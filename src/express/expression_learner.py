@@ -438,7 +438,12 @@ class ExpressionLearner:
                 continue
             
             prev_original_idx = bare_lines[pos - 1][0]
-            up_content = filter_message_content(random_msg[prev_original_idx].processed_plain_text or "")
+            source_content = (
+                random_msg[prev_original_idx].processed_plain_text
+                or getattr(random_msg[prev_original_idx], "display_message", None)
+                or ""
+            )
+            up_content = filter_message_content(source_content)
             if not up_content:
                 # 上一句为空，跳过该表达
                 continue
@@ -493,8 +498,8 @@ class ExpressionLearner:
         bare_lines: List[Tuple[int, str]] = []
         
         for idx, msg in enumerate(messages):
-            content = msg.processed_plain_text or ""
-            content = filter_message_content(content)
+            raw_content = msg.processed_plain_text or getattr(msg, "display_message", None) or ""
+            content = filter_message_content(raw_content)
             # 即使content为空也要记录，防止错位
             bare_lines.append((idx, content))
                 

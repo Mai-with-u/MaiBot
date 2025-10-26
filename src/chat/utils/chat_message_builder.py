@@ -983,8 +983,8 @@ async def build_bare_messages(messages: List[DatabaseMessages]) -> str:
     output_lines = []
 
     for msg in messages:
-        # 获取纯文本内容
-        content = msg.processed_plain_text or ""
+        # 获取纯文本内容，优先使用processed_plain_text，回退到display_message
+        content = msg.processed_plain_text or getattr(msg, "display_message", None) or ""
 
         # 处理图片ID
         pic_pattern = r"\[picid:[^\]]+\]"
