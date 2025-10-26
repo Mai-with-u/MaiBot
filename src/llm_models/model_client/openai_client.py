@@ -396,6 +396,7 @@ class OpenaiClient(BaseClient):
             api_key=api_provider.api_key,
             max_retries=0,
             timeout=api_provider.timeout,
+            default_headers={"User-Agent": "python-requests/2.32.0"},
         )
 
     async def get_response(
