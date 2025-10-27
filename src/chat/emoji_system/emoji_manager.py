@@ -34,6 +34,36 @@ MAX_EMOJI_FOR_PROMPT = 20  # 最大允许的表情包描述数量于图片替换
 
 """
 
+PLACEHOLDER_KEYWORDS = (
+    "请描述这个表情包",
+    "请描述这张表情包",
+    "请描述这张图片",
+    "抱歉，我无法查看图片",
+    "抱歉，我無法查看圖片",
+    "please describe this sticker",
+    "please describe the sticker",
+    "please describe this image",
+    "please describe the image",
+)
+
+
+def _normalize_description_for_placeholder_check(description: str) -> str:
+    text = description.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    lowered = text.lower()
+    for prefix in ("表情包：", "表情包:", "emoji：", "emoji:", "图片：", "图片:", "image:", "image："):
+        if lowered.startswith(prefix):
+            text = text[len(prefix) :].strip()
+            break
+    return text
+
+
+def looks_like_placeholder_description(description: str) -> bool:
+    normalized = _normalize_description_for_placeholder_check(description)
+    lowered = normalized.lower()
+    return any(keyword in lowered for keyword in PLACEHOLDER_KEYWORDS)
+
 
 class MaiEmoji:
     """定义一个表情包"""
@@ -920,13 +950,26 @@ class EmojiManager:
 
             # 尝试从Images表获取已有的详细描述（可能在收到表情包时已生成）
             existing_description = None
+            existing_image = None
             try:
                 from src.common.database.database_model import Images
 
                 existing_image = Images.get_or_none((Images.emoji_hash == image_hash) & (Images.type == "emoji"))
                 if existing_image and existing_image.description:
-                    existing_description = existing_image.description
-                    logger.info(f"[复用描述] 找到已有详细描述: {existing_description[:50]}...")
+                    if looks_like_placeholder_description(existing_image.description):
+                        logger.warning(
+                            "[VLM兜底] 检测到占位描述，忽略缓存并重新生成: %s",
+                            existing_image.description[:100],
+                        )
+                        try:
+                            existing_image.description = None
+                            existing_image.vlm_processed = False
+                            existing_image.save()
+                        except Exception as save_error:
+                            logger.error(f"[VLM兜底] 清理占位描述失败: {save_error}")
+                    else:
+                        existing_description = existing_image.description
+                        logger.info(f"[复用描述] 找到已有详细描述: {existing_description[:50]}...")
             except Exception as e:
                 logger.debug(f"查询已有描述时出错: {e}")
 
@@ -951,6 +994,21 @@ class EmojiManager:
                     description, _ = await self.vlm.generate_response_for_image(
                         prompt, image_base64, image_format, temperature=0.3, max_tokens=1000
                     )
+
+                if looks_like_placeholder_description(description):
+                    logger.error(
+                        "[VLM兜底] VLM返回占位描述，终止注册: %s",
+                        description[:100],
+                    )
+                    raise RuntimeError("VLM返回占位描述")
+
+                if existing_image:
+                    try:
+                        existing_image.description = description
+                        existing_image.vlm_processed = True
+                        existing_image.save()
+                    except Exception as save_error:
+                        logger.error(f"[VLM兜底] 更新描述缓存失败: {save_error}")
 
             # 审核表情包
             if global_config.emoji.content_filtration:
