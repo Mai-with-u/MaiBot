@@ -518,8 +518,9 @@ class HeartFChatting:
                     )
                 reply_result = None
 
-            # 过滤掉planner返回的reply动作（如果存在）
-            action_to_use_info = [action for action in action_to_use_info if action.action_type != "reply"]
+            # 当planner与提及回复并行时，reply_result已包含回复结果，需要避免重复执行reply动作
+            if reply_result:
+                action_to_use_info = [action for action in action_to_use_info if action.action_type != "reply"]
 
             logger.info(
                 f"{self.log_prefix} 决定执行{len(action_to_use_info)}个动作: {' '.join([a.action_type for a in action_to_use_info])}"
