@@ -77,7 +77,8 @@ class BaseAction(ABC):
         self.action_require: list[str] = getattr(self.__class__, "action_require", []).copy()
 
         """NORMAL模式下的激活类型"""
-        self.activation_type = getattr(self.__class__, "activation_type")
+        focus_activation_type = getattr(self.__class__, "focus_activation_type", ActionActivationType.ALWAYS)
+        self.activation_type = getattr(self.__class__, "activation_type", focus_activation_type)
         """激活类型"""
         self.random_activation_probability: float = getattr(self.__class__, "random_activation_probability", 0.0)
         """当激活类型为RANDOM时的概率"""
