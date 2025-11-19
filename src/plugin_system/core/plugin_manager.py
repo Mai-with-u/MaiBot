@@ -1,5 +1,6 @@
 import os
 import traceback
+import asyncio
 
 from typing import Dict, List, Optional, Tuple, Type, Any
 from importlib.util import spec_from_file_location, module_from_spec
@@ -11,6 +12,7 @@ from src.plugin_system.base.plugin_base import PluginBase
 from src.plugin_system.base.component_types import ComponentType
 from src.plugin_system.utils.manifest_utils import VersionComparator
 from .component_registry import component_registry
+from .dependency_manager import plugin_dependency_manager
 
 logger = get_logger("plugin_manager")
 
@@ -73,7 +75,13 @@ class PluginManager:
         total_registered = 0
         total_failed_registration = 0
 
-        for plugin_name in self.plugin_classes.keys():
+        # 获取所有已注册的插件名称
+        all_plugin_names = list(self.plugin_classes.keys())
+
+        # 对插件进行拓扑排序
+        sorted_plugin_names = self._sort_plugins_by_dependency(all_plugin_names)
+
+        for plugin_name in sorted_plugin_names:
             load_status, count = self.load_registered_plugin_classes(plugin_name)
             if load_status:
                 total_registered += 1
@@ -83,6 +91,60 @@ class PluginManager:
         self._show_stats(total_registered, total_failed_registration)
 
         return total_registered, total_failed_registration
+
+    def _sort_plugins_by_dependency(self, plugin_names: List[str]) -> List[str]:
+        """对插件进行拓扑排序，确保依赖加载顺序
+
+        Args:
+            plugin_names: 待排序的插件名称列表。
+
+        Returns:
+            List[str]: 排序后的插件名称列表，依赖项排在前面。
+        """
+        # 预实例化所有插件以获取依赖信息
+        temp_instances = {}
+        for name in plugin_names:
+            cls = self.plugin_classes.get(name)
+            path = self.plugin_paths.get(name)
+            if cls and path:
+                try:
+                    # 实例化插件以获取依赖信息，但不注册
+                    instance = cls(plugin_dir=path)
+                    temp_instances[name] = instance
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.warning(f"预加载插件 {name} 以获取依赖信息失败: {e}")
+
+        # 构建依赖图
+        graph = {name: set() for name in plugin_names}
+        for name, instance in temp_instances.items():
+            for dep in instance.dependencies:
+                if dep in plugin_names:
+                    graph[name].add(dep)
+                else:
+                    logger.warning(f"插件 {name} 依赖未知的插件: {dep}")
+
+        # 拓扑排序
+        result = []
+        visited = set()
+        temp_mark = set()
+
+        def visit(n):
+            if n in temp_mark:
+                logger.error(f"检测到循环依赖: {n}")
+                return
+            if n not in visited:
+                temp_mark.add(n)
+                for m in graph.get(n, []):
+                    visit(m)
+                temp_mark.remove(n)
+                visited.add(n)
+                result.append(n)
+
+        for name in plugin_names:
+            if name not in visited:
+                visit(name)
+
+        return result
 
     def load_registered_plugin_classes(self, plugin_name: str) -> Tuple[bool, int]:
         # sourcery skip: extract-duplicate-method, extract-method
@@ -109,6 +171,53 @@ class PluginManager:
             if not plugin_instance.enable_plugin:
                 logger.info(f"插件 {plugin_name} 已禁用，跳过加载")
                 return False, 0
+
+            # 优先检查并安装配置文件定义的依赖
+            try:
+                # 检查是否有正在运行的事件循环
+                try:
+                    asyncio.get_running_loop()
+
+                    pass
+                except RuntimeError:
+                    # 没有运行的循环，可以使用 asyncio.run
+                    asyncio.run(
+                        plugin_dependency_manager.install_auto_from_directory(plugin_dir)
+                    )
+            except Exception as e:  # pylint: disable=broad-except
+                logger.error(f"自动安装依赖文件失败: {e}")
+
+            if plugin_instance.python_dependencies:
+                _, unsatisfied = plugin_dependency_manager.check_dependencies(
+                    plugin_instance.python_dependencies)
+                if unsatisfied:
+                    logger.warning(f"插件 {plugin_name} 缺少Python依赖:"
+                        f" {[d.name for d in unsatisfied]}，尝试自动安装...")
+
+                    # 尝试自动安装
+                    install_success = False
+                    try:
+                        # 检查是否有正在运行的事件循环
+                        try:
+                            asyncio.get_running_loop()
+                            # 如果已经在循环中（例如 WebUI 调用），我们无法在同步方法中阻塞等待异步安装
+                            # 记录警告并跳过自动安装，尝试继续加载（如果真的缺依赖，后续会抛出 ImportError）
+                            logger.warning(f"检测到运行中的事件循环，跳过插件 {plugin_name} 的元数据依赖自动安装。如果加载失败，请手动安装: {[d.name for d in unsatisfied]}")
+                            install_success = False # 标记为未执行安装，但允许后续流程尝试加载
+                        except RuntimeError:
+                            # 没有运行的循环，可以使用 asyncio.run
+                            install_success = asyncio.run(
+                                plugin_dependency_manager.install_dependencies(unsatisfied))
+                    except Exception as e:  # pylint: disable=broad-except
+                        logger.error(f"自动安装依赖失败: {e}")
+                        install_success = False
+
+                    if install_success:
+                        logger.info(f"插件 {plugin_name} 依赖安装成功，继续加载")
+                    elif unsatisfied:
+                        logger.warning(f"插件 {plugin_name} 存在未满足的依赖且未能自动安装，将尝试强制加载...")
+
+
 
             # 检查版本兼容性
             is_compatible, compatibility_error = self._check_plugin_version_compatibility(
