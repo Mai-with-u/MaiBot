@@ -256,15 +256,16 @@ def _build_stream_api_resp(
                 reason = str(fr)
                 break
 
-    if str(reason).endswith("MAX_TOKENS"):
+    if reason and "MAX_TOKENS" in reason:
+        model_dbg = getattr(last_resp, "model_version", None) or getattr(last_resp, "modelVersion", None)
         has_visible_output = bool(resp.content and resp.content.strip())
         if has_visible_output:
-            logger.warning(
-                "⚠ Gemini 响应因达到 max_tokens 限制被部分截断，\n"
-                "    可能会对回复内容造成影响，建议修改模型 max_tokens 配置！"
+            logger.info(
+                f"模型 {model_dbg} 因达到 max_tokens 限制被部分截断，\n"
+                "可能会对回复内容造成影响，适当调宽模型 max_tokens 配置！"
             )
         else:
-            logger.warning("⚠ Gemini 响应因达到 max_tokens 限制被截断，\n    请修改模型 max_tokens 配置！")
+            logger.warning(f"⚠ 模型 {model_dbg} 因达到 max_tokens 限制被截断，\n    请修改模型 max_tokens 配置！")
 
     if not resp.content and not resp.tool_calls:
         if not getattr(resp, "reasoning_content", None):
@@ -396,13 +397,14 @@ def _default_normal_response_parser(
                 if not has_real_output and getattr(resp, "text", None):
                     has_real_output = True
 
+                model_dbg = getattr(resp, "model_version", None) or getattr(resp, "modelVersion", None)
                 if has_real_output:
-                    logger.warning(
-                        "⚠ Gemini 响应因达到 max_tokens 限制被部分截断，\n"
-                        "    可能会对回复内容造成影响，建议修改模型 max_tokens 配置！"
+                    logger.info(
+                        f"模型 {model_dbg} 因达到 max_tokens 限制被部分截断，\n"
+                        "可能会对回复内容造成影响，适当调宽模型 max_tokens 配置！"
                     )
                 else:
-                    logger.warning("⚠ Gemini 响应因达到 max_tokens 限制被截断，\n    请修改模型 max_tokens 配置！")
+                    logger.warning(f"⚠ 模型 {model_dbg} 因达到 max_tokens 限制被截断，\n    请修改模型 max_tokens 配置！")
 
                 return api_response, _usage_record
     except Exception as e:
@@ -448,6 +450,20 @@ class GeminiClient(BaseClient):
         """
         按模型限制思考预算范围，仅支持指定的模型（支持带数字后缀的新版本）
         """
+        if model_id.startswith("gemini-3"):
+            # Gemini 3 使用 thinking_level
+            thinking_level = "high"  # 默认高思考级别
+
+            if extra_params and "thinking_level" in extra_params:
+                tl = str(extra_params["thinking_level"]).lower()
+                if tl in ("low", "high"):
+                    thinking_level = tl
+                else:
+                    logger.warning(f"无效的 thinking_level: {tl}，已回退为默认值 high")
+
+            # Gemini 3 系列模型不支持禁用思考功能
+            return thinking_level
+
         limits = None
 
         # 参数传入处理
@@ -543,7 +559,7 @@ class GeminiClient(BaseClient):
         # 将tool_options转换为Gemini API所需的格式
         tools = _convert_tool_options(tool_options) if tool_options else None
         # 解析并裁剪 thinking_budget
-        tb = self.clamp_thinking_budget(extra_params, model_info.model_identifier)
+        think = self.clamp_thinking_budget(extra_params, model_info.model_identifier)
         # 检测是否为带 -search 的模型
         enable_google_search = False
         model_identifier = model_info.model_identifier
@@ -559,12 +575,20 @@ class GeminiClient(BaseClient):
             "max_output_tokens": max_tokens,
             "temperature": temperature,
             "response_modalities": ["TEXT"],
-            "thinking_config": ThinkingConfig(
-                include_thoughts=True,
-                thinking_budget=tb,
-            ),
             "safety_settings": gemini_safe_settings,  # 防止空回复问题
         }
+
+        # 根据模型类型选择 thinking_config 参数
+        thinking_kwargs = {"include_thoughts": True}
+        if model_identifier.startswith("gemini-3"):
+            thinking_kwargs["thinking_level"] = think
+        else:
+            thinking_kwargs["thinking_budget"] = think
+        try:
+            generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
+        except Exception:
+            logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
+            generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
         if tools:
             generation_config_dict["tools"] = Tool(function_declarations=tools)
         if messages[1]:
@@ -707,7 +731,7 @@ class GeminiClient(BaseClient):
         :return: 转录响应
         """
         # 解析并裁剪 thinking_budget
-        tb = self.clamp_thinking_budget(extra_params, model_info.model_identifier)
+        think = self.clamp_thinking_budget(extra_params, model_info.model_identifier)
 
         # 构造 prompt + 音频输入
         prompt = "Generate a transcript of the speech. The language of the transcript should **match the language of the speech**."
@@ -724,12 +748,19 @@ class GeminiClient(BaseClient):
         generation_config_dict = {
             "max_output_tokens": max_tokens,
             "response_modalities": ["TEXT"],
-            "thinking_config": ThinkingConfig(
-                include_thoughts=True,
-                thinking_budget=tb,
-            ),
             "safety_settings": gemini_safe_settings,
         }
+
+        thinking_kwargs = {"include_thoughts": True}
+        if model_info.model_identifier.startswith("gemini-3"):
+            thinking_kwargs["thinking_level"] = think
+        else:
+            thinking_kwargs["thinking_budget"] = think
+        try:
+            generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
+        except Exception:
+            logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
+            generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
         generate_content_config = GenerateContentConfig(**generation_config_dict)
 
         try:
