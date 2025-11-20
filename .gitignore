@@ -51,6 +51,7 @@ template/compare/model_config_template.toml
 src/plugins/utils/statistic.py
 CLAUDE.md
 MaiBot-Dashboard/
+cloudflare-workers/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -16,8 +16,8 @@ from src.llm_models.payload_content.message import MessageBuilder, RoleType, Mes
 
 logger = get_logger("memory_retrieval")
 
-THINKING_BACK_NOT_FOUND_RETENTION_SECONDS = 3600  # 未找到答案记录保留时长
-THINKING_BACK_CLEANUP_INTERVAL_SECONDS = 300  # 清理频率
+THINKING_BACK_NOT_FOUND_RETENTION_SECONDS = 36000  # 未找到答案记录保留时长
+THINKING_BACK_CLEANUP_INTERVAL_SECONDS = 3000  # 清理频率
 _last_not_found_cleanup_ts: float = 0.0
 
 
@@ -340,7 +340,8 @@ async def _react_agent_solve_question(
                 max_iterations=max_iterations,
             )
 
-            logger.info(f"ReAct Agent 第 {iteration + 1} 次Prompt: {prompt}")
+            if global_config.debug.show_memory_prompt:
+                logger.info(f"ReAct Agent 第 {iteration + 1} 次Prompt: {prompt}")
             success, response, reasoning_content, model_name, tool_calls = await llm_api.generate_with_model_with_tools(
                 prompt,
                 model_config=model_config.model_task_config.tool_use,
@@ -380,42 +381,43 @@ async def _react_agent_solve_question(
 
                 messages.extend(_conversation_messages)
 
-                # 优化日志展示 - 合并所有消息到一条日志
-                log_lines = []
-                for idx, msg in enumerate(messages, 1):
-                    role_name = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+                if global_config.debug.show_memory_prompt:
+                    # 优化日志展示 - 合并所有消息到一条日志
+                    log_lines = []
+                    for idx, msg in enumerate(messages, 1):
+                        role_name = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
 
-                    # 处理内容 - 显示完整内容，不截断
-                    if isinstance(msg.content, str):
-                        full_content = msg.content
-                        content_type = "文本"
-                    elif isinstance(msg.content, list):
-                        text_parts = [item for item in msg.content if isinstance(item, str)]
-                        image_count = len([item for item in msg.content if isinstance(item, tuple)])
-                        full_content = "".join(text_parts) if text_parts else ""
-                        content_type = f"混合({len(text_parts)}段文本, {image_count}张图片)"
-                    else:
-                        full_content = str(msg.content)
-                        content_type = "未知"
+                        # 处理内容 - 显示完整内容，不截断
+                        if isinstance(msg.content, str):
+                            full_content = msg.content
+                            content_type = "文本"
+                        elif isinstance(msg.content, list):
+                            text_parts = [item for item in msg.content if isinstance(item, str)]
+                            image_count = len([item for item in msg.content if isinstance(item, tuple)])
+                            full_content = "".join(text_parts) if text_parts else ""
+                            content_type = f"混合({len(text_parts)}段文本, {image_count}张图片)"
+                        else:
+                            full_content = str(msg.content)
+                            content_type = "未知"
 
-                    # 构建单条消息的日志信息
-                    msg_info = f"\n[消息 {idx}] 角色: {role_name} 内容类型: {content_type}\n========================================"
+                        # 构建单条消息的日志信息
+                        msg_info = f"\n[消息 {idx}] 角色: {role_name} 内容类型: {content_type}\n========================================"
 
-                    if full_content:
-                        msg_info += f"\n{full_content}"
+                        if full_content:
+                            msg_info += f"\n{full_content}"
 
-                    if msg.tool_calls:
-                        msg_info += f"\n  工具调用: {len(msg.tool_calls)}个"
-                        for tool_call in msg.tool_calls:
-                            msg_info += f"\n    - {tool_call}"
+                        if msg.tool_calls:
+                            msg_info += f"\n  工具调用: {len(msg.tool_calls)}个"
+                            for tool_call in msg.tool_calls:
+                                msg_info += f"\n    - {tool_call}"
 
-                    if msg.tool_call_id:
-                        msg_info += f"\n  工具调用ID: {msg.tool_call_id}"
+                        if msg.tool_call_id:
+                            msg_info += f"\n  工具调用ID: {msg.tool_call_id}"
 
-                    log_lines.append(msg_info)
+                        log_lines.append(msg_info)
 
-                # 合并所有消息为一条日志输出
-                logger.info(f"消息列表 (共{len(messages)}条):{''.join(log_lines)}")
+                    # 合并所有消息为一条日志输出
+                    logger.info(f"消息列表 (共{len(messages)}条):{''.join(log_lines)}")
 
                 return messages
 
@@ -1068,7 +1070,8 @@ async def build_memory_retrieval_prompt(
             request_type="memory.question",
         )
 
-        logger.info(f"记忆检索问题生成提示词: {question_prompt}")
+        if global_config.debug.show_memory_prompt:
+            logger.info(f"记忆检索问题生成提示词: {question_prompt}")
         logger.info(f"记忆检索问题生成响应: {response}")
 
         if not success:

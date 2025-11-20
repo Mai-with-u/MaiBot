@@ -319,6 +319,58 @@ async def update_bot_config_section(section_name: str, section_data: Any = Body(
         raise HTTPException(status_code=500, detail=f"更新配置节失败: {str(e)}")
 
 
+# ===== 原始 TOML 文件操作接口 =====
+
+
+@router.get("/bot/raw")
+async def get_bot_config_raw():
+    """获取麦麦主程序配置的原始 TOML 内容"""
+    try:
+        config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
+        if not os.path.exists(config_path):
+            raise HTTPException(status_code=404, detail="配置文件不存在")
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+
+        return {"success": True, "content": raw_content}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"读取配置文件失败: {e}")
+        raise HTTPException(status_code=500, detail=f"读取配置文件失败: {str(e)}")
+
+
+@router.post("/bot/raw")
+async def update_bot_config_raw(raw_content: str = Body(..., embed=True)):
+    """更新麦麦主程序配置（直接保存原始 TOML 内容，会先验证格式）"""
+    try:
+        # 验证 TOML 格式
+        try:
+            config_data = tomlkit.loads(raw_content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"TOML 格式错误: {str(e)}")
+
+        # 验证配置数据结构
+        try:
+            Config.from_dict(config_data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}")
+
+        # 保存配置文件
+        config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(raw_content)
+
+        logger.info("麦麦主程序配置已更新（原始模式）")
+        return {"success": True, "message": "配置已保存"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存配置文件失败: {e}")
+        raise HTTPException(status_code=500, detail=f"保存配置文件失败: {str(e)}")
+
+
 @router.post("/model/section/{section_name}")
 async def update_model_config_section(section_name: str, section_data: Any = Body(...)):
     """更新模型配置的指定节（保留注释和格式）"""
@@ -364,3 +416,144 @@ async def update_model_config_section(section_name: str, section_data: Any = Bod
     except Exception as e:
         logger.error(f"更新配置节失败: {e}")
         raise HTTPException(status_code=500, detail=f"更新配置节失败: {str(e)}")
+
+
+# ===== 适配器配置管理接口 =====
+
+
+@router.get("/adapter-config/path")
+async def get_adapter_config_path():
+    """获取保存的适配器配置文件路径"""
+    try:
+        # 从 data/webui.json 读取路径偏好
+        webui_data_path = os.path.join("data", "webui.json")
+        if not os.path.exists(webui_data_path):
+            return {"success": True, "path": None}
+
+        import json
+        with open(webui_data_path, "r", encoding="utf-8") as f:
+            webui_data = json.load(f)
+
+        adapter_config_path = webui_data.get("adapter_config_path")
+        if not adapter_config_path:
+            return {"success": True, "path": None}
+
+        # 检查文件是否存在并返回最后修改时间
+        if os.path.exists(adapter_config_path):
+            import datetime
+            mtime = os.path.getmtime(adapter_config_path)
+            last_modified = datetime.datetime.fromtimestamp(mtime).isoformat()
+            return {"success": True, "path": adapter_config_path, "lastModified": last_modified}
+        else:
+            return {"success": True, "path": adapter_config_path, "lastModified": None}
+
+    except Exception as e:
+        logger.error(f"获取适配器配置路径失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取配置路径失败: {str(e)}")
+
+
+@router.post("/adapter-config/path")
+async def save_adapter_config_path(data: dict[str, str] = Body(...)):
+    """保存适配器配置文件路径偏好"""
+    try:
+        path = data.get("path")
+        if not path:
+            raise HTTPException(status_code=400, detail="路径不能为空")
+
+        # 保存到 data/webui.json
+        webui_data_path = os.path.join("data", "webui.json")
+        import json
+
+        # 读取现有数据
+        if os.path.exists(webui_data_path):
+            with open(webui_data_path, "r", encoding="utf-8") as f:
+                webui_data = json.load(f)
+        else:
+            webui_data = {}
+
+        # 更新路径
+        webui_data["adapter_config_path"] = path
+
+        # 保存
+        os.makedirs("data", exist_ok=True)
+        with open(webui_data_path, "w", encoding="utf-8") as f:
+            json.dump(webui_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"适配器配置路径已保存: {path}")
+        return {"success": True, "message": "路径已保存"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存适配器配置路径失败: {e}")
+        raise HTTPException(status_code=500, detail=f"保存路径失败: {str(e)}")
+
+
+@router.get("/adapter-config")
+async def get_adapter_config(path: str):
+    """从指定路径读取适配器配置文件"""
+    try:
+        if not path:
+            raise HTTPException(status_code=400, detail="路径参数不能为空")
+
+        # 检查文件是否存在
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"配置文件不存在: {path}")
+
+        # 检查文件扩展名
+        if not path.endswith(".toml"):
+            raise HTTPException(status_code=400, detail="只支持 .toml 格式的配置文件")
+
+        # 读取文件内容
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        logger.info(f"已读取适配器配置: {path}")
+        return {"success": True, "content": content}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"读取适配器配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"读取配置失败: {str(e)}")
+
+
+@router.post("/adapter-config")
+async def save_adapter_config(data: dict[str, str] = Body(...)):
+    """保存适配器配置到指定路径"""
+    try:
+        path = data.get("path")
+        content = data.get("content")
+
+        if not path:
+            raise HTTPException(status_code=400, detail="路径不能为空")
+        if content is None:
+            raise HTTPException(status_code=400, detail="配置内容不能为空")
+
+        # 检查文件扩展名
+        if not path.endswith(".toml"):
+            raise HTTPException(status_code=400, detail="只支持 .toml 格式的配置文件")
+
+        # 验证 TOML 格式
+        try:
+            import toml
+            toml.loads(content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"TOML 格式错误: {str(e)}")
+
+        # 确保目录存在
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+
+        # 保存文件
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info(f"适配器配置已保存: {path}")
+        return {"success": True, "message": "配置已保存"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"保存适配器配置失败: {e}")
+        raise HTTPException(status_code=500, detail=f"保存配置失败: {str(e)}")
+

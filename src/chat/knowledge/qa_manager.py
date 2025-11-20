@@ -92,9 +92,10 @@ class QAManager:
         # 过滤阈值
         result = dyn_select_top_k(result, 0.5, 1.0)
 
-        for res in result:
-            raw_paragraph = self.embed_manager.paragraphs_embedding_store.store[res[0]].str
-            logger.info(f"找到相关文段，相关系数：{res[1]:.8f}\n{raw_paragraph}\n\n")
+        if global_config.debug.show_lpmm_paragraph:
+            for res in result:
+                raw_paragraph = self.embed_manager.paragraphs_embedding_store.store[res[0]].str
+                logger.info(f"找到相关文段，相关系数：{res[1]:.8f}\n{raw_paragraph}\n\n")
 
         return result, ppr_node_weights
 

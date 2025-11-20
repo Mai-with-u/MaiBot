@@ -581,8 +581,14 @@ class DebugConfig(ConfigBase):
     show_jargon_prompt: bool = False
     """是否显示jargon相关提示词"""
 
+    show_memory_prompt: bool = False
+    """是否显示记忆检索相关prompt"""
+
     show_planner_prompt: bool = False
     """是否显示planner相关提示词"""
+
+    show_lpmm_paragraph: bool = False
+    """是否显示lpmm找到的相关文段日志"""
 
 
 @dataclass

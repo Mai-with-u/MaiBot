@@ -384,10 +384,10 @@ class JargonMiner:
                 logger.error(f"jargon {content} 推断2解析失败: {e}")
                 return
 
-            logger.info(f"jargon {content} 推断2提示词: {prompt2}")
-            logger.info(f"jargon {content} 推断2结果: {response2}")
-            logger.info(f"jargon {content} 推断1提示词: {prompt1}")
-            logger.info(f"jargon {content} 推断1结果: {response1}")
+            # logger.info(f"jargon {content} 推断2提示词: {prompt2}")
+            # logger.info(f"jargon {content} 推断2结果: {response2}")
+            # logger.info(f"jargon {content} 推断1提示词: {prompt1}")
+            # logger.info(f"jargon {content} 推断1结果: {response1}")
 
             if global_config.debug.show_jargon_prompt:
                 logger.info(f"jargon {content} 推断2提示词: {prompt2}")

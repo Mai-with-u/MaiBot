@@ -1,5 +1,5 @@
 [inner]
-version = "6.21.6"
+version = "6.21.8"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 #如果你想要修改配置文件，请递增version的值
@@ -211,6 +211,9 @@ show_prompt = false # 是否显示prompt
 show_replyer_prompt = false # 是否显示回复器prompt
 show_replyer_reasoning = false # 是否显示回复器推理
 show_jargon_prompt = false # 是否显示jargon相关提示词
+show_memory_prompt = false # 是否显示记忆检索相关提示词
+show_planner_prompt = false # 是否显示planner的prompt和原始返回结果
+show_lpmm_paragraph = false # 是否显示lpmm找到的相关文段日志
 
 [maim_message]
 auth_token = [] # 认证令牌，用于API验证，为空则不启用验证
