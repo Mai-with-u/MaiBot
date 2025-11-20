@@ -1,6 +1,7 @@
 import asyncio
 import io
 import base64
+import warnings
 from typing import Callable, AsyncIterator, Optional, Coroutine, Any, List, Dict
 
 from google import genai
@@ -578,17 +579,23 @@ class GeminiClient(BaseClient):
             "safety_settings": gemini_safe_settings,  # 防止空回复问题
         }
 
-        # 根据模型类型选择 thinking_config 参数
-        thinking_kwargs = {"include_thoughts": True}
-        if model_identifier.startswith("gemini-3"):
-            thinking_kwargs["thinking_level"] = think
+        # 排除非思考的媒体模型(避免传入ThinkingConfig参数引发400)
+        is_media_model = any(suffix in model_info.model_identifier for suffix in ("-tts", "-image"))
+        if not (is_media_model and model_info.model_identifier.startswith("gemini-2.5")):
+             # 根据模型类型选择 thinking_config 参数
+             thinking_kwargs = {"include_thoughts": True}
+             if model_identifier.startswith("gemini-3"):
+                 thinking_kwargs["thinking_level"] = think
+             elif model_identifier.startswith("gemini-2.5"):
+                 thinking_kwargs["thinking_budget"] = think
+             try:
+                 generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
+             except Exception:
+                 logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
+                 generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
         else:
-            thinking_kwargs["thinking_budget"] = think
-        try:
-            generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
-        except Exception:
-            logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
-            generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
+             # 忽略来自genai._common的thinking_config无效记录警告
+             warnings.filterwarnings("ignore", category=UserWarning, module="google.genai._common")
         if tools:
             generation_config_dict["tools"] = Tool(function_declarations=tools)
         if messages[1]:
@@ -751,16 +758,20 @@ class GeminiClient(BaseClient):
             "safety_settings": gemini_safe_settings,
         }
 
-        thinking_kwargs = {"include_thoughts": True}
-        if model_info.model_identifier.startswith("gemini-3"):
-            thinking_kwargs["thinking_level"] = think
+        is_media_model = any(suffix in model_identifier for suffix in ("-tts", "-image"))
+        if not (is_media_model and model_identifier.startswith("gemini-2.5")):
+             thinking_kwargs = {"include_thoughts": True}
+             if model_info.model_identifier.startswith("gemini-3"):
+                 thinking_kwargs["thinking_level"] = think
+             elif model_info.model_identifier.startswith("gemini-2.5"):
+                 thinking_kwargs["thinking_budget"] = think
+             try:
+                 generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
+             except Exception:
+                 logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
+                 generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
         else:
-            thinking_kwargs["thinking_budget"] = think
-        try:
-            generation_config_dict["thinking_config"] = ThinkingConfig(**thinking_kwargs)
-        except Exception:
-            logger.warning("当前SDK不支持 thinking_level，请手动更新google-genai库")
-            generation_config_dict["thinking_config"] = ThinkingConfig(include_thoughts=True)
+             warnings.filterwarnings("ignore", category=UserWarning, module="google.genai._common")
         generate_content_config = GenerateContentConfig(**generation_config_dict)
 
         try:
