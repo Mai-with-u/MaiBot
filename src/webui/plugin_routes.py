@@ -3,9 +3,13 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import json
+import os
+import toml
+from src.plugin_system.base.config_types import ConfigField
 from src.common.logger import get_logger
 from src.config.config import MMC_VERSION
 from src.plugin_system.core.dependency_manager import plugin_dependency_manager
+from src.plugin_system.core.plugin_manager import plugin_manager
 from .git_mirror_service import get_git_mirror_service, set_update_progress_callback
 from .token_manager import get_token_manager
 from .plugin_progress_ws import update_progress
@@ -162,6 +166,31 @@ class UpdatePluginRequest(BaseModel):
     repository_url: str = Field(..., description="插件仓库 URL")
     branch: Optional[str] = Field("main", description="分支名称")
     mirror_id: Optional[str] = Field(None, description="指定镜像源 ID")
+
+
+class PluginConfigItem(BaseModel):
+    """插件配置项"""
+    key: str = Field(..., description="配置键（section.key）")
+    label: str = Field(..., description="显示标签")
+    value: Any = Field(..., description="当前值")
+    description: str = Field(..., description="描述")
+    section: str = Field(..., description="所属节")
+    required: bool = Field(..., description="是否必需")
+    default: Any = Field(..., description="默认值")
+    type: str = Field(..., description="字段类型: input, number, switch, select, array")
+    options: Optional[List[Any]] = Field(None, description="可选值列表")
+
+
+class PluginConfigResponse(BaseModel):
+    """插件配置响应"""
+    success: bool = Field(..., description="是否成功")
+    data: List[PluginConfigItem] = Field(..., description="配置项列表")
+    error: Optional[str] = Field(None, description="错误信息")
+
+
+class UpdatePluginConfigRequest(BaseModel):
+    """更新插件配置请求"""
+    configs: Dict[str, Any] = Field(..., description="配置键值对")
 
 
 # ============ API 路由 ============
@@ -549,7 +578,7 @@ async def install_plugin(
             await update_progress(
                 stage="error",
                 progress=0,
-                message=f"插件已存在",
+                message="插件已存在",
                 operation="install",
                 plugin_id=request.plugin_id,
                 error="插件已安装，请先卸载"
@@ -1147,17 +1176,32 @@ async def get_installed_plugins(
                     logger.warning(f"插件 {plugin_id} 的 _manifest.json 格式无效，跳过")
                     continue
 
+                # 读取 config.toml 获取启用状态
+                config_path = plugin_path / "config.toml"
+                is_enabled = False
+                try:
+                    if config_path.exists():
+                        import toml
+                        config = toml.load(config_path)
+                        is_enabled = config.get("plugin", {}).get("enabled", False)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                
+                is_running = plugin_manager.get_plugin_instance(plugin_id) is not None
+
                 # 添加到已安装列表（返回完整的 manifest 信息）
                 installed_plugins.append({
                     "id": plugin_id,
                     "manifest": manifest,  # 返回完整的 manifest 对象
-                    "path": str(plugin_path.absolute())
+                    "path": str(plugin_path.absolute()),
+                    "enabled": is_enabled,
+                    "running": is_running
                 })
 
             except json.JSONDecodeError as e:
                 logger.warning(f"插件 {plugin_id} 的 _manifest.json 解析失败: {e}")
                 continue
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logger.error(f"读取插件 {plugin_id} 信息时出错: {e}")
                 continue
 
@@ -1172,3 +1216,205 @@ async def get_installed_plugins(
     except Exception as e:
         logger.error(f"获取已安装插件列表失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}") from e
+
+
+@router.get("/{plugin_id}/config", response_model=PluginConfigResponse)
+async def get_plugin_config(
+    plugin_id: str,
+    authorization: Optional[str] = Header(None)
+) -> PluginConfigResponse:
+    """
+    获取插件配置表单定义和当前值
+    """
+    # Token 验证
+    token = authorization.replace("Bearer ", "") if authorization else None
+    token_manager = get_token_manager()
+    if not token or not token_manager.verify_token(token):
+        raise HTTPException(status_code=401, detail="未授权：无效的访问令牌")
+
+    plugin = plugin_manager.get_plugin_instance(plugin_id)
+
+    schema = None
+    current_config = None
+
+    # 1. 尝试从已加载的插件获取
+    if plugin:
+        schema = plugin.config_schema
+        current_config = plugin.config
+    else:
+        # 2. 尝试从已注册的类中加载（针对已禁用或加载失败的插件）
+        logger.info(f"插件 {plugin_id} 未运行，尝试静态加载配置")
+
+        plugin_class = plugin_manager.plugin_classes.get(plugin_id)
+        plugin_path = plugin_manager.plugin_paths.get(plugin_id)
+
+        # 如果没有路径信息，尝试推断标准路径
+        if not plugin_path:
+            possible_path = Path("plugins") / plugin_id
+            if possible_path.exists():
+                plugin_path = str(possible_path)
+
+        if plugin_class and plugin_path:
+            try:
+                # 临时实例化，仅用于获取 schema 和 config
+                # 注意：这里可能会触发 __init__ 中的逻辑
+                temp_plugin = plugin_class(plugin_dir=plugin_path)
+                schema = temp_plugin.config_schema
+                current_config = temp_plugin.config
+            except Exception as e:  # pylint: disable=broad-except
+                logger.warning(f"临时实例化插件 {plugin_id} 失败: {e}")
+
+        # 3. 如果还是没有 schema，尝试直接读取 config.toml 并推断
+        if schema is None and plugin_path:
+            config_path = Path(plugin_path) / "config.toml"
+            if config_path.exists():
+                try:
+
+                    current_config = toml.load(config_path)
+                    # 根据 config 生成简单的 schema
+                    schema = {}
+                    for section, values in current_config.items():
+                        if isinstance(values, dict):
+                            schema[section] = {}
+                            for key, value in values.items():
+                                # 构造一个伪造的 ConfigField
+                                schema[section][key] = ConfigField(
+                                    type=type(value),
+                                    default=value,
+                                    description=f"自动推断字段: {key}",
+                                    required=False
+                                )
+                    logger.info(f"已从 config.toml 推断出插件 {plugin_id} 的配置结构")
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.error(f"直接读取配置文件失败: {e}")
+
+    if schema is None:
+        raise HTTPException(status_code=404, detail=f"无法加载插件 {plugin_id} 的配置：插件未运行且无法读取配置文件")
+
+    try:
+        items = []
+        for section, fields in schema.items():
+            if not isinstance(fields, dict):
+                continue
+
+            for field_name, field_info in fields.items():
+                # 获取当前值
+                # 注意：current_config 结构是 {section: {key: value}}
+                section_config = current_config.get(section, {}) if current_config else {}
+                value = section_config.get(field_name, field_info.default)
+
+                # 确定前端控件类型
+                field_type = "input"
+                if field_info.choices:
+                    field_type = "select"
+                elif field_info.type is bool:
+                    field_type = "switch"
+                elif field_info.type in (int, float):
+                    field_type = "number"
+                elif field_info.type is list:
+                    field_type = "array"
+
+                items.append(PluginConfigItem(
+                    key=f"{section}.{field_name}",
+                    label=field_name,
+                    value=value,
+                    description=field_info.description,
+                    section=section,
+                    required=field_info.required,
+                    default=field_info.default,
+                    type=field_type,
+                    options=field_info.choices
+                ))
+
+        return PluginConfigResponse(success=True, data=items)
+
+    except Exception as e:
+        logger.error(f"获取插件配置失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}") from e
+
+
+@router.post("/{plugin_id}/config")
+async def update_plugin_config(
+    plugin_id: str,
+    request: UpdatePluginConfigRequest,
+    authorization: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """
+    更新插件配置
+    """
+    # Token 验证
+    token = authorization.replace("Bearer ", "") if authorization else None
+    token_manager = get_token_manager()
+    if not token or not token_manager.verify_token(token):
+        raise HTTPException(status_code=401, detail="未授权：无效的访问令牌")
+
+    plugin = plugin_manager.get_plugin_instance(plugin_id)
+
+    # 准备配置更新逻辑
+    config_file_name = "config.toml" # 默认值
+    plugin_dir = None
+    current_config = {}
+
+    if plugin:
+        plugin_dir = plugin.plugin_dir
+        config_file_name = plugin.config_file_name or "config.toml"
+        current_config = plugin.config
+    else:
+        # 插件未加载，尝试查找路径
+        plugin_path = plugin_manager.plugin_paths.get(plugin_id)
+        if not plugin_path:
+            possible_path = Path("plugins") / plugin_id
+            if possible_path.exists():
+                plugin_path = str(possible_path)
+
+        if not plugin_path:
+             raise HTTPException(status_code=404, detail=f"找不到插件 {plugin_id} 的目录")
+
+        plugin_dir = plugin_path
+
+        # 尝试读取现有配置以进行合并
+        try:
+
+            config_path = os.path.join(plugin_dir, config_file_name)
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    current_config = toml.load(f)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    try:
+
+
+        # 1. 解析扁平化的配置键值对到嵌套字典
+        # 前端传来的格式: {"section.key": value}
+        # 目标格式: {"section": {"key": value}}
+        new_config = current_config.copy()
+
+        for key, value in request.configs.items():
+            if "." in key:
+                section, field_name = key.split(".", 1)
+                if section not in new_config:
+                    new_config[section] = {}
+
+                # 类型转换（如果需要）
+                # 这里假设前端传来的类型已经是正确的，或者在保存时会自动处理
+                new_config[section][field_name] = value
+
+        # 2. 保存到文件
+        config_path = os.path.join(plugin_dir, config_file_name)
+
+        # 如果插件已加载，使用插件的方法保存
+        if plugin:
+            plugin._save_config_to_file(new_config, config_path)
+            # 更新内存中的配置
+            plugin.config = new_config
+        else:
+            # 否则直接使用 toml 库保存
+            with open(config_path, "w", encoding="utf-8") as f:
+                toml.dump(new_config, f)
+
+        return {"success": True, "message": "配置已更新"}
+
+    except Exception as e:
+        logger.error(f"更新插件配置失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新配置失败: {str(e)}") from e
