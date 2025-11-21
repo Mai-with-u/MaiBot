@@ -45,7 +45,9 @@
 
 ## 🔥 更新和安装
 
-**最新版本: v0.11.6** ([更新日志](changelogs/changelog.md))
+
+**最新版本: v0.11.5** ([更新日志](changelogs/changelog.md))
+
 
 可前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本
 可前往 [启动器发布页面](https://github.com/MaiM-with-u/mailauncher/releases/)下载最新启动器
@@ -112,7 +114,7 @@
 ## 🙋 贡献和致谢
 你可以阅读[开发文档](https://docs.mai-mai.org/develop/)来更好的了解麦麦!  
 MaiCore 是一个开源项目，我们非常欢迎你的参与。你的贡献，无论是提交 bug 报告、功能需求还是代码 pr，都对项目非常宝贵。我们非常感谢你的支持！🎉  
-但无序的讨论会降低沟通效率，进而影响问题的解决速度，因此在提交任何贡献前，请务必先阅读本项目的[贡献指南](docs/CONTRIBUTE.md)。(待补完)  
+但无序的讨论会降低沟通效率，进而影响问题的解决速度，因此在提交任何贡献前，请务必先阅读本项目的[贡献指南](docs-src/CONTRIBUTE.md)。(待补完)  
 
 ### 贡献者
 

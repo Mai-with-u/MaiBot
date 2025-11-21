@@ -28,7 +28,7 @@ class EmojiResponse(BaseModel):
     query_count: int
     is_registered: bool
     is_banned: bool
-    emotion: Optional[List[str]]  # 解析后的 JSON
+    emotion: Optional[str]  # 直接返回字符串
     record_time: float
     register_time: Optional[float]
     usage_count: int
@@ -58,7 +58,7 @@ class EmojiUpdateRequest(BaseModel):
     description: Optional[str] = None
     is_registered: Optional[bool] = None
     is_banned: Optional[bool] = None
-    emotion: Optional[List[str]] = None
+    emotion: Optional[str] = None
 
 
 class EmojiUpdateResponse(BaseModel):
@@ -106,16 +106,6 @@ def verify_auth_token(authorization: Optional[str]) -> bool:
     return True
 
 
-def parse_emotion(emotion_str: Optional[str]) -> Optional[List[str]]:
-    """解析情感标签 JSON 字符串"""
-    if not emotion_str:
-        return None
-    try:
-        return json.loads(emotion_str)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
 def emoji_to_response(emoji: Emoji) -> EmojiResponse:
     """将 Emoji 模型转换为响应对象"""
     return EmojiResponse(
@@ -127,7 +117,7 @@ def emoji_to_response(emoji: Emoji) -> EmojiResponse:
         query_count=emoji.query_count,
         is_registered=emoji.is_registered,
         is_banned=emoji.is_banned,
-        emotion=parse_emotion(emoji.emotion),
+        emotion=str(emoji.emotion) if emoji.emotion is not None else None,
         record_time=emoji.record_time,
         register_time=emoji.register_time,
         usage_count=emoji.usage_count,
@@ -264,12 +254,7 @@ async def update_emoji(emoji_id: int, request: EmojiUpdateRequest, authorization
         if not update_data:
             raise HTTPException(status_code=400, detail="未提供任何需要更新的字段")
 
-        # 处理情感标签（转换为 JSON）
-        if "emotion" in update_data:
-            if update_data["emotion"] is None:
-                update_data["emotion"] = None
-            else:
-                update_data["emotion"] = json.dumps(update_data["emotion"], ensure_ascii=False)
+        # emotion 字段直接使用字符串,无需转换
 
         # 如果注册状态从 False 变为 True，记录注册时间
         if "is_registered" in update_data and update_data["is_registered"] and not emoji.is_registered:
