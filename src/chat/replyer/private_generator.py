@@ -241,7 +241,9 @@ class PrivateReplyer:
 
         return f"{sender_relation}"
 
-    async def build_expression_habits(self, chat_history: str, target: str, reply_reason: str = "") -> Tuple[str, List[int]]:
+    async def build_expression_habits(
+        self, chat_history: str, target: str, reply_reason: str = ""
+    ) -> Tuple[str, List[int]]:
         # sourcery skip: for-append-to-extend
         """构建表达习惯块
 
@@ -1032,10 +1034,10 @@ class PrivateReplyer:
             if not global_config.lpmm_knowledge.enable:
                 logger.debug("LPMM知识库未启用，跳过获取知识库内容")
                 return ""
-            
+
             if global_config.lpmm_knowledge.lpmm_mode == "agent":
                 return ""
-            
+
             time_now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
             bot_name = global_config.bot.nickname

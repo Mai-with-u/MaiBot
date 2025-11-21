@@ -11,11 +11,11 @@ spec:
   backoffLimit: 2
   template:
     spec:
-      serviceAccountName: {{ .Release.Name }}-maibot-adapter-cm-generator
+      serviceAccountName: {{ .Release.Name }}-maibot-sa
       restartPolicy: Never
       containers:
         - name: adapter-cm-generator
-          image: {{ .Values.adapter.cm_generator.image.repository | default "reg.mikumikumi.xyz/maibot/adapter-cm-generator" }}:{{ .Values.adapter.cm_generator.image.tag | default "0.11.2-beta" }}
+          image: {{ .Values.adapter.cm_generator.image.repository | default "reg.mikumikumi.xyz/maibot/adapter-cm-generator" }}:{{ .Values.adapter.cm_generator.image.tag | default "0.11.5-beta" }}
           workingDir: /app
           env:
             - name: PYTHONUNBUFFERED

@@ -25,11 +25,12 @@
 
 **🍔MaiCore 是一个基于大语言模型的可交互智能体**
 
-- 💭 **智能对话系统**：基于 LLM 的自然语言交互，聊天时机控制。
-- 🤔 **实时思维系统**：模拟人类思考过程。
-- 🧠 **表达学习功能**：学习群友的说话风格和表达方式
-- 💝 **情感表达系统**：情绪系统和表情包系统。
-- 🔌 **强大插件系统**：提供API和事件系统，可编写强大插件。
+- 💭 **拟人构建的prompt**：使用自然语言风格构建回复器的prompt，实现近似人类言语习惯的回复。
+- 💭 **行为规划**：在合适的时间说话，使用合适的动作
+- 🧠 **表达学习**：学习群友的说话风格和表达方式，学会真实人类的说话风格
+- 🤔 **黑话学习**：自主的学习没有见过的词语，尝试理解并认知含义
+- 🔌 **插件系统**：提供API和事件系统，可编写丰富插件。
+- 💝 **情感表达**：情绪系统和表情包系统。
 
 <div style="text-align: center">
 <a href="https://www.bilibili.com/video/BV1amAneGE3P" target="_blank">
@@ -44,28 +45,27 @@
 
 ## 🔥 更新和安装
 
-**最新版本: v0.11.0** ([更新日志](changelogs/changelog.md))
+
+**最新版本: v0.11.5** ([更新日志](changelogs/changelog.md))
+
 
 可前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本
 可前往 [启动器发布页面](https://github.com/MaiM-with-u/mailauncher/releases/)下载最新启动器
 **GitHub 分支说明：**
 - `main`: 稳定发布版本(推荐)
+
+
 - `dev`: 开发测试版本(不稳定)
-- `classical`: 旧版本(停止维护)
+- `classical`: 经典版本(停止维护)
 
 ### 最新版本部署教程
 - [🚀 最新版本部署教程](https://docs.mai-mai.org/manual/deployment/mmc_deploy_windows.html) - 基于 MaiCore 的新版本部署方式(与旧版本不兼容)
 
 > [!WARNING]
 > - 项目处于活跃开发阶段，功能和 API 可能随时调整。
-> - 有问题可以提交 Issue 或者 Discussion。
+> - 有问题可以提交 Issue 。
 > - QQ 机器人存在被限制风险，请自行了解，谨慎使用。
 > - 由于程序处于开发中，可能消耗较多 token。
-
-## 麦麦MC项目MaiCraft（早期开发）
-[让麦麦玩MC](https://github.com/MaiM-with-u/Maicraft)
-
-交流群：1058573197
 
 ## 💬 讨论
 
@@ -78,7 +78,7 @@
 **聊天吹水群：**
 - [麦麦之闲聊群](https://qm.qq.com/q/JxvHZnxyec)
 
-**插件开发测试版群：**
+**插件开发/测试版讨论群：**
 - [插件开发群](https://qm.qq.com/q/1036092828)
 
 ## 📚 文档
@@ -87,7 +87,22 @@
 
 - [📚 核心 Wiki 文档](https://docs.mai-mai.org) - 项目最全面的文档中心，你可以了解麦麦有关的一切。
 
-### 设计理念(原始时代的火花)
+
+## 📚 衍生项目
+
+### MaiCraft（早期开发）
+[MaiCraft](https://github.com/MaiM-with-u/Maicraft)
+> 让麦麦具有玩MC能力的项目
+> 交流群：1058573197
+
+### MoFox_Bot
+[MoFox - 仓库地址](https://github.com/MoFox-Studio/MoFox-Core)
+> MoFox_Bot 是一个基于 MaiCore 0.10.0 snapshot.5 的增强型 fork 项目
+> 我们保留了原项目几乎所有核心功能，并在此基础上进行了深度优化与功能扩展，致力于打造一个更稳定、更智能、更具趣味性的 AI 智能体。
+
+
+
+## 设计理念(原始时代的火花)
 
 > **千石可乐说：**
 > - 这个项目最初只是为了给牛牛 bot 添加一点额外的功能，但是功能越写越多，最后决定重写。其目的是为了创造一个活跃在 QQ 群聊的"生命体"。目的并不是为了写一个功能齐全的机器人，而是一个尽可能让人感知到真实的类人存在。
@@ -99,7 +114,7 @@
 ## 🙋 贡献和致谢
 你可以阅读[开发文档](https://docs.mai-mai.org/develop/)来更好的了解麦麦!  
 MaiCore 是一个开源项目，我们非常欢迎你的参与。你的贡献，无论是提交 bug 报告、功能需求还是代码 pr，都对项目非常宝贵。我们非常感谢你的支持！🎉  
-但无序的讨论会降低沟通效率，进而影响问题的解决速度，因此在提交任何贡献前，请务必先阅读本项目的[贡献指南](docs/CONTRIBUTE.md)。(待补完)  
+但无序的讨论会降低沟通效率，进而影响问题的解决速度，因此在提交任何贡献前，请务必先阅读本项目的[贡献指南](docs-src/CONTRIBUTE.md)。(待补完)  
 
 ### 贡献者
 

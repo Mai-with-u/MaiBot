@@ -102,13 +102,13 @@ class EmojiAction(BaseAction):
 
                 # 5. 调用LLM
                 models = llm_api.get_available_models()
-                chat_model_config = models.get("replyer")  # 使用字典访问方式
+                chat_model_config = models.get("utils")  # 使用字典访问方式
                 if not chat_model_config:
-                    logger.error(f"{self.log_prefix} 未找到'replyer'模型配置，无法调用LLM")
-                    return False, "未找到'replyer'模型配置"
+                    logger.error(f"{self.log_prefix} 未找到'utils'模型配置，无法调用LLM")
+                    return False, "未找到'utils'模型配置"
 
                 success, chosen_emotion, _, _ = await llm_api.generate_with_model(
-                    prompt, model_config=chat_model_config, request_type="emoji"
+                    prompt, model_config=chat_model_config, request_type="emoji.select"
                 )
 
                 if not success:

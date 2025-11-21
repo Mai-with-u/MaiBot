@@ -5,6 +5,6 @@ WORKDIR /app
 
 COPY . /app
 
-RUN pip3 install --no-cache-dir -i https://mirrors.ustc.edu.cn/pypi/simple -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 ENTRYPOINT ["python3", "adapter-cm-generator.py"]

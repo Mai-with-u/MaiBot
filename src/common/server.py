@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter
-from fastapi.middleware.cors import CORSMiddleware  # 新增导入
 from typing import Optional
 from uvicorn import Config, Server as UvicornServer
+import asyncio
 import os
 from rich.traceback import install
 
@@ -15,21 +15,6 @@ class Server:
         self._port: int = 8080
         self._server: Optional[UvicornServer] = None
         self.set_address(host, port)
-
-        # 配置 CORS
-        origins = [
-            "http://localhost:7999",  # 允许的前端源
-            "http://127.0.0.1:7999",
-            # 在生产环境中，您应该添加实际的前端域名
-        ]
-
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,  # 是否支持 cookie
-            allow_methods=["*"],  # 允许所有 HTTP 方法
-            allow_headers=["*"],  # 允许所有 HTTP 请求头
-        )
 
     def register_router(self, router: APIRouter, prefix: str = ""):
         """注册路由
@@ -82,8 +67,17 @@ class Server:
         """安全关闭服务器"""
         if self._server:
             self._server.should_exit = True
-            await self._server.shutdown()
-            self._server = None
+            try:
+                # 添加 3 秒超时，避免 shutdown 永久挂起
+                await asyncio.wait_for(self._server.shutdown(), timeout=3.0)
+            except asyncio.TimeoutError:
+                # 超时就强制标记为 None，让垃圾回收处理
+                pass
+            except Exception:
+                # 忽略其他异常
+                pass
+            finally:
+                self._server = None
 
     def get_app(self) -> FastAPI:
         """获取 FastAPI 实例"""

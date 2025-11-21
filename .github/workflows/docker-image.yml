@@ -1,11 +1,12 @@
 name: Docker Build and Push
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   push:
     branches:
       - main
       - classical
-      - dev
     tags:
       - "v*.*.*"
       - "v*"
@@ -24,6 +25,7 @@ jobs:
       - name: Check out git repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
           fetch-depth: 0
 
       # Clone required dependencies
@@ -77,6 +79,7 @@ jobs:
       - name: Check out git repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
           fetch-depth: 0
 
       # Clone required dependencies

@@ -15,6 +15,7 @@ class SearchKnowledgeFromLPMMTool(BaseTool):
     description = "从知识库中搜索相关信息，如果你需要知识，就使用这个工具"
     parameters = [
         ("query", ToolParamType.STRING, "搜索查询关键词", True, None),
+        ("limit", ToolParamType.INTEGER, "希望返回的相关知识条数，默认5", False, 5),
     ]
     available_for_llm = global_config.lpmm_knowledge.enable
 
@@ -29,6 +30,12 @@ class SearchKnowledgeFromLPMMTool(BaseTool):
         """
         try:
             query: str = function_args.get("query")  # type: ignore
+            limit = function_args.get("limit", 5)
+            try:
+                limit_value = int(limit)
+            except (TypeError, ValueError):
+                limit_value = 5
+            limit_value = max(1, limit_value)
             # threshold = function_args.get("threshold", 0.4)
 
             # 检查LPMM知识库是否启用
@@ -38,7 +45,7 @@ class SearchKnowledgeFromLPMMTool(BaseTool):
 
             # 调用知识库搜索
 
-            knowledge_info = await qa_manager.get_knowledge(query)
+            knowledge_info = await qa_manager.get_knowledge(query, limit=limit_value)
 
             logger.debug(f"知识库查询结果: {knowledge_info}")
 

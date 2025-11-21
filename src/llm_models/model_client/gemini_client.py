@@ -147,7 +147,7 @@ def _convert_tool_options(tool_options: list[ToolOption]) -> list[FunctionDeclar
         param_type_value = tool_option_param.param_type.value
         if param_type_value == "bool":
             param_type_value = "boolean"
-        
+
         return_dict: dict[str, Any] = {
             "type": param_type_value,
             "description": tool_option_param.description,

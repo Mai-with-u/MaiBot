@@ -1,0 +1,26 @@
+{{- if and .Values.core.webui.enabled .Values.core.webui.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-maibot-webui
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.core.webui.ingress.annotations }}
+  annotations:
+    {{ toYaml .Values.core.webui.ingress.annotations | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ .Release.Name }}-maibot-core
+spec:
+  ingressClassName: {{ .Values.core.webui.ingress.className }}
+  rules:
+    - host: {{ .Values.core.webui.ingress.host }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Release.Name }}-maibot-core
+                port:
+                  number: {{ .Values.core.webui.service.port }}
+            path: {{ .Values.core.webui.ingress.path }}
+            pathType: {{ .Values.core.webui.ingress.pathType }}
+{{- end }}

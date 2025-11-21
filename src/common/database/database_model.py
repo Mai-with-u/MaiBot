@@ -311,6 +311,8 @@ class Expression(BaseModel):
     context = TextField(null=True)
     up_content = TextField(null=True)
 
+    content_list = TextField(null=True)
+    count = IntegerField(default=1)
     last_active_time = FloatField()
     chat_id = TextField(index=True)
     create_date = FloatField(null=True)  # 创建日期，允许为空以兼容老数据

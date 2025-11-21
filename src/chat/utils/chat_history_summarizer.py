@@ -106,8 +106,8 @@ class ChatHistorySummarizer:
                     await self._check_and_package(current_time)
                 self.last_check_time = current_time
                 return
-            
-            logger.info(
+
+            logger.debug(
                 f"{self.log_prefix} 开始处理聊天概括，时间窗口: {self.last_check_time:.2f} -> {current_time:.2f}"
             )
 
@@ -119,7 +119,7 @@ class ChatHistorySummarizer:
                 before_count = len(self.current_batch.messages)
                 self.current_batch.messages.extend(new_messages)
                 self.current_batch.end_time = current_time
-                logger.info(f"{self.log_prefix} 批次更新: {before_count} -> {len(self.current_batch.messages)} 条消息")
+                logger.info(f"{self.log_prefix} 更新聊天话题: {before_count} -> {len(self.current_batch.messages)} 条消息")
             else:
                 # 创建新批次
                 self.current_batch = MessageBatch(
@@ -127,7 +127,7 @@ class ChatHistorySummarizer:
                     start_time=new_messages[0].time if new_messages else current_time,
                     end_time=current_time,
                 )
-                logger.info(f"{self.log_prefix} 新建批次: {len(new_messages)} 条消息")
+                logger.info(f"{self.log_prefix} 新建聊天话题: {len(new_messages)} 条消息")
 
             # 检查是否需要打包
             await self._check_and_package(current_time)

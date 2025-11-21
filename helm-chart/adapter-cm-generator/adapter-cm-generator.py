@@ -29,7 +29,7 @@ data['maibot_server']['host'] = f'{release_name}-maibot-core'  # 根据release�
 data['maibot_server']['port'] = 8000
 
 # 创建/修改configmap
-cm_name = f'{release_name}-maibot-adapter'
+cm_name = f'{release_name}-maibot-adapter-config'
 cm = client.V1ConfigMap(
     metadata=client.V1ObjectMeta(name=cm_name),
     data={'config.toml': toml.dumps(data)}

@@ -5,8 +5,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   # core
-  volume-linker.sh: |
-    {{ .Files.Get "files/volume-linker.sh" | nindent 4 }}
+  k8s-init.sh: |
+    {{ .Files.Get "files/k8s-init.sh" | nindent 4 }}
   # core的初始化容器
   {{- if .Values.core.setup_default_plugins }}
   setup-plugins.py: |

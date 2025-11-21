@@ -1,0 +1,14 @@
+{{- if or .Release.IsInstall (and .Values.core.webui.enabled .Values.config.enable_config_override_with_webui) (and (not .Values.core.webui.enabled) .Values.config.enable_config_override_without_webui) }}
+# 渲染规则：
+# 初次安装，或配置了覆盖规则
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-maibot-core-model-config
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/resource-policy": keep
+data:
+  model_config.toml: |
+    {{ .Values.config.core_model_config | nindent 4 }}
+{{- end }}

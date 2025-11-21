@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-maibot-core-env-config
+  namespace: {{ .Release.Namespace }}
+data:
+  .env: |
+    HOST=0.0.0.0
+    PORT=8000
+    WEBUI_ENABLED={{ if .Values.core.webui.enabled }}true{{ else }}false{{ end }}
+    WEBUI_MODE=production
+    WEBUI_HOST=0.0.0.0
+    WEBUI_PORT=8001

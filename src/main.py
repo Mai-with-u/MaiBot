@@ -36,37 +36,39 @@ class MainSystem:
         # 使用消息API替代直接的FastAPI实例
         self.app: MessageServer = get_global_api()
         self.server: Server = get_global_server()
-        
-        # 注册 WebUI API 路由
-        self._register_webui_routes()
-        
-        # 设置 WebUI（开发/生产模式）
-        self._setup_webui()
+        self.webui_server = None  # 独立的 WebUI 服务器
 
-    def _register_webui_routes(self):
-        """注册 WebUI API 路由"""
-        try:
-            from src.webui.routes import router as webui_router
-            self.server.register_router(webui_router)
-            logger.info("WebUI API 路由已注册")
-        except Exception as e:
-            logger.warning(f"注册 WebUI API 路由失败: {e}")
+        # 设置独立的 WebUI 服务器
+        self._setup_webui_server()
 
-    def _setup_webui(self):
-        """设置 WebUI（根据环境变量决定模式）"""
+    def _setup_webui_server(self):
+        """设置独立的 WebUI 服务器"""
         import os
+
         webui_enabled = os.getenv("WEBUI_ENABLED", "false").lower() == "true"
         if not webui_enabled:
             logger.info("WebUI 已禁用")
             return
-        
+
         webui_mode = os.getenv("WEBUI_MODE", "production").lower()
-        
+
         try:
-            from src.webui.manager import setup_webui
-            setup_webui(mode=webui_mode)
+            from src.webui.webui_server import get_webui_server
+
+            self.webui_server = get_webui_server()
+            
+            if webui_mode == "development":
+                logger.info("📝 WebUI 开发模式已启用")
+                logger.info("🌐 后端 API 将运行在 http://0.0.0.0:8001")
+                logger.info("💡 请手动启动前端开发服务器: cd MaiBot-Dashboard && bun dev")
+                logger.info("💡 前端将运行在 http://localhost:7999")
+            else:
+                logger.info("✅ WebUI 生产模式已启用")
+                logger.info(f"🌐 WebUI 将运行在 http://0.0.0.0:8001")
+                logger.info("💡 请确保已构建前端: cd MaiBot-Dashboard && bun run build")
+                
         except Exception as e:
-            logger.error(f"设置 WebUI 失败: {e}")
+            logger.error(f"❌ 初始化 WebUI 服务器失败: {e}")
 
     async def initialize(self):
         """初始化系统组件"""
@@ -160,6 +162,10 @@ class MainSystem:
                 self.app.run(),
                 self.server.run(),
             ]
+
+            # 如果 WebUI 服务器已初始化，添加到任务列表
+            if self.webui_server:
+                tasks.append(self.webui_server.start())
 
             await asyncio.gather(*tasks)
 

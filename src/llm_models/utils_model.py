@@ -166,7 +166,7 @@ class LLMRequest:
                 time_cost=time.time() - start_time,
             )
         return content or "", (reasoning_content, model_info.name, tool_calls)
-    
+
     async def generate_response_with_message_async(
         self,
         message_factory: Callable[[BaseClient], List[Message]],

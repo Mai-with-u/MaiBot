@@ -1,7 +1,6 @@
 stages:
-#  - initialize-maibot-git-repo
-  - build
-  - package
+  - build-image
+  - package-helm-chart
 
 # 仅在helm-chart分支运行
 workflow:
@@ -9,49 +8,15 @@ workflow:
     - if: '$CI_COMMIT_BRANCH == "helm-chart"'
     - when: never
 
-## 查询并将麦麦仓库的工作区置为最后一个tag的版本
-#initialize-maibot-git-repo:
-#  stage: initialize-maibot-git-repo
-#  image: reg.mikumikumi.xyz/base/git:latest
-#  cache:
-#    key: git-repo
-#    policy: push
-#    paths:
-#      - target-repo/
-#  script:
-#    - git clone https://github.com/Mai-with-u/MaiBot.git target-repo/
-#    - cd target-repo/
-#    - export MAIBOT_VERSION=$(git describe --tags --abbrev=0)
-#    - echo "Current version is ${MAIBOT_VERSION}"
-#    - git reset --hard ${MAIBOT_VERSION}
-#    - echo ${MAIBOT_VERSION} > MAIBOT_VERSION
-#    - git clone https://github.com/MaiM-with-u/maim_message maim_message
-#    - git clone https://github.com/MaiM-with-u/MaiMBot-LPMM.git MaiMBot-LPMM
-#    - ls -al
-#
-## 构建最后一个tag的麦麦本体的镜像
-#build-core:
-#  stage: build
-#  image: reg.mikumikumi.xyz/base/kaniko-builder:latest
-#  cache:
-#    key: git-repo
-#    policy: pull
-#    paths:
-#      - target-repo/
-#  script:
-#    - cd target-repo/
-#    - export BUILD_CONTEXT=$(pwd)
-#    - ls -al
-#    - export BUILD_DESTINATION="reg.mikumikumi.xyz/maibot/maibot:tag-$(cat MAIBOT_VERSION)"
-#    - build
-
-# 将Helm Chart版本作为tag，构建并推送镜像
+# 构建并推送adapter-cm-generator镜像
 build-adapter-cm-generator:
-  stage: build
+  stage: build-image
   image: reg.mikumikumi.xyz/base/kaniko-builder:latest
-#  rules:
-#    - changes:
-#        - helm-chart/adapter-cm-generator/**
+  variables:
+    BUILD_NO_CACHE: true
+  rules:
+    - changes:
+        - helm-chart/adapter-cm-generator/**
   script:
     - export BUILD_CONTEXT=helm-chart/adapter-cm-generator
     - export TMP_DST=reg.mikumikumi.xyz/maibot/adapter-cm-generator
@@ -60,16 +25,36 @@ build-adapter-cm-generator:
     - export BUILD_ARGS="--destination ${TMP_DST}:latest"
     - build
 
+# 构建并推送core-webui-cm-sync镜像
+build-core-webui-cm-sync:
+  stage: build-image
+  image: reg.mikumikumi.xyz/base/kaniko-builder:latest
+  variables:
+    BUILD_NO_CACHE: true
+  rules:
+    - changes:
+        - helm-chart/core-webui-cm-sync/**
+  script:
+    - export BUILD_CONTEXT=helm-chart/core-webui-cm-sync
+    - export TMP_DST=reg.mikumikumi.xyz/maibot/core-webui-cm-sync
+    - export CHART_VERSION=$(cat helm-chart/Chart.yaml | grep '^version:' | cut -d' ' -f2)
+    - export BUILD_DESTINATION="${TMP_DST}:${CHART_VERSION}"
+    - export BUILD_ARGS="--destination ${TMP_DST}:latest"
+    - build
+
 # 打包并推送helm chart
 package-helm-chart:
-  stage: package
+  stage: package-helm-chart
   image: reg.mikumikumi.xyz/mirror/helm:latest
-#  rules:
-#    - changes:
-#        - helm-chart/files/**
-#        - helm-chart/templates/**
-#        - helm-chart/Chart.yaml
-#        - helm-chart/values.yaml
+  rules:
+    - changes:
+        - helm-chart/files/**
+        - helm-chart/templates/**
+        - helm-chart/.gitignore
+        - helm-chart/.helmignore
+        - helm-chart/Chart.yaml
+        - helm-chart/README.md
+        - helm-chart/values.yaml
   script:
     - export CHART_VERSION=$(cat helm-chart/Chart.yaml | grep '^version:' | cut -d' ' -f2)
     - helm registry login reg.mikumikumi.xyz --username ${CI_REGISTRY_USER} --password ${CI_REGISTRY_PASSWORD}

@@ -1,14 +1,14 @@
-# 动态生成adapter配置文件的configmap所需要的rbac授权
+# 初始化及反向修改ConfigMap所需要的rbac授权
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ .Release.Name }}-maibot-adapter-cm-generator
+  name: {{ .Release.Name }}-maibot-sa
   namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ .Release.Name }}-maibot-adapter-cm-gen-role
+  name: {{ .Release.Name }}-maibot-role
   namespace: {{ .Release.Namespace }}
 rules:
   - apiGroups: [""]
@@ -21,13 +21,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Release.Name }}-maibot-adapter-cm-gen-role-binding
+  name: {{ .Release.Name }}-maibot-rolebinding
   namespace: {{ .Release.Namespace }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Release.Name }}-maibot-adapter-cm-generator
+    name: {{ .Release.Name }}-maibot-sa
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: Role
-  name: {{ .Release.Name }}-maibot-adapter-cm-gen-role
+  name: {{ .Release.Name }}-maibot-role
   apiGroup: rbac.authorization.k8s.io

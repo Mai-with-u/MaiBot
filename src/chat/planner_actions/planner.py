@@ -7,7 +7,6 @@ from typing import Dict, Optional, Tuple, List, TYPE_CHECKING, Union
 from rich.traceback import install
 from datetime import datetime
 from json_repair import repair_json
-
 from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config, model_config
 from src.common.logger import get_logger
@@ -164,6 +163,45 @@ class ActionPlanner:
                 return item[1]
         return None
 
+    def _replace_message_ids_with_text(
+        self, text: Optional[str], message_id_list: List[Tuple[str, "DatabaseMessages"]]
+    ) -> Optional[str]:
+        """将文本中的 m+数字 消息ID替换为原消息内容，并添加双引号"""
+        if not text:
+            return text
+
+        id_to_message = {msg_id: msg for msg_id, msg in message_id_list}
+
+        # 匹配m后带2-4位数字，前后不是字母数字下划线
+        pattern = r"(?<![A-Za-z0-9_])m\d{2,4}(?![A-Za-z0-9_])"
+
+        matches = re.findall(pattern, text)
+        if matches:
+            available_ids = set(id_to_message.keys())
+            found_ids = set(matches)
+            missing_ids = found_ids - available_ids
+            if missing_ids:
+                logger.info(f"{self.log_prefix}planner理由中引用的消息ID不在当前上下文中: {missing_ids}, 可用ID: {list(available_ids)[:10]}...")
+            logger.info(f"{self.log_prefix}planner理由替换: 找到{len(matches)}个消息ID引用，其中{len(found_ids & available_ids)}个在上下文中")
+
+        def _replace(match: re.Match[str]) -> str:
+            msg_id = match.group(0)
+            message = id_to_message.get(msg_id)
+            if not message:
+                logger.warning(f"{self.log_prefix}planner理由引用 {msg_id} 未找到对应消息，保持原样")
+                return msg_id
+
+            msg_text = (message.processed_plain_text or message.display_message or "").strip()
+            if not msg_text:
+                logger.warning(f"{self.log_prefix}planner理由引用 {msg_id} 的消息内容为空，保持原样")
+                return msg_id
+
+            preview = msg_text if len(msg_text) <= 100 else f"{msg_text[:97]}..."
+            logger.info(f"{self.log_prefix}planner理由引用 {msg_id} -> 消息（{preview}）")
+            return f"消息（{msg_text}）"
+
+        return re.sub(pattern, _replace, text)
+
     def _parse_single_action(
         self,
         action_json: dict,
@@ -176,7 +214,10 @@ class ActionPlanner:
 
         try:
             action = action_json.get("action", "no_reply")
-            reasoning = action_json.get("reason", "未提供原因")
+            original_reasoning = action_json.get("reason", "未提供原因")
+            reasoning = self._replace_message_ids_with_text(original_reasoning, message_id_list)
+            if reasoning is None:
+                reasoning = original_reasoning
             action_data = {key: value for key, value in action_json.items() if key not in ["action", "reason"]}
             # 非no_reply动作需要target_message_id
             target_message = None
@@ -573,9 +614,6 @@ class ActionPlanner:
             # 调用LLM
             llm_content, (reasoning_content, _, _) = await self.planner_llm.generate_response_async(prompt=prompt)
 
-            # logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
-            # logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
-
             if global_config.debug.show_planner_prompt:
                 logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
                 logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
@@ -604,6 +642,7 @@ class ActionPlanner:
         if llm_content:
             try:
                 json_objects, extracted_reasoning = self._extract_json_from_markdown(llm_content)
+                extracted_reasoning = self._replace_message_ids_with_text(extracted_reasoning, message_id_list) or ""
                 if json_objects:
                     logger.debug(f"{self.log_prefix}从响应中提取到{len(json_objects)}个JSON对象")
                     filtered_actions_list = list(filtered_actions.items())

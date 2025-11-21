@@ -581,8 +581,14 @@ class DebugConfig(ConfigBase):
     show_jargon_prompt: bool = False
     """是否显示jargon相关提示词"""
 
+    show_memory_prompt: bool = False
+    """是否显示记忆检索相关prompt"""
+
     show_planner_prompt: bool = False
     """是否显示planner相关提示词"""
+
+    show_lpmm_paragraph: bool = False
+    """是否显示lpmm找到的相关文段日志"""
 
 
 @dataclass
@@ -647,7 +653,7 @@ class LPMMKnowledgeConfig(ConfigBase):
 
     enable: bool = True
     """是否启用LPMM知识库"""
-    
+
     lpmm_mode: Literal["classic", "agent"] = "classic"
     """LPMM知识库模式，可选：classic经典模式，agent 模式，结合最新的记忆一同使用"""
 

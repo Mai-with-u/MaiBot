@@ -77,6 +77,9 @@ class ExpressionLearner:
         self.express_learn_model: LLMRequest = LLMRequest(
             model_set=model_config.model_task_config.utils, request_type="expression.learner"
         )
+        self.summary_model: LLMRequest = LLMRequest(
+            model_set=model_config.model_task_config.utils_small, request_type="expression.summary"
+        )
         self.embedding_model: LLMRequest = LLMRequest(
             model_set=model_config.model_task_config.embedding, request_type="expression.embedding"
         )
@@ -91,8 +94,8 @@ class ExpressionLearner:
         _, self.enable_learning, self.learning_intensity = global_config.expression.get_expression_config_for_chat(
             self.chat_id
         )
-        self.min_messages_for_learning = 30 / self.learning_intensity  # 触发学习所需的最少消息数
-        self.min_learning_interval = 300 / self.learning_intensity
+        self.min_messages_for_learning = 15 / self.learning_intensity  # 触发学习所需的最少消息数
+        self.min_learning_interval = 120 / self.learning_intensity
 
     def should_trigger_learning(self) -> bool:
         """
@@ -186,25 +189,13 @@ class ExpressionLearner:
             context,
             up_content,
         ) in learnt_expressions:
-            # 查找是否已存在相似表达方式
-            query = Expression.select().where(
-                (Expression.chat_id == self.chat_id) & (Expression.situation == situation) & (Expression.style == style)
+            await self._upsert_expression_record(
+                situation=situation,
+                style=style,
+                context=context,
+                up_content=up_content,
+                current_time=current_time,
             )
-            if query.exists():
-                # 表达方式完全相同，只更新时间戳
-                expr_obj = query.get()
-                expr_obj.last_active_time = current_time
-                expr_obj.save()
-            else:
-                Expression.create(
-                    situation=situation,
-                    style=style,
-                    last_active_time=current_time,
-                    chat_id=self.chat_id,
-                    create_date=current_time,  # 手动设置创建日期
-                    context=context,
-                    up_content=up_content,
-                )
 
         return learnt_expressions
 
@@ -362,6 +353,10 @@ class ExpressionLearner:
             logger.error(f"学习表达方式失败,模型生成出错: {e}")
             return None
         expressions: List[Tuple[str, str]] = self.parse_expression_response(response)
+        expressions = self._filter_self_reference_styles(expressions)
+        if not expressions:
+            logger.info("过滤后没有可用的表达方式（style 与机器人名称重复）")
+            return None
         # logger.debug(f"学习{type_str}的response: {response}")
 
         # 对表达方式溯源
@@ -432,6 +427,149 @@ class ExpressionLearner:
             style = line[idx_quote3 + 1 : idx_quote4]
             expressions.append((situation, style))
         return expressions
+
+    def _filter_self_reference_styles(self, expressions: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        """
+        过滤掉style与机器人名称/昵称重复的表达
+        """
+        banned_names = set()
+        bot_nickname = (global_config.bot.nickname or "").strip()
+        if bot_nickname:
+            banned_names.add(bot_nickname)
+
+        alias_names = global_config.bot.alias_names or []
+        for alias in alias_names:
+            alias = alias.strip()
+            if alias:
+                banned_names.add(alias)
+
+        banned_casefold = {name.casefold() for name in banned_names if name}
+
+        filtered: List[Tuple[str, str]] = []
+        removed_count = 0
+        for situation, style in expressions:
+            normalized_style = (style or "").strip()
+            if normalized_style and normalized_style.casefold() not in banned_casefold:
+                filtered.append((situation, style))
+            else:
+                removed_count += 1
+
+        if removed_count:
+            logger.debug(f"已过滤 {removed_count} 条style与机器人名称重复的表达方式")
+
+        return filtered
+
+    async def _upsert_expression_record(
+        self,
+        situation: str,
+        style: str,
+        context: str,
+        up_content: str,
+        current_time: float,
+    ) -> None:
+        expr_obj = Expression.select().where((Expression.chat_id == self.chat_id) & (Expression.style == style)).first()
+
+        if expr_obj:
+            await self._update_existing_expression(
+                expr_obj=expr_obj,
+                situation=situation,
+                context=context,
+                up_content=up_content,
+                current_time=current_time,
+            )
+            return
+
+        await self._create_expression_record(
+            situation=situation,
+            style=style,
+            context=context,
+            up_content=up_content,
+            current_time=current_time,
+        )
+
+    async def _create_expression_record(
+        self,
+        situation: str,
+        style: str,
+        context: str,
+        up_content: str,
+        current_time: float,
+    ) -> None:
+        content_list = [situation]
+        formatted_situation = await self._compose_situation_text(content_list, 1, situation)
+
+        Expression.create(
+            situation=formatted_situation,
+            style=style,
+            content_list=json.dumps(content_list, ensure_ascii=False),
+            count=1,
+            last_active_time=current_time,
+            chat_id=self.chat_id,
+            create_date=current_time,
+            context=context,
+            up_content=up_content,
+        )
+
+    async def _update_existing_expression(
+        self,
+        expr_obj: Expression,
+        situation: str,
+        context: str,
+        up_content: str,
+        current_time: float,
+    ) -> None:
+        content_list = self._parse_content_list(expr_obj.content_list)
+        content_list.append(situation)
+
+        expr_obj.content_list = json.dumps(content_list, ensure_ascii=False)
+        expr_obj.count = (expr_obj.count or 0) + 1
+        expr_obj.last_active_time = current_time
+        expr_obj.context = context
+        expr_obj.up_content = up_content
+
+        new_situation = await self._compose_situation_text(
+            content_list=content_list,
+            count=expr_obj.count,
+            fallback=expr_obj.situation,
+        )
+        expr_obj.situation = new_situation
+
+        expr_obj.save()
+
+    def _parse_content_list(self, stored_list: Optional[str]) -> List[str]:
+        if not stored_list:
+            return []
+        try:
+            data = json.loads(stored_list)
+        except json.JSONDecodeError:
+            return []
+        return [str(item) for item in data if isinstance(item, str)] if isinstance(data, list) else []
+
+    async def _compose_situation_text(self, content_list: List[str], count: int, fallback: str = "") -> str:
+        sanitized = [c.strip() for c in content_list if c.strip()]
+        summary = await self._summarize_situations(sanitized)
+        if summary:
+            return summary
+        return "/".join(sanitized) if sanitized else fallback
+
+    async def _summarize_situations(self, situations: List[str]) -> Optional[str]:
+        if not situations:
+            return None
+
+        prompt = (
+            "请阅读以下多个聊天情境描述，并将它们概括成一句简短的话，"
+            "长度不超过20个字，保留共同特点：\n"
+            f"{chr(10).join(f'- {s}' for s in situations[-10:])}\n只输出概括内容。"
+        )
+
+        try:
+            summary, _ = await self.summary_model.generate_response_async(prompt, temperature=0.2)
+            summary = summary.strip()
+            if summary:
+                return summary
+        except Exception as e:
+            logger.error(f"概括表达情境失败: {e}")
+        return None
 
     def _build_bare_lines(self, messages: List) -> List[Tuple[int, str]]:
         """

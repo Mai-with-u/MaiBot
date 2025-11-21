@@ -30,8 +30,10 @@ DATA_PATH = os.path.join(ROOT_PATH, "data")
 qa_manager = None
 inspire_manager = None
 
+
 def get_qa_manager():
     return qa_manager
+
 
 def lpmm_start_up():  # sourcery skip: extract-duplicate-method
     # 检查LPMM知识库是否启用

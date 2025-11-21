@@ -29,7 +29,8 @@ services:
       - TZ=Asia/Shanghai
 #      - EULA_AGREE=99f08e0cab0190de853cb6af7d64d4de # 同意EULA
 #      - PRIVACY_AGREE=9943b855e72199d0f5016ea39052f1b6 # 同意EULA
-#    ports:
+    ports:
+      - "18001:8001" # webui端口
 #      - "8000:8000"
     volumes:
       - ./docker-config/mmc/.env:/MaiMBot/.env # 持久化env配置文件

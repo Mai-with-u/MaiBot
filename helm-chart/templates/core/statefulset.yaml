@@ -18,23 +18,32 @@ spec:
     spec:
       containers:
         - name: core
-          command:  # 为了在k8s中初始化存储卷，这里替换启动命令为指定脚本
+          command:  # 为了在k8s中初始化，这里替换启动命令为指定脚本
             - sh
           args:
-            - /MaiMBot/volume-linker.sh
+            - /MaiMBot/k8s-init.sh
           env:
             - name: TZ
-              value: Asia/Shanghai
+              value: "Asia/Shanghai"
             - name: EULA_AGREE
-              value: 99f08e0cab0190de853cb6af7d64d4de
+              value: "99f08e0cab0190de853cb6af7d64d4de"
             - name: PRIVACY_AGREE
-              value: 9943b855e72199d0f5016ea39052f1b6
-          image: {{ .Values.core.image.repository | default "sengokucola/maibot" }}:{{ .Values.core.image.tag | default "0.11.2-beta" }}
+              value: "9943b855e72199d0f5016ea39052f1b6"
+            {{- if .Values.core.webui.enabled }}
+            - name: MAIBOT_WEBUI_ENABLED
+              value: "true"
+            {{- end}}
+          image: {{ .Values.core.image.repository | default "sengokucola/maibot" }}:{{ .Values.core.image.tag | default "0.11.5-beta" }}
           imagePullPolicy: {{ .Values.core.image.pullPolicy }}
           ports:
             - containerPort: 8000
               name: adapter-ws
               protocol: TCP
+            {{- if .Values.core.webui.enabled }}
+            - containerPort: 8001
+              name: webui
+              protocol: TCP
+            {{- end }}
           {{- if .Values.core.resources }}
           resources:
             {{ toYaml .Values.core.resources | nindent 12 }}
@@ -42,26 +51,45 @@ spec:
           volumeMounts:
             - mountPath: /MaiMBot/data
               name: data
-            - mountPath: /MaiMBot/volume-linker.sh
+            - mountPath: /MaiMBot/k8s-init.sh
               name: scripts
               readOnly: true
-              subPath: volume-linker.sh
+              subPath: k8s-init.sh
             - mountPath: /MaiMBot/.env
-              name: config
+              name: env-config
               readOnly: true
               subPath: .env
+            {{- if not .Values.core.webui.enabled }}
             - mountPath: /MaiMBot/config/model_config.toml
-              name: config
+              name: model-config
               readOnly: true
               subPath: model_config.toml
             - mountPath: /MaiMBot/config/bot_config.toml
-              name: config
+              name: bot-config
               readOnly: true
               subPath: bot_config.toml
+            {{- end }}
             {{- if .Values.statistics_dashboard.enabled }}
             - mountPath: /MaiMBot/statistics
               name: statistics
             {{- end }}
+            {{- if .Values.core.webui.enabled }}
+            - mountPath: /MaiMBot/webui-cm-sync
+              name: webui-cm-sync
+            {{- end }}
+      {{- if .Values.core.webui.enabled }}
+        - name: webui-cm-sync
+          image: {{ .Values.core.webui.cm_sync.image.repository | default "reg.mikumikumi.xyz/maibot/core-webui-cm-sync" }}:{{ .Values.core.webui.cm_sync.image.tag | default "0.11.5-beta" }}
+          imagePullPolicy: {{ .Values.core.webui.cm_sync.image.pullPolicy }}
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: RELEASE_NAME
+              value: {{ .Release.Name }}
+          volumeMounts:
+            - mountPath: /MaiMBot/webui-cm-sync
+              name: webui-cm-sync
+      {{- end }}
       {{- if .Values.core.setup_default_plugins }}
       initContainers:  # 用户插件目录存储在存储卷中，会在启动时覆盖掉容器的默认插件目录。此初始化容器用于默认插件更新后或麦麦首次启动时为用户自动安装默认插件到存储卷中
         - args:
@@ -69,7 +97,7 @@ spec:
           command:
             - python3
           workingDir: /MaiMBot
-          image: {{ .Values.core.image.repository | default "sengokucola/maibot" }}:{{ .Values.core.image.tag | default "0.11.2-beta" }}
+          image: {{ .Values.core.image.repository | default "sengokucola/maibot" }}:{{ .Values.core.image.tag | default "0.11.5-beta" }}
           imagePullPolicy: {{ .Values.core.image.pullPolicy }}
           name: setup-plugins
           resources: { }
@@ -81,6 +109,7 @@ spec:
               readOnly: true
               subPath: setup-plugins.py
       {{- end }}
+      serviceAccountName: {{ .Release.Name }}-maibot-sa
       {{- if .Values.core.image.pullSecrets }}
       imagePullSecrets:
         {{ toYaml .Values.core.image.pullSecrets | nindent 8 }}
@@ -99,8 +128,8 @@ spec:
             claimName: {{ .Release.Name }}-maibot-core
         - configMap:
             items:
-              - key: volume-linker.sh
-                path: volume-linker.sh
+              - key: k8s-init.sh
+                path: k8s-init.sh
               {{- if .Values.core.setup_default_plugins }}
               - key: setup-plugins.py
                 path: setup-plugins.py
@@ -111,14 +140,28 @@ spec:
             items:
               - key: .env
                 path: .env
+            name: {{ .Release.Name }}-maibot-core-env-config
+          name: env-config
+        {{- if not .Values.core.webui.enabled }}
+        - configMap:
+            items:
               - key: model_config.toml
                 path: model_config.toml
+            name: {{ .Release.Name }}-maibot-core-model-config
+          name: model-config
+        - configMap:
+            items:
               - key: bot_config.toml
                 path: bot_config.toml
-            name: {{ .Release.Name }}-maibot-core
-          name: config
+            name: {{ .Release.Name }}-maibot-core-bot-config
+          name: bot-config
+        {{- end }}
         {{- if .Values.statistics_dashboard.enabled }}
         - name: statistics
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-maibot-statistics-dashboard
+        {{- end }}
+        {{- if .Values.core.webui.enabled }}
+        - emptyDir: {}
+          name: webui-cm-sync
         {{- end }}

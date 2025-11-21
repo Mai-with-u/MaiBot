@@ -19,6 +19,7 @@ PROJECT_ROOT = logger_file.parent.parent.parent.resolve()
 # 全局handler实例，避免重复创建
 _file_handler = None
 _console_handler = None
+_ws_handler = None
 
 
 def get_file_handler():
@@ -57,6 +58,35 @@ def get_console_handler():
         console_level = LOG_CONFIG.get("console_log_level", LOG_CONFIG.get("log_level", "INFO"))
         _console_handler.setLevel(getattr(logging, console_level.upper(), logging.INFO))
     return _console_handler
+
+
+def get_ws_handler():
+    """获取 WebSocket handler 单例"""
+    global _ws_handler
+    if _ws_handler is None:
+        _ws_handler = WebSocketLogHandler()
+        # WebSocket handler 推送所有级别的日志
+        _ws_handler.setLevel(logging.DEBUG)
+    return _ws_handler
+
+
+def initialize_ws_handler(loop):
+    """初始化 WebSocket handler 的事件循环
+
+    Args:
+        loop: asyncio 事件循环
+    """
+    handler = get_ws_handler()
+    handler.set_loop(loop)
+
+    # 为 WebSocket handler 设置 JSON 格式化器（与文件格式相同）
+    handler.setFormatter(file_formatter)
+
+    # 添加到根日志记录器
+    root_logger = logging.getLogger()
+    if handler not in root_logger.handlers:
+        root_logger.addHandler(handler)
+        print("[日志系统] ✅ WebSocket 日志推送已启用")
 
 
 class TimestampedFileHandler(logging.Handler):
@@ -145,12 +175,76 @@ class TimestampedFileHandler(logging.Handler):
         super().close()
 
 
+class WebSocketLogHandler(logging.Handler):
+    """WebSocket 日志处理器 - 将日志实时推送到前端"""
+
+    _log_counter = 0  # 类级别计数器,确保 ID 唯一性
+
+    def __init__(self, loop=None):
+        super().__init__()
+        self.loop = loop
+        self._initialized = False
+
+    def set_loop(self, loop):
+        """设置事件循环"""
+        self.loop = loop
+        self._initialized = True
+
+    def emit(self, record):
+        """发送日志到 WebSocket 客户端"""
+        if not self._initialized or self.loop is None:
+            return
+
+        try:
+            # 获取格式化后的消息
+            # 对于 structlog,formatted message 包含完整的日志信息
+            formatted_msg = self.format(record) if self.formatter else record.getMessage()
+
+            # 如果是 JSON 格式(文件格式化器),解析它
+            message = formatted_msg
+            try:
+                import json
+
+                log_dict = json.loads(formatted_msg)
+                message = log_dict.get("event", formatted_msg)
+            except (json.JSONDecodeError, ValueError):
+                # 不是 JSON,直接使用消息
+                message = formatted_msg
+
+            # 生成唯一 ID: 时间戳毫秒 + 自增计数器
+            WebSocketLogHandler._log_counter += 1
+            log_id = f"{int(record.created * 1000)}_{WebSocketLogHandler._log_counter}"
+
+            # 格式化日志数据
+            log_data = {
+                "id": log_id,
+                "timestamp": datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
+                "level": record.levelname,
+                "module": record.name,
+                "message": message,
+            }
+
+            # 异步广播日志(不阻塞日志记录)
+            try:
+                import asyncio
+                from src.webui.logs_ws import broadcast_log
+
+                asyncio.run_coroutine_threadsafe(broadcast_log(log_data), self.loop)
+            except Exception:
+                # WebSocket 推送失败不影响日志记录
+                pass
+
+        except Exception:
+            # 不要让 WebSocket 错误影响日志系统
+            self.handleError(record)
+
+
 # 旧的轮转文件处理器已移除，现在使用基于时间戳的处理器
 
 
 def close_handlers():
     """安全关闭所有handler"""
-    global _file_handler, _console_handler
+    global _file_handler, _console_handler, _ws_handler
 
     if _file_handler:
         _file_handler.close()
@@ -159,6 +253,10 @@ def close_handlers():
     if _console_handler:
         _console_handler.close()
         _console_handler = None
+
+    if _ws_handler:
+        _ws_handler.close()
+        _ws_handler = None
 
 
 def remove_duplicate_handlers():  # sourcery skip: for-append-to-extend, list-comprehension
@@ -843,8 +941,8 @@ def start_log_cleanup_task():
 
 def shutdown_logging():
     """优雅关闭日志系统，释放所有文件句柄"""
-    logger = get_logger("logger")
-    logger.info("正在关闭日志系统...")
+    # 先输出到控制台，避免日志系统关闭后无法输出
+    print("[logger] 正在关闭日志系统...")
 
     # 关闭所有handler
     root_logger = logging.getLogger()
@@ -865,4 +963,5 @@ def shutdown_logging():
                     handler.close()
                 logger_obj.removeHandler(handler)
 
-    logger.info("日志系统已关闭")
+    # 使用 print 而不是 logger，因为 logger 已经关闭
+    print("[logger] 日志系统已关闭")

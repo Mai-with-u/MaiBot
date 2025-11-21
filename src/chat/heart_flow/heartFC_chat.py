@@ -230,7 +230,7 @@ class HeartFChatting:
                 if (message.is_mentioned or message.is_at) and global_config.chat.mentioned_bot_reply:
                     mentioned_message = message
 
-            logger.info(f"{self.log_prefix} 当前talk_value: {global_config.chat.get_talk_value(self.stream_id)}")
+            # logger.info(f"{self.log_prefix} 当前talk_value: {global_config.chat.get_talk_value(self.stream_id)}")
 
             # *控制频率用
             if mentioned_message:
@@ -333,7 +333,6 @@ class HeartFChatting:
             # 重置连续 no_reply 计数
             self.consecutive_no_reply_count = 0
             reason = ""
-            
 
             await database_api.store_action_info(
                 chat_stream=self.chat_stream,
@@ -411,7 +410,7 @@ class HeartFChatting:
             # asyncio.create_task(self.chat_history_summarizer.process())
 
             cycle_timers, thinking_id = self.start_cycle()
-            logger.info(f"{self.log_prefix} 开始第{self._cycle_counter}次思考")
+            logger.info(f"{self.log_prefix} 开始第{self._cycle_counter}次思考(频率: {global_config.chat.get_talk_value(self.stream_id)})")
 
             # 第一步：动作检查
             available_actions: Dict[str, ActionInfo] = {}

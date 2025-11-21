@@ -116,9 +116,7 @@ class MessageBuilder:
         构建消息对象
         :return: Message对象
         """
-        if len(self.__content) == 0 and not (
-            self.__role == RoleType.Assistant and self.__tool_calls
-        ):
+        if len(self.__content) == 0 and not (self.__role == RoleType.Assistant and self.__tool_calls):
             raise ValueError("内容不能为空")
         if self.__role == RoleType.Tool and self.__tool_call_id is None:
             raise ValueError("Tool角色的工具调用ID不能为空")

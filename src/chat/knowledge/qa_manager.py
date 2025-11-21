@@ -92,14 +92,20 @@ class QAManager:
         # 过滤阈值
         result = dyn_select_top_k(result, 0.5, 1.0)
 
-        for res in result:
-            raw_paragraph = self.embed_manager.paragraphs_embedding_store.store[res[0]].str
-            logger.info(f"找到相关文段，相关系数：{res[1]:.8f}\n{raw_paragraph}\n\n")
+        if global_config.debug.show_lpmm_paragraph:
+            for res in result:
+                raw_paragraph = self.embed_manager.paragraphs_embedding_store.store[res[0]].str
+                logger.info(f"找到相关文段，相关系数：{res[1]:.8f}\n{raw_paragraph}\n\n")
 
         return result, ppr_node_weights
 
-    async def get_knowledge(self, question: str) -> Optional[str]:
-        """获取知识"""
+    async def get_knowledge(self, question: str, limit: int = 5) -> Optional[str]:
+        """获取知识
+
+        Args:
+            question: 查询问题
+            limit: 返回的相关知识条数
+        """
         # 处理查询
         processed_result = await self.process_query(question)
         if processed_result is not None:
@@ -109,6 +115,8 @@ class QAManager:
                 logger.debug("知识库查询结果为空，可能是知识库中没有相关内容")
                 return None
 
+            limit = max(1, limit) if isinstance(limit, int) else 5
+
             knowledge = [
                 (
                     self.embed_manager.paragraphs_embedding_store.store[res[0]].str,
@@ -116,9 +124,17 @@ class QAManager:
                 )
                 for res in query_res
             ]
-            found_knowledge = "\n".join(
-                [f"第{i + 1}条知识：{k[0]}\n 该条知识对于问题的相关性：{k[1]}" for i, k in enumerate(knowledge)]
-            )
+
+            # max_score = max([k[1] for k in knowledge]) if knowledge else None
+            selected_knowledge = knowledge[:limit]
+
+            formatted_knowledge = [
+                f"第{i + 1}条知识：{k[0]}\n 该条知识对于问题的相关性：{k[1]}" for i, k in enumerate(selected_knowledge)
+            ]
+            # if max_score is not None:
+            # formatted_knowledge.insert(0, f"最高相关系数：{max_score}")
+
+            found_knowledge = "\n".join(formatted_knowledge)
             if len(found_knowledge) > MAX_KNOWLEDGE_LENGTH:
                 found_knowledge = found_knowledge[:MAX_KNOWLEDGE_LENGTH] + "\n"
             return found_knowledge

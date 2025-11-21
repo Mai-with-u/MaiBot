@@ -11,6 +11,15 @@ spec:
       port: 8000
       protocol: TCP
       targetPort: 8000
+    {{- if .Values.core.webui.enabled }}
+    - name: webui
+      port: {{ .Values.core.webui.service.port }}
+      protocol: TCP
+      targetPort: 8001
+      {{- if eq .Values.core.webui.service.type "NodePort" }}
+      nodePort: {{ .Values.core.webui.service.nodePort | default nil }}
+      {{- end }}
+    {{- end }}
   selector:
     app: {{ .Release.Name }}-maibot-core
   type: ClusterIP

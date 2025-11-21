@@ -1,5 +1,5 @@
 [inner]
-version = "6.21.4"
+version = "6.21.8"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 #如果你想要修改配置文件，请递增version的值
@@ -104,7 +104,7 @@ talk_value_rules = [
 include_planner_reasoning = false # 是否将planner推理加入replyer，默认关闭（不加入）
 
 [memory]
-max_agent_iterations = 5 # 记忆思考深度（最低为1（不深入思考））
+max_agent_iterations = 3 # 记忆思考深度（最低为1（不深入思考））
 
 [jargon]
 all_global = true # 是否开启全局黑话模式，注意，此功能关闭后，已经记录的全局黑话不会改变，需要手动删除
@@ -211,6 +211,9 @@ show_prompt = false # 是否显示prompt
 show_replyer_prompt = false # 是否显示回复器prompt
 show_replyer_reasoning = false # 是否显示回复器推理
 show_jargon_prompt = false # 是否显示jargon相关提示词
+show_memory_prompt = false # 是否显示记忆检索相关提示词
+show_planner_prompt = false # 是否显示planner的prompt和原始返回结果
+show_lpmm_paragraph = false # 是否显示lpmm找到的相关文段日志
 
 [maim_message]
 auth_token = [] # 认证令牌，用于API验证，为空则不启用验证

@@ -26,7 +26,7 @@ spec:
               value: "{{ .Values.napcat.permission.uid }}"
             - name: TZ
               value: Asia/Shanghai
-          image: {{ .Values.napcat.image.repository | default "mlikiowa/napcat-docker" }}:{{ .Values.napcat.image.tag | default "v4.9.70" }}
+          image: {{ .Values.napcat.image.repository | default "mlikiowa/napcat-docker" }}:{{ .Values.napcat.image.tag | default "v4.9.73" }}
           imagePullPolicy: {{ .Values.napcat.image.pullPolicy }}
           livenessProbe:
             failureThreshold: 3

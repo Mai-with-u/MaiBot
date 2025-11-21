@@ -58,5 +58,5 @@ spec:
             items:
               - key: config.toml
                 path: config.toml
-            name: {{ .Release.Name }}-maibot-adapter
+            name: {{ .Release.Name }}-maibot-adapter-config
           name: config

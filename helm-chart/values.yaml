@@ -38,7 +38,7 @@ adapter:
   cm_generator:
     image:
       repository: # 默认 reg.mikumikumi.xyz/maibot/adapter-cm-generator
-      tag: # 默认 0.11.2-beta
+      tag: # 默认 0.11.5-beta
       pullPolicy: IfNotPresent
       pullSecrets: [ ]
 
@@ -48,7 +48,7 @@ core:
 
   image:
     repository: # 默认 sengokucola/maibot
-    tag: # 默认 0.11.2-beta
+    tag: # 默认 0.11.5-beta
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -64,6 +64,28 @@ core:
     size: 10Gi
 
   setup_default_plugins: true  # 启用一个初始化容器，用于为用户自动安装默认插件到存储卷中
+
+  webui:  # WebUI相关配置
+    # 对从helm chart 0.11.5-beta 之前的旧版升级的用户的重要提示：
+    # 旧版本helm chart没有配置configmap的保留策略，直接升级同时开启WebUI后会导致configmap丢失从而无法启动。
+    # 这种情况可以先禁用WebUI更新一次，再启用WebUI更新一次即可解决问题。
+    enabled: true  # 默认启用
+    cm_sync:  # WebUI的辅助容器配置
+      image:
+        repository: # 默认 reg.mikumikumi.xyz/maibot/core-webui-cm-sync
+        tag: # 默认 0.11.5-beta
+        pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP  # ClusterIP / NodePort 指定NodePort可以将内网的服务端口映射到物理节点的端口
+      port: 8001  # 服务端口
+      nodePort:  # 仅在设置NodePort类型时有效，不指定则会随机分配端口
+    ingress:
+      enabled: false
+      className: nginx
+      annotations: { }
+      host: maim.example.com  # 访问麦麦WebUI的域名
+      path: /
+      pathType: Prefix
 
 # 麦麦的运行统计看板配置
 # 麦麦每隔一段时间会自动输出html格式的运行统计报告，此统计报告可以作为静态网页访问
@@ -117,7 +139,7 @@ napcat:
 
   image:
     repository: # 默认 mlikiowa/napcat-docker
-    tag: # 默认 v4.9.70
+    tag: # 默认 v4.9.73
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -189,8 +211,15 @@ sqlite_web:
     path: /
     pathType: Prefix
 
-# 麦麦各部分组件的运行配置文件
+# 手动设置麦麦各部分组件的运行配置文件
 config:
+
+  # 启用WebUI后，配置文件的修改即可在WebUI进行。如果通过WebUI修改了配置，则实际的配置文件将与values中的配置存在差异。
+  # 如果用户在k8s的ConfigMap中手动修改了配置文件，则实际的配置文件也会与values中的配置存在差异。
+  # 出现上述两种情况时，为了避免helm升级麦麦时，下面values中的配置覆盖掉已有的配置文件而导致配置丢失，可以在这里禁止本次部署时的配置覆盖。
+  # 注：由于adapter的配置无法通过WebUI修改，因此下面的adapter_config配置仍然会覆盖已有配置文件。
+  enable_config_override_without_webui: true  # 未启用WebUI时，默认覆盖
+  enable_config_override_with_webui: false  # 启用WebUI时，默认不覆盖
 
   # adapter的config.toml
   adapter_config: |
@@ -227,7 +256,7 @@ config:
   # core的model_config.toml
   core_model_config: |
     [inner]
-    version = "1.7.7"
+    version = "1.7.8"
     
     # 配置文件版本号迭代规则同bot_config.toml
     
@@ -388,7 +417,7 @@ config:
   # core的bot_config.toml
   core_bot_config: |
     [inner]
-    version = "6.21.4"
+    version = "6.21.8"
     
     #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
     #如果你想要修改配置文件，请递增version的值
@@ -493,7 +522,7 @@ config:
     include_planner_reasoning = false # 是否将planner推理加入replyer，默认关闭（不加入）
     
     [memory]
-    max_agent_iterations = 5 # 记忆思考深度（最低为1（不深入思考））
+    max_agent_iterations = 3 # 记忆思考深度（最低为1（不深入思考））
     
     [jargon]
     all_global = true # 是否开启全局黑话模式，注意，此功能关闭后，已经记录的全局黑话不会改变，需要手动删除
@@ -600,6 +629,9 @@ config:
     show_replyer_prompt = false # 是否显示回复器prompt
     show_replyer_reasoning = false # 是否显示回复器推理
     show_jargon_prompt = false # 是否显示jargon相关提示词
+    show_memory_prompt = false # 是否显示记忆检索相关提示词
+    show_planner_prompt = false # 是否显示planner的prompt和原始返回结果
+    show_lpmm_paragraph = false # 是否显示lpmm找到的相关文段日志
     
     [maim_message]
     auth_token = [] # 认证令牌，用于API验证，为空则不启用验证

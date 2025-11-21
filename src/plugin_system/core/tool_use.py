@@ -124,7 +124,6 @@ class ToolExecutor:
         response, (reasoning_content, model_name, tool_calls) = await self.llm_model.generate_response_async(
             prompt=prompt, tools=tools, raise_when_empty=False
         )
-        
 
         # 执行工具调用
         tool_results, used_tools = await self.execute_tool_calls(tool_calls)

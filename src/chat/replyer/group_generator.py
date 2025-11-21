@@ -226,7 +226,9 @@ class DefaultReplyer:
             traceback.print_exc()
             return False, llm_response
 
-    async def build_expression_habits(self, chat_history: str, target: str, reply_reason: str = "") -> Tuple[str, List[int]]:
+    async def build_expression_habits(
+        self, chat_history: str, target: str, reply_reason: str = ""
+    ) -> Tuple[str, List[int]]:
         # sourcery skip: for-append-to-extend
         """构建表达习惯块
 
@@ -1094,10 +1096,10 @@ class DefaultReplyer:
             if not global_config.lpmm_knowledge.enable:
                 logger.debug("LPMM知识库未启用，跳过获取知识库内容")
                 return ""
-            
+
             if global_config.lpmm_knowledge.lpmm_mode == "agent":
                 return ""
-            
+
             time_now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
             bot_name = global_config.bot.nickname
@@ -1115,10 +1117,10 @@ class DefaultReplyer:
                 model_config=model_config.model_task_config.tool_use,
                 tool_options=[SearchKnowledgeFromLPMMTool.get_tool_definition()],
             )
-            
+
             # logger.info(f"工具调用提示词: {prompt}")
             # logger.info(f"工具调用: {tool_calls}")
-            
+
             if tool_calls:
                 result = await self.tool_executor.execute_tool_call(tool_calls[0], SearchKnowledgeFromLPMMTool())
                 end_time = time.time()

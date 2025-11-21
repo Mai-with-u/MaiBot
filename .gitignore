@@ -11,7 +11,6 @@ run_maibot_core.bat
 run_voice.bat
 run_napcat_adapter.bat
 run_ad.bat
-s4u.s4u
 llm_tool_benchmark_results.json
 MaiBot-Napcat-Adapter-main
 MaiBot-Napcat-Adapter
@@ -27,6 +26,7 @@ run.bat
 log_debug/
 run_amds.bat
 run_none.bat
+docs-mai/
 run.py
 message_queue_content.txt
 message_queue_content.bat
@@ -51,6 +51,7 @@ template/compare/model_config_template.toml
 src/plugins/utils/statistic.py
 CLAUDE.md
 MaiBot-Dashboard/
+cloudflare-workers/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -69,7 +70,6 @@ elua.confirmed
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/

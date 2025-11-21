@@ -25,6 +25,8 @@ WORKDIR /MaiMBot
 # 复制依赖列表
 COPY requirements.txt .
 
+RUN apt-get update && apt-get install -y git
+
 # 从编译阶段复制 LPMM 编译结果
 COPY --from=lpmm-builder /usr/local/lib/python3.13/site-packages/ /usr/local/lib/python3.13/site-packages/
 
