@@ -1,5 +1,5 @@
 [inner]
-version = "1.7.8"
+version = "1.7.9"
 
 # 配置文件版本号迭代规则同bot_config.toml
 
@@ -67,12 +67,31 @@ price_out = 3.0
 enable_thinking = true # 不启用思考
 
 [[models]]
+model_identifier = "gemini-3-pro-preview"
+name = "google-gemini-3-pro-preview"
+api_provider = "Google"
+price_in = 0.0
+price_out = 0.0
+[models.extra_params]
+thinking_level = "high" # 默认高预算
+
+[[models]]
+model_identifier = "gemini-2.5-pro"
+name = "google-gemini-2.5-pro"
+api_provider = "Google"
+price_in = 0.0
+price_out = 0.0
+[models.extra_params]
+thinking_budget = -1 # 由模型自己决定
+# thinking_budget = 0 禁用思考(如果可能)
+
+
+[[models]]
 model_identifier = "deepseek-ai/DeepSeek-R1"
 name = "siliconflow-deepseek-r1"
 api_provider = "SiliconFlow"
 price_in = 4.0
 price_out = 16.0
-
 
 [[models]]
 model_identifier = "Qwen/Qwen3-30B-A3B-Instruct-2507"
