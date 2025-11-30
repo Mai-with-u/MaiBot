@@ -941,7 +941,7 @@ class DefaultReplyer:
             chat_id=chat_id,
             timestamp=time.time(),
             limit=min(int(global_config.chat.max_context_size * 0.33), 15),
-            filter_no_read_command=True,
+            filter_no_read_command=False,
         )
         chat_talking_prompt_half = build_readable_messages(
             message_list_before_now_half,
