@@ -13,7 +13,7 @@ from typing import Optional, Tuple, List, Any
 from PIL import Image
 from rich.traceback import install
 
-from src.common.database.database_model import Emoji
+from src.common.database.database_model import Emoji, EmojiDescriptionCache
 from src.common.database.database import db as peewee_db
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
@@ -356,7 +356,7 @@ async def clean_unused_emojis(emoji_dir: str, emoji_objects: List["MaiEmoji"], r
         if cleaned_count > 0:
             logger.info(f"[清理] 在目录 {emoji_dir} 中清理了 {cleaned_count} 个破损表情包。")
         else:
-            logger.info(f"[清理] 目录 {emoji_dir} 中没有需要清理的。")
+            logger.debug(f"[清理] 目录 {emoji_dir} 中没有需要清理的。")
 
     except Exception as e:
         logger.error(f"[错误] 清理未使用表情包文件时出错 ({emoji_dir}): {str(e)}")
@@ -398,6 +398,7 @@ class EmojiManager:
             raise RuntimeError("数据库连接失败")
         _ensure_emoji_dir()
         Emoji.create_table(safe=True)  # Ensures table exists
+        EmojiDescriptionCache.create_table(safe=True)
         self._initialized = True
 
     def _ensure_db(self) -> None:
@@ -918,17 +919,15 @@ class EmojiManager:
             image_hash = hashlib.md5(image_bytes).hexdigest()
             image_format = Image.open(io.BytesIO(image_bytes)).format.lower()  # type: ignore
 
-            # 尝试从Images表获取已有的详细描述（可能在收到表情包时已生成）
+            # 尝试从 EmojiDescriptionCache 表获取已有的详细描述
             existing_description = None
             try:
-                from src.common.database.database_model import Images
-
-                existing_image = Images.get_or_none((Images.emoji_hash == image_hash) & (Images.type == "emoji"))
-                if existing_image and existing_image.description:
-                    existing_description = existing_image.description
-                    logger.info(f"[复用描述] 找到已有详细描述: {existing_description[:50]}...")
+                cache_record = EmojiDescriptionCache.get_or_none(EmojiDescriptionCache.emoji_hash == image_hash)
+                if cache_record and cache_record.description:
+                    existing_description = cache_record.description
+                    logger.info(f"[复用描述] 表情描述缓存命中: {existing_description[:50]}...")
             except Exception as e:
-                logger.debug(f"查询已有描述时出错: {e}")
+                logger.debug(f"查询表情描述缓存时出错: {e}")
 
             # 第一步：VLM视觉分析（如果没有已有描述才调用）
             if existing_description:
@@ -949,6 +948,21 @@ class EmojiManager:
                     description, _ = await self.vlm.generate_response_for_image(
                         prompt, image_base64, image_format, temperature=0.5
                     )
+
+            # 若是新生成的描述，写入缓存表（此时还没有情感标签，稍后会更新）
+            if not existing_description:
+                try:
+                    cache_record, created = EmojiDescriptionCache.get_or_create(
+                        emoji_hash=image_hash,
+                        defaults={"description": description, "timestamp": time.time()},
+                    )
+                    if not created:
+                        # 更新描述，但保留已有的情感标签（如果有）
+                        cache_record.description = description
+                        cache_record.timestamp = time.time()
+                        cache_record.save()
+                except Exception as cache_error:
+                    logger.debug(f"写入表情描述缓存失败: {cache_error}")
 
             # 审核表情包
             if global_config.emoji.content_filtration:
@@ -988,6 +1002,30 @@ class EmojiManager:
                 emotions = random.sample(emotions, 2)
 
             logger.info(f"[注册分析] 详细描述: {description[:50]}... -> 情感标签: {emotions}")
+
+            # 将情感标签列表转换为逗号分隔的字符串
+            emotion_tags_str = ",".join(emotions)
+
+            # 更新EmojiDescriptionCache，保存情感标签
+            try:
+                cache_record = EmojiDescriptionCache.get_or_none(EmojiDescriptionCache.emoji_hash == image_hash)
+                if cache_record:
+                    # 更新已有记录的情感标签
+                    cache_record.emotion_tags = emotion_tags_str
+                    cache_record.timestamp = time.time()
+                    cache_record.save()
+                    logger.info(f"[缓存更新] 表情包情感标签已更新到EmojiDescriptionCache: {image_hash[:8]}...")
+                else:
+                    # 如果缓存不存在，创建新记录（包含描述和情感标签）
+                    EmojiDescriptionCache.create(
+                        emoji_hash=image_hash,
+                        description=description,
+                        emotion_tags=emotion_tags_str,
+                        timestamp=time.time(),
+                    )
+                    logger.info(f"[缓存创建] 表情包描述和情感标签已保存到EmojiDescriptionCache: {image_hash[:8]}...")
+            except Exception as cache_error:
+                logger.debug(f"更新表情包情感标签缓存失败: {cache_error}")
 
             return f"[表情包：{description}]", emotions
 

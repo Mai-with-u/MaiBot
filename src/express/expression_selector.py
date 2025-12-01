@@ -126,8 +126,10 @@ class ExpressionSelector:
             # 支持多chat_id合并抽选
             related_chat_ids = self.get_related_chat_ids(chat_id)
 
-            # 优化：一次性查询所有相关chat_id的表达方式
-            style_query = Expression.select().where((Expression.chat_id.in_(related_chat_ids)))
+            # 优化：一次性查询所有相关chat_id的表达方式，排除 rejected=1 的表达
+            style_query = Expression.select().where(
+                (Expression.chat_id.in_(related_chat_ids)) & (~Expression.rejected)
+            )
 
             style_exprs = [
                 {
@@ -138,6 +140,7 @@ class ExpressionSelector:
                     "source_id": expr.chat_id,
                     "create_date": expr.create_date if expr.create_date is not None else expr.last_active_time,
                     "count": expr.count if getattr(expr, "count", None) is not None else 1,
+                    "checked": expr.checked if getattr(expr, "checked", None) is not None else False,
                 }
                 for expr in style_query
             ]
@@ -148,7 +151,6 @@ class ExpressionSelector:
             else:
                 selected_style = []
 
-            logger.info(f"随机选择，为聊天室 {chat_id} 选择了 {len(selected_style)} 个表达方式")
             return selected_style
 
         except Exception as e:
@@ -291,7 +293,7 @@ class ExpressionSelector:
             if valid_expressions:
                 self.update_expressions_last_active_time(valid_expressions)
 
-            logger.info(f"classic模式从{len(all_expressions)}个情境中选择了{len(valid_expressions)}个")
+            logger.debug(f"从{len(all_expressions)}个情境中选择了{len(valid_expressions)}个")
             return valid_expressions, selected_ids
 
         except Exception as e:

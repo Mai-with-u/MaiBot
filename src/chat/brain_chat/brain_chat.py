@@ -164,7 +164,8 @@ class BrainChatting:
             limit=20,
             limit_mode="latest",
             filter_mai=True,
-            filter_command=True,
+            filter_command=False,
+            filter_no_read_command=True,
         )
 
         if len(recent_messages_list) >= 1:
@@ -235,6 +236,28 @@ class BrainChatting:
             recent_messages_list = []
         _reply_text = ""  # 初始化reply_text变量，避免UnboundLocalError
 
+        # -------------------------------------------------------------------------
+        # ReflectTracker Check
+        # 在每次回复前检查一次上下文，看是否有反思问题得到了解答
+        # -------------------------------------------------------------------------
+        from src.express.reflect_tracker import reflect_tracker_manager
+
+        tracker = reflect_tracker_manager.get_tracker(self.stream_id)
+        if tracker:
+            resolved = await tracker.trigger_tracker()
+            if resolved:
+                reflect_tracker_manager.remove_tracker(self.stream_id)
+                logger.info(f"{self.log_prefix} ReflectTracker resolved and removed.")
+
+        # -------------------------------------------------------------------------
+        # Expression Reflection Check
+        # 检查是否需要提问表达反思
+        # -------------------------------------------------------------------------
+        from src.express.expression_reflector import expression_reflector_manager
+
+        reflector = expression_reflector_manager.get_or_create_reflector(self.stream_id)
+        asyncio.create_task(reflector.check_and_ask())
+
         async with global_prompt_manager.async_message_scope(self.chat_stream.context.get_template_name()):
             asyncio.create_task(self.expression_learner.trigger_learning_for_chat())
 
@@ -256,6 +279,7 @@ class BrainChatting:
                 chat_id=self.stream_id,
                 timestamp=time.time(),
                 limit=int(global_config.chat.max_context_size * 0.6),
+                filter_no_read_command=True,
             )
             chat_content_block, message_id_list = build_readable_messages_with_id(
                 messages=message_list_before_now,

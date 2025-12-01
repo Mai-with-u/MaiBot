@@ -25,7 +25,7 @@ class MemoryForgetTask(AsyncTask):
         """执行遗忘检查"""
         try:
             current_time = time.time()
-            logger.info("[记忆遗忘] 开始遗忘检查...")
+            # logger.info("[记忆遗忘] 开始遗忘检查...")
 
             # 执行4个阶段的遗忘检查
             await self._forget_stage_1(current_time)
@@ -33,7 +33,7 @@ class MemoryForgetTask(AsyncTask):
             await self._forget_stage_3(current_time)
             await self._forget_stage_4(current_time)
 
-            logger.info("[记忆遗忘] 遗忘检查完成")
+            # logger.info("[记忆遗忘] 遗忘检查完成")
         except Exception as e:
             logger.error(f"[记忆遗忘] 执行遗忘检查时出错: {e}", exc_info=True)
 

@@ -8,18 +8,25 @@
     "url": "https://github.com/MaiM-with-u"
   },
   "license": "GPL-v3.0-or-later",
-  
   "host_application": {
     "min_version": "0.10.3"
   },
   "homepage_url": "https://github.com/SengokuCola/BetterFrequency",
   "repository_url": "https://github.com/SengokuCola/BetterFrequency",
-  "keywords": ["frequency", "control", "talk_frequency", "plugin", "shortcut"],
-  "categories": ["Chat", "Frequency", "Control"],
-  
+  "keywords": [
+    "frequency",
+    "control",
+    "talk_frequency",
+    "plugin",
+    "shortcut"
+  ],
+  "categories": [
+    "Chat",
+    "Frequency",
+    "Control"
+  ],
   "default_locale": "zh-CN",
   "locales_path": "_locales",
-  
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "frequency",
@@ -46,5 +53,6 @@
       "支持完整命令和简化命令",
       "快速操作支持"
     ]
-  }
+  },
+  "id": "SengokuCola.BetterFrequency"
 }

@@ -181,8 +181,12 @@ class ActionPlanner:
             found_ids = set(matches)
             missing_ids = found_ids - available_ids
             if missing_ids:
-                logger.info(f"{self.log_prefix}planner理由中引用的消息ID不在当前上下文中: {missing_ids}, 可用ID: {list(available_ids)[:10]}...")
-            logger.info(f"{self.log_prefix}planner理由替换: 找到{len(matches)}个消息ID引用，其中{len(found_ids & available_ids)}个在上下文中")
+                logger.info(
+                    f"{self.log_prefix}planner理由中引用的消息ID不在当前上下文中: {missing_ids}, 可用ID: {list(available_ids)[:10]}..."
+                )
+            logger.info(
+                f"{self.log_prefix}planner理由替换: 找到{len(matches)}个消息ID引用，其中{len(found_ids & available_ids)}个在上下文中"
+            )
 
         def _replace(match: re.Match[str]) -> str:
             msg_id = match.group(0)
@@ -222,7 +226,8 @@ class ActionPlanner:
             # 非no_reply动作需要target_message_id
             target_message = None
 
-            if target_message_id := action_json.get("target_message_id"):
+            target_message_id = action_json.get("target_message_id")
+            if target_message_id:
                 # 根据target_message_id查找原始消息
                 target_message = self.find_message_by_id(target_message_id, message_id_list)
                 if target_message is None:
@@ -232,6 +237,14 @@ class ActionPlanner:
             else:
                 target_message = message_id_list[-1][1]
                 logger.debug(f"{self.log_prefix}动作'{action}'缺少target_message_id，使用最新消息作为target_message")
+
+            if action != "no_reply" and target_message is not None and self._is_message_from_self(target_message):
+                logger.info(
+                    f"{self.log_prefix}Planner选择了自己的消息 {target_message_id or target_message.message_id} 作为目标，强制使用 no_reply"
+                )
+                reasoning = f"目标消息 {target_message_id or target_message.message_id} 来自机器人自身，违反不回复自身消息规则。原始理由: {reasoning}"
+                action = "no_reply"
+                target_message = None
 
             # 验证action是否可用
             available_action_names = [action_name for action_name, _ in current_available_actions]
@@ -277,6 +290,16 @@ class ActionPlanner:
 
         return action_planner_infos
 
+    def _is_message_from_self(self, message: "DatabaseMessages") -> bool:
+        """判断消息是否由机器人自身发送"""
+        try:
+            return str(message.user_info.user_id) == str(global_config.bot.qq_account) and (
+                message.user_info.platform or ""
+            ) == (global_config.bot.platform or "")
+        except AttributeError:
+            logger.warning(f"{self.log_prefix}检测消息发送者失败，缺少必要字段")
+            return False
+
     async def plan(
         self,
         available_actions: Dict[str, ActionInfo],
@@ -293,6 +316,7 @@ class ActionPlanner:
             chat_id=self.chat_id,
             timestamp=time.time(),
             limit=int(global_config.chat.max_context_size * 0.6),
+            filter_no_read_command=True,
         )
         message_id_list: list[Tuple[str, "DatabaseMessages"]] = []
         chat_content_block, message_id_list = build_readable_messages_with_id(
@@ -744,6 +768,58 @@ class ActionPlanner:
             except Exception as e:
                 logger.warning(f"解析JSON块失败: {e}, 块内容: {match[:100]}...")
                 continue
+
+        # 如果没有找到完整的```json```块，尝试查找不完整的代码块（缺少结尾```）
+        if not json_objects:
+            json_start_pos = content.find("```json")
+            if json_start_pos != -1:
+                # 找到```json之后的内容
+                json_content_start = json_start_pos + 7  # ```json的长度
+                # 提取从```json之后到内容结尾的所有内容
+                incomplete_json_str = content[json_content_start:].strip()
+
+                # 提取JSON之前的内容作为推理文本
+                if json_start_pos > 0:
+                    reasoning_content = content[:json_start_pos].strip()
+                    reasoning_content = re.sub(r"^//\s*", "", reasoning_content, flags=re.MULTILINE)
+                    reasoning_content = reasoning_content.strip()
+
+                if incomplete_json_str:
+                    try:
+                        # 清理可能的注释和格式问题
+                        json_str = re.sub(r"//.*?\n", "\n", incomplete_json_str)
+                        json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
+                        json_str = json_str.strip()
+
+                        if json_str:
+                            # 尝试按行分割，每行可能是一个JSON对象
+                            lines = [line.strip() for line in json_str.split("\n") if line.strip()]
+                            for line in lines:
+                                try:
+                                    json_obj = json.loads(repair_json(line))
+                                    if isinstance(json_obj, dict):
+                                        json_objects.append(json_obj)
+                                    elif isinstance(json_obj, list):
+                                        for item in json_obj:
+                                            if isinstance(item, dict):
+                                                json_objects.append(item)
+                                except json.JSONDecodeError:
+                                    pass
+
+                            # 如果按行解析没有成功，尝试将整个块作为一个JSON对象或数组
+                            if not json_objects:
+                                try:
+                                    json_obj = json.loads(repair_json(json_str))
+                                    if isinstance(json_obj, dict):
+                                        json_objects.append(json_obj)
+                                    elif isinstance(json_obj, list):
+                                        for item in json_obj:
+                                            if isinstance(item, dict):
+                                                json_objects.append(item)
+                                except Exception as e:
+                                    logger.debug(f"尝试解析不完整的JSON代码块失败: {e}")
+                    except Exception as e:
+                        logger.debug(f"处理不完整的JSON代码块时出错: {e}")
 
         return json_objects, reasoning_content
 

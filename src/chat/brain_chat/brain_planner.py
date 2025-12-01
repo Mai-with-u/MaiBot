@@ -226,6 +226,7 @@ class BrainPlanner:
             chat_id=self.chat_id,
             timestamp=time.time(),
             limit=int(global_config.chat.max_context_size * 0.6),
+            filter_no_read_command=True,
         )
         message_id_list: list[Tuple[str, "DatabaseMessages"]] = []
         chat_content_block, message_id_list = build_readable_messages_with_id(

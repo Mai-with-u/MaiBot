@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import re
 from typing import List, Optional, Tuple
 import traceback
 from src.common.logger import get_logger
@@ -225,6 +226,19 @@ class ExpressionLearner:
         match_responses = []
         try:
             response = response.strip()
+
+            # 尝试提取JSON代码块（如果存在）
+            json_pattern = r"```json\s*(.*?)\s*```"
+            matches = re.findall(json_pattern, response, re.DOTALL)
+            if matches:
+                response = matches[0].strip()
+
+            # 移除可能的markdown代码块标记（如果没有找到```json，但可能有```）
+            if not matches:
+                response = re.sub(r"^```\s*", "", response, flags=re.MULTILINE)
+                response = re.sub(r"```\s*$", "", response, flags=re.MULTILINE)
+                response = response.strip()
+
             # 检查是否已经是标准JSON数组格式
             if response.startswith("[") and response.endswith("]"):
                 match_responses = json.loads(response)
@@ -280,15 +294,60 @@ class ExpressionLearner:
                 logger.error(f"match_responses 不是列表或字典类型: {type(match_responses)}, 内容: {match_responses}")
                 return []
 
+        # 清理和规范化 match_responses 中的元素
+        normalized_responses = []
+        for item in match_responses:
+            if isinstance(item, dict):
+                # 已经是字典，直接添加
+                normalized_responses.append(item)
+            elif isinstance(item, str):
+                # 如果是字符串，尝试解析为 JSON
+                try:
+                    parsed = json.loads(item)
+                    if isinstance(parsed, dict):
+                        normalized_responses.append(parsed)
+                    elif isinstance(parsed, list):
+                        # 如果是列表，递归处理
+                        for sub_item in parsed:
+                            if isinstance(sub_item, dict):
+                                normalized_responses.append(sub_item)
+                            else:
+                                logger.debug(f"跳过非字典类型的子元素: {type(sub_item)}, 内容: {sub_item}")
+                    else:
+                        logger.debug(f"跳过无法转换为字典的字符串元素: {item}")
+                except (json.JSONDecodeError, TypeError):
+                    logger.debug(f"跳过无法解析为JSON的字符串元素: {item}")
+            elif isinstance(item, list):
+                # 如果是列表，展开并处理其中的字典
+                for sub_item in item:
+                    if isinstance(sub_item, dict):
+                        normalized_responses.append(sub_item)
+                    elif isinstance(sub_item, str):
+                        # 尝试解析字符串
+                        try:
+                            parsed = json.loads(sub_item)
+                            if isinstance(parsed, dict):
+                                normalized_responses.append(parsed)
+                            else:
+                                logger.debug(f"跳过非字典类型的解析结果: {type(parsed)}, 内容: {parsed}")
+                        except (json.JSONDecodeError, TypeError):
+                            logger.debug(f"跳过无法解析为JSON的字符串子元素: {sub_item}")
+                    else:
+                        logger.debug(f"跳过非字典类型的列表元素: {type(sub_item)}, 内容: {sub_item}")
+            else:
+                logger.debug(f"跳过无法处理的元素类型: {type(item)}, 内容: {item}")
+
+        match_responses = normalized_responses
+
         matched_expressions = []
         used_pair_indices = set()  # 用于跟踪已经使用的expression_pair索引
 
-        logger.debug(f"match_responses 类型: {type(match_responses)}, 长度: {len(match_responses)}")
-        logger.debug(f"match_responses 内容: {match_responses}")
+        logger.debug(f"规范化后的 match_responses 类型: {type(match_responses)}, 长度: {len(match_responses)}")
+        logger.debug(f"规范化后的 match_responses 内容: {match_responses}")
 
         for match_response in match_responses:
             try:
-                # 检查 match_response 的类型
+                # 检查 match_response 的类型（此时应该都是字典）
                 if not isinstance(match_response, dict):
                     logger.error(f"match_response 不是字典类型: {type(match_response)}, 内容: {match_response}")
                     continue

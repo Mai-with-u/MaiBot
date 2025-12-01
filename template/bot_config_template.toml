@@ -1,9 +1,9 @@
 [inner]
-version = "6.21.8"
+version = "6.23.5"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
-#如果你想要修改配置文件，请递增version的值
-#如果新增项目，请阅读src/config/official_configs.py中的说明
+# 如果你想要修改配置文件，请递增version的值
+# 如果新增项目，请阅读src/config/official_configs.py中的说明
 #
 # 版本格式：主版本号.次版本号.修订号，版本号递增规则如下：
 #     主版本号：MMC版本更新
@@ -23,7 +23,7 @@ alias_names = ["麦叠", "牢麦"] # 麦麦的别名
 [personality]
 # 建议120字以内，描述人格特质 和 身份特征
 personality = "是一个女大学生，现在在读大二，会刷贴吧。" 
-#アイデンティティがない 生まれないらららら
+# アイデンティティがない 生まれないらららら
 # 描述麦麦说话的表达风格，表达习惯，如要修改，可以酌情新增内容
 reply_style = "请回复的平淡一些，简短一些，说中文，不要刻意突出自身学科背景。可以参考贴吧，知乎和微博的回复风格。"
 
@@ -80,12 +80,16 @@ expression_groups = [
     # 注意：如果为群聊，则需要设置为group，如果设置为私聊，则需要设置为private
 ]
 
+reflect = false # 是否启用表达反思（Bot主动向管理员询问表达方式是否合适）
+reflect_operator_id = "" # 表达反思操作员ID，格式：platform:id:type (例如 "qq:123456:private" 或 "qq:654321:group")
+allow_reflect = [] # 允许进行表达反思的聊天流ID列表，格式：["qq:123456:private", "qq:654321:group", ...]，只有在此列表中的聊天流才会提出问题并跟踪。如果列表为空，则所有聊天流都可以进行表达反思（前提是 reflect = true）
 
-[chat] #麦麦的聊天设置
-talk_value = 1 #聊天频率，越小越沉默，范围0-1
+
+[chat] # 麦麦的聊天设置
+talk_value = 1 # 聊天频率，越小越沉默，范围0-1
 mentioned_bot_reply = true # 是否启用提及必回复
 max_context_size = 30 # 上下文长度
-planner_smooth = 2 #规划器平滑，增大数值会减小planner负荷，略微降低反应速度，推荐1-5，0为关闭，必须大于等于0
+planner_smooth = 2 # 规划器平滑，增大数值会减小planner负荷，略微降低反应速度，推荐1-5，0为关闭，必须大于等于0
 
 enable_talk_value_rules = true # 是否启用动态发言频率规则
 
@@ -105,6 +109,7 @@ include_planner_reasoning = false # 是否将planner推理加入replyer，默认
 
 [memory]
 max_agent_iterations = 3 # 记忆思考深度（最低为1（不深入思考））
+enable_jargon_detection = true # 记忆检索过程中是否启用黑话识别
 
 [jargon]
 all_global = true # 是否开启全局黑话模式，注意，此功能关闭后，已经记录的全局黑话不会改变，需要手动删除
@@ -138,8 +143,8 @@ ban_words = [
 
 ban_msgs_regex = [
     # 需要过滤的消息（原始消息）匹配的正则表达式，匹配到的消息将被过滤，若不了解正则表达式请勿修改
-    #"https?://[^\\s]+", # 匹配https链接
-    #"\\d{4}-\\d{2}-\\d{2}", # 匹配日期
+    # "https?://[^\\s]+", # 匹配https链接
+    # "\\d{4}-\\d{2}-\\d{2}", # 匹配日期
 ]
 
 
@@ -168,7 +173,7 @@ embedding_dimension = 1024 # 嵌入向量维度,应该与模型的输出维度�
 keyword_rules = [
     { keywords = ["人机", "bot", "机器", "入机", "robot", "机器人", "ai", "AI"], reaction = "有人说你是人机或者机器人，否定这一事实，攻击或反问他。注意，只有认为你是机器人才回复，否则不要否认" },
     { keywords = ["测试关键词回复", "test"], reaction = "回答测试成功" },
-    #{ keywords = ["你好", "hello"], reaction = "你好，有什么可以帮你？" }    
+    # { keywords = ["你好", "hello"], reaction = "你好，有什么可以帮你？" }    
     # 在此处添加更多规则，格式同上
 ]
 
@@ -241,7 +246,7 @@ enable = true
 chat_prompts = []
 
 
-#此系统暂时移除，无效配置
+# 此系统暂时移除，无效配置
 [relationship]
 enable_relationship = true # 是否启用关系系统
 

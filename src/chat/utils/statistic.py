@@ -227,6 +227,8 @@ class StatisticOutputTask(AsyncTask):
             "",
             self._format_model_classified_stat(stats["last_hour"]),
             "",
+            self._format_module_classified_stat(stats["last_hour"]),
+            "",
             self._format_chat_stat(stats["last_hour"]),
             self.SEP_LINE,
             "",
@@ -737,11 +739,13 @@ class StatisticOutputTask(AsyncTask):
         """
         if stats[TOTAL_REQ_CNT] <= 0:
             return ""
-        data_fmt = "{:<32}  {:>10}  {:>12}  {:>12}  {:>12}  {:>9.2f}¥  {:>10.1f}  {:>10.1f}"
+        data_fmt = "{:<32}  {:>10}  {:>12}  {:>12}  {:>12}  {:>9.2f}¥  {:>10.1f}  {:>10.1f}  {:>12}  {:>12}"
 
+        total_replies = stats.get(TOTAL_REPLY_CNT, 0)
+        
         output = [
             "按模型分类统计:",
-            " 模型名称                          调用次数    输入Token     输出Token     Token总量     累计花费    平均耗时(秒)  标准差(秒)",
+            " 模型名称                          调用次数    输入Token     输出Token     Token总量     累计花费    平均耗时(秒)  标准差(秒)  每次回复平均调用次数  每次回复平均Token数",
         ]
         for model_name, count in sorted(stats[REQ_CNT_BY_MODEL].items()):
             name = f"{model_name[:29]}..." if len(model_name) > 32 else model_name
@@ -751,11 +755,19 @@ class StatisticOutputTask(AsyncTask):
             cost = stats[COST_BY_MODEL][model_name]
             avg_time_cost = stats[AVG_TIME_COST_BY_MODEL][model_name]
             std_time_cost = stats[STD_TIME_COST_BY_MODEL][model_name]
+            
+            # 计算每次回复平均值
+            avg_count_per_reply = count / total_replies if total_replies > 0 else 0.0
+            avg_tokens_per_reply = tokens / total_replies if total_replies > 0 else 0.0
+            
             # 格式化大数字
             formatted_count = _format_large_number(count)
             formatted_in_tokens = _format_large_number(in_tokens)
             formatted_out_tokens = _format_large_number(out_tokens)
             formatted_tokens = _format_large_number(tokens)
+            formatted_avg_count = _format_large_number(avg_count_per_reply) if total_replies > 0 else "N/A"
+            formatted_avg_tokens = _format_large_number(avg_tokens_per_reply) if total_replies > 0 else "N/A"
+            
             output.append(
                 data_fmt.format(
                     name,
@@ -766,6 +778,62 @@ class StatisticOutputTask(AsyncTask):
                     cost,
                     avg_time_cost,
                     std_time_cost,
+                    formatted_avg_count,
+                    formatted_avg_tokens,
+                )
+            )
+
+        output.append("")
+        return "\n".join(output)
+
+    @staticmethod
+    def _format_module_classified_stat(stats: Dict[str, Any]) -> str:
+        """
+        格式化按模块分类的统计数据
+        """
+        if stats[TOTAL_REQ_CNT] <= 0:
+            return ""
+        data_fmt = "{:<32}  {:>10}  {:>12}  {:>12}  {:>12}  {:>9.2f}¥  {:>10.1f}  {:>10.1f}  {:>12}  {:>12}"
+
+        total_replies = stats.get(TOTAL_REPLY_CNT, 0)
+        
+        output = [
+            "按模块分类统计:",
+            " 模块名称                          调用次数    输入Token     输出Token     Token总量     累计花费    平均耗时(秒)  标准差(秒)  每次回复平均调用次数  每次回复平均Token数",
+        ]
+        for module_name, count in sorted(stats[REQ_CNT_BY_MODULE].items()):
+            name = f"{module_name[:29]}..." if len(module_name) > 32 else module_name
+            in_tokens = stats[IN_TOK_BY_MODULE][module_name]
+            out_tokens = stats[OUT_TOK_BY_MODULE][module_name]
+            tokens = stats[TOTAL_TOK_BY_MODULE][module_name]
+            cost = stats[COST_BY_MODULE][module_name]
+            avg_time_cost = stats[AVG_TIME_COST_BY_MODULE][module_name]
+            std_time_cost = stats[STD_TIME_COST_BY_MODULE][module_name]
+            
+            # 计算每次回复平均值
+            avg_count_per_reply = count / total_replies if total_replies > 0 else 0.0
+            avg_tokens_per_reply = tokens / total_replies if total_replies > 0 else 0.0
+            
+            # 格式化大数字
+            formatted_count = _format_large_number(count)
+            formatted_in_tokens = _format_large_number(in_tokens)
+            formatted_out_tokens = _format_large_number(out_tokens)
+            formatted_tokens = _format_large_number(tokens)
+            formatted_avg_count = _format_large_number(avg_count_per_reply) if total_replies > 0 else "N/A"
+            formatted_avg_tokens = _format_large_number(avg_tokens_per_reply) if total_replies > 0 else "N/A"
+            
+            output.append(
+                data_fmt.format(
+                    name,
+                    formatted_count,
+                    formatted_in_tokens,
+                    formatted_out_tokens,
+                    formatted_tokens,
+                    cost,
+                    avg_time_cost,
+                    std_time_cost,
+                    formatted_avg_count,
+                    formatted_avg_tokens,
                 )
             )
 
@@ -849,6 +917,7 @@ class StatisticOutputTask(AsyncTask):
             # format总在线时间
 
             # 按模型分类统计
+            total_replies = stat_data.get(TOTAL_REPLY_CNT, 0)
             model_rows = "\n".join(
                 [
                     f"<tr>"
@@ -860,11 +929,13 @@ class StatisticOutputTask(AsyncTask):
                     f"<td>{stat_data[COST_BY_MODEL][model_name]:.2f} ¥</td>"
                     f"<td>{stat_data[AVG_TIME_COST_BY_MODEL][model_name]:.1f} 秒</td>"
                     f"<td>{stat_data[STD_TIME_COST_BY_MODEL][model_name]:.1f} 秒</td>"
+                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
+                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODEL][model_name] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
                     f"</tr>"
                     for model_name, count in sorted(stat_data[REQ_CNT_BY_MODEL].items())
                 ]
                 if stat_data[REQ_CNT_BY_MODEL]
-                else ["<tr><td colspan='8' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
+                else ["<tr><td colspan='10' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
             )
             # 按请求类型分类统计
             type_rows = "\n".join(
@@ -878,11 +949,13 @@ class StatisticOutputTask(AsyncTask):
                     f"<td>{stat_data[COST_BY_TYPE][req_type]:.2f} ¥</td>"
                     f"<td>{stat_data[AVG_TIME_COST_BY_TYPE][req_type]:.1f} 秒</td>"
                     f"<td>{stat_data[STD_TIME_COST_BY_TYPE][req_type]:.1f} 秒</td>"
+                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
+                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_TYPE][req_type] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
                     f"</tr>"
                     for req_type, count in sorted(stat_data[REQ_CNT_BY_TYPE].items())
                 ]
                 if stat_data[REQ_CNT_BY_TYPE]
-                else ["<tr><td colspan='8' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
+                else ["<tr><td colspan='10' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
             )
             # 按模块分类统计
             module_rows = "\n".join(
@@ -896,11 +969,13 @@ class StatisticOutputTask(AsyncTask):
                     f"<td>{stat_data[COST_BY_MODULE][module_name]:.2f} ¥</td>"
                     f"<td>{stat_data[AVG_TIME_COST_BY_MODULE][module_name]:.1f} 秒</td>"
                     f"<td>{stat_data[STD_TIME_COST_BY_MODULE][module_name]:.1f} 秒</td>"
+                    f"<td>{_format_large_number(count / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
+                    f"<td>{_format_large_number(stat_data[TOTAL_TOK_BY_MODULE][module_name] / total_replies, html=True) if total_replies > 0 else 'N/A'}</td>"
                     f"</tr>"
                     for module_name, count in sorted(stat_data[REQ_CNT_BY_MODULE].items())
                 ]
                 if stat_data[REQ_CNT_BY_MODULE]
-                else ["<tr><td colspan='8' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
+                else ["<tr><td colspan='10' style='text-align: center; color: #999;'>暂无数据</td></tr>"]
             )
 
             # 聊天消息统计
@@ -975,7 +1050,7 @@ class StatisticOutputTask(AsyncTask):
                 <h2>按模型分类统计</h2>
                 <div class=\"table-wrap\">
                     <table>
-                        <thead><tr><th>模型名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th></tr></thead>
+                        <thead><tr><th>模型名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th></tr></thead>
                         <tbody>
                             {model_rows}
                         </tbody>
@@ -986,7 +1061,7 @@ class StatisticOutputTask(AsyncTask):
                 <div class=\"table-wrap\">
                     <table>
                         <thead>
-                            <tr><th>模块名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th></tr>
+                            <tr><th>模块名称</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th></tr>
                         </thead>
                         <tbody>
                         {module_rows}
@@ -998,7 +1073,7 @@ class StatisticOutputTask(AsyncTask):
                 <div class=\"table-wrap\">
                     <table>
                         <thead>
-                            <tr><th>请求类型</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th></tr>
+                            <tr><th>请求类型</th><th>调用次数</th><th>输入Token</th><th>输出Token</th><th>Token总量</th><th>累计花费</th><th>平均耗时(秒)</th><th>标准差(秒)</th><th>每次回复平均调用次数</th><th>每次回复平均Token数</th></tr>
                         </thead>
                         <tbody>
                         {type_rows}

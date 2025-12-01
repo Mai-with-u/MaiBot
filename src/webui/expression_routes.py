@@ -1,11 +1,12 @@
 """表达方式管理 API 路由"""
 
-from fastapi import APIRouter, HTTPException, Header, Query
+from fastapi import APIRouter, HTTPException, Header, Query, Cookie
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from src.common.logger import get_logger
-from src.common.database.database_model import Expression
+from src.common.database.database_model import Expression, ChatStreams
 from .token_manager import get_token_manager
+from .auth import verify_auth_token_from_cookie_or_header
 import time
 
 logger = get_logger("webui.expression")
@@ -87,18 +88,12 @@ class ExpressionCreateResponse(BaseModel):
     data: ExpressionResponse
 
 
-def verify_auth_token(authorization: Optional[str]) -> bool:
-    """验证认证 Token"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="未提供有效的认证信息")
-
-    token = authorization.replace("Bearer ", "")
-    token_manager = get_token_manager()
-
-    if not token_manager.verify_token(token):
-        raise HTTPException(status_code=401, detail="Token 无效或已过期")
-
-    return True
+def verify_auth_token(
+    maibot_session: Optional[str] = None,
+    authorization: Optional[str] = None,
+) -> bool:
+    """验证认证 Token，支持 Cookie 和 Header"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 
 def expression_to_response(expression: Expression) -> ExpressionResponse:
@@ -115,12 +110,97 @@ def expression_to_response(expression: Expression) -> ExpressionResponse:
     )
 
 
+def get_chat_name(chat_id: str) -> str:
+    """根据 chat_id 获取聊天名称"""
+    try:
+        chat_stream = ChatStreams.get_or_none(ChatStreams.stream_id == chat_id)
+        if chat_stream:
+            # 优先使用群聊名称，否则使用用户昵称
+            if chat_stream.group_name:
+                return chat_stream.group_name
+            elif chat_stream.user_nickname:
+                return chat_stream.user_nickname
+        return chat_id  # 找不到时返回原始ID
+    except Exception:
+        return chat_id
+
+
+def get_chat_names_batch(chat_ids: List[str]) -> Dict[str, str]:
+    """批量获取聊天名称"""
+    result = {cid: cid for cid in chat_ids}  # 默认值为原始ID
+    try:
+        chat_streams = ChatStreams.select().where(ChatStreams.stream_id.in_(chat_ids))
+        for cs in chat_streams:
+            if cs.group_name:
+                result[cs.stream_id] = cs.group_name
+            elif cs.user_nickname:
+                result[cs.stream_id] = cs.user_nickname
+    except Exception as e:
+        logger.warning(f"批量获取聊天名称失败: {e}")
+    return result
+
+
+class ChatInfo(BaseModel):
+    """聊天信息"""
+
+    chat_id: str
+    chat_name: str
+    platform: Optional[str] = None
+    is_group: bool = False
+
+
+class ChatListResponse(BaseModel):
+    """聊天列表响应"""
+
+    success: bool
+    data: List[ChatInfo]
+
+
+@router.get("/chats", response_model=ChatListResponse)
+async def get_chat_list(maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+    """
+    获取所有聊天列表（用于下拉选择）
+
+    Args:
+        authorization: Authorization header
+
+    Returns:
+        聊天列表
+    """
+    try:
+        verify_auth_token(maibot_session, authorization)
+
+        chat_list = []
+        for cs in ChatStreams.select():
+            chat_name = cs.group_name if cs.group_name else (cs.user_nickname if cs.user_nickname else cs.stream_id)
+            chat_list.append(
+                ChatInfo(
+                    chat_id=cs.stream_id,
+                    chat_name=chat_name,
+                    platform=cs.platform,
+                    is_group=bool(cs.group_id),
+                )
+            )
+
+        # 按名称排序
+        chat_list.sort(key=lambda x: x.chat_name)
+
+        return ChatListResponse(success=True, data=chat_list)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"获取聊天列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取聊天列表失败: {str(e)}") from e
+
+
 @router.get("/list", response_model=ExpressionListResponse)
 async def get_expression_list(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     chat_id: Optional[str] = Query(None, description="聊天ID筛选"),
+    maibot_session: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ):
     """
@@ -137,7 +217,7 @@ async def get_expression_list(
         表达方式列表
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         # 构建查询
         query = Expression.select()
@@ -181,7 +261,7 @@ async def get_expression_list(
 
 
 @router.get("/{expression_id}", response_model=ExpressionDetailResponse)
-async def get_expression_detail(expression_id: int, authorization: Optional[str] = Header(None)):
+async def get_expression_detail(expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
     """
     获取表达方式详细信息
 
@@ -193,7 +273,7 @@ async def get_expression_detail(expression_id: int, authorization: Optional[str]
         表达方式详细信息
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         expression = Expression.get_or_none(Expression.id == expression_id)
 
@@ -210,7 +290,7 @@ async def get_expression_detail(expression_id: int, authorization: Optional[str]
 
 
 @router.post("/", response_model=ExpressionCreateResponse)
-async def create_expression(request: ExpressionCreateRequest, authorization: Optional[str] = Header(None)):
+async def create_expression(request: ExpressionCreateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
     """
     创建新的表达方式
 
@@ -222,7 +302,7 @@ async def create_expression(request: ExpressionCreateRequest, authorization: Opt
         创建结果
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         current_time = time.time()
 
@@ -252,7 +332,7 @@ async def create_expression(request: ExpressionCreateRequest, authorization: Opt
 
 @router.patch("/{expression_id}", response_model=ExpressionUpdateResponse)
 async def update_expression(
-    expression_id: int, request: ExpressionUpdateRequest, authorization: Optional[str] = Header(None)
+    expression_id: int, request: ExpressionUpdateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
 ):
     """
     增量更新表达方式（只更新提供的字段）
@@ -266,7 +346,7 @@ async def update_expression(
         更新结果
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         expression = Expression.get_or_none(Expression.id == expression_id)
 
@@ -302,7 +382,7 @@ async def update_expression(
 
 
 @router.delete("/{expression_id}", response_model=ExpressionDeleteResponse)
-async def delete_expression(expression_id: int, authorization: Optional[str] = Header(None)):
+async def delete_expression(expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
     """
     删除表达方式
 
@@ -314,7 +394,7 @@ async def delete_expression(expression_id: int, authorization: Optional[str] = H
         删除结果
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         expression = Expression.get_or_none(Expression.id == expression_id)
 
@@ -345,7 +425,7 @@ class BatchDeleteRequest(BaseModel):
 
 
 @router.post("/batch/delete", response_model=ExpressionDeleteResponse)
-async def batch_delete_expressions(request: BatchDeleteRequest, authorization: Optional[str] = Header(None)):
+async def batch_delete_expressions(request: BatchDeleteRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
     """
     批量删除表达方式
 
@@ -357,7 +437,7 @@ async def batch_delete_expressions(request: BatchDeleteRequest, authorization: O
         删除结果
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         if not request.ids:
             raise HTTPException(status_code=400, detail="未提供要删除的表达方式ID")
@@ -386,7 +466,7 @@ async def batch_delete_expressions(request: BatchDeleteRequest, authorization: O
 
 
 @router.get("/stats/summary")
-async def get_expression_stats(authorization: Optional[str] = Header(None)):
+async def get_expression_stats(maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
     """
     获取表达方式统计数据
 
@@ -397,7 +477,7 @@ async def get_expression_stats(authorization: Optional[str] = Header(None)):
         统计数据
     """
     try:
-        verify_auth_token(authorization)
+        verify_auth_token(maibot_session, authorization)
 
         total = Expression.select().count()
 

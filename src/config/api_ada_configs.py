@@ -88,6 +88,9 @@ class TaskConfig(ConfigBase):
     temperature: float = 0.3
     """模型温度"""
 
+    slow_threshold: float = 15.0
+    """慢请求阈值（秒），超过此值会输出警告日志"""
+
 
 @dataclass
 class ModelTaskConfig(ConfigBase):

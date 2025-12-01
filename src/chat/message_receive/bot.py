@@ -116,6 +116,7 @@ class ChatBot:
                 try:
                     # 执行命令
                     success, response, intercept_message = await command_instance.execute()
+                    message.is_no_read_command = bool(intercept_message)
 
                     # 记录命令执行结果
                     if success:

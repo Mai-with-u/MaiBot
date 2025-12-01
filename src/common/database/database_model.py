@@ -170,6 +170,7 @@ class Messages(BaseModel):
     is_emoji = BooleanField(default=False)
     is_picid = BooleanField(default=False)
     is_command = BooleanField(default=False)
+    is_no_read_command = BooleanField(default=False)
     is_notify = BooleanField(default=False)
 
     selected_expressions = TextField(null=True)
@@ -237,6 +238,20 @@ class ImageDescriptions(BaseModel):
     class Meta:
         # database = db # 继承自 BaseModel
         table_name = "image_descriptions"
+
+
+class EmojiDescriptionCache(BaseModel):
+    """
+    存储表情包的详细描述和情感标签缓存
+    """
+
+    emoji_hash = TextField(unique=True, index=True)
+    description = TextField()  # 详细描述
+    emotion_tags = TextField(null=True)  # 情感标签，逗号分隔
+    timestamp = FloatField()
+
+    class Meta:
+        table_name = "emoji_description_cache"
 
 
 class OnlineTime(BaseModel):
@@ -316,6 +331,8 @@ class Expression(BaseModel):
     last_active_time = FloatField()
     chat_id = TextField(index=True)
     create_date = FloatField(null=True)  # 创建日期，允许为空以兼容老数据
+    checked = BooleanField(default=False)  # 是否已检查
+    rejected = BooleanField(default=False)  # 是否被拒绝但未更新
 
     class Meta:
         table_name = "expression"
@@ -328,8 +345,6 @@ class Jargon(BaseModel):
 
     content = TextField()
     raw_content = TextField(null=True)
-    type = TextField(null=True)
-    translation = TextField(null=True)
     meaning = TextField(null=True)
     chat_id = TextField(index=True)
     is_global = BooleanField(default=False)
@@ -357,6 +372,7 @@ class ChatHistory(BaseModel):
     theme = TextField()  # 主题：这段对话的主要内容，一个简短的标题
     keywords = TextField()  # 关键词：这段对话的关键词，JSON格式存储
     summary = TextField()  # 概括：对这段话的平文本概括
+    key_point = TextField(null=True)  # 关键信息：话题中的关键信息点，JSON格式存储
     count = IntegerField(default=0)  # 被检索次数
     forget_times = IntegerField(default=0)  # 被遗忘检查的次数
 
@@ -389,6 +405,7 @@ MODELS = [
     Messages,
     Images,
     ImageDescriptions,
+    EmojiDescriptionCache,
     OnlineTime,
     PersonInfo,
     Expression,

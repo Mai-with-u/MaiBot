@@ -39,6 +39,11 @@ class HeartFCMessageReceiver:
             message_data: 原始消息字符串
         """
         try:
+            # 通知消息不处理
+            if message.is_notify:
+                logger.debug("通知消息，跳过处理")
+                return
+
             # 1. 消息解析与初始化
             userinfo = message.message_info.user_info
             chat = message.chat_stream

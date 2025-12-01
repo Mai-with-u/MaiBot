@@ -244,6 +244,9 @@ class MemoryConfig(ConfigBase):
     max_agent_iterations: int = 5
     """Agent最多迭代轮数（最低为1）"""
 
+    enable_jargon_detection: bool = True
+    """记忆检索过程中是否启用黑话识别"""
+
     def __post_init__(self):
         """验证配置值"""
         if self.max_agent_iterations < 1:
@@ -277,6 +280,20 @@ class ExpressionConfig(ConfigBase):
     """
     表达学习互通组
     格式: [["qq:12345:group", "qq:67890:private"]]
+    """
+
+    reflect: bool = False
+    """是否启用表达反思"""
+
+    reflect_operator_id: str = ""
+    """表达反思操作员ID"""
+
+    allow_reflect: list[str] = field(default_factory=list)
+    """
+    允许进行表达反思的聊天流ID列表
+    格式: ["qq:123456:private", "qq:654321:group", ...]
+    只有在此列表中的聊天流才会提出问题并跟踪
+    如果列表为空，则所有聊天流都可以进行表达反思（前提是 reflect = true）
     """
 
     def _parse_stream_config_to_chat_id(self, stream_config_str: str) -> Optional[str]:

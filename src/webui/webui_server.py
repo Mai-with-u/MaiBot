@@ -5,6 +5,7 @@ import asyncio
 import mimetypes
 from pathlib import Path
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from uvicorn import Config, Server as UvicornServer
 from src.common.logger import get_logger
@@ -20,19 +21,39 @@ class WebUIServer:
         self.port = port
         self.app = FastAPI(title="MaiBot WebUI")
         self._server = None
-        
+
+        # 配置 CORS（支持开发环境跨域请求）
+        self._setup_cors()
+
         # 显示 Access Token
         self._show_access_token()
-        
+
         # 重要：先注册 API 路由，再设置静态文件
         self._register_api_routes()
         self._setup_static_files()
+
+    def _setup_cors(self):
+        """配置 CORS 中间件"""
+        # 开发环境需要允许前端开发服务器的跨域请求
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[
+                "http://localhost:5173",  # Vite 开发服务器
+                "http://127.0.0.1:5173",
+                "http://localhost:8001",  # 生产环境
+                "http://127.0.0.1:8001",
+            ],
+            allow_credentials=True,  # 允许携带 Cookie
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        logger.debug("✅ CORS 中间件已配置")
 
     def _show_access_token(self):
         """显示 WebUI Access Token"""
         try:
             from src.webui.token_manager import get_token_manager
-            
+
             token_manager = get_token_manager()
             current_token = token_manager.get_token()
             logger.info(f"🔑 WebUI Access Token: {current_token}")
@@ -69,7 +90,7 @@ class WebUIServer:
             # 如果是根路径，直接返回 index.html
             if not full_path or full_path == "/":
                 return FileResponse(static_path / "index.html", media_type="text/html")
-            
+
             # 检查是否是静态文件
             file_path = static_path / full_path
             if file_path.is_file() and file_path.exists():
@@ -89,13 +110,26 @@ class WebUIServer:
             from src.webui.routes import router as webui_router
             from src.webui.logs_ws import router as logs_router
 
+            logger.info("开始导入 knowledge_routes...")
+            from src.webui.knowledge_routes import router as knowledge_router
+
+            logger.info("knowledge_routes 导入成功")
+
+            # 导入本地聊天室路由
+            from src.webui.chat_routes import router as chat_router
+
+            logger.info("chat_routes 导入成功")
+
             # 注册路由
             self.app.include_router(webui_router)
             self.app.include_router(logs_router)
+            self.app.include_router(knowledge_router)
+            self.app.include_router(chat_router)
+            logger.info(f"knowledge_router 路由前缀: {knowledge_router.prefix}")
 
             logger.info("✅ WebUI API 路由已注册")
         except Exception as e:
-            logger.error(f"❌ 注册 WebUI API 路由失败: {e}")
+            logger.error(f"❌ 注册 WebUI API 路由失败: {e}", exc_info=True)
 
     async def start(self):
         """启动服务器"""
@@ -110,6 +144,8 @@ class WebUIServer:
 
         logger.info("🌐 WebUI 服务器启动中...")
         logger.info(f"🌐 访问地址: http://{self.host}:{self.port}")
+        if self.host == "0.0.0.0":
+            logger.info(f"本机访问请使用 http://localhost:{self.port}")
 
         try:
             await self._server.serve()

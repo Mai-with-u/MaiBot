@@ -63,13 +63,15 @@ def format_create_date(timestamp: float) -> str:
 
 def _compute_weights(population: List[Dict]) -> List[float]:
     """
-    根据表达的count计算权重，范围限定在1~3之间。
-    count越高，权重越高，但最多为基础权重的3倍。
+    根据表达的count计算权重，范围限定在1~5之间。
+    count越高，权重越高，但最多为基础权重的5倍。
+    如果表达已checked，权重会再乘以3倍。
     """
     if not population:
         return []
 
     counts = []
+    checked_flags = []
     for item in population:
         count = item.get("count", 1)
         try:
@@ -77,18 +79,29 @@ def _compute_weights(population: List[Dict]) -> List[float]:
         except (TypeError, ValueError):
             count_value = 1.0
         counts.append(max(count_value, 0.0))
+        # 获取checked状态
+        checked = item.get("checked", False)
+        checked_flags.append(bool(checked))
 
     min_count = min(counts)
     max_count = max(counts)
 
     if max_count == min_count:
-        return [1.0 for _ in counts]
+        base_weights = [1.0 for _ in counts]
+    else:
+        base_weights = []
+        for count_value in counts:
+            # 线性映射到[1,5]区间
+            normalized = (count_value - min_count) / (max_count - min_count)
+            base_weights.append(1.0 + normalized * 4.0)  # 1~3
 
+    # 如果checked，权重乘以3
     weights = []
-    for count_value in counts:
-        # 线性映射到[1,3]区间
-        normalized = (count_value - min_count) / (max_count - min_count)
-        weights.append(1.0 + normalized * 2.0)  # 1~3
+    for base_weight, checked in zip(base_weights, checked_flags, strict=False):
+        if checked:
+            weights.append(base_weight * 3.0)
+        else:
+            weights.append(base_weight)
     return weights
 
 

@@ -117,7 +117,7 @@ class ConfigSchemaGenerator:
                         if next_line.startswith('"""') or next_line.startswith("'''"):
                             # 单行文档字符串
                             if next_line.count('"""') == 2 or next_line.count("'''") == 2:
-                                description_lines.append(next_line.strip('"""').strip("'''").strip())
+                                description_lines.append(next_line.replace('"""', "").replace("'''", "").strip())
                             else:
                                 # 多行文档字符串
                                 quote = '"""' if next_line.startswith('"""') else "'''"
@@ -135,7 +135,7 @@ class ConfigSchemaGenerator:
                         next_line = lines[i + 1].strip()
                         if next_line.startswith('"""') or next_line.startswith("'''"):
                             if next_line.count('"""') == 2 or next_line.count("'''") == 2:
-                                description_lines.append(next_line.strip('"""').strip("'''").strip())
+                                description_lines.append(next_line.replace('"""', "").replace("'''", "").strip())
                             else:
                                 quote = '"""' if next_line.startswith('"""') else "'''"
                                 description_lines.append(next_line.strip(quote).strip())
@@ -199,13 +199,13 @@ class ConfigSchemaGenerator:
             return FieldType.ARRAY, None, items
 
         # 处理基本类型
-        if field_type is bool or field_type == bool:
+        if field_type is bool:
             return FieldType.BOOLEAN, None, None
-        elif field_type is int or field_type == int:
+        elif field_type is int:
             return FieldType.INTEGER, None, None
-        elif field_type is float or field_type == float:
+        elif field_type is float:
             return FieldType.NUMBER, None, None
-        elif field_type is str or field_type == str:
+        elif field_type is str:
             return FieldType.STRING, None, None
         elif field_type is dict or origin is dict:
             return FieldType.OBJECT, None, None

@@ -8,18 +8,22 @@
     "url": "https://github.com/SengokuCola"
   },
   "license": "GPL-v3.0-or-later",
-  
   "host_application": {
     "min_version": "0.10.4"
   },
   "homepage_url": "https://github.com/SengokuCola/BetterEmoji",
   "repository_url": "https://github.com/SengokuCola/BetterEmoji",
-  "keywords": ["emoji", "manage", "plugin"],
-  "categories": ["Examples", "Tutorial"],
-  
+  "keywords": [
+    "emoji",
+    "manage",
+    "plugin"
+  ],
+  "categories": [
+    "Examples",
+    "Tutorial"
+  ],
   "default_locale": "zh-CN",
   "locales_path": "_locales",
-  
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "emoji_manage",
@@ -31,10 +35,17 @@
       },
       {
         "type": "action",
-        "name": "bye_greeting", 
+        "name": "bye_greeting",
         "description": "向用户发送告别消息",
-        "activation_modes": ["keyword"],
-        "keywords": ["再见", "bye", "88", "拜拜"]
+        "activation_modes": [
+          "keyword"
+        ],
+        "keywords": [
+          "再见",
+          "bye",
+          "88",
+          "拜拜"
+        ]
       },
       {
         "type": "command",
@@ -49,5 +60,6 @@
       "配置文件示例",
       "新手教程代码"
     ]
-  }
+  },
+  "id": "SengokuCola.BetterEmoji"
 }

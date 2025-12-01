@@ -12,6 +12,25 @@ from .tool_registry import register_memory_retrieval_tool
 logger = get_logger("memory_retrieval_tools")
 
 
+def _calculate_similarity(query: str, target: str) -> float:
+    """计算查询词在目标字符串中的相似度比例
+
+    Args:
+        query: 查询词
+        target: 目标字符串
+
+    Returns:
+        float: 相似度比例（0.0-1.0），查询词长度 / 目标字符串长度
+    """
+    if not query or not target:
+        return 0.0
+    query_len = len(query)
+    target_len = len(target)
+    if target_len == 0:
+        return 0.0
+    return query_len / target_len
+
+
 def _format_group_nick_names(group_nick_name_field) -> str:
     """格式化群昵称信息
 
@@ -81,11 +100,29 @@ async def query_person_info(person_name: str) -> str:
         if not records:
             return f"未找到模糊匹配'{person_name}'的用户信息"
 
+        # 根据相似度过滤结果：查询词在目标字符串中至少占50%
+        SIMILARITY_THRESHOLD = 0.5
+        filtered_records = []
+        for record in records:
+            if not record.person_name:
+                continue
+            # 精确匹配总是保留（相似度100%）
+            if record.person_name.strip() == person_name:
+                filtered_records.append(record)
+            else:
+                # 模糊匹配需要检查相似度
+                similarity = _calculate_similarity(person_name, record.person_name.strip())
+                if similarity >= SIMILARITY_THRESHOLD:
+                    filtered_records.append(record)
+
+        if not filtered_records:
+            return f"未找到相似度≥50%的匹配'{person_name}'的用户信息"
+
         # 区分精确匹配和模糊匹配的结果
         exact_matches = []
         fuzzy_matches = []
 
-        for record in records:
+        for record in filtered_records:
             # 检查是否是精确匹配
             if record.person_name and record.person_name.strip() == person_name:
                 exact_matches.append(record)
@@ -248,7 +285,7 @@ async def query_person_info(person_name: str) -> str:
         response_text = "\n\n---\n\n".join(results)
 
         # 添加统计信息
-        total_count = len(records)
+        total_count = len(filtered_records)
         exact_count = len(exact_matches)
         fuzzy_count = len(fuzzy_matches)
 

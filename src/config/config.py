@@ -11,6 +11,7 @@ from rich.traceback import install
 from typing import List, Optional
 
 from src.common.logger import get_logger
+from src.common.toml_utils import format_toml_string
 from src.config.config_base import ConfigBase
 from src.config.official_configs import (
     BotConfig,
@@ -56,7 +57,7 @@ TEMPLATE_DIR = os.path.join(PROJECT_ROOT, "template")
 
 # 考虑到，实际上配置文件中的mai_version是不会自动更新的,所以采用硬编码
 # 对该字段的更新，请严格参照语义化版本规范：https://semver.org/lang/zh-CN/
-MMC_VERSION = "0.11.5"
+MMC_VERSION = "0.11.6"
 
 
 def get_key_comment(toml_table, key):
@@ -252,7 +253,7 @@ def _update_config_generic(config_name: str, template_name: str):
             # 如果配置有更新，立即保存到文件
             if config_updated:
                 with open(old_config_path, "w", encoding="utf-8") as f:
-                    f.write(tomlkit.dumps(old_config))
+                    f.write(format_toml_string(old_config))
                 logger.info(f"已保存更新后的{config_name}配置文件")
         else:
             logger.info(f"未检测到{config_name}模板默认值变动")
@@ -313,9 +314,9 @@ def _update_config_generic(config_name: str, template_name: str):
     logger.info(f"开始合并{config_name}新旧配置...")
     _update_dict(new_config, old_config)
 
-    # 保存更新后的配置（保留注释和格式）
+    # 保存更新后的配置（保留注释和格式，数组多行格式化）
     with open(new_config_path, "w", encoding="utf-8") as f:
-        f.write(tomlkit.dumps(new_config))
+        f.write(format_toml_string(new_config))
     logger.info(f"{config_name}配置文件更新完成，建议检查新配置文件中的内容，以免丢失重要信息")
 
 

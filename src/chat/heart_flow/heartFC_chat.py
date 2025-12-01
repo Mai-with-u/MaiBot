@@ -18,6 +18,8 @@ from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.heart_flow.hfc_utils import CycleDetail
 from src.express.expression_learner import expression_learner_manager
 from src.chat.frequency_control.frequency_control import frequency_control_manager
+from src.express.reflect_tracker import reflect_tracker_manager
+from src.express.expression_reflector import expression_reflector_manager
 from src.jargon import extract_and_store_jargon
 from src.person_info.person_info import Person
 from src.plugin_system.base.component_types import EventType, ActionInfo
@@ -27,7 +29,7 @@ from src.chat.utils.chat_message_builder import (
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
 )
-from src.chat.utils.chat_history_summarizer import ChatHistorySummarizer
+from src.hippo_memorizer.chat_history_summarizer import ChatHistorySummarizer
 
 if TYPE_CHECKING:
     from src.common.data_models.database_data_model import DatabaseMessages
@@ -187,7 +189,8 @@ class HeartFChatting:
             limit=20,
             limit_mode="latest",
             filter_mai=True,
-            filter_command=True,
+            filter_command=False,
+            filter_no_read_command=True,
         )
 
         # 根据连续 no_reply 次数动态调整阈值
@@ -393,8 +396,21 @@ class HeartFChatting:
             recent_messages_list = []
         _reply_text = ""  # 初始化reply_text变量，避免UnboundLocalError
 
-        start_time = time.time()
+        # -------------------------------------------------------------------------
+        # ReflectTracker Check
+        # 在每次回复前检查一次上下文，看是否有反思问题得到了解答
+        # -------------------------------------------------------------------------
 
+        reflector = expression_reflector_manager.get_or_create_reflector(self.stream_id)
+        await reflector.check_and_ask()
+        tracker = reflect_tracker_manager.get_tracker(self.stream_id)
+        if tracker:
+            resolved = await tracker.trigger_tracker()
+            if resolved:
+                reflect_tracker_manager.remove_tracker(self.stream_id)
+                logger.info(f"{self.log_prefix} ReflectTracker resolved and removed.")
+
+        start_time = time.time()
         async with global_prompt_manager.async_message_scope(self.chat_stream.context.get_template_name()):
             asyncio.create_task(self.expression_learner.trigger_learning_for_chat())
             asyncio.create_task(
@@ -410,7 +426,9 @@ class HeartFChatting:
             # asyncio.create_task(self.chat_history_summarizer.process())
 
             cycle_timers, thinking_id = self.start_cycle()
-            logger.info(f"{self.log_prefix} 开始第{self._cycle_counter}次思考(频率: {global_config.chat.get_talk_value(self.stream_id)})")
+            logger.info(
+                f"{self.log_prefix} 开始第{self._cycle_counter}次思考(频率: {global_config.chat.get_talk_value(self.stream_id)})"
+            )
 
             # 第一步：动作检查
             available_actions: Dict[str, ActionInfo] = {}
@@ -467,6 +485,7 @@ class HeartFChatting:
                     chat_id=self.stream_id,
                     timestamp=time.time(),
                     limit=int(global_config.chat.max_context_size * 0.6),
+                    filter_no_read_command=True,
                 )
                 chat_content_block, message_id_list = build_readable_messages_with_id(
                     messages=message_list_before_now,
@@ -814,6 +833,7 @@ class HeartFChatting:
                         "result": f"你回复内容{reply_text}",
                         "loop_info": loop_info,
                     }
+
                 else:
                     # 执行普通动作
                     with Timer("动作执行", cycle_timers):

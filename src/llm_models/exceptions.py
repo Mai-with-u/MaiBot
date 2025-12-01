@@ -18,11 +18,12 @@ error_code_mapping = {
 class NetworkConnectionError(Exception):
     """连接异常，常见于网络问题或服务器不可用"""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, message: str | None = None):
+        super().__init__(message)
+        self.message = message
 
     def __str__(self):
-        return "连接异常，请检查网络连接状态或URL是否正确"
+        return self.message or "连接异常，请检查网络连接状态或URL是否正确"
 
 
 class ReqAbortException(Exception):

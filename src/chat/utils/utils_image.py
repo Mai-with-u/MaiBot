@@ -12,7 +12,7 @@ from rich.traceback import install
 
 from src.common.logger import get_logger
 from src.common.database.database import db
-from src.common.database.database_model import Images, ImageDescriptions
+from src.common.database.database_model import Images, ImageDescriptions, EmojiDescriptionCache
 from src.config.config import global_config, model_config
 from src.llm_models.utils_model import LLMRequest
 
@@ -40,7 +40,7 @@ class ImageManager:
 
             try:
                 db.connect(reuse_if_open=True)
-                db.create_tables([Images, ImageDescriptions], safe=True)
+                db.create_tables([Images, ImageDescriptions, EmojiDescriptionCache], safe=True)
             except Exception as e:
                 logger.error(f"数据库连接或表创建失败: {e}")
 
@@ -48,6 +48,11 @@ class ImageManager:
                 self._cleanup_invalid_descriptions()
             except Exception as e:
                 logger.warning(f"数据库清理失败: {e}")
+
+            try:
+                self._cleanup_emoji_from_image_descriptions()
+            except Exception as e:
+                logger.warning(f"清理ImageDescriptions中的emoji记录失败: {e}")
 
             self._initialized = True
 
@@ -119,6 +124,31 @@ class ImageManager:
         else:
             logger.info("[清理完成] 未发现无效描述记录")
 
+    @staticmethod
+    def _cleanup_emoji_from_image_descriptions():
+        """清理Images和ImageDescriptions表中type为emoji的记录（已迁移到EmojiDescriptionCache）"""
+        try:
+            # 清理Images表中type为emoji的记录
+            deleted_images = Images.delete().where(Images.type == "emoji").execute()
+            
+            # 清理ImageDescriptions表中type为emoji的记录
+            deleted_descriptions = (
+                ImageDescriptions.delete().where(ImageDescriptions.type == "emoji").execute()
+            )
+            
+            total_deleted = deleted_images + deleted_descriptions
+            if total_deleted > 0:
+                logger.info(
+                    f"[清理完成] 从Images表中删除 {deleted_images} 条emoji类型记录, "
+                    f"从ImageDescriptions表中删除 {deleted_descriptions} 条emoji类型记录, "
+                    f"共删除 {total_deleted} 条记录"
+                )
+            else:
+                logger.info("[清理完成] Images和ImageDescriptions表中未发现emoji类型记录")
+        except Exception as e:
+            logger.error(f"清理Images和ImageDescriptions中的emoji记录时出错: {str(e)}")
+            raise
+
     async def get_emoji_tag(self, image_base64: str) -> str:
         from src.chat.emoji_system.emoji_manager import get_emoji_manager
 
@@ -134,8 +164,49 @@ class ImageManager:
         tag_str = ",".join(emotion_list)
         return f"[表情包：{tag_str}]"
 
+    async def _save_emoji_file_if_needed(self, image_base64: str, image_hash: str, image_format: str) -> None:
+        """如果启用了steal_emoji且表情包未注册，保存文件到data/emoji目录
+        
+        Args:
+            image_base64: 图片的base64编码
+            image_hash: 图片的MD5哈希值
+            image_format: 图片格式
+        """
+        if not global_config.emoji.steal_emoji:
+            return
+        
+        try:
+            from src.chat.emoji_system.emoji_manager import EMOJI_DIR
+            from src.chat.emoji_system.emoji_manager import get_emoji_manager
+
+            # 确保目录存在
+            os.makedirs(EMOJI_DIR, exist_ok=True)
+
+            # 检查是否已存在该表情包（通过哈希值）
+            emoji_manager = get_emoji_manager()
+            existing_emoji = await emoji_manager.get_emoji_from_manager(image_hash)
+            if existing_emoji:
+                logger.debug(f"[自动保存] 表情包已注册，跳过保存: {image_hash[:8]}...")
+                return
+
+            # 生成文件名：使用哈希值前8位 + 格式
+            filename = f"{image_hash[:8]}.{image_format}"
+            file_path = os.path.join(EMOJI_DIR, filename)
+
+            # 检查文件是否已存在（可能之前保存过但未注册）
+            if not os.path.exists(file_path):
+                # 保存文件
+                if base64_to_image(image_base64, file_path):
+                    logger.info(f"[自动保存] 表情包已保存到 {file_path} (Hash: {image_hash[:8]}...)")
+                else:
+                    logger.warning(f"[自动保存] 保存表情包文件失败: {file_path}")
+            else:
+                logger.debug(f"[自动保存] 表情包文件已存在，跳过: {file_path}")
+        except Exception as save_error:
+            logger.warning(f"[自动保存] 保存表情包文件时出错: {save_error}")
+
     async def get_emoji_description(self, image_base64: str) -> str:
-        """获取表情包描述，优先使用Emoji表中的缓存数据"""
+        """获取表情包描述，优先使用EmojiDescriptionCache表中的缓存数据"""
         try:
             # 计算图片哈希
             # 确保base64字符串只包含ASCII字符
@@ -158,10 +229,25 @@ class ImageManager:
             except Exception as e:
                 logger.debug(f"查询EmojiManager时出错: {e}")
 
-            # 查询ImageDescriptions表的缓存描述
-            if cached_description := self._get_description_from_db(image_hash, "emoji"):
-                logger.info(f"[缓存命中] 使用ImageDescriptions表中的描述: {cached_description[:50]}...")
-                return f"[表情包：{cached_description}]"
+            # 查询EmojiDescriptionCache表的缓存（包含描述和情感标签）
+            try:
+                cache_record = EmojiDescriptionCache.get_or_none(EmojiDescriptionCache.emoji_hash == image_hash)
+                if cache_record:
+                    # 优先使用情感标签，如果没有则使用详细描述
+                    result_text = ""
+                    if cache_record.emotion_tags:
+                        logger.info(f"[缓存命中] 使用EmojiDescriptionCache表中的情感标签: {cache_record.emotion_tags[:50]}...")
+                        result_text = f"[表情包：{cache_record.emotion_tags}]"
+                    elif cache_record.description:
+                        logger.info(f"[缓存命中] 使用EmojiDescriptionCache表中的描述: {cache_record.description[:50]}...")
+                        result_text = f"[表情包：{cache_record.description}]"
+                    
+                    # 即使缓存命中，如果启用了steal_emoji，也检查是否需要保存文件
+                    if result_text:
+                        await self._save_emoji_file_if_needed(image_base64, image_hash, image_format)
+                        return result_text
+            except Exception as e:
+                logger.debug(f"查询EmojiDescriptionCache时出错: {e}")
 
             # === 二步走识别流程 ===
 
@@ -221,45 +307,38 @@ class ImageManager:
 
             logger.debug(f"[emoji识别] 详细描述: {detailed_description[:50]}... -> 情感标签: {final_emotion}")
 
-            if cached_description := self._get_description_from_db(image_hash, "emoji"):
-                logger.warning(f"虽然生成了描述，但是找到缓存表情包描述: {cached_description}")
-                return f"[表情包：{cached_description}]"
-
-            # 保存表情包文件和元数据（用于可能的后续分析）
-            logger.debug(f"保存表情包: {image_hash}")
-            current_timestamp = time.time()
-            filename = f"{int(current_timestamp)}_{image_hash[:8]}.{image_format}"
-            emoji_dir = os.path.join(self.IMAGE_DIR, "emoji")
-            os.makedirs(emoji_dir, exist_ok=True)
-            file_path = os.path.join(emoji_dir, filename)
-
+            # 再次检查缓存（防止并发情况下其他线程已经保存）
             try:
-                # 保存文件
-                with open(file_path, "wb") as f:
-                    f.write(image_bytes)
-
-                # 保存到数据库 (Images表) - 包含详细描述用于可能的注册流程
-                try:
-                    img_obj = Images.get((Images.emoji_hash == image_hash) & (Images.type == "emoji"))
-                    img_obj.path = file_path
-                    img_obj.description = detailed_description  # 保存详细描述
-                    img_obj.timestamp = current_timestamp
-                    img_obj.save()
-                except Images.DoesNotExist:  # type: ignore
-                    Images.create(
-                        image_id=str(uuid.uuid4()),
-                        emoji_hash=image_hash,
-                        path=file_path,
-                        type="emoji",
-                        description=detailed_description,  # 保存详细描述
-                        timestamp=current_timestamp,
-                        vlm_processed=True,
-                    )
+                cache_record = EmojiDescriptionCache.get_or_none(EmojiDescriptionCache.emoji_hash == image_hash)
+                if cache_record and cache_record.emotion_tags:
+                    logger.warning(f"虽然生成了描述，但是找到缓存表情包情感标签: {cache_record.emotion_tags}")
+                    return f"[表情包：{cache_record.emotion_tags}]"
             except Exception as e:
-                logger.error(f"保存表情包文件或元数据失败: {str(e)}")
+                logger.debug(f"再次查询EmojiDescriptionCache时出错: {e}")
 
-            # 保存最终的情感标签到缓存 (ImageDescriptions表)
-            self._save_description_to_db(image_hash, final_emotion, "emoji")
+            # 保存识别出的详细描述和情感标签到 emoji_description_cache
+            try:
+                current_timestamp = time.time()
+                cache_record, created = EmojiDescriptionCache.get_or_create(
+                    emoji_hash=image_hash,
+                    defaults={
+                        "description": detailed_description,
+                        "emotion_tags": final_emotion,
+                        "timestamp": current_timestamp,
+                    },
+                )
+                if not created:
+                    # 更新已有记录
+                    cache_record.description = detailed_description
+                    cache_record.emotion_tags = final_emotion
+                    cache_record.timestamp = current_timestamp
+                    cache_record.save()
+                logger.info(f"[缓存保存] 表情包描述和情感标签已保存到EmojiDescriptionCache: {image_hash[:8]}...")
+            except Exception as e:
+                logger.error(f"保存表情包描述和情感标签缓存失败: {str(e)}")
+
+            # 如果启用了steal_emoji，自动保存表情包文件到data/emoji目录
+            await self._save_emoji_file_if_needed(image_base64, image_hash, image_format)
 
             return f"[表情包：{final_emotion}]"
 

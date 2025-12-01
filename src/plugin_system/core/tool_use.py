@@ -95,7 +95,7 @@ class ToolExecutor:
 
         # 如果没有可用工具，直接返回空内容
         if not tools:
-            logger.info(f"{self.log_prefix}没有可用工具，直接返回空内容")
+            logger.debug(f"{self.log_prefix}没有可用工具，直接返回空内容")
             if return_details:
                 return [], [], ""
             else:

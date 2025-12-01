@@ -15,12 +15,57 @@ install(extra_lines=3)
 
 logger = get_logger("sender")
 
+# WebUI 聊天室的消息广播器（延迟导入避免循环依赖）
+_webui_chat_broadcaster = None
+
+
+def get_webui_chat_broadcaster():
+    """获取 WebUI 聊天室广播器"""
+    global _webui_chat_broadcaster
+    if _webui_chat_broadcaster is None:
+        try:
+            from src.webui.chat_routes import chat_manager, WEBUI_CHAT_PLATFORM
+
+            _webui_chat_broadcaster = (chat_manager, WEBUI_CHAT_PLATFORM)
+        except ImportError:
+            _webui_chat_broadcaster = (None, None)
+    return _webui_chat_broadcaster
+
 
 async def _send_message(message: MessageSending, show_log=True) -> bool:
     """合并后的消息发送函数，包含WS发送和日志记录"""
     message_preview = truncate_message(message.processed_plain_text, max_length=200)
+    platform = message.message_info.platform
 
     try:
+        # 检查是否是 WebUI 平台的消息
+        chat_manager, webui_platform = get_webui_chat_broadcaster()
+        if platform == webui_platform and chat_manager is not None:
+            # WebUI 聊天室消息，通过 WebSocket 广播
+            import time
+            from src.config.config import global_config
+
+            await chat_manager.broadcast(
+                {
+                    "type": "bot_message",
+                    "content": message.processed_plain_text,
+                    "message_type": "text",
+                    "timestamp": time.time(),
+                    "sender": {
+                        "name": global_config.bot.nickname,
+                        "avatar": None,
+                        "is_bot": True,
+                    },
+                }
+            )
+
+            # 注意：机器人消息会由 MessageStorage.store_message 自动保存到数据库
+            # 无需手动保存
+
+            if show_log:
+                logger.info(f"已将消息  '{message_preview}'  发往 WebUI 聊天室")
+            return True
+
         # 直接调用API发送消息
         await get_global_api().send_message(message)
         if show_log:

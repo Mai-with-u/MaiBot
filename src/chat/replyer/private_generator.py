@@ -37,6 +37,7 @@ from src.chat.replyer.prompt.lpmm_prompt import init_lpmm_prompt
 from src.chat.replyer.prompt.replyer_prompt import init_replyer_prompt
 from src.chat.replyer.prompt.rewrite_prompt import init_rewrite_prompt
 from src.memory_system.memory_retrieval import init_memory_retrieval_prompt, build_memory_retrieval_prompt
+from src.jargon.jargon_explainer import explain_jargon_in_context
 
 init_lpmm_prompt()
 init_replyer_prompt()
@@ -662,6 +663,7 @@ class PrivateReplyer:
             chat_id=chat_id,
             timestamp=time.time(),
             limit=global_config.chat.max_context_size,
+            filter_no_read_command=True,
         )
 
         dialogue_prompt = build_readable_messages(
@@ -676,6 +678,7 @@ class PrivateReplyer:
             chat_id=chat_id,
             timestamp=time.time(),
             limit=int(global_config.chat.max_context_size * 0.33),
+            filter_no_read_command=True,
         )
 
         person_list_short: List[Person] = []
@@ -706,7 +709,7 @@ class PrivateReplyer:
             show_actions=True,
         )
 
-        # 并行执行八个构建任务
+        # 并行执行九个构建任务（包括黑话解释）
         task_results = await asyncio.gather(
             self._time_and_run_task(
                 self.build_expression_habits(chat_talking_prompt_short, target, reply_reason), "expression_habits"
@@ -725,6 +728,10 @@ class PrivateReplyer:
                 ),
                 "memory_retrieval",
             ),
+            self._time_and_run_task(
+                explain_jargon_in_context(chat_id, message_list_before_short, chat_talking_prompt_short),
+                "jargon_explanation",
+            ),
         )
 
         # 任务名称中英文映射
@@ -737,6 +744,7 @@ class PrivateReplyer:
             "personality_prompt": "人格信息",
             "mood_state_prompt": "情绪状态",
             "memory_retrieval": "记忆检索",
+            "jargon_explanation": "黑话解释",
         }
 
         # 处理结果
@@ -752,8 +760,6 @@ class PrivateReplyer:
                 continue
 
             timing_logs.append(f"{chinese_name}: {duration:.1f}s")
-            if duration > 12:
-                logger.warning(f"回复生成前信息获取耗时过长: {chinese_name} 耗时: {duration:.1f}s，请使用更快的模型")
         logger.info(f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s")
 
         expression_habits_block, selected_expressions = results_dict["expression_habits"]
@@ -767,6 +773,7 @@ class PrivateReplyer:
         mood_state_prompt: str = results_dict["mood_state_prompt"]
         memory_retrieval: str = results_dict["memory_retrieval"]
         keywords_reaction_prompt = await self.build_keywords_reaction_prompt(target)
+        jargon_explanation: str = results_dict.get("jargon_explanation") or ""
 
         # 从 chosen_actions 中提取 planner 的整体思考理由
         planner_reasoning = ""
@@ -813,6 +820,7 @@ class PrivateReplyer:
                 identity=personality_prompt,
                 action_descriptions=actions_info,
                 dialogue_prompt=dialogue_prompt,
+                jargon_explanation=jargon_explanation,
                 time_block=time_block,
                 target=target,
                 reason=reply_reason,
@@ -835,6 +843,7 @@ class PrivateReplyer:
                 identity=personality_prompt,
                 action_descriptions=actions_info,
                 dialogue_prompt=dialogue_prompt,
+                jargon_explanation=jargon_explanation,
                 time_block=time_block,
                 reply_target_block=reply_target_block,
                 reply_style=global_config.personality.reply_style,
@@ -869,6 +878,7 @@ class PrivateReplyer:
             chat_id=chat_id,
             timestamp=time.time(),
             limit=min(int(global_config.chat.max_context_size * 0.33), 15),
+            filter_no_read_command=True,
         )
         chat_talking_prompt_half = build_readable_messages(
             message_list_before_now_half,
