@@ -3,6 +3,7 @@ import hashlib
 import time
 import copy
 from typing import Dict, Optional, TYPE_CHECKING
+from collections import OrderedDict
 from rich.traceback import install
 from maim_message import GroupInfo, UserInfo
 
@@ -19,6 +20,9 @@ install(extra_lines=3)
 
 
 logger = get_logger("chat_stream")
+
+# LRU + TTL 配置
+MAX_LAST_MESSAGES_CACHE = 5000  # 最大缓存消息数
 
 
 class ChatMessageContext:
@@ -127,7 +131,8 @@ class ChatManager:
     def __init__(self):
         if not self._initialized:
             self.streams: Dict[str, ChatStream] = {}  # stream_id -> ChatStream
-            self.last_messages: Dict[str, "MessageRecv"] = {}  # stream_id -> last_message
+            self.last_messages: OrderedDict[str, "MessageRecv"] = OrderedDict()  # stream_id -> last_message
+            self.last_message_timestamps: Dict[str, float] = {}  # stream_id -> timestamp
             try:
                 db.connect(reuse_if_open=True)
                 # 确保 ChatStreams 表存在
@@ -167,6 +172,15 @@ class ChatManager:
             message.message_info.group_info,
         )
         self.last_messages[stream_id] = message
+        self.last_messages.move_to_end(stream_id)  
+        self.last_message_timestamps[stream_id] = time.time()
+        
+        # LRU 
+        if len(self.last_messages) > MAX_LAST_MESSAGES_CACHE:
+            oldest_key, _ = self.last_messages.popitem(last=False)  
+            self.last_message_timestamps.pop(oldest_key, None)
+            logger.debug(f"LRU 淘汰: 移除最老的消息 {oldest_key}，当前缓存数: {len(self.last_messages)}")
+        
         # logger.debug(f"注册消息到聊天流: {stream_id}")
 
     @staticmethod
