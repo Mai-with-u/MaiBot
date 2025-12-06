@@ -25,24 +25,25 @@ logger = get_logger("expressor")
 
 
 def init_prompt() -> None:
-    learn_style_prompt = """{chat_str}
+    learn_style_prompt = f"""{{chat_str}}
 
 请从上面这段群聊中概括除了人名为"SELF"之外的人的语言风格。
 每一行消息前面的方括号中的数字（如 [1]、[2]）是该行消息的唯一编号，请在输出中引用这些编号来标注“表达方式的来源行”。
 1. 只考虑文字，不要考虑表情包和图片
 2. 不要涉及具体的人名，但是可以涉及具体名词
 3. 思考有没有特殊的梗，一并总结成语言风格
-4. 例子仅供参考，请严格根据群聊内容总结!!!
+4. 必须符合"{global_config.expression.filtration_prompt}"的要求
+5. 例子仅供参考，请严格根据群聊内容总结!!!
 注意：总结成如下格式的规律，总结的内容要详细，但具有概括性：
 例如：当"AAAAA"时，可以"BBBBB", AAAAA代表某个具体的场景，不超过20个字。BBBBB代表对应的语言风格，特定句式或表达方式，不超过20个字。
 
 请严格以 JSON 数组的形式输出结果，每个元素为一个对象，结构如下（注意字段名）：
 [
-  {{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}},
-  {{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}
-  {{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}},
-  {{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}},
-  {{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}},
+  {{{{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}}}},
+  {{{{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}}}
+  {{{{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}}}},
+  {{{{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}}}},
+  {{{{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}}}},
 ]
 
 请注意：

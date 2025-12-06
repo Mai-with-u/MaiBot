@@ -1,5 +1,5 @@
 [inner]
-version = "7.0.2"
+version = "7.0.3"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 # 如果你想要修改配置文件，请递增version的值
@@ -80,6 +80,8 @@ expression_groups = [
     # ["qq:123456:private","qq:654321:group"] - 特定互通组，组内chat_id共享表达方式
     # 注意：如果为群聊，则需要设置为group，如果设置为私聊，则需要设置为private
 ]
+
+filtration_prompt = "不要奇怪的、令人反感的" # 表达风格过滤要求，只有符合该要求的表达风格才会被保存
 
 reflect = false # 是否启用表达反思（Bot主动向管理员询问表达方式是否合适）
 reflect_operator_id = "" # 表达反思操作员ID，格式：platform:id:type (例如 "qq:123456:private" 或 "qq:654321:group")
