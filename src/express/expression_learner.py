@@ -57,7 +57,6 @@ def init_prompt() -> None:
 
 现在请你输出 JSON：
 """
-    print(learn_style_prompt)
     Prompt(learn_style_prompt, "learn_style_prompt")
 
 
