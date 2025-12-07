@@ -90,7 +90,6 @@ def init_prompt() -> None:
 
 现在请你输出 JSON：
 """
-    print(learn_style_prompt)
     Prompt(learn_style_prompt, "learn_style_prompt")
 
 
@@ -354,9 +353,74 @@ class ExpressionLearner:
                     parsed = json.loads(repaired)
                 else:
                     parsed = repaired
-        except Exception:
-            logger.error(f"解析表达风格 JSON 失败，原始响应：{response}")
-            return []
+        except Exception as parse_error:
+            # 如果解析失败，尝试修复中文引号问题
+            # 使用状态机方法，在 JSON 字符串值内部将中文引号替换为转义的英文引号
+            try:
+                def fix_chinese_quotes_in_json(text):
+                    """使用状态机修复 JSON 字符串值中的中文引号"""
+                    result = []
+                    i = 0
+                    in_string = False
+                    escape_next = False
+                    
+                    while i < len(text):
+                        char = text[i]
+                        
+                        if escape_next:
+                            # 当前字符是转义字符后的字符，直接添加
+                            result.append(char)
+                            escape_next = False
+                            i += 1
+                            continue
+                        
+                        if char == '\\':
+                            # 转义字符
+                            result.append(char)
+                            escape_next = True
+                            i += 1
+                            continue
+                        
+                        if char == '"' and not escape_next:
+                            # 遇到英文引号，切换字符串状态
+                            in_string = not in_string
+                            result.append(char)
+                            i += 1
+                            continue
+                        
+                        if in_string:
+                            # 在字符串值内部，将中文引号替换为转义的英文引号
+                            if char == '"':  # 中文左引号
+                                result.append('\\"')
+                            elif char == '"':  # 中文右引号
+                                result.append('\\"')
+                            else:
+                                result.append(char)
+                        else:
+                            # 不在字符串内，直接添加
+                            result.append(char)
+                        
+                        i += 1
+                    
+                    return ''.join(result)
+                
+                fixed_raw = fix_chinese_quotes_in_json(raw)
+                
+                # 再次尝试解析
+                if fixed_raw.startswith("[") and fixed_raw.endswith("]"):
+                    parsed = json.loads(fixed_raw)
+                else:
+                    repaired = repair_json(fixed_raw)
+                    if isinstance(repaired, str):
+                        parsed = json.loads(repaired)
+                    else:
+                        parsed = repaired
+            except Exception as fix_error:
+                logger.error(f"解析表达风格 JSON 失败，初始错误: {type(parse_error).__name__}: {str(parse_error)}")
+                logger.error(f"修复中文引号后仍失败，错误: {type(fix_error).__name__}: {str(fix_error)}")
+                logger.error(f"解析表达风格 JSON 失败，原始响应：{response}")
+                logger.error(f"处理后的 JSON 字符串（前500字符）：{raw[:500]}")
+                return []
 
         if isinstance(parsed, dict):
             parsed_list = [parsed]
