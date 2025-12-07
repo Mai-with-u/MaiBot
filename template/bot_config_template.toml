@@ -81,6 +81,7 @@ expression_groups = [
     # 注意：如果为群聊，则需要设置为group，如果设置为私聊，则需要设置为private
 ]
 
+content_filtration = false # 是否启用表达风格过滤，只有符合要求的表达风格才会被保存
 filtration_prompt = "不要奇怪的、令人反感的" # 表达风格过滤要求，只有符合该要求的表达风格才会被保存
 
 reflect = false # 是否启用表达反思（Bot主动向管理员询问表达方式是否合适）

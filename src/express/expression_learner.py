@@ -25,12 +25,13 @@ logger = get_logger("expressor")
 
 
 def init_prompt() -> None:
-    learn_style_prompt = f"""{{chat_str}}
+    if global_config.expression.content_filtration:
+        learn_style_prompt = """{chat_str}
 
 请从上面这段群聊中概括除了人名为"SELF"之外的人的语言风格。
 每一行消息前面的方括号中的数字（如 [1]、[2]）是该行消息的唯一编号，请在输出中引用这些编号来标注“表达方式的来源行”。
 1. 只考虑文字，不要考虑表情包和图片
-2. 不要涉及具体的人名，但是可以涉及具体名词
+2. 不要涉及具体的名称、事件以及话题内容，但是可以涉及具体名词
 3. 思考有没有特殊的梗，一并总结成语言风格
 4. 必须符合"{global_config.expression.filtration_prompt}"的要求
 5. 例子仅供参考，请严格根据群聊内容总结!!!
@@ -39,11 +40,11 @@ def init_prompt() -> None:
 
 请严格以 JSON 数组的形式输出结果，每个元素为一个对象，结构如下（注意字段名）：
 [
-  {{{{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}}}},
-  {{{{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}}}
-  {{{{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}}}},
-  {{{{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}}}},
-  {{{{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}}}},
+  {{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}},
+  {{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}
+  {{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}},
+  {{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}},
+  {{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}},
 ]
 
 请注意：
@@ -57,6 +58,39 @@ def init_prompt() -> None:
 
 现在请你输出 JSON：
 """
+    else:
+        learn_style_prompt = """{chat_str}
+
+请从上面这段群聊中概括除了人名为"SELF"之外的人的语言风格。
+每一行消息前面的方括号中的数字（如 [1]、[2]）是该行消息的唯一编号，请在输出中引用这些编号来标注“表达方式的来源行”。
+1. 只考虑文字，不要考虑表情包和图片
+2. 不要涉及具体的名称、事件以及话题内容，但是可以涉及具体名词
+3. 思考有没有特殊的梗，一并总结成语言风格
+4. 例子仅供参考，请严格根据群聊内容总结!!!
+注意：总结成如下格式的规律，总结的内容要详细，但具有概括性：
+例如：当"AAAAA"时，可以"BBBBB", AAAAA代表某个具体的场景，不超过20个字。BBBBB代表对应的语言风格，特定句式或表达方式，不超过20个字。
+
+请严格以 JSON 数组的形式输出结果，每个元素为一个对象，结构如下（注意字段名）：
+[
+  {{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}},
+  {{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}
+  {{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}},
+  {{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}},
+  {{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}},
+]
+
+请注意：
+- 不要总结你自己（SELF）的发言，尽量保证总结内容的逻辑性
+- 请只针对最重要的若干条表达方式进行总结，避免输出太多重复或相似的条目
+
+其中：
+- situation：表示“在什么情境下”的简短概括（不超过20个字）
+- style：表示对应的语言风格或常用表达（不超过20个字）
+- source_id：该表达方式对应的“来源行编号”，即上方聊天记录中方括号里的数字（例如 [3]），请只输出数字本身，不要包含方括号
+
+现在请你输出 JSON：
+"""
+    print(learn_style_prompt)
     Prompt(learn_style_prompt, "learn_style_prompt")
 
 
@@ -320,74 +354,9 @@ class ExpressionLearner:
                     parsed = json.loads(repaired)
                 else:
                     parsed = repaired
-        except Exception as parse_error:
-            # 如果解析失败，尝试修复中文引号问题
-            # 使用状态机方法，在 JSON 字符串值内部将中文引号替换为转义的英文引号
-            try:
-                def fix_chinese_quotes_in_json(text):
-                    """使用状态机修复 JSON 字符串值中的中文引号"""
-                    result = []
-                    i = 0
-                    in_string = False
-                    escape_next = False
-                    
-                    while i < len(text):
-                        char = text[i]
-                        
-                        if escape_next:
-                            # 当前字符是转义字符后的字符，直接添加
-                            result.append(char)
-                            escape_next = False
-                            i += 1
-                            continue
-                        
-                        if char == '\\':
-                            # 转义字符
-                            result.append(char)
-                            escape_next = True
-                            i += 1
-                            continue
-                        
-                        if char == '"' and not escape_next:
-                            # 遇到英文引号，切换字符串状态
-                            in_string = not in_string
-                            result.append(char)
-                            i += 1
-                            continue
-                        
-                        if in_string:
-                            # 在字符串值内部，将中文引号替换为转义的英文引号
-                            if char == '"':  # 中文左引号
-                                result.append('\\"')
-                            elif char == '"':  # 中文右引号
-                                result.append('\\"')
-                            else:
-                                result.append(char)
-                        else:
-                            # 不在字符串内，直接添加
-                            result.append(char)
-                        
-                        i += 1
-                    
-                    return ''.join(result)
-                
-                fixed_raw = fix_chinese_quotes_in_json(raw)
-                
-                # 再次尝试解析
-                if fixed_raw.startswith("[") and fixed_raw.endswith("]"):
-                    parsed = json.loads(fixed_raw)
-                else:
-                    repaired = repair_json(fixed_raw)
-                    if isinstance(repaired, str):
-                        parsed = json.loads(repaired)
-                    else:
-                        parsed = repaired
-            except Exception as fix_error:
-                logger.error(f"解析表达风格 JSON 失败，初始错误: {type(parse_error).__name__}: {str(parse_error)}")
-                logger.error(f"修复中文引号后仍失败，错误: {type(fix_error).__name__}: {str(fix_error)}")
-                logger.error(f"解析表达风格 JSON 失败，原始响应：{response}")
-                logger.error(f"处理后的 JSON 字符串（前500字符）：{raw[:500]}")
-                return []
+        except Exception:
+            logger.error(f"解析表达风格 JSON 失败，原始响应：{response}")
+            return []
 
         if isinstance(parsed, dict):
             parsed_list = [parsed]

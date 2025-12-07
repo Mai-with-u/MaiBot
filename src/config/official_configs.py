@@ -306,8 +306,11 @@ class ExpressionConfig(ConfigBase):
     格式: [["qq:12345:group", "qq:67890:private"]]
     """
 
+    content_filtration: bool = False
+    """是否启用表达风格过滤"""
+
     filtration_prompt: str = "不要奇怪的、令人反感的"
-    """表达风格过滤要求，只有符合该要求的表达风格才会被保存"""
+    """表达风格过滤条件"""
 
     reflect: bool = False
     """是否启用表达反思"""
