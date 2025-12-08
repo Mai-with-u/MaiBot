@@ -258,6 +258,11 @@ def main():
     try:
         # 在新的事件循环中运行异步主函数
         loop.run_until_complete(main_async())
+        print(
+            "\n[NOTICE] OpenIE 导入脚本执行完毕。如主程序（聊天 / WebUI）已在运行，"
+            "请重启主程序，或在主程序内部调用一次 lpmm_start_up() 以应用最新 LPMM 知识库。"
+        )
+        print("[NOTICE] 如果不清楚 lpmm_start_up 是什么，直接重启主程序即可。")
     finally:
         # 确保事件循环被正确关闭
         if not loop.is_closed():

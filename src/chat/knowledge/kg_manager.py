@@ -1,7 +1,8 @@
 import json
 import os
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Set
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pandas as pd
@@ -98,6 +99,28 @@ class KGManager:
         # 加载KG
         self.graph = di_graph.load_from_file(self.graph_data_path)
 
+    def _rebuild_metadata_from_graph(self) -> None:
+        """根据当前图重建 stored_paragraph_hashes 与 ent_appear_cnt"""
+        nodes = self.graph.get_node_list()
+        edges = self.graph.get_edge_list()
+
+        # 段落 hash：paragraph-{hash}
+        self.stored_paragraph_hashes = set()
+        for node_id in nodes:
+            if node_id.startswith("paragraph-"):
+                self.stored_paragraph_hashes.add(node_id.split("paragraph-", 1)[1])
+
+        # 实体出现次数：基于 entity -> paragraph 的边权
+        ent_appear_cnt: Dict[str, float] = {}
+        for edge_tuple in edges:
+            src, tgt = edge_tuple[0], edge_tuple[1]
+            if src.startswith("entity") and tgt.startswith("paragraph"):
+                edge_data = self.graph[src, tgt]
+                weight = edge_data["weight"] if "weight" in edge_data else 1.0
+                ent_appear_cnt[src] = ent_appear_cnt.get(src, 0.0) + float(weight)
+
+        self.ent_appear_cnt = ent_appear_cnt
+
     def _build_edges_between_ent(
         self,
         node_to_node: Dict[Tuple[str, str], float],
@@ -149,6 +172,13 @@ class KGManager:
                 ent_hash_list.add("entity" + "-" + get_sha256(triple[0]))
                 ent_hash_list.add("entity" + "-" + get_sha256(triple[2]))
         ent_hash_list = list(ent_hash_list)
+        # 性能保护：限制同义连接的实体数量
+        max_synonym_entities = global_config.lpmm_knowledge.max_synonym_entities
+        if max_synonym_entities and len(ent_hash_list) > max_synonym_entities:
+            logger.warning(
+                f"同义连接实体数 {len(ent_hash_list)} 超过阈值 {max_synonym_entities}，跳过同义边构建以保护性能"
+            )
+            return 0
 
         synonym_hash_set = set()
         synonym_result = {}
@@ -329,6 +359,14 @@ class KGManager:
             embed_manager: EmbeddingManager对象
         """
         # 图中存在的节点总集
+                # 性能保护：超限或关闭时直接返回向量检索结果
+        if (
+            not global_config.lpmm_knowledge.enable_ppr
+            or len(self.graph.get_node_list()) > global_config.lpmm_knowledge.ppr_node_cap
+            or len(relation_search_result) > global_config.lpmm_knowledge.ppr_relation_cap
+        ):
+            logger.info("PPR 已禁用或超出阈值，使用纯向量检索结果")
+            return paragraph_search_result, None
         existed_nodes = self.graph.get_node_list()
 
         # 准备PPR使用的数据
@@ -357,7 +395,15 @@ class KGManager:
         ent_mean_scores = {}  # 记录实体的平均相似度
         for ent_hash, scores in ent_sim_scores.items():
             # 先对相似度进行累加，然后与实体计数相除获取最终权重
-            ent_weights[ent_hash] = float(np.sum(scores)) / self.ent_appear_cnt[ent_hash]
+            # 保护：有些实体在当前图中可能只有实体-实体关系，不会出现在 ent_appear_cnt 中
+            appear_cnt = self.ent_appear_cnt.get(ent_hash)
+            if not appear_cnt or appear_cnt <= 0:
+                logger.debug(
+                    f"实体 {ent_hash} 在 ent_appear_cnt 中不存在或计数为 0，"
+                    f"将使用 1.0 作为默认出现次数参与权重计算"
+                )
+                appear_cnt = 1.0
+            ent_weights[ent_hash] = float(np.sum(scores)) / float(appear_cnt)
             # 记录实体的平均相似度，用于后续的top_k筛选
             ent_mean_scores[ent_hash] = float(np.mean(scores))
         del ent_sim_scores
@@ -434,3 +480,115 @@ class KGManager:
         passage_node_res = sorted(passage_node_res, key=lambda item: item[1], reverse=True)
 
         return passage_node_res, ppr_node_weights
+
+    def delete_paragraphs(
+        self,
+        pg_hashes: List[str],
+        ent_hashes: List[str] | None = None,
+        remove_orphan_entities: bool = False,
+    ) -> Dict[str, int]:
+        """删除段落/实体节点及相关边（基于 GraphML），可选清理孤立实体，并重建元数据"""
+        # 要删除的节点 ID
+        nodes_to_delete: Set[str] = {f"paragraph-{h}" for h in pg_hashes}
+        if ent_hashes:
+            nodes_to_delete.update({f"entity-{h}" for h in ent_hashes})
+
+        if not os.path.exists(self.graph_data_path):
+            raise FileNotFoundError(f"KG图文件{self.graph_data_path}不存在")
+
+        tree = ET.parse(self.graph_data_path)
+        root = tree.getroot()
+
+        # GraphML 可能带命名空间，用尾缀判断
+        def is_node(elem: ET.Element) -> bool:
+            return elem.tag.endswith("node")
+
+        def is_edge(elem: ET.Element) -> bool:
+            return elem.tag.endswith("edge")
+
+        graph_elem = None
+        for child in root:
+            if child.tag.endswith("graph"):
+                graph_elem = child
+                break
+        if graph_elem is None:
+            raise RuntimeError("GraphML 中未找到 <graph> 节点")
+
+        # 统计现有节点
+        existing_nodes: Set[str] = set()
+        for elem in graph_elem:
+            if is_node(elem):
+                node_id = elem.get("id")
+                if node_id:
+                    existing_nodes.add(node_id)
+
+        deleted_nodes = len(nodes_to_delete & existing_nodes)
+        skipped_nodes = len(nodes_to_delete - existing_nodes)
+
+        # 先删除指定节点及相关边
+        # 删除节点
+        for elem in list(graph_elem):
+            if is_node(elem):
+                node_id = elem.get("id")
+                if node_id and node_id in nodes_to_delete:
+                    graph_elem.remove(elem)
+
+        # 删除 incident edges
+        for elem in list(graph_elem):
+            if is_edge(elem):
+                src = elem.get("source")
+                tgt = elem.get("target")
+                if src in nodes_to_delete or tgt in nodes_to_delete:
+                    graph_elem.remove(elem)
+
+        orphan_removed = 0
+        if remove_orphan_entities:
+            # 计算仍然参与边的节点
+            used_nodes: Set[str] = set()
+            for elem in graph_elem:
+                if is_edge(elem):
+                    src = elem.get("source")
+                    tgt = elem.get("target")
+                    if src:
+                        used_nodes.add(src)
+                    if tgt:
+                        used_nodes.add(tgt)
+
+            # 找出没有任何边的实体节点
+            orphan_entities: Set[str] = set()
+            for elem in graph_elem:
+                if is_node(elem):
+                    node_id = elem.get("id")
+                    if node_id and node_id.startswith("entity") and node_id not in used_nodes:
+                        orphan_entities.add(node_id)
+
+            orphan_removed = len(orphan_entities)
+
+            if orphan_entities:
+                # 删除孤立实体节点
+                for elem in list(graph_elem):
+                    if is_node(elem):
+                        node_id = elem.get("id")
+                        if node_id in orphan_entities:
+                            graph_elem.remove(elem)
+
+                # 删除与孤立实体相关的边（理论上已无，但做一次防御性清理）
+                for elem in list(graph_elem):
+                    if is_edge(elem):
+                        src = elem.get("source")
+                        tgt = elem.get("target")
+                        if src in orphan_entities or tgt in orphan_entities:
+                            graph_elem.remove(elem)
+
+        # 写回 GraphML
+        tree.write(self.graph_data_path, encoding="utf-8", xml_declaration=True)
+
+        # 重新加载图并重建元数据
+        self.graph = di_graph.load_from_file(self.graph_data_path)
+        self._rebuild_metadata_from_graph()
+
+        return {
+            "deleted": deleted_nodes,
+            "skipped": skipped_nodes,
+            "orphan_removed": orphan_removed,
+        }

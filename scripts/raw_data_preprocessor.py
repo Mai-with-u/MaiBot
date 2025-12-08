@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
 import sys  # 新增系统模块导入
-from src.chat.knowledge.utils.hash import get_sha256
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.chat.knowledge.utils.hash import get_sha256
 from src.common.logger import get_logger
 
 logger = get_logger("lpmm")
@@ -59,10 +59,11 @@ def load_raw_data() -> tuple[list[str], list[str]]:
         - raw_data: 原始数据列表
         - sha256_list: 原始数据的SHA256集合
     """
-    raw_data = _process_multi_files()
+    raw_paragraphs = _process_multi_files()
     sha256_list = []
     sha256_set = set()
-    for item in raw_data:
+    raw_data: list[str] = []
+    for item in raw_paragraphs:
         if not isinstance(item, str):
             logger.warning(f"数据类型错误：{item}")
             continue

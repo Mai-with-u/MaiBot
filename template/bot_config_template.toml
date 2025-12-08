@@ -171,24 +171,28 @@ ban_msgs_regex = [
 [lpmm_knowledge] # lpmm知识库配置
 enable = false # 是否启用lpmm知识库
 lpmm_mode = "agent"
-# 可选：classic经典模式，agent 模式，结合最新的记忆一同使用
-rag_synonym_search_top_k = 10 # 同义词搜索TopK
-rag_synonym_threshold = 0.8 # 同义词阈值（相似度高于此阈值的词语会被认为是同义词）
-info_extraction_workers = 3 # 实体提取同时执行线程数，非Pro模型不要设置超过5
-qa_relation_search_top_k = 10 # 关系搜索TopK
-qa_relation_threshold = 0.5 # 关系阈值（相似度高于此阈值的关系会被认为是相关的关系）
-qa_paragraph_search_top_k = 1000 # 段落搜索TopK（不能过小，可能影响搜索结果）
+# 可选择classic传统模式/agent 模式，结合新的记忆一同使用
+rag_synonym_search_top_k = 10 # 同义检索TopK
+rag_synonym_threshold = 0.8 # 同义阈值，相似度高于该值的关系会被当作同义词
+info_extraction_workers = 3 # 实体抽取同时执行线程数，非Pro模型不要设置超过5
+qa_relation_search_top_k = 10 # 关系检索TopK
+qa_relation_threshold = 0.5 # 关系阈值，相似度高于该值的关系会被认为是相关关系
+qa_paragraph_search_top_k = 1000 # 段落检索TopK（不能过小，可能影响搜索结果）
 qa_paragraph_node_weight = 0.05 # 段落节点权重（在图搜索&PPR计算中的权重，当搜索仅使用DPR时，此参数不起作用）
 qa_ent_filter_top_k = 10 # 实体过滤TopK
 qa_ppr_damping = 0.8 # PPR阻尼系数
-qa_res_top_k = 3 # 最终提供的文段TopK
-embedding_dimension = 1024 # 嵌入向量维度,应该与模型的输出维度一致
+qa_res_top_k = 3 # 最终提供段落TopK
+embedding_dimension = 1024 # 嵌入向量维度,输出维度一致
+# 性能与降级参数（低配机器可下调）
+# 低配机器参考：单/双核或内存≤4GB（如轻量云主机/云函数/开发板），建议先关闭PPR并降低并发
+max_embedding_workers = 3 # 嵌入/抽取并发线程数
+embedding_chunk_size = 4 # 每批嵌入的条数
+max_synonym_entities = 2000 # 同义边参与的实体数上限，超限则跳过
+enable_ppr = true # 是否启用PPR，低配机器可关闭
+ppr_node_cap = 8000 # 图节点数超过该值时跳过PPR
+ppr_relation_cap = 50 # 命中关系数超过该值时跳过PPR
+webui_graph_default_limit = 200 # WebUI /graph 默认返回的最大节点数，避免大图负载
 
-# keyword_rules 用于设置关键词触发的额外回复知识
-# 添加新规则方法：在 keyword_rules 数组中增加一项，格式如下：
-# { keywords = ["关键词1", "关键词2"], reaction = "触发这些关键词时的回复内容" }
-# 例如，添加一个新规则：当检测到“你好”或“hello”时回复“你好，有什么可以帮你？”
-# { keywords = ["你好", "hello"], reaction = "你好，有什么可以帮你？" }
 [keyword_reaction]
 keyword_rules = [
     { keywords = ["人机", "bot", "机器", "入机", "robot", "机器人", "ai", "AI"], reaction = "有人说你是人机或者机器人，否定这一事实，攻击或反问他。注意，只有认为你是机器人才回复，否则不要否认" },

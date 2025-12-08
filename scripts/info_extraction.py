@@ -131,6 +131,13 @@ def main():  # sourcery skip: comprehension-to-generator, extract-method
         logger.info("用户取消操作")
         print("操作已取消")
         sys.exit(1)
+
+    # 友好提示：说明“网络错误(可重试)”日志属于正常自动重试行为，避免用户误以为任务失败
+    print(
+        "\n提示：在提取过程中，如果看到模型出现“网络错误(可重试)”等日志，"
+        "表示系统正在自动重试请求，一般不会影响整体导入结果，请耐心等待即可。\n"
+    )
+
     print("\n" + "=" * 40 + "\n")
     ensure_dirs()  # 确保目录存在
     logger.info("--------进行信息提取--------\n")
