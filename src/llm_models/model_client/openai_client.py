@@ -447,8 +447,20 @@ def _default_normal_response_parser(
         for call in message_part.tool_calls:
             try:
                 arguments = json.loads(repair_json(call.function.arguments))
+                # 【新增修复逻辑】如果解析出来还是字符串，说明发生了双重编码，尝试二次解析
+                if isinstance(arguments, str):
+                    try:
+                        # 尝试对字符串内容再次进行修复和解析
+                        arguments = json.loads(repair_json(arguments))
+                    except Exception:
+                        # 如果二次解析失败，保留原值，让下方的 isinstance(dict) 抛出更具体的错误
+                        pass
                 if not isinstance(arguments, dict):
-                    raise RespParseException(resp, "响应解析失败，工具调用参数无法解析为字典类型")
+                    # 此时为了调试方便，建议打印出 arguments 的类型
+                    raise RespParseException(
+                        resp, 
+                        f"响应解析失败，工具调用参数无法解析为字典类型 type={type(arguments)} arguments={arguments}"
+                    )
                 api_response.tool_calls.append(ToolCall(call.id, call.function.name, arguments))
             except json.JSONDecodeError as e:
                 raise RespParseException(resp, "响应解析失败，无法解析工具调用参数") from e
