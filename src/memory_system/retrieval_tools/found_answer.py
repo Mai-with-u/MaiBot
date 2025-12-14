@@ -1,5 +1,5 @@
 """
-found_answer工具 - 用于在记忆检索过程中标记找到答案
+finish_search工具 - 用于在记忆检索过程中结束查询
 """
 
 from src.common.logger import get_logger
@@ -8,33 +8,42 @@ from .tool_registry import register_memory_retrieval_tool
 logger = get_logger("memory_retrieval_tools")
 
 
-async def found_answer(answer: str) -> str:
-    """标记已找到问题的答案
+async def finish_search(found_answer: bool, answer: str = "") -> str:
+    """结束查询
 
     Args:
-        answer: 找到的答案内容
+        found_answer: 是否找到了答案
+        answer: 如果找到了答案，提供答案内容；如果未找到，可以为空
 
     Returns:
         str: 确认信息
     """
-    # 这个工具主要用于标记，实际答案会通过返回值传递
-    logger.info(f"找到答案: {answer}")
-    return f"已确认找到答案: {answer}"
+    if found_answer:
+        logger.info(f"找到答案: {answer}")
+        return f"已确认找到答案: {answer}"
+    else:
+        logger.info("未找到答案，结束查询")
+        return "未找到答案，查询结束"
 
 
 def register_tool():
-    """注册found_answer工具"""
+    """注册finish_search工具"""
     register_memory_retrieval_tool(
-        name="found_answer",
-        description="当你在已收集的信息中找到了问题的明确答案时，调用此工具标记已找到答案。只有在检索到明确、具体的答案时才使用此工具，不要编造信息。",
+        name="finish_search",
+        description="当你决定结束查询时，调用此工具。如果找到了明确答案，设置found_answer为true并在answer中提供答案；如果未找到答案，设置found_answer为false。只有在检索到明确、具体的答案时才设置found_answer为true，不要编造信息。",
         parameters=[
+            {
+                "name": "found_answer",
+                "type": "boolean",
+                "description": "是否找到了答案",
+                "required": True,
+            },
             {
                 "name": "answer",
                 "type": "string",
-                "description": "找到的答案内容，必须基于已收集的信息，不要编造",
-                "required": True,
+                "description": "如果found_answer为true，提供找到的答案内容，必须基于已收集的信息，不要编造；如果found_answer为false，可以为空",
+                "required": False,
             },
         ],
-        execute_func=found_answer,
+        execute_func=finish_search,
     )
-

@@ -98,7 +98,10 @@ def _convert_messages(
             content: List[Part] = []
             for item in message.content:
                 if isinstance(item, tuple):
-                    image_format = "jpeg" if item[0].lower() == "jpg" else item[0].lower()
+                    image_format = item[0].lower()
+                    # 规范 JPEG MIME 类型后缀，统一使用 image/jpeg
+                    if image_format in ("jpg", "jpeg"):
+                        image_format = "jpeg"
                     content.append(Part.from_bytes(data=base64.b64decode(item[1]), mime_type=f"image/{image_format}"))
                 elif isinstance(item, str):
                     content.append(Part.from_text(text=item))
@@ -143,10 +146,14 @@ def _convert_tool_options(tool_options: list[ToolOption]) -> list[FunctionDeclar
         :param tool_option_param: 工具参数对象
         :return: 转换后的工具参数字典
         """
-        # JSON Schema要求使用"boolean"而不是"bool"
+        # JSON Schema 类型名称修正：
+        # - 布尔类型使用 "boolean" 而不是 "bool"
+        # - 浮点数使用 "number" 而不是 "float"
         param_type_value = tool_option_param.param_type.value
         if param_type_value == "bool":
             param_type_value = "boolean"
+        elif param_type_value == "float":
+            param_type_value = "number"
 
         return_dict: dict[str, Any] = {
             "type": param_type_value,

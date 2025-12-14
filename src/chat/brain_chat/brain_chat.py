@@ -16,7 +16,8 @@ from src.chat.brain_chat.brain_planner import BrainPlanner
 from src.chat.planner_actions.action_modifier import ActionModifier
 from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.heart_flow.hfc_utils import CycleDetail
-from src.express.expression_learner import expression_learner_manager
+from src.bw_learner.expression_learner import expression_learner_manager
+from src.bw_learner.message_recorder import extract_and_distribute_messages
 from src.person_info.person_info import Person
 from src.plugin_system.base.component_types import EventType, ActionInfo
 from src.plugin_system.core import events_manager
@@ -96,6 +97,9 @@ class BrainChatting:
 
         self.more_plan = False
 
+        # 最近一次是否成功进行了 reply，用于选择 BrainPlanner 的 Prompt
+        self._last_successful_reply: bool = False
+
     async def start(self):
         """检查是否需要启动主循环，如果未激活则启动。"""
 
@@ -157,6 +161,7 @@ class BrainChatting:
         )
 
     async def _loopbody(self):  # sourcery skip: hoist-if-from-if
+        # 获取最新消息（用于上下文，但不影响是否调用 observe）
         recent_messages_list = message_api.get_messages_by_time_in_chat(
             chat_id=self.stream_id,
             start_time=self.last_read_time,
@@ -165,17 +170,25 @@ class BrainChatting:
             limit_mode="latest",
             filter_mai=True,
             filter_command=False,
-            filter_no_read_command=True,
+            filter_intercept_message_level=1,
         )
 
+        # 如果有新消息，更新 last_read_time
         if len(recent_messages_list) >= 1:
             self.last_read_time = time.time()
-            await self._observe(recent_messages_list=recent_messages_list)
 
-        else:
-            # Normal模式：消息数量不足，等待
-            await asyncio.sleep(0.2)
-            return True
+        # 总是执行一次思考迭代（不管有没有新消息）
+        # wait 动作会在其内部等待，不需要在这里处理
+        should_continue = await self._observe(recent_messages_list=recent_messages_list)
+
+        if not should_continue:
+            # 选择了 complete_talk，返回 False 表示需要等待新消息
+            return False
+
+        # 继续下一次迭代（除非选择了 complete_talk）
+        # 短暂等待后再继续，避免过于频繁的循环
+        await asyncio.sleep(0.1)
+
         return True
 
     async def _send_and_store_reply(
@@ -240,7 +253,7 @@ class BrainChatting:
         # ReflectTracker Check
         # 在每次回复前检查一次上下文，看是否有反思问题得到了解答
         # -------------------------------------------------------------------------
-        from src.express.reflect_tracker import reflect_tracker_manager
+        from src.bw_learner.reflect_tracker import reflect_tracker_manager
 
         tracker = reflect_tracker_manager.get_tracker(self.stream_id)
         if tracker:
@@ -253,13 +266,15 @@ class BrainChatting:
         # Expression Reflection Check
         # 检查是否需要提问表达反思
         # -------------------------------------------------------------------------
-        from src.express.expression_reflector import expression_reflector_manager
+        from src.bw_learner.expression_reflector import expression_reflector_manager
 
         reflector = expression_reflector_manager.get_or_create_reflector(self.stream_id)
         asyncio.create_task(reflector.check_and_ask())
 
         async with global_prompt_manager.async_message_scope(self.chat_stream.context.get_template_name()):
-            asyncio.create_task(self.expression_learner.trigger_learning_for_chat())
+            # 通过 MessageRecorder 统一提取消息并分发给 expression_learner 和 jargon_miner
+            # 在 replyer 执行时触发，统一管理时间窗口，避免重复获取消息
+            asyncio.create_task(extract_and_distribute_messages(self.stream_id))
 
             cycle_timers, thinking_id = self.start_cycle()
             logger.info(f"{self.log_prefix} 开始第{self._cycle_counter}次思考")
@@ -272,14 +287,16 @@ class BrainChatting:
             except Exception as e:
                 logger.error(f"{self.log_prefix} 动作修改失败: {e}")
 
-            # 执行planner
+            # 获取必要信息
             is_group_chat, chat_target_info, _ = self.action_planner.get_necessary_info()
 
+            # 一次思考迭代：Think - Act - Observe
+            # 获取聊天上下文
             message_list_before_now = get_raw_msg_before_timestamp_with_chat(
                 chat_id=self.stream_id,
                 timestamp=time.time(),
                 limit=int(global_config.chat.max_context_size * 0.6),
-                filter_no_read_command=True,
+                filter_intercept_message_level=1,
             )
             chat_content_block, message_id_list = build_readable_messages_with_id(
                 messages=message_list_before_now,
@@ -290,12 +307,11 @@ class BrainChatting:
             )
 
             prompt_info = await self.action_planner.build_planner_prompt(
-                is_group_chat=is_group_chat,
                 chat_target_info=chat_target_info,
                 current_available_actions=available_actions,
                 chat_content_block=chat_content_block,
                 message_id_list=message_id_list,
-                interest=global_config.personality.interest,
+                prompt_key="brain_planner_prompt_react",
             )
             continue_flag, modified_message = await events_manager.handle_mai_events(
                 EventType.ON_PLAN, None, prompt_info[0], None, self.chat_stream.stream_id
@@ -311,7 +327,10 @@ class BrainChatting:
                     available_actions=available_actions,
                 )
 
-            # 3. 并行执行所有动作
+            # 检查是否有 complete_talk 动作（会停止后续迭代）
+            has_complete_talk = any(action.action_type == "complete_talk" for action in action_to_use_info)
+
+            # 并行执行所有动作
             action_tasks = [
                 asyncio.create_task(
                     self._execute_action(action, action_to_use_info, thinking_id, available_actions, cycle_timers)
@@ -343,7 +362,14 @@ class BrainChatting:
                     else:
                         logger.warning(f"{self.log_prefix} 回复动作执行失败")
 
-            # 构建最终的循环信息
+            # 更新观察时间标记
+            self.action_planner.last_obs_time_mark = time.time()
+
+            # 如果选择了 complete_talk，标记为完成，不再继续迭代
+            if has_complete_talk:
+                logger.info(f"{self.log_prefix} 检测到 complete_talk 动作，本次思考完成")
+
+            # 构建循环信息
             if reply_loop_info:
                 # 如果有回复信息，使用回复的loop_info作为基础
                 loop_info = reply_loop_info
@@ -369,10 +395,16 @@ class BrainChatting:
                 }
                 _reply_text = action_reply_text
 
+            # 如果选择了 complete_talk，返回 False 以停止 _loopbody 的循环
+            # 否则返回 True，让 _loopbody 继续下一次迭代
+            should_continue = not has_complete_talk
+
             self.end_cycle(loop_info, cycle_timers)
             self.print_cycle_info(cycle_timers)
 
-            return True
+            # 如果选择了 complete_talk，返回 False 停止循环
+            # 否则返回 True，继续下一次思考迭代
+            return should_continue
 
     async def _main_chat_loop(self):
         """主循环，持续进行计划并可能回复消息，直到被外部取消。"""
@@ -380,9 +412,13 @@ class BrainChatting:
             while self.running:
                 # 主循环
                 success = await self._loopbody()
-                await asyncio.sleep(0.1)
                 if not success:
-                    break
+                    # 选择了 complete，等待新消息
+                    logger.info(f"{self.log_prefix} 选择了 complete，等待新消息...")
+                    await self._wait_for_new_message()
+                    # 有新消息后继续循环
+                    continue
+                await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             # 设置了关闭标志位后被取消是正常流程
             logger.info(f"{self.log_prefix} 麦麦已关闭聊天")
@@ -392,6 +428,33 @@ class BrainChatting:
             await asyncio.sleep(3)
             self._loop_task = asyncio.create_task(self._main_chat_loop())
         logger.error(f"{self.log_prefix} 结束了当前聊天循环")
+
+    async def _wait_for_new_message(self):
+        """等待新消息到达"""
+        last_check_time = self.last_read_time
+        check_interval = 1.0  # 每秒检查一次
+
+        while self.running:
+            # 检查是否有新消息
+            recent_messages_list = message_api.get_messages_by_time_in_chat(
+                chat_id=self.stream_id,
+                start_time=last_check_time,
+                end_time=time.time(),
+                limit=20,
+                limit_mode="latest",
+                filter_mai=True,
+                filter_command=False,
+                filter_intercept_message_level=1,
+            )
+
+            # 如果有新消息，更新 last_read_time 并返回
+            if len(recent_messages_list) >= 1:
+                self.last_read_time = time.time()
+                logger.info(f"{self.log_prefix} 检测到新消息，恢复循环")
+                return
+
+            # 等待一段时间后再次检查
+            await asyncio.sleep(check_interval)
 
     async def _handle_action(
         self,
@@ -506,12 +569,12 @@ class BrainChatting:
         """执行单个动作的通用函数"""
         try:
             with Timer(f"动作{action_planner_info.action_type}", cycle_timers):
-                if action_planner_info.action_type == "no_reply":
-                    # 直接处理no_reply逻辑，不再通过动作系统
-                    reason = action_planner_info.reasoning or "选择不回复"
-                    # logger.info(f"{self.log_prefix} 选择不回复，原因: {reason}")
+                if action_planner_info.action_type == "complete_talk":
+                    # 直接处理complete_talk逻辑，不再通过动作系统
+                    reason = action_planner_info.reasoning or "选择完成对话"
+                    logger.info(f"{self.log_prefix} 选择完成对话，原因: {reason}")
 
-                    # 存储no_reply信息到数据库
+                    # 存储complete_talk信息到数据库
                     await database_api.store_action_info(
                         chat_stream=self.chat_stream,
                         action_build_into_prompt=False,
@@ -519,9 +582,9 @@ class BrainChatting:
                         action_done=True,
                         thinking_id=thinking_id,
                         action_data={"reason": reason},
-                        action_name="no_reply",
+                        action_name="complete_talk",
                     )
-                    return {"action_type": "no_reply", "success": True, "reply_text": "", "command": ""}
+                    return {"action_type": "complete_talk", "success": True, "reply_text": "", "command": ""}
 
                 elif action_planner_info.action_type == "reply":
                     try:
@@ -543,11 +606,17 @@ class BrainChatting:
                                 )
                             else:
                                 logger.info("回复生成失败")
-                            return {"action_type": "reply", "success": False, "reply_text": "", "loop_info": None}
+                            return {
+                                "action_type": "reply",
+                                "success": False,
+                                "reply_text": "",
+                                "loop_info": None,
+                            }
 
                     except asyncio.CancelledError:
                         logger.debug(f"{self.log_prefix} 并行执行：回复生成任务已被取消")
                         return {"action_type": "reply", "success": False, "reply_text": "", "loop_info": None}
+
                     response_set = llm_response.reply_set
                     selected_expressions = llm_response.selected_expressions
                     loop_info, reply_text, _ = await self._send_and_store_reply(
@@ -558,6 +627,8 @@ class BrainChatting:
                         actions=chosen_action_plan_infos,
                         selected_expressions=selected_expressions,
                     )
+                    # 标记这次循环已经成功进行了回复
+                    self._last_successful_reply = True
                     return {
                         "action_type": "reply",
                         "success": True,
@@ -567,7 +638,88 @@ class BrainChatting:
 
                 # 其他动作
                 else:
-                    # 执行普通动作
+                    # 内建 wait / listening：不通过插件系统，直接在这里处理
+                    if action_planner_info.action_type in ["wait", "listening"]:
+                        reason = action_planner_info.reasoning or ""
+                        action_data = action_planner_info.action_data or {}
+
+                        if action_planner_info.action_type == "wait":
+                            # 获取等待时间（必填）
+                            wait_seconds = action_data.get("wait_seconds")
+                            if wait_seconds is None:
+                                logger.warning(f"{self.log_prefix} wait 动作缺少 wait_seconds 参数，使用默认值 5 秒")
+                                wait_seconds = 5
+                            else:
+                                try:
+                                    wait_seconds = float(wait_seconds)
+                                    if wait_seconds < 0:
+                                        logger.warning(f"{self.log_prefix} wait_seconds 不能为负数，使用默认值 5 秒")
+                                        wait_seconds = 5
+                                except (ValueError, TypeError):
+                                    logger.warning(f"{self.log_prefix} wait_seconds 参数格式错误，使用默认值 5 秒")
+                                    wait_seconds = 5
+
+                            logger.info(f"{self.log_prefix} 执行 wait 动作，等待 {wait_seconds} 秒")
+
+                            # 记录动作信息
+                            await database_api.store_action_info(
+                                chat_stream=self.chat_stream,
+                                action_build_into_prompt=False,
+                                action_prompt_display=reason or f"等待 {wait_seconds} 秒",
+                                action_done=True,
+                                thinking_id=thinking_id,
+                                action_data={"reason": reason, "wait_seconds": wait_seconds},
+                                action_name="wait",
+                            )
+
+                            # 等待指定时间
+                            await asyncio.sleep(wait_seconds)
+
+                            logger.info(f"{self.log_prefix} wait 动作完成，继续下一次思考")
+
+                            # 这些动作本身不产生文本回复
+                            self._last_successful_reply = False
+                            return {
+                                "action_type": "wait",
+                                "success": True,
+                                "reply_text": "",
+                                "command": "",
+                            }
+
+                        # listening 已合并到 wait，如果遇到则转换为 wait（向后兼容）
+                        elif action_planner_info.action_type == "listening":
+                            logger.debug(f"{self.log_prefix} 检测到 listening 动作，已合并到 wait，自动转换")
+                            # 使用默认等待时间
+                            wait_seconds = 3
+
+                            logger.info(f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒")
+
+                            # 记录动作信息
+                            await database_api.store_action_info(
+                                chat_stream=self.chat_stream,
+                                action_build_into_prompt=False,
+                                action_prompt_display=reason or f"倾听并等待 {wait_seconds} 秒",
+                                action_done=True,
+                                thinking_id=thinking_id,
+                                action_data={"reason": reason, "wait_seconds": wait_seconds},
+                                action_name="listening",
+                            )
+
+                            # 等待指定时间
+                            await asyncio.sleep(wait_seconds)
+
+                            logger.info(f"{self.log_prefix} listening 动作完成，继续下一次思考")
+
+                            # 这些动作本身不产生文本回复
+                            self._last_successful_reply = False
+                            return {
+                                "action_type": "listening",
+                                "success": True,
+                                "reply_text": "",
+                                "command": "",
+                            }
+
+                    # 其余动作：走原有插件 Action 体系
                     with Timer("动作执行", cycle_timers):
                         success, reply_text, command = await self._handle_action(
                             action_planner_info.action_type,
@@ -577,6 +729,10 @@ class BrainChatting:
                             thinking_id,
                             action_planner_info.action_message,
                         )
+                    # 非 reply 类动作执行成功时，清空最近成功回复标记，让下一轮回到 initial Prompt
+                    if success and action_planner_info.action_type != "reply":
+                        self._last_successful_reply = False
+
                     return {
                         "action_type": action_planner_info.action_type,
                         "success": success,

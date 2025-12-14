@@ -1,0 +1,60 @@
+{
+  "manifest_version": 1,
+  "name": "MCP桥接插件",
+  "version": "1.7.0",
+  "description": "将 MCP (Model Context Protocol) 服务器的工具桥接到 MaiBot，使麦麦能够调用外部 MCP 工具",
+  "author": {
+    "name": "CharTyr",
+    "url": "https://github.com/CharTyr"
+  },
+  "license": "AGPL-3.0",
+  "host_application": {
+    "min_version": "0.11.6"
+  },
+  "homepage_url": "https://github.com/CharTyr/MaiBot_MCPBridgePlugin",
+  "repository_url": "https://github.com/CharTyr/MaiBot_MCPBridgePlugin",
+  "keywords": [
+    "mcp",
+    "bridge",
+    "tool",
+    "integration",
+    "resources",
+    "prompts",
+    "post-process",
+    "cache",
+    "trace",
+    "permissions",
+    "import",
+    "export",
+    "claude-desktop"
+  ],
+  "categories": [
+    "工具扩展",
+    "外部集成"
+  ],
+  "default_locale": "zh-CN",
+  "plugin_info": {
+    "is_built_in": false,
+    "components": [],
+    "features": [
+      "支持多个 MCP 服务器",
+      "自动发现并注册 MCP 工具",
+      "支持 stdio、SSE、HTTP、Streamable HTTP 四种传输方式",
+      "工具参数自动转换",
+      "心跳检测与自动重连",
+      "调用统计（次数、成功率、耗时）",
+      "WebUI 配置支持",
+      "Resources 支持（实验性）",
+      "Prompts 支持（实验性）",
+      "结果后处理（LLM 摘要提炼）",
+      "工具禁用管理",
+      "调用链路追踪",
+      "工具调用缓存（LRU）",
+      "工具权限控制（群/用户级别）",
+      "配置导入导出（Claude Desktop / Kiro 格式）",
+      "断路器模式（故障快速失败）",
+      "状态实时刷新"
+    ]
+  },
+  "id": "MaiBot Community.MCPBridgePlugin"
+}

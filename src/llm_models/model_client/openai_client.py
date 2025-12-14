@@ -61,10 +61,16 @@ def _convert_messages(messages: list[Message]) -> list[ChatCompletionMessagePara
             content = []
             for item in message.content:
                 if isinstance(item, tuple):
+                    image_format = item[0].lower()
+                    # 规范 JPEG MIME 类型后缀，统一使用 image/jpeg
+                    if image_format in ("jpg", "jpeg"):
+                        mime_suffix = "jpeg"
+                    else:
+                        mime_suffix = image_format
                     content.append(
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/{item[0].lower()};base64,{item[1]}"},
+                            "image_url": {"url": f"data:image/{mime_suffix};base64,{item[1]}"},
                         }
                     )
                 elif isinstance(item, str):
@@ -118,10 +124,14 @@ def _convert_tool_options(tool_options: list[ToolOption]) -> list[dict[str, Any]
         :param tool_option_param: 工具参数对象
         :return: 转换后的工具参数字典
         """
-        # JSON Schema要求使用"boolean"而不是"bool"
+        # JSON Schema 类型名称修正：
+        # - 布尔类型使用 "boolean" 而不是 "bool"
+        # - 浮点数使用 "number" 而不是 "float"
         param_type_value = tool_option_param.param_type.value
         if param_type_value == "bool":
             param_type_value = "boolean"
+        elif param_type_value == "float":
+            param_type_value = "number"
 
         return_dict: dict[str, Any] = {
             "type": param_type_value,

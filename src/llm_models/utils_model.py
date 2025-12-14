@@ -49,7 +49,7 @@ class LLMRequest:
 
     def _check_slow_request(self, time_cost: float, model_name: str) -> None:
         """检查请求是否过慢并输出警告日志
-        
+
         Args:
             time_cost: 请求耗时（秒）
             model_name: 使用的模型名称
@@ -315,12 +315,30 @@ class LLMRequest:
         while retry_remain > 0:
             try:
                 if request_type == RequestType.RESPONSE:
+                    # 温度优先级：参数传入 > 模型级别配置 > extra_params > 任务配置
+                    effective_temperature = temperature
+                    if effective_temperature is None:
+                        effective_temperature = model_info.temperature
+                    if effective_temperature is None:
+                        effective_temperature = (model_info.extra_params or {}).get("temperature")
+                    if effective_temperature is None:
+                        effective_temperature = self.model_for_task.temperature
+
+                    # max_tokens 优先级：参数传入 > 模型级别配置 > extra_params > 任务配置
+                    effective_max_tokens = max_tokens
+                    if effective_max_tokens is None:
+                        effective_max_tokens = model_info.max_tokens
+                    if effective_max_tokens is None:
+                        effective_max_tokens = (model_info.extra_params or {}).get("max_tokens")
+                    if effective_max_tokens is None:
+                        effective_max_tokens = self.model_for_task.max_tokens
+
                     return await client.get_response(
                         model_info=model_info,
                         message_list=(compressed_messages or message_list),
                         tool_options=tool_options,
-                        max_tokens=self.model_for_task.max_tokens if max_tokens is None else max_tokens,
-                        temperature=temperature if temperature is not None else (model_info.extra_params or {}).get("temperature", self.model_for_task.temperature),
+                        max_tokens=effective_max_tokens,
+                        temperature=effective_temperature,
                         response_format=response_format,
                         stream_response_handler=stream_response_handler,
                         async_response_parser=async_response_parser,
@@ -348,7 +366,9 @@ class LLMRequest:
                     logger.error(f"模型 '{model_info.name}' 在多次出现空回复后仍然失败。{original_error_info}")
                     raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
-                logger.warning(f"模型 '{model_info.name}' 返回空回复(可重试){original_error_info}。剩余重试次数: {retry_remain}")
+                logger.warning(
+                    f"模型 '{model_info.name}' 返回空回复(可重试){original_error_info}。剩余重试次数: {retry_remain}"
+                )
                 await asyncio.sleep(api_provider.retry_interval)
 
             except NetworkConnectionError as e:
@@ -376,7 +396,9 @@ class LLMRequest:
                 if e.status_code == 429 or e.status_code >= 500:
                     retry_remain -= 1
                     if retry_remain <= 0:
-                        logger.error(f"模型 '{model_info.name}' 在遇到 {e.status_code} 错误并用尽重试次数后仍然失败。{original_error_info}")
+                        logger.error(
+                            f"模型 '{model_info.name}' 在遇到 {e.status_code} 错误并用尽重试次数后仍然失败。{original_error_info}"
+                        )
                         raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
                     logger.warning(
@@ -522,7 +544,5 @@ class LLMRequest:
         if e.__cause__:
             original_error_type = type(e.__cause__).__name__
             original_error_msg = str(e.__cause__)
-            return (
-                f"\n  底层异常类型: {original_error_type}\n  底层异常信息: {original_error_msg}"
-            )
+            return f"\n  底层异常类型: {original_error_type}\n  底层异常信息: {original_error_msg}"
         return ""

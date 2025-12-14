@@ -17,7 +17,6 @@ from src.common.logger import get_logger
 logger = get_logger("memory_utils")
 
 
-
 def parse_questions_json(response: str) -> Tuple[List[str], List[str]]:
     """解析问题JSON，返回概念列表和问题列表
 
@@ -67,6 +66,7 @@ def parse_questions_json(response: str) -> Tuple[List[str], List[str]]:
     except Exception as e:
         logger.error(f"解析问题JSON失败: {e}, 响应内容: {response[:200]}...")
         return [], []
+
 
 def parse_datetime_to_timestamp(value: str) -> float:
     """

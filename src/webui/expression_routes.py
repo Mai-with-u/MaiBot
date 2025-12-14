@@ -1,7 +1,7 @@
 """表达方式管理 API 路由"""
 
 from fastapi import APIRouter, HTTPException, Header, Query, Cookie
-from pydantic import BaseModel
+from pydantic import BaseModel, NonNegativeFloat
 from typing import Optional, List, Dict
 from src.common.logger import get_logger
 from src.common.database.database_model import Expression, ChatStreams
@@ -21,7 +21,6 @@ class ExpressionResponse(BaseModel):
     situation: str
     style: str
     context: Optional[str]
-    up_content: Optional[str]
     last_active_time: float
     chat_id: str
     create_date: Optional[float]
@@ -49,8 +48,7 @@ class ExpressionCreateRequest(BaseModel):
 
     situation: str
     style: str
-    context: Optional[str] = None
-    up_content: Optional[str] = None
+    context: Optional[str] = NonNegativeFloat
     chat_id: str
 
 
@@ -60,7 +58,6 @@ class ExpressionUpdateRequest(BaseModel):
     situation: Optional[str] = None
     style: Optional[str] = None
     context: Optional[str] = None
-    up_content: Optional[str] = None
     chat_id: Optional[str] = None
 
 
@@ -102,7 +99,6 @@ def expression_to_response(expression: Expression) -> ExpressionResponse:
         situation=expression.situation,
         style=expression.style,
         context=expression.context,
-        up_content=expression.up_content,
         last_active_time=expression.last_active_time,
         chat_id=expression.chat_id,
         create_date=expression.create_date,
@@ -260,7 +256,9 @@ async def get_expression_list(
 
 
 @router.get("/{expression_id}", response_model=ExpressionDetailResponse)
-async def get_expression_detail(expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def get_expression_detail(
+    expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     获取表达方式详细信息
 
@@ -289,7 +287,11 @@ async def get_expression_detail(expression_id: int, maibot_session: Optional[str
 
 
 @router.post("/", response_model=ExpressionCreateResponse)
-async def create_expression(request: ExpressionCreateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def create_expression(
+    request: ExpressionCreateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     创建新的表达方式
 
@@ -310,7 +312,6 @@ async def create_expression(request: ExpressionCreateRequest, maibot_session: Op
             situation=request.situation,
             style=request.style,
             context=request.context,
-            up_content=request.up_content,
             chat_id=request.chat_id,
             last_active_time=current_time,
             create_date=current_time,
@@ -331,7 +332,10 @@ async def create_expression(request: ExpressionCreateRequest, maibot_session: Op
 
 @router.patch("/{expression_id}", response_model=ExpressionUpdateResponse)
 async def update_expression(
-    expression_id: int, request: ExpressionUpdateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+    expression_id: int,
+    request: ExpressionUpdateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
 ):
     """
     增量更新表达方式（只更新提供的字段）
@@ -381,7 +385,9 @@ async def update_expression(
 
 
 @router.delete("/{expression_id}", response_model=ExpressionDeleteResponse)
-async def delete_expression(expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def delete_expression(
+    expression_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     删除表达方式
 
@@ -424,7 +430,11 @@ class BatchDeleteRequest(BaseModel):
 
 
 @router.post("/batch/delete", response_model=ExpressionDeleteResponse)
-async def batch_delete_expressions(request: BatchDeleteRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def batch_delete_expressions(
+    request: BatchDeleteRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     批量删除表达方式
 
@@ -465,7 +475,9 @@ async def batch_delete_expressions(request: BatchDeleteRequest, maibot_session: 
 
 
 @router.get("/stats/summary")
-async def get_expression_stats(maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def get_expression_stats(
+    maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     获取表达方式统计数据
 

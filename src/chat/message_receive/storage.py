@@ -72,7 +72,7 @@ class MessageStorage:
                 key_words = ""
                 key_words_lite = ""
                 selected_expressions = message.selected_expressions
-                is_no_read_command = False
+                intercept_message_level = 0
             else:
                 filtered_display_message = ""
                 interest_value = message.interest_value
@@ -86,7 +86,7 @@ class MessageStorage:
                 is_picid = message.is_picid
                 is_notify = message.is_notify
                 is_command = message.is_command
-                is_no_read_command = getattr(message, "is_no_read_command", False)
+                intercept_message_level = getattr(message, "intercept_message_level", 0)
                 # 序列化关键词列表为JSON字符串
                 key_words = MessageStorage._serialize_keywords(message.key_words)
                 key_words_lite = MessageStorage._serialize_keywords(message.key_words_lite)
@@ -138,7 +138,7 @@ class MessageStorage:
                 is_picid=is_picid,
                 is_notify=is_notify,
                 is_command=is_command,
-                is_no_read_command=is_no_read_command,
+                intercept_message_level=intercept_message_level,
                 key_words=key_words,
                 key_words_lite=key_words_lite,
                 selected_expressions=selected_expressions,

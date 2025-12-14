@@ -41,6 +41,7 @@ logger = get_logger("main")
 # 定义重启退出码
 RESTART_EXIT_CODE = 42
 
+
 def run_runner_process():
     """
     Runner 进程逻辑：作为守护进程运行，负责启动和监控 Worker 进程。
@@ -55,25 +56,25 @@ def run_runner_process():
 
     while True:
         logger.info(f"正在启动 {script_file}...")
-        
+
         # 启动子进程 (Worker)
         # 使用 sys.executable 确保使用相同的 Python 解释器
         cmd = [python_executable, script_file] + sys.argv[1:]
-        
+
         process = subprocess.Popen(cmd, env=env)
-        
+
         try:
             # 等待子进程结束
             return_code = process.wait()
-            
+
             if return_code == RESTART_EXIT_CODE:
                 logger.info("检测到重启请求 (退出码 42)，正在重启...")
-                time.sleep(1) # 稍作等待
+                time.sleep(1)  # 稍作等待
                 continue
             else:
                 logger.info(f"程序已退出 (退出码 {return_code})")
                 sys.exit(return_code)
-                
+
         except KeyboardInterrupt:
             # 向子进程发送终止信号
             if process.poll() is None:
@@ -86,6 +87,7 @@ def run_runner_process():
                     logger.warning("子进程未响应，强制关闭...")
                     process.kill()
             sys.exit(0)
+
 
 # 检查是否是 Worker 进程
 # 如果没有设置 MAIBOT_WORKER_PROCESS 环境变量，说明是直接运行的脚本，
@@ -143,7 +145,7 @@ def print_opensource_notice():
         "",
         f"{Fore.WHITE}  官方仓库: {Fore.BLUE}https://github.com/MaiM-with-u/MaiBot {Style.RESET_ALL}",
         f"{Fore.WHITE}  官方文档: {Fore.BLUE}https://docs.mai-mai.org {Style.RESET_ALL}",
-        f"{Fore.WHITE}  官方群聊: {Fore.BLUE}766798517{Style.RESET_ALL}",
+        f"{Fore.WHITE}  官方群聊: {Fore.BLUE}1006149251{Style.RESET_ALL}",
         f"{Fore.CYAN}{'─' * 70}{Style.RESET_ALL}",
         f"{Fore.RED}  ⚠ 将本软件作为「商品」倒卖、隐瞒开源性质均违反协议！{Style.RESET_ALL}",
         f"{Fore.CYAN}{'═' * 70}{Style.RESET_ALL}",

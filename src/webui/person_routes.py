@@ -200,7 +200,9 @@ async def get_person_list(
 
 
 @router.get("/{person_id}", response_model=PersonDetailResponse)
-async def get_person_detail(person_id: str, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def get_person_detail(
+    person_id: str, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     获取人物详细信息
 
@@ -229,7 +231,12 @@ async def get_person_detail(person_id: str, maibot_session: Optional[str] = Cook
 
 
 @router.patch("/{person_id}", response_model=PersonUpdateResponse)
-async def update_person(person_id: str, request: PersonUpdateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def update_person(
+    person_id: str,
+    request: PersonUpdateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     增量更新人物信息（只更新提供的字段）
 
@@ -278,7 +285,9 @@ async def update_person(person_id: str, request: PersonUpdateRequest, maibot_ses
 
 
 @router.delete("/{person_id}", response_model=PersonDeleteResponse)
-async def delete_person(person_id: str, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def delete_person(
+    person_id: str, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     删除人物信息
 
@@ -348,7 +357,11 @@ async def get_person_stats(maibot_session: Optional[str] = Cookie(None), authori
 
 
 @router.post("/batch/delete", response_model=BatchDeleteResponse)
-async def batch_delete_persons(request: BatchDeleteRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def batch_delete_persons(
+    request: BatchDeleteRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     批量删除人物信息
 

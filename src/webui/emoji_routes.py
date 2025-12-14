@@ -1,4 +1,4 @@
-""" 表情包管理 API 路由"""
+"""表情包管理 API 路由"""
 
 from fastapi import APIRouter, HTTPException, Header, Query, UploadFile, File, Form, Cookie
 from fastapi.responses import FileResponse, JSONResponse
@@ -48,7 +48,7 @@ def _get_thumbnail_lock(file_hash: str) -> threading.Lock:
 def _background_generate_thumbnail(source_path: str, file_hash: str) -> None:
     """
     后台生成缩略图（在线程池中执行）
-    
+
     生成完成后自动从 generating 集合中移除
     """
     try:
@@ -74,14 +74,14 @@ def _get_thumbnail_cache_path(file_hash: str) -> Path:
 def _generate_thumbnail(source_path: str, file_hash: str) -> Path:
     """
     生成缩略图并保存到缓存目录
-    
+
     Args:
         source_path: 原图路径
         file_hash: 文件哈希值，用作缓存文件名
-        
+
     Returns:
         缩略图路径
-        
+
     Features:
         - GIF: 提取第一帧作为缩略图
         - 所有格式统一转为 WebP
@@ -89,63 +89,63 @@ def _generate_thumbnail(source_path: str, file_hash: str) -> Path:
     """
     _ensure_thumbnail_cache_dir()
     cache_path = _get_thumbnail_cache_path(file_hash)
-    
+
     # 使用锁防止并发生成同一缩略图
     lock = _get_thumbnail_lock(file_hash)
     with lock:
         # 双重检查，可能在等待锁时已被其他线程生成
         if cache_path.exists():
             return cache_path
-        
+
         try:
             with Image.open(source_path) as img:
                 # GIF 处理：提取第一帧
-                if hasattr(img, 'n_frames') and img.n_frames > 1:
+                if hasattr(img, "n_frames") and img.n_frames > 1:
                     img.seek(0)  # 确保在第一帧
-                
+
                 # 转换为 RGB/RGBA（WebP 支持透明度）
-                if img.mode in ('P', 'PA'):
+                if img.mode in ("P", "PA"):
                     # 调色板模式转换为 RGBA 以保留透明度
-                    img = img.convert('RGBA')
-                elif img.mode == 'LA':
-                    img = img.convert('RGBA')
-                elif img.mode not in ('RGB', 'RGBA'):
-                    img = img.convert('RGB')
-                
+                    img = img.convert("RGBA")
+                elif img.mode == "LA":
+                    img = img.convert("RGBA")
+                elif img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGB")
+
                 # 创建缩略图（保持宽高比）
                 img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                
+
                 # 保存为 WebP 格式
-                img.save(cache_path, 'WEBP', quality=THUMBNAIL_QUALITY, method=6)
-                
+                img.save(cache_path, "WEBP", quality=THUMBNAIL_QUALITY, method=6)
+
                 logger.debug(f"生成缩略图: {file_hash} -> {cache_path}")
-                
+
         except Exception as e:
             logger.warning(f"生成缩略图失败 {file_hash}: {e}，将返回原图")
             # 生成失败时不创建缓存文件，下次会重试
             raise
-    
+
     return cache_path
 
 
 def cleanup_orphaned_thumbnails() -> tuple[int, int]:
     """
     清理孤立的缩略图缓存（原图已不存在的缩略图）
-    
+
     Returns:
         (清理数量, 保留数量)
     """
     if not THUMBNAIL_CACHE_DIR.exists():
         return 0, 0
-    
+
     # 获取所有表情包的哈希值
     valid_hashes = set()
     for emoji in Emoji.select(Emoji.emoji_hash):
         valid_hashes.add(emoji.emoji_hash)
-    
+
     cleaned = 0
     kept = 0
-    
+
     for cache_file in THUMBNAIL_CACHE_DIR.glob("*.webp"):
         file_hash = cache_file.stem
         if file_hash not in valid_hashes:
@@ -157,11 +157,12 @@ def cleanup_orphaned_thumbnails() -> tuple[int, int]:
                 logger.warning(f"清理缩略图失败 {cache_file.name}: {e}")
         else:
             kept += 1
-    
+
     if cleaned > 0:
         logger.info(f"清理孤立缩略图: 删除 {cleaned} 个，保留 {kept} 个")
-    
+
     return cleaned, kept
+
 
 # 模块级别的类型别名（解决 B008 ruff 错误）
 EmojiFile = Annotated[UploadFile, File(description="表情包图片文件")]
@@ -365,7 +366,9 @@ async def get_emoji_list(
 
 
 @router.get("/{emoji_id}", response_model=EmojiDetailResponse)
-async def get_emoji_detail(emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def get_emoji_detail(
+    emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     获取表情包详细信息
 
@@ -394,7 +397,12 @@ async def get_emoji_detail(emoji_id: int, maibot_session: Optional[str] = Cookie
 
 
 @router.patch("/{emoji_id}", response_model=EmojiUpdateResponse)
-async def update_emoji(emoji_id: int, request: EmojiUpdateRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def update_emoji(
+    emoji_id: int,
+    request: EmojiUpdateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     增量更新表情包（只更新提供的字段）
 
@@ -446,7 +454,9 @@ async def update_emoji(emoji_id: int, request: EmojiUpdateRequest, maibot_sessio
 
 
 @router.delete("/{emoji_id}", response_model=EmojiDeleteResponse)
-async def delete_emoji(emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def delete_emoji(
+    emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     删除表情包
 
@@ -538,7 +548,9 @@ async def get_emoji_stats(maibot_session: Optional[str] = Cookie(None), authoriz
 
 
 @router.post("/{emoji_id}/register", response_model=EmojiUpdateResponse)
-async def register_emoji(emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def register_emoji(
+    emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     注册表情包（快捷操作）
 
@@ -578,7 +590,9 @@ async def register_emoji(emoji_id: int, maibot_session: Optional[str] = Cookie(N
 
 
 @router.post("/{emoji_id}/ban", response_model=EmojiUpdateResponse)
-async def ban_emoji(emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def ban_emoji(
+    emoji_id: int, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+):
     """
     禁用表情包（快捷操作）
 
@@ -633,7 +647,7 @@ async def get_emoji_thumbnail(
 
     Returns:
         表情包缩略图（WebP 格式）或原图
-        
+
     Features:
         - 懒加载：首次请求时生成缩略图
         - 缓存：后续请求直接返回缓存
@@ -643,7 +657,7 @@ async def get_emoji_thumbnail(
     try:
         token_manager = get_token_manager()
         is_valid = False
-        
+
         # 1. 优先使用 Cookie
         if maibot_session and token_manager.verify_token(maibot_session):
             is_valid = True
@@ -655,7 +669,7 @@ async def get_emoji_thumbnail(
             auth_token = authorization.replace("Bearer ", "")
             if token_manager.verify_token(auth_token):
                 is_valid = True
-        
+
         if not is_valid:
             raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
@@ -680,35 +694,27 @@ async def get_emoji_thumbnail(
             }
             media_type = mime_types.get(emoji.format.lower(), "application/octet-stream")
             return FileResponse(
-                path=emoji.full_path, 
-                media_type=media_type, 
-                filename=f"{emoji.emoji_hash}.{emoji.format}"
+                path=emoji.full_path, media_type=media_type, filename=f"{emoji.emoji_hash}.{emoji.format}"
             )
 
         # 尝试获取或生成缩略图
         cache_path = _get_thumbnail_cache_path(emoji.emoji_hash)
-        
+
         # 检查缓存是否存在
         if cache_path.exists():
             # 缓存命中，直接返回
             return FileResponse(
-                path=str(cache_path), 
-                media_type="image/webp", 
-                filename=f"{emoji.emoji_hash}_thumb.webp"
+                path=str(cache_path), media_type="image/webp", filename=f"{emoji.emoji_hash}_thumb.webp"
             )
-        
+
         # 缓存未命中，触发后台生成并返回 202
         with _generating_lock:
             if emoji.emoji_hash not in _generating_thumbnails:
                 # 标记为正在生成
                 _generating_thumbnails.add(emoji.emoji_hash)
                 # 提交到线程池后台生成
-                _thumbnail_executor.submit(
-                    _background_generate_thumbnail,
-                    emoji.full_path,
-                    emoji.emoji_hash
-                )
-        
+                _thumbnail_executor.submit(_background_generate_thumbnail, emoji.full_path, emoji.emoji_hash)
+
         # 返回 202 Accepted，告诉前端缩略图正在生成中
         return JSONResponse(
             status_code=202,
@@ -719,7 +725,7 @@ async def get_emoji_thumbnail(
             },
             headers={
                 "Retry-After": "1",  # 建议 1 秒后重试
-            }
+            },
         )
 
     except HTTPException:
@@ -730,7 +736,11 @@ async def get_emoji_thumbnail(
 
 
 @router.post("/batch/delete", response_model=BatchDeleteResponse)
-async def batch_delete_emojis(request: BatchDeleteRequest, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)):
+async def batch_delete_emojis(
+    request: BatchDeleteRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     批量删除表情包
 
@@ -1079,7 +1089,7 @@ async def batch_upload_emoji(
 
 class ThumbnailCacheStatsResponse(BaseModel):
     """缩略图缓存统计响应"""
-    
+
     success: bool
     cache_dir: str
     total_count: int
@@ -1090,7 +1100,7 @@ class ThumbnailCacheStatsResponse(BaseModel):
 
 class ThumbnailCleanupResponse(BaseModel):
     """缩略图清理响应"""
-    
+
     success: bool
     message: str
     cleaned_count: int
@@ -1099,7 +1109,7 @@ class ThumbnailCleanupResponse(BaseModel):
 
 class ThumbnailPreheatResponse(BaseModel):
     """缩略图预热响应"""
-    
+
     success: bool
     message: str
     generated_count: int
@@ -1114,27 +1124,27 @@ async def get_thumbnail_cache_stats(
 ):
     """
     获取缩略图缓存统计信息
-    
+
     Returns:
         缓存目录、缓存数量、总大小、覆盖率等统计信息
     """
     try:
         verify_auth_token(maibot_session, authorization)
-        
+
         _ensure_thumbnail_cache_dir()
-        
+
         # 统计缓存文件
         cache_files = list(THUMBNAIL_CACHE_DIR.glob("*.webp"))
         total_count = len(cache_files)
         total_size = sum(f.stat().st_size for f in cache_files)
         total_size_mb = round(total_size / (1024 * 1024), 2)
-        
+
         # 统计表情包总数
         emoji_count = Emoji.select().count()
-        
+
         # 计算覆盖率
         coverage_percent = round((total_count / emoji_count * 100) if emoji_count > 0 else 0, 1)
-        
+
         return ThumbnailCacheStatsResponse(
             success=True,
             cache_dir=str(THUMBNAIL_CACHE_DIR.absolute()),
@@ -1143,7 +1153,7 @@ async def get_thumbnail_cache_stats(
             emoji_count=emoji_count,
             coverage_percent=coverage_percent,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1158,22 +1168,22 @@ async def cleanup_thumbnail_cache(
 ):
     """
     清理孤立的缩略图缓存（原图已删除的表情包对应的缩略图）
-    
+
     Returns:
         清理结果
     """
     try:
         verify_auth_token(maibot_session, authorization)
-        
+
         cleaned, kept = cleanup_orphaned_thumbnails()
-        
+
         return ThumbnailCleanupResponse(
             success=True,
             message=f"清理完成：删除 {cleaned} 个孤立缓存，保留 {kept} 个有效缓存",
             cleaned_count=cleaned,
             kept_count=kept,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1189,20 +1199,20 @@ async def preheat_thumbnail_cache(
 ):
     """
     预热缩略图缓存（提前生成未缓存的缩略图）
-    
+
     优先处理使用次数高的表情包
-    
+
     Args:
         limit: 最多预热数量 (1-1000)
-        
+
     Returns:
         预热结果
     """
     try:
         verify_auth_token(maibot_session, authorization)
-        
+
         _ensure_thumbnail_cache_dir()
-        
+
         # 获取使用次数最高的表情包（未缓存的优先）
         emojis = (
             Emoji.select()
@@ -1210,41 +1220,36 @@ async def preheat_thumbnail_cache(
             .order_by(Emoji.usage_count.desc())
             .limit(limit * 2)  # 多查一些，因为有些可能已缓存
         )
-        
+
         generated = 0
         skipped = 0
         failed = 0
-        
+
         for emoji in emojis:
             if generated >= limit:
                 break
-                
+
             cache_path = _get_thumbnail_cache_path(emoji.emoji_hash)
-            
+
             # 已缓存，跳过
             if cache_path.exists():
                 skipped += 1
                 continue
-            
+
             # 原文件不存在，跳过
             if not os.path.exists(emoji.full_path):
                 failed += 1
                 continue
-            
+
             try:
                 # 使用线程池异步生成缩略图，避免阻塞事件循环
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    _thumbnail_executor,
-                    _generate_thumbnail,
-                    emoji.full_path,
-                    emoji.emoji_hash
-                )
+                await loop.run_in_executor(_thumbnail_executor, _generate_thumbnail, emoji.full_path, emoji.emoji_hash)
                 generated += 1
             except Exception as e:
                 logger.warning(f"预热缩略图失败 {emoji.emoji_hash}: {e}")
                 failed += 1
-        
+
         return ThumbnailPreheatResponse(
             success=True,
             message=f"预热完成：生成 {generated} 个，跳过 {skipped} 个已缓存，失败 {failed} 个",
@@ -1252,7 +1257,7 @@ async def preheat_thumbnail_cache(
             skipped_count=skipped,
             failed_count=failed,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1267,13 +1272,13 @@ async def clear_all_thumbnail_cache(
 ):
     """
     清空所有缩略图缓存（下次访问时会重新生成）
-    
+
     Returns:
         清理结果
     """
     try:
         verify_auth_token(maibot_session, authorization)
-        
+
         if not THUMBNAIL_CACHE_DIR.exists():
             return ThumbnailCleanupResponse(
                 success=True,
@@ -1281,7 +1286,7 @@ async def clear_all_thumbnail_cache(
                 cleaned_count=0,
                 kept_count=0,
             )
-        
+
         cleaned = 0
         for cache_file in THUMBNAIL_CACHE_DIR.glob("*.webp"):
             try:
@@ -1289,16 +1294,16 @@ async def clear_all_thumbnail_cache(
                 cleaned += 1
             except Exception as e:
                 logger.warning(f"删除缓存文件失败 {cache_file.name}: {e}")
-        
+
         logger.info(f"已清空缩略图缓存: 删除 {cleaned} 个文件")
-        
+
         return ThumbnailCleanupResponse(
             success=True,
             message=f"已清空所有缩略图缓存：删除 {cleaned} 个文件",
             cleaned_count=cleaned,
             kept_count=0,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:

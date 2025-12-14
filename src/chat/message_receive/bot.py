@@ -7,7 +7,6 @@ from maim_message import UserInfo, Seg, GroupInfo
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.mood.mood_manager import mood_manager  # 导入情绪管理器
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.chat.message_receive.message import MessageRecv
 from src.chat.message_receive.storage import MessageStorage
@@ -73,7 +72,6 @@ class ChatBot:
     def __init__(self):
         self.bot = None  # bot 实例引用
         self._started = False
-        self.mood_manager = mood_manager  # 获取情绪管理器单例
         self.heartflow_message_receiver = HeartFCMessageReceiver()  # 新增
 
     async def _ensure_started(self):
@@ -83,7 +81,7 @@ class ChatBot:
 
             self._started = True
 
-    async def _process_commands_with_new_system(self, message: MessageRecv):
+    async def _process_commands(self, message: MessageRecv):
         # sourcery skip: use-named-expression
         """使用新插件系统处理命令"""
         try:
@@ -115,17 +113,21 @@ class ChatBot:
 
                 try:
                     # 执行命令
-                    success, response, intercept_message = await command_instance.execute()
-                    message.is_no_read_command = bool(intercept_message)
+                    success, response, intercept_message_level = await command_instance.execute()
+                    message.intercept_message_level = intercept_message_level
 
                     # 记录命令执行结果
                     if success:
-                        logger.info(f"命令执行成功: {command_class.__name__} (拦截: {intercept_message})")
+                        logger.info(f"命令执行成功: {command_class.__name__} (拦截等级: {intercept_message_level})")
                     else:
                         logger.warning(f"命令执行失败: {command_class.__name__} - {response}")
 
                     # 根据命令的拦截设置决定是否继续处理消息
-                    return True, response, not intercept_message  # 找到命令，根据intercept_message决定是否继续
+                    return (
+                        True,
+                        response,
+                        not bool(intercept_message_level),
+                    )  # 找到命令，根据intercept_message决定是否继续
 
                 except Exception as e:
                     logger.error(f"执行命令时出错: {command_class.__name__} - {e}")
@@ -295,7 +297,7 @@ class ChatBot:
             #     return
 
             # 命令处理 - 使用新插件系统检查并处理命令
-            is_command, cmd_result, continue_process = await self._process_commands_with_new_system(message)
+            is_command, cmd_result, continue_process = await self._process_commands(message)
 
             # 如果是命令且不需要继续处理，则直接返回
             if is_command and not continue_process:

@@ -1,5 +1,5 @@
 [inner]
-version = "1.8.2"
+version = "1.9.0"
 
 # 配置文件版本号迭代规则同bot_config.toml
 
@@ -54,9 +54,11 @@ name = "siliconflow-deepseek-v3.2"
 api_provider = "SiliconFlow"
 price_in = 2.0
 price_out = 3.0
+# temperature = 0.5    # 可选：为该模型单独指定温度，会覆盖任务配置中的温度
+# max_tokens = 4096    # 可选：为该模型单独指定最大token数，会覆盖任务配置中的max_tokens
 [models.extra_params] # 可选的额外参数配置
 enable_thinking = false # 不启用思考
-# temperature = 0.5    # 可选：为该模型单独指定温度，会覆盖任务配置中的温度
+
 
 [[models]]
 model_identifier = "deepseek-ai/DeepSeek-V3.2-Exp"
@@ -64,9 +66,11 @@ name = "siliconflow-deepseek-v3.2-think"
 api_provider = "SiliconFlow"    
 price_in = 2.0
 price_out = 3.0
+# temperature = 0.7    # 可选：为该模型单独指定温度，会覆盖任务配置中的温度
+# max_tokens = 4096    # 可选：为该模型单独指定最大token数，会覆盖任务配置中的max_tokens
 [models.extra_params] # 可选的额外参数配置
 enable_thinking = true # 启用思考
-# temperature = 0.7    # 可选：为该模型单独指定温度，会覆盖任务配置中的温度
+
 
 [[models]]
 model_identifier = "Qwen/Qwen3-Next-80B-A3B-Instruct"

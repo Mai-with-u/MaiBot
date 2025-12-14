@@ -1,9 +1,10 @@
 """知识库图谱可视化 API 路由"""
 import secrets
 from typing import List, Optional
-from fastapi import APIRouter, Query, Request, HTTPException
+from fastapi import APIRouter, Query, Request, HTTPException, Depends, Cookie, Header
 from pydantic import BaseModel
 import logging
+from src.webui.auth import verify_auth_token_from_cookie_or_header
 
 from webui.auth import get_current_token
 from webui.token_manager import get_token_manager
@@ -11,6 +12,14 @@ from webui.token_manager import get_token_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webui/knowledge", tags=["knowledge"])
+
+
+def require_auth(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> bool:
+    """认证依赖：验证用户是否已登录"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 
 class KnowledgeNode(BaseModel):
@@ -117,6 +126,7 @@ async def get_knowledge_graph(
     request: Request,
     limit: int = Query(100, ge=1, le=10000, description="返回的最大节点数"),
     node_type: str = Query("all", description="节点类型过滤: all, entity, paragraph"),
+    _auth: bool = Depends(require_auth),
 ):
     """获取知识图谱(限制节点数量)
 
@@ -130,7 +140,7 @@ async def get_knowledge_graph(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -220,7 +230,7 @@ async def get_knowledge_stats(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -281,7 +291,7 @@ async def search_knowledge_node(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 

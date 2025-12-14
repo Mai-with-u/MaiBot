@@ -25,7 +25,7 @@ def find_messages(
     limit_mode: str = "latest",
     filter_bot=False,
     filter_command=False,
-    filter_no_read_command=False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """
     根据提供的过滤器、排序和限制条件查找消息。
@@ -85,8 +85,9 @@ def find_messages(
             # 使用按位取反构造 Peewee 的 NOT 条件，避免直接与 False 比较
             query = query.where(~Messages.is_command)
 
-        if filter_no_read_command:
-            query = query.where(~Messages.is_no_read_command)
+        if filter_intercept_message_level is not None:
+            # 过滤掉所有 intercept_message_level > filter_intercept_message_level 的消息
+            query = query.where(Messages.intercept_message_level <= filter_intercept_message_level)
 
         if limit > 0:
             if limit_mode == "earliest":

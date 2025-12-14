@@ -77,7 +77,7 @@ class DatabaseMessages(BaseDataModel):
         is_emoji: bool = False,
         is_picid: bool = False,
         is_command: bool = False,
-        is_no_read_command: bool = False,
+        intercept_message_level: int = 0,
         is_notify: bool = False,
         selected_expressions: Optional[str] = None,
         user_id: str = "",
@@ -120,7 +120,7 @@ class DatabaseMessages(BaseDataModel):
         self.is_emoji = is_emoji
         self.is_picid = is_picid
         self.is_command = is_command
-        self.is_no_read_command = is_no_read_command
+        self.intercept_message_level = intercept_message_level
         self.is_notify = is_notify
 
         self.selected_expressions = selected_expressions
@@ -188,7 +188,7 @@ class DatabaseMessages(BaseDataModel):
             "is_emoji": self.is_emoji,
             "is_picid": self.is_picid,
             "is_command": self.is_command,
-            "is_no_read_command": self.is_no_read_command,
+            "intercept_message_level": self.intercept_message_level,
             "is_notify": self.is_notify,
             "selected_expressions": self.selected_expressions,
             "user_id": self.user_info.user_id,

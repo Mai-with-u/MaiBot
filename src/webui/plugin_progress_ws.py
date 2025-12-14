@@ -1,10 +1,11 @@
 """WebSocket 插件加载进度推送模块"""
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import Set, Dict, Any
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from typing import Set, Dict, Any, Optional
 import json
 import asyncio
 from src.common.logger import get_logger
+from src.webui.token_manager import get_token_manager
 
 logger = get_logger("webui.plugin_progress")
 
@@ -89,14 +90,33 @@ async def update_progress(
 
 
 @router.websocket("/ws/plugin-progress")
-async def websocket_plugin_progress(websocket: WebSocket):
+async def websocket_plugin_progress(websocket: WebSocket, token: Optional[str] = Query(None)):
     """WebSocket 插件加载进度推送端点
 
     客户端连接后会立即收到当前进度状态
+    需要通过 query 参数或 Cookie 传递 token 进行认证
     """
+    # 认证检查
+    auth_token = token
+    if not auth_token:
+        # 尝试从 Cookie 获取 token
+        auth_token = websocket.cookies.get("maibot_session")
+    
+    if not auth_token:
+        logger.warning("插件进度 WebSocket 连接被拒绝：未提供认证 token")
+        await websocket.close(code=4001, reason="未提供认证信息")
+        return
+    
+    # 验证 token
+    token_manager = get_token_manager()
+    if not token_manager.verify_token(auth_token):
+        logger.warning("插件进度 WebSocket 连接被拒绝：token 无效")
+        await websocket.close(code=4003, reason="Token 无效或已过期")
+        return
+    
     await websocket.accept()
     active_connections.add(websocket)
-    logger.info(f"📡 插件进度 WebSocket 客户端已连接，当前连接数: {len(active_connections)}")
+    logger.info(f"📡 插件进度 WebSocket 客户端已连接（已认证），当前连接数: {len(active_connections)}")
 
     try:
         # 发送当前进度状态

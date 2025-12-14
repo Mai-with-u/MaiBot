@@ -1,12 +1,13 @@
 """WebUI API 路由"""
 import secrets
 
-from fastapi import APIRouter, HTTPException, Header, Response, Request, Cookie
+from fastapi import APIRouter, HTTPException, Header, Response, Request, Cookie, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
 from src.common.logger import get_logger
 from .token_manager import get_token_manager
 from .auth import set_auth_cookie, clear_auth_cookie, verify_auth_token_from_cookie_or_header, get_current_token
+from .rate_limiter import get_rate_limiter, check_auth_rate_limit
 from .config_routes import router as config_router
 from .statistics_routes import router as statistics_router
 from .person_routes import router as person_router
@@ -108,12 +109,18 @@ async def health_check():
 
 
 @router.post("/auth/verify", response_model=TokenVerifyResponse)
-async def verify_token(request: TokenVerifyRequest, response: Response):
+async def verify_token(
+    request_body: TokenVerifyRequest, 
+    request: Request,
+    response: Response,
+    _rate_limit: None = Depends(check_auth_rate_limit),
+):
     """
     验证访问令牌，验证成功后设置 HttpOnly Cookie
 
     Args:
-        request: 包含 token 的验证请求
+        request_body: 包含 token 的验证请求
+        request: FastAPI Request 对象（用于获取客户端 IP）
         response: FastAPI Response 对象
 
     Returns:
@@ -121,16 +128,40 @@ async def verify_token(request: TokenVerifyRequest, response: Response):
     """
     try:
         token_manager = get_token_manager()
-        is_valid = token_manager.verify_token(request.token)
+        rate_limiter = get_rate_limiter()
+        
+        is_valid = token_manager.verify_token(request_body.token)
 
         if is_valid:
+            # 认证成功，重置失败计数
+            rate_limiter.reset_failures(request)
             # 设置 HttpOnly Cookie
-            set_auth_cookie(response, request.token)
+            set_auth_cookie(response, request_body.token)
             # 同时返回首次配置状态，避免额外请求
             is_first_setup = token_manager.is_first_setup()
             return TokenVerifyResponse(valid=True, message="Token 验证成功", is_first_setup=is_first_setup)
         else:
-            return TokenVerifyResponse(valid=False, message="Token 无效或已过期")
+            # 记录失败尝试
+            blocked, remaining = rate_limiter.record_failed_attempt(
+                request,
+                max_failures=5,      # 5 次失败
+                window_seconds=300,  # 5 分钟窗口
+                block_duration=600   # 封禁 10 分钟
+            )
+            
+            if blocked:
+                raise HTTPException(
+                    status_code=429,
+                    detail="认证失败次数过多，您的 IP 已被临时封禁 10 分钟"
+                )
+            
+            message = "Token 无效或已过期"
+            if remaining <= 2:
+                message += f"（剩余 {remaining} 次尝试机会）"
+            
+            return TokenVerifyResponse(valid=False, message=message)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Token 验证失败: {e}")
         raise HTTPException(status_code=500, detail="Token 验证失败") from e
@@ -140,10 +171,10 @@ async def verify_token(request: TokenVerifyRequest, response: Response):
 async def logout(response: Response):
     """
     登出并清除认证 Cookie
-    
+
     Args:
         response: FastAPI Response 对象
-    
+
     Returns:
         登出结果
     """
@@ -157,13 +188,13 @@ async def check_auth_status(
 ):
     """
     检查当前认证状态（用于前端判断是否已登录）
-    
+
     Returns:
         认证状态
     """
     try:
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             return {"authenticated": True}
         else:
@@ -189,7 +220,7 @@ async def update_token(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -225,15 +256,15 @@ async def regenerate_token(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
         # 重新生成 token
         new_token = manager.regenerate_token()
-
-        # 更新 Cookie
-        set_auth_cookie(response, new_token)
+        
+        # 清除 Cookie，要求用户重新登录
+        clear_auth_cookie(response)
 
         return TokenRegenerateResponse(success=True, token=new_token, message="Token 已重新生成")
     except HTTPException:
@@ -258,7 +289,7 @@ async def get_setup_status(
     try:
         # 验证 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="Token 无效")
 
@@ -288,7 +319,7 @@ async def complete_setup(
     try:
         # 验证 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="Token 无效")
 
@@ -322,7 +353,7 @@ async def reset_setup(
     try:
         # 验证 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="Token 无效")
 

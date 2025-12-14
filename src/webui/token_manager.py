@@ -175,13 +175,29 @@ class TokenManager:
 
     def regenerate_token(self) -> str:
         """
-        重新生成 token
+        重新生成 token（保留 first_setup_completed 状态）
 
         Returns:
             str: 新生成的 token
         """
         logger.info("正在重新生成 WebUI Token...")
-        return self._create_new_token()
+
+        # 生成新的 64 位十六进制字符串
+        new_token = secrets.token_hex(32)
+
+        # 加载现有配置，保留 first_setup_completed 状态
+        config = self._load_config()
+        old_token = config.get("access_token", "")[:8] if config.get("access_token") else "无"
+        first_setup_completed = config.get("first_setup_completed", True)  # 默认为 True，表示已完成配置
+
+        config["access_token"] = new_token
+        config["updated_at"] = self._get_current_timestamp()
+        config["first_setup_completed"] = first_setup_completed  # 保留原来的状态
+
+        self._save_config(config)
+        logger.info(f"WebUI Token 已重新生成: {old_token}... -> {new_token[:8]}...")
+
+        return new_token
 
     def _validate_token_format(self, token: str) -> bool:
         """

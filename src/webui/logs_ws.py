@@ -1,10 +1,11 @@
 """WebSocket 日志推送模块"""
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from typing import Set
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from typing import Set, Optional
 import json
 from pathlib import Path
 from src.common.logger import get_logger
+from src.webui.token_manager import get_token_manager
 
 logger = get_logger("webui.logs_ws")
 router = APIRouter()
@@ -73,14 +74,32 @@ def load_recent_logs(limit: int = 100) -> list[dict]:
 
 
 @router.websocket("/ws/logs")
-async def websocket_logs(websocket: WebSocket):
+async def websocket_logs(websocket: WebSocket, token: Optional[str] = Query(None)):
     """WebSocket 日志推送端点
 
     客户端连接后会持续接收服务器端的日志消息
+    需要通过 query 参数传递 token 进行认证，例如：ws://host/ws/logs?token=xxx
     """
+    # 认证检查
+    if not token:
+        # 尝试从 Cookie 获取 token
+        token = websocket.cookies.get("maibot_session")
+    
+    if not token:
+        logger.warning("WebSocket 连接被拒绝：未提供认证 token")
+        await websocket.close(code=4001, reason="未提供认证信息")
+        return
+    
+    # 验证 token
+    token_manager = get_token_manager()
+    if not token_manager.verify_token(token):
+        logger.warning("WebSocket 连接被拒绝：token 无效")
+        await websocket.close(code=4003, reason="Token 无效或已过期")
+        return
+    
     await websocket.accept()
     active_connections.add(websocket)
-    logger.info(f"📡 WebSocket 客户端已连接，当前连接数: {len(active_connections)}")
+    logger.info(f"📡 WebSocket 客户端已连接（已认证），当前连接数: {len(active_connections)}")
 
     # 连接建立后，立即发送历史日志
     try:

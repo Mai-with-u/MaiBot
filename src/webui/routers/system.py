@@ -7,16 +7,26 @@
 import os
 import time
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Cookie, Header
 from pydantic import BaseModel
 from src.config.config import MMC_VERSION
 from src.common.logger import get_logger
+from src.webui.auth import verify_auth_token_from_cookie_or_header
 
 router = APIRouter(prefix="/system", tags=["system"])
 logger = get_logger("webui_system")
 
 # 记录启动时间
 _start_time = time.time()
+
+
+def require_auth(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> bool:
+    """认证依赖：验证用户是否已登录"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 
 class RestartResponse(BaseModel):
@@ -36,7 +46,7 @@ class StatusResponse(BaseModel):
 
 
 @router.post("/restart", response_model=RestartResponse)
-async def restart_maibot():
+async def restart_maibot(_auth: bool = Depends(require_auth)):
     """
     重启麦麦主程序
 
@@ -67,7 +77,7 @@ async def restart_maibot():
 
 
 @router.get("/status", response_model=StatusResponse)
-async def get_maibot_status():
+async def get_maibot_status(_auth: bool = Depends(require_auth)):
     """
     获取麦麦运行状态
 
@@ -90,7 +100,7 @@ async def get_maibot_status():
 
 
 @router.post("/reload-config")
-async def reload_config():
+async def reload_config(_auth: bool = Depends(require_auth)):
     """
     热重载配置（不重启进程）
 

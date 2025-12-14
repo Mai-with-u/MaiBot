@@ -1,5 +1,5 @@
 from src.common.logger import get_logger
-from src.chat.frequency_control.frequency_control import frequency_control_manager
+from src.chat.heart_flow.frequency_control import frequency_control_manager
 from src.config.config import global_config
 
 logger = get_logger("frequency_api")

@@ -29,7 +29,7 @@ from .component_types import (
     ForwardNode,
     ReplySetModel,
 )
-from .config_types import ConfigField
+from .config_types import ConfigField, ConfigSection, ConfigLayout, ConfigTab
 
 __all__ = [
     "BasePlugin",
@@ -46,6 +46,9 @@ __all__ = [
     "PluginInfo",
     "PythonDependency",
     "ConfigField",
+    "ConfigSection",
+    "ConfigLayout",
+    "ConfigTab",
     "EventHandlerInfo",
     "EventType",
     "BaseEventHandler",

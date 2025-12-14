@@ -24,7 +24,7 @@ def parse_chat_id_to_stream_ids(chat_id_str: str) -> List[str]:
     """
     if not chat_id_str:
         return []
-    
+
     try:
         # 尝试解析为 JSON
         parsed = json.loads(chat_id_str)
@@ -49,10 +49,10 @@ def get_display_name_for_chat_id(chat_id_str: str) -> str:
     尝试解析 JSON 并查询 ChatStreams 表获取群聊名称
     """
     stream_ids = parse_chat_id_to_stream_ids(chat_id_str)
-    
+
     if not stream_ids:
         return chat_id_str
-    
+
     # 查询所有 stream_id 对应的名称
     names = []
     for stream_id in stream_ids:
@@ -62,7 +62,7 @@ def get_display_name_for_chat_id(chat_id_str: str) -> str:
         else:
             # 如果没找到，显示截断的 stream_id
             names.append(stream_id[:8] + "..." if len(stream_id) > 8 else stream_id)
-    
+
     return ", ".join(names) if names else chat_id_str
 
 
@@ -187,7 +187,7 @@ def jargon_to_dict(jargon: Jargon) -> dict:
     chat_name = get_display_name_for_chat_id(jargon.chat_id) if jargon.chat_id else None
     stream_ids = parse_chat_id_to_stream_ids(jargon.chat_id) if jargon.chat_id else []
     stream_id = stream_ids[0] if stream_ids else None
-    
+
     return {
         "id": jargon.id,
         "content": jargon.content,
@@ -277,17 +277,13 @@ async def get_chat_list():
     """获取所有有黑话记录的聊天列表"""
     try:
         # 获取所有不同的 chat_id
-        chat_ids = (
-            Jargon.select(Jargon.chat_id)
-            .distinct()
-            .where(Jargon.chat_id.is_null(False))
-        )
+        chat_ids = Jargon.select(Jargon.chat_id).distinct().where(Jargon.chat_id.is_null(False))
 
         chat_id_list = [j.chat_id for j in chat_ids if j.chat_id]
 
         # 用于按 stream_id 去重
         seen_stream_ids: set[str] = set()
-        
+
         for chat_id in chat_id_list:
             stream_ids = parse_chat_id_to_stream_ids(chat_id)
             if stream_ids:
@@ -346,12 +342,7 @@ async def get_jargon_stats():
         complete_count = Jargon.select().where(Jargon.is_complete).count()
 
         # 关联的聊天数量
-        chat_count = (
-            Jargon.select(Jargon.chat_id)
-            .distinct()
-            .where(Jargon.chat_id.is_null(False))
-            .count()
-        )
+        chat_count = Jargon.select(Jargon.chat_id).distinct().where(Jargon.chat_id.is_null(False)).count()
 
         # 按聊天统计 TOP 5
         top_chats = (
@@ -403,9 +394,7 @@ async def create_jargon(request: JargonCreateRequest):
     """创建黑话"""
     try:
         # 检查是否已存在相同内容的黑话
-        existing = Jargon.get_or_none(
-            (Jargon.content == request.content) & (Jargon.chat_id == request.chat_id)
-        )
+        existing = Jargon.get_or_none((Jargon.content == request.content) & (Jargon.chat_id == request.chat_id))
         if existing:
             raise HTTPException(status_code=400, detail="该聊天中已存在相同内容的黑话")
 
@@ -527,11 +516,7 @@ async def batch_set_jargon_status(
         if not ids:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
-        updated_count = (
-            Jargon.update(is_jargon=is_jargon)
-            .where(Jargon.id.in_(ids))
-            .execute()
-        )
+        updated_count = Jargon.update(is_jargon=is_jargon).where(Jargon.id.in_(ids)).execute()
 
         logger.info(f"批量更新黑话状态成功: 更新了 {updated_count} 条记录，is_jargon={is_jargon}")
 

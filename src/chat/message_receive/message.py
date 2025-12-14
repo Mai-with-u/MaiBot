@@ -122,7 +122,7 @@ class MessageRecv(Message):
         self.is_notify = False
 
         self.is_command = False
-        self.is_no_read_command = False
+        self.intercept_message_level = 0
 
         self.priority_mode = "interest"
         self.priority_info = None
@@ -213,6 +213,68 @@ class MessageRecv(Message):
                     }
                     """
                 return ""
+            elif segment.type == "video_card":
+                # 处理视频卡片消息
+                self.is_picid = False
+                self.is_emoji = False
+                self.is_voice = False
+                if isinstance(segment.data, dict):
+                    file_name = segment.data.get("file", "未知视频")
+                    file_size = segment.data.get("file_size", "")
+                    url = segment.data.get("url", "")
+                    text = f"[视频: {file_name}"
+                    if file_size:
+                        text += f", 大小: {file_size}字节"
+                    text += "]"
+                    if url:
+                        text += f" 链接: {url}"
+                    return text
+                return "[视频]"
+            elif segment.type == "music_card":
+                # 处理音乐卡片消息
+                self.is_picid = False
+                self.is_emoji = False
+                self.is_voice = False
+                if isinstance(segment.data, dict):
+                    title = segment.data.get("title", "未知歌曲")
+                    singer = segment.data.get("singer", "")
+                    tag = segment.data.get("tag", "")  # 音乐来源，如"网易云音乐"
+                    jump_url = segment.data.get("jump_url", "")
+                    music_url = segment.data.get("music_url", "")
+                    text = f"[音乐: {title}"
+                    if singer:
+                        text += f" - {singer}"
+                    if tag:
+                        text += f" ({tag})"
+                    text += "]"
+                    if jump_url:
+                        text += f" 跳转链接: {jump_url}"
+                    if music_url:
+                        text += f" 音乐链接: {music_url}"
+                    return text
+                return "[音乐]"
+            elif segment.type == "miniapp_card":
+                # 处理小程序分享卡片（如B站视频分享）
+                self.is_picid = False
+                self.is_emoji = False
+                self.is_voice = False
+                if isinstance(segment.data, dict):
+                    title = segment.data.get("title", "")  # 小程序名称
+                    desc = segment.data.get("desc", "")  # 内容描述
+                    source_url = segment.data.get("source_url", "")  # 原始链接
+                    url = segment.data.get("url", "")  # 小程序链接
+                    text = "[小程序分享"
+                    if title:
+                        text += f" - {title}"
+                    text += "]"
+                    if desc:
+                        text += f" {desc}"
+                    if source_url:
+                        text += f" 链接: {source_url}"
+                    elif url:
+                        text += f" 链接: {url}"
+                    return text
+                return "[小程序分享]"
             else:
                 return ""
         except Exception as e:

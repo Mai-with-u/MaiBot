@@ -316,7 +316,9 @@ class ChatHistorySummarizer:
                 before_count = len(self.current_batch.messages)
                 self.current_batch.messages.extend(new_messages)
                 self.current_batch.end_time = current_time
-                logger.info(f"{self.log_prefix} 更新聊天检查批次: {before_count} -> {len(self.current_batch.messages)} 条消息")
+                logger.info(
+                    f"{self.log_prefix} 更新聊天检查批次: {before_count} -> {len(self.current_batch.messages)} 条消息"
+                )
                 # 更新批次后持久化
                 self._persist_topic_cache()
             else:
@@ -362,9 +364,7 @@ class ChatHistorySummarizer:
         else:
             time_str = f"{time_since_last_check / 3600:.1f}小时"
 
-        logger.debug(
-            f"{self.log_prefix} 批次状态检查 | 消息数: {message_count} | 距上次检查: {time_str}"
-        )
+        logger.debug(f"{self.log_prefix} 批次状态检查 | 消息数: {message_count} | 距上次检查: {time_str}")
 
         # 检查“话题检查”触发条件
         should_check = False
@@ -414,7 +414,7 @@ class ChatHistorySummarizer:
         # 说明 bot 没有参与这段对话，不应该记录
         bot_user_id = str(global_config.bot.qq_account)
         has_bot_message = False
-        
+
         for msg in messages:
             if msg.user_info.user_id == bot_user_id:
                 has_bot_message = True
@@ -427,17 +427,38 @@ class ChatHistorySummarizer:
             return
 
         # 2. 构造编号后的消息字符串和参与者信息
-        numbered_lines, index_to_msg_str, index_to_msg_text, index_to_participants = self._build_numbered_messages_for_llm(messages)
-
-        # 3. 调用 LLM 识别话题，并得到 topic -> indices
-        existing_topics = list(self.topic_cache.keys())
-        success, topic_to_indices = await self._analyze_topics_with_llm(
-            numbered_lines=numbered_lines,
-            existing_topics=existing_topics,
+        numbered_lines, index_to_msg_str, index_to_msg_text, index_to_participants = (
+            self._build_numbered_messages_for_llm(messages)
         )
 
+        # 3. 调用 LLM 识别话题，并得到 topic -> indices（失败时最多重试 3 次）
+        existing_topics = list(self.topic_cache.keys())
+        max_retries = 3
+        attempt = 0
+        success = False
+        topic_to_indices: Dict[str, List[int]] = {}
+
+        while attempt < max_retries:
+            attempt += 1
+            success, topic_to_indices = await self._analyze_topics_with_llm(
+                numbered_lines=numbered_lines,
+                existing_topics=existing_topics,
+            )
+
+            if success and topic_to_indices:
+                if attempt > 1:
+                    logger.info(
+                        f"{self.log_prefix} 话题识别在第 {attempt} 次重试后成功 | 话题数: {len(topic_to_indices)}"
+                    )
+                break
+
+            logger.warning(
+                f"{self.log_prefix} 话题识别失败或无有效话题，第 {attempt} 次尝试失败"
+                + ("" if attempt >= max_retries else "，准备重试")
+            )
+
         if not success or not topic_to_indices:
-            logger.warning(f"{self.log_prefix} 话题识别失败或无有效话题，本次检查忽略")
+            logger.error(f"{self.log_prefix} 话题识别连续 {max_retries} 次失败或始终无有效话题，本次检查放弃")
             # 即使识别失败，也认为是一次“检查”，但不更新 no_update_checks（保持原状）
             return
 
@@ -589,9 +610,7 @@ class ChatHistorySummarizer:
         if not numbered_lines:
             return False, {}
 
-        history_topics_block = (
-            "\n".join(f"- {t}" for t in existing_topics) if existing_topics else "（当前无历史话题）"
-        )
+        history_topics_block = "\n".join(f"- {t}" for t in existing_topics) if existing_topics else "（当前无历史话题）"
         messages_block = "\n".join(numbered_lines)
 
         prompt = await global_prompt_manager.format_prompt(
@@ -614,17 +633,17 @@ class ChatHistorySummarizer:
             json_str = None
             json_pattern = r"```json\s*(.*?)\s*```"
             matches = re.findall(json_pattern, response, re.DOTALL)
-            
+
             if matches:
                 # 找到JSON代码块，使用第一个匹配
                 json_str = matches[0].strip()
             else:
                 # 如果没有找到代码块，尝试查找JSON数组的开始和结束位置
                 # 查找第一个 [ 和最后一个 ]
-                start_idx = response.find('[')
-                end_idx = response.rfind(']')
+                start_idx = response.find("[")
+                end_idx = response.rfind("]")
                 if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                    json_str = response[start_idx:end_idx + 1].strip()
+                    json_str = response[start_idx : end_idx + 1].strip()
                 else:
                     # 如果还是找不到，尝试直接使用整个响应（移除可能的markdown标记）
                     json_str = response.strip()
@@ -921,4 +940,3 @@ class ChatHistorySummarizer:
 
 
 init_prompt()
-

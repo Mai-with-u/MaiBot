@@ -47,7 +47,7 @@ class EmojiAction(BaseAction):
         try:
             # 1. 获取发送表情的原因
             # reason = self.action_data.get("reason", "表达当前情绪")
-            reason = self.reasoning
+            reason = self.action_reasoning
 
             # 2. 随机获取20个表情包
             sampled_emojis = await emoji_api.get_random(30)

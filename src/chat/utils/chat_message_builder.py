@@ -120,7 +120,7 @@ def get_raw_msg_by_timestamp_with_chat(
     limit_mode: str = "latest",
     filter_bot=False,
     filter_command=False,
-    filter_no_read_command=False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """获取在特定聊天从指定时间戳到指定时间戳的消息，按时间升序排序，返回消息列表
     limit: 限制返回的消息数量，0为不限制
@@ -138,7 +138,7 @@ def get_raw_msg_by_timestamp_with_chat(
         limit_mode=limit_mode,
         filter_bot=filter_bot,
         filter_command=filter_command,
-        filter_no_read_command=filter_no_read_command,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
 
 
@@ -150,7 +150,7 @@ def get_raw_msg_by_timestamp_with_chat_inclusive(
     limit_mode: str = "latest",
     filter_bot=False,
     filter_command=False,
-    filter_no_read_command=False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """获取在特定聊天从指定时间戳到指定时间戳的消息（包含边界），按时间升序排序，返回消息列表
     limit: 限制返回的消息数量，0为不限制
@@ -167,7 +167,7 @@ def get_raw_msg_by_timestamp_with_chat_inclusive(
         limit_mode=limit_mode,
         filter_bot=filter_bot,
         filter_command=filter_command,
-        filter_no_read_command=filter_no_read_command,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
 
 
@@ -303,7 +303,7 @@ def get_raw_msg_before_timestamp(timestamp: float, limit: int = 0) -> List[Datab
 
 
 def get_raw_msg_before_timestamp_with_chat(
-    chat_id: str, timestamp: float, limit: int = 0, filter_no_read_command: bool = False
+    chat_id: str, timestamp: float, limit: int = 0, filter_intercept_message_level: Optional[int] = None
 ) -> List[DatabaseMessages]:
     """获取指定时间戳之前的消息，按时间升序排序，返回消息列表
     limit: 限制返回的消息数量，0为不限制
@@ -311,7 +311,10 @@ def get_raw_msg_before_timestamp_with_chat(
     filter_query = {"chat_id": chat_id, "time": {"$lt": timestamp}}
     sort_order = [("time", 1)]
     return find_messages(
-        message_filter=filter_query, sort=sort_order, limit=limit, filter_no_read_command=filter_no_read_command
+        message_filter=filter_query,
+        sort=sort_order,
+        limit=limit,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
 
 

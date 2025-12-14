@@ -1,17 +1,26 @@
 """统计数据 API 路由"""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Cookie, Header
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from peewee import fn
 
 from src.common.logger import get_logger
 from src.common.database.database_model import LLMUsage, OnlineTime, Messages
+from src.webui.auth import verify_auth_token_from_cookie_or_header
 
 logger = get_logger("webui.statistics")
 
 router = APIRouter(prefix="/statistics", tags=["statistics"])
+
+
+def require_auth(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> bool:
+    """认证依赖：验证用户是否已登录"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 
 class StatisticsSummary(BaseModel):
@@ -58,7 +67,7 @@ class DashboardData(BaseModel):
 
 
 @router.get("/dashboard", response_model=DashboardData)
-async def get_dashboard_data(hours: int = 24):
+async def get_dashboard_data(hours: int = 24, _auth: bool = Depends(require_auth)):
     """
     获取仪表盘统计数据
 
@@ -275,7 +284,7 @@ async def _get_recent_activity(limit: int = 10) -> List[Dict[str, Any]]:
 
 
 @router.get("/summary")
-async def get_summary(hours: int = 24):
+async def get_summary(hours: int = 24, _auth: bool = Depends(require_auth)):
     """
     获取统计摘要
 
@@ -293,7 +302,7 @@ async def get_summary(hours: int = 24):
 
 
 @router.get("/models")
-async def get_model_stats(hours: int = 24):
+async def get_model_stats(hours: int = 24, _auth: bool = Depends(require_auth)):
     """
     获取模型统计
 

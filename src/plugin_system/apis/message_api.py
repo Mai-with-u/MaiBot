@@ -72,7 +72,7 @@ def get_messages_by_time_in_chat(
     limit_mode: str = "latest",
     filter_mai: bool = False,
     filter_command: bool = False,
-    filter_no_read_command: bool = False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """
     获取指定聊天中指定时间范围内的消息
@@ -111,7 +111,7 @@ def get_messages_by_time_in_chat(
         limit_mode=limit_mode,
         filter_bot=filter_mai,
         filter_command=filter_command,
-        filter_no_read_command=filter_no_read_command,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
 
 
@@ -123,7 +123,7 @@ def get_messages_by_time_in_chat_inclusive(
     limit_mode: str = "latest",
     filter_mai: bool = False,
     filter_command: bool = False,
-    filter_no_read_command: bool = False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """
     获取指定聊天中指定时间范围内的消息（包含边界）
@@ -158,7 +158,7 @@ def get_messages_by_time_in_chat_inclusive(
         limit_mode=limit_mode,
         filter_bot=filter_mai,
         filter_command=filter_command,
-        filter_no_read_command=filter_no_read_command,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
     if filter_mai:
         return filter_mai_messages(messages)
@@ -284,7 +284,7 @@ def get_messages_before_time_in_chat(
     timestamp: float,
     limit: int = 0,
     filter_mai: bool = False,
-    filter_no_read_command: bool = False,
+    filter_intercept_message_level: Optional[int] = None,
 ) -> List[DatabaseMessages]:
     """
     获取指定聊天中指定时间戳之前的消息
@@ -313,7 +313,7 @@ def get_messages_before_time_in_chat(
         chat_id=chat_id,
         timestamp=timestamp,
         limit=limit,
-        filter_no_read_command=filter_no_read_command,
+        filter_intercept_message_level=filter_intercept_message_level,
     )
     if filter_mai:
         return filter_mai_messages(messages)

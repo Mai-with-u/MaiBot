@@ -271,7 +271,7 @@ def _to_emoji_objects(data: Any) -> Tuple[List["MaiEmoji"], int]:
 
             emoji.description = emoji_data.description
             # Deserialize emotion string from DB to list
-            emoji.emotion = emoji_data.emotion.split(",") if emoji_data.emotion else []
+            emoji.emotion = emoji_data.emotion.replace("，", ",").split(",") if emoji_data.emotion else []
             emoji.usage_count = emoji_data.usage_count
 
             db_last_used_time = emoji_data.last_used_time
@@ -732,7 +732,7 @@ class EmojiManager:
                 emoji_record = Emoji.get_or_none(Emoji.emoji_hash == emoji_hash)
                 if emoji_record and emoji_record.emotion:
                     logger.info(f"[缓存命中] 从数据库获取表情包情感标签: {emoji_record.emotion[:50]}...")
-                    return emoji_record.emotion.split(",")
+                    return emoji_record.emotion.replace("，", ",").split(",")
             except Exception as e:
                 logger.error(f"从数据库查询表情包情感标签时出错: {e}")
 
@@ -993,7 +993,7 @@ class EmojiManager:
             )
 
             # 处理情感列表
-            emotions = [e.strip() for e in emotions_text.split(",") if e.strip()]
+            emotions = [e.strip() for e in emotions_text.replace("，", ",").split(",") if e.strip()]
 
             # 根据情感标签数量随机选择 - 超过5个选3个，超过2个选2个
             if len(emotions) > 5:

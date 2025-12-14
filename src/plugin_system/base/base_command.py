@@ -55,11 +55,11 @@ class BaseCommand(ABC):
         self.matched_groups = groups
 
     @abstractmethod
-    async def execute(self) -> Tuple[bool, Optional[str], bool]:
+    async def execute(self) -> Tuple[bool, Optional[str], int]:
         """执行Command的抽象方法，子类必须实现
 
         Returns:
-            Tuple[bool, Optional[str], bool]: (是否执行成功, 可选的回复消息, 是否拦截消息 不进行 后续处理)
+            Tuple[bool, Optional[str], int]: (是否执行成功, 可选的回复消息, 拦截消息力度，0代表不拦截，1代表仅不触发回复，replyer可见，2代表不触发回复，replyer不可见)
         """
         pass
 

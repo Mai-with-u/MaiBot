@@ -4,6 +4,8 @@ import time
 import jieba
 import json
 import ast
+import os
+from datetime import datetime
 
 from typing import Optional, Tuple, List, TYPE_CHECKING
 
@@ -639,6 +641,42 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["TargetP
         logger.error(f"获取聊天类型和目标信息时出错 for {chat_id}: {e}", exc_info=True)
 
     return is_group_chat, chat_target_info
+
+
+def record_replyer_action_temp(chat_id: str, reason: str, think_level: int) -> None:
+    """
+    临时记录replyer动作被选择的信息（仅群聊）
+
+    Args:
+        chat_id: 聊天ID
+        reason: 选择理由
+        think_level: 思考深度等级
+    """
+    try:
+        # 确保data/temp目录存在
+        temp_dir = "data/temp"
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # 创建记录数据
+        record_data = {
+            "chat_id": chat_id,
+            "reason": reason,
+            "think_level": think_level,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        # 生成文件名（使用时间戳避免冲突）
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"replyer_action_{timestamp_str}.json"
+        filepath = os.path.join(temp_dir, filename)
+
+        # 写入文件
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(record_data, f, ensure_ascii=False, indent=2)
+
+        logger.debug(f"已记录replyer动作选择: chat_id={chat_id}, think_level={think_level}")
+    except Exception as e:
+        logger.warning(f"记录replyer动作选择失败: {e}")
 
 
 def assign_message_ids(messages: List[DatabaseMessages]) -> List[Tuple[str, DatabaseMessages]]:

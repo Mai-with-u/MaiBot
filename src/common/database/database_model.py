@@ -170,7 +170,7 @@ class Messages(BaseModel):
     is_emoji = BooleanField(default=False)
     is_picid = BooleanField(default=False)
     is_command = BooleanField(default=False)
-    is_no_read_command = BooleanField(default=False)
+    intercept_message_level = IntegerField(default=0)
     is_notify = BooleanField(default=False)
 
     selected_expressions = TextField(null=True)
@@ -324,7 +324,6 @@ class Expression(BaseModel):
 
     # new mode fields
     context = TextField(null=True)
-    up_content = TextField(null=True)
 
     content_list = TextField(null=True)
     count = IntegerField(default=1)
@@ -593,22 +592,41 @@ def _fix_table_constraints(table_name, model, constraints_to_fix):
         db.execute_sql(f"CREATE TABLE {backup_table} AS SELECT * FROM {table_name}")
         logger.info(f"已创建备份表 '{backup_table}'")
 
-        # 2. 删除原表
+        # 2. 获取原始行数（在删除表之前）
+        original_count = db.execute_sql(f"SELECT COUNT(*) FROM {backup_table}").fetchone()[0]
+        logger.info(f"备份表 '{backup_table}' 包含 {original_count} 行数据")
+
+        # 3. 删除原表
         db.execute_sql(f"DROP TABLE {table_name}")
         logger.info(f"已删除原表 '{table_name}'")
 
-        # 3. 重新创建表（使用当前模型定义）
+        # 4. 重新创建表（使用当前模型定义）
         db.create_tables([model])
         logger.info(f"已重新创建表 '{table_name}' 使用新的约束")
 
-        # 4. 从备份表恢复数据
-        # 获取字段列表
+        # 5. 从备份表恢复数据
+        # 获取字段列表，排除主键字段（让数据库自动生成新的主键）
         fields = list(model._meta.fields.keys())
-        fields_str = ", ".join(fields)
+        # Peewee 默认使用 'id' 作为主键字段名
+        # 尝试获取主键字段名，如果获取失败则默认使用 'id'
+        primary_key_name = "id"  # 默认值
+        try:
+            if hasattr(model._meta, "primary_key") and model._meta.primary_key:
+                if hasattr(model._meta.primary_key, "name"):
+                    primary_key_name = model._meta.primary_key.name
+                elif isinstance(model._meta.primary_key, str):
+                    primary_key_name = model._meta.primary_key
+        except Exception:
+            pass  # 如果获取失败，使用默认值 'id'
 
-        # 对于需要从 NOT NULL 改为 NULL 的字段，直接复制数据
-        # 对于需要从 NULL 改为 NOT NULL 的字段，需要处理 NULL 值
-        insert_sql = f"INSERT INTO {table_name} ({fields_str}) SELECT {fields_str} FROM {backup_table}"
+        # 如果字段列表包含主键，则排除它
+        if primary_key_name in fields:
+            fields_without_pk = [f for f in fields if f != primary_key_name]
+            logger.info(f"排除主键字段 '{primary_key_name}'，让数据库自动生成新的主键")
+        else:
+            fields_without_pk = fields
+
+        fields_str = ", ".join(fields_without_pk)
 
         # 检查是否有字段需要从 NULL 改为 NOT NULL
         null_to_notnull_fields = [
@@ -621,7 +639,7 @@ def _fix_table_constraints(table_name, model, constraints_to_fix):
 
             # 构建更复杂的 SELECT 语句来处理 NULL 值
             select_fields = []
-            for field_name in fields:
+            for field_name in fields_without_pk:
                 if field_name in null_to_notnull_fields:
                     field_obj = model._meta.fields[field_name]
                     # 根据字段类型设置默认值
@@ -642,12 +660,13 @@ def _fix_table_constraints(table_name, model, constraints_to_fix):
 
             select_str = ", ".join(select_fields)
             insert_sql = f"INSERT INTO {table_name} ({fields_str}) SELECT {select_str} FROM {backup_table}"
+        else:
+            # 没有需要处理 NULL 的字段，直接复制数据（排除主键）
+            insert_sql = f"INSERT INTO {table_name} ({fields_str}) SELECT {fields_str} FROM {backup_table}"
 
         db.execute_sql(insert_sql)
         logger.info(f"已从备份表恢复数据到 '{table_name}'")
 
-        # 5. 验证数据完整性
-        original_count = db.execute_sql(f"SELECT COUNT(*) FROM {backup_table}").fetchone()[0]
         new_count = db.execute_sql(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
         if original_count == new_count:

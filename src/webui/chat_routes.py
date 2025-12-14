@@ -8,19 +8,27 @@ import secrets
 import time
 import uuid
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Request, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Request, HTTPException, Depends, Cookie, Header
 from pydantic import BaseModel
 
 from src.common.logger import get_logger
 from src.common.database.database_model import Messages, PersonInfo
 from src.config.config import global_config
 from src.chat.message_receive.bot import chat_bot
-from webui.auth import get_current_token
-from webui.token_manager import get_token_manager
+from src.webui.auth import verify_auth_token_from_cookie_or_header
+from src.webui.token_manager import get_token_manager
 
 logger = get_logger("webui.chat")
 
 router = APIRouter(prefix="/api/chat", tags=["LocalChat"])
+
+
+def require_auth(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> bool:
+    """认证依赖：验证用户是否已登录"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 # WebUI 聊天的虚拟群组 ID
 WEBUI_CHAT_GROUP_ID = "webui_local_chat"
@@ -65,14 +73,14 @@ class ChatHistoryManager:
 
     def _message_to_dict(self, msg: Messages, group_id: Optional[str] = None) -> Dict[str, Any]:
         """将数据库消息转换为前端格式
-        
+
         Args:
             msg: 数据库消息对象
             group_id: 群 ID，用于判断是否是虚拟群
         """
         # 判断是否是机器人消息
         user_id = msg.user_id or ""
-        
+
         # 对于虚拟群，通过比较机器人 QQ 账号来判断
         # 对于普通 WebUI 群，检查 user_id 是否以 webui_ 开头
         if group_id and group_id.startswith(VIRTUAL_GROUP_ID_PREFIX):
@@ -255,10 +263,11 @@ def create_message_data(
 
 @router.get("/history")
 async def get_chat_history(
-        request: Request,
+    request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     user_id: Optional[str] = Query(default=None),  # 保留参数兼容性，但不用于过滤
     group_id: Optional[str] = Query(default=None),  # 可选：指定群 ID 获取历史
+    _auth: bool = Depends(require_auth),
 ):
     """获取聊天历史记录
 
@@ -267,7 +276,7 @@ async def get_chat_history(
     """
     # 验证当前 token（优先 Cookie，其次 Header）
     manager = get_token_manager()
-    tk, sign = get_current_token(request)
+    tk = get_current_token(request)
     if secrets.compare_digest(tk, manager.get_token()):
         raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -289,7 +298,7 @@ async def get_available_platforms(request: Request):
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk= get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -315,10 +324,11 @@ async def get_available_platforms(request: Request):
 
 @router.get("/persons")
 async def get_persons_by_platform(
-        request: Request,
+    request: Request,
     platform: str = Query(..., description="平台名称"),
     search: Optional[str] = Query(default=None, description="搜索关键词"),
     limit: int = Query(default=50, ge=1, le=200),
+    _auth: bool = Depends(require_auth),
 ):
     """获取指定平台的用户列表
 
@@ -330,7 +340,7 @@ async def get_persons_by_platform(
     try:
         # 验证当前 token（优先 Cookie，其次 Header）
         manager = get_token_manager()
-        tk, sign = get_current_token(request)
+        tk = get_current_token(request)
         if secrets.compare_digest(tk, manager.get_token()):
             raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -383,7 +393,7 @@ async def clear_chat_history(
     """
     # 验证当前 token（优先 Cookie，其次 Header）
     manager = get_token_manager()
-    tk, sign = get_current_token(request)
+    tk = get_current_token(request)
     if secrets.compare_digest(tk, manager.get_token()):
         raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -396,7 +406,7 @@ async def clear_chat_history(
 
 @router.websocket("/ws")
 async def websocket_chat(
-        request: Request,
+    request: Request,
     websocket: WebSocket,
     user_id: Optional[str] = Query(default=None),
     user_name: Optional[str] = Query(default="WebUI用户"),
@@ -404,6 +414,7 @@ async def websocket_chat(
     person_id: Optional[str] = Query(default=None),
     group_name: Optional[str] = Query(default=None),
     group_id: Optional[str] = Query(default=None),  # 前端传递的稳定 group_id
+    token: Optional[str] = Query(default=None),  # 认证 token
 ):
     """WebSocket 聊天端点
 
@@ -414,12 +425,13 @@ async def websocket_chat(
         person_id: 虚拟身份模式的用户 person_id（可选）
         group_name: 虚拟身份模式的群名（可选）
         group_id: 虚拟身份模式的群 ID（可选，由前端生成并持久化）
+        token: 认证 token（可选，也可从 Cookie 获取）
 
     虚拟身份模式可通过 URL 参数直接配置，或通过消息中的 set_virtual_identity 配置
     """
     # 验证当前 token（优先 Cookie，其次 Header）
     manager = get_token_manager()
-    tk, sign = get_current_token(request)
+    tk = get_current_token(request)
     if secrets.compare_digest(tk, manager.get_token()):
         raise HTTPException(status_code=401, detail="当前 Token 无效")
 
@@ -452,7 +464,9 @@ async def websocket_chat(
                     group_id=virtual_group_id,
                     group_name=group_name or "WebUI虚拟群聊",
                 )
-                logger.info(f"虚拟身份模式已通过 URL 参数激活: {current_virtual_config.user_nickname} @ {current_virtual_config.platform}, group_id={virtual_group_id}")
+                logger.info(
+                    f"虚拟身份模式已通过 URL 参数激活: {current_virtual_config.user_nickname} @ {current_virtual_config.platform}, group_id={virtual_group_id}"
+                )
         except Exception as e:
             logger.warning(f"通过 URL 参数配置虚拟身份失败: {e}")
 
@@ -752,7 +766,7 @@ async def get_chat_info(request: Request):
     """获取聊天室信息"""
     # 验证当前 token（优先 Cookie，其次 Header）
     manager = get_token_manager()
-    tk, sign = get_current_token(request)
+    tk = get_current_token(request)
     if secrets.compare_digest(tk, manager.get_token()):
         raise HTTPException(status_code=401, detail="当前 Token 无效")
 

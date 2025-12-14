@@ -70,6 +70,12 @@ class ConfigField:
     depends_on: Optional[str] = None  # 依赖的字段路径，如 "section.field"
     depends_value: Any = None  # 依赖字段需要的值（当依赖字段等于此值时显示）
 
+    # === 列表类型专用 ===
+    item_type: Optional[str] = None  # 数组元素类型: "string", "number", "object"
+    item_fields: Optional[Dict[str, Any]] = None  # 当 item_type="object" 时，定义对象的字段结构
+    min_items: Optional[int] = None  # 数组最小元素数量
+    max_items: Optional[int] = None  # 数组最大元素数量
+
     def get_ui_type(self) -> str:
         """
         获取 UI 控件类型
@@ -132,6 +138,10 @@ class ConfigField:
             "group": self.group,
             "depends_on": self.depends_on,
             "depends_value": self.depends_value,
+            "item_type": self.item_type,
+            "item_fields": self.item_fields,
+            "min_items": self.min_items,
+            "max_items": self.max_items,
         }
 
 

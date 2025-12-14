@@ -296,7 +296,6 @@ class ConfigSchemaGenerator:
                     "plan_style",
                     "visual_style",
                     "private_plan_style",
-                    "emotion_style",
                     "reaction",
                     "filtration_prompt",
                 ]:
