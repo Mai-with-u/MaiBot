@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from src.common.logger import get_logger
 from src.webui.token_manager import get_token_manager
+from src.webui.ws_auth import verify_ws_token
 
 logger = get_logger("webui.logs_ws")
 router = APIRouter()
@@ -78,23 +79,39 @@ async def websocket_logs(websocket: WebSocket, token: Optional[str] = Query(None
     """WebSocket 日志推送端点
 
     客户端连接后会持续接收服务器端的日志消息
-    需要通过 query 参数传递 token 进行认证，例如：ws://host/ws/logs?token=xxx
+    支持三种认证方式（按优先级）：
+    1. query 参数 token（推荐，通过 /api/webui/ws-token 获取临时 token）
+    2. Cookie 中的 maibot_session
+    3. 直接使用 session token（兼容）
+    
+    示例：ws://host/ws/logs?token=xxx
     """
-    # 认证检查
-    if not token:
-        # 尝试从 Cookie 获取 token
-        token = websocket.cookies.get("maibot_session")
+    is_authenticated = False
     
-    if not token:
-        logger.warning("WebSocket 连接被拒绝：未提供认证 token")
-        await websocket.close(code=4001, reason="未提供认证信息")
-        return
+    # 方式 1: 尝试验证临时 WebSocket token（推荐方式）
+    if token and verify_ws_token(token):
+        is_authenticated = True
+        logger.debug("WebSocket 使用临时 token 认证成功")
     
-    # 验证 token
-    token_manager = get_token_manager()
-    if not token_manager.verify_token(token):
-        logger.warning("WebSocket 连接被拒绝：token 无效")
-        await websocket.close(code=4003, reason="Token 无效或已过期")
+    # 方式 2: 尝试从 Cookie 获取 session token
+    if not is_authenticated:
+        cookie_token = websocket.cookies.get("maibot_session")
+        if cookie_token:
+            token_manager = get_token_manager()
+            if token_manager.verify_token(cookie_token):
+                is_authenticated = True
+                logger.debug("WebSocket 使用 Cookie 认证成功")
+    
+    # 方式 3: 尝试直接验证 query 参数作为 session token（兼容旧方式）
+    if not is_authenticated and token:
+        token_manager = get_token_manager()
+        if token_manager.verify_token(token):
+            is_authenticated = True
+            logger.debug("WebSocket 使用 session token 认证成功")
+    
+    if not is_authenticated:
+        logger.warning("WebSocket 连接被拒绝：认证失败")
+        await websocket.close(code=4001, reason="认证失败，请重新登录")
         return
     
     await websocket.accept()

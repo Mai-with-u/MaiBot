@@ -40,6 +40,8 @@ class WebUIServer:
             allow_origins=[
                 "http://localhost:5173",  # Vite 开发服务器
                 "http://127.0.0.1:5173",
+                "http://localhost:7999",  # 前端开发服务器备用端口
+                "http://127.0.0.1:7999",
                 "http://localhost:8001",  # 生产环境
                 "http://127.0.0.1:8001",
             ],
@@ -90,23 +92,46 @@ class WebUIServer:
             logger.warning("💡 请确认前端已正确构建")
             return
 
+        # robots.txt - 禁止搜索引擎索引
+        @self.app.get("/robots.txt", include_in_schema=False)
+        async def robots_txt():
+            """返回 robots.txt 禁止所有爬虫"""
+            from fastapi.responses import PlainTextResponse
+            content = """User-agent: *
+Disallow: /
+
+# MaiBot Dashboard - 私有管理面板，禁止索引
+"""
+            return PlainTextResponse(
+                content=content,
+                headers={"X-Robots-Tag": "noindex, nofollow, noarchive"}
+            )
+
         # 处理 SPA 路由 - 注意：这个路由优先级最低
         @self.app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str):
             """服务单页应用 - 只处理非 API 请求"""
             # 如果是根路径，直接返回 index.html
             if not full_path or full_path == "/":
-                return FileResponse(static_path / "index.html", media_type="text/html")
+                response = FileResponse(static_path / "index.html", media_type="text/html")
+                response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+                return response
 
             # 检查是否是静态文件
             file_path = static_path / full_path
             if file_path.is_file() and file_path.exists():
                 # 自动检测 MIME 类型
                 media_type = mimetypes.guess_type(str(file_path))[0]
-                return FileResponse(file_path, media_type=media_type)
+                response = FileResponse(file_path, media_type=media_type)
+                # HTML 文件添加防索引头
+                if str(file_path).endswith('.html'):
+                    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+                return response
 
             # 其他路径返回 index.html（SPA 路由）
-            return FileResponse(static_path / "index.html", media_type="text/html")
+            response = FileResponse(static_path / "index.html", media_type="text/html")
+            response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+            return response
 
         logger.info(f"✅ WebUI 静态文件服务已配置: {static_path}")
 
