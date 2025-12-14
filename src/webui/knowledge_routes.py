@@ -1,9 +1,12 @@
 """知识库图谱可视化 API 路由"""
-
+import secrets
 from typing import List, Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException
 from pydantic import BaseModel
 import logging
+
+from webui.auth import get_current_token
+from webui.token_manager import get_token_manager
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +114,7 @@ def _convert_graph_to_json(kg_manager) -> KnowledgeGraph:
 
 @router.get("/graph", response_model=KnowledgeGraph)
 async def get_knowledge_graph(
+    request: Request,
     limit: int = Query(100, ge=1, le=10000, description="返回的最大节点数"),
     node_type: str = Query("all", description="节点类型过滤: all, entity, paragraph"),
 ):
@@ -124,6 +128,12 @@ async def get_knowledge_graph(
         KnowledgeGraph: 包含指定数量节点和相关边的知识图谱
     """
     try:
+        # 验证当前 token（优先 Cookie，其次 Header）
+        manager = get_token_manager()
+        tk, sign = get_current_token(request)
+        if secrets.compare_digest(tk, manager.get_token()):
+            raise HTTPException(status_code=401, detail="当前 Token 无效")
+
         kg_manager = _load_kg_manager()
         if kg_manager is None:
             logger.warning("KGManager 未初始化，返回空图谱")
@@ -199,13 +209,21 @@ async def get_knowledge_graph(
 
 
 @router.get("/stats", response_model=KnowledgeStats)
-async def get_knowledge_stats():
+async def get_knowledge_stats(
+        request: Request,
+):
     """获取知识库统计信息
 
     Returns:
         KnowledgeStats: 统计信息
     """
     try:
+        # 验证当前 token（优先 Cookie，其次 Header）
+        manager = get_token_manager()
+        tk, sign = get_current_token(request)
+        if secrets.compare_digest(tk, manager.get_token()):
+            raise HTTPException(status_code=401, detail="当前 Token 无效")
+
         kg_manager = _load_kg_manager()
         if kg_manager is None or kg_manager.graph is None:
             return KnowledgeStats(total_nodes=0, total_edges=0, entity_nodes=0, paragraph_nodes=0, avg_connections=0.0)
@@ -248,7 +266,10 @@ async def get_knowledge_stats():
 
 
 @router.get("/search", response_model=List[KnowledgeNode])
-async def search_knowledge_node(query: str = Query(..., min_length=1)):
+async def search_knowledge_node(
+        request: Request,
+        query: str = Query(..., min_length=1),
+):
     """搜索知识节点
 
     Args:
@@ -258,6 +279,12 @@ async def search_knowledge_node(query: str = Query(..., min_length=1)):
         List[KnowledgeNode]: 匹配的节点列表
     """
     try:
+        # 验证当前 token（优先 Cookie，其次 Header）
+        manager = get_token_manager()
+        tk, sign = get_current_token(request)
+        if secrets.compare_digest(tk, manager.get_token()):
+            raise HTTPException(status_code=401, detail="当前 Token 无效")
+
         kg_manager = _load_kg_manager()
         if kg_manager is None or kg_manager.graph is None:
             return []

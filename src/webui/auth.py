@@ -2,11 +2,13 @@
 WebUI 认证模块
 提供统一的认证依赖，支持 Cookie 和 Header 两种方式
 """
-
+import hashlib
+import hmac
 from typing import Optional
 from fastapi import HTTPException, Cookie, Header, Response, Request
 from src.common.logger import get_logger
 from .token_manager import get_token_manager
+import secrets
 
 logger = get_logger("webui.auth")
 
@@ -14,19 +16,18 @@ logger = get_logger("webui.auth")
 COOKIE_NAME = "maibot_session"
 COOKIE_MAX_AGE = 7 * 24 * 60 * 60  # 7天
 
+COOKIE_NAME_NEW = "maibot_session_signDx"  # 新版 Cookie 名称
+COOKIE_SIGN_NRS = "maibot_session_signCx"  # 签名 Cookie 名称
+
 
 def get_current_token(
-    request: Request,
-    maibot_session: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None),
-) -> str:
+        request: Request,
+) -> tuple[str, str | None]:
     """
     获取当前请求的 token，优先从 Cookie 获取，其次从 Header 获取
     
     Args:
         request: FastAPI Request 对象
-        maibot_session: Cookie 中的 token
-        authorization: Authorization Header (Bearer token)
     
     Returns:
         验证通过的 token
@@ -34,24 +35,28 @@ def get_current_token(
     Raises:
         HTTPException: 认证失败时抛出 401 错误
     """
-    token = None
-    
+    sign = None
+    authorization = request.headers.get("Authorization")
+    token = request.cookies.get(COOKIE_NAME_NEW)
+    if not token:
+        token = request.cookies.get(COOKIE_NAME)
+
     # 优先从 Cookie 获取
-    if maibot_session:
-        token = maibot_session
+    if token:
+        sign = request.cookies.get(COOKIE_SIGN_NRS)
     # 其次从 Header 获取（兼容旧版本）
-    elif authorization and authorization.startswith("Bearer "):
+    elif authorization and request.headers.get("Authorization").startswith("Bearer "):
         token = authorization.replace("Bearer ", "")
-    
+
     if not token:
         raise HTTPException(status_code=401, detail="未提供有效的认证信息")
-    
+
     # 验证 token
     token_manager = get_token_manager()
-    if not token_manager.verify_token(token):
+    if not token_manager.verify_token(token, sign):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
-    
-    return token
+
+    return token, sign
 
 
 def set_auth_cookie(response: Response, token: str) -> None:
@@ -62,9 +67,24 @@ def set_auth_cookie(response: Response, token: str) -> None:
         response: FastAPI Response 对象
         token: 要设置的 token
     """
+    tk = secrets.token_hex(64)
+    sign = hmac.new(
+        token.encode('utf-8'),
+        tk.encode('utf-8'),
+        hashlib.sha256
+    )
     response.set_cookie(
-        key=COOKIE_NAME,
+        key=COOKIE_NAME_NEW,
         value=token,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,  # 防止 JS 读取
+        samesite="lax",  # 允许同站导航时发送 Cookie（兼容开发环境代理）
+        secure=False,  # 本地开发不强制 HTTPS，生产环境建议设为 True
+        path="/",  # 确保 Cookie 在所有路径下可用
+    )
+    response.set_cookie(
+        key=COOKIE_SIGN_NRS,
+        value=sign.hexdigest(),
         max_age=COOKIE_MAX_AGE,
         httponly=True,  # 防止 JS 读取
         samesite="lax",  # 允许同站导航时发送 Cookie（兼容开发环境代理）
@@ -82,7 +102,13 @@ def clear_auth_cookie(response: Response) -> None:
         response: FastAPI Response 对象
     """
     response.delete_cookie(
-        key=COOKIE_NAME,
+        key=COOKIE_NAME_NEW,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    response.delete_cookie(
+        key=COOKIE_SIGN_NRS,
         httponly=True,
         samesite="lax",
         path="/",
@@ -91,14 +117,16 @@ def clear_auth_cookie(response: Response) -> None:
 
 
 def verify_auth_token_from_cookie_or_header(
-    maibot_session: Optional[str] = None,
-    authorization: Optional[str] = None,
+        maibot_session: Optional[str] = None,
+        seesion_sign: Optional[str] = None,
+        authorization: Optional[str] = None,
 ) -> bool:
     """
     验证认证 Token，支持从 Cookie 或 Header 获取
     
     Args:
         maibot_session: Cookie 中的 token
+        seesion_sign: Cookie 中的签名 token
         authorization: Authorization header (Bearer token)
     
     Returns:
@@ -108,20 +136,20 @@ def verify_auth_token_from_cookie_or_header(
         HTTPException: 认证失败时抛出 401 错误
     """
     token = None
-    
+
     # 优先从 Cookie 获取
     if maibot_session:
         token = maibot_session
     # 其次从 Header 获取（兼容旧版本）
     elif authorization and authorization.startswith("Bearer "):
         token = authorization.replace("Bearer ", "")
-    
+
     if not token:
         raise HTTPException(status_code=401, detail="未提供有效的认证信息")
-    
+
     # 验证 token
     token_manager = get_token_manager()
-    if not token_manager.verify_token(token):
+    if not token_manager.verify_token(token, seesion_sign):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
-    
+
     return True

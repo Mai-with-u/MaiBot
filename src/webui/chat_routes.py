@@ -4,17 +4,19 @@
 1. WebUI 模式：使用 WebUI 平台独立身份聊天
 2. 虚拟身份模式：使用真实平台用户的身份，在虚拟群聊中与麦麦对话
 """
-
+import secrets
 import time
 import uuid
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Request, HTTPException
 from pydantic import BaseModel
 
 from src.common.logger import get_logger
 from src.common.database.database_model import Messages, PersonInfo
 from src.config.config import global_config
 from src.chat.message_receive.bot import chat_bot
+from webui.auth import get_current_token
+from webui.token_manager import get_token_manager
 
 logger = get_logger("webui.chat")
 
@@ -253,6 +255,7 @@ def create_message_data(
 
 @router.get("/history")
 async def get_chat_history(
+        request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     user_id: Optional[str] = Query(default=None),  # 保留参数兼容性，但不用于过滤
     group_id: Optional[str] = Query(default=None),  # 可选：指定群 ID 获取历史
@@ -262,6 +265,12 @@ async def get_chat_history(
     所有 WebUI 用户共享同一个聊天室，因此返回所有历史记录
     如果指定了 group_id，则获取该虚拟群的历史记录
     """
+    # 验证当前 token（优先 Cookie，其次 Header）
+    manager = get_token_manager()
+    tk, sign = get_current_token(request)
+    if secrets.compare_digest(tk, manager.get_token()):
+        raise HTTPException(status_code=401, detail="当前 Token 无效")
+
     target_group_id = group_id if group_id else WEBUI_CHAT_GROUP_ID
     history = chat_history.get_history(limit, target_group_id)
     return {
@@ -272,12 +281,18 @@ async def get_chat_history(
 
 
 @router.get("/platforms")
-async def get_available_platforms():
+async def get_available_platforms(request: Request):
     """获取可用平台列表
 
     从 PersonInfo 表中获取所有已知的平台
     """
     try:
+        # 验证当前 token（优先 Cookie，其次 Header）
+        manager = get_token_manager()
+        tk, sign = get_current_token(request)
+        if secrets.compare_digest(tk, manager.get_token()):
+            raise HTTPException(status_code=401, detail="当前 Token 无效")
+
         from peewee import fn
 
         # 查询所有不同的平台
@@ -300,6 +315,7 @@ async def get_available_platforms():
 
 @router.get("/persons")
 async def get_persons_by_platform(
+        request: Request,
     platform: str = Query(..., description="平台名称"),
     search: Optional[str] = Query(default=None, description="搜索关键词"),
     limit: int = Query(default=50, ge=1, le=200),
@@ -312,6 +328,12 @@ async def get_persons_by_platform(
         limit: 返回数量限制
     """
     try:
+        # 验证当前 token（优先 Cookie，其次 Header）
+        manager = get_token_manager()
+        tk, sign = get_current_token(request)
+        if secrets.compare_digest(tk, manager.get_token()):
+            raise HTTPException(status_code=401, detail="当前 Token 无效")
+
         # 构建查询
         query = PersonInfo.select().where(PersonInfo.platform == platform)
 
@@ -350,12 +372,21 @@ async def get_persons_by_platform(
 
 
 @router.delete("/history")
-async def clear_chat_history(group_id: Optional[str] = Query(default=None)):
+async def clear_chat_history(
+        request: Request,
+        group_id: Optional[str] = Query(default=None)
+):
     """清空聊天历史记录
 
     Args:
         group_id: 可选，指定要清空的群 ID，默认清空 WebUI 默认聊天室
     """
+    # 验证当前 token（优先 Cookie，其次 Header）
+    manager = get_token_manager()
+    tk, sign = get_current_token(request)
+    if secrets.compare_digest(tk, manager.get_token()):
+        raise HTTPException(status_code=401, detail="当前 Token 无效")
+
     deleted = chat_history.clear_history(group_id)
     return {
         "success": True,
@@ -365,6 +396,7 @@ async def clear_chat_history(group_id: Optional[str] = Query(default=None)):
 
 @router.websocket("/ws")
 async def websocket_chat(
+        request: Request,
     websocket: WebSocket,
     user_id: Optional[str] = Query(default=None),
     user_name: Optional[str] = Query(default="WebUI用户"),
@@ -385,6 +417,12 @@ async def websocket_chat(
 
     虚拟身份模式可通过 URL 参数直接配置，或通过消息中的 set_virtual_identity 配置
     """
+    # 验证当前 token（优先 Cookie，其次 Header）
+    manager = get_token_manager()
+    tk, sign = get_current_token(request)
+    if secrets.compare_digest(tk, manager.get_token()):
+        raise HTTPException(status_code=401, detail="当前 Token 无效")
+
     # 生成会话 ID（每次连接都是新的）
     session_id = str(uuid.uuid4())
 
@@ -710,8 +748,14 @@ async def websocket_chat(
 
 
 @router.get("/info")
-async def get_chat_info():
+async def get_chat_info(request: Request):
     """获取聊天室信息"""
+    # 验证当前 token（优先 Cookie，其次 Header）
+    manager = get_token_manager()
+    tk, sign = get_current_token(request)
+    if secrets.compare_digest(tk, manager.get_token()):
+        raise HTTPException(status_code=401, detail="当前 Token 无效")
+
     return {
         "bot_name": global_config.bot.nickname,
         "platform": WEBUI_CHAT_PLATFORM,

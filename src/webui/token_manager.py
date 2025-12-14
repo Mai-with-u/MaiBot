@@ -7,6 +7,8 @@ import json
 import secrets
 from pathlib import Path
 from typing import Optional
+import hmac
+import hashlib
 
 from src.common.logger import get_logger
 
@@ -99,12 +101,13 @@ class TokenManager:
         config = self._load_config()
         return config.get("access_token", "")
 
-    def verify_token(self, token: str) -> bool:
+    def verify_token(self, token: str, sign: Optional[str] = None) -> bool:
         """
         验证 token 是否有效
 
         Args:
             token: 待验证的 token
+            sign: Cookies 中存在的签名数据
 
         Returns:
             bool: token 是否有效
@@ -113,12 +116,24 @@ class TokenManager:
             return False
 
         current_token = self.get_token()
+
         if not current_token:
             logger.error("系统中没有有效的 token")
             return False
 
-        # 使用 secrets.compare_digest 防止时序攻击
-        is_valid = secrets.compare_digest(token, current_token)
+        token_bytes = token.encode('utf-8')
+
+        if sign:
+            h_recalculated = hmac.new(
+                current_token.encode('utf-8'),
+                token_bytes,
+                hashlib.sha256
+            )
+            recalculated_sign = h_recalculated.hexdigest()
+
+            is_valid = hmac.compare_digest(recalculated_sign, sign)
+        else:
+            is_valid = secrets.compare_digest(token, current_token)
 
         if is_valid:
             logger.debug("Token 验证成功")
