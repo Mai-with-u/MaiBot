@@ -10,6 +10,7 @@ from json_repair import repair_json
 from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config, model_config
 from src.common.logger import get_logger
+from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.chat.utils.chat_message_builder import (
@@ -52,7 +53,7 @@ reply
 4.不要选择回复你自己发送的消息
 5.不要单独对表情包进行回复
 6.将上下文中所有含义不明的，疑似黑话的，缩写词均写入unknown_words中
-7.用一句简单的话来描述当前回复场景，不超过10个字
+7.如果你对上下文存在疑问，有需要查询的问题，写入question中
 {reply_action_example}
 
 no_reply
@@ -223,6 +224,25 @@ class ActionPlanner:
             else:
                 reasoning = "未提供原因"
             action_data = {key: value for key, value in action_json.items() if key not in ["action"]}
+            
+            # 验证和清理 question
+            if "question" in action_data:
+                q = action_data.get("question")
+                if isinstance(q, str):
+                    cleaned_q = q.strip()
+                    if cleaned_q:
+                        action_data["question"] = cleaned_q
+                    else:
+                        # 如果清理后为空字符串，移除该字段
+                        action_data.pop("question", None)
+                elif q is None:
+                    # 如果为 None，移除该字段
+                    action_data.pop("question", None)
+                else:
+                    # 如果不是字符串类型，记录警告并移除
+                    logger.warning(f"{self.log_prefix}question 格式不正确，应为字符串类型，已忽略")
+                    action_data.pop("question", None)
+            
             # 非no_reply动作需要target_message_id
             target_message = None
 
@@ -310,6 +330,7 @@ class ActionPlanner:
         """
         规划器 (Planner): 使用LLM根据上下文决定做出什么动作。
         """
+        plan_start = time.perf_counter()
 
         # 获取聊天上下文
         message_list_before_now = get_raw_msg_before_timestamp_with_chat(
@@ -345,6 +366,7 @@ class ActionPlanner:
 
         logger.debug(f"{self.log_prefix}过滤后有{len(filtered_actions)}个可用动作")
 
+        prompt_build_start = time.perf_counter()
         # 构建包含所有动作的提示词
         prompt, message_id_list = await self.build_planner_prompt(
             is_group_chat=is_group_chat,
@@ -353,9 +375,10 @@ class ActionPlanner:
             chat_content_block=chat_content_block,
             message_id_list=message_id_list,
         )
+        prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
 
         # 调用LLM获取决策
-        reasoning, actions = await self._execute_main_planner(
+        reasoning, actions, llm_raw_output, llm_reasoning, llm_duration_ms = await self._execute_main_planner(
             prompt=prompt,
             message_id_list=message_id_list,
             filtered_actions=filtered_actions,
@@ -396,6 +419,25 @@ class ActionPlanner:
         )
 
         self.add_plan_log(reasoning, actions)
+
+        try:
+            PlanReplyLogger.log_plan(
+                chat_id=self.chat_id,
+                prompt=prompt,
+                reasoning=reasoning,
+                raw_output=llm_raw_output,
+                raw_reasoning=llm_reasoning,
+                actions=actions,
+                timing={
+                    "prompt_build_ms": round(prompt_build_ms, 2),
+                    "llm_duration_ms": round(llm_duration_ms, 2) if llm_duration_ms is not None else None,
+                    "total_plan_ms": round((time.perf_counter() - plan_start) * 1000, 2),
+                    "loop_start_time": loop_start_time,
+                },
+                extra=None,
+            )
+        except Exception:
+            logger.exception(f"{self.log_prefix}记录plan日志失败")
 
         return actions
 
@@ -480,18 +522,20 @@ class ActionPlanner:
             name_block = f"你的名字是{bot_name}{bot_nickname}，请注意哪些是你自己的发言。"
 
             # 根据 think_mode 配置决定 reply action 的示例 JSON
-            # 在 JSON 中直接作为 action 参数携带 unknown_words
+            # 在 JSON 中直接作为 action 参数携带 unknown_words 和 question
             if global_config.chat.think_mode == "classic":
                 reply_action_example = (
                     '{{"action":"reply", "target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"]}}'
+                    '"unknown_words":["词语1","词语2"], '
+                    '"question":"需要查询的问题"}'
                 )
             else:
                 reply_action_example = (
                     "5.think_level表示思考深度，0表示该回复不需要思考和回忆，1表示该回复需要进行回忆和思考\n"
                     + '{{"action":"reply", "think_level":数值等级(0或1), '
                     '"target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"]}}'
+                    '"unknown_words":["词语1","词语2"], '
+                    '"question":"需要查询的问题"}'
                 )
 
             planner_prompt_template = await global_prompt_manager.get_prompt_async("planner_prompt")
@@ -547,7 +591,7 @@ class ActionPlanner:
             if action_info.activation_type == ActionActivationType.NEVER:
                 logger.debug(f"{self.log_prefix}动作 {action_name} 设置为 NEVER 激活类型，跳过")
                 continue
-            elif action_info.activation_type in [ActionActivationType.LLM_JUDGE, ActionActivationType.ALWAYS]:
+            elif action_info.activation_type == ActionActivationType.ALWAYS:
                 filtered_actions[action_name] = action_info
             elif action_info.activation_type == ActionActivationType.RANDOM:
                 if random.random() < action_info.random_activation_probability:
@@ -610,14 +654,19 @@ class ActionPlanner:
         filtered_actions: Dict[str, ActionInfo],
         available_actions: Dict[str, ActionInfo],
         loop_start_time: float,
-    ) -> Tuple[str, List[ActionPlannerInfo]]:
+    ) -> Tuple[str, List[ActionPlannerInfo], Optional[str], Optional[str], Optional[float]]:
         """执行主规划器"""
         llm_content = None
         actions: List[ActionPlannerInfo] = []
+        llm_reasoning = None
+        llm_duration_ms = None
 
         try:
             # 调用LLM
+            llm_start = time.perf_counter()
             llm_content, (reasoning_content, _, _) = await self.planner_llm.generate_response_async(prompt=prompt)
+            llm_duration_ms = (time.perf_counter() - llm_start) * 1000
+            llm_reasoning = reasoning_content
 
             if global_config.debug.show_planner_prompt:
                 logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
@@ -640,7 +689,7 @@ class ActionPlanner:
                     action_message=None,
                     available_actions=available_actions,
                 )
-            ]
+            ], llm_content, llm_reasoning, llm_duration_ms
 
         # 解析LLM响应
         extracted_reasoning = ""
@@ -685,7 +734,7 @@ class ActionPlanner:
 
         logger.debug(f"{self.log_prefix}规划器选择了{len(actions)}个动作: {' '.join([a.action_type for a in actions])}")
 
-        return extracted_reasoning, actions
+        return extracted_reasoning, actions, llm_content, llm_reasoning, llm_duration_ms
 
     def _create_no_reply(self, reasoning: str, available_actions: Dict[str, ActionInfo]) -> List[ActionPlannerInfo]:
         """创建no_reply"""

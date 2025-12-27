@@ -28,7 +28,7 @@ class ReflectTracker:
         self.max_duration = 15 * 60  # 15 minutes
 
         # LLM for judging response
-        self.judge_model = LLMRequest(model_set=model_config.model_task_config.utils, request_type="reflect.tracker")
+        self.judge_model = LLMRequest(model_set=model_config.model_task_config.tool_use, request_type="reflect.tracker")
 
         self._init_prompts()
 

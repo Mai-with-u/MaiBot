@@ -848,11 +848,7 @@ class ChatHistorySummarizer:
         )
 
         try:
-            response, _ = await self.summarizer_llm.generate_response_async(
-                prompt=prompt,
-                temperature=0.3,
-                max_tokens=500,
-            )
+            response, _ = await self.summarizer_llm.generate_response_async(prompt=prompt)
 
             # 解析JSON响应
             json_str = response.strip()
@@ -912,8 +908,11 @@ class ChatHistorySummarizer:
                     result = _parse_with_quote_fix(extracted_json)
 
             keywords = result.get("keywords", [])
-            summary = result.get("summary", "无概括")
+            summary = result.get("summary", "")
             key_point = result.get("key_point", [])
+            
+            if not (keywords and summary) and key_point:
+                logger.warning(f"{self.log_prefix} LLM返回的JSON中缺少字段，原文\n{response}")
 
             # 确保keywords和key_point是列表
             if isinstance(keywords, str):

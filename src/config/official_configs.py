@@ -260,11 +260,31 @@ class MemoryConfig(ConfigBase):
     agent_timeout_seconds: float = 120.0
     """Agent超时时间（秒）"""
 
-    enable_jargon_detection: bool = True
-    """记忆检索过程中是否启用黑话识别"""
-
     global_memory: bool = False
     """是否允许记忆检索在聊天记录中进行全局查询（忽略当前chat_id，仅对 search_chat_history 等工具生效）"""
+
+    global_memory_blacklist: list[str] = field(default_factory=lambda: [])
+    """
+    全局记忆黑名单，当启用全局记忆时，不将特定聊天流纳入检索
+    格式: ["platform:id:type", ...]
+    
+    示例:
+    [
+        "qq:1919810:private",  # 排除特定私聊
+        "qq:114514:group",     # 排除特定群聊
+    ]
+    
+    说明:
+    - 当启用全局记忆时，黑名单中的聊天流不会被检索
+    - 当在黑名单中的聊天流进行查询时，仅使用该聊天流的本地记忆
+    """
+
+    planner_question: bool = True
+    """
+    是否使用 Planner 提供的 question 作为记忆检索问题
+    - True: 当 Planner 在 reply 动作中提供了 question 时，直接使用该问题进行记忆检索，跳过 LLM 生成问题的步骤
+    - False: 沿用旧模式，使用 LLM 生成问题
+    """
 
     def __post_init__(self):
         """验证配置值"""
@@ -303,10 +323,13 @@ class ExpressionConfig(ConfigBase):
     格式: [["qq:12345:group", "qq:67890:private"]]
     """
 
-    reflect: bool = False
-    """是否启用表达反思"""
+    expression_self_reflect: bool = False
+    """是否启用自动表达优化"""
+    
+    expression_manual_reflect: bool = False
+    """是否启用手动表达优化"""
 
-    reflect_operator_id: str = ""
+    manual_reflect_operator_id: str = ""
     """表达反思操作员ID"""
 
     allow_reflect: list[str] = field(default_factory=list)
@@ -328,6 +351,34 @@ class ExpressionConfig(ConfigBase):
     黑话解释来源模式：
     - "context": 使用上下文自动匹配黑话并解释（原有模式）
     - "planner": 仅使用 Planner 在 reply 动作中给出的 unknown_words 列表进行黑话检索
+    """
+
+    expression_checked_only: bool = False
+    """
+    是否仅选择已检查且未拒绝的表达方式
+    当设置为 true 时，只有 checked=True 且 rejected=False 的表达方式才会被选择
+    当设置为 false 时，保留旧的筛选原则（仅排除 rejected=True 的表达方式）
+    """
+
+
+    expression_auto_check_interval: int = 3600
+    """
+    表达方式自动检查的间隔时间（单位：秒）
+    默认值：3600秒（1小时）
+    """
+
+    expression_auto_check_count: int = 10
+    """
+    每次自动检查时随机选取的表达方式数量
+    默认值：10条
+    """
+
+    expression_auto_check_custom_criteria: list[str] = field(default_factory=list)
+    """
+    表达方式自动检查的额外自定义评估标准
+    格式: ["标准1", "标准2", "标准3", ...]
+    这些标准会被添加到评估提示词中，作为额外的评估要求
+    默认值：空列表
     """
 
     def _parse_stream_config_to_chat_id(self, stream_config_str: str) -> Optional[str]:

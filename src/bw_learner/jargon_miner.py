@@ -51,32 +51,32 @@ def _is_single_char_jargon(content: str) -> bool:
     )
 
 
-def _init_prompt() -> None:
-    prompt_str = """
-**聊天内容，其中的{bot_name}的发言内容是你自己的发言，[msg_id] 是消息ID**
-{chat_str}
+# def _init_prompt() -> None:
+#     prompt_str = """
+# **聊天内容，其中的{bot_name}的发言内容是你自己的发言，[msg_id] 是消息ID**
+# {chat_str}
 
-请从上面这段聊天内容中提取"可能是黑话"的候选项（黑话/俚语/网络缩写/口头禅）。
-- 必须为对话中真实出现过的短词或短语
-- 必须是你无法理解含义的词语，没有明确含义的词语，请不要选择有明确含义，或者含义清晰的词语
-- 排除：人名、@、表情包/图片中的内容、纯标点、常规功能词（如的、了、呢、啊等）
-- 每个词条长度建议 2-8 个字符（不强制），尽量短小
+# 请从上面这段聊天内容中提取"可能是黑话"的候选项（黑话/俚语/网络缩写/口头禅）。
+# - 必须为对话中真实出现过的短词或短语
+# - 必须是你无法理解含义的词语，没有明确含义的词语，请不要选择有明确含义，或者含义清晰的词语
+# - 排除：人名、@、表情包/图片中的内容、纯标点、常规功能词（如的、了、呢、啊等）
+# - 每个词条长度建议 2-8 个字符（不强制），尽量短小
 
-黑话必须为以下几种类型：
-- 由字母构成的，汉语拼音首字母的简写词，例如：nb、yyds、xswl
-- 英文词语的缩写，用英文字母概括一个词汇或含义，例如：CPU、GPU、API
-- 中文词语的缩写，用几个汉字概括一个词汇或含义，例如：社死、内卷
+# 黑话必须为以下几种类型：
+# - 由字母构成的，汉语拼音首字母的简写词，例如：nb、yyds、xswl
+# - 英文词语的缩写，用英文字母概括一个词汇或含义，例如：CPU、GPU、API
+# - 中文词语的缩写，用几个汉字概括一个词汇或含义，例如：社死、内卷
 
-以 JSON 数组输出，元素为对象（严格按以下结构）：
-请你提取出可能的黑话，最多30个黑话，请尽量提取所有
-[
-  {{"content": "词条", "msg_id": "m12"}},  // msg_id 必须与上方聊天中展示的ID完全一致
-  {{"content": "词条2", "msg_id": "m15"}}
-]
+# 以 JSON 数组输出，元素为对象（严格按以下结构）：
+# 请你提取出可能的黑话，最多30个黑话，请尽量提取所有
+# [
+#   {{"content": "词条", "msg_id": "m12"}},  // msg_id 必须与上方聊天中展示的ID完全一致
+#   {{"content": "词条2", "msg_id": "m15"}}
+# ]
 
-现在请输出：
-"""
-    Prompt(prompt_str, "extract_jargon_prompt")
+# 现在请输出：
+# """
+#     Prompt(prompt_str, "extract_jargon_prompt")
 
 
 def _init_inference_prompts() -> None:
@@ -142,7 +142,6 @@ def _init_inference_prompts() -> None:
     Prompt(prompt3_str, "jargon_compare_inference_prompt")
 
 
-_init_prompt()
 _init_inference_prompts()
 
 
@@ -229,34 +228,9 @@ class JargonMiner:
             if len(self.cache) > self.cache_limit:
                 self.cache.popitem(last=False)
 
-    def _collect_cached_entries(self, messages: List[Any]) -> List[Dict[str, List[str]]]:
-        """检查缓存中的黑话是否出现在当前消息窗口，生成对应上下文"""
-        if not self.cache or not messages:
-            return []
-
-        cached_entries: List[Dict[str, List[str]]] = []
-        processed_pairs = set()
-
-        for idx, msg in enumerate(messages):
-            msg_text = (
-                getattr(msg, "display_message", None) or getattr(msg, "processed_plain_text", None) or ""
-            ).strip()
-            if not msg_text or is_bot_message(msg):
-                continue
-
-            for content in self.cache.keys():
-                if not content:
-                    continue
-                if (content, idx) in processed_pairs:
-                    continue
-                if content in msg_text:
-                    paragraph = build_context_paragraph(messages, idx)
-                    if not paragraph:
-                        continue
-                    cached_entries.append({"content": content, "raw_content": [paragraph]})
-                    processed_pairs.add((content, idx))
-
-        return cached_entries
+    def get_cached_jargons(self) -> List[str]:
+        """获取缓存中的所有黑话列表"""
+        return list(self.cache.keys())
 
     async def _infer_meaning_by_id(self, jargon_id: int) -> None:
         """通过ID加载对象并推断"""
@@ -479,263 +453,6 @@ class JargonMiner:
             import traceback
 
             traceback.print_exc()
-
-    async def run_once(
-        self, 
-        messages: List[Any],
-        person_name_filter: Optional[Callable[[str], bool]] = None
-    ) -> None:
-        """
-        运行一次黑话提取
-
-        Args:
-            messages: 外部传入的消息列表（必需）
-            person_name_filter: 可选的过滤函数，用于检查内容是否包含人物名称
-        """
-        # 使用异步锁防止并发执行
-        async with self._extraction_lock:
-            try:
-                if not messages:
-                    return
-
-                # 按时间排序，确保编号与上下文一致
-                messages = sorted(messages, key=lambda msg: msg.time or 0)
-
-                chat_str, message_id_list = build_readable_messages_with_id(
-                    messages=messages,
-                    replace_bot_name=True,
-                    timestamp_mode="relative",
-                    truncate=False,
-                    show_actions=False,
-                    show_pic=True,
-                    pic_single=True,
-                )
-                if not chat_str.strip():
-                    return
-
-                msg_id_to_index: Dict[str, int] = {}
-                for idx, (msg_id, _msg) in enumerate(message_id_list or []):
-                    if not msg_id:
-                        continue
-                    msg_id_to_index[msg_id] = idx
-                if not msg_id_to_index:
-                    logger.warning("未能生成消息ID映射，跳过本次提取")
-                    return
-
-                prompt: str = await global_prompt_manager.format_prompt(
-                    "extract_jargon_prompt",
-                    bot_name=global_config.bot.nickname,
-                    chat_str=chat_str,
-                )
-
-                response, _ = await self.llm.generate_response_async(prompt, temperature=0.2)
-                if not response:
-                    return
-
-                if global_config.debug.show_jargon_prompt:
-                    logger.info(f"jargon提取提示词: {prompt}")
-                    logger.info(f"jargon提取结果: {response}")
-
-                # 解析为JSON
-                entries: List[dict] = []
-                try:
-                    resp = response.strip()
-                    parsed = None
-                    if resp.startswith("[") and resp.endswith("]"):
-                        parsed = json.loads(resp)
-                    else:
-                        repaired = repair_json(resp)
-                        if isinstance(repaired, str):
-                            parsed = json.loads(repaired)
-                        else:
-                            parsed = repaired
-
-                    if isinstance(parsed, dict):
-                        parsed = [parsed]
-
-                    if not isinstance(parsed, list):
-                        return
-
-                    for item in parsed:
-                        if not isinstance(item, dict):
-                            continue
-
-                        content = str(item.get("content", "")).strip()
-                        msg_id_value = item.get("msg_id")
-
-                        if not content:
-                            continue
-
-                        if contains_bot_self_name(content):
-                            logger.info(f"解析阶段跳过包含机器人昵称/别名的词条: {content}")
-                            continue
-                        
-                        # 检查是否包含人物名称
-                        if person_name_filter and person_name_filter(content):
-                            logger.info(f"解析阶段跳过包含人物名称的词条: {content}")
-                            continue
-
-                        msg_id_str = str(msg_id_value or "").strip()
-                        if not msg_id_str:
-                            logger.warning(f"解析jargon失败：msg_id缺失，content={content}")
-                            continue
-
-                        msg_index = msg_id_to_index.get(msg_id_str)
-                        if msg_index is None:
-                            logger.warning(f"解析jargon失败：msg_id未找到，content={content}, msg_id={msg_id_str}")
-                            continue
-
-                        target_msg = messages[msg_index]
-                        if is_bot_message(target_msg):
-                            logger.info(f"解析阶段跳过引用机器人自身消息的词条: content={content}, msg_id={msg_id_str}")
-                            continue
-
-                        context_paragraph = build_context_paragraph(messages, msg_index)
-                        if not context_paragraph:
-                            logger.warning(f"解析jargon失败：上下文为空，content={content}, msg_id={msg_id_str}")
-                            continue
-
-                        entries.append({"content": content, "raw_content": [context_paragraph]})
-                    cached_entries = self._collect_cached_entries(messages)
-                    if cached_entries:
-                        entries.extend(cached_entries)
-                except Exception as e:
-                    logger.error(f"解析jargon JSON失败: {e}; 原始: {response}")
-                    return
-
-                if not entries:
-                    return
-
-                # 去重并合并raw_content（按 content 聚合）
-                merged_entries: OrderedDict[str, Dict[str, List[str]]] = OrderedDict()
-                for entry in entries:
-                    content_key = entry["content"]
-                    raw_list = entry.get("raw_content", []) or []
-                    if content_key in merged_entries:
-                        merged_entries[content_key]["raw_content"].extend(raw_list)
-                    else:
-                        merged_entries[content_key] = {
-                            "content": content_key,
-                            "raw_content": list(raw_list),
-                        }
-
-                uniq_entries = []
-                for merged_entry in merged_entries.values():
-                    raw_content_list = merged_entry["raw_content"]
-                    if raw_content_list:
-                        merged_entry["raw_content"] = list(dict.fromkeys(raw_content_list))
-                    uniq_entries.append(merged_entry)
-
-                saved = 0
-                updated = 0
-                for entry in uniq_entries:
-                    content = entry["content"]
-                    raw_content_list = entry["raw_content"]  # 已经是列表
-
-                    try:
-                        # 查询所有content匹配的记录
-                        query = Jargon.select().where(Jargon.content == content)
-
-                        # 查找匹配的记录
-                        matched_obj = None
-                        for obj in query:
-                            if global_config.expression.all_global_jargon:
-                                # 开启all_global：所有content匹配的记录都可以
-                                matched_obj = obj
-                                break
-                            else:
-                                # 关闭all_global：需要检查chat_id列表是否包含目标chat_id
-                                chat_id_list = parse_chat_id_list(obj.chat_id)
-                                if chat_id_list_contains(chat_id_list, self.chat_id):
-                                    matched_obj = obj
-                                    break
-
-                        if matched_obj:
-                            obj = matched_obj
-                            try:
-                                obj.count = (obj.count or 0) + 1
-                            except Exception:
-                                obj.count = 1
-
-                            # 合并raw_content列表：读取现有列表，追加新值，去重
-                            existing_raw_content = []
-                            if obj.raw_content:
-                                try:
-                                    existing_raw_content = (
-                                        json.loads(obj.raw_content)
-                                        if isinstance(obj.raw_content, str)
-                                        else obj.raw_content
-                                    )
-                                    if not isinstance(existing_raw_content, list):
-                                        existing_raw_content = [existing_raw_content] if existing_raw_content else []
-                                except (json.JSONDecodeError, TypeError):
-                                    existing_raw_content = [obj.raw_content] if obj.raw_content else []
-
-                            # 合并并去重
-                            merged_list = list(dict.fromkeys(existing_raw_content + raw_content_list))
-                            obj.raw_content = json.dumps(merged_list, ensure_ascii=False)
-
-                            # 更新chat_id列表：增加当前chat_id的计数
-                            chat_id_list = parse_chat_id_list(obj.chat_id)
-                            updated_chat_id_list = update_chat_id_list(chat_id_list, self.chat_id, increment=1)
-                            obj.chat_id = json.dumps(updated_chat_id_list, ensure_ascii=False)
-
-                            # 开启all_global时，确保记录标记为is_global=True
-                            if global_config.expression.all_global_jargon:
-                                obj.is_global = True
-                            # 关闭all_global时，保持原有is_global不变（不修改）
-
-                            obj.save()
-
-                            # 检查是否需要推断（达到阈值且超过上次判定值）
-                            if _should_infer_meaning(obj):
-                                # 异步触发推断，不阻塞主流程
-                                # 重新加载对象以确保数据最新
-                                jargon_id = obj.id
-                                asyncio.create_task(self._infer_meaning_by_id(jargon_id))
-
-                            updated += 1
-                        else:
-                            # 没找到匹配记录，创建新记录
-                            if global_config.expression.all_global_jargon:
-                                # 开启all_global：新记录默认为is_global=True
-                                is_global_new = True
-                            else:
-                                # 关闭all_global：新记录is_global=False
-                                is_global_new = False
-
-                            # 使用新格式创建chat_id列表：[[chat_id, count]]
-                            chat_id_list = [[self.chat_id, 1]]
-                            chat_id_json = json.dumps(chat_id_list, ensure_ascii=False)
-
-                            Jargon.create(
-                                content=content,
-                                raw_content=json.dumps(raw_content_list, ensure_ascii=False),
-                                chat_id=chat_id_json,
-                                is_global=is_global_new,
-                                count=1,
-                            )
-                            saved += 1
-                    except Exception as e:
-                        logger.error(f"保存jargon失败: chat_id={self.chat_id}, content={content}, err={e}")
-                        continue
-                    finally:
-                        self._add_to_cache(content)
-
-                # 固定输出提取的jargon结果，格式化为可读形式（只要有提取结果就输出）
-                if uniq_entries:
-                    # 收集所有提取的jargon内容
-                    jargon_list = [entry["content"] for entry in uniq_entries]
-                    jargon_str = ",".join(jargon_list)
-
-                    # 输出格式化的结果（使用logger.info会自动应用jargon模块的颜色）
-                    logger.info(f"[{self.stream_name}]疑似黑话: {jargon_str}")
-
-                if saved or updated:
-                    logger.info(f"jargon写入: 新增 {saved} 条，更新 {updated} 条，chat_id={self.chat_id}")
-            except Exception as e:
-                logger.error(f"JargonMiner 运行失败: {e}")
-                # 即使失败也保持时间戳更新，避免频繁重试
 
     async def process_extracted_entries(
         self, 

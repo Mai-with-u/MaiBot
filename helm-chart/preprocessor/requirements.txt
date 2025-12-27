@@ -1,2 +1,0 @@
-toml~=0.10.2
-kubernetes~=34.1.0

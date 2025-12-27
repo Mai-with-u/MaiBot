@@ -19,7 +19,7 @@ from src.chat.message_receive.chat_stream import get_chat_manager
 logger = get_logger("person_info")
 
 relation_selection_model = LLMRequest(
-    model_set=model_config.model_task_config.utils_small, request_type="relation_selection"
+    model_set=model_config.model_task_config.tool_use, request_type="relation_selection"
 )
 
 

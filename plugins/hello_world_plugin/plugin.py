@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Type, Any
+from typing import List, Tuple, Type, Any, Optional
 from src.plugin_system import (
     BasePlugin,
     register_plugin,
@@ -17,6 +17,9 @@ from src.plugin_system import (
     emoji_api,
 )
 from src.config.config import global_config
+from src.common.logger import get_logger
+
+logger = get_logger("hello_world_plugin")
 
 
 class CompareNumbersTool(BaseTool):
@@ -217,6 +220,39 @@ class RandomEmojis(BaseCommand):
         return (True, "已发送随机表情包", True) if success else (False, "发送随机表情包失败", False)
 
 
+class TestCommand(BaseCommand):
+    """响应/test命令"""
+
+    command_name = "test"
+    command_description = "测试命令"
+    command_pattern = r"^/test$"
+
+    async def execute(self) -> Tuple[bool, Optional[str], int]:
+        """执行测试命令"""
+        try:
+            from src.plugin_system.apis import generator_api
+
+            reply_reason = "这是一条测试消息。"
+            logger.info(f"测试命令:{reply_reason}")
+            result_status, data = await generator_api.generate_reply(
+                chat_stream=self.message.chat_stream,
+                reply_reason=reply_reason,
+                enable_chinese_typo=False,
+                extra_info=f"{reply_reason}用于测试bot的功能是否正常。请你按设定的人设表达一句\"测试正常\"",
+            )
+            if result_status:
+                # 发送生成的回复
+                if data and data.reply_set and data.reply_set.reply_data:
+                    for reply_seg in data.reply_set.reply_data:
+                        send_data = reply_seg.content
+                        await self.send_text(send_data, storage_message=True)
+                        logger.info(f"已回复: {send_data}")
+                return True, "", 1
+        except Exception as e:
+            logger.error(f"表达器生成失败:{e}")
+        return True, "", 1
+
+
 # ===== 插件注册 =====
 
 
@@ -259,6 +295,7 @@ class HelloWorldPlugin(BasePlugin):
             (PrintMessage.get_handler_info(), PrintMessage),
             (ForwardMessages.get_handler_info(), ForwardMessages),
             (RandomEmojis.get_command_info(), RandomEmojis),
+            (TestCommand.get_command_info(), TestCommand),
         ]
 
 

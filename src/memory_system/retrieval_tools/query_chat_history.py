@@ -4,7 +4,7 @@
 """
 
 import json
-from typing import Optional
+from typing import Optional, Set
 from datetime import datetime
 
 from src.common.logger import get_logger
@@ -14,6 +14,72 @@ from src.config.config import global_config
 from .tool_registry import register_memory_retrieval_tool
 
 logger = get_logger("memory_retrieval_tools")
+
+
+def _parse_blacklist_to_chat_ids(blacklist: list[str]) -> Set[str]:
+    """将黑名单配置（platform:id:type格式）转换为chat_id集合
+
+    Args:
+        blacklist: 黑名单配置列表，格式为 ["platform:id:type", ...]
+
+    Returns:
+        Set[str]: chat_id集合
+    """
+    chat_ids = set()
+    if not blacklist:
+        return chat_ids
+
+    try:
+        from src.chat.message_receive.chat_stream import get_chat_manager
+
+        chat_manager = get_chat_manager()
+        for blacklist_item in blacklist:
+            if not isinstance(blacklist_item, str):
+                continue
+
+            try:
+                parts = blacklist_item.split(":")
+                if len(parts) != 3:
+                    logger.warning(f"黑名单配置格式错误，应为 platform:id:type，实际: {blacklist_item}")
+                    continue
+
+                platform = parts[0]
+                id_str = parts[1]
+                stream_type = parts[2]
+
+                # 判断是否为群聊
+                is_group = stream_type == "group"
+
+                # 转换为chat_id
+                chat_id = chat_manager.get_stream_id(platform, str(id_str), is_group=is_group)
+                if chat_id:
+                    chat_ids.add(chat_id)
+                else:
+                    logger.warning(f"无法将黑名单配置转换为chat_id: {blacklist_item}")
+            except Exception as e:
+                logger.warning(f"解析黑名单配置失败: {blacklist_item}, 错误: {e}")
+
+    except Exception as e:
+        logger.error(f"初始化黑名单chat_id集合失败: {e}")
+
+    return chat_ids
+
+
+def _is_chat_id_in_blacklist(chat_id: str) -> bool:
+    """检查chat_id是否在全局记忆黑名单中
+
+    Args:
+        chat_id: 要检查的chat_id
+
+    Returns:
+        bool: 如果chat_id在黑名单中返回True，否则返回False
+    """
+    blacklist = getattr(global_config.memory, "global_memory_blacklist", [])
+    if not blacklist:
+        return False
+
+    blacklist_chat_ids = _parse_blacklist_to_chat_ids(blacklist)
+    return chat_id in blacklist_chat_ids
 
 
 async def search_chat_history(chat_id: str, keyword: Optional[str] = None, participant: Optional[str] = None) -> str:
@@ -33,17 +99,34 @@ async def search_chat_history(chat_id: str, keyword: Optional[str] = None, parti
             return "未指定查询参数（需要提供keyword或participant之一）"
 
         # 构建查询条件
+        # 检查当前chat_id是否在黑名单中
+        is_current_chat_in_blacklist = _is_chat_id_in_blacklist(chat_id)
+
         # 根据配置决定是否限制在当前 chat_id 内查询
-        use_global_search = global_config.memory.global_memory
+        # 如果当前chat_id在黑名单中，强制使用本地查询
+        use_global_search = global_config.memory.global_memory and not is_current_chat_in_blacklist
 
         if use_global_search:
-            # 全局查询所有聊天记录
-            query = ChatHistory.select()
-            logger.debug(
-                f"search_chat_history 启用全局查询模式，忽略 chat_id 过滤，keyword={keyword}, participant={participant}"
-            )
+            # 全局查询所有聊天记录，但排除黑名单中的聊天流
+            blacklist_chat_ids = _parse_blacklist_to_chat_ids(global_config.memory.global_memory_blacklist)
+            if blacklist_chat_ids:
+                # 排除黑名单中的chat_id
+                query = ChatHistory.select().where(~(ChatHistory.chat_id.in_(blacklist_chat_ids)))
+                logger.debug(
+                    f"search_chat_history 启用全局查询模式（排除黑名单 {len(blacklist_chat_ids)} 个聊天流），keyword={keyword}, participant={participant}"
+                )
+            else:
+                # 没有黑名单，查询所有
+                query = ChatHistory.select()
+                logger.debug(
+                    f"search_chat_history 启用全局查询模式，忽略 chat_id 过滤，keyword={keyword}, participant={participant}"
+                )
         else:
             # 仅在当前聊天流内查询
+            if is_current_chat_in_blacklist:
+                logger.debug(
+                    f"search_chat_history 当前聊天流在黑名单中，强制使用本地查询，chat_id={chat_id}, keyword={keyword}, participant={participant}"
+                )
             query = ChatHistory.select().where(ChatHistory.chat_id == chat_id)
 
         # 执行查询

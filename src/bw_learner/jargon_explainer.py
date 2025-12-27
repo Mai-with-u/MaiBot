@@ -45,7 +45,7 @@ class JargonExplainer:
     def __init__(self, chat_id: str) -> None:
         self.chat_id = chat_id
         self.llm = LLMRequest(
-            model_set=model_config.model_task_config.utils,
+            model_set=model_config.model_task_config.tool_use,
             request_type="jargon.explain",
         )
 
@@ -341,7 +341,7 @@ async def retrieve_concepts_with_jargon(concepts: List[str], chat_id: str) -> st
                     meaning = result.get("meaning", "").strip()
                     if found_content and meaning:
                         output_parts.append(f"找到 '{found_content}' 的含义为：{meaning}")
-                results.append("，".join(output_parts))
+                results.append("\n".join(output_parts))  # 换行分隔每个jargon解释
                 logger.info(f"在jargon库中找到匹配（模糊搜索）: {concept}，找到{len(jargon_results)}条结果")
             else:
                 # 精确匹配
@@ -350,7 +350,8 @@ async def retrieve_concepts_with_jargon(concepts: List[str], chat_id: str) -> st
                     meaning = result.get("meaning", "").strip()
                     if meaning:
                         output_parts.append(f"'{concept}' 为黑话或者网络简写，含义为：{meaning}")
-                results.append("；".join(output_parts) if len(output_parts) > 1 else output_parts[0])
+                # 换行分隔每个jargon解释
+                results.append("\n".join(output_parts) if len(output_parts) > 1 else output_parts[0])
                 exact_matches.append(concept)  # 收集精确匹配的概念，稍后统一打印
         else:
             # 未找到，不返回占位信息，只记录日志
@@ -361,5 +362,5 @@ async def retrieve_concepts_with_jargon(concepts: List[str], chat_id: str) -> st
         logger.info(f"找到黑话: {', '.join(exact_matches)}，共找到{len(exact_matches)}条结果")
 
     if results:
-        return "【概念检索结果】\n" + "\n".join(results) + "\n"
+        return "你了解以下词语可能的含义：\n" + "\n".join(results) + "\n"
     return ""

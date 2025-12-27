@@ -76,6 +76,7 @@ class PrivateReplyer:
         reply_message: Optional[DatabaseMessages] = None,
         reply_time_point: Optional[float] = time.time(),
         unknown_words: Optional[List[str]] = None,
+        log_reply: bool = True,
     ) -> Tuple[bool, LLMGenerationDataModel]:
         # sourcery skip: merge-nested-ifs
         """
@@ -109,6 +110,7 @@ class PrivateReplyer:
                     enable_tool=enable_tool,
                     reply_message=reply_message,
                     reply_reason=reply_reason,
+                    unknown_words=unknown_words,
                 )
             llm_response.prompt = prompt
             llm_response.selected_expressions = selected_expressions
@@ -610,6 +612,7 @@ class PrivateReplyer:
         available_actions: Optional[Dict[str, ActionInfo]] = None,
         chosen_actions: Optional[List[ActionPlannerInfo]] = None,
         enable_tool: bool = True,
+        unknown_words: Optional[List[str]] = None,
     ) -> Tuple[str, List[int]]:
         """
         构建回复器上下文
@@ -664,6 +667,7 @@ class PrivateReplyer:
             timestamp_mode="relative",
             read_mark=0.0,
             show_actions=True,
+            long_time_notice=True
         )
 
         message_list_before_short = get_raw_msg_before_timestamp_with_chat(
@@ -708,12 +712,24 @@ class PrivateReplyer:
         else:
             jargon_coroutine = self._build_disabled_jargon_explanation()
 
+        # 从 chosen_actions 中提取 question（仅在 reply 动作中）
+        question = None
+        if chosen_actions:
+            for action_info in chosen_actions:
+                if action_info.action_type == "reply" and isinstance(action_info.action_data, dict):
+                    q = action_info.action_data.get("question")
+                    if isinstance(q, str):
+                        cleaned_q = q.strip()
+                        if cleaned_q:
+                            question = cleaned_q
+                            break
+
         # 并行执行九个构建任务（包括黑话解释，可配置关闭）
         task_results = await asyncio.gather(
             self._time_and_run_task(
                 self.build_expression_habits(chat_talking_prompt_short, target, reply_reason), "expression_habits"
             ),
-            self._time_and_run_task(self.build_relation_info(chat_talking_prompt_short, sender), "relation_info"),
+            # self._time_and_run_task(self.build_relation_info(chat_talking_prompt_short, sender), "relation_info"),
             self._time_and_run_task(
                 self.build_tool_info(chat_talking_prompt_short, sender, target, enable_tool=enable_tool), "tool_info"
             ),
@@ -722,7 +738,7 @@ class PrivateReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, self.tool_executor
+                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=1, unknown_words=unknown_words, question=question
                 ),
                 "memory_retrieval",
             ),
@@ -759,7 +775,7 @@ class PrivateReplyer:
         expression_habits_block, selected_expressions = results_dict["expression_habits"]
         expression_habits_block: str
         selected_expressions: List[int]
-        relation_info: str = results_dict["relation_info"]
+        relation_info: str = results_dict.get("relation_info") or ""
         tool_info: str = results_dict["tool_info"]
         prompt_info: str = results_dict["prompt_info"]  # 直接使用格式化后的结果
         actions_info: str = results_dict["actions_info"]
@@ -796,6 +812,17 @@ class PrivateReplyer:
         chat_prompt_content = self.get_chat_prompt_for_chat(chat_id)
         chat_prompt_block = f"{chat_prompt_content}\n" if chat_prompt_content else ""
 
+        # 根据配置构建最终的 reply_style：支持 multiple_reply_style 按概率随机替换
+        reply_style = global_config.personality.reply_style
+        multi_styles = getattr(global_config.personality, "multiple_reply_style", None) or []
+        multi_prob = getattr(global_config.personality, "multiple_probability", 0.0) or 0.0
+        if multi_styles and multi_prob > 0 and random.random() < multi_prob:
+            try:
+                reply_style = random.choice(list(multi_styles))
+            except Exception:
+                # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
+                reply_style = global_config.personality.reply_style
+
         if global_config.bot.qq_account == user_id and platform == global_config.bot.platform:
             return await global_prompt_manager.format_prompt(
                 "private_replyer_self_prompt",
@@ -812,7 +839,7 @@ class PrivateReplyer:
                 target=target,
                 reason=reply_reason,
                 sender_name=sender,
-                reply_style=global_config.personality.reply_style,
+                reply_style=reply_style,
                 keywords_reaction_prompt=keywords_reaction_prompt,
                 moderation_prompt=moderation_prompt_block,
                 memory_retrieval=memory_retrieval,
@@ -832,7 +859,7 @@ class PrivateReplyer:
                 jargon_explanation=jargon_explanation,
                 time_block=time_block,
                 reply_target_block=reply_target_block,
-                reply_style=global_config.personality.reply_style,
+                reply_style=reply_style,
                 keywords_reaction_prompt=keywords_reaction_prompt,
                 moderation_prompt=moderation_prompt_block,
                 sender_name=sender,
@@ -917,6 +944,17 @@ class PrivateReplyer:
 
         template_name = "default_expressor_prompt"
 
+        # 根据配置构建最终的 reply_style：支持 multiple_reply_style 按概率随机替换
+        reply_style = global_config.personality.reply_style
+        multi_styles = getattr(global_config.personality, "multiple_reply_style", None) or []
+        multi_prob = getattr(global_config.personality, "multiple_probability", 0.0) or 0.0
+        if multi_styles and multi_prob > 0 and random.random() < multi_prob:
+            try:
+                reply_style = random.choice(list(multi_styles))
+            except Exception:
+                # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
+                reply_style = global_config.personality.reply_style
+
         return await global_prompt_manager.format_prompt(
             template_name,
             expression_habits_block=expression_habits_block,
@@ -929,7 +967,7 @@ class PrivateReplyer:
             reply_target_block=reply_target_block,
             raw_reply=raw_reply,
             reason=reason,
-            reply_style=global_config.personality.reply_style,
+            reply_style=reply_style,
             keywords_reaction_prompt=keywords_reaction_prompt,
             moderation_prompt=moderation_prompt_block,
         )

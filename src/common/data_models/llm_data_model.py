@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING, Dict, Any
 
 from . import BaseDataModel
 
@@ -17,3 +17,6 @@ class LLMGenerationDataModel(BaseDataModel):
     prompt: Optional[str] = None
     selected_expressions: Optional[List[int]] = None
     reply_set: Optional["ReplySetModel"] = None
+    timing: Optional[Dict[str, Any]] = None
+    processed_output: Optional[List[str]] = None
+    timing_logs: Optional[List[str]] = None

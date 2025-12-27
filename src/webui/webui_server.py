@@ -1,4 +1,4 @@
-"""独立的 WebUI 服务器 - 默认运行在 127.0.0.1:8001"""
+"""独立的 WebUI 服务器 - 运行在 0.0.0.0:8001"""
 
 import asyncio
 import mimetypes
@@ -15,7 +15,7 @@ logger = get_logger("webui_server")
 class WebUIServer:
     """独立的 WebUI 服务器"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8001):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8001):
         self.host = host
         self.port = port
         self.app = FastAPI(title="MaiBot WebUI")
@@ -168,12 +168,20 @@ class WebUIServer:
 
             # 导入本地聊天室路由
             from src.webui.chat_routes import router as chat_router
+            
+            # 导入规划器监控路由
+            from src.webui.api.planner import router as planner_router
+            
+            # 导入回复器监控路由
+            from src.webui.api.replier import router as replier_router
 
             # 注册路由
             self.app.include_router(webui_router)
             self.app.include_router(logs_router)
             self.app.include_router(knowledge_router)
             self.app.include_router(chat_router)
+            self.app.include_router(planner_router)
+            self.app.include_router(replier_router)
 
             logger.info("✅ WebUI API 路由已注册")
         except Exception as e:

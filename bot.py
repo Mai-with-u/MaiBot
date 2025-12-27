@@ -59,6 +59,7 @@ def run_runner_process():
 
     while True:
         logger.info(f"正在启动 {script_file}...")
+        logger.info("正在编译着色器：1/114514")
 
         # 启动子进程 (Worker)
         # 使用 sys.executable 确保使用相同的 Python 解释器

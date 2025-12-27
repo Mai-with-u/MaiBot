@@ -50,7 +50,7 @@ def get_dream_summary_model() -> LLMRequest:
     global _dream_summary_model
     if _dream_summary_model is None:
         _dream_summary_model = LLMRequest(
-            model_set=model_config.model_task_config.utils,
+            model_set=model_config.model_task_config.replyer,
             request_type="dream.summary",
         )
     return _dream_summary_model

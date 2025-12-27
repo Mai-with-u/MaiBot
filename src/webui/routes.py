@@ -18,6 +18,7 @@ from .plugin_progress_ws import get_progress_router
 from .routers.system import router as system_router
 from .model_routes import router as model_router
 from .ws_auth import router as ws_auth_router
+from .annual_report_routes import router as annual_report_router
 
 logger = get_logger("webui.api")
 
@@ -46,6 +47,8 @@ router.include_router(system_router)
 router.include_router(model_router)
 # 注册 WebSocket 认证路由
 router.include_router(ws_auth_router)
+# 注册年度报告路由
+router.include_router(annual_report_router)
 
 
 class TokenVerifyRequest(BaseModel):

@@ -22,7 +22,6 @@ class QAManager:
     ):
         self.embed_manager = embed_manager
         self.kg_manager = kg_manager
-        self.qa_model = LLMRequest(model_set=model_config.model_task_config.lpmm_qa, request_type="lpmm.qa")
 
     async def process_query(
         self, question: str

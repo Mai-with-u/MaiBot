@@ -1,5 +1,6 @@
 from dataclasses import dataclass, fields, MISSING
-from typing import TypeVar, Type, Any, get_origin, get_args, Literal
+from typing import TypeVar, Type, Any, get_origin, get_args, Literal, Union
+import types
 
 T = TypeVar("T", bound="ConfigBase")
 
@@ -107,6 +108,39 @@ class ConfigBase:
             key_type, value_type = field_type_args
 
             return {cls._convert_field(k, key_type): cls._convert_field(v, value_type) for k, v in value.items()}
+
+        # 处理 Union/Optional 类型（包括 float | None 这种 Python 3.10+ 语法）    
+        # 注意：
+        # - Optional[float] 等价于 Union[float, None]，get_origin() 返回 typing.Union
+        # - float | None 是 types.UnionType，get_origin() 返回 None
+        is_union_type = (
+            field_origin_type is Union  # typing.Optional / typing.Union
+            or isinstance(field_type, types.UnionType)  # Python 3.10+ 的 | 语法
+        )
+        
+        if is_union_type:
+            union_args = field_type_args if field_type_args else get_args(field_type)
+            
+            # 安全检查：只允许 T | None 形式的 Optional 类型，禁止 float | str 这种多类型 Union
+            non_none_types = [arg for arg in union_args if arg is not type(None)]
+            if len(non_none_types) > 1:
+                raise TypeError(
+                    f"配置字段不支持多类型 Union（如 float | str），只支持 Optional 类型（如 float | None）。"
+                    f"当前类型: {field_type}"
+                )
+            
+            # 如果值是 None 且 None 在 Union 中，直接返回
+            if value is None and type(None) in union_args:
+                return None
+            # 尝试转换为非 None 的类型
+            for arg in union_args:
+                if arg is not type(None):
+                    try:
+                        return cls._convert_field(value, arg)
+                    except (ValueError, TypeError):
+                        continue
+            # 如果所有类型都转换失败，抛出异常
+            raise TypeError("Cannot convert value to any type in Union")
 
         # 处理基础类型，例如 int, str 等
         if field_origin_type is type(None) and value is None:  # 处理Optional类型

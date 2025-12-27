@@ -28,11 +28,11 @@ class ExpressionReflector:
         try:
             logger.debug(f"[Expression Reflection] 开始检查是否需要提问 (stream_id: {self.chat_id})")
 
-            if not global_config.expression.reflect:
+            if not global_config.expression.expression_self_reflect:
                 logger.debug("[Expression Reflection] 表达反思功能未启用，跳过")
                 return False
 
-            operator_config = global_config.expression.reflect_operator_id
+            operator_config = global_config.expression.manual_reflect_operator_id
             if not operator_config:
                 logger.debug("[Expression Reflection] Operator ID 未配置，跳过")
                 return False

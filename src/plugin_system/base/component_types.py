@@ -33,7 +33,6 @@ class ActionActivationType(Enum):
 
     NEVER = "never"  # 从不激活（默认关闭）
     ALWAYS = "always"  # 默认参与到planner
-    LLM_JUDGE = "llm_judge"  # LLM判定是否启动该action到planner
     RANDOM = "random"  # 随机启用action到planner
     KEYWORD = "keyword"  # 关键词触发启用action到planner
 
@@ -128,7 +127,6 @@ class ActionInfo(ComponentInfo):
     normal_activation_type: ActionActivationType = ActionActivationType.ALWAYS  # 已弃用
     activation_type: ActionActivationType = ActionActivationType.ALWAYS
     random_activation_probability: float = 0.0
-    llm_judge_prompt: str = ""
     activation_keywords: List[str] = field(default_factory=list)  # 激活关键词列表
     keyword_case_sensitive: bool = False
     # 模式和并行设置

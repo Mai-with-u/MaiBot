@@ -116,19 +116,11 @@ class MessageRecorder:
                     f"时间窗口: {extraction_start_time:.2f} - {extraction_end_time:.2f}"
                 )
 
-                # 分别触发 expression_learner 和 jargon_miner 的处理
-                # 传递提取的消息，避免它们重复获取
-                # 触发 expression 学习（如果启用）
+                # 触发 expression_learner 和 jargon_miner 的处理
                 if self.enable_expression_learning:
                     asyncio.create_task(
-                        self._trigger_expression_learning(extraction_start_time, extraction_end_time, messages)
+                        self._trigger_expression_learning(messages)
                     )
-
-                # 触发 jargon 提取（如果启用），传递消息
-                # if self.enable_jargon_learning:
-                # asyncio.create_task(
-                # self._trigger_jargon_extraction(extraction_start_time, extraction_end_time, messages)
-                # )
 
             except Exception as e:
                 logger.error(f"为聊天流 {self.chat_name} 提取和分发消息失败: {e}")
@@ -138,7 +130,7 @@ class MessageRecorder:
                 # 即使失败也保持时间戳更新，避免频繁重试
 
     async def _trigger_expression_learning(
-        self, timestamp_start: float, timestamp_end: float, messages: List[Any]
+        self, messages: List[Any]
     ) -> None:
         """
         触发 expression 学习，使用指定的消息列表
@@ -158,27 +150,6 @@ class MessageRecorder:
                 logger.debug(f"聊天流 {self.chat_name} 表达学习未获得有效结果")
         except Exception as e:
             logger.error(f"为聊天流 {self.chat_name} 触发表达学习失败: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    async def _trigger_jargon_extraction(
-        self, timestamp_start: float, timestamp_end: float, messages: List[Any]
-    ) -> None:
-        """
-        触发 jargon 提取，使用指定的消息列表
-
-        Args:
-            timestamp_start: 开始时间戳
-            timestamp_end: 结束时间戳
-            messages: 消息列表
-        """
-        try:
-            # 传递消息给 JargonMiner，避免它重复获取
-            await self.jargon_miner.run_once(messages=messages)
-
-        except Exception as e:
-            logger.error(f"为聊天流 {self.chat_name} 触发黑话提取失败: {e}")
             import traceback
 
             traceback.print_exc()

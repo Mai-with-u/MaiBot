@@ -1,12 +1,9 @@
 import random
-import asyncio
-import hashlib
 import time
 from typing import List, Dict, TYPE_CHECKING, Tuple
 
 from src.common.logger import get_logger
-from src.config.config import global_config, model_config
-from src.llm_models.utils_model import LLMRequest
+from src.config.config import global_config
 from src.chat.message_receive.chat_stream import get_chat_manager, ChatMessageContext
 from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.utils.chat_message_builder import get_raw_msg_before_timestamp_with_chat, build_readable_messages
@@ -34,14 +31,6 @@ class ActionModifier:
         self.log_prefix = f"[{get_chat_manager().get_stream_name(self.chat_id) or self.chat_id}]"
 
         self.action_manager = action_manager
-
-        # 用于LLM判定的小模型
-        self.llm_judge = LLMRequest(model_set=model_config.model_task_config.utils_small, request_type="action.judge")
-
-        # 缓存相关属性
-        self._llm_judge_cache = {}  # 缓存LLM判定结果
-        self._cache_expiry_time = 30  # 缓存过期时间（秒）
-        self._last_context_hash = None  # 上次上下文的哈希值
 
     async def modify_actions(
         self,
@@ -159,9 +148,6 @@ class ActionModifier:
         """
         deactivated_actions = []
 
-        # 分类处理不同激活类型的actions
-        llm_judge_actions: Dict[str, ActionInfo] = {}
-
         actions_to_check = list(actions_with_info.items())
         random.shuffle(actions_to_check)
 
@@ -185,9 +171,6 @@ class ActionModifier:
                     deactivated_actions.append((action_name, reason))
                     logger.debug(f"{self.log_prefix}未激活动作: {action_name}，原因: {reason}")
 
-            elif activation_type == ActionActivationType.LLM_JUDGE:
-                llm_judge_actions[action_name] = action_info
-
             elif activation_type == ActionActivationType.NEVER:
                 reason = "激活类型为never"
                 deactivated_actions.append((action_name, reason))
@@ -196,193 +179,7 @@ class ActionModifier:
             else:
                 logger.warning(f"{self.log_prefix}未知的激活类型: {activation_type}，跳过处理")
 
-        # 并行处理LLM_JUDGE类型
-        if llm_judge_actions:
-            llm_results = await self._process_llm_judge_actions_parallel(
-                llm_judge_actions,
-                chat_content,
-            )
-            for action_name, should_activate in llm_results.items():
-                if not should_activate:
-                    reason = "LLM判定未激活"
-                    deactivated_actions.append((action_name, reason))
-                    logger.debug(f"{self.log_prefix}未激活动作: {action_name}，原因: {reason}")
-
         return deactivated_actions
-
-    def _generate_context_hash(self, chat_content: str) -> str:
-        """生成上下文的哈希值用于缓存"""
-        context_content = f"{chat_content}"
-        return hashlib.md5(context_content.encode("utf-8")).hexdigest()
-
-    async def _process_llm_judge_actions_parallel(
-        self,
-        llm_judge_actions: Dict[str, ActionInfo],
-        chat_content: str = "",
-    ) -> Dict[str, bool]:
-        """
-        并行处理LLM判定actions，支持智能缓存
-
-        Args:
-            llm_judge_actions: 需要LLM判定的actions
-            chat_content: 聊天内容
-
-        Returns:
-            Dict[str, bool]: action名称到激活结果的映射
-        """
-
-        # 生成当前上下文的哈希值
-        current_context_hash = self._generate_context_hash(chat_content)
-        current_time = time.time()
-
-        results = {}
-        tasks_to_run: Dict[str, ActionInfo] = {}
-
-        # 检查缓存
-        for action_name, action_info in llm_judge_actions.items():
-            cache_key = f"{action_name}_{current_context_hash}"
-
-            # 检查是否有有效的缓存
-            if (
-                cache_key in self._llm_judge_cache
-                and current_time - self._llm_judge_cache[cache_key]["timestamp"] < self._cache_expiry_time
-            ):
-                results[action_name] = self._llm_judge_cache[cache_key]["result"]
-                logger.debug(
-                    f"{self.log_prefix}使用缓存结果 {action_name}: {'激活' if results[action_name] else '未激活'}"
-                )
-            else:
-                # 需要进行LLM判定
-                tasks_to_run[action_name] = action_info
-
-        # 如果有需要运行的任务，并行执行
-        if tasks_to_run:
-            logger.debug(f"{self.log_prefix}并行执行LLM判定，任务数: {len(tasks_to_run)}")
-
-            # 创建并行任务
-            tasks = []
-            task_names = []
-
-            for action_name, action_info in tasks_to_run.items():
-                task = self._llm_judge_action(
-                    action_name,
-                    action_info,
-                    chat_content,
-                )
-                tasks.append(task)
-                task_names.append(action_name)
-
-            # 并行执行所有任务
-            try:
-                task_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                # 处理结果并更新缓存
-                for action_name, result in zip(task_names, task_results, strict=False):
-                    if isinstance(result, Exception):
-                        logger.error(f"{self.log_prefix}LLM判定action {action_name} 时出错: {result}")
-                        results[action_name] = False
-                    else:
-                        results[action_name] = result
-
-                        # 更新缓存
-                        cache_key = f"{action_name}_{current_context_hash}"
-                        self._llm_judge_cache[cache_key] = {"result": result, "timestamp": current_time}
-
-                logger.debug(f"{self.log_prefix}并行LLM判定完成，耗时: {time.time() - current_time:.2f}s")
-
-            except Exception as e:
-                logger.error(f"{self.log_prefix}并行LLM判定失败: {e}")
-                # 如果并行执行失败，为所有任务返回False
-                for action_name in tasks_to_run:
-                    results[action_name] = False
-
-        # 清理过期缓存
-        self._cleanup_expired_cache(current_time)
-
-        return results
-
-    def _cleanup_expired_cache(self, current_time: float):
-        """清理过期的缓存条目"""
-        expired_keys = []
-        expired_keys.extend(
-            cache_key
-            for cache_key, cache_data in self._llm_judge_cache.items()
-            if current_time - cache_data["timestamp"] > self._cache_expiry_time
-        )
-        for key in expired_keys:
-            del self._llm_judge_cache[key]
-
-        if expired_keys:
-            logger.debug(f"{self.log_prefix}清理了 {len(expired_keys)} 个过期缓存条目")
-
-    async def _llm_judge_action(
-        self,
-        action_name: str,
-        action_info: ActionInfo,
-        chat_content: str = "",
-    ) -> bool:  # sourcery skip: move-assign-in-block, use-named-expression
-        """
-        使用LLM判定是否应该激活某个action
-
-        Args:
-            action_name: 动作名称
-            action_info: 动作信息
-            observed_messages_str: 观察到的聊天消息
-            chat_context: 聊天上下文
-            extra_context: 额外上下文
-
-        Returns:
-            bool: 是否应该激活此action
-        """
-
-        try:
-            # 构建判定提示词
-            action_description = action_info.description
-            action_require = action_info.action_require
-            custom_prompt = action_info.llm_judge_prompt
-
-            # 构建基础判定提示词
-            base_prompt = f"""
-你需要判断在当前聊天情况下，是否应该激活名为"{action_name}"的动作。
-
-动作描述：{action_description}
-
-动作使用场景：
-"""
-            for req in action_require:
-                base_prompt += f"- {req}\n"
-
-            if custom_prompt:
-                base_prompt += f"\n额外判定条件：\n{custom_prompt}\n"
-
-            if chat_content:
-                base_prompt += f"\n当前聊天记录：\n{chat_content}\n"
-
-            base_prompt += """
-请根据以上信息判断是否应该激活这个动作。
-只需要回答"是"或"否"，不要有其他内容。
-"""
-
-            # 调用LLM进行判定
-            response, _ = await self.llm_judge.generate_response_async(prompt=base_prompt)
-
-            # 解析响应
-            response = response.strip().lower()
-
-            # print(base_prompt)
-            # print(f"LLM判定动作 {action_name}：响应='{response}'")
-
-            should_activate = "是" in response or "yes" in response or "true" in response
-
-            logger.debug(
-                f"{self.log_prefix}LLM判定动作 {action_name}：响应='{response}'，结果={'激活' if should_activate else '不激活'}"
-            )
-            return should_activate
-
-        except Exception as e:
-            logger.error(f"{self.log_prefix}LLM判定动作 {action_name} 时出错: {e}")
-            # 出错时默认不激活
-            return False
 
     def _check_keyword_activation(
         self,

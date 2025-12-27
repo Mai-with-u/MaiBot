@@ -1397,6 +1397,79 @@ async def get_installed_plugins(
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}") from e
 
 
+@router.get("/local-readme/{plugin_id}")
+async def get_local_plugin_readme(
+    plugin_id: str, maibot_session: Optional[str] = Cookie(None), authorization: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """
+    获取本地已安装插件的 README 文件内容
+
+    Args:
+        plugin_id: 插件 ID
+
+    Returns:
+        包含 success 和 data(README 内容) 的字典，如果文件不存在则返回 success=False
+    """
+    # Token 验证
+    token = get_token_from_cookie_or_header(maibot_session, authorization)
+    token_manager = get_token_manager()
+    if not token or not token_manager.verify_token(token):
+        raise HTTPException(status_code=401, detail="未授权：无效的访问令牌")
+
+    logger.info(f"获取本地插件 README: {plugin_id}")
+
+    try:
+        plugins_dir = Path("plugins")
+        
+        # 查找插件目录
+        plugin_path = None
+        for folder in plugins_dir.iterdir():
+            if not folder.is_dir():
+                continue
+                
+            manifest_path = folder / "_manifest.json"
+            if manifest_path.exists():
+                try:
+                    import json as json_module
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json_module.load(f)
+                    
+                    # 检查是否匹配 plugin_id
+                    if manifest.get("id") == plugin_id:
+                        plugin_path = folder
+                        break
+                except Exception:
+                    continue
+        
+        if not plugin_path:
+            return {"success": False, "error": "插件未安装"}
+        
+        # 查找 README 文件（支持多种命名）
+        readme_files = ["README.md", "readme.md", "Readme.md", "README.MD"]
+        readme_content = None
+        
+        for readme_name in readme_files:
+            readme_path = plugin_path / readme_name
+            if readme_path.exists():
+                try:
+                    with open(readme_path, "r", encoding="utf-8") as f:
+                        readme_content = f.read()
+                    logger.info(f"成功读取本地 README: {readme_path}")
+                    break
+                except Exception as e:
+                    logger.warning(f"读取 {readme_path} 失败: {e}")
+                    continue
+        
+        if readme_content:
+            return {"success": True, "data": readme_content}
+        else:
+            return {"success": False, "error": "本地未找到 README 文件"}
+            
+    except Exception as e:
+        logger.error(f"获取本地 README 失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
 # ============ 插件配置管理 API ============
 
 

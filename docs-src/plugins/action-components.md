@@ -85,7 +85,6 @@ Action采用**两层决策机制**来优化性能和决策质量：
 | ----------- | ---------------------------------------- | ---------------------- |
 | [`NEVER`](#never-激活)     | 从不激活，Action对麦麦不可见               | 临时禁用某个Action      |
 | [`ALWAYS`](#always-激活)    | 永远激活，Action总是在麦麦的候选池中        | 核心功能，如回复、不回复 |
-| [`LLM_JUDGE`](#llm_judge-激活) | 通过LLM智能判断当前情境是否需要激活此Action | 需要智能判断的复杂场景   |
 | `RANDOM`    | 基于随机概率决定是否激活                   | 增加行为随机性的功能     |
 | `KEYWORD`   | 当检测到特定关键词时激活                   | 明确触发条件的功能       |
 
@@ -115,30 +114,6 @@ class AlwaysActivatedAction(BaseAction):
     async def execute(self) -> Tuple[bool, str]:
         # 执行核心功能
         return True, "执行了核心功能"
-```
-
-#### `LLM_JUDGE` 激活
-
-`ActionActivationType.LLM_JUDGE`会使得这个 Action 根据 LLM 的判断来决定是否加入候选池。
-
-而 LLM 的判断是基于代码中预设的`llm_judge_prompt`和自动提供的聊天上下文进行的。
-
-因此使用此种方法需要实现`llm_judge_prompt`属性。
-
-```python
-class LLMJudgedAction(BaseAction):
-    activation_type = ActionActivationType.LLM_JUDGE  # 通过LLM判断激活
-    # LLM判断提示词
-    llm_judge_prompt = (
-    "判定是否需要使用这个动作的条件：\n"
-    "1. 用户希望调用XXX这个动作\n"
-    "...\n"
-    "请回答\"是\"或\"否\"。\n"
-    )
-
-    async def execute(self) -> Tuple[bool, str]:
-        # 根据LLM判断是否执行
-        return True, "执行了LLM判断功能"
 ```
 
 #### `RANDOM` 激活

@@ -24,6 +24,7 @@ from src.plugin_system.core.plugin_manager import plugin_manager
 # 导入消息API和traceback模块
 from src.common.message import get_global_api
 from src.dream.dream_agent import start_dream_scheduler
+from src.bw_learner.expression_auto_check_task import ExpressionAutoCheckTask
 
 # 插件系统现在使用统一的插件加载器
 
@@ -87,16 +88,11 @@ class MainSystem:
         # 添加统计信息输出任务
         await async_task_manager.add_task(StatisticOutputTask())
 
-        # 添加聊天流统计任务（每5分钟生成一次报告，统计最近30天的数据）
-        # await async_task_manager.add_task(TokenStatisticsTask())
-
         # 添加遥测心跳任务
         await async_task_manager.add_task(TelemetryHeartBeatTask())
 
-        # 添加记忆遗忘任务
-        from src.hippo_memorizer.memory_forget_task import MemoryForgetTask
-
-        await async_task_manager.add_task(MemoryForgetTask())
+        # 添加表达方式自动检查任务
+        await async_task_manager.add_task(ExpressionAutoCheckTask())
 
         # 启动API服务器
         # start_api_server()

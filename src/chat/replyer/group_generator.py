@@ -31,6 +31,7 @@ from src.person_info.person_info import Person
 from src.plugin_system.base.component_types import ActionInfo, EventType
 from src.plugin_system.apis import llm_api
 
+from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.chat.replyer.prompt.lpmm_prompt import init_lpmm_prompt
 from src.chat.replyer.prompt.replyer_prompt import init_replyer_prompt
 from src.chat.replyer.prompt.rewrite_prompt import init_rewrite_prompt
@@ -74,6 +75,7 @@ class DefaultReplyer:
         reply_time_point: Optional[float] = time.time(),
         think_level: int = 1,
         unknown_words: Optional[List[str]] = None,
+        log_reply: bool = True,
     ) -> Tuple[bool, LLMGenerationDataModel]:
         # sourcery skip: merge-nested-ifs
         """
@@ -92,6 +94,9 @@ class DefaultReplyer:
             Tuple[bool, Optional[Dict[str, Any]], Optional[str]]: (是否成功, 生成的回复, 使用的prompt)
         """
 
+        overall_start = time.perf_counter()
+        prompt_duration_ms: Optional[float] = None
+        llm_duration_ms: Optional[float] = None
         prompt = None
         selected_expressions: Optional[List[int]] = None
         llm_response = LLMGenerationDataModel()
@@ -101,6 +106,7 @@ class DefaultReplyer:
             # 3. 构建 Prompt
             timing_logs = []
             almost_zero_str = ""
+            prompt_start = time.perf_counter()
             with Timer("构建Prompt", {}):  # 内部计时器，可选保留
                 prompt, selected_expressions, timing_logs, almost_zero_str = await self.build_prompt_reply_context(
                     extra_info=extra_info,
@@ -113,11 +119,37 @@ class DefaultReplyer:
                     think_level=think_level,
                     unknown_words=unknown_words,
                 )
+            prompt_duration_ms = (time.perf_counter() - prompt_start) * 1000
             llm_response.prompt = prompt
             llm_response.selected_expressions = selected_expressions
+            llm_response.timing = {
+                "prompt_ms": round(prompt_duration_ms or 0.0, 2),
+                "overall_ms": None,  # 占位，稍后写入
+            }
+            llm_response.timing_logs = timing_logs
+            llm_response.timing["timing_logs"] = timing_logs
 
             if not prompt:
                 logger.warning("构建prompt失败，跳过回复生成")
+                llm_response.timing["overall_ms"] = round((time.perf_counter() - overall_start) * 1000, 2)
+                llm_response.timing["almost_zero"] = almost_zero_str
+                llm_response.timing["timing_logs"] = timing_logs
+                if log_reply:
+                    try:
+                        PlanReplyLogger.log_reply(
+                            chat_id=self.chat_stream.stream_id,
+                            prompt="",
+                            output=None,
+                            processed_output=None,
+                            model=None,
+                            timing=llm_response.timing,
+                            reasoning=None,
+                            think_level=think_level,
+                            error="build_prompt_failed",
+                            success=False,
+                        )
+                    except Exception:
+                        logger.exception("记录reply日志失败")
                 return False, llm_response
             from src.plugin_system.core.events_manager import events_manager
 
@@ -137,7 +169,9 @@ class DefaultReplyer:
             model_name = "unknown_model"
 
             try:
+                llm_start = time.perf_counter()
                 content, reasoning_content, model_name, tool_call = await self.llm_generate_content(prompt)
+                llm_duration_ms = (time.perf_counter() - llm_start) * 1000
                 # logger.debug(f"replyer生成内容: {content}")
 
                 # 统一输出所有日志信息，使用try-except确保即使某个步骤出错也能输出
@@ -161,6 +195,26 @@ class DefaultReplyer:
                 llm_response.reasoning = reasoning_content
                 llm_response.model = model_name
                 llm_response.tool_calls = tool_call
+                llm_response.timing["llm_ms"] = round(llm_duration_ms or 0.0, 2)
+                llm_response.timing["overall_ms"] = round((time.perf_counter() - overall_start) * 1000, 2)
+                llm_response.timing_logs = timing_logs
+                llm_response.timing["timing_logs"] = timing_logs
+                llm_response.timing["almost_zero"] = almost_zero_str
+                try:
+                    if log_reply:
+                        PlanReplyLogger.log_reply(
+                            chat_id=self.chat_stream.stream_id,
+                            prompt=prompt,
+                            output=content,
+                            processed_output=None,
+                            model=model_name,
+                            timing=llm_response.timing,
+                            reasoning=reasoning_content,
+                            think_level=think_level,
+                            success=True,
+                        )
+                except Exception:
+                    logger.exception("记录reply日志失败")
                 continue_flag, modified_message = await events_manager.handle_mai_events(
                     EventType.AFTER_LLM, None, prompt, llm_response, stream_id=stream_id
                 )
@@ -194,6 +248,27 @@ class DefaultReplyer:
                 except Exception as log_e:
                     logger.warning(f"输出日志时出错: {log_e}")
 
+                llm_response.timing["llm_ms"] = round(llm_duration_ms or 0.0, 2)
+                llm_response.timing["overall_ms"] = round((time.perf_counter() - overall_start) * 1000, 2)
+                llm_response.timing_logs = timing_logs
+                llm_response.timing["timing_logs"] = timing_logs
+                llm_response.timing["almost_zero"] = almost_zero_str
+                if log_reply:
+                    try:
+                        PlanReplyLogger.log_reply(
+                            chat_id=self.chat_stream.stream_id,
+                            prompt=prompt or "",
+                            output=None,
+                            processed_output=None,
+                            model=model_name,
+                            timing=llm_response.timing,
+                            reasoning=None,
+                            think_level=think_level,
+                            error=str(llm_e),
+                            success=False,
+                        )
+                    except Exception:
+                        logger.exception("记录reply日志失败")
                 return False, llm_response  # LLM 调用失败则无法生成回复
 
             return True, llm_response
@@ -541,107 +616,6 @@ class DefaultReplyer:
             logger.error(f"上下文黑话解释失败: {e}")
             return ""
 
-    def build_chat_history_prompts(
-        self, message_list_before_now: List[DatabaseMessages], target_user_id: str, sender: str
-    ) -> Tuple[str, str]:
-        """
-
-        Args:
-            message_list_before_now: 历史消息列表
-            target_user_id: 目标用户ID（当前对话对象）
-
-        Returns:
-            Tuple[str, str]: (核心对话prompt, 背景对话prompt)
-        """
-        # 构建背景对话 prompt
-        all_dialogue_prompt = ""
-        if message_list_before_now:
-            latest_msgs = message_list_before_now[-int(global_config.chat.max_context_size) :]
-            all_dialogue_prompt = build_readable_messages(
-                latest_msgs,
-                replace_bot_name=True,
-                timestamp_mode="normal_no_YMD",
-                truncate=True,
-            )
-
-        return all_dialogue_prompt
-
-    def core_background_build_chat_history_prompts(
-        self, message_list_before_now: List[DatabaseMessages], target_user_id: str, sender: str
-    ) -> Tuple[str, str]:
-        """
-
-        Args:
-            message_list_before_now: 历史消息列表
-            target_user_id: 目标用户ID（当前对话对象）
-
-        Returns:
-            Tuple[str, str]: (核心对话prompt, 背景对话prompt)
-        """
-        core_dialogue_list: List[DatabaseMessages] = []
-        bot_id = str(global_config.bot.qq_account)
-
-        # 过滤消息：分离bot和目标用户的对话 vs 其他用户的对话
-        for msg in message_list_before_now:
-            try:
-                msg_user_id = str(msg.user_info.user_id)
-                reply_to = msg.reply_to
-                _platform, reply_to_user_id = self._parse_reply_target(reply_to)
-                if (msg_user_id == bot_id and reply_to_user_id == target_user_id) or msg_user_id == target_user_id:
-                    # bot 和目标用户的对话
-                    core_dialogue_list.append(msg)
-            except Exception as e:
-                logger.error(f"处理消息记录时出错: {msg}, 错误: {e}")
-
-        # 构建核心对话 prompt
-        core_dialogue_prompt = ""
-        if core_dialogue_list:
-            # 检查最新五条消息中是否包含bot自己说的消息
-            latest_5_messages = core_dialogue_list[-5:] if len(core_dialogue_list) >= 5 else core_dialogue_list
-            has_bot_message = any(str(msg.user_info.user_id) == bot_id for msg in latest_5_messages)
-
-            # logger.info(f"最新五条消息：{latest_5_messages}")
-            # logger.info(f"最新五条消息中是否包含bot自己说的消息：{has_bot_message}")
-
-            # 如果最新五条消息中不包含bot的消息，则返回空字符串
-            if not has_bot_message:
-                core_dialogue_prompt = ""
-            else:
-                core_dialogue_list = core_dialogue_list[
-                    -int(global_config.chat.max_context_size * 0.6) :
-                ]  # 限制消息数量
-
-                core_dialogue_prompt_str = build_readable_messages(
-                    core_dialogue_list,
-                    replace_bot_name=True,
-                    timestamp_mode="normal_no_YMD",
-                    read_mark=0.0,
-                    truncate=True,
-                    show_actions=True,
-                )
-                core_dialogue_prompt = f"""--------------------------------
-这是上述中你和{sender}的对话摘要，内容从上面的对话中截取，便于你理解：
-{core_dialogue_prompt_str}
---------------------------------
-"""
-
-        # 构建背景对话 prompt
-        all_dialogue_prompt = ""
-        if message_list_before_now:
-            latest_25_msgs = message_list_before_now[-int(global_config.chat.max_context_size) :]
-            all_dialogue_prompt_str = build_readable_messages(
-                latest_25_msgs,
-                replace_bot_name=True,
-                timestamp_mode="normal_no_YMD",
-                truncate=True,
-            )
-            if core_dialogue_prompt:
-                all_dialogue_prompt = f"所有用户的发言：\n{all_dialogue_prompt_str}"
-            else:
-                all_dialogue_prompt = f"{all_dialogue_prompt_str}"
-
-        return core_dialogue_prompt, all_dialogue_prompt
-
     async def build_actions_prompt(
         self, available_actions: Dict[str, ActionInfo], chosen_actions_info: Optional[List[ActionPlannerInfo]] = None
     ) -> str:
@@ -865,12 +839,25 @@ class DefaultReplyer:
             timestamp_mode="relative",
             read_mark=0.0,
             show_actions=True,
+            long_time_notice=True,
         )
 
         # 统一黑话解释构建：根据配置选择上下文或 Planner 模式
         jargon_coroutine = self._build_jargon_explanation(
             chat_id, message_list_before_short, chat_talking_prompt_short, unknown_words
         )
+
+        # 从 chosen_actions 中提取 question（仅在 reply 动作中）
+        question = None
+        if chosen_actions:
+            for action_info in chosen_actions:
+                if action_info.action_type == "reply" and isinstance(action_info.action_data, dict):
+                    q = action_info.action_data.get("question")
+                    if isinstance(q, str):
+                        cleaned_q = q.strip()
+                        if cleaned_q:
+                            question = cleaned_q
+                            break
 
         # 并行执行构建任务（包括黑话解释，可配置关闭）
         task_results = await asyncio.gather(
@@ -886,7 +873,7 @@ class DefaultReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level
+                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level, unknown_words=unknown_words, question=question
                 ),
                 "memory_retrieval",
             ),
@@ -960,8 +947,16 @@ class DefaultReplyer:
         else:
             reply_target_block = ""
 
-        # 构建分离的对话 prompt
-        dialogue_prompt = self.build_chat_history_prompts(message_list_before_now_long, user_id, sender)
+
+        if message_list_before_now_long:
+            latest_msgs = message_list_before_now_long[-int(global_config.chat.max_context_size) :]
+            dialogue_prompt = build_readable_messages(
+                latest_msgs,
+                replace_bot_name=True,
+                timestamp_mode="normal_no_YMD",
+                truncate=True,
+                long_time_notice=True,
+            )
 
         # 获取匹配的额外prompt
         chat_prompt_content = self.get_chat_prompt_for_chat(chat_id)

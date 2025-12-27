@@ -1,0 +1,3236 @@
+{
+  "last_updated": "2025-12-26T16:33:12.430516",
+  "total_count": 360,
+  "manual_results": [
+    {
+      "expression_id": 3169,
+      "situation": "调侃式回应他人疑问",
+      "style": "hhh",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:14.505956"
+    },
+    {
+      "expression_id": 2488,
+      "situation": "建议被忽视，问题依旧存在",
+      "style": "简单回应 yes 后继续说失败",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:17.306742"
+    },
+    {
+      "expression_id": 3535,
+      "situation": "提出反对意见时",
+      "style": "使用'我拒绝xxx'句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:18.516562"
+    },
+    {
+      "expression_id": 5287,
+      "situation": "针对技术方案提出建议时",
+      "style": "采用“...一下”或“试试”句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:20.937777"
+    },
+    {
+      "expression_id": 5136,
+      "situation": "对他人发言进行同步复读以强化语气",
+      "style": "复读对方原话并加@",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:38.770362"
+    },
+    {
+      "expression_id": 3178,
+      "situation": "认可他人观点时表达认同",
+      "style": "使用 你别说...句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:42.465183"
+    },
+    {
+      "expression_id": 5344,
+      "situation": "对突然变化的规则表示荒诞感",
+      "style": "今天这个是自动减的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:45.801959"
+    },
+    {
+      "expression_id": 2379,
+      "situation": "讽刺技术荒诞的文学化表达",
+      "style": "用诗意语言描述技术崩溃",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:49.097711"
+    },
+    {
+      "expression_id": 2508,
+      "situation": "被要求不回复时仍执意回应",
+      "style": "用“不要回复我”直接拒绝",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:51.913429"
+    },
+    {
+      "expression_id": 2573,
+      "situation": "聊天中热议动漫角色",
+      "style": "使用'萌音'指代角色",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:17:54.017132"
+    },
+    {
+      "expression_id": 2051,
+      "situation": "对比抽象概念时的对话特征",
+      "style": "使用 vs 连接两个对立概念",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:03.928730"
+    },
+    {
+      "expression_id": 4327,
+      "situation": "对他人建议提出反问以质疑合理性",
+      "style": "要XX干嘛",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:05.944953"
+    },
+    {
+      "expression_id": 3432,
+      "situation": "讨论插件功能时强调专注性",
+      "style": "使用 专注于某动作",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:08.425325"
+    },
+    {
+      "expression_id": 3591,
+      "situation": "对他人建议表示认可并补充",
+      "style": "嗯，也是好选择",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:11.202821"
+    },
+    {
+      "expression_id": 602,
+      "situation": "简短确认他人引用内容",
+      "style": "回 复 中",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:13.296995"
+    },
+    {
+      "expression_id": 2552,
+      "situation": "系统状态描述均简洁明确",
+      "style": "使用 重启就会变",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:21.089313"
+    },
+    {
+      "expression_id": 1566,
+      "situation": "讨论服务器资源占用情况",
+      "style": "使用 吃了太多电费",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:22.585119"
+    },
+    {
+      "expression_id": 839,
+      "situation": "对某事持怀疑或否定态度",
+      "style": "我觉得肯定受不了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:24.680676"
+    },
+    {
+      "expression_id": 3673,
+      "situation": "建议用无关方式解决矛盾",
+      "style": "删掉XX即可",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:28.842462"
+    },
+    {
+      "expression_id": 1723,
+      "situation": "反复强调同一观点",
+      "style": "重复使用相同短句",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:30.728958"
+    },
+    {
+      "expression_id": 2732,
+      "situation": "用否定句式表达无力回应建议",
+      "style": "无法起飞",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:35.472037"
+    },
+    {
+      "expression_id": 2965,
+      "situation": "确认为其他账户",
+      "style": "对",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:37.170307"
+    },
+    {
+      "expression_id": 4436,
+      "situation": "对他人操作流程表示质疑",
+      "style": "你虚拟环境呢",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:39.192119"
+    },
+    {
+      "expression_id": 995,
+      "situation": "模仿他人发言",
+      "style": "直接重复他人原话",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:40.703669"
+    },
+    {
+      "expression_id": 495,
+      "situation": "对技术建议常持否定态度",
+      "style": "补充说明细节或注意事项",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:44.968474"
+    },
+    {
+      "expression_id": 4443,
+      "situation": "警告他人不要随意操作",
+      "style": "重复 '别乱动乱敲'",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:48.256356"
+    },
+    {
+      "expression_id": 3059,
+      "situation": "质疑数据真实性",
+      "style": "结果不真啊，麦的xxx呢",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:51.080153"
+    },
+    {
+      "expression_id": 4038,
+      "situation": "回应无厘头或荒诞内容时假装严肃",
+      "style": "你尔朵笼还是盐津虾",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:18:54.202207"
+    },
+    {
+      "expression_id": 1121,
+      "situation": "发现技术细节时的对话特征",
+      "style": "连续使用woc表达惊讶",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:19:04.408294"
+    },
+    {
+      "expression_id": 1328,
+      "situation": "AI输出异常或过度",
+      "style": "用“发力”形容模型生成内容，带调侃",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:19:06.559956"
+    },
+    {
+      "expression_id": 5506,
+      "situation": "渴望得到他人反馈或急于求证时",
+      "style": "使用祈使短语“求回答”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:08.938962"
+    },
+    {
+      "expression_id": 662,
+      "situation": "AI输出不稳定时的聊天情境",
+      "style": "使用“不收敛”形容失控",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:12.483859"
+    },
+    {
+      "expression_id": 3944,
+      "situation": "对他人疑问进行引导性回应",
+      "style": "你问问课代表？",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:14.507348"
+    },
+    {
+      "expression_id": 4220,
+      "situation": "半开玩笑地讨论学校政策",
+      "style": "使用‘确实爽’和‘也就’表达半开玩笑",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:16.395121"
+    },
+    {
+      "expression_id": 1530,
+      "situation": "用无厘头回应化解尴尬",
+      "style": "还有上门服务",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:29.306839"
+    },
+    {
+      "expression_id": 1236,
+      "situation": "系统故障时用户寻求帮助",
+      "style": "直接陈述故障原因",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:32.467370"
+    },
+    {
+      "expression_id": 1635,
+      "situation": "表达惊讶或困惑",
+      "style": "使用 这是什么东西",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:35.506595"
+    },
+    {
+      "expression_id": 4145,
+      "situation": "对他人行为表示接受并轻描淡写回应",
+      "style": "搜嘎",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:38.307144"
+    },
+    {
+      "expression_id": 2385,
+      "situation": "聊天中突兀插入无关话题",
+      "style": "用无意义数字或感叹词填充",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:40.594576"
+    },
+    {
+      "expression_id": 1179,
+      "situation": "游戏比较中常带主观评价",
+      "style": "使用“感觉不如...”句式进行对比",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:43.075143"
+    },
+    {
+      "expression_id": 343,
+      "situation": "认可时表达赞同",
+      "style": "使用“中”等单字肯定",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:47.058887"
+    },
+    {
+      "expression_id": 2303,
+      "situation": "用反常识鼓励回应消极情绪",
+      "style": "上药",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:49.586496"
+    },
+    {
+      "expression_id": 4246,
+      "situation": "讨论技术问题时提出解决方案",
+      "style": "直接给出技术术语建议",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:53.050459"
+    },
+    {
+      "expression_id": 3955,
+      "situation": "表达对问题的不满",
+      "style": "使用'有点慢'结构",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:56.305860"
+    },
+    {
+      "expression_id": 1435,
+      "situation": "邀请聚餐时的社交互动",
+      "style": "使用 有没有一起去吃火锅的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:23:58.762824"
+    },
+    {
+      "expression_id": 4800,
+      "situation": "对游戏机制表示不解",
+      "style": "问“怎么自动扣除了”",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:07.842563"
+    },
+    {
+      "expression_id": 2632,
+      "situation": "犹豫不决，难以抉择",
+      "style": "强调 都试试",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:09.730461"
+    },
+    {
+      "expression_id": 1872,
+      "situation": "确认他人建议",
+      "style": "对喵",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:10.866521"
+    },
+    {
+      "expression_id": 1118,
+      "situation": "请求未获直接同意",
+      "style": "使用“烦死了！（自动回复）”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:14.370537"
+    },
+    {
+      "expression_id": 1709,
+      "situation": "神秘化描述事物",
+      "style": "使用 神秘+名词",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:16.929684"
+    },
+    {
+      "expression_id": 5010,
+      "situation": "质疑插件指令被误判为对话",
+      "style": "为啥插件触发的指令会被bot当成对话",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:22.425584"
+    },
+    {
+      "expression_id": 3706,
+      "situation": "对他人建议的轻蔑态度",
+      "style": "使用'直接杀死'",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:26.681089"
+    },
+    {
+      "expression_id": 4490,
+      "situation": "面对复杂问题时表达头大或压力大",
+      "style": "头大",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:28.010419"
+    },
+    {
+      "expression_id": 3408,
+      "situation": "回应荒诞承诺时提出更荒诞条件",
+      "style": "只要...就可以了喵",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:31.538269"
+    },
+    {
+      "expression_id": 1293,
+      "situation": "多人在线游戏组队求助",
+      "style": "使用 数字 表示确认参与",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:33.305892"
+    },
+    {
+      "expression_id": 4322,
+      "situation": "回应他人提议或信息时表示认同",
+      "style": "说 还真是",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:53.640715"
+    },
+    {
+      "expression_id": 4782,
+      "situation": "请求操作指导",
+      "style": "怎么做枫枫",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:24:55.329241"
+    },
+    {
+      "expression_id": 4249,
+      "situation": "讨论工具优劣",
+      "style": "使用比较句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:25:16.202072"
+    },
+    {
+      "expression_id": 357,
+      "situation": "讨论游戏机制时的交流",
+      "style": "使用 模块化框架",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:25:18.071625"
+    },
+    {
+      "expression_id": 5503,
+      "situation": "表达无奈、疲惫或轻微叹息时",
+      "style": "使用单字语气助词“哎”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:25:19.896008"
+    },
+    {
+      "expression_id": 1212,
+      "situation": "震惊于荒谬猎奇内容",
+      "style": "使用‘我艹’等感叹词表达强烈反应",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:42.274011"
+    },
+    {
+      "expression_id": 1983,
+      "situation": "技术讨论中使用专业术语",
+      "style": "提及‘API’‘插件’",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:43.878236"
+    },
+    {
+      "expression_id": 4106,
+      "situation": "对投票结果表示意外",
+      "style": "结合表情符号表达震惊",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:45.653868"
+    },
+    {
+      "expression_id": 2450,
+      "situation": "提出模糊建议或方向",
+      "style": "看看",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:47.667071"
+    },
+    {
+      "expression_id": 3993,
+      "situation": "对不明内容表示困惑",
+      "style": "直接说'不理解'",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:49.230999"
+    },
+    {
+      "expression_id": 5291,
+      "situation": "追究责任或寻找原因时",
+      "style": "使用“...的锅”进行定性",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:50.621311"
+    },
+    {
+      "expression_id": 2242,
+      "situation": "对技术问题感到困惑",
+      "style": "说命令和主分支一样，文档没写",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:52.797922"
+    },
+    {
+      "expression_id": 4203,
+      "situation": "暗示等待经济到账后行动",
+      "style": "发米了就去找人玩",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:54.809907"
+    },
+    {
+      "expression_id": 2342,
+      "situation": "用地域调侃化解严肃话题",
+      "style": "昌平县城",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:57.269840"
+    },
+    {
+      "expression_id": 4797,
+      "situation": "对他人观点提出反问以示质疑",
+      "style": "为什么不要凭证（？）",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:51:59.469990"
+    },
+    {
+      "expression_id": 1703,
+      "situation": "确认方案是否可行",
+      "style": "以'就可以'作结",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:11.254043"
+    },
+    {
+      "expression_id": 2381,
+      "situation": "表达失望时的负面情绪反应",
+      "style": "使用粗俗比喻描述期待与现实的落差",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:12.918439"
+    },
+    {
+      "expression_id": 2860,
+      "situation": "用夸张比喻描述抽象概念",
+      "style": "说 到不了会有阴兵的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:15.326344"
+    },
+    {
+      "expression_id": 199,
+      "situation": "讨论技术实现方案",
+      "style": "使用项目化表述",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:18.646503"
+    },
+    {
+      "expression_id": 3174,
+      "situation": "建议时总被忽略或反驳",
+      "style": "采用 直接建议句式",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:22.445332"
+    },
+    {
+      "expression_id": 5195,
+      "situation": "对某种方案或条件表示极度认可",
+      "style": "使用“无敌”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:24.621702"
+    },
+    {
+      "expression_id": 1012,
+      "situation": "反复威胁，情绪升级",
+      "style": "刻意模仿客服话术",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:26.349202"
+    },
+    {
+      "expression_id": 3012,
+      "situation": "对术语困惑不解",
+      "style": "啊？那是啥平台的代金券",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:27.668688"
+    },
+    {
+      "expression_id": 2620,
+      "situation": "表达赞同或认可时的回应",
+      "style": "使用“好看”、“666”等简短夸赞",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:28.765022"
+    },
+    {
+      "expression_id": 2214,
+      "situation": "反差语气掩饰内心崩溃",
+      "style": "纯搞来的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T01:52:31.452526"
+    },
+    {
+      "expression_id": 3847,
+      "situation": "对不想做的事表达抗拒",
+      "style": "但是我一直不想",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:23:50.924439"
+    },
+    {
+      "expression_id": 5534,
+      "situation": "被说像某物时否认并强调不同",
+      "style": "说 不是xxx",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:23:56.427990"
+    },
+    {
+      "expression_id": 4648,
+      "situation": "被质疑行为逻辑时强行合理化",
+      "style": "说‘逻辑上就是这样的’",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:24:02.995928"
+    },
+    {
+      "expression_id": 2213,
+      "situation": "轻描淡写回应，单字默认认同",
+      "style": "6",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:24:04.060748"
+    },
+    {
+      "expression_id": 374,
+      "situation": "质疑对方隐瞒信息",
+      "style": "使用 是不是在xxx里存xxx",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:24:09.139523"
+    },
+    {
+      "expression_id": 1441,
+      "situation": "任务压力大，沟通紧张",
+      "style": "用 无开始搞 表达",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:03.202611"
+    },
+    {
+      "expression_id": 2931,
+      "situation": "困惑或无法理解时寻求帮助",
+      "style": "使用“发啥了”询问具体情况",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:06.154571"
+    },
+    {
+      "expression_id": 2431,
+      "situation": "询问接口性能时关注响应速度",
+      "style": "用“有没有几百token/s的”量化提问",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:08.186667"
+    },
+    {
+      "expression_id": 3329,
+      "situation": "对他人行为表示惊讶或讽刺",
+      "style": "妈的气笑了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:09.673876"
+    },
+    {
+      "expression_id": 3716,
+      "situation": "表达对系统改进的期待",
+      "style": "使用'再次伟大'类比",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:18.306136"
+    },
+    {
+      "expression_id": 505,
+      "situation": "看到离谱内容时的震惊反应",
+      "style": "使用“逆天”表示惊叹",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:21.410431"
+    },
+    {
+      "expression_id": 4796,
+      "situation": "对他人技术问题表示不解",
+      "style": "？你在说什么啊",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:22.954275"
+    },
+    {
+      "expression_id": 2889,
+      "situation": "增进感情的亲密表达",
+      "style": "使用“贴贴”、“抱抱”等叠词",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:24.106546"
+    },
+    {
+      "expression_id": 3698,
+      "situation": "对他人建议表示附和但无实质回应",
+      "style": "虽然我也不知道该hook啥",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:27.298723"
+    },
+    {
+      "expression_id": 552,
+      "situation": "测试新功能时",
+      "style": "表达试用意愿",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:29.066189"
+    },
+    {
+      "expression_id": 5362,
+      "situation": "催促对方开启加速器",
+      "style": "加速器开了吧",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:30.881502"
+    },
+    {
+      "expression_id": 762,
+      "situation": "无厘头接话搞怪互动",
+      "style": "那就发人模狗样",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:34.914448"
+    },
+    {
+      "expression_id": 3868,
+      "situation": "对他人观点进行轻蔑式贬低",
+      "style": "这有点阿姨了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:36.777608"
+    },
+    {
+      "expression_id": 1690,
+      "situation": "对复杂功能感到惊讶或抗拒",
+      "style": "那有点过于...了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:40.578147"
+    },
+    {
+      "expression_id": 389,
+      "situation": "问题解决后致谢",
+      "style": "说 爱你 + 表情",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:25:41.729439"
+    },
+    {
+      "expression_id": 567,
+      "situation": "表达个人偏好时的主观陈述",
+      "style": "使用 肯定是取我喜欢的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:13.295939"
+    },
+    {
+      "expression_id": 3068,
+      "situation": "被反复重复相同句式",
+      "style": "模仿并加重句式重复",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:16.903331"
+    },
+    {
+      "expression_id": 3108,
+      "situation": "计划时模糊指代资源",
+      "style": "我先用...还打算从...",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:22.205836"
+    },
+    {
+      "expression_id": 3725,
+      "situation": "对回复质量表示认可",
+      "style": "感觉还挺高的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:23.678708"
+    },
+    {
+      "expression_id": 3280,
+      "situation": "谐音梗成聊天幽默利器",
+      "style": "使用 孔喵莲",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:25.717663"
+    },
+    {
+      "expression_id": 3767,
+      "situation": "否定某种过度配置",
+      "style": "没必要开extra high",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:31.309638"
+    },
+    {
+      "expression_id": 5507,
+      "situation": "对他人行为表示调侃式认同",
+      "style": "这是一种无声的反抗",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:35.772597"
+    },
+    {
+      "expression_id": 3885,
+      "situation": "对明显跑题表示无奈",
+      "style": "串了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:36.972325"
+    },
+    {
+      "expression_id": 4080,
+      "situation": "对某事表示认同并补充细节",
+      "style": "还真是",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:39.123904"
+    },
+    {
+      "expression_id": 1000,
+      "situation": "用反讽接受他人调侃",
+      "style": "玩的还挺花的你这",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:42.140283"
+    },
+    {
+      "expression_id": 4976,
+      "situation": "认为旧话题应该结束时",
+      "style": "使用 翻篇",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:45.379005"
+    },
+    {
+      "expression_id": 3358,
+      "situation": "对他人建议表示轻微反驳或无奈",
+      "style": "不至于吧，这还没出几天",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:48.050954"
+    },
+    {
+      "expression_id": 5267,
+      "situation": "对技术问题表示无奈或调侃",
+      "style": "用括号补充自嘲式备注",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:50.914664"
+    },
+    {
+      "expression_id": 4063,
+      "situation": "对复杂问题表示难以判断",
+      "style": "说实话...真不好判断",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:54.594218"
+    },
+    {
+      "expression_id": 855,
+      "situation": "系统崩溃引发多场景对话",
+      "style": "使用网络流行语",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:56.281794"
+    },
+    {
+      "expression_id": 3075,
+      "situation": "认可不当建议",
+      "style": "使用 数字6 或 666 表示赞同",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:36:57.994884"
+    },
+    {
+      "expression_id": 3861,
+      "situation": "质疑换方案的动机",
+      "style": "换他干嘛",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:37:01.857283"
+    },
+    {
+      "expression_id": 1393,
+      "situation": "无奈接受技术限制",
+      "style": "这个模型最高不就是10mb么",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:37:04.168960"
+    },
+    {
+      "expression_id": 4552,
+      "situation": "对他人关系发展进行猜测或八卦",
+      "style": "感觉要成了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:37:05.785418"
+    },
+    {
+      "expression_id": 676,
+      "situation": "用重复关键词回应荒谬言论",
+      "style": "赛尔赛尔~",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:37:07.208807"
+    },
+    {
+      "expression_id": 2072,
+      "situation": "讨论衣物搭配方案",
+      "style": "使用“xxx套xxx”描述叠穿",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:38.798708"
+    },
+    {
+      "expression_id": 4683,
+      "situation": "对选择模型时强调性价比",
+      "style": "哪个上的快我先上哪个",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:42.150304"
+    },
+    {
+      "expression_id": 1361,
+      "situation": "厌倦工作学习，想躺平休息",
+      "style": "用 几个月都不想碰 来描述状态",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:43.838510"
+    },
+    {
+      "expression_id": 4577,
+      "situation": "描述某种负面现象的持续影响",
+      "style": "...后遗症",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:46.573887"
+    },
+    {
+      "expression_id": 5103,
+      "situation": "对他人发言表示附和但无实质内容",
+      "style": "哦，知道了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:48.062051"
+    },
+    {
+      "expression_id": 4010,
+      "situation": "对荒诞现象表示无语",
+      "style": "再无话说",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:49.781501"
+    },
+    {
+      "expression_id": 2103,
+      "situation": "惊讶或无奈的反应",
+      "style": "使用单字“草”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:50.989742"
+    },
+    {
+      "expression_id": 958,
+      "situation": "对他人发言感到震惊",
+      "style": "用‘我草’‘吓哭了’‘能说吗我真吓到了’",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:52.117589"
+    },
+    {
+      "expression_id": 1864,
+      "situation": "调侃他人行为时的幽默互动",
+      "style": "用‘量子叠加态’等科学术语进行荒诞比喻",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:53:54.797521"
+    },
+    {
+      "expression_id": 4726,
+      "situation": "对他人建议表示反对或讽刺",
+      "style": "用别人还是比用自己的爽",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:04.268461"
+    },
+    {
+      "expression_id": 3071,
+      "situation": "聊天中常以亲昵方式打招呼",
+      "style": "使用 麦麦你好/麦麦你好香",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:08.882885"
+    },
+    {
+      "expression_id": 4738,
+      "situation": "对复杂现象进行简化归因并带自嘲",
+      "style": "规划器全过了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:10.835122"
+    },
+    {
+      "expression_id": 3884,
+      "situation": "突然引入无关信息转移话题",
+      "style": "其实叔叔的生日是12月3日 [图片2]",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:14.163726"
+    },
+    {
+      "expression_id": 3838,
+      "situation": "讨论网络交易陷阱",
+      "style": "用'白嫖一个号'描述欺诈行为",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:17.066433"
+    },
+    {
+      "expression_id": 2994,
+      "situation": "越解释越糊涂",
+      "style": "是这么说",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:20.706261"
+    },
+    {
+      "expression_id": 2930,
+      "situation": "转发或观点引发讨论",
+      "style": "用“是这样的”表示认同或总结",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:22.378464"
+    },
+    {
+      "expression_id": 4480,
+      "situation": "对模糊概念试图澄清",
+      "style": "就是那个",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:24.290415"
+    },
+    {
+      "expression_id": 1229,
+      "situation": "认同他人，却无奈叹息",
+      "style": "现在知道了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:26.410167"
+    },
+    {
+      "expression_id": 2830,
+      "situation": "用无厘头称呼调侃转移话题",
+      "style": "喊我妈妈",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:30.378153"
+    },
+    {
+      "expression_id": 4893,
+      "situation": "对他人发言表示质疑并要求澄清",
+      "style": "追问 不是什么不是",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:34.264776"
+    },
+    {
+      "expression_id": 4792,
+      "situation": "对他人发言进行重复引用并追问",
+      "style": "[回复 X：Y]，说：@X Z",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:54:37.200473"
+    },
+    {
+      "expression_id": 3764,
+      "situation": "表达对某事物不信任或不安",
+      "style": "感觉不太踏实",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:04.670326"
+    },
+    {
+      "expression_id": 1452,
+      "situation": "技术建议常被忽视或质疑",
+      "style": "表示赞同并称呼对方昵称",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:08.054725"
+    },
+    {
+      "expression_id": 559,
+      "situation": "面对模糊指令时表达困惑",
+      "style": "连续发送 ？",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:09.717423"
+    },
+    {
+      "expression_id": 5559,
+      "situation": "用伪文言文语气调侃时",
+      "style": "使用 汝...之...也乎 句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:14.565000"
+    },
+    {
+      "expression_id": 1077,
+      "situation": "模型回避身份提问",
+      "style": "使用 你是...吗 直接提问",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:16.844791"
+    },
+    {
+      "expression_id": 2634,
+      "situation": "玩家常以夸张或幽默方式描述游戏行为",
+      "style": "使用 开大车",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:18.652901"
+    },
+    {
+      "expression_id": 5113,
+      "situation": "请求帮助时情绪焦急",
+      "style": "使用 救一救孩子",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:20.468956"
+    },
+    {
+      "expression_id": 2211,
+      "situation": "调侃他人突然自曝身份",
+      "style": "我搭的，看我看我",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:22.364349"
+    },
+    {
+      "expression_id": 4358,
+      "situation": "提及特定模型",
+      "style": "使用 大香蕉",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T10:55:26.196360"
+    },
+    {
+      "expression_id": 3525,
+      "situation": "拉取失败时表达无奈",
+      "style": "拉不下来了草",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:17.912143"
+    },
+    {
+      "expression_id": 1035,
+      "situation": "任务无法及时完成",
+      "style": "说明时间安排",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:19.288011"
+    },
+    {
+      "expression_id": 3327,
+      "situation": "对技术实现失败归因于提示词",
+      "style": "什么都好，但死在了怎么写提示词了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:23.344335"
+    },
+    {
+      "expression_id": 4832,
+      "situation": "回应他人调侃时反向调侃",
+      "style": "叫妈妈",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:24.559084"
+    },
+    {
+      "expression_id": 812,
+      "situation": "赞同他人发言",
+      "style": "使用单个词语如“豪德”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:27.127242"
+    },
+    {
+      "expression_id": 3139,
+      "situation": "图片质量讨论中的常见争议",
+      "style": "远看有艺术感，近看糊",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:32.199112"
+    },
+    {
+      "expression_id": 4113,
+      "situation": "对他人发言表示共鸣式附和",
+      "style": "3.2喜欢用...",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:33.742935"
+    },
+    {
+      "expression_id": 1764,
+      "situation": "发现配置错误引发问题",
+      "style": "使用“事实证明”引出结论",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:37.238756"
+    },
+    {
+      "expression_id": 1673,
+      "situation": "评价他人发言时态度谨慎",
+      "style": "先肯定再转折提出缺点",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:48.790587"
+    },
+    {
+      "expression_id": 5089,
+      "situation": "描述对某事物投入情感的演变",
+      "style": "使用 第一章...第N章...的叙事体",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:53.574395"
+    },
+    {
+      "expression_id": 756,
+      "situation": "回避他人隐藏动态的回应行为",
+      "style": "233",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:57.806483"
+    },
+    {
+      "expression_id": 510,
+      "situation": "反驳他人时轻描淡写",
+      "style": "没",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:28:59.957683"
+    },
+    {
+      "expression_id": 1655,
+      "situation": "质疑模型是否具备思考能力",
+      "style": "不思考的可以吗",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:02.485807"
+    },
+    {
+      "expression_id": 3923,
+      "situation": "对不合理或荒诞观点表示无奈认同",
+      "style": "说 没事，我也是...",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:06.998147"
+    },
+    {
+      "expression_id": 3721,
+      "situation": "对他人质疑进行反问式挑衅",
+      "style": "懂什么辣",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:09.238207"
+    },
+    {
+      "expression_id": 742,
+      "situation": "对技术方案敷衍认可合规",
+      "style": "很擦边",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:12.613919"
+    },
+    {
+      "expression_id": 5701,
+      "situation": "对他人提问表示认同",
+      "style": "true",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:13.733950"
+    },
+    {
+      "expression_id": 3137,
+      "situation": "震惊或困惑的反应",
+      "style": "使用 我草了老铁",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:14.949674"
+    },
+    {
+      "expression_id": 4237,
+      "situation": "对他人创作内容表示崇拜",
+      "style": "我写那种不乖的小孩被奇怪app拐走的文章",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:17.029639"
+    },
+    {
+      "expression_id": 1941,
+      "situation": "回应建议时提出修正",
+      "style": "指出具体点并否定原方案",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:20.702203"
+    },
+    {
+      "expression_id": 3078,
+      "situation": "遇责推诿，不愿担责",
+      "style": "说 你自己的锅啊 / 你自己发的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:27.717281"
+    },
+    {
+      "expression_id": 5294,
+      "situation": "表达不确定或反问语气时",
+      "style": "句末添加空括号“（）”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:30.253213"
+    },
+    {
+      "expression_id": 4892,
+      "situation": "对他人突然文言文表示无奈",
+      "style": "吐槽 同一个毛病",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:36.428512"
+    },
+    {
+      "expression_id": 5724,
+      "situation": "回应模糊或无效反馈时的无奈",
+      "style": "人机",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:38.380509"
+    },
+    {
+      "expression_id": 2366,
+      "situation": "随和回应他人提议",
+      "style": "那我也试试",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:43.020770"
+    },
+    {
+      "expression_id": 2201,
+      "situation": "无奈或荒谬时的无奈回应",
+      "style": "使用‘难蚌’、‘难评’等谐音梗",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:50.148141"
+    },
+    {
+      "expression_id": 1620,
+      "situation": "敏感或违规发言需处理",
+      "style": "声称已向国安举报，带威胁语气",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:52.771962"
+    },
+    {
+      "expression_id": 3214,
+      "situation": "资源受限下的讨论",
+      "style": "使用'没内存'",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:29:58.091857"
+    },
+    {
+      "expression_id": 2988,
+      "situation": "用幽默回避敏感话题",
+      "style": "用‘课上也能发’‘刺激’等词淡化场合禁忌",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:00.628771"
+    },
+    {
+      "expression_id": 3875,
+      "situation": "模糊指代某群体",
+      "style": "使用 你们形成",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:01.988036"
+    },
+    {
+      "expression_id": 3808,
+      "situation": "对他人观点表示质疑或否定",
+      "style": "感觉还是智商欠缺",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:11.635279"
+    },
+    {
+      "expression_id": 2114,
+      "situation": "对他人言行表示惊讶或不解",
+      "style": "？",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:12.619580"
+    },
+    {
+      "expression_id": 3308,
+      "situation": "用括号补充调侃性备注",
+      "style": "（...）",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:14.219061"
+    },
+    {
+      "expression_id": 2728,
+      "situation": "压力下用极端语气表达崩溃",
+      "style": "杀了我吧",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:16.523568"
+    },
+    {
+      "expression_id": 5051,
+      "situation": "故意曲解词语制造谐音梗",
+      "style": "将'淫秽信息'替换为'银灰信息'",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:19.555559"
+    },
+    {
+      "expression_id": 5233,
+      "situation": "评价他人行为不合规矩时",
+      "style": "使用 不合乎周礼",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:23.826708"
+    },
+    {
+      "expression_id": 2096,
+      "situation": "对复杂问题的负面反应",
+      "style": "草",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:25.123482"
+    },
+    {
+      "expression_id": 2924,
+      "situation": "强烈质疑某事",
+      "style": "使用单个“？”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:25.994508"
+    },
+    {
+      "expression_id": 2763,
+      "situation": "轻度反驳或调侃他人建议",
+      "style": "肯定是你正在用的才要分享啊",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:30.123092"
+    },
+    {
+      "expression_id": 2476,
+      "situation": "技术原理与原因的解释",
+      "style": "使用 因为...用了...",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:31.995015"
+    },
+    {
+      "expression_id": 4210,
+      "situation": "对他人转发的荒诞内容表示否定",
+      "style": "见鬼",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:35.203748"
+    },
+    {
+      "expression_id": 3991,
+      "situation": "对某人能力表示贬低但带幽默",
+      "style": "说'好菜'并集体跟风",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:38.818700"
+    },
+    {
+      "expression_id": 3223,
+      "situation": "接受无奈并自嘲",
+      "style": "使用 不知道就不知道吧ⁿ",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:45.169767"
+    },
+    {
+      "expression_id": 3892,
+      "situation": "提醒注意健康时",
+      "style": "使用 请停止麦麦开发",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:46.833699"
+    },
+    {
+      "expression_id": 3359,
+      "situation": "表达自己资源充裕且不需使用",
+      "style": "我都用不完",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:52.386001"
+    },
+    {
+      "expression_id": 4192,
+      "situation": "对不明款项提出疑问",
+      "style": "这是什么钱",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:30:54.210075"
+    },
+    {
+      "expression_id": 4627,
+      "situation": "对版本差异感到困惑时",
+      "style": "用‘怎么一会儿...一会...’表达疑惑",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:31:02.825611"
+    },
+    {
+      "expression_id": 2221,
+      "situation": "对他人行为感到无语",
+      "style": "使用“很唐了”评价",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:31:04.513956"
+    },
+    {
+      "expression_id": 4999,
+      "situation": "质疑他人发言的合理性",
+      "style": "为什么会说出这种话",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:31:05.737494"
+    },
+    {
+      "expression_id": 3774,
+      "situation": "对触发机制感到荒谬",
+      "style": "群友发色图也触发麦麦哈气",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:31:07.193435"
+    },
+    {
+      "expression_id": 3395,
+      "situation": "对某现象进行归因并简化表达",
+      "style": "因为...特别容易被提取到",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:04.528007"
+    },
+    {
+      "expression_id": 3333,
+      "situation": "回应荒谬言论时进行反讽式认同",
+      "style": "使用‘是吧’‘说是’结尾",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:06.574729"
+    },
+    {
+      "expression_id": 4752,
+      "situation": "催促对方检查状态",
+      "style": "你看看",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:07.830497"
+    },
+    {
+      "expression_id": 5673,
+      "situation": "评价某个事物或领域时",
+      "style": "使用“XX这一块”作为结尾",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:09.614544"
+    },
+    {
+      "expression_id": 5269,
+      "situation": "重复他人话语以示调侃",
+      "style": "重复前句并加语气词",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:11.294108"
+    },
+    {
+      "expression_id": 3912,
+      "situation": "表达个人目标时",
+      "style": "自嘲式‘妄想’表述",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:13.917935"
+    },
+    {
+      "expression_id": 3728,
+      "situation": "表达体验后正面评价",
+      "style": "感觉不错",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:15.278186"
+    },
+    {
+      "expression_id": 2802,
+      "situation": "纠正术语错误",
+      "style": "不对，ssl",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:16.270299"
+    },
+    {
+      "expression_id": 432,
+      "situation": "重复回应时坚持自己正确",
+      "style": "是刚刚的我没说错",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:18.133442"
+    },
+    {
+      "expression_id": 5524,
+      "situation": "对他人方案表示认可但无热情",
+      "style": "随便吧",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:20.166496"
+    },
+    {
+      "expression_id": 792,
+      "situation": "事情顺利恢复",
+      "style": "使用 又回来了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:23.773650"
+    },
+    {
+      "expression_id": 3465,
+      "situation": "对他人言论进行粗俗辱骂",
+      "style": "nmsl啊米诺斯",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:25.101676"
+    },
+    {
+      "expression_id": 2604,
+      "situation": "故作深奥地炫耀技术",
+      "style": "说“我见过更残酷的公式”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:26.942360"
+    },
+    {
+      "expression_id": 961,
+      "situation": "模仿程序异常反应",
+      "style": "复读+喵喵模式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:29.406044"
+    },
+    {
+      "expression_id": 929,
+      "situation": "表达惊讶或意外的反应",
+      "style": "使用“好神奇”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:30.717473"
+    },
+    {
+      "expression_id": 4349,
+      "situation": "对技术问题归因于环境",
+      "style": "env有冲突",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:33.236816"
+    },
+    {
+      "expression_id": 3222,
+      "situation": "聊天中融入奇幻元素",
+      "style": "使用 神秘梦境",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:34.813846"
+    },
+    {
+      "expression_id": 1609,
+      "situation": "调侃中化解技术难题",
+      "style": "要不要fork...（雾）",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:36.197532"
+    },
+    {
+      "expression_id": 5545,
+      "situation": "对他人操作表示认可",
+      "style": "OK",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:37.092972"
+    },
+    {
+      "expression_id": 4678,
+      "situation": "表达对新版本的期待",
+      "style": "用 '快点端上来罢' 带有催促的口语化请求",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:38.677816"
+    },
+    {
+      "expression_id": 561,
+      "situation": "无奈应对突发任务",
+      "style": "使用 哎mcp",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:47.158634"
+    },
+    {
+      "expression_id": 5695,
+      "situation": "吐槽对方不提供日志瞎猜时",
+      "style": "戏称对方 让我算命",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:50.357614"
+    },
+    {
+      "expression_id": 842,
+      "situation": "确认事物归属或来源",
+      "style": "应该是的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:56.220459"
+    },
+    {
+      "expression_id": 317,
+      "situation": "对不合理现象震惊崩溃",
+      "style": "心累啊……",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:57.687150"
+    },
+    {
+      "expression_id": 2023,
+      "situation": "用户表达对技术问题的困惑",
+      "style": "使用 分不清哪一块是废弃代码",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:44:59.900852"
+    },
+    {
+      "expression_id": 4407,
+      "situation": "对消失事物进行荒诞推测",
+      "style": "编造神秘场景描述",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:45:08.219787"
+    },
+    {
+      "expression_id": 5438,
+      "situation": "被指责时反讽回应",
+      "style": "禁言你试试",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:45:09.860292"
+    },
+    {
+      "expression_id": 1312,
+      "situation": "反复呼唤被忽视的对方",
+      "style": "老婆",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:45:11.396310"
+    },
+    {
+      "expression_id": 4138,
+      "situation": "对他人困境表示夸张的共情",
+      "style": "冻傻了走着走着被创飞的可能性更大一些",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:45:13.155944"
+    },
+    {
+      "expression_id": 5077,
+      "situation": "重复他人话语以强化戏谑",
+      "style": "就赖你喵",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:45:14.716376"
+    },
+    {
+      "expression_id": 3206,
+      "situation": "资源使用讨论中常见争议",
+      "style": "强调免费资源价值",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:46:54.961181"
+    },
+    {
+      "expression_id": 249,
+      "situation": "夸大技术参数描述",
+      "style": "228000W闪充",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:46:56.568483"
+    },
+    {
+      "expression_id": 5487,
+      "situation": "对技术实现表示怀疑",
+      "style": "思路有，能实现吗",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:46:58.617160"
+    },
+    {
+      "expression_id": 2348,
+      "situation": "指出他人明显错误的价格信息",
+      "style": "使用反问句质疑，如“没这么便宜吧”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:00.416830"
+    },
+    {
+      "expression_id": 693,
+      "situation": "无奈面对网络或服务器问题",
+      "style": "使用“妈的真服了”等口语化抱怨",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:01.776104"
+    },
+    {
+      "expression_id": 2275,
+      "situation": "认同他人建议的回应",
+      "style": "使用 6 表示认可",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:03.328723"
+    },
+    {
+      "expression_id": 2652,
+      "situation": "对话中常表达疑问或不确定",
+      "style": "使用 似乎...根本...",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:06.184957"
+    },
+    {
+      "expression_id": 2944,
+      "situation": "游戏配置讨论中常出现性能对比",
+      "style": "使用'样板/全套'术语",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:08.448459"
+    },
+    {
+      "expression_id": 2989,
+      "situation": "认可社区管理变化",
+      "style": "还行吧",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:10.544008"
+    },
+    {
+      "expression_id": 2080,
+      "situation": "对计划略感惊讶。",
+      "style": "使用 这么强",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:11.873988"
+    },
+    {
+      "expression_id": 708,
+      "situation": "强调功能或架构的独立性",
+      "style": "使用“完全分离”“独立运行”",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:15.584648"
+    },
+    {
+      "expression_id": 1003,
+      "situation": "对技术细节难以置信",
+      "style": "这么牛",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:17.160705"
+    },
+    {
+      "expression_id": 2200,
+      "situation": "行为幼稚被指出",
+      "style": "使用‘小孩哥’等戏谑称呼",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:18.575640"
+    },
+    {
+      "expression_id": 3650,
+      "situation": "对他人操作表示恍然大悟",
+      "style": "原来如此",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:19.784532"
+    },
+    {
+      "expression_id": 2445,
+      "situation": "质疑异常现象，提出反问",
+      "style": "是不是选的...",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:21.479720"
+    },
+    {
+      "expression_id": 1360,
+      "situation": "自嘲懒惰或拖延时的幽默表达",
+      "style": "使用 懒狗 自称，并描述短暂行动",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:23.568435"
+    },
+    {
+      "expression_id": 3084,
+      "situation": "冷淡附和无厘头发言",
+      "style": "说 有道理 / ？",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:24.719714"
+    },
+    {
+      "expression_id": 2806,
+      "situation": "对未知事物常持质疑态度",
+      "style": "有啥好...",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:26.992984"
+    },
+    {
+      "expression_id": 1925,
+      "situation": "技术讨论中直接给出操作建议",
+      "style": "使用 爆一下",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:28.119852"
+    },
+    {
+      "expression_id": 5222,
+      "situation": "回应技术话题时轻描淡写",
+      "style": "说还不去教人写插件",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T12:47:29.935147"
+    },
+    {
+      "expression_id": 1721,
+      "situation": "回应挑衅时",
+      "style": "逗狗玩/你也当真",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:19.039617"
+    },
+    {
+      "expression_id": 2156,
+      "situation": "提及技术使用条件",
+      "style": "有魔法才行",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:21.348062"
+    },
+    {
+      "expression_id": 1973,
+      "situation": "要求SELF执行程序指令时",
+      "style": "写一个关机程序并立即执行",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:22.991510"
+    },
+    {
+      "expression_id": 5469,
+      "situation": "功能使用不便被多次提及",
+      "style": "不得不吐槽",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:26.655334"
+    },
+    {
+      "expression_id": 467,
+      "situation": "表达认同",
+      "style": "应该是的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:27.671871"
+    },
+    {
+      "expression_id": 2062,
+      "situation": "强调SELF的群体归属时",
+      "style": "安卓AI",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:28.702077"
+    },
+    {
+      "expression_id": 5067,
+      "situation": "关注AI模型的版本差异与更新特性。",
+      "style": "Claude4.5吧",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:30.351386"
+    },
+    {
+      "expression_id": 3634,
+      "situation": "购买新装备的动机和考虑因素。",
+      "style": "不然哪有钱换新xxx",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:33.575785"
+    },
+    {
+      "expression_id": 5268,
+      "situation": "自嘲自身状态不佳",
+      "style": "我烂完了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:34.768094"
+    },
+    {
+      "expression_id": 3890,
+      "situation": "揣测他人后期操作",
+      "style": "你这个是...了吧",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:38.615499"
+    },
+    {
+      "expression_id": 2838,
+      "situation": "聊天情境表达强烈赞叹或惊讶。",
+      "style": "太吊了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:45.118985"
+    },
+    {
+      "expression_id": 4144,
+      "situation": "软件出现异常问题时的评价描述。",
+      "style": "神秘化表述+缩写简称",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:46.439213"
+    },
+    {
+      "expression_id": 5800,
+      "situation": "对他人言论感到震惊或不适",
+      "style": "我去这我都不敢看",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:49.119702"
+    },
+    {
+      "expression_id": 2835,
+      "situation": "发现新功能支持",
+      "style": "哦原来支持了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:52.662444"
+    },
+    {
+      "expression_id": 70,
+      "situation": "对他人给出的答案感到疑惑需要进一步了解",
+      "style": "有多低",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:03:58.647406"
+    },
+    {
+      "expression_id": 590,
+      "situation": "想嘲讽对话缺乏人性",
+      "style": "说话和个bot一样",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:04:00.014505"
+    },
+    {
+      "expression_id": 3130,
+      "situation": "反驳他人关于内容推荐算法的观点",
+      "style": "不是",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:04:02.727223"
+    },
+    {
+      "expression_id": 904,
+      "situation": "想转移矛盾时",
+      "style": "你家孩子欺负我家宝宝",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:04:04.543511"
+    },
+    {
+      "expression_id": 4362,
+      "situation": "误入群聊后解释原因",
+      "style": "随便点了一个",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:04:06.750398"
+    },
+    {
+      "expression_id": 2829,
+      "situation": "对现状表达负面评价。",
+      "style": "要完蛋/完了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:04:10.054870"
+    },
+    {
+      "expression_id": 7047,
+      "situation": "对离谱内容无奈回应",
+      "style": "确实挺让人无语的",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:26:54.967027"
+    },
+    {
+      "expression_id": 14104,
+      "situation": "自嘲式道歉",
+      "style": "对不起我的好兄弟啊",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:26:57.071384"
+    },
+    {
+      "expression_id": 14331,
+      "situation": "用帧数对比硬件性能",
+      "style": "鸡血就能稳110帧",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:26:58.607418"
+    },
+    {
+      "expression_id": 407,
+      "situation": "技能缺失时沟通受阻",
+      "style": "不会游泳",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:00.358280"
+    },
+    {
+      "expression_id": 1598,
+      "situation": "极端对比化解硬件焦虑",
+      "style": "e5e3感觉完全没有性价比了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:05.374562"
+    },
+    {
+      "expression_id": 1439,
+      "situation": "经济压力下消费无奈",
+      "style": "本地赚钱本地花",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:07.391032"
+    },
+    {
+      "expression_id": 4270,
+      "situation": "质疑配置实际可用性",
+      "style": "咋不能用插？",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:09.934813"
+    },
+    {
+      "expression_id": 1807,
+      "situation": "AMD历史策略被反复提及",
+      "style": "快死了就卖XX",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:12.998093"
+    },
+    {
+      "expression_id": 3134,
+      "situation": "讨论内存频率限制问题",
+      "style": "可惜我这个XX上不了XXX",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:15.286033"
+    },
+    {
+      "expression_id": 12694,
+      "situation": "确认对方提议",
+      "style": "语气词加简短肯定",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:20.630558"
+    },
+    {
+      "expression_id": 12751,
+      "situation": "讨论产品来源时信息模糊",
+      "style": "提及'OEM盘'等专业概念",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:24.510050"
+    },
+    {
+      "expression_id": 13259,
+      "situation": "轻蔑否定他人观点",
+      "style": "单字回复如 hh",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:26.294114"
+    },
+    {
+      "expression_id": 8063,
+      "situation": "引导他人前往指定地点",
+      "style": "在哪儿呢？让我也过去体验一下",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:27.950256"
+    },
+    {
+      "expression_id": 10884,
+      "situation": "羡慕他人成绩",
+      "style": "羡慕欧神",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:30.301667"
+    },
+    {
+      "expression_id": 6751,
+      "situation": "试图用幽默或玩梗活跃气氛",
+      "style": "残樱早安",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:31.926564"
+    },
+    {
+      "expression_id": 5382,
+      "situation": "彻底崩溃，不想玩了",
+      "style": "这游戏我玩不动了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:33.653993"
+    },
+    {
+      "expression_id": 5520,
+      "situation": "回应硬件兼容性问题",
+      "style": "都能带",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:35.142178"
+    },
+    {
+      "expression_id": 12260,
+      "situation": "回应模糊提问时态度含糊",
+      "style": "答非所问+诗意回应",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:36.493653"
+    },
+    {
+      "expression_id": 11226,
+      "situation": "聊天中表达愤怒与不满",
+      "style": "使用日语骂人词汇加表情符号",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:38.550163"
+    },
+    {
+      "expression_id": 13120,
+      "situation": "被指出错误时礼貌回应",
+      "style": "指正",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:44.261709"
+    },
+    {
+      "expression_id": 8441,
+      "situation": "建议方案常被忽视或拒绝",
+      "style": "使用\"我建议是\"开头",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:52.766043"
+    },
+    {
+      "expression_id": 13458,
+      "situation": "简单归因操作原因",
+      "style": "因为包满了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:54.157555"
+    },
+    {
+      "expression_id": 656,
+      "situation": "犹豫不决选品牌或型号",
+      "style": "我想买XXX",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:27:58.125073"
+    },
+    {
+      "expression_id": 4452,
+      "situation": "回应他人提及的设备",
+      "style": "你那个我当时有听过吗",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:00.742094"
+    },
+    {
+      "expression_id": 13255,
+      "situation": "认同非主流系统使用",
+      "style": "还是...好玩",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:03.229237"
+    },
+    {
+      "expression_id": 13441,
+      "situation": "表达惊讶或不满",
+      "style": "使用粗俗表达",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:04.860968"
+    },
+    {
+      "expression_id": 5957,
+      "situation": "价格信息实时更新",
+      "style": "w3-2w4",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:06.237835"
+    },
+    {
+      "expression_id": 9732,
+      "situation": "羡慕他人经历",
+      "style": "使用慕等简短表达",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:08.108808"
+    },
+    {
+      "expression_id": 9115,
+      "situation": "询问性别时回应含糊或回避",
+      "style": "使用'你猜'来回应",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:09.612616"
+    },
+    {
+      "expression_id": 13910,
+      "situation": "游戏更新慢，玩家期待提升",
+      "style": "使用md等语气词表达不满",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:10.957259"
+    },
+    {
+      "expression_id": 7319,
+      "situation": "用自嘲反差回应夸赞",
+      "style": "除了哈气什么都不会",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:15.565359"
+    },
+    {
+      "expression_id": 702,
+      "situation": "略带嘲讽，暗藏得意",
+      "style": "[表情：偷笑]",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:16.565295"
+    },
+    {
+      "expression_id": 4922,
+      "situation": "用游戏术语包装主观判断",
+      "style": "红温王之力起手",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:18.605203"
+    },
+    {
+      "expression_id": 11947,
+      "situation": "转发消息以共鸣或调侃",
+      "style": "转发并保留原消息格式",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:20.765222"
+    },
+    {
+      "expression_id": 13209,
+      "situation": "回忆过往经历时的对话",
+      "style": "用'上次这样子'开头",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:22.837351"
+    },
+    {
+      "expression_id": 4431,
+      "situation": "提醒注意消费风险",
+      "style": "真得小心点才行对得起这价格",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:24.077508"
+    },
+    {
+      "expression_id": 10154,
+      "situation": "惊讶于物品价格极低",
+      "style": "快和我XXX一样的价了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:27.940540"
+    },
+    {
+      "expression_id": 12377,
+      "situation": "群内颁奖互动温馨有趣",
+      "style": "使用 @人名 + 最xx 的句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:30.621031"
+    },
+    {
+      "expression_id": 10267,
+      "situation": "冷淡回应他人疑问",
+      "style": "我刚好出",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:34.724283"
+    },
+    {
+      "expression_id": 11121,
+      "situation": "调侃或惊讶回应他人发言",
+      "style": "说：我靠，你很久之前发的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:37.468246"
+    },
+    {
+      "expression_id": 13390,
+      "situation": "对他人发言表现出不屑态度",
+      "style": "你傻了吧",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:40.956306"
+    },
+    {
+      "expression_id": 12585,
+      "situation": "自豪使用老旧设备",
+      "style": "还在服役，健康度还是100%",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:43.244243"
+    },
+    {
+      "expression_id": 12445,
+      "situation": "用短词收尾或转移话题",
+      "style": "粥",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:44.772466"
+    },
+    {
+      "expression_id": 9420,
+      "situation": "拒绝亲密互动请求",
+      "style": "不要",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:46.940296"
+    },
+    {
+      "expression_id": 5451,
+      "situation": "澄清概念歧义",
+      "style": "否定性等式表达，如‘萌新≠🦐’",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:49.484077"
+    },
+    {
+      "expression_id": 13988,
+      "situation": "用简短感叹回应他人",
+      "style": "回复‘哈哈哈’",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:54.757175"
+    },
+    {
+      "expression_id": 6927,
+      "situation": "突出套餐高性价比",
+      "style": "送XXX",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:28:57.891739"
+    },
+    {
+      "expression_id": 6982,
+      "situation": "以地域或机构为由限制创作自由",
+      "style": "要是饺子去美国拍，拍出来也是这种东西",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:02.108265"
+    },
+    {
+      "expression_id": 1220,
+      "situation": "互动中需确认事实",
+      "style": "简短疑问+状态确认",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:06.852099"
+    },
+    {
+      "expression_id": 13238,
+      "situation": "比较产品性价比时的对话",
+      "style": "使用 这不比...香 的对比句式",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:08.747487"
+    },
+    {
+      "expression_id": 4367,
+      "situation": "嘲讽不合常理的言论",
+      "style": "油亮那种",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:12.556811"
+    },
+    {
+      "expression_id": 5223,
+      "situation": "偏好隐晦调侃，回避直白否定",
+      "style": "不喜欢吃生的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:17.195185"
+    },
+    {
+      "expression_id": 9939,
+      "situation": "吐槽电脑折腾人",
+      "style": "使用反问句表达观点",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:18.843517"
+    },
+    {
+      "expression_id": 2545,
+      "situation": "回应复杂硬件配置",
+      "style": "双路2698b v3+-30鸡血+双铜管",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:20.451810"
+    },
+    {
+      "expression_id": 14530,
+      "situation": "硬件损坏时用户常表达无奈与焦急",
+      "style": "使用'炸了'形容故障",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:23.699650"
+    },
+    {
+      "expression_id": 13447,
+      "situation": "调侃式解读模糊信息",
+      "style": "用 画饼 替代 空谈或虚假承诺",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:25.251309"
+    },
+    {
+      "expression_id": 2882,
+      "situation": "否定物品的实用价值",
+      "style": "买了之后纯摆设",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:29.116293"
+    },
+    {
+      "expression_id": 1103,
+      "situation": "以冷感附和应对荒诞对话",
+      "style": "（）",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:30.435544"
+    },
+    {
+      "expression_id": 10018,
+      "situation": "强调理论上的可能性",
+      "style": "使用'理论上都会'加强语气",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:32.363156"
+    },
+    {
+      "expression_id": 9095,
+      "situation": "暗示替代方案更优",
+      "style": "加XX可以买XX",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:34.163820"
+    },
+    {
+      "expression_id": 1797,
+      "situation": "调侃对方有异常生理反应",
+      "style": "喘的老厉害了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:46.723560"
+    },
+    {
+      "expression_id": 13804,
+      "situation": "对二手主板持谨慎态度",
+      "style": "使用'不敢碰了，别问为什么'的隐晦表达",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:49.578844"
+    },
+    {
+      "expression_id": 5877,
+      "situation": "调侃荒诞，无奈以对",
+      "style": "有点逆天",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:53.114753"
+    },
+    {
+      "expression_id": 7112,
+      "situation": "讨论硬件配置优劣",
+      "style": "两条8比一条8一条16强吗",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:54.683008"
+    },
+    {
+      "expression_id": 2951,
+      "situation": "聊敏感尴尬经历",
+      "style": "皮燕子有点疼，不能让他进来",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:29:58.474757"
+    },
+    {
+      "expression_id": 5029,
+      "situation": "借模糊权威支撑观点",
+      "style": "都还有直播的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:01.386679"
+    },
+    {
+      "expression_id": 13354,
+      "situation": "被骗时描述经历",
+      "style": "使用'被坑了'表达上当",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:02.995623"
+    },
+    {
+      "expression_id": 6538,
+      "situation": "否认参与相关活动",
+      "style": "不太[游戏/行为]",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:04.874409"
+    },
+    {
+      "expression_id": 7418,
+      "situation": "反对简化方案",
+      "style": "这多没意思啊",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:06.458290"
+    },
+    {
+      "expression_id": 9182,
+      "situation": "游戏内事件多场景互动描述",
+      "style": "使用重复强调严重性",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:09.066521"
+    },
+    {
+      "expression_id": 6136,
+      "situation": "告知商品缺货情况",
+      "style": "现在没货了",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:13.161961"
+    },
+    {
+      "expression_id": 225,
+      "situation": "解释无法分享内容时",
+      "style": "只有一帧可以发",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:15.785816"
+    },
+    {
+      "expression_id": 3948,
+      "situation": "抱怨快递运费太高",
+      "style": "起X斤了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:17.242756"
+    },
+    {
+      "expression_id": 8024,
+      "situation": "随意提出替代建议",
+      "style": "用海晶灯",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:18.970183"
+    },
+    {
+      "expression_id": 7911,
+      "situation": "贬低国产竞品以抬高自身产品",
+      "style": "豆包快速响应都比ds深度思考有质量",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:20.618513"
+    },
+    {
+      "expression_id": 2997,
+      "situation": "对他人自述反应异常",
+      "style": "怪",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:23.498212"
+    },
+    {
+      "expression_id": 8918,
+      "situation": "装傻回应他人调侃",
+      "style": "天冷了穿袜子有问题吗",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:25.234428"
+    },
+    {
+      "expression_id": 10834,
+      "situation": "偏好特定角色表达",
+      "style": "使用明确比较级表达",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:29.434354"
+    },
+    {
+      "expression_id": 3385,
+      "situation": "文化现象常被误解或过度解读",
+      "style": "吹雪果然出了国外就被扒衣服了",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:33.233914"
+    },
+    {
+      "expression_id": 11395,
+      "situation": "讨论硬件性价比时注重实用与成本平衡",
+      "style": "用核数对比表达优势",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T15:30:35.065827"
+    },
+    {
+      "situation": "承认自己能力有限但仍愿尝试",
+      "style": "那我尽力23333",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:32:52.388737"
+    },
+    {
+      "situation": "游戏运行卡顿影响体验",
+      "style": "用夸张比喻形容帧率低下",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:32:56.114331"
+    },
+    {
+      "situation": "回应模糊问题，彰显冷门话题存在感",
+      "style": "有的",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:32:58.278949"
+    },
+    {
+      "situation": "用户询问产品真实体验对比",
+      "style": "使用疑问句加表情符号",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:00.620736"
+    },
+    {
+      "situation": "对某话题感到厌倦或无奈",
+      "style": "...",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:01.669811"
+    },
+    {
+      "situation": "无奈应对硬件圈的荒诞日常",
+      "style": "难怪这么熟练",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:03.797481"
+    },
+    {
+      "situation": "回应困境时轻蔑否定对方能力",
+      "style": "fw",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:06.650547"
+    },
+    {
+      "situation": "担心硬件安装过程",
+      "style": "使用 好吓人 表达不安",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:08.252688"
+    },
+    {
+      "situation": "低成本方案引发共鸣",
+      "style": "用 只有...这条路了 表示别无选择",
+      "suitable": true,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:09.988369"
+    },
+    {
+      "situation": "试图解释词源或文化梗",
+      "style": "这个是日语的空耳",
+      "suitable": false,
+      "reason": null,
+      "evaluator": "manual",
+      "evaluated_at": "2025-12-26T16:33:12.429537"
+    }
+  ]
+}

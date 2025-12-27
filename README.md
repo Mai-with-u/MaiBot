@@ -46,7 +46,7 @@
 ## 🔥 更新和安装
 
 
-**最新版本: v0.11.6** ([更新日志](changelogs/changelog.md))
+**最新版本: v0.12.0** ([更新日志](changelogs/changelog.md))
 
 
 可前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本

@@ -28,7 +28,6 @@ class BaseAction(ABC):
     - keyword_case_sensitive: 关键词是否区分大小写
     - parallel_action: 是否允许并行执行
     - random_activation_probability: 随机激活概率
-    - llm_judge_prompt: LLM判断提示词
     """
 
     def __init__(
@@ -81,8 +80,6 @@ class BaseAction(ABC):
         """激活类型"""
         self.random_activation_probability: float = getattr(self.__class__, "random_activation_probability", 0.0)
         """当激活类型为RANDOM时的概率"""
-        self.llm_judge_prompt: str = getattr(self.__class__, "llm_judge_prompt", "")  # 已弃用
-        """协助LLM进行判断的Prompt"""
         self.activation_keywords: list[str] = getattr(self.__class__, "activation_keywords", []).copy()
         """激活类型为KEYWORD时的KEYWORDS列表"""
         self.keyword_case_sensitive: bool = getattr(self.__class__, "keyword_case_sensitive", False)
@@ -504,7 +501,6 @@ class BaseAction(ABC):
             keyword_case_sensitive=getattr(cls, "keyword_case_sensitive", False),
             parallel_action=getattr(cls, "parallel_action", True),
             random_activation_probability=getattr(cls, "random_activation_probability", 0.0),
-            llm_judge_prompt=getattr(cls, "llm_judge_prompt", ""),
             # 使用正确的字段名
             action_parameters=getattr(cls, "action_parameters", {}).copy(),
             action_require=getattr(cls, "action_require", []).copy(),

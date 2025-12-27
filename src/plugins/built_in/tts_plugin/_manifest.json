@@ -28,7 +28,7 @@
         "type": "action",
         "name": "tts_action", 
         "description": "将文本转换为语音进行播放",
-        "activation_modes": ["llm_judge", "keyword"],
+        "activation_modes": ["keyword"],
         "keywords": ["语音", "tts", "播报", "读出来", "语音播放", "听", "朗读"]
       }
     ],

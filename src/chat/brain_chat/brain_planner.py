@@ -11,6 +11,7 @@ from json_repair import repair_json
 from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config, model_config
 from src.common.logger import get_logger
+from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.chat.utils.chat_message_builder import (
@@ -261,6 +262,7 @@ class BrainPlanner:
         """
         规划器 (Planner): 使用LLM根据上下文决定做出什么动作（ReAct模式）。
         """
+        plan_start = time.perf_counter()
 
         # 获取聊天上下文
         message_list_before_now = get_raw_msg_before_timestamp_with_chat(
@@ -298,6 +300,7 @@ class BrainPlanner:
 
         logger.debug(f"{self.log_prefix}过滤后有{len(filtered_actions)}个可用动作")
 
+        prompt_build_start = time.perf_counter()
         # 构建包含所有动作的提示词：使用统一的 ReAct Prompt
         prompt_key = "brain_planner_prompt_react"
         # 这里不记录日志，避免重复打印，由调用方按需控制 log_prompt
@@ -308,9 +311,10 @@ class BrainPlanner:
             message_id_list=message_id_list,
             prompt_key=prompt_key,
         )
+        prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
 
         # 调用LLM获取决策
-        reasoning, actions = await self._execute_main_planner(
+        reasoning, actions, llm_raw_output, llm_reasoning, llm_duration_ms = await self._execute_main_planner(
             prompt=prompt,
             message_id_list=message_id_list,
             filtered_actions=filtered_actions,
@@ -323,6 +327,25 @@ class BrainPlanner:
             f"{self.log_prefix}Planner: {reasoning}。选择了{len(actions)}个动作: {' '.join([a.action_type for a in actions])}"
         )
         self.add_plan_log(reasoning, actions)
+
+        try:
+            PlanReplyLogger.log_plan(
+                chat_id=self.chat_id,
+                prompt=prompt,
+                reasoning=reasoning,
+                raw_output=llm_raw_output,
+                raw_reasoning=llm_reasoning,
+                actions=actions,
+                timing={
+                    "prompt_build_ms": round(prompt_build_ms, 2),
+                    "llm_duration_ms": round(llm_duration_ms, 2) if llm_duration_ms is not None else None,
+                    "total_plan_ms": round((time.perf_counter() - plan_start) * 1000, 2),
+                    "loop_start_time": loop_start_time,
+                },
+                extra=None,
+            )
+        except Exception:
+            logger.exception(f"{self.log_prefix}记录plan日志失败")
 
         return actions
 
@@ -421,7 +444,7 @@ class BrainPlanner:
             if action_info.activation_type == ActionActivationType.NEVER:
                 logger.debug(f"{self.log_prefix}动作 {action_name} 设置为 NEVER 激活类型，跳过")
                 continue
-            elif action_info.activation_type in [ActionActivationType.LLM_JUDGE, ActionActivationType.ALWAYS]:
+            elif action_info.activation_type == ActionActivationType.ALWAYS:
                 filtered_actions[action_name] = action_info
             elif action_info.activation_type == ActionActivationType.RANDOM:
                 if random.random() < action_info.random_activation_probability:
@@ -479,15 +502,20 @@ class BrainPlanner:
         filtered_actions: Dict[str, ActionInfo],
         available_actions: Dict[str, ActionInfo],
         loop_start_time: float,
-    ) -> Tuple[str, List[ActionPlannerInfo]]:
+    ) -> Tuple[str, List[ActionPlannerInfo], Optional[str], Optional[str], Optional[float]]:
         """执行主规划器"""
         llm_content = None
         actions: List[ActionPlannerInfo] = []
         extracted_reasoning = ""
+        llm_reasoning = None
+        llm_duration_ms = None
 
         try:
             # 调用LLM
+            llm_start = time.perf_counter()
             llm_content, (reasoning_content, _, _) = await self.planner_llm.generate_response_async(prompt=prompt)
+            llm_duration_ms = (time.perf_counter() - llm_start) * 1000
+            llm_reasoning = reasoning_content
 
             logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
             logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
@@ -514,7 +542,7 @@ class BrainPlanner:
                     action_message=None,
                     available_actions=available_actions,
                 )
-            ]
+            ], llm_content, llm_reasoning, llm_duration_ms
 
         # 解析LLM响应
         if llm_content:
@@ -553,7 +581,7 @@ class BrainPlanner:
             f"{self.log_prefix}规划器决定执行{len(actions)}个动作: {' '.join([a.action_type for a in actions])}"
         )
 
-        return extracted_reasoning, actions
+        return extracted_reasoning, actions, llm_content, llm_reasoning, llm_duration_ms
 
     def _create_complete_talk(
         self, reasoning: str, available_actions: Dict[str, ActionInfo]

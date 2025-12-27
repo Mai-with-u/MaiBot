@@ -1,6 +1,7 @@
 import re
 import asyncio
 import time
+import random
 
 from enum import Enum
 from rich.traceback import install
@@ -266,7 +267,7 @@ class LLMRequest:
 
     def _select_model(self, exclude_models: Optional[Set[str]] = None) -> Tuple[ModelInfo, APIProvider, BaseClient]:
         """
-        根据总tokens和惩罚值选择的模型
+        根据配置的策略选择模型：balance（负载均衡）或 random（随机选择）
         """
         available_models = {
             model: scores
@@ -276,15 +277,30 @@ class LLMRequest:
         if not available_models:
             raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
 
-        least_used_model_name = min(
-            available_models,
-            key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
-        )
-        model_info = model_config.get_model_info(least_used_model_name)
+        strategy = self.model_for_task.selection_strategy.lower()
+        
+        if strategy == "random":
+            # 随机选择策略
+            selected_model_name = random.choice(list(available_models.keys()))
+        elif strategy == "balance":
+            # 负载均衡策略：根据总tokens和惩罚值选择
+            selected_model_name = min(
+                available_models,
+                key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
+            )
+        else:
+            # 默认使用负载均衡策略
+            logger.warning(f"未知的选择策略 '{strategy}'，使用默认的负载均衡策略")
+            selected_model_name = min(
+                available_models,
+                key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
+            )
+        
+        model_info = model_config.get_model_info(selected_model_name)
         api_provider = model_config.get_provider(model_info.api_provider)
         force_new_client = self.request_type == "embedding"
         client = client_registry.get_client_class_instance(api_provider, force_new=force_new_client)
-        logger.debug(f"选择请求模型: {model_info.name}")
+        logger.debug(f"选择请求模型: {model_info.name} (策略: {strategy})")
         total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
         self.model_usage[model_info.name] = (total_tokens, penalty, usage_penalty + 1)
         return model_info, api_provider, client

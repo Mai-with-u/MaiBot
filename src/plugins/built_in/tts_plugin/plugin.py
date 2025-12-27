@@ -13,7 +13,9 @@ class TTSAction(BaseAction):
     """TTS语音转换动作处理类"""
 
     # 激活设置
-    activation_type = ActionActivationType.LLM_JUDGE
+    activation_type = ActionActivationType.KEYWORD
+    activation_keywords = ["语音", "tts", "播报", "读出来", "语音播放", "听", "朗读"]
+    keyword_case_sensitive = False
     parallel_action = False
 
     # 动作基本信息

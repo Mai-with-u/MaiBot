@@ -97,6 +97,9 @@ class TaskConfig(ConfigBase):
     slow_threshold: float = 15.0
     """慢请求阈值（秒），超过此值会输出警告日志"""
 
+    selection_strategy: str = field(default="balance")
+    """模型选择策略：balance（负载均衡）或 random（随机选择）"""
+
 
 @dataclass
 class ModelTaskConfig(ConfigBase):
@@ -104,9 +107,6 @@ class ModelTaskConfig(ConfigBase):
 
     utils: TaskConfig
     """组件模型配置"""
-
-    utils_small: TaskConfig
-    """组件小模型配置"""
 
     replyer: TaskConfig
     """normal_chat首要回复模型模型配置"""
@@ -131,9 +131,6 @@ class ModelTaskConfig(ConfigBase):
 
     lpmm_rdf_build: TaskConfig
     """LPMM RDF构建模型配置"""
-
-    lpmm_qa: TaskConfig
-    """LPMM问答模型配置"""
 
     def get_task(self, task_name: str) -> TaskConfig:
         """获取指定任务的配置"""
