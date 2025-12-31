@@ -645,6 +645,12 @@ class ResponseSplitterConfig(ConfigBase):
     enable_overflow_return_all: bool = False
     """是否在超出句子数量限制时合并后一次性返回"""
 
+    enable_ai_segmentation: bool = False
+    """是否启用AI智能分段"""
+
+    ai_segmentation_style: str = "natural"
+    """AI智能分段风格：natural(自然), conservative(保守), active(活跃)"""
+
 
 @dataclass
 class TelemetryConfig(ConfigBase):

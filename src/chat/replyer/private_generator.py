@@ -821,6 +821,30 @@ class PrivateReplyer:
                 # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
                 reply_style = global_config.personality.reply_style
 
+        if global_config.response_splitter.enable_ai_segmentation:
+            style: str = global_config.response_splitter.ai_segmentation_style
+            max_segments: int = global_config.response_splitter.max_sentence_num
+
+            style_guides: Dict[str, str] = {
+                "natural": "在话题转换、语气变化等重要停顿处切分。一个完整的意思放在一段里，不要过度切分。",
+                "conservative": "尽量少切分，只在明显话题转换处切分。多个句子可以放在同一段。",
+                "active": "切分更细致，在语气转换、情绪变化处也可切分，但仍要保持语义完整。"
+            }
+
+            segmentation_prompt: str = f"""
+请将你的回复切分成多段，模拟真人发消息节奏。
+{style_guides.get(style, style_guides["natural"])}
+重要规则：
+- 不要在每个标点都切分！只在重要的语义停顿处切分
+- 相关的句子应该保持在同一段
+- 最多切分成 {max_segments} 段
+- 切分时可以删除切分点的逗号、句号、顿号
+- 保留感叹号、问号、省略号、波浪号等情绪标点
+- 保持原文内容和语气不变
+- 使用 "|||SPLIT|||" 作为分段标记，例如："第一段内容|||SPLIT|||第二段内容"
+"""
+            reply_style += segmentation_prompt
+
         # 使用统一的 is_bot_self 函数判断是否是机器人自己（支持多平台，包括 WebUI）
         if is_bot_self(platform, user_id):
             return await global_prompt_manager.format_prompt(
@@ -953,6 +977,30 @@ class PrivateReplyer:
             except Exception:
                 # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
                 reply_style = global_config.personality.reply_style
+
+        if global_config.response_splitter.enable_ai_segmentation:
+            style: str = global_config.response_splitter.ai_segmentation_style
+            max_segments: int = global_config.response_splitter.max_sentence_num
+
+            style_guides: Dict[str, str] = {
+                "natural": "在话题转换、语气变化等重要停顿处切分。一个完整的意思放在一段里，不要过度切分。",
+                "conservative": "尽量少切分，只在明显话题转换处切分。多个句子可以放在同一段。",
+                "active": "切分更细致，在语气转换、情绪变化处也可切分，但仍要保持语义完整。"
+            }
+
+            segmentation_prompt: str = f"""
+请将你的回复切分成多段，模拟真人发消息节奏。
+{style_guides.get(style, style_guides["natural"])}
+重要规则：
+- 不要在每个标点都切分！只在重要的语义停顿处切分
+- 相关的句子应该保持在同一段
+- 最多切分成 {max_segments} 段
+- 切分时可以删除切分点的逗号、句号、顿号
+- 保留感叹号、问号、省略号、波浪号等情绪标点
+- 保持原文内容和语气不变
+- 使用 "|||SPLIT|||" 作为分段标记，例如："第一段内容|||SPLIT|||第二段内容"
+"""
+            reply_style += segmentation_prompt
 
         return await global_prompt_manager.format_prompt(
             template_name,

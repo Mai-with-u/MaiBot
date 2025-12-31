@@ -447,6 +447,10 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     if not global_config.response_post_process.enable_response_post_process:
         return [text]
 
+    # 检查分隔符
+    if "|||SPLIT|||" in text and global_config.response_splitter.enable_ai_segmentation:
+        return [s.strip() for s in text.split("|||SPLIT|||") if s.strip()]
+
     # 先保护颜文字
     if global_config.response_splitter.enable_kaomoji_protection:
         protected_text, kaomoji_mapping = protect_kaomoji(text)

@@ -245,6 +245,8 @@ max_length = 512 # 回复允许的最大长度
 max_sentence_num = 8 # 回复允许的最大句子数
 enable_kaomoji_protection = false # 是否启用颜文字保护
 enable_overflow_return_all = false # 是否在句子数量超出回复允许的最大句子数时一次性返回全部内容
+enable_ai_segmentation = false # 是否启用AI智能分段
+ai_segmentation_style = "natural" # AI智能分段风格：natural(自然), conservative(保守), active(活跃)
 
 [log]
 date_style = "m-d H:i:s" # 日期格式
