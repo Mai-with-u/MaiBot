@@ -1,0 +1,8 @@
+# 检查EULA和PRIVACY
+{{- if not .Values.EULA_AGREE }}
+{{ fail "You must accept the EULA by setting 'EULA_AGREE: true'. EULA: https://github.com/Mai-with-u/MaiBot/blob/main/EULA.md" }}
+{{- end }}
+
+{{- if not .Values.PRIVACY_AGREE }}
+{{ fail "You must accept the Privacy Policy by setting 'PRIVACY_AGREE: true'. Privacy Policy: https://github.com/Mai-with-u/MaiBot/blob/main/PRIVACY.md" }}
+{{- end }}

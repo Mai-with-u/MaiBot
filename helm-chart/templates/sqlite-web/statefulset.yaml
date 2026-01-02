@@ -1,0 +1,64 @@
+{{- if .Values.sqlite_web.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-maibot-sqlite-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-sqlite-web
+spec:
+  serviceName: {{ .Release.Name }}-maibot-sqlite-web
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-maibot-sqlite-web
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-maibot-sqlite-web
+    spec:
+      containers:
+        - name: sqlite-web
+          env:
+            - name: SQLITE_DATABASE
+              value: /data/MaiMBot/MaiBot.db
+          image: {{ .Values.sqlite_web.image.repository | default "coleifer/sqlite-web" }}:{{ .Values.sqlite_web.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.sqlite_web.image.pullPolicy }}
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            successThreshold: 1
+            timeoutSeconds: 10
+          ports:
+            - containerPort: 8080
+              name: webui
+              protocol: TCP
+          {{- if .Values.sqlite_web.resources }}
+          resources:
+            {{ toYaml .Values.sqlite_web.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /data/MaiMBot
+              name: data
+      {{- if .Values.sqlite_web.image.pullSecrets }}
+      imagePullSecrets:
+        {{ toYaml .Values.sqlite_web.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.sqlite_web.nodeSelector }}
+      nodeSelector:
+        {{ toYaml .Values.sqlite_web.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.sqlite_web.tolerations }}
+      tolerations:
+        {{ toYaml .Values.sqlite_web.tolerations | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-maibot-core
+{{- end }}

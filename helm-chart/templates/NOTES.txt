@@ -1,0 +1,3 @@
+MaiBot has been successfully deployed.
+
+MaiBot on GitHub: https://github.com/Mai-with-u/MaiBot

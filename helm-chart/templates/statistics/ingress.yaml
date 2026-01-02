@@ -1,0 +1,26 @@
+{{- if and .Values.statistics_dashboard.enabled .Values.statistics_dashboard.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-maibot-statistics-dashboard
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.statistics_dashboard.ingress.annotations }}
+  annotations:
+    {{ toYaml .Values.statistics_dashboard.ingress.annotations | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ .Release.Name }}-maibot-statistics-dashboard
+spec:
+  ingressClassName: {{ .Values.statistics_dashboard.ingress.className }}
+  rules:
+    - host: {{ .Values.statistics_dashboard.ingress.host }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Release.Name }}-maibot-statistics-dashboard
+                port:
+                  number: {{ .Values.statistics_dashboard.service.port }}
+            path: {{ .Values.statistics_dashboard.ingress.path }}
+            pathType: {{ .Values.statistics_dashboard.ingress.pathType }}
+{{- end }}

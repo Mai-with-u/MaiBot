@@ -1,0 +1,61 @@
+{{- if .Values.statistics_dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-maibot-statistics-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-statistics-dashboard
+spec:
+  replicas: {{ .Values.statistics_dashboard.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-maibot-statistics-dashboard
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-maibot-statistics-dashboard
+    spec:
+      containers:
+        - name: nginx
+          image: {{ .Values.statistics_dashboard.image.repository | default "nginx" }}:{{ .Values.statistics_dashboard.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.statistics_dashboard.image.pullPolicy }}
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          ports:
+            - containerPort: 80
+              name: dashboard
+              protocol: TCP
+          {{- if .Values.statistics_dashboard.resources }}
+          resources:
+            {{ toYaml .Values.statistics_dashboard.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /usr/share/nginx/html
+              name: statistics
+              readOnly: true
+      {{- if .Values.statistics_dashboard.image.pullSecrets }}
+      imagePullSecrets:
+        {{ toYaml .Values.statistics_dashboard.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.statistics_dashboard.nodeSelector }}
+      nodeSelector:
+        {{ toYaml .Values.statistics_dashboard.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.statistics_dashboard.tolerations }}
+      tolerations:
+        {{ toYaml .Values.statistics_dashboard.tolerations | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: statistics
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-maibot-statistics-dashboard
+{{- end }}

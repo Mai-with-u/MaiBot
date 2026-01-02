@@ -1,0 +1,18 @@
+{{- if .Values.napcat.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-maibot-napcat
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if .Values.napcat.persistence.accessModes }}
+  accessModes:
+    {{ toYaml .Values.napcat.persistence.accessModes | nindent 4 }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.napcat.persistence.size }}
+  {{- if .Values.napcat.persistence.storageClass }}
+  storageClassName: {{ .Values.napcat.persistence.storageClass | default nil }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+{{- if .Values.sqlite_web.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-maibot-sqlite-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-sqlite-web
+spec:
+  ports:
+    - name: webui
+      port: {{ .Values.sqlite_web.service.port }}
+      protocol: TCP
+      targetPort: 8080
+      {{- if eq .Values.sqlite_web.service.type "NodePort" }}
+      nodePort: {{ .Values.sqlite_web.service.nodePort | default nil }}
+      {{- end }}
+  selector:
+    app: {{ .Release.Name }}-maibot-sqlite-web
+  type: {{ .Values.sqlite_web.service.type }}
+{{- end }}

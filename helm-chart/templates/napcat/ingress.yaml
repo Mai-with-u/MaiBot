@@ -1,0 +1,26 @@
+{{- if and .Values.napcat.enabled .Values.napcat.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-maibot-napcat
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.napcat.ingress.annotations }}
+  annotations:
+    {{ toYaml .Values.napcat.ingress.annotations | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ .Release.Name }}-maibot-napcat
+spec:
+  ingressClassName: {{ .Values.napcat.ingress.className }}
+  rules:
+    - host: {{ .Values.napcat.ingress.host }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Release.Name }}-maibot-napcat
+                port:
+                  number: {{ .Values.napcat.service.port }}
+            path: {{ .Values.napcat.ingress.path }}
+            pathType: {{ .Values.napcat.ingress.pathType }}
+{{- end }}

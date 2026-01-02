@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-maibot-scripts
+  namespace: {{ .Release.Namespace }}
+data:
+  # core
+  k8s-init.sh: |
+    {{ .Files.Get "files/k8s-init.sh" | nindent 4 }}

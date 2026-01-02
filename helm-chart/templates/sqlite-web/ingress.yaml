@@ -1,0 +1,26 @@
+{{- if and .Values.sqlite_web.enabled .Values.sqlite_web.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-maibot-sqlite-web
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.sqlite_web.ingress.annotations }}
+  annotations:
+    {{ toYaml .Values.sqlite_web.ingress.annotations | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ .Release.Name }}-maibot-sqlite-web
+spec:
+  ingressClassName: {{ .Values.sqlite_web.ingress.className }}
+  rules:
+    - host: {{ .Values.sqlite_web.ingress.host }}
+      http:
+        paths:
+          - backend:
+              service:
+                name: {{ .Release.Name }}-maibot-sqlite-web
+                port:
+                  number: {{ .Values.sqlite_web.service.port }}
+            path: {{ .Values.sqlite_web.ingress.path }}
+            pathType: {{ .Values.sqlite_web.ingress.pathType }}
+{{- end }}

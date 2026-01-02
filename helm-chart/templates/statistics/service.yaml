@@ -1,0 +1,21 @@
+{{- if .Values.statistics_dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-maibot-statistics-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-statistics-dashboard
+spec:
+  ports:
+    - name: dashboard
+      port: {{ .Values.statistics_dashboard.service.port }}
+      protocol: TCP
+      targetPort: 80
+      {{- if eq .Values.statistics_dashboard.service.type "NodePort" }}
+      nodePort: {{ .Values.statistics_dashboard.service.nodePort | default nil }}
+      {{- end }}
+  selector:
+    app: {{ .Release.Name }}-maibot-statistics-dashboard
+  type: {{ .Values.statistics_dashboard.service.type }}
+{{- end }}

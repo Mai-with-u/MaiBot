@@ -1,0 +1,21 @@
+{{- if .Values.napcat.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-maibot-napcat
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-napcat
+spec:
+  ports:
+    - name: webui
+      port: {{ .Values.napcat.service.port }}
+      protocol: TCP
+      targetPort: 6099
+      {{- if eq .Values.napcat.service.type "NodePort" }}
+      nodePort: {{ .Values.napcat.service.nodePort | default nil }}
+      {{- end }}
+  selector:
+    app: {{ .Release.Name }}-maibot-napcat
+  type: {{ .Values.napcat.service.type }}
+{{- end }}

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-maibot-adapter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}-maibot-adapter
+spec:
+  serviceName: {{ .Release.Name }}-maibot-adapter
+  replicas: 0  # post-install任务初始化完毕后自动扩容至1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-maibot-adapter
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-maibot-adapter
+    spec:
+      containers:
+        - name: adapter
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          image: {{ .Values.adapter.image.repository | default "unclas/maimbot-adapter" }}:{{ .Values.adapter.image.tag | default "main-20251211074617" }}
+          imagePullPolicy: {{ .Values.adapter.image.pullPolicy }}
+          ports:
+            - containerPort: 8095
+              name: napcat-ws
+              protocol: TCP
+          {{- if .Values.adapter.resources }}
+          resources:
+            {{ toYaml .Values.adapter.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /adapters/data
+              name: data
+            - mountPath: /adapters/config.toml
+              name: config
+              subPath: config.toml
+      {{- if .Values.adapter.image.pullSecrets }}
+      imagePullSecrets:
+        {{ toYaml .Values.adapter.image.pullSecrets | nindent 8 }}
+      {{- end }}
+      {{- if .Values.adapter.nodeSelector }}
+      nodeSelector:
+        {{ toYaml .Values.adapter.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.adapter.tolerations }}
+      tolerations:
+        {{ toYaml .Values.adapter.tolerations | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-maibot-adapter
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-maibot-adapter-config
