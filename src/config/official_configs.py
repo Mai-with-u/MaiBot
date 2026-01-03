@@ -647,6 +647,17 @@ class ResponseSplitterConfig(ConfigBase):
 
 
 @dataclass
+class ResponseTypingConfig(ConfigBase):
+    """回复打字效果配置类"""
+
+    typing_delay_per_chinese_char: float = 0.3
+    """每个中文字符的打字延迟（秒）"""
+
+    typing_delay_per_english_char: float = 0.15
+    """每个英文字符的打字延迟（秒）"""
+
+
+@dataclass
 class TelemetryConfig(ConfigBase):
     """遥测配置类"""
 
