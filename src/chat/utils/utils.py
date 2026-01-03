@@ -524,15 +524,15 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
 def calculate_typing_time(
     input_string: str,
     thinking_start_time: float,
-    chinese_time: float = 0.3,
-    english_time: float = 0.15,
+    chinese_time: float = global_config.response_typing.typing_delay_per_chinese_char,
+    english_time: float = global_config.response_typing.typing_delay_per_english_char,
     is_emoji: bool = False,
 ) -> float:
     """
     计算输入字符串所需的时间，中文和英文字符有不同的输入时间
         input_string (str): 输入的字符串
-        chinese_time (float): 中文字符的输入时间，默认为0.2秒
-        english_time (float): 英文字符的输入时间，默认为0.1秒
+        chinese_time (float): 中文字符的输入时间，默认配置为0.3秒
+        english_time (float): 英文字符的输入时间，默认配置为0.1秒
         is_emoji (bool): 是否为emoji，默认为False
 
     特殊情况：
