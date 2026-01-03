@@ -1,5 +1,5 @@
 [inner]
-version = "7.3.3"
+version = "7.3.4"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 # 如果你想要修改配置文件，请递增version的值
@@ -245,6 +245,11 @@ max_length = 512 # 回复允许的最大长度
 max_sentence_num = 8 # 回复允许的最大句子数
 enable_kaomoji_protection = false # 是否启用颜文字保护
 enable_overflow_return_all = false # 是否在句子数量超出回复允许的最大句子数时一次性返回全部内容
+
+[response_typing]
+typing_delay_per_chinese_char = 0.3 # 每个中文字符的打字延迟（秒）
+typing_delay_per_english_char = 0.15 # 每个英文字符的打字延迟（秒）
+
 
 [log]
 date_style = "m-d H:i:s" # 日期格式
