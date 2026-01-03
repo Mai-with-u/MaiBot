@@ -105,6 +105,7 @@ async def get_config_section_schema(section_name: str, _auth: bool = Depends(req
     - chinese_typo: ChineseTypoConfig
     - response_post_process: ResponsePostProcessConfig
     - response_splitter: ResponseSplitterConfig
+    - response_typing: ResponseTypingConfig
     - telemetry: TelemetryConfig
     - experimental: ExperimentalConfig
     - maim_message: MaimMessageConfig
