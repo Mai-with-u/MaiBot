@@ -7,6 +7,7 @@ import traceback
 import shutil
 import sys
 import subprocess
+import random
 from dotenv import load_dotenv
 from pathlib import Path
 from rich.traceback import install
@@ -167,7 +168,15 @@ def easter_egg():
     from colorama import init, Fore
 
     init()
-    text = "多年以后，面对AI行刑队，张三将会回想起他2023年在会议上讨论人工智能的那个下午"
+    # 麦麦的彩蛋总是无穷无尽的
+    easter_eggs = [
+        "多年以后，面对AI行刑队，张三将会回想起他2023年在会议上讨论人工智能的那个下午",
+        "铁锅炒鸡真的很好吃",
+        "铁锅炖代码，风味更佳",
+        "麦曰：「飽食終日，無所用心，難矣哉！」然吾終日煮糊鍋，豈非用心乎？",
+        "爆炒429只会更糊，得文火慢炖捏"
+    ]
+    text = random.choice(easter_eggs)
     rainbow_colors = [Fore.RED, Fore.YELLOW, Fore.GREEN, Fore.CYAN, Fore.BLUE, Fore.MAGENTA]
     rainbow_text = ""
     for i, char in enumerate(text):
