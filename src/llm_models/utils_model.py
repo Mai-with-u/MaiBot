@@ -378,12 +378,15 @@ class LLMRequest:
                 # 空回复：通常为临时问题，单独记录并重试
                 original_error_info = self._get_original_error_info(e)
                 retry_remain -= 1
+                task_display = self.request_type or "未知任务"
                 if retry_remain <= 0:
-                    logger.error(f"模型 '{model_info.name}' 在多次出现空回复后仍然失败。{original_error_info}")
+                    logger.error(
+                        f"任务 '{task_display}' 的模型 '{model_info.name}' 在多次出现空回复后仍然失败。{original_error_info}"
+                    )
                     raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
                 logger.warning(
-                    f"模型 '{model_info.name}' 返回空回复(可重试){original_error_info}。剩余重试次数: {retry_remain}"
+                    f"任务 '{task_display}' 的模型 '{model_info.name}' 返回空回复(可重试){original_error_info}。剩余重试次数: {retry_remain}"
                 )
                 await asyncio.sleep(api_provider.retry_interval)
 
@@ -393,12 +396,15 @@ class LLMRequest:
                 original_error_info = self._get_original_error_info(e)
 
                 retry_remain -= 1
+                task_display = self.request_type or "未知任务"
                 if retry_remain <= 0:
-                    logger.error(f"模型 '{model_info.name}' 在网络错误重试用尽后仍然失败。{original_error_info}")
+                    logger.error(
+                        f"任务 '{task_display}' 的模型 '{model_info.name}' 在网络错误重试用尽后仍然失败。{original_error_info}"
+                    )
                     raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
                 logger.warning(
-                    f"模型 '{model_info.name}' 遇到网络错误(可重试): {str(e)}{original_error_info}\n"
+                    f"任务 '{task_display}' 的模型 '{model_info.name}' 遇到网络错误(可重试): {str(e)}{original_error_info}\n"
                     f"  常见原因: 如请求的API正常但APITimeoutError类型错误过多，请尝试调整模型配置中对应API Provider的timeout值\n"
                     f"  其它可能原因: 网络波动、DNS 故障、连接超时、防火墙限制或代理问题\n"
                     f"  剩余重试次数: {retry_remain}"
@@ -407,42 +413,50 @@ class LLMRequest:
 
             except RespNotOkException as e:
                 original_error_info = self._get_original_error_info(e)
+                task_display = self.request_type or "未知任务"
 
                 # 可重试的HTTP错误
                 if e.status_code == 429 or e.status_code >= 500:
                     retry_remain -= 1
                     if retry_remain <= 0:
                         logger.error(
-                            f"模型 '{model_info.name}' 在遇到 {e.status_code} 错误并用尽重试次数后仍然失败。{original_error_info}"
+                            f"任务 '{task_display}' 的模型 '{model_info.name}' 在遇到 {e.status_code} 错误并用尽重试次数后仍然失败。{original_error_info}"
                         )
                         raise ModelAttemptFailed(f"模型 '{model_info.name}' 重试耗尽", original_exception=e) from e
 
                     logger.warning(
-                        f"模型 '{model_info.name}' 遇到可重试的HTTP错误: {str(e)}{original_error_info}。剩余重试次数: {retry_remain}"
+                        f"任务 '{task_display}' 的模型 '{model_info.name}' 遇到可重试的HTTP错误: {str(e)}{original_error_info}。剩余重试次数: {retry_remain}"
                     )
                     await asyncio.sleep(api_provider.retry_interval)
                     continue
 
                 # 特殊处理413，尝试压缩
                 if e.status_code == 413 and message_list and not compressed_messages:
-                    logger.warning(f"模型 '{model_info.name}' 返回413请求体过大，尝试压缩后重试...")
+                    logger.warning(
+                        f"任务 '{task_display}' 的模型 '{model_info.name}' 返回413请求体过大，尝试压缩后重试..."
+                    )
                     # 压缩消息本身不消耗重试次数
                     compressed_messages = compress_messages(message_list)
                     continue
 
                 # 不可重试的HTTP错误
-                logger.warning(f"模型 '{model_info.name}' 遇到不可重试的HTTP错误: {str(e)}{original_error_info}")
+                logger.warning(
+                    f"任务 '{task_display}' 的模型 '{model_info.name}' 遇到不可重试的HTTP错误: {str(e)}{original_error_info}"
+                )
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
             except Exception as e:
                 logger.error(traceback.format_exc())
 
                 original_error_info = self._get_original_error_info(e)
+                task_display = self.request_type or "未知任务"
 
-                logger.warning(f"模型 '{model_info.name}' 遇到未知的不可重试错误: {str(e)}{original_error_info}")
+                logger.warning(
+                    f"任务 '{task_display}' 的模型 '{model_info.name}' 遇到未知的不可重试错误: {str(e)}{original_error_info}"
+                )
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
-        raise ModelAttemptFailed(f"模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
+        raise ModelAttemptFailed(f"任务 '{self.request_type or '未知任务'}' 的模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
 
     async def _execute_request(
         self,

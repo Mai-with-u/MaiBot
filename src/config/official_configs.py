@@ -282,12 +282,20 @@ class MemoryConfig(ConfigBase):
     - 当在黑名单中的聊天流进行查询时，仅使用该聊天流的本地记忆
     """
 
-    planner_question: bool = True
-    """
-    是否使用 Planner 提供的 question 作为记忆检索问题
-    - True: 当 Planner 在 reply 动作中提供了 question 时，直接使用该问题进行记忆检索，跳过 LLM 生成问题的步骤
-    - False: 沿用旧模式，使用 LLM 生成问题
-    """
+    chat_history_topic_check_message_threshold: int = 80
+    """聊天历史话题检查的消息数量阈值，当累积消息数达到此值时触发话题检查"""
+
+    chat_history_topic_check_time_hours: float = 8.0
+    """聊天历史话题检查的时间阈值（小时），当距离上次检查超过此时间且消息数达到最小阈值时触发话题检查"""
+
+    chat_history_topic_check_min_messages: int = 20
+    """聊天历史话题检查的时间触发模式下的最小消息数阈值"""
+
+    chat_history_finalize_no_update_checks: int = 3
+    """聊天历史话题打包存储的连续无更新检查次数阈值，当话题连续N次检查无新增内容时触发打包存储"""
+
+    chat_history_finalize_message_count: int = 5
+    """聊天历史话题打包存储的消息条数阈值，当话题的消息条数超过此值时触发打包存储"""
 
     def __post_init__(self):
         """验证配置值"""
@@ -295,6 +303,16 @@ class MemoryConfig(ConfigBase):
             raise ValueError(f"max_agent_iterations 必须至少为1，当前值: {self.max_agent_iterations}")
         if self.agent_timeout_seconds <= 0:
             raise ValueError(f"agent_timeout_seconds 必须大于0，当前值: {self.agent_timeout_seconds}")
+        if self.chat_history_topic_check_message_threshold < 1:
+            raise ValueError(f"chat_history_topic_check_message_threshold 必须至少为1，当前值: {self.chat_history_topic_check_message_threshold}")
+        if self.chat_history_topic_check_time_hours <= 0:
+            raise ValueError(f"chat_history_topic_check_time_hours 必须大于0，当前值: {self.chat_history_topic_check_time_hours}")
+        if self.chat_history_topic_check_min_messages < 1:
+            raise ValueError(f"chat_history_topic_check_min_messages 必须至少为1，当前值: {self.chat_history_topic_check_min_messages}")
+        if self.chat_history_finalize_no_update_checks < 1:
+            raise ValueError(f"chat_history_finalize_no_update_checks 必须至少为1，当前值: {self.chat_history_finalize_no_update_checks}")
+        if self.chat_history_finalize_message_count < 1:
+            raise ValueError(f"chat_history_finalize_message_count 必须至少为1，当前值: {self.chat_history_finalize_message_count}")
 
 
 @dataclass
@@ -731,6 +749,9 @@ class ExperimentalConfig(ConfigBase):
     - type: "group" 或 "private"
     - prompt内容: 要添加的额外prompt文本
     """
+
+    lpmm_memory: bool = False
+    """是否将聊天历史总结导入到LPMM知识库。开启后，chat_history_summarizer总结出的历史记录会同时导入到知识库"""
 
 
 @dataclass

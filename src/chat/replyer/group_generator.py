@@ -845,18 +845,6 @@ class DefaultReplyer:
             chat_id, message_list_before_short, chat_talking_prompt_short, unknown_words
         )
 
-        # 从 chosen_actions 中提取 question（仅在 reply 动作中）
-        question = None
-        if chosen_actions:
-            for action_info in chosen_actions:
-                if action_info.action_type == "reply" and isinstance(action_info.action_data, dict):
-                    q = action_info.action_data.get("question")
-                    if isinstance(q, str):
-                        cleaned_q = q.strip()
-                        if cleaned_q:
-                            question = cleaned_q
-                            break
-
         # 并行执行构建任务（包括黑话解释，可配置关闭）
         task_results = await asyncio.gather(
             self._time_and_run_task(
@@ -871,7 +859,7 @@ class DefaultReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level, unknown_words=unknown_words, question=question
+                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level, unknown_words=unknown_words
                 ),
                 "memory_retrieval",
             ),

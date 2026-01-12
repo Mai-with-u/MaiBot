@@ -53,7 +53,6 @@ reply
 4.不要选择回复你自己发送的消息
 5.不要单独对表情包进行回复
 6.将上下文中所有含义不明的，疑似黑话的，缩写词均写入unknown_words中
-7.如果你对上下文存在疑问，有需要查询的问题，写入question中
 {reply_action_example}
 
 no_reply
@@ -224,24 +223,6 @@ class ActionPlanner:
             else:
                 reasoning = "未提供原因"
             action_data = {key: value for key, value in action_json.items() if key not in ["action"]}
-            
-            # 验证和清理 question
-            if "question" in action_data:
-                q = action_data.get("question")
-                if isinstance(q, str):
-                    cleaned_q = q.strip()
-                    if cleaned_q:
-                        action_data["question"] = cleaned_q
-                    else:
-                        # 如果清理后为空字符串，移除该字段
-                        action_data.pop("question", None)
-                elif q is None:
-                    # 如果为 None，移除该字段
-                    action_data.pop("question", None)
-                else:
-                    # 如果不是字符串类型，记录警告并移除
-                    logger.warning(f"{self.log_prefix}question 格式不正确，应为字符串类型，已忽略")
-                    action_data.pop("question", None)
             
             # 非no_reply动作需要target_message_id
             target_message = None
@@ -520,15 +501,14 @@ class ActionPlanner:
             name_block = f"你的名字是{bot_name}{bot_nickname}，请注意哪些是你自己的发言。"
 
             # 根据 think_mode 配置决定 reply action 的示例 JSON
-            # 在 JSON 中直接作为 action 参数携带 unknown_words 和 question
+            # 在 JSON 中直接作为 action 参数携带 unknown_words
             if global_config.chat.think_mode == "classic":
                 reply_action_example = ""
                 if global_config.chat.llm_quote:
                     reply_action_example += "5.如果要明确回复消息，使用quote，如果消息不多不需要明确回复，设置quote为false\n"
                 reply_action_example += (
                     '{{"action":"reply", "target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"], '
-                    '"question":"需要查询的问题"'
+                    '"unknown_words":["词语1","词语2"]'
                 )
                 if global_config.chat.llm_quote:
                     reply_action_example += ', "quote":"如果需要引用该message，设置为true"'
@@ -542,8 +522,7 @@ class ActionPlanner:
                 reply_action_example += (
                     '{{"action":"reply", "think_level":数值等级(0或1), '
                     '"target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"], '
-                    '"question":"需要查询的问题"'
+                    '"unknown_words":["词语1","词语2"]'
                 )
                 if global_config.chat.llm_quote:
                     reply_action_example += ', "quote":"如果需要引用该message，设置为true"'

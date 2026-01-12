@@ -1,5 +1,5 @@
 [inner]
-version = "7.3.5"
+version = "7.4.0"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 # 如果你想要修改配置文件，请递增version的值
@@ -132,7 +132,13 @@ global_memory = false # 是否允许记忆检索进行全局查询
 global_memory_blacklist = [
     
 ] # 全局记忆黑名单，当启用全局记忆时，不将特定聊天流纳入检索。格式: ["platform:id:type", ...]，例如: ["qq:1919810:private", "qq:114514:group"]
-planner_question = true # 是否使用 Planner 提供的 question 作为记忆检索问题。开启后，当 Planner 在 reply 动作中提供了 question 时，直接使用该问题进行记忆检索，跳过 LLM 生成问题的步骤；关闭后沿用旧模式，使用 LLM 生成问题
+
+# 聊天历史总结配置
+chat_history_topic_check_message_threshold = 80 # 聊天历史话题检查的消息数量阈值，当累积消息数达到此值时触发话题检查
+chat_history_topic_check_time_hours = 8.0 # 聊天历史话题检查的时间阈值（小时），当距离上次检查超过此时间且消息数达到最小阈值时触发话题检查
+chat_history_topic_check_min_messages = 20 # 聊天历史话题检查的时间触发模式下的最小消息数阈值
+chat_history_finalize_no_update_checks = 3 # 聊天历史话题打包存储的连续无更新检查次数阈值，当话题连续N次检查无新增内容时触发打包存储
+chat_history_finalize_message_count = 5 # 聊天历史话题打包存储的消息条数阈值，当话题的消息条数超过此值时触发打包存储
 
 [dream]
 interval_minutes = 60 # 做梦时间间隔（分钟），默认30分钟
@@ -305,6 +311,8 @@ private_plan_style = """
 #     "qq:114514:private:这是你与好朋友的私聊"
 # ]
 chat_prompts = []
+
+lpmm_memory = false # 是否将聊天历史总结导入到LPMM知识库。开启后，chat_history_summarizer总结出的历史记录会同时导入到知识库
 
 
 # 此系统暂时移除，无效配置

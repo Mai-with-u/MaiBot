@@ -56,12 +56,12 @@ def register_tool():
     """注册LPMM知识库查询工具"""
     register_memory_retrieval_tool(
         name="lpmm_search_knowledge",
-        description="从LPMM知识库中搜索相关信息，适用于需要知识支持的场景。",
+        description="从知识库中搜索相关信息，适用于需要知识支持的场景。使用自然语言问句检索",
         parameters=[
             {
                 "name": "query",
                 "type": "string",
-                "description": "需要查询的关键词或问题",
+                "description": "需要查询的问题，使用一句疑问句提问，例如：什么是AI？",
                 "required": True,
             },
             {

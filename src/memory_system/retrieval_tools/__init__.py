@@ -15,16 +15,18 @@ from .query_chat_history import register_tool as register_query_chat_history
 from .query_lpmm_knowledge import register_tool as register_lpmm_knowledge
 from .query_person_info import register_tool as register_query_person_info
 from .query_words import register_tool as register_query_words
-from .found_answer import register_tool as register_found_answer
+from .return_information import register_tool as register_return_information
 from src.config.config import global_config
 
 
 def init_all_tools():
     """初始化并注册所有记忆检索工具"""
-    register_query_chat_history()
-    register_query_person_info()
-    register_query_words()  # 注册query_words工具
-    register_found_answer()  # 注册found_answer工具
+    # 如果开启了lpmm_memory，则不注册query_chat_history工具
+    if not global_config.experimental.lpmm_memory:
+        register_query_chat_history()
+        register_query_person_info()
+    register_query_words()
+    register_return_information()
 
     if global_config.lpmm_knowledge.lpmm_mode == "agent":
         register_lpmm_knowledge()
