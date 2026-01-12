@@ -179,6 +179,8 @@ class ConfigBase(BaseModel, AttrDocBase):
                 self._validate_list_set_type(anno, field_name)
             elif origin_type is Any:
                 self._discourage_any_usage(field_name)
+            elif origin_type in (int, float, str, bool, complex, bytes):
+                return
             else:
                 raise TypeError(
                     f"类'{type(self).__name__}'字段'{field_name}'中不允许嵌套泛型类型: {annotation}，请使用自定义类代替。"
@@ -207,7 +209,7 @@ class ConfigBase(BaseModel, AttrDocBase):
                 self._discourage_any_usage(field_name)
 
             # 非泛型注解视为原子类型，允许
-            if origin_type in (int, float, str, bool, complex, bytes, type(None), Any):
+            if origin_type in (int, float, str, bool, complex, bytes, Any):
                 continue
             # 允许嵌套的ConfigBase自定义类
             if inspect.isclass(origin_type) and issubclass(origin_type, ConfigBase):  # type: ignore
