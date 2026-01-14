@@ -9,7 +9,7 @@ PRIVACY_AGREE: false
 pre_processor:
   image:
     repository: # 默认 reg.mikumikumi.xyz/maibot/preprocessor
-    tag: # 默认 0.12.1
+    tag: # 默认 0.12.2
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -21,7 +21,7 @@ adapter:
 
   image:
     repository: # 默认 unclas/maimbot-adapter
-    tag: # 默认 main-20251211074617
+    tag: # 默认 main-20260109183519
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -56,7 +56,7 @@ core:
 
   image:
     repository: # 默认 sengokucola/maibot
-    tag: # 默认 0.12.1
+    tag: # 默认 0.12.2
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -151,7 +151,7 @@ napcat:
 
   image:
     repository: # 默认 mlikiowa/napcat-docker
-    tag: # 默认 v.4.10.1
+    tag: # 默认 v4.10.15
     pullPolicy: IfNotPresent
     pullSecrets: [ ]
 
@@ -238,7 +238,7 @@ config:
   # adapter的config.toml
   adapter_config: |
     [inner]
-    version = "0.1.2" # 版本号
+    version = "0.1.3" # 版本号
     # 请勿修改版本号，除非你知道自己在做什么
     
     [nickname] # 现在没用
@@ -263,6 +263,9 @@ config:
     
     [voice] # 发送语音设置
     use_tts = false # 是否使用tts语音（请确保你配置了tts并有对应的adapter）
+    
+    [forward] # 转发消息处理设置
+    image_threshold = 3 # 图片数量阈值：转发消息中图片数量超过此值时使用占位符(避免麦麦VLM处理卡死)
     
     [debug]
     level = "INFO" # 日志等级（DEBUG, INFO, WARNING, ERROR, CRITICAL）
@@ -470,7 +473,7 @@ config:
   # core的bot_config.toml
   core_bot_config: |
     [inner]
-    version = "7.3.3"
+    version = "7.3.5"
     
     #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
     # 如果你想要修改配置文件，请递增version的值
@@ -511,20 +514,11 @@ config:
     multiple_probability = 0.3
     
     # 麦麦的说话规则和行为规则:
-    plan_style = """
-    1.思考**所有**的可用的action中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用
-    2.如果相同的内容已经被执行，请不要重复执行
-    3.你对技术相关话题，游戏和动漫相关话题感兴趣，也对日常话题感兴趣，不喜欢太过沉重严肃的话题
-    4.请控制你的发言频率，不要太过频繁的发言
-    5.如果有人对你感到厌烦，请减少回复
-    6.如果有人在追问你，或者话题没有说完，请你继续回复"""
-    
-    
-    # 麦麦私聊的说话规则，行为风格:
-    private_plan_style = """
-    1.思考**所有**的可用的action中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用
-    2.如果相同的内容已经被执行，请不要重复执行
-    3.某句话如果已经被回复过，不要重复回复"""
+    plan_style = """1.思考**所有**的可用的action中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用
+    2.如果相同的action已经被执行，请不要重复执行该action
+    3.如果有人对你感到厌烦，请减少回复
+    4.如果有人在追问你，或者话题没有说完，请你继续回复
+    5.请分析哪些对话是和你说的，哪些是其他人之间的互动，不要误认为其他人之间的互动是和你说的"""
     
     # 多重人格，根据概率随机选择人格
     states = [
@@ -610,7 +604,7 @@ config:
     agent_timeout_seconds = 180.0 # 最长回忆时间（秒）
     global_memory = false # 是否允许记忆检索进行全局查询
     global_memory_blacklist = [
-        
+    
     ] # 全局记忆黑名单，当启用全局记忆时，不将特定聊天流纳入检索。格式: ["platform:id:type", ...]，例如: ["qq:1919810:private", "qq:114514:group"]
     planner_question = true # 是否使用 Planner 提供的 question 作为记忆检索问题。开启后，当 Planner 在 reply 动作中提供了 question 时，直接使用该问题进行记忆检索，跳过 LLM 生成问题的步骤；关闭后沿用旧模式，使用 LLM 生成问题
     
@@ -624,6 +618,7 @@ config:
     # 为空字符串时不推送。
     dream_send = ""
     
+    dream_visible = false # 做梦结果是否存储到上下文，True: 将梦境发送给配置的用户后，也会存储到聊天上下文中，在后续对话中可见；False: 仅发送梦境但不存储，不在后续对话上下文中出现
     # 做梦时间段配置，格式：["HH:MM-HH:MM", ...]
     # 如果列表为空，则表示全天允许做梦。
     # 如果配置了时间段，则只有在这些时间段内才会实际执行做梦流程。
@@ -751,7 +746,6 @@ config:
     enable = true
     
     [webui] # WebUI 独立服务器配置
-    # 注意: WebUI 的监听地址(host)和端口(port)已移至 .env 文件中的 WEBUI_HOST 和 WEBUI_PORT
     mode = "production" # 模式: development(开发) 或 production(生产)
     
     # 防爬虫配置
@@ -763,6 +757,12 @@ config:
     secure_cookie = false # 是否启用安全Cookie（仅通过HTTPS传输，默认false）
     
     [experimental] #实验性功能
+    # 麦麦私聊的说话规则，行为风格（实验性功能）
+    private_plan_style = """
+    1.思考**所有**的可用的action中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用
+    2.如果相同的内容已经被执行，请不要重复执行
+    3.某句话如果已经被回复过，不要重复回复"""
+
     # 为指定聊天添加额外的prompt配置
     # 格式: ["platform:id:type:prompt内容", ...]
     # 示例:

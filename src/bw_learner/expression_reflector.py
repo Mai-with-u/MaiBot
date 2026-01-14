@@ -28,7 +28,7 @@ class ExpressionReflector:
         try:
             logger.debug(f"[Expression Reflection] 开始检查是否需要提问 (stream_id: {self.chat_id})")
 
-            if not global_config.expression.expression_self_reflect:
+            if not global_config.expression.expression_manual_reflect:
                 logger.debug("[Expression Reflection] 表达反思功能未启用，跳过")
                 return False
 

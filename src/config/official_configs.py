@@ -57,9 +57,6 @@ class PersonalityConfig(ConfigBase):
     visual_style: str = ""
     """图片提示词"""
 
-    private_plan_style: str = ""
-    """私聊说话规则，行为风格"""
-
     states: list[str] = field(default_factory=lambda: [])
     """状态列表，用于随机替换personality"""
 
@@ -713,8 +710,8 @@ class DebugConfig(ConfigBase):
 class ExperimentalConfig(ConfigBase):
     """实验功能配置类"""
 
-    enable_friend_chat: bool = False
-    """是否启用好友聊天"""
+    private_plan_style: str = ""
+    """私聊说话规则，行为风格（实验性功能）"""
 
     chat_prompts: list[str] = field(default_factory=lambda: [])
     """
@@ -903,6 +900,13 @@ class DreamConfig(ConfigBase):
                 return True
 
         return False
+
+    dream_visible: bool = False
+    """
+    做梦结果是否存储到上下文
+    - True: 将梦境发送给配置的用户后，也会存储到聊天上下文中，在后续对话中可见
+    - False: 仅发送梦境但不存储，不在后续对话上下文中出现
+    """
 
     def __post_init__(self):
         """验证配置值"""

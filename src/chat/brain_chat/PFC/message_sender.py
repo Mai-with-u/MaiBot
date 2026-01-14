@@ -1,13 +1,11 @@
 import time
 from typing import Optional
 from src.common.logger import get_module_logger
-from ..chat.chat_stream import ChatStream
-from ..chat.message import Message
+from src.chat.message_receive.chat_stream import ChatStream
+from src.chat.message_receive.message import Message, MessageSending
 from maim_message import UserInfo, Seg
-from src.plugins.chat.message import MessageSending, MessageSet
-from src.plugins.chat.message_sender import message_manager
-from ..storage.storage import MessageStorage
-from ...config.config import global_config
+from src.chat.message_receive.storage import MessageStorage
+from src.config.config import global_config
 from rich.traceback import install
 
 install(extra_lines=3)
@@ -66,15 +64,18 @@ class DirectMessageSender:
             # 处理消息
             await message.process()
 
-            # 不知道有什么用，先留下来了，和之前那套sender一样
-            _message_json = message.to_dict()
-
-            # 发送消息
-            message_set = MessageSet(chat_stream, message_id)
-            message_set.add_message(message)
-            await message_manager.add_message(message_set)
-            await self.storage.store_message(message, chat_stream)
-            logger.info(f"[私聊][{self.private_name}]PFC消息已发送: {content}")
+            # 发送消息（直接调用底层 API）
+            from src.chat.message_receive.uni_message_sender import _send_message
+            
+            sent = await _send_message(message, show_log=True)
+            
+            if sent:
+                # 存储消息
+                await self.storage.store_message(message, chat_stream)
+                logger.info(f"[私聊][{self.private_name}]PFC消息已发送: {content}")
+            else:
+                logger.error(f"[私聊][{self.private_name}]PFC消息发送失败")
+                raise RuntimeError("消息发送失败")
 
         except Exception as e:
             logger.error(f"[私聊][{self.private_name}]PFC消息发送失败: {str(e)}")

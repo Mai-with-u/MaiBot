@@ -402,7 +402,7 @@ class BrainPlanner:
                 moderation_prompt=moderation_prompt_block,
                 name_block=name_block,
                 interest=interest,
-                plan_style=global_config.personality.private_plan_style,
+                plan_style=global_config.experimental.private_plan_style,
             )
 
             return prompt, message_id_list

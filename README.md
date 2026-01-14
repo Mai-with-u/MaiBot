@@ -1,117 +1,114 @@
-<img src="depends-data/maimai.png" alt="MaiBot" title="作者:略nd" width="300">
-
-# 麦麦！MaiCore-MaiBot
-
-![Python Version](https://img.shields.io/badge/Python-3.10+-blue)
-![License](https://img.shields.io/github/license/SengokuCola/MaiMBot?label=协议)
-![Status](https://img.shields.io/badge/状态-开发中-yellow)
-![Contributors](https://img.shields.io/github/contributors/MaiM-with-u/MaiBot.svg?style=flat&label=贡献者)
-![forks](https://img.shields.io/github/forks/MaiM-with-u/MaiBot.svg?style=flat&label=分支数)
-![stars](https://img.shields.io/github/stars/MaiM-with-u/MaiBot?style=flat&label=星标数)
-![issues](https://img.shields.io/github/issues/MaiM-with-u/MaiBot)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/DrSmoothl/MaiBot)
-
-<div style="text-align: center">
-<strong>
-<a href="https://www.bilibili.com/video/BV1amAneGE3P">🌟 演示视频</a> | 
-<a href="#-更新和安装">🚀 快速入门</a> | 
-<a href="#-文档">📃 教程</a> | 
-<a href="#-讨论">💬 讨论</a> | 
-<a href="#-贡献和致谢">🙋 贡献指南</a>
-</strong>
+<div align="center">
+  <h1>麦麦 MaiBot <sub><small>MaiCore</small></sub></h1>
+  
+  <!-- Badges Row -->
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.10+-blue" alt="Python Version">
+    <img src="https://img.shields.io/github/license/Mai-with-u/MaiBot?label=%E5%8D%8F%E8%AE%AE" alt="License">
+    <img src="https://img.shields.io/badge/状态-开发中-yellow" alt="Status">
+    <img src="https://img.shields.io/github/contributors/Mai-with-u/MaiBot.svg?style=flat&label=%E8%B4%A1%E7%8C%AE%E8%80%85" alt="Contributors">
+    <img src="https://img.shields.io/github/forks/Mai-with-u/MaiBot.svg?style=flat&label=%E5%88%86%E6%94%AF%E6%95%B0" alt="Forks">
+    <img src="https://img.shields.io/github/stars/Mai-with-u/MaiBot?style=flat&label=%E6%98%9F%E6%A0%87%E6%95%B0" alt="Stars">
+    <a href="https://deepwiki.com/DrSmoothl/MaiBot"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  </p>
 </div>
+
+<br>
+
+<!-- Mascot on the Right (Float) -->
+<img src="depends-data/maimai-v2.png" align="right" width="40%" alt="MaiBot Character" style="margin-left: 20px; margin-bottom: 20px;">
 
 ## 🎉 介绍
 
-**🍔MaiCore 是一个基于大语言模型的可交互智能体**
+**🍔 MaiCore 是一个基于大语言模型的可交互智能体**
 
-- 💭 **拟人构建的prompt**：使用自然语言风格构建回复器的prompt，实现近似人类言语习惯的回复。
-- 💭 **行为规划**：在合适的时间说话，使用合适的动作
-- 🧠 **表达学习**：学习群友的说话风格和表达方式，学会真实人类的说话风格
-- 🤔 **黑话学习**：自主的学习没有见过的词语，尝试理解并认知含义
-- 🔌 **插件系统**：提供API和事件系统，可编写丰富插件。
-- 💝 **情感表达**：情绪系统和表情包系统。
+MaiBot 不仅仅是一个机器人，她致力于成为一个活跃在 QQ 群聊中的“生命体”。她不追求完美，但追求真实。
 
-<div style="text-align: center">
-<a href="https://www.bilibili.com/video/BV1amAneGE3P" target="_blank">
+- 💭 **拟人构建**：使用自然语言风格构建 Prompt，回复贴近人类习惯。
+- 🎭 **行为规划**：懂得在合适的时间说话，使用合适的动作。
+- 🧠 **表达学习**：模仿群友的说话风格，学习黑话，不断进化。
+- 🔌 **插件系统**：提供强大的 API 和事件系统，无限扩展可能。
+- 💝 **情感表达**：拥有独立的情绪系统和表情包互动能力。
+
+### 🚀 快速导航
+<p>
+  <a href="https://www.bilibili.com/video/BV1amAneGE3P">🌟 演示视频</a> &nbsp;|&nbsp; 
+  <a href="#-更新和安装">📦 快速入门</a> &nbsp;|&nbsp; 
+  <a href="#-部署教程">📃 核心文档</a> &nbsp;|&nbsp; 
+  <a href="#-讨论与社区">💬 加入社区</a>
+</p>
+
+<!-- Clear float to ensure subsequent content starts below the image area if text is short -->
+<br clear="both">
+
+<div align="center">
+  <br>
+  <h3>🎥 精彩演示</h3>
+  <a href="https://www.bilibili.com/video/BV1amAneGE3P" target="_blank">
     <picture>
       <source media="(max-width: 600px)" srcset="depends-data/video.png" width="100%">
-      <img src="depends-data/video.png" width="30%" alt="麦麦演示视频">
+      <img src="depends-data/video.png" width="60%" alt="麦麦演示视频" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
     </picture>
-    <br />
-  👆 点击观看麦麦演示视频 👆
-</a>
+    <br>
+    <small>👆 点击观看麦麦演示视频 👆</small>
+  </a>
 </div>
+
+---
 
 ## 🔥 更新和安装
 
+> **最新版本: v0.12.2** ([📄 更新日志](changelogs/changelog.md))
 
-**最新版本: v0.12.0** ([更新日志](changelogs/changelog.md))
+- **下载**: 前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本
+- **启动器**: [Mailauncher](https://github.com/MaiM-with-u/mailauncher/releases/) (仅支持 MacOS, 早期开发中)
 
+| 分支 | 说明 |
+| :--- | :--- |
+| `main` | ✅ **稳定发布版本 (推荐)** |
+| `dev` | 🚧 开发测试版本 (不稳定) |
+| `classical` | 🛑 经典版本 (停止维护) |
 
-可前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本
-
-可前往 [启动器发布页面](https://github.com/MaiM-with-u/mailauncher/releases/)下载最新启动器
-
-注意，启动器处于早期开发版本，仅支持MacOS
-
-**GitHub 分支说明：**
-- `main`: 稳定发布版本(推荐)
-
-- `dev`: 开发测试版本(不稳定)
-
-- `classical`: 经典版本(停止维护)
-
-### 最新版本部署教程
-- [🚀 最新版本部署教程](https://docs.mai-mai.org/manual/deployment/mmc_deploy_windows.html) - 基于 MaiCore 的新版本部署方式(与旧版本不兼容)
+### 📚 部署教程
+👉 **[🚀 最新版本部署教程](https://docs.mai-mai.org/manual/deployment/mmc_deploy_windows.html)**  
+*(注意：MaiCore 新版本部署方式与旧版本不兼容)*
 
 > [!WARNING]
-> - 项目处于活跃开发阶段，功能和 API 可能随时调整。
-> - 有问题可以提交 Issue 。
-> - QQ 机器人存在被限制风险，请自行了解，谨慎使用。
-> - 由于程序处于开发中，可能消耗较多 token。
+> - ⚠️ 项目处于活跃开发阶段，API 可能随时调整。
+> - ⚠️ QQ 机器人存在风控风险，请谨慎使用。
+> - ⚠️ AI 模型运行可能消耗较多 Token。
 
-## 💬 讨论
+---
 
-**技术交流群/答疑群：**
-  [麦麦脑电图](https://qm.qq.com/q/RzmCiRtHEW) | 
-  [麦麦大脑磁共振](https://qm.qq.com/q/VQ3XZrWgMs) | 
-  [麦麦要当VTB](https://qm.qq.com/q/wGePTl1UyY) | 
+## 💬 讨论与社区
 
-  为了维持技术交流和互帮互助的氛围，请不要在技术交流群讨论过多无关内容~
+我们欢迎所有对 MaiBot 感兴趣的朋友加入！
 
-**聊天吹水群：**
-- [麦麦之闲聊群](https://qm.qq.com/q/JxvHZnxyec)
+| 类别 | 群组 | 说明 |
+| :--- | :--- | :--- |
+| **技术交流** | [麦麦脑电图](https://qm.qq.com/q/RzmCiRtHEW) | 技术交流/答疑 |
+| **技术交流** | [麦麦大脑磁共振](https://qm.qq.com/q/VQ3XZrWgMs) | 技术交流/答疑 |
+| **技术交流** | [麦麦要当VTB](https://qm.qq.com/q/wGePTl1UyY) | 技术交流/答疑 |
+| **闲聊吹水** | [麦麦之闲聊群](https://qm.qq.com/q/JxvHZnxyec) | 仅限闲聊，不答疑 |
+| **插件开发** | [插件开发群](https://qm.qq.com/q/1036092828) | 进阶开发与测试 |
 
-  麦麦相关闲聊群，此群仅用于聊天，提问部署/技术问题可能不会快速得到答案
-
-**插件开发/测试版讨论群：**
-- [插件开发群](https://qm.qq.com/q/1036092828)
-
-  进阶内容，包括插件开发，测试版使用等等
+---
 
 ## 📚 文档
 
-**部分内容可能更新不够及时，请注意版本对应**
+> [!NOTE]
+> 部分内容可能更新不够及时，请注意版本对应。
 
-- [📚 核心 Wiki 文档](https://docs.mai-mai.org) - 项目最全面的文档中心，你可以了解麦麦有关的一切。
+- **[📚 核心 Wiki 文档](https://docs.mai-mai.org)**: 最全面的文档中心，了解麦麦的一切。
 
+### 🧩 衍生项目
 
-## 📚 衍生项目
+- **[MaiCraft](https://github.com/MaiM-with-u/Maicraft)**: 让麦麦陪你玩 Minecraft (早期开发中)。
+- **[MoFox_Bot](https://github.com/MoFox-Studio/MoFox-Core)**: 基于 MaiCore 0.10.0 的增强型 Fork，更稳定更有趣。
 
-### MaiCraft（早期开发）
-[MaiCraft](https://github.com/MaiM-with-u/Maicraft)
-> 让麦麦具有玩MC能力的项目
-> 交流群：1058573197
+---
 
-### MoFox_Bot
-[MoFox - 仓库地址](https://github.com/MoFox-Studio/MoFox-Core)
-> MoFox_Bot 是一个基于 MaiCore 0.10.0 snapshot.5 的增强型 fork 项目
-> 我们保留了原项目几乎所有核心功能，并在此基础上进行了深度优化与功能扩展，致力于打造一个更稳定、更智能、更具趣味性的 AI 智能体。
-
-
-
-## 设计理念(原始时代的火花)
+## 💡 设计理念 (原始时代的火花)
 
 > **千石可乐说：**
 > - 这个项目最初只是为了给牛牛 bot 添加一点额外的功能，但是功能越写越多，最后决定重写。其目的是为了创造一个活跃在 QQ 群聊的"生命体"。目的并不是为了写一个功能齐全的机器人，而是一个尽可能让人感知到真实的类人存在。
@@ -119,41 +116,39 @@
 > - 如果人类真的需要一个 AI 来陪伴自己，并不是所有人都需要一个完美的，能解决所有问题的"helpful assistant"，而是一个会犯错的，拥有自己感知和想法的"生命形式"。
 > - 代码会保持开源和开放，但个人希望 MaiMbot 的运行时数据保持封闭，尽量避免以显式命令来对其进行控制和调试。我认为一个你无法完全掌控的个体才更能让你感觉到它的自主性，而视其成为一个对话机器。
 > - SengokuCola~~纯编程外行，面向 cursor 编程，很多代码写得不好多多包涵~~已得到大脑升级。
+> *Code is open, but the soul is yours.*
+
+---
 
 ## 🙋 贡献和致谢
-你可以阅读[开发文档](https://docs.mai-mai.org/develop/)来更好的了解麦麦!  
-MaiCore 是一个开源项目，我们非常欢迎你的参与。你的贡献，无论是提交 bug 报告、功能需求还是代码 pr，都对项目非常宝贵。我们非常感谢你的支持！🎉  
-但无序的讨论会降低沟通效率，进而影响问题的解决速度，因此在提交任何贡献前，请务必先阅读本项目的[贡献指南](docs-src/CONTRIBUTE.md)。(待补完)  
 
-### 贡献者
+欢迎参与贡献！请先阅读 [贡献指南](docs-src/CONTRIBUTE.md)。
 
-感谢各位大佬！  
+### 🌟 贡献者
 
 <a href="https://github.com/MaiM-with-u/MaiBot/graphs/contributors">
   <img alt="contributors" src="https://contrib.rocks/image?repo=MaiM-with-u/MaiBot" />
 </a>
 
-### 致谢
+### ❤️ 特别致谢
 
-- [略nd](https://space.bilibili.com/1344099355): 为麦麦绘制人设。
-- [NapCat](https://github.com/NapNeko/NapCatQQ): 现代化的基于 NTQQ 的 Bot 协议端实现。
+- **[略nd](https://space.bilibili.com/1344099355)**: 🎨 为麦麦绘制精美人设。
+- **[NapCat](https://github.com/NapNeko/NapCatQQ)**: 🚀 现代化的基于 NTQQ 的 Bot 协议实现。
 
-**也感谢每一位给麦麦发展提出宝贵意见与建议的用户，感谢陪伴麦麦走到现在的你们！**
+---
 
-## 📌 注意事项
-
-> [!WARNING]
-> 使用本项目前必须阅读和同意[用户协议](EULA.md)和[隐私协议](PRIVACY.md)。  
-> 本应用生成内容来自人工智能模型，由 AI 生成，请仔细甄别，请勿用于违反法律的用途，AI 生成内容不代表本项目团队的观点和立场。
-
-## 麦麦仓库状态
+## 📊 仓库状态
 
 ![Alt](https://repobeats.axiom.co/api/embed/9faca9fccfc467931b87dd357b60c6362b5cfae0.svg "麦麦仓库状态")
 
 ### Star 趋势
-
 [![Star 趋势](https://starchart.cc/MaiM-with-u/MaiBot.svg?variant=adaptive)](https://starchart.cc/MaiM-with-u/MaiBot)
 
-## License
+---
 
-GPL-3.0
+## 📌 注意事项 & License
+
+> [!IMPORTANT]
+> 使用前请阅读 [用户协议 (EULA)](EULA.md) 和 [隐私协议](PRIVACY.md)。AI 生成内容请仔细甄别。
+
+**License**: GPL-3.0

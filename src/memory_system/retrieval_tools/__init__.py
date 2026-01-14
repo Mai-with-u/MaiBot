@@ -15,7 +15,7 @@ from .query_chat_history import register_tool as register_query_chat_history
 from .query_lpmm_knowledge import register_tool as register_lpmm_knowledge
 from .query_person_info import register_tool as register_query_person_info
 from .query_words import register_tool as register_query_words
-from .found_answer import register_tool as register_finish_search
+from .found_answer import register_tool as register_found_answer
 from src.config.config import global_config
 
 
@@ -24,7 +24,7 @@ def init_all_tools():
     register_query_chat_history()
     register_query_person_info()
     register_query_words()  # 注册query_words工具
-    register_finish_search()  # 注册finish_search工具
+    register_found_answer()  # 注册found_answer工具
 
     if global_config.lpmm_knowledge.lpmm_mode == "agent":
         register_lpmm_knowledge()

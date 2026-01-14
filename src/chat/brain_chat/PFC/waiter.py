@@ -3,7 +3,7 @@ from .chat_observer import ChatObserver
 from .conversation_info import ConversationInfo
 
 # from src.individuality.individuality import Individuality # 不再需要
-from ...config.config import global_config
+from src.config.config import global_config
 import time
 import asyncio
 

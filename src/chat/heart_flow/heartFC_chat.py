@@ -545,9 +545,9 @@ class HeartFChatting:
             new_message_count = message_api.count_new_messages(
                 chat_id=self.chat_stream.stream_id, start_time=self.last_read_time, end_time=time.time()
             )
-            need_reply = new_message_count >= random.randint(2, 3)
+            need_reply = new_message_count >= random.randint(2, 3) or time.time() - self.last_read_time > 90
             if need_reply:
-                logger.info(f"{self.log_prefix} 从思考到回复，共有{new_message_count}条新消息，使用引用回复")
+                logger.info(f"{self.log_prefix} 从思考到回复，共有{new_message_count}条新消息，使用引用回复，或者上次回复时间超过90秒")
 
         reply_text = ""
         first_replied = False

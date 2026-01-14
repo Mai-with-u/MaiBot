@@ -1,14 +1,14 @@
 import time
 from typing import Tuple, Optional  # 增加了 Optional
-from src.common.logger_manager import get_logger
-from ..models.utils_model import LLMRequest
-from ...config.config import global_config
+from src.common.logger import get_logger
+from src.llm_models.utils_model import LLMRequest
+from src.config.config import global_config
+import random
 from .chat_observer import ChatObserver
 from .pfc_utils import get_items_from_json
-from src.individuality.individuality import Individuality
 from .observation_info import ObservationInfo
 from .conversation_info import ConversationInfo
-from src.plugins.utils.chat_message_builder import build_readable_messages
+from src.chat.utils.chat_message_builder import build_readable_messages
 
 
 logger = get_logger("pfc_action_planner")
@@ -113,11 +113,26 @@ class ActionPlanner:
             max_tokens=1500,
             request_type="action_planning",
         )
-        self.personality_info = Individuality.get_instance().get_prompt(x_person=2, level=3)
+        self.personality_info = self._get_personality_prompt()
         self.name = global_config.BOT_NICKNAME
         self.private_name = private_name
         self.chat_observer = ChatObserver.get_instance(stream_id, private_name)
         # self.action_planner_info = ActionPlannerInfo() # 移除未使用的变量
+
+    def _get_personality_prompt(self) -> str:
+        """获取个性提示信息"""
+        prompt_personality = global_config.personality.personality
+        
+        # 检查是否需要随机替换为状态
+        if (
+            global_config.personality.states
+            and global_config.personality.state_probability > 0
+            and random.random() < global_config.personality.state_probability
+        ):
+            prompt_personality = random.choice(global_config.personality.states)
+        
+        bot_name = global_config.BOT_NICKNAME
+        return f"你的名字是{bot_name},你{prompt_personality};"
 
     # 修改 plan 方法签名，增加 last_successful_reply_action 参数
     async def plan(

@@ -87,6 +87,7 @@ class BrainChatting:
         # 循环控制内部状态
         self.running: bool = False
         self._loop_task: Optional[asyncio.Task] = None  # 主循环任务
+        self._new_message_event = asyncio.Event()  # 新消息事件，用于打断 wait
 
         # 添加循环信息管理相关的属性
         self.history_loop: List[CycleDetail] = []
@@ -173,9 +174,10 @@ class BrainChatting:
             filter_intercept_message_level=1,
         )
 
-        # 如果有新消息，更新 last_read_time
+        # 如果有新消息，更新 last_read_time 并触发事件以打断正在进行的 wait
         if len(recent_messages_list) >= 1:
             self.last_read_time = time.time()
+            self._new_message_event.set()  # 触发新消息事件，打断 wait
 
         # 总是执行一次思考迭代（不管有没有新消息）
         # wait 动作会在其内部等待，不需要在这里处理
@@ -434,6 +436,9 @@ class BrainChatting:
         last_check_time = self.last_read_time
         check_interval = 1.0  # 每秒检查一次
 
+        # 清除事件状态，准备等待新消息
+        self._new_message_event.clear()
+
         while self.running:
             # 检查是否有新消息
             recent_messages_list = message_api.get_messages_by_time_in_chat(
@@ -453,8 +458,15 @@ class BrainChatting:
                 logger.info(f"{self.log_prefix} 检测到新消息，恢复循环")
                 return
 
-            # 等待一段时间后再次检查
-            await asyncio.sleep(check_interval)
+            # 等待新消息事件或超时后再次检查
+            try:
+                await asyncio.wait_for(self._new_message_event.wait(), timeout=check_interval)
+                # 事件被触发，说明有新消息
+                logger.info(f"{self.log_prefix} 检测到新消息事件，恢复循环")
+                return
+            except asyncio.TimeoutError:
+                # 超时后继续检查
+                continue
 
     async def _handle_action(
         self,
@@ -674,7 +686,10 @@ class BrainChatting:
                                     logger.warning(f"{self.log_prefix} wait_seconds 参数格式错误，使用默认值 5 秒")
                                     wait_seconds = 5
 
-                            logger.info(f"{self.log_prefix} 执行 wait 动作，等待 {wait_seconds} 秒")
+                            logger.info(f"{self.log_prefix} 执行 wait 动作，等待 {wait_seconds} 秒（可被新消息打断）")
+
+                            # 清除事件状态，准备等待新消息
+                            self._new_message_event.clear()
 
                             # 记录动作信息
                             await database_api.store_action_info(
@@ -687,8 +702,17 @@ class BrainChatting:
                                 action_name="wait",
                             )
 
-                            # 等待指定时间
-                            await asyncio.sleep(wait_seconds)
+                            # 等待指定时间，但可被新消息打断
+                            try:
+                                await asyncio.wait_for(
+                                    self._new_message_event.wait(),
+                                    timeout=wait_seconds
+                                )
+                                # 如果事件被触发，说明有新消息到达
+                                logger.info(f"{self.log_prefix} wait 动作被新消息打断，提前结束等待")
+                            except asyncio.TimeoutError:
+                                # 超时正常完成
+                                pass
 
                             logger.info(f"{self.log_prefix} wait 动作完成，继续下一次思考")
 
@@ -707,7 +731,10 @@ class BrainChatting:
                             # 使用默认等待时间
                             wait_seconds = 3
 
-                            logger.info(f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒")
+                            logger.info(f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒（可被新消息打断）")
+
+                            # 清除事件状态，准备等待新消息
+                            self._new_message_event.clear()
 
                             # 记录动作信息
                             await database_api.store_action_info(
@@ -720,8 +747,17 @@ class BrainChatting:
                                 action_name="listening",
                             )
 
-                            # 等待指定时间
-                            await asyncio.sleep(wait_seconds)
+                            # 等待指定时间，但可被新消息打断
+                            try:
+                                await asyncio.wait_for(
+                                    self._new_message_event.wait(),
+                                    timeout=wait_seconds
+                                )
+                                # 如果事件被触发，说明有新消息到达
+                                logger.info(f"{self.log_prefix} listening 动作被新消息打断，提前结束等待")
+                            except asyncio.TimeoutError:
+                                # 超时正常完成
+                                pass
 
                             logger.info(f"{self.log_prefix} listening 动作完成，继续下一次思考")
 

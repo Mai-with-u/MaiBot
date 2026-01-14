@@ -1,7 +1,6 @@
 import time
 import json
 import asyncio
-import re
 from typing import List, Dict, Any, Optional, Tuple
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
@@ -108,7 +107,7 @@ def init_memory_retrieval_prompt():
 - 你可以对查询思路给出简短的思考：思考要简短，直接切入要点
 - 先思考当前信息是否足够回答问题
 - 如果信息不足，则需要使用tool查询信息，你必须给出使用什么工具进行查询
-- 如果当前已收集的信息足够或信息不足确定无法找到答案，你必须调用finish_search工具结束查询
+- 如果当前已收集的信息足够或信息不足确定无法找到答案，你必须调用found_answer工具结束查询
 """,
         name="memory_retrieval_react_prompt_head",
     )
@@ -312,7 +311,7 @@ async def _react_agent_solve_question(
 
             return None
 
-        # 正常迭代：使用head_prompt决定调用哪些工具（包含finish_search工具）
+        # 正常迭代：使用head_prompt决定调用哪些工具（包含found_answer工具）
         tool_definitions = tool_registry.get_tool_definitions()
         # tool_names = [tool_def["name"] for tool_def in tool_definitions]
         # logger.debug(f"ReAct Agent 第 {iteration + 1} 次迭代，问题: {question}|可用工具: {', '.join(tool_names)} (共{len(tool_definitions)}个)")
@@ -373,7 +372,7 @@ async def _react_agent_solve_question(
             logger.error(f"ReAct Agent LLM调用失败: {response}")
             break
 
-        # 注意：这里会检查finish_search工具调用，如果检测到finish_search工具，会根据found_answer参数决定返回答案或退出查询
+        # 注意：这里会检查found_answer工具调用，如果检测到found_answer工具，会根据answer参数决定返回答案或退出查询
 
         assistant_message: Optional[Message] = None
         if tool_calls:
@@ -403,115 +402,146 @@ async def _react_agent_solve_question(
 
         # 处理工具调用
         if not tool_calls:
-            # 如果没有工具调用，检查响应文本中是否包含finish_search函数调用格式
+            # 如果没有工具调用，检查响应文本中是否包含found_answer函数调用格式或JSON格式
             if response and response.strip():
-                # 尝试从文本中解析finish_search函数调用
-                def parse_finish_search_from_text(text: str):
-                    """从文本中解析finish_search函数调用，返回(found_answer, answer)元组，如果未找到则返回(None, None)"""
+                # 首先尝试解析JSON格式的found_answer
+                def parse_json_found_answer(text: str):
+                    """从文本中解析JSON格式的found_answer，返回(found_answer, answer)元组，如果未找到则返回(None, None)"""
                     if not text:
                         return None, None
+                    
+                    try:
+                        # 尝试提取JSON对象（可能包含在代码块中或直接是JSON）
+                        json_text = text.strip()
+                        
+                        # 如果包含代码块标记，提取JSON部分
+                        if "```json" in json_text:
+                            start = json_text.find("```json") + 7
+                            end = json_text.find("```", start)
+                            if end != -1:
+                                json_text = json_text[start:end].strip()
+                        elif "```" in json_text:
+                            start = json_text.find("```") + 3
+                            end = json_text.find("```", start)
+                            if end != -1:
+                                json_text = json_text[start:end].strip()
+                        
+                        # 尝试解析JSON
+                        data = json.loads(json_text)
+                        
+                        # 检查是否包含found_answer字段
+                        if isinstance(data, dict) and "found_answer" in data:
+                            found_answer = bool(data.get("found_answer", False))
+                            answer = data.get("answer", "")
+                            return found_answer, answer
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        # 如果JSON解析失败，尝试在文本中查找JSON对象
+                        try:
+                            # 查找第一个 { 和最后一个 } 之间的内容（更健壮的JSON提取）
+                            first_brace = text.find('{')
+                            if first_brace != -1:
+                                # 从第一个 { 开始，找到匹配的 }
+                                brace_count = 0
+                                json_end = -1
+                                for i in range(first_brace, len(text)):
+                                    if text[i] == '{':
+                                        brace_count += 1
+                                    elif text[i] == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            json_end = i + 1
+                                            break
+                                
+                                if json_end != -1:
+                                    json_text = text[first_brace:json_end]
+                                    data = json.loads(json_text)
+                                    if isinstance(data, dict) and "found_answer" in data:
+                                        found_answer = bool(data.get("found_answer", False))
+                                        answer = data.get("answer", "")
+                                        return found_answer, answer
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
+                    
+                    return None, None
+                
+                # 尝试从文本中解析found_answer函数调用
+                def parse_found_answer_from_text(text: str):
+                    """从文本中解析found_answer函数调用，返回answer字符串，如果未找到则返回None
+                    如果answer存在且非空，表示找到答案；如果answer为空或不存在，表示未找到答案"""
+                    if not text:
+                        return None
 
-                    # 查找finish_search函数调用位置（不区分大小写）
-                    func_pattern = "finish_search"
+                    # 查找found_answer函数调用位置（不区分大小写）
+                    func_pattern = "found_answer"
                     text_lower = text.lower()
                     func_pos = text_lower.find(func_pattern)
                     if func_pos == -1:
-                        return None, None
-
-                    # 查找函数调用的开始和结束位置
-                    # 从func_pos开始向后查找左括号
-                    start_pos = text.find("(", func_pos)
-                    if start_pos == -1:
-                        return None, None
-
-                    # 查找匹配的右括号（考虑嵌套）
-                    paren_count = 0
-                    end_pos = start_pos
-                    for i in range(start_pos, len(text)):
-                        if text[i] == "(":
-                            paren_count += 1
-                        elif text[i] == ")":
-                            paren_count -= 1
-                            if paren_count == 0:
-                                end_pos = i
-                                break
-                    else:
-                        # 没有找到匹配的右括号
-                        return None, None
-
-                    # 提取函数参数部分
-                    params_text = text[start_pos + 1 : end_pos]
-
-                    # 解析found_answer参数（布尔值，可能是true/false/True/False）
-                    found_answer = None
-                    found_answer_patterns = [
-                        r"found_answer\s*=\s*true",
-                        r"found_answer\s*=\s*True",
-                        r"found_answer\s*=\s*false",
-                        r"found_answer\s*=\s*False",
-                    ]
-                    for pattern in found_answer_patterns:
-                        match = re.search(pattern, params_text, re.IGNORECASE)
-                        if match:
-                            found_answer = "true" in match.group(0).lower()
-                            break
+                        return None
 
                     # 解析answer参数（字符串，使用extract_quoted_content）
-                    answer = extract_quoted_content(text, "finish_search", "answer")
+                    answer = extract_quoted_content(text, "found_answer", "answer")
+                    
+                    # 如果answer存在（即使是空字符串），也返回它（空字符串表示未找到答案）
+                    return answer
 
-                    return found_answer, answer
+                # 首先尝试解析JSON格式
+                parsed_found_answer_json, parsed_answer_json = parse_json_found_answer(response)
+                is_json_format = parsed_found_answer_json is not None
+                
+                # 如果JSON解析成功，使用JSON结果
+                if is_json_format:
+                    parsed_answer = parsed_answer_json
+                    has_answer = parsed_found_answer_json and parsed_answer and parsed_answer.strip()
+                else:
+                    # 如果JSON解析失败，尝试解析函数调用格式
+                    parsed_answer = parse_found_answer_from_text(response)
+                    # 如果answer存在且非空，表示找到答案；否则表示未找到答案
+                    has_answer = parsed_answer is not None and parsed_answer.strip() != ""
 
-                parsed_found_answer, parsed_answer = parse_finish_search_from_text(response)
-
-                if parsed_found_answer is not None:
-                    # 检测到finish_search函数调用格式
-                    if parsed_found_answer:
+                if parsed_answer is not None or is_json_format:
+                    # 检测到found_answer格式（可能是JSON格式或函数调用格式）
+                    format_type = "JSON格式" if is_json_format else "函数调用格式"
+                    if has_answer:
                         # 找到了答案
-                        if parsed_answer:
-                            step["actions"].append(
-                                {
-                                    "action_type": "finish_search",
-                                    "action_params": {"found_answer": True, "answer": parsed_answer},
-                                }
-                            )
-                            step["observations"] = ["检测到finish_search文本格式调用，找到答案"]
-                            thinking_steps.append(step)
-                            logger.info(
-                                f"{react_log_prefix}第 {iteration + 1} 次迭代 通过finish_search文本格式找到关于问题{question}的答案: {parsed_answer}"
-                            )
-
-                            _log_conversation_messages(
-                                conversation_messages,
-                                head_prompt=first_head_prompt,
-                                final_status=f"找到答案：{parsed_answer}",
-                            )
-
-                            return True, parsed_answer, thinking_steps, False
-                        else:
-                            # found_answer为True但没有提供answer，视为错误，继续迭代
-                            logger.warning(
-                                f"{react_log_prefix}第 {iteration + 1} 次迭代 finish_search文本格式found_answer为True但未提供answer"
-                            )
-                    else:
-                        # 未找到答案，直接退出查询
                         step["actions"].append(
-                            {"action_type": "finish_search", "action_params": {"found_answer": False}}
+                            {
+                                "action_type": "found_answer",
+                                "action_params": {"answer": parsed_answer},
+                            }
                         )
-                        step["observations"] = ["检测到finish_search文本格式调用，未找到答案"]
+                        step["observations"] = [f"检测到found_answer{format_type}调用，找到答案"]
                         thinking_steps.append(step)
                         logger.info(
-                            f"{react_log_prefix}第 {iteration + 1} 次迭代 通过finish_search文本格式判断未找到答案"
+                            f"{react_log_prefix}第 {iteration + 1} 次迭代 通过found_answer{format_type}找到关于问题{question}的答案: {parsed_answer[:100]}..."
                         )
 
                         _log_conversation_messages(
                             conversation_messages,
                             head_prompt=first_head_prompt,
-                            final_status="未找到答案：通过finish_search文本格式判断未找到答案",
+                            final_status=f"找到答案：{parsed_answer}",
+                        )
+
+                        return True, parsed_answer, thinking_steps, False
+                    else:
+                        # 未找到答案，直接退出查询
+                        step["actions"].append(
+                            {"action_type": "found_answer", "action_params": {"answer": ""}}
+                        )
+                        step["observations"] = [f"检测到found_answer{format_type}调用，未找到答案"]
+                        thinking_steps.append(step)
+                        logger.info(
+                            f"{react_log_prefix}第 {iteration + 1} 次迭代 通过found_answer{format_type}判断未找到答案"
+                        )
+
+                        _log_conversation_messages(
+                            conversation_messages,
+                            head_prompt=first_head_prompt,
+                            final_status="未找到答案：通过found_answer文本格式判断未找到答案",
                         )
 
                         return False, "", thinking_steps, False
 
-                # 如果没有检测到finish_search格式，记录思考过程，继续下一轮迭代
+                # 如果没有检测到found_answer格式，记录思考过程，继续下一轮迭代
                 step["observations"] = [f"思考完成，但未调用工具。响应: {response}"]
                 logger.info(
                     f"{react_log_prefix}第 {iteration + 1} 次迭代 思考完成但未调用工具: {response}"
@@ -525,62 +555,55 @@ async def _react_agent_solve_question(
             continue
 
         # 处理工具调用
-        # 首先检查是否有finish_search工具调用，如果有则立即返回，不再处理其他工具
-        finish_search_found = None
-        finish_search_answer = None
+        # 首先检查是否有found_answer工具调用，如果有则立即返回，不再处理其他工具
+        found_answer_answer = None
         for tool_call in tool_calls:
             tool_name = tool_call.func_name
             tool_args = tool_call.args or {}
 
-            if tool_name == "finish_search":
-                finish_search_found = tool_args.get("found_answer", False)
-                finish_search_answer = tool_args.get("answer", "")
+            if tool_name == "found_answer":
+                found_answer_answer = tool_args.get("answer", "")
 
-                if finish_search_found:
+                # 如果answer存在且非空，表示找到答案；否则表示未找到答案
+                if found_answer_answer and found_answer_answer.strip():
                     # 找到了答案
-                    if finish_search_answer:
-                        step["actions"].append(
-                            {
-                                "action_type": "finish_search",
-                                "action_params": {"found_answer": True, "answer": finish_search_answer},
-                            }
-                        )
-                        step["observations"] = ["检测到finish_search工具调用，找到答案"]
-                        thinking_steps.append(step)
-                        logger.info(
-                            f"{react_log_prefix}第 {iteration + 1} 次迭代 通过finish_search工具找到关于问题{question}的答案: {finish_search_answer}"
-                        )
-
-                        _log_conversation_messages(
-                            conversation_messages,
-                            head_prompt=first_head_prompt,
-                            final_status=f"找到答案：{finish_search_answer}",
-                        )
-
-                        return True, finish_search_answer, thinking_steps, False
-                    else:
-                        # found_answer为True但没有提供answer，视为错误
-                        logger.warning(
-                            f"{react_log_prefix}第 {iteration + 1} 次迭代 finish_search工具found_answer为True但未提供answer"
-                        )
-                else:
-                    # 未找到答案，直接退出查询
-                    step["actions"].append({"action_type": "finish_search", "action_params": {"found_answer": False}})
-                    step["observations"] = ["检测到finish_search工具调用，未找到答案"]
+                    step["actions"].append(
+                        {
+                            "action_type": "found_answer",
+                            "action_params": {"answer": found_answer_answer},
+                        }
+                    )
+                    step["observations"] = ["检测到found_answer工具调用，找到答案"]
                     thinking_steps.append(step)
                     logger.info(
-                        f"{react_log_prefix}第 {iteration + 1} 次迭代 通过finish_search工具判断未找到答案"
+                        f"{react_log_prefix}第 {iteration + 1} 次迭代 通过found_answer工具找到关于问题{question}的答案: {found_answer_answer}"
                     )
 
                     _log_conversation_messages(
                         conversation_messages,
                         head_prompt=first_head_prompt,
-                        final_status="未找到答案：通过finish_search工具判断未找到答案",
+                        final_status=f"找到答案：{found_answer_answer}",
+                    )
+
+                    return True, found_answer_answer, thinking_steps, False
+                else:
+                    # 未找到答案，直接退出查询
+                    step["actions"].append({"action_type": "found_answer", "action_params": {"answer": ""}})
+                    step["observations"] = ["检测到found_answer工具调用，未找到答案"]
+                    thinking_steps.append(step)
+                    logger.info(
+                        f"{react_log_prefix}第 {iteration + 1} 次迭代 通过found_answer工具判断未找到答案"
+                    )
+
+                    _log_conversation_messages(
+                        conversation_messages,
+                        head_prompt=first_head_prompt,
+                        final_status="未找到答案：通过found_answer工具判断未找到答案",
                     )
 
                     return False, "", thinking_steps, False
 
-        # 如果没有finish_search工具调用，继续处理其他工具
+        # 如果没有found_answer工具调用，继续处理其他工具
         tool_tasks = []
         for i, tool_call in enumerate(tool_calls):
             tool_name = tool_call.func_name
@@ -590,8 +613,8 @@ async def _react_agent_solve_question(
                 f"{react_log_prefix}第 {iteration + 1} 次迭代 工具调用 {i + 1}/{len(tool_calls)}: {tool_name}({tool_args})"
             )
 
-            # 跳过finish_search工具调用（已经在上面处理过了）
-            if tool_name == "finish_search":
+            # 跳过found_answer工具调用（已经在上面处理过了）
+            if tool_name == "found_answer":
                 continue
 
             # 记录最后一次使用的工具名称（用于判断是否需要额外迭代）
