@@ -187,21 +187,6 @@ class MemoryConfig(ConfigBase):
     chat_history_finalize_message_count: int = 5
     """聊天历史话题打包存储的消息条数阈值，当话题的消息条数超过此值时触发打包存储"""
 
-    chat_history_topic_check_message_threshold: int = 80
-    """聊天历史话题检查的消息数量阈值，当累积消息数达到此值时触发话题检查"""
-
-    chat_history_topic_check_time_hours: float = 8.0
-    """聊天历史话题检查的时间阈值（小时），当距离上次检查超过此时间且消息数达到最小阈值时触发话题检查"""
-
-    chat_history_topic_check_min_messages: int = 20
-    """聊天历史话题检查的时间触发模式下的最小消息数阈值"""
-
-    chat_history_finalize_no_update_checks: int = 3
-    """聊天历史话题打包存储的连续无更新检查次数阈值，当话题连续N次检查无新增内容时触发打包存储"""
-
-    chat_history_finalize_message_count: int = 5
-    """聊天历史话题打包存储的消息条数阈值，当话题的消息条数超过此值时触发打包存储"""
-
     def model_post_init(self, context: Optional[dict] = None) -> None:
         """验证配置值"""
         if self.max_agent_iterations < 1:
