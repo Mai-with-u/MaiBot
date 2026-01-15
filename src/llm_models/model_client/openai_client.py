@@ -22,7 +22,7 @@ from openai.types.chat import (
 )
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 
-from src.config.api_ada_configs import ModelInfo, APIProvider
+from src.config.model_configs import ModelInfo, APIProvider
 from src.common.logger import get_logger
 from .base_client import APIResponse, UsageRecord, BaseClient, client_registry
 from ..exceptions import (

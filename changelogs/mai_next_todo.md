@@ -12,3 +12,9 @@ version 0.3.0 - 2026-01-11
     - [x] 禁止使用 `Union` 类型
     - [x] 禁止使用`tuple`类型，使用嵌套`dataclass`替代
     - [x] 复杂类型使用嵌套配置类实现
+- [x] 配置类中禁止使用除了`model_post_init`的方法
+- [x] 取代了部分与标准函数混淆的命名
+    - [x] `id` -> `item_id`
+
+### BotConfig 设计
+- [ ] 精简了配置项，现在只有Nickname和Alias Name了（预期将判断提及移到Adapter端）

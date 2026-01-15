@@ -757,7 +757,7 @@ class MCPToolProxy(BaseTool):
     ) -> Optional[str]:
         """调用 LLM 进行后处理"""
         from src.config.config import model_config
-        from src.config.api_ada_configs import TaskConfig
+        from src.config.model_configs import TaskConfig
         from src.llm_models.utils_model import LLMRequest
         
         model_name = settings.get("post_process_model", "")

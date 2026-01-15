@@ -10,7 +10,7 @@ import traceback
 
 from src.common.logger import get_logger
 from src.config.config import model_config
-from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
+from src.config.model_configs import APIProvider, ModelInfo, TaskConfig
 from .payload_content.message import MessageBuilder, Message
 from .payload_content.resp_format import RespFormat
 from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType

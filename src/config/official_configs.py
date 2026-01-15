@@ -18,6 +18,17 @@ class ExampleConfig(ConfigBase):
 
 class BotConfig(ConfigBase):
     """机器人配置类"""
+    platform: str = ""
+    """平台"""
+    
+    qq_account: int = 0
+    """QQ账号"""
+    
+    platforms: list[str] = Field(default_factory=lambda: [])
+    """其他平台"""
+    
+    nickname: str = "麦麦"
+    """机器人昵称"""
 
     alias_names: list[str] = Field(default_factory=lambda: [])
     """别名列表"""
@@ -70,10 +81,10 @@ class RelationshipConfig(ConfigBase):
 
 class TalkRulesItem(ConfigBase):
     platform: str = ""
-    """平台，留空表示全局"""
+    """平台，与ID一起留空表示全局"""
 
-    id: str = ""
-    """用户ID"""
+    item_id: str = ""
+    """用户ID，与平台一起留空表示全局"""
 
     rule_type: Literal["group", "private"] = "group"
     """聊天流类型，group（群聊）或private（私聊）"""
@@ -119,8 +130,8 @@ class ChatConfig(ConfigBase):
 
     talk_value_rules: list[TalkRulesItem] = Field(
         default_factory=lambda: [
-            TalkRulesItem(platform="", id="", rule_type="group", time="00:00-08:59", value=0.8),
-            TalkRulesItem(platform="", id="", rule_type="group", time="09:00-18:59", value=1.0),
+            TalkRulesItem(platform="", item_id="", rule_type="group", time="00:00-08:59", value=0.8),
+            TalkRulesItem(platform="", item_id="", rule_type="group", time="09:00-18:59", value=1.0),
         ]
     )
     """
@@ -148,10 +159,10 @@ class MessageReceiveConfig(ConfigBase):
 
 class TargetItem(ConfigBase):
     platform: str = ""
-    """平台，留空表示全局"""
+    """平台，与ID一起留空表示全局"""
 
-    id: str = ""
-    """用户ID"""
+    item_id: str = ""
+    """用户ID，与平台一起留空表示全局"""
 
     rule_type: Literal["group", "private"] = "group"
     """聊天流类型，group（群聊）或private（私聊）"""
@@ -218,10 +229,10 @@ class MemoryConfig(ConfigBase):
 
 class LearningItem(ConfigBase):
     platform: str = ""
-    """平台，留空表示全局"""
+    """平台，与ID一起留空表示全局"""
 
-    id: str = ""
-    """用户ID"""
+    item_id: str = ""
+    """用户ID，与平台一起留空表示全局"""
 
     rule_type: Literal["group", "private"] = "group"
     """聊天流类型，group（群聊）或private（私聊）"""
@@ -250,7 +261,7 @@ class ExpressionConfig(ConfigBase):
         default_factory=lambda: [
             LearningItem(
                 platform="",
-                id="",
+                item_id="",
                 rule_type="group",
                 use_expression=True,
                 enable_learning=True,
@@ -468,7 +479,7 @@ class ExtraPromptItem(ConfigBase):
     platform: str = ""
     """平台，留空无效"""
 
-    id: str = ""
+    item_id: str = ""
     """用户ID，留空无效"""
 
     rule_type: Literal["group", "private"] = "group"
@@ -478,7 +489,7 @@ class ExtraPromptItem(ConfigBase):
     """额外的prompt内容"""
 
     def model_post_init(self, context: Optional[dict] = None) -> None:
-        if not self.platform or not self.id or not self.prompt:
+        if not self.platform or not self.item_id or not self.prompt:
             raise ValueError("ExtraPromptItem 中 platform, id 和 prompt 不能为空")
         return super().model_post_init(context)
 

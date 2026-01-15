@@ -7,7 +7,7 @@ from datetime import datetime
 from src.common.logger import get_logger
 from src.common.database.database import db  # 确保 db 被导入用于 create_tables
 from src.common.database.database_model import LLMUsage
-from src.config.api_ada_configs import ModelInfo
+from src.config.model_configs import ModelInfo
 from .payload_content.message import Message, MessageBuilder
 from .model_client.base_client import UsageRecord
 

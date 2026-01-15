@@ -282,4 +282,5 @@ def write_config_to_file(
 # generate_new_config_file(Config, BOT_CONFIG_PATH, CONFIG_VERSION)
 config_manager = ConfigManager()
 config_manager.initialize()
-# global_config = config_manager.get_global_config()
+global_config = config_manager.get_global_config()
+model_config = config_manager.get_model_config()
