@@ -1,12 +1,12 @@
 import time
-from typing import Tuple, Optional  # 增加了 Optional
+from typing import Tuple, Optional, Dict, Any  # 增加了 Optional
 from src.common.logger import get_logger
 from src.llm_models.utils_model import LLMRequest
-from src.config.config import global_config
+from src.config.config import global_config, model_config
 import random
 from .chat_observer import ChatObserver
 from .pfc_utils import get_items_from_json
-from .observation_info import ObservationInfo
+from .observation_info import ObservationInfo, dict_to_database_message
 from .conversation_info import ConversationInfo
 from src.chat.utils.chat_message_builder import build_readable_messages
 
@@ -108,13 +108,11 @@ class ActionPlanner:
 
     def __init__(self, stream_id: str, private_name: str):
         self.llm = LLMRequest(
-            model=global_config.llm_PFC_action_planner,
-            temperature=global_config.llm_PFC_action_planner["temp"],
-            max_tokens=1500,
+            model_set=model_config.model_task_config.planner,
             request_type="action_planning",
         )
         self.personality_info = self._get_personality_prompt()
-        self.name = global_config.BOT_NICKNAME
+        self.name = global_config.bot.nickname
         self.private_name = private_name
         self.chat_observer = ChatObserver.get_instance(stream_id, private_name)
         # self.action_planner_info = ActionPlannerInfo() # 移除未使用的变量
@@ -131,7 +129,7 @@ class ActionPlanner:
         ):
             prompt_personality = random.choice(global_config.personality.states)
         
-        bot_name = global_config.BOT_NICKNAME
+        bot_name = global_config.bot.nickname
         return f"你的名字是{bot_name},你{prompt_personality};"
 
     # 修改 plan 方法签名，增加 last_successful_reply_action 参数
@@ -152,13 +150,13 @@ class ActionPlanner:
             Tuple[str, str]: (行动类型, 行动原因)
         """
         # --- 获取 Bot 上次发言时间信息 ---
-        # (这部分逻辑不变)
         time_since_last_bot_message_info = ""
         try:
-            bot_id = str(global_config.BOT_QQ)
-            if hasattr(observation_info, "chat_history") and observation_info.chat_history:
-                for i in range(len(observation_info.chat_history) - 1, -1, -1):
-                    msg = observation_info.chat_history[i]
+            bot_id = str(global_config.bot.qq_account)
+            chat_history = getattr(observation_info, "chat_history", None)
+            if chat_history and len(chat_history) > 0:
+                for i in range(len(chat_history) - 1, -1, -1):
+                    msg = chat_history[i]
                     if not isinstance(msg, dict):
                         continue
                     sender_info = msg.get("user_info", {})
@@ -173,14 +171,11 @@ class ActionPlanner:
                         break
             else:
                 logger.debug(
-                    f"[私聊][{self.private_name}]Observation info chat history is empty or not available for bot time check."
+                    f"[私聊][{self.private_name}]聊天历史为空或尚未加载，跳过 Bot 发言时间检查。"
                 )
-        except AttributeError:
-            logger.warning(
-                f"[私聊][{self.private_name}]ObservationInfo object might not have chat_history attribute yet for bot time check."
-            )
         except Exception as e:
-            logger.warning(f"[私聊][{self.private_name}]获取 Bot 上次发言时间时出错: {e}")
+            logger.debug(f"[私聊][{self.private_name}]获取 Bot 上次发言时间时出错: {e}")
+
 
         # --- 获取超时提示信息 ---
         # (这部分逻辑不变)
@@ -288,10 +283,11 @@ class ActionPlanner:
             if hasattr(observation_info, "new_messages_count") and observation_info.new_messages_count > 0:
                 if hasattr(observation_info, "unprocessed_messages") and observation_info.unprocessed_messages:
                     new_messages_list = observation_info.unprocessed_messages
-                    new_messages_str = await build_readable_messages(
-                        new_messages_list,
+                    # Convert dict format to DatabaseMessages objects
+                    db_messages = [dict_to_database_message(m) for m in new_messages_list]
+                    new_messages_str = build_readable_messages(
+                        db_messages,
                         replace_bot_name=True,
-                        merge_messages=False,
                         timestamp_mode="relative",
                         read_mark=0.0,
                     )

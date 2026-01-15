@@ -9,7 +9,7 @@ from typing import Tuple, List, Dict, Optional, Callable, Any, Set
 import traceback
 
 from src.common.logger import get_logger
-from src.config.config import model_config
+from src.config.config import model_config, get_model_info_by_name, get_provider_by_name
 from src.config.model_configs import APIProvider, ModelInfo, TaskConfig
 from .payload_content.message import MessageBuilder, Message
 from .payload_content.resp_format import RespFormat
@@ -296,8 +296,8 @@ class LLMRequest:
                 key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
             )
         
-        model_info = model_config.get_model_info(selected_model_name)
-        api_provider = model_config.get_provider(model_info.api_provider)
+        model_info = get_model_info_by_name(model_config, selected_model_name)
+        api_provider = get_provider_by_name(model_config, model_info.api_provider)
         force_new_client = self.request_type == "embedding"
         client = client_registry.get_client_class_instance(api_provider, force_new=force_new_client)
         logger.debug(f"选择请求模型: {model_info.name} (策略: {strategy})")

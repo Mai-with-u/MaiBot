@@ -162,6 +162,44 @@ class ModelConfig(ConfigBase):
         return super().model_post_init(context)
 
 
+def get_model_info_by_name(model_config: ModelConfig, model_name: str) -> ModelInfo:
+    """根据模型名称获取模型信息
+    
+    Args:
+        model_config: ModelConfig实例
+        model_name: 模型名称
+        
+    Returns:
+        ModelInfo: 模型信息
+        
+    Raises:
+        ValueError: 未找到指定模型
+    """
+    for model in model_config.models:
+        if model.name == model_name:
+            return model
+    raise ValueError(f"未找到名为 '{model_name}' 的模型")
+
+
+def get_provider_by_name(model_config: ModelConfig, provider_name: str) -> APIProvider:
+    """根据提供商名称获取提供商信息
+    
+    Args:
+        model_config: ModelConfig实例
+        provider_name: 提供商名称
+        
+    Returns:
+        APIProvider: API提供商信息
+        
+    Raises:
+        ValueError: 未找到指定提供商
+    """
+    for provider in model_config.api_providers:
+        if provider.name == provider_name:
+            return provider
+    raise ValueError(f"未找到名为 '{provider_name}' 的API提供商")
+
+
 class ConfigManager:
     """总配置管理类"""
 
