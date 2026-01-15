@@ -71,16 +71,14 @@ def init_prompt():
 1. 关键词：提取与话题相关的关键词，用列表形式返回（3-10个关键词）
 2. 概括：对这段话的平文本概括（50-200字），要求：
    - 仔细地转述发生的事件和聊天内容；
-   - 可以适当摘取聊天记录中的原文；
    - 重点突出事件的发展过程和结果；
    - 围绕话题这个中心进行概括。
-3. 关键信息：提取话题中的关键信息点，用列表形式返回（3-8个关键信息点），每个关键信息点应该简洁明了。
+   - 提取话题中的关键信息点，关键信息点应该简洁明了。
 
 请以JSON格式返回，格式如下：
 {{
     "keywords": ["关键词1", "关键词2", ...],
-    "summary": "概括内容",
-    "key_point": ["关键信息1", "关键信息2", ...]
+    "summary": "概括内容"
 }}
 
 聊天记录：
@@ -815,12 +813,38 @@ class ChatHistorySummarizer:
         original_text = "\n".join(item.messages)
 
         logger.info(
-            f"{self.log_prefix} 开始打包话题[{topic}] | 消息数: {len(item.messages)} | 时间范围: {start_time:.2f} - {end_time:.2f}"
+            f"{self.log_prefix} 开始将聊天记录构建成记忆：[{topic}] | 消息数: {len(item.messages)} | 时间范围: {start_time:.2f} - {end_time:.2f}"
         )
 
-        # 使用 LLM 进行总结（基于话题名）
-        success, keywords, summary, key_point = await self._compress_with_llm(original_text, topic)
-        if not success:
+        # 使用 LLM 进行总结（基于话题名），带重试机制
+        max_retries = 3
+        attempt = 0
+        success = False
+        keywords = []
+        summary = ""
+
+        while attempt < max_retries:
+            attempt += 1
+            success, keywords, summary = await self._compress_with_llm(original_text, topic)
+            
+            if success and keywords and summary:
+                # 成功获取到有效的 keywords 和 summary
+                if attempt > 1:
+                    logger.info(
+                        f"{self.log_prefix} 话题[{topic}] LLM 概括在第 {attempt} 次重试后成功"
+                    )
+                break
+            
+            if attempt < max_retries:
+                logger.warning(
+                    f"{self.log_prefix} 话题[{topic}] LLM 概括失败（第 {attempt} 次尝试），准备重试"
+                )
+            else:
+                logger.error(
+                    f"{self.log_prefix} 话题[{topic}] LLM 概括连续 {max_retries} 次失败，放弃存储"
+                )
+
+        if not success or not keywords or not summary:
             logger.warning(f"{self.log_prefix} 话题[{topic}] LLM 概括失败，不写入数据库")
             return
 
@@ -834,14 +858,13 @@ class ChatHistorySummarizer:
             theme=topic,  # 主题直接使用话题名
             keywords=keywords,
             summary=summary,
-            key_point=key_point,
         )
 
         logger.info(
             f"{self.log_prefix} 话题[{topic}] 成功打包并存储 | 消息数: {len(item.messages)} | 参与者数: {len(participants)}"
         )
 
-    async def _compress_with_llm(self, original_text: str, topic: str) -> tuple[bool, List[str], str, List[str]]:
+    async def _compress_with_llm(self, original_text: str, topic: str) -> tuple[bool, List[str], str]:
         """
         使用LLM压缩聊天内容（用于单个话题的最终总结）
 
@@ -850,7 +873,7 @@ class ChatHistorySummarizer:
             topic: 话题名称
 
         Returns:
-            tuple[bool, List[str], str, List[str]]: (是否成功, 关键词列表, 概括, 关键信息列表)
+            tuple[bool, List[str], str]: (是否成功, 关键词列表, 概括)
         """
         prompt = await global_prompt_manager.format_prompt(
             "hippo_topic_summary_prompt",
@@ -920,24 +943,24 @@ class ChatHistorySummarizer:
 
             keywords = result.get("keywords", [])
             summary = result.get("summary", "")
-            key_point = result.get("key_point", [])
             
-            if not (keywords and summary) and key_point:
-                logger.warning(f"{self.log_prefix} LLM返回的JSON中缺少字段，原文\n{response}")
+            # 检查必需字段是否为空
+            if not keywords or not summary:
+                logger.warning(f"{self.log_prefix} LLM返回的JSON中缺少必需字段，原文\n{response}")
+                # 返回失败，和模型出错一样，让上层进行重试
+                return False, [], ""
 
-            # 确保keywords和key_point是列表
+            # 确保keywords是列表
             if isinstance(keywords, str):
                 keywords = [keywords]
-            if isinstance(key_point, str):
-                key_point = [key_point]
 
-            return True, keywords, summary, key_point
+            return True, keywords, summary
 
         except Exception as e:
             logger.error(f"{self.log_prefix} LLM压缩聊天内容时出错: {e}")
             logger.error(f"{self.log_prefix} LLM响应: {response if 'response' in locals() else 'N/A'}")
             # 返回失败标志和默认值
-            return False, [], "压缩失败，无法生成概括", []
+            return False, [], "压缩失败，无法生成概括"
 
     async def _store_to_database(
         self,
@@ -948,7 +971,6 @@ class ChatHistorySummarizer:
         theme: str,
         keywords: List[str],
         summary: str,
-        key_point: Optional[List[str]] = None,
     ):
         """存储到数据库"""
         try:
@@ -967,10 +989,6 @@ class ChatHistorySummarizer:
                 "summary": summary,
                 "count": 0,
             }
-
-            # 存储 key_point（如果存在）
-            if key_point is not None:
-                data["key_point"] = json.dumps(key_point, ensure_ascii=False)
 
             # 使用db_save存储（使用start_time和chat_id作为唯一标识）
             # 由于可能有多条记录，我们使用组合键，但peewee不支持，所以使用start_time作为唯一标识
@@ -991,7 +1009,6 @@ class ChatHistorySummarizer:
                 await self._import_to_lpmm_knowledge(
                     theme=theme,
                     summary=summary,
-                    key_point=key_point,
                     participants=participants,
                     original_text=original_text,
                 )
@@ -1007,7 +1024,6 @@ class ChatHistorySummarizer:
         self,
         theme: str,
         summary: str,
-        key_point: Optional[List[str]],
         participants: List[str],
         original_text: str,
     ):
@@ -1017,7 +1033,6 @@ class ChatHistorySummarizer:
         Args:
             theme: 话题主题
             summary: 概括内容
-            key_point: 关键信息点列表
             participants: 参与者列表
             original_text: 原始文本（可能很长，需要截断）
         """
@@ -1025,46 +1040,43 @@ class ChatHistorySummarizer:
             from src.chat.knowledge.lpmm_ops import lpmm_ops
 
             # 构造要导入的文本内容
-            # 格式：主题 + 概括 + 关键信息点 + 参与者信息
+            # 格式：主题 + 概括 + 参与者信息 + 原始内容摘要
+            # 注意：使用单换行符连接，确保整个内容作为一段导入，不被LPMM分段
             content_parts = []
 
             # 1. 话题主题
-            if theme:
-                content_parts.append(f"话题：{theme}")
+            # if theme:
+                # content_parts.append(f"话题：{theme}")
 
             # 2. 概括内容
             if summary:
                 content_parts.append(f"概括：{summary}")
 
-            # 3. 关键信息点
-            if key_point:
-                key_points_text = "、".join(key_point)
-                content_parts.append(f"关键信息：{key_points_text}")
-
-            # 4. 参与者信息
+            # 3. 参与者信息
             if participants:
                 participants_text = "、".join(participants)
                 content_parts.append(f"参与者：{participants_text}")
 
-            # 5. 原始文本摘要（如果原始文本太长，只取前500字）
-            if original_text:
-                # 截断原始文本，避免过长
-                max_original_length = 500
-                if len(original_text) > max_original_length:
-                    truncated_text = original_text[:max_original_length] + "..."
-                    content_parts.append(f"原始内容摘要：{truncated_text}")
-                else:
-                    content_parts.append(f"原始内容：{original_text}")
+            # 4. 原始文本摘要（如果原始文本太长，只取前500字）
+            # if original_text:
+            #     # 截断原始文本，避免过长
+            #     max_original_length = 500
+            #     if len(original_text) > max_original_length:
+            #         truncated_text = original_text[:max_original_length] + "..."
+            #         content_parts.append(f"原始内容摘要：{truncated_text}")
+            #     else:
+            #         content_parts.append(f"原始内容：{original_text}")
 
-            # 将所有部分合并为一个段落（用双换行分隔，符合lpmm_ops.add_content的格式要求）
-            content_to_import = "\n\n".join(content_parts)
+            # 将所有部分合并为一个完整段落（使用单换行符，避免被LPMM分段）
+            # LPMM使用 \n\n 作为段落分隔符，所以这里使用 \n 确保不会被分段
+            content_to_import = "\n".join(content_parts)
 
             if not content_to_import.strip():
                 logger.warning(f"{self.log_prefix} 聊天历史总结内容为空，跳过导入知识库")
                 return
 
             # 调用lpmm_ops导入
-            result = await lpmm_ops.add_content(content_to_import)
+            result = await lpmm_ops.add_content(text=content_to_import, auto_split=False)
 
             if result["status"] == "success":
                 logger.info(

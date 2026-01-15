@@ -463,18 +463,6 @@ async def get_chat_history_detail(chat_id: str, memory_ids: str) -> str:
             if record.summary:
                 result_parts.append(f"概括：{record.summary}")
 
-            # 添加关键信息点
-            if record.key_point:
-                try:
-                    key_point_data = (
-                        json.loads(record.key_point) if isinstance(record.key_point, str) else record.key_point
-                    )
-                    if isinstance(key_point_data, list) and key_point_data:
-                        key_point_str = "\n".join([f"  - {str(kp)}" for kp in key_point_data])
-                        result_parts.append(f"关键信息点：\n{key_point_str}")
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    pass
-
             results.append("\n".join(result_parts))
 
         if not results:

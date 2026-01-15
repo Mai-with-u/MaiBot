@@ -46,8 +46,30 @@ config/lpmm_config.toml.bak
 template/compare/bot_config_template.toml
 template/compare/model_config_template.toml
 CLAUDE.md
-MaiBot-Dashboard/
 cloudflare-workers/
+log_viewer/
+dev/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 result.json
 # Byte-compiled / optimized / DLL files
 __pycache__/

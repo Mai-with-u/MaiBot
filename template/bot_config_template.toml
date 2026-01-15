@@ -1,5 +1,5 @@
 [inner]
-version = "7.4.0"
+version = "7.4.1"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 # 如果你想要修改配置文件，请递增version的值
@@ -294,6 +294,7 @@ trusted_proxies = "" # 信任的代理IP列表（逗号分隔），只有来自�
 trust_xff = false # 是否启用X-Forwarded-For代理解析（默认false）
                   # 启用后，仍要求直连IP在trusted_proxies中才会信任XFF头
 secure_cookie = false # 是否启用安全Cookie（仅通过HTTPS传输，默认false）
+enable_paragraph_content = false # 是否在知识图谱中加载段落完整内容（需要加载embedding store，会占用额外内存）
 
 [experimental] #实验性功能
 # 麦麦私聊的说话规则，行为风格（实验性功能）

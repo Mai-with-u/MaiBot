@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from typing import List, Union
+from typing import List, Union, Dict, Any
 
 from .global_logger import logger
 from . import prompt_template
@@ -173,3 +173,50 @@ def info_extract_from_str(
                 return None, None
 
     return entity_extract_result, rdf_triple_extract_result
+
+
+class IEProcess:
+    """
+    信息抽取处理器类，提供更方便的批次处理接口。
+    """
+
+    def __init__(self, llm_ner: LLMRequest, llm_rdf: LLMRequest = None):
+        self.llm_ner = llm_ner
+        self.llm_rdf = llm_rdf or llm_ner
+
+    async def process_paragraphs(self, paragraphs: List[str]) -> List[dict]:
+        """
+        异步处理多个段落。
+        """
+        from .utils.hash import get_sha256
+
+        results = []
+        total = len(paragraphs)
+        
+        for i, pg in enumerate(paragraphs, start=1):
+            # 打印进度日志，让用户知道没有卡死
+            logger.info(f"[IEProcess] 正在处理第 {i}/{total} 段文本 (长度: {len(pg)})...")
+            
+            # 使用 asyncio.to_thread 包装同步阻塞调用，防止死锁
+            # 这样 info_extract_from_str 内部的 asyncio.run 会在独立线程的新 loop 中运行
+            try:
+                entities, triples = await asyncio.to_thread(
+                    info_extract_from_str, self.llm_ner, self.llm_rdf, pg
+                )
+
+                if entities is not None:
+                    results.append(
+                        {
+                            "idx": get_sha256(pg),
+                            "passage": pg,
+                            "extracted_entities": entities,
+                            "extracted_triples": triples,
+                        }
+                    )
+                    logger.info(f"[IEProcess] 第 {i}/{total} 段处理完成，提取到 {len(entities)} 个实体")
+                else:
+                    logger.warning(f"[IEProcess] 第 {i}/{total} 段提取失败（返回为空）")
+            except Exception as e:
+                logger.error(f"[IEProcess] 处理第 {i}/{total} 段时发生异常: {e}")
+
+        return results

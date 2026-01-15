@@ -13,13 +13,12 @@ def make_update_chat_history(chat_id: str):  # chat_id 目前未直接使用，�
         theme: Optional[str] = None,
         summary: Optional[str] = None,
         keywords: Optional[str] = None,
-        key_point: Optional[str] = None,
     ) -> str:
         """按字段更新 chat_history（字符串字段要求 JSON 的字段须传入已序列化的字符串）"""
         try:
             logger.info(
                 f"[dream][tool] 调用 update_chat_history(memory_id={memory_id}, "
-                f"theme={bool(theme)}, summary={bool(summary)}, keywords={bool(keywords)}, key_point={bool(key_point)})"
+                f"theme={bool(theme)}, summary={bool(summary)}, keywords={bool(keywords)})"
             )
             record = ChatHistory.get_or_none(ChatHistory.id == memory_id)
             if not record:
@@ -34,8 +33,6 @@ def make_update_chat_history(chat_id: str):  # chat_id 目前未直接使用，�
                 data["summary"] = summary
             if keywords is not None:
                 data["keywords"] = keywords
-            if key_point is not None:
-                data["key_point"] = key_point
 
             if not data:
                 return "未提供任何需要更新的字段。"

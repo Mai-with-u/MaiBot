@@ -32,8 +32,7 @@ def make_get_chat_history_detail(chat_id: str):  # chat_id 目前未直接使用
                 f"主题={record.theme or '无'}\n"
                 f"关键词={record.keywords or '无'}\n"
                 f"参与者={record.participants or '无'}\n"
-                f"概括={record.summary or '无'}\n"
-                f"关键信息={record.key_point or '无'}"
+                f"概括={record.summary or '无'}"
             )
             logger.debug(f"[dream][tool] get_chat_history_detail 成功，预览: {result[:200].replace(chr(10), ' ')}")
             return result

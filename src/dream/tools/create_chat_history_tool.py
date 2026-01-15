@@ -11,7 +11,8 @@ def make_create_chat_history(chat_id: str):
         theme: str,
         summary: str,
         keywords: str,
-        key_point: str,
+        original_text: str,
+        participants: str,
         start_time: float,
         end_time: float,
     ) -> str:
@@ -20,7 +21,8 @@ def make_create_chat_history(chat_id: str):
             logger.info(
                 f"[dream][tool] 调用 create_chat_history("
                 f"theme={bool(theme)}, summary={bool(summary)}, "
-                f"keywords={bool(keywords)}, key_point={bool(key_point)}, "
+                f"keywords={bool(keywords)}, original_text={bool(original_text)}, "
+                f"participants={bool(participants)}, "
                 f"start_time={start_time}, end_time={end_time}) (chat_id={chat_id})"
             )
 
@@ -43,7 +45,8 @@ def make_create_chat_history(chat_id: str):
                 theme=theme,
                 summary=summary,
                 keywords=keywords,
-                key_point=key_point,
+                original_text=original_text,
+                participants=participants,
                 # 对于由 dream 整理产生的新概括，时间范围优先使用工具提供的时间，否则使用当前时间占位
                 start_time=start_ts,
                 end_time=end_ts,

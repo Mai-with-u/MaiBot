@@ -192,7 +192,6 @@ def init_dream_tools(chat_id: str) -> None:
                 ("theme", ToolParamType.STRING, "新的主题标题，如果不需要修改可不填。", False, None),
                 ("summary", ToolParamType.STRING, "新的概括内容，如果不需要修改可不填。", False, None),
                 ("keywords", ToolParamType.STRING, "新的关键词 JSON 字符串，如 ['关键词1','关键词2']。", False, None),
-                ("key_point", ToolParamType.STRING, "新的关键信息 JSON 字符串，如 ['要点1','要点2']。", False, None),
             ],
             update_chat_history,
         )
@@ -201,7 +200,7 @@ def init_dream_tools(chat_id: str) -> None:
     _dream_tool_registry.register_tool(
         DreamTool(
             "create_chat_history",
-            "根据整理后的理解创建一条新的 ChatHistory 概括记录（主题、概括、关键词、关键信息等）。",
+            "根据整理后的理解创建一条新的 ChatHistory 概括记录（主题、概括、关键词等）。",
             [
                 ("theme", ToolParamType.STRING, "新的主题标题（必填）。", True, None),
                 ("summary", ToolParamType.STRING, "新的概括内容（必填）。", True, None),
@@ -212,10 +211,11 @@ def init_dream_tools(chat_id: str) -> None:
                     True,
                     None,
                 ),
+                ("original_text", ToolParamType.STRING, "对话原文内容（必填）。", True, None),
                 (
-                    "key_point",
+                    "participants",
                     ToolParamType.STRING,
-                    "新的关键信息 JSON 字符串，如 ['要点1','要点2']（必填）。",
+                    "参与人的 JSON 字符串，如 ['用户1','用户2']（必填）。",
                     True,
                     None,
                 ),
@@ -313,8 +313,7 @@ async def run_dream_agent_once(
                     f"主题={record.theme or '无'}\n"
                     f"关键词={record.keywords or '无'}\n"
                     f"参与者={record.participants or '无'}\n"
-                    f"概括={record.summary or '无'}\n"
-                    f"关键信息={record.key_point or '无'}"
+                    f"概括={record.summary or '无'}"
                 )
 
                 logger.debug(

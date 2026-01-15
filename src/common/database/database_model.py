@@ -368,7 +368,7 @@ class ChatHistory(BaseModel):
     theme = TextField()  # 主题：这段对话的主要内容，一个简短的标题
     keywords = TextField()  # 关键词：这段对话的关键词，JSON格式存储
     summary = TextField()  # 概括：对这段话的平文本概括
-    key_point = TextField(null=True)  # 关键信息：话题中的关键信息点，JSON格式存储
+    # key_point = TextField(null=True)  # 关键信息：话题中的关键信息点，JSON格式存储
     count = IntegerField(default=0)  # 被检索次数
     forget_times = IntegerField(default=0)  # 被遗忘检查的次数
 
