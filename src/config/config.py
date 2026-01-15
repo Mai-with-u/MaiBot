@@ -27,6 +27,7 @@ from .official_configs import (
     MemoryConfig,
     DebugConfig,
     DreamConfig,
+    WebUIConfig,
 )
 from .model_configs import ModelInfo, ModelTaskConfig, APIProvider
 from .config_base import ConfigBase, Field, AttributeData
@@ -118,6 +119,9 @@ class Config(ConfigBase):
 
     lpmm_knowledge: LPMMKnowledgeConfig = Field(default_factory=LPMMKnowledgeConfig)
     """LPMM知识库配置类"""
+
+    webui: WebUIConfig = Field(default_factory=WebUIConfig)
+    """WebUI配置类"""
 
 
 class ModelConfig(ConfigBase):
