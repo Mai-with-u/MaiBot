@@ -46,6 +46,10 @@ def patch_attrdoc_post_init():
 
 config_base_module.logger = logging.getLogger("config_base_test_logger")
 
+class SimpleClass(ConfigBase):
+    a: int = 1
+    b: str = "test"
+
 
 class TestConfigBase:
     # ---------------------------------------------------------
@@ -267,6 +271,18 @@ class TestConfigBase:
                 "不允许嵌套泛型类型",
                 id="listset-validation-nested-generic-inner-list",
             ),
+            pytest.param(
+                List[SimpleClass],
+                False,
+                None,
+                id="listset-validation-list-configbase-element_allow",
+            ),
+            pytest.param(
+                Set[SimpleClass],
+                True,
+                "ConfigBase is not Hashable",
+                id="listset-validation-set-configbase-element_reject",
+            )
         ],
     )
     def test_validate_list_set_type(self, annotation, expect_error, error_fragment):
@@ -319,6 +335,12 @@ class TestConfigBase:
                 "必须指定键和值的类型参数",
                 id="dict-validation-missing-args",
             ),
+            pytest.param(
+                Dict[str, SimpleClass],
+                False,
+                None,
+                id="dict-validation-happy-configbase-value",
+            )
         ],
     )
     def test_validate_dict_type(self, annotation, expect_error, error_fragment):
@@ -370,6 +392,22 @@ class TestConfigBase:
 
         # Assert
         assert "字段'field_y'中使用了 Any 类型注解" in caplog.text
+    
+    def test_discourage_any_usage_suppressed_warning(self, caplog):
+        class Sample(ConfigBase):
+            _validate_any: bool = False
+            suppress_any_warning: bool = True
+
+        instance = Sample()
+
+        # Arrange
+        caplog.set_level(logging.WARNING, logger="config_base_test_logger")
+
+        # Act
+        instance._discourage_any_usage("field_z")
+
+        # Assert
+        assert "字段'field_z'中使用了 Any 类型注解" not in caplog.text
 
     # ---------------------------------------------------------
     # model_post_init 规则覆盖（错误与边界情况）

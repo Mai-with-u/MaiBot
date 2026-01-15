@@ -1,4 +1,4 @@
-raise RuntimeError("System Not Ready")
+# raise RuntimeError("System Not Ready")
 import asyncio
 import hashlib
 import os
@@ -181,14 +181,14 @@ async def graceful_shutdown():  # sourcery skip: use-named-expression
         logger.info("正在优雅关闭麦麦...")
 
         # 关闭 WebUI 服务器
-        try:
-            from src.webui.webui_server import get_webui_server
+        # try:
+        #     from src.webui.webui_server import get_webui_server
 
-            webui_server = get_webui_server()
-            if webui_server and webui_server._server:
-                await webui_server.shutdown()
-        except Exception as e:
-            logger.warning(f"关闭 WebUI 服务器时出错: {e}")
+        #     webui_server = get_webui_server()
+        #     if webui_server and webui_server._server:
+        #         await webui_server.shutdown()
+        # except Exception as e:
+        #     logger.warning(f"关闭 WebUI 服务器时出错: {e}")
 
         from src.plugin_system.core.events_manager import events_manager
         from src.plugin_system.base.component_types import EventType

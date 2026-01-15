@@ -2,15 +2,12 @@
 Version 0.2.2 - 2025-11-05
 
 ## 配置文件设计
-- [x] 使用 `toml` 作为配置文件格式
-- [x] <del>合理使用注释说明当前配置作用</del>（提案）
-- [x] 使用 python 方法作为配置项说明（提案）
-    - [x] 取消`bot_config_template.toml`
-    - [x] 取消`model_config_template.toml`
-- [x] 配置类中的所有原子项目应该只包含以下类型: `str`, `int`, `float`, `bool`, `list`, `dict`, `set`
-    - [ ] 暂时禁止使用 `Union` 类型（尚未支持解析）
-    - [ ] 不建议使用`tuple`类型，使用时会发出警告，考虑使用嵌套`dataclass`替代
-    - [x] 复杂类型使用嵌套配置类实现
+主体利用`pydantic`的`BaseModel`进行配置类设计`ConfigBase`类
+要求每个属性必须具有类型注解，且类型注解满足以下要求:
+- 原子类型仅允许使用: `str`, `int`, `float`, `bool`, 以及基于`ConfigBase`的嵌套配置类
+- 复杂类型允许使用: `list`, `dict`, `set`，但其内部类型必须为原子类型或嵌套配置类，不可使用`list[list[int]]`,`list[dict[str, int]]`等写法
+- 禁止了使用`Union`, `tuple/Tuple`类型
+    - 但是`Optional`仍然允许使用
 ### 移除template的方案提案
 <details>
 <summary>配置项说明的废案</summary>
