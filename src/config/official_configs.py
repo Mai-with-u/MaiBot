@@ -611,3 +611,30 @@ class DreamConfig(ConfigBase):
         if self.first_delay_seconds < 0:
             raise ValueError(f"first_delay_seconds 不能为负数，当前值: {self.first_delay_seconds}")
         return super().model_post_init(context)
+
+class WebUIConfig(ConfigBase):
+    """WebUI配置类"""
+
+    enabled: bool = True
+    """是否启用WebUI"""
+
+    mode: Literal["development", "production"] = "production"
+    """运行模式：development(开发) 或 production(生产)"""
+
+    anti_crawler_mode: Literal["false", "strict", "loose", "basic"] = "basic"
+    """防爬虫模式：false(禁用) / strict(严格) / loose(宽松) / basic(基础-只记录不阻止)"""
+
+    allowed_ips: str = "127.0.0.1"
+    """IP白名单（逗号分隔，支持精确IP、CIDR格式和通配符）"""
+
+    trusted_proxies: str = ""
+    """信任的代理IP列表（逗号分隔），只有来自这些IP的X-Forwarded-For才被信任"""
+
+    trust_xff: bool = False
+    """是否启用X-Forwarded-For代理解析（默认false）"""
+
+    secure_cookie: bool = False
+    """是否启用安全Cookie（仅通过HTTPS传输，默认false）"""
+
+    enable_paragraph_content: bool = False
+    """是否在知识图谱中加载段落完整内容（需要加载embedding store，会占用额外内存）"""
