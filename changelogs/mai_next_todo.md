@@ -26,11 +26,11 @@ version 0.3.0 - 2026-01-11
     - [x] 其他上面两个依赖的函数已经合并到这两个函数中
 
 ### ExpressionConfig
-- [x] 迁移了原来在`ExpressionConfig`中的方法到一个单独的临时类`TempMethodsGroupGenerator`中
+- [x] 迁移了原来在`ExpressionConfig`中的方法到一个单独的临时类`TempMethodsExpression`中
     - [x] get_expression_config_for_chat
     - [x] 其他上面依赖的函数已经合并到这个函数中
 
 ### ModelConfig
-- [x] 迁移了原来在`ModelConfig`中的方法到一个单独的临时类`TempMethodsModelConfig`中
-    - [ ] get_model_info
-    - [ ] get_provider
+- [x] 迁移了原来在`ModelConfig`中的方法到一个单独的临时类`TempMethodsLLMUtils`中
+    - [x] get_model_info
+    - [x] get_provider

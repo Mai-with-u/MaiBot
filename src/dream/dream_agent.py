@@ -558,7 +558,7 @@ async def start_dream_scheduler(
 
             start_ts = time.time()
             # 检查当前时间是否在允许做梦的时间段内
-            if not global_config.dream.is_in_dream_time():
+            if not TempMethodsDream.is_in_dream_time():
                 logger.debug("[dream] 当前时间不在允许做梦的时间段内，跳过本次执行")
             else:
                 try:
@@ -577,3 +577,34 @@ async def start_dream_scheduler(
 
 # 初始化提示词
 init_dream_prompts()
+
+
+class TempMethodsDream:
+    @staticmethod
+    def is_in_dream_time() -> bool:
+        if not global_config.dream.dream_time_ranges:
+            return True
+        now_min = time.localtime()
+        now_total_min = now_min.tm_hour * 60 + now_min.tm_min
+        for time_range in global_config.dream.dream_time_ranges:
+            if parsed := TempMethodsDream._parse_range(time_range):
+                start_min, end_min = parsed
+                if TempMethodsDream._in_range(now_total_min, start_min, end_min):
+                    return True
+        return False
+
+    @staticmethod
+    def _in_range(now_min, start_min, end_min) -> bool:
+        if start_min <= end_min:
+            return start_min <= now_min <= end_min
+        return now_min >= start_min or now_min <= end_min
+
+    @staticmethod
+    def _parse_range(range_str: str) -> Optional[Tuple[int, int]]:
+        try:
+            start_str, end_str = [s.strip() for s in range_str.split("-")]
+            sh, sm = [int(x) for x in start_str.split(":")]
+            eh, em = [int(x) for x in end_str.split(":")]
+            return sh * 60 + sm, eh * 60 + em
+        except Exception:
+            return None

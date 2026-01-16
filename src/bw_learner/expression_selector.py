@@ -11,6 +11,7 @@ from src.common.database.database_model import Expression
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.bw_learner.learner_utils import weighted_sample
 from src.chat.message_receive.chat_stream import get_chat_manager
+from src.chat.utils.common_utils import TempMethodsExpression
 
 logger = get_logger("expression_selector")
 
@@ -59,7 +60,7 @@ class ExpressionSelector:
             bool: 是否允许使用表达
         """
         try:
-            use_expression, _, _ = global_config.expression.get_expression_config_for_chat(chat_id)
+            use_expression, _, _ = TempMethodsExpression.get_expression_config_for_chat(chat_id)
             return use_expression
         except Exception as e:
             logger.error(f"检查表达使用权限失败: {e}")

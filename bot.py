@@ -44,7 +44,11 @@ logger = get_logger("main")
 
 # 定义重启退出码
 RESTART_EXIT_CODE = 42
-
+print("-----------------------------------------")
+print("\n\n\n\n\n")
+print("警告：Dev进入不稳定开发状态，任何插件与WebUI均可能无法正常工作！")
+print("\n\n\n\n\n")
+print("-----------------------------------------")
 
 def run_runner_process():
     """
