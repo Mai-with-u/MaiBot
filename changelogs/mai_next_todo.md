@@ -18,3 +18,19 @@ version 0.3.0 - 2026-01-11
 
 ### BotConfig 设计
 - [ ] 精简了配置项，现在只有Nickname和Alias Name了（预期将判断提及移到Adapter端）
+
+### ChatConfig
+- [x] 迁移了原来在`ChatConfig`中的方法到一个单独的临时类`TempMethodsHFC`中
+    - [x] _parse_range
+    - [x] get_talk_value
+    - [x] 其他上面两个依赖的函数已经合并到这两个函数中
+
+### ExpressionConfig
+- [x] 迁移了原来在`ExpressionConfig`中的方法到一个单独的临时类`TempMethodsGroupGenerator`中
+    - [x] get_expression_config_for_chat
+    - [x] 其他上面依赖的函数已经合并到这个函数中
+
+### ModelConfig
+- [x] 迁移了原来在`ModelConfig`中的方法到一个单独的临时类`TempMethodsModelConfig`中
+    - [ ] get_model_info
+    - [ ] get_provider

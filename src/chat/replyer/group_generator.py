@@ -177,7 +177,11 @@ class DefaultReplyer:
                 # 统一输出所有日志信息，使用try-except确保即使某个步骤出错也能输出
                 try:
                     # 1. 输出回复准备日志
-                    timing_log_str = f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s" if timing_logs or almost_zero_str else "回复准备: 无计时信息"
+                    timing_log_str = (
+                        f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s"
+                        if timing_logs or almost_zero_str
+                        else "回复准备: 无计时信息"
+                    )
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
@@ -236,7 +240,11 @@ class DefaultReplyer:
                 # 即使LLM生成失败，也尝试输出已收集的日志信息
                 try:
                     # 1. 输出回复准备日志
-                    timing_log_str = f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s" if timing_logs or almost_zero_str else "回复准备: 无计时信息"
+                    timing_log_str = (
+                        f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s"
+                        if timing_logs or almost_zero_str
+                        else "回复准备: 无计时信息"
+                    )
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
@@ -859,7 +867,12 @@ class DefaultReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level, unknown_words=unknown_words
+                    chat_talking_prompt_short,
+                    sender,
+                    target,
+                    self.chat_stream,
+                    think_level=think_level,
+                    unknown_words=unknown_words,
                 ),
                 "memory_retrieval",
             ),
@@ -933,7 +946,6 @@ class DefaultReplyer:
         else:
             reply_target_block = ""
 
-
         if message_list_before_now_long:
             latest_msgs = message_list_before_now_long[-int(global_config.chat.max_context_size) :]
             dialogue_prompt = build_readable_messages(
@@ -967,28 +979,33 @@ class DefaultReplyer:
                 # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
                 reply_style = global_config.personality.reply_style
 
-        return await global_prompt_manager.format_prompt(
-            prompt_name,
-            expression_habits_block=expression_habits_block,
-            tool_info_block=tool_info,
-            bot_name=global_config.bot.nickname,
-            knowledge_prompt=prompt_info,
-            # relation_info_block=relation_info,
-            extra_info_block=extra_info_block,
-            jargon_explanation=jargon_explanation,
-            identity=personality_prompt,
-            action_descriptions=actions_info,
-            sender_name=sender,
-            dialogue_prompt=dialogue_prompt,
-            time_block=time_block,
-            reply_target_block=reply_target_block,
-            reply_style=reply_style,
-            keywords_reaction_prompt=keywords_reaction_prompt,
-            moderation_prompt=moderation_prompt_block,
-            memory_retrieval=memory_retrieval,
-            chat_prompt=chat_prompt_block,
-            planner_reasoning=planner_reasoning,
-        ), selected_expressions, timing_logs, almost_zero_str
+        return (
+            await global_prompt_manager.format_prompt(
+                prompt_name,
+                expression_habits_block=expression_habits_block,
+                tool_info_block=tool_info,
+                bot_name=global_config.bot.nickname,
+                knowledge_prompt=prompt_info,
+                # relation_info_block=relation_info,
+                extra_info_block=extra_info_block,
+                jargon_explanation=jargon_explanation,
+                identity=personality_prompt,
+                action_descriptions=actions_info,
+                sender_name=sender,
+                dialogue_prompt=dialogue_prompt,
+                time_block=time_block,
+                reply_target_block=reply_target_block,
+                reply_style=reply_style,
+                keywords_reaction_prompt=keywords_reaction_prompt,
+                moderation_prompt=moderation_prompt_block,
+                memory_retrieval=memory_retrieval,
+                chat_prompt=chat_prompt_block,
+                planner_reasoning=planner_reasoning,
+            ),
+            selected_expressions,
+            timing_logs,
+            almost_zero_str,
+        )
 
     async def build_prompt_rewrite_context(
         self,
@@ -1237,3 +1254,66 @@ def weighted_sample_no_replacement(items, weights, k) -> list:
                 pool.pop(idx)
                 break
     return selected
+
+
+class TempMethodsGroupGenerator:
+    """用于临时存放一些方法的类"""
+
+    @staticmethod
+    def get_expression_config_for_chat(chat_stream_id: Optional[str] = None) -> tuple[bool, bool, bool]:
+        """
+        根据聊天流ID获取表达配置
+
+        Args:
+            chat_stream_id: 聊天流ID，格式为哈希值
+
+        Returns:
+            tuple: (是否使用表达, 是否学习表达, 是否启用jargon学习)
+        """
+        if not global_config.expression.learning_list:
+            return True, True, True
+
+        if chat_stream_id:
+            for config_item in global_config.expression.learning_list:
+                if not config_item.platform and not config_item.item_id:
+                    continue  # 这是全局的
+                stream_id = TempMethodsGroupGenerator._get_stream_id(
+                    config_item.platform,
+                    str(config_item.item_id),
+                    (config_item.rule_type == "group"),
+                )
+                if stream_id is None:
+                    continue
+                if stream_id == chat_stream_id:
+                    continue
+                return config_item.use_expression, config_item.enable_learning, config_item.enable_jargon_learning
+        for config_item in global_config.expression.learning_list:
+            if not config_item.platform and not config_item.item_id:
+                return config_item.use_expression, config_item.enable_learning, config_item.enable_jargon_learning
+
+        return True, True, True
+
+    @staticmethod
+    def _get_stream_id(
+        platform: str,
+        id_str: str,
+        is_group: bool = False,
+    ) -> Optional[str]:
+        """
+        根据平台、ID字符串和是否为群聊生成聊天流ID
+
+        Args:
+            platform: 平台名称
+            id_str: 用户或群组的原始ID字符串
+            is_group: 是否为群聊
+
+        Returns:
+            str: 生成的聊天流ID（哈希值）
+        """
+        try:
+            from src.chat.message_receive.chat_stream import get_chat_manager
+
+            return get_chat_manager().get_stream_id(platform, str(id_str), is_group=is_group)
+        except Exception as e:
+            logger.error(f"生成聊天流ID失败: {e}")
+            return None
