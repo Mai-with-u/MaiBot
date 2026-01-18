@@ -267,7 +267,7 @@ class LLMRequest:
 
     def _select_model(self, exclude_models: Optional[Set[str]] = None) -> Tuple[ModelInfo, APIProvider, BaseClient]:
         """
-        根据配置的策略选择模型：balance（负载均衡）或 random（随机选择）
+        根据配置的策略选择模型：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
         """
         available_models = {
             model: scores
@@ -278,8 +278,17 @@ class LLMRequest:
             raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
 
         strategy = self.model_for_task.selection_strategy.lower()
-        
-        if strategy == "random":
+
+        if strategy == "fallback":
+            # 按顺序降级策略：按照模型列表顺序选择第一个未被排除的模型
+            selected_model_name = None
+            for model_name in self.model_for_task.model_list:
+                if not exclude_models or model_name not in exclude_models:
+                    selected_model_name = model_name
+                    break
+            if not selected_model_name:
+                raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
+        elif strategy == "random":
             # 随机选择策略
             selected_model_name = random.choice(list(available_models.keys()))
         elif strategy == "balance":

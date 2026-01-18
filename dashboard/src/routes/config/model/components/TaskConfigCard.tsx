@@ -143,10 +143,11 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
             <SelectContent>
               <SelectItem value="balance">负载均衡（balance）</SelectItem>
               <SelectItem value="random">随机选择（random）</SelectItem>
+              <SelectItem value="fallback">按顺序降级（fallback）</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            负载均衡：优先选择使用次数少的模型。随机选择：完全随机从模型列表中选择
+            负载均衡：优先选择使用次数少的模型。随机选择：完全随机从模型列表中选择。按顺序降级：按列表顺序选择，第一个不可用时才使用下一个。
           </p>
         </div>
       </div>
