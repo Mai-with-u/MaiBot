@@ -98,7 +98,7 @@ class TaskConfig(ConfigBase):
     """慢请求阈值（秒），超过此值会输出警告日志"""
 
     selection_strategy: str = field(default="balance")
-    """模型选择策略：balance（负载均衡）或 random（随机选择）"""
+    """模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）"""
 
 
 @dataclass

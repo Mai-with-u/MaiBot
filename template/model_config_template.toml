@@ -140,45 +140,45 @@ model_list = ["siliconflow-deepseek-v3.2"] # 使用的模型列表，每个子�
 temperature = 0.2                        # 模型温度，新V3建议0.1-0.3
 max_tokens = 4096                         # 最大输出token数
 slow_threshold = 15.0                     # 慢请求阈值（秒），模型等待回复时间超过此值会输出警告日志
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.tool_use] #功能模型，需要使用支持工具调用的模型，请使用较快的小模型（调用量较大）
 model_list = ["qwen3-30b","qwen3-next-80b"]
 temperature = 0.7
 max_tokens = 1024
 slow_threshold = 10.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.replyer] # 首要回复模型，还用于表达方式学习
 model_list = ["siliconflow-deepseek-v3.2","siliconflow-deepseek-v3.2-think","siliconflow-glm-4.6","siliconflow-glm-4.6-think"]
 temperature = 0.3                        # 模型温度，新V3建议0.1-0.3
 max_tokens = 2048
 slow_threshold = 25.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.planner] #决策：负责决定麦麦该什么时候回复的模型
 model_list = ["siliconflow-deepseek-v3.2"]
 temperature = 0.3
 max_tokens = 800
 slow_threshold = 12.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.vlm] # 图像识别模型
 model_list = ["qwen3-vl-30"]
 max_tokens = 256
 slow_threshold = 15.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.voice] # 语音识别模型
 model_list = ["sensevoice-small"]
 slow_threshold = 12.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 # 嵌入模型
 [model_task_config.embedding]
 model_list = ["bge-m3"]
 slow_threshold = 5.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 # ------------LPMM知识库模型------------
 
@@ -187,11 +187,11 @@ model_list = ["siliconflow-deepseek-v3.2"]
 temperature = 0.2
 max_tokens = 800
 slow_threshold = 20.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
 
 [model_task_config.lpmm_rdf_build] # RDF构建模型
 model_list = ["siliconflow-deepseek-v3.2"]
 temperature = 0.2
 max_tokens = 800
 slow_threshold = 20.0
-selection_strategy = "random"           # 模型选择策略：balance（负载均衡）或 random（随机选择）
+selection_strategy = "random"           # 模型选择策略：balance（负载均衡）、random（随机选择）或 fallback（按顺序降级）
