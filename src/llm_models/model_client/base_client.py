@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import Callable, Any, Optional
 
-from src.config.api_ada_configs import ModelInfo, APIProvider
+from src.config.model_configs import ModelInfo, APIProvider
 from ..payload_content.message import Message
 from ..payload_content.resp_format import RespFormat
 from ..payload_content.tool_option import ToolOption, ToolCall

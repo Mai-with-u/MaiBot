@@ -10,7 +10,7 @@ import traceback
 
 from src.common.logger import get_logger
 from src.config.config import model_config
-from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
+from src.config.model_configs import APIProvider, ModelInfo, TaskConfig
 from .payload_content.message import MessageBuilder, Message
 from .payload_content.resp_format import RespFormat
 from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
@@ -278,7 +278,7 @@ class LLMRequest:
             raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
 
         strategy = self.model_for_task.selection_strategy.lower()
-        
+
         if strategy == "random":
             # 随机选择策略
             selected_model_name = random.choice(list(available_models.keys()))
@@ -295,9 +295,9 @@ class LLMRequest:
                 available_models,
                 key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
             )
-        
-        model_info = model_config.get_model_info(selected_model_name)
-        api_provider = model_config.get_provider(model_info.api_provider)
+
+        model_info = TempMethodsLLMUtils.get_model_info_by_name(selected_model_name)
+        api_provider = TempMethodsLLMUtils.get_provider_by_name(model_info.api_provider)
         force_new_client = self.request_type == "embedding"
         client = client_registry.get_client_class_instance(api_provider, force_new=force_new_client)
         logger.debug(f"选择请求模型: {model_info.name} (策略: {strategy})")
@@ -456,7 +456,9 @@ class LLMRequest:
                 )
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
-        raise ModelAttemptFailed(f"任务 '{self.request_type or '未知任务'}' 的模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
+        raise ModelAttemptFailed(
+            f"任务 '{self.request_type or '未知任务'}' 的模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。"
+        )
 
     async def _execute_request(
         self,
@@ -576,3 +578,43 @@ class LLMRequest:
             original_error_msg = str(e.__cause__)
             return f"\n  底层异常类型: {original_error_type}\n  底层异常信息: {original_error_msg}"
         return ""
+
+
+class TempMethodsLLMUtils:
+    @staticmethod
+    def get_model_info_by_name(model_name: str) -> ModelInfo:
+        """根据模型名称获取模型信息
+
+        Args:
+            model_config: ModelConfig实例
+            model_name: 模型名称
+
+        Returns:
+            ModelInfo: 模型信息
+
+        Raises:
+            ValueError: 未找到指定模型
+        """
+        for model in model_config.models:
+            if model.name == model_name:
+                return model
+        raise ValueError(f"未找到名为 '{model_name}' 的模型")
+
+    @staticmethod
+    def get_provider_by_name(provider_name: str) -> APIProvider:
+        """根据提供商名称获取提供商信息
+
+        Args:
+            model_config: ModelConfig实例
+            provider_name: 提供商名称
+
+        Returns:
+            APIProvider: API提供商信息
+
+        Raises:
+            ValueError: 未找到指定提供商
+        """
+        for provider in model_config.api_providers:
+            if provider.name == provider_name:
+                return provider
+        raise ValueError(f"未找到名为 '{provider_name}' 的API提供商")

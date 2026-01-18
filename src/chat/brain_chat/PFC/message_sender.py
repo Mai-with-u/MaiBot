@@ -1,6 +1,6 @@
 import time
 from typing import Optional
-from src.common.logger import get_module_logger
+from src.common.logger import get_logger
 from src.chat.message_receive.chat_stream import ChatStream
 from src.chat.message_receive.message import Message, MessageSending
 from maim_message import UserInfo, Seg
@@ -11,7 +11,7 @@ from rich.traceback import install
 install(extra_lines=3)
 
 
-logger = get_module_logger("message_sender")
+logger = get_logger("message_sender")
 
 
 class DirectMessageSender:
@@ -40,8 +40,8 @@ class DirectMessageSender:
 
             # 获取麦麦的信息
             bot_user_info = UserInfo(
-                user_id=global_config.BOT_QQ,
-                user_nickname=global_config.BOT_NICKNAME,
+                user_id=global_config.bot.qq_account,
+                user_nickname=global_config.bot.nickname,
                 platform=chat_stream.platform,
             )
 

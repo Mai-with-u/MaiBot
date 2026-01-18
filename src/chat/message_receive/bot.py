@@ -11,6 +11,7 @@ from src.chat.message_receive.chat_stream import get_chat_manager
 from src.chat.message_receive.message import MessageRecv
 from src.chat.message_receive.storage import MessageStorage
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
+from src.chat.brain_chat.PFC.pfc_manager import PFCManager
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.plugin_system.core import component_registry, events_manager, global_announcement_manager
 from src.plugin_system.base import BaseCommand, EventType
@@ -73,6 +74,7 @@ class ChatBot:
         self.bot = None  # bot 实例引用
         self._started = False
         self.heartflow_message_receiver = HeartFCMessageReceiver()  # 新增
+        self.pfc_manager = PFCManager.get_instance()  # PFC管理器
 
     async def _ensure_started(self):
         """确保所有任务已启动"""
@@ -80,6 +82,23 @@ class ChatBot:
             logger.debug("确保ChatBot所有任务已启动")
 
             self._started = True
+
+    async def _create_pfc_chat(self, message: MessageRecv):
+        """创建或获取PFC对话实例
+        
+        Args:
+            message: 消息对象
+        """
+        try:
+            chat_id = str(message.chat_stream.stream_id)
+            private_name = str(message.message_info.user_info.user_nickname)
+            
+            logger.debug(f"[私聊][{private_name}]创建或获取PFC对话: {chat_id}")
+            await self.pfc_manager.get_or_create_conversation(chat_id, private_name)
+            
+        except Exception as e:
+            logger.error(f"创建PFC聊天失败: {e}")
+            logger.error(traceback.format_exc())
 
     async def _process_commands(self, message: MessageRecv):
         # sourcery skip: use-named-expression
@@ -324,7 +343,16 @@ class ChatBot:
                 template_group_name = None
 
             async def preprocess():
-                await self.heartflow_message_receiver.process_message(message)
+                # 根据聊天类型路由消息
+                if group_info is None:
+                    # 私聊消息 -> PFC系统
+                    logger.debug("[私聊]检测到私聊消息，路由到PFC系统")
+                    await MessageStorage.store_message(message, chat)
+                    await self._create_pfc_chat(message)
+                else:
+                    # 群聊消息 -> HeartFlow系统
+                    logger.debug("[群聊]检测到群聊消息，路由到HeartFlow系统")
+                    await self.heartflow_message_receiver.process_message(message)
 
             if template_group_name:
                 async with global_prompt_manager.async_message_scope(template_group_name):

@@ -4,6 +4,7 @@ import datetime
 
 # from .message_storage import MongoDBMessageStorage
 from src.chat.utils.chat_message_builder import build_readable_messages, get_raw_msg_before_timestamp_with_chat
+from src.common.data_models import transform_class_to_dict
 
 # from src.config.config import global_config
 from typing import Dict, Any, Optional
@@ -89,33 +90,53 @@ class Conversation:
                 timestamp=time.time(),
                 limit=30,  # 加载最近30条作为初始上下文，可以调整
             )
-            chat_talking_prompt = await build_readable_messages(
+            chat_talking_prompt = build_readable_messages(
                 initial_messages,
                 replace_bot_name=True,
-                merge_messages=False,
                 timestamp_mode="relative",
                 read_mark=0.0,
             )
             if initial_messages:
+                # 将 DatabaseMessages 列表转换为 PFC 期望的 dict 格式（保持嵌套结构）
+                initial_messages_dict: list[dict] = []
+                for msg in initial_messages:
+                    msg_dict = {
+                        "message_id": msg.message_id,
+                        "time": msg.time,
+                        "chat_id": msg.chat_id,
+                        "processed_plain_text": msg.processed_plain_text,
+                        "display_message": msg.display_message,
+                        "is_mentioned": msg.is_mentioned,
+                        "is_command": msg.is_command,
+                        "user_info": {
+                            "user_id": msg.user_info.user_id if msg.user_info else "",
+                            "user_nickname": msg.user_info.user_nickname if msg.user_info else "",
+                            "user_cardname": msg.user_info.user_cardname if msg.user_info else None,
+                            "platform": msg.user_info.platform if msg.user_info else "",
+                        }
+                    }
+                    initial_messages_dict.append(msg_dict)
+                
                 # 将加载的消息填充到 ObservationInfo 的 chat_history
-                self.observation_info.chat_history = initial_messages
+                self.observation_info.chat_history = initial_messages_dict
                 self.observation_info.chat_history_str = chat_talking_prompt + "\n"
-                self.observation_info.chat_history_count = len(initial_messages)
+                self.observation_info.chat_history_count = len(initial_messages_dict)
 
                 # 更新 ObservationInfo 中的时间戳等信息
-                last_msg = initial_messages[-1]
-                self.observation_info.last_message_time = last_msg.get("time")
-                last_user_info = UserInfo.from_dict(last_msg.get("user_info", {}))
+                last_msg_dict: dict = initial_messages_dict[-1]
+                self.observation_info.last_message_time = last_msg_dict.get("time")
+                last_user_info = UserInfo.from_dict(last_msg_dict.get("user_info", {}))
                 self.observation_info.last_message_sender = last_user_info.user_id
-                self.observation_info.last_message_content = last_msg.get("processed_plain_text", "")
+                self.observation_info.last_message_content = last_msg_dict.get("processed_plain_text", "")
 
                 logger.info(
-                    f"[私聊][{self.private_name}]成功加载 {len(initial_messages)} 条初始聊天记录。最后一条消息时间: {self.observation_info.last_message_time}"
+                    f"[私聊][{self.private_name}]成功加载 {len(initial_messages_dict)} 条初始聊天记录。最后一条消息时间: {self.observation_info.last_message_time}"
                 )
 
                 # 让 ChatObserver 从加载的最后一条消息之后开始同步
-                self.chat_observer.last_message_time = self.observation_info.last_message_time
-                self.chat_observer.last_message_read = last_msg  # 更新 observer 的最后读取记录
+                if self.observation_info.last_message_time:
+                    self.chat_observer.last_message_time = self.observation_info.last_message_time
+                self.chat_observer.last_message_read = last_msg_dict  # 更新 observer 的最后读取记录
             else:
                 logger.info(f"[私聊][{self.private_name}]没有找到初始聊天记录。")
 

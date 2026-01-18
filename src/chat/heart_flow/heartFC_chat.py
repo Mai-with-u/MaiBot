@@ -216,14 +216,14 @@ class HeartFChatting:
                 if (message.is_mentioned or message.is_at) and global_config.chat.mentioned_bot_reply:
                     mentioned_message = message
 
-            # logger.info(f"{self.log_prefix} 当前talk_value: {global_config.chat.get_talk_value(self.stream_id)}")
+            # logger.info(f"{self.log_prefix} 当前talk_value: {TempMethods.get_talk_value(self.stream_id)}")
 
             # *控制频率用
             if mentioned_message:
                 await self._observe(recent_messages_list=recent_messages_list, force_reply_message=mentioned_message)
             elif (
                 random.random()
-                < global_config.chat.get_talk_value(self.stream_id)
+                < TempMethodsHFC.get_talk_value(self.stream_id)
                 * frequency_control_manager.get_or_create_frequency_control(self.stream_id).get_talk_frequency_adjust()
             ):
                 await self._observe(recent_messages_list=recent_messages_list)
@@ -325,7 +325,7 @@ class HeartFChatting:
 
             cycle_timers, thinking_id = self.start_cycle()
             logger.info(
-                f"{self.log_prefix} 开始第{self._cycle_counter}次思考(频率: {global_config.chat.get_talk_value(self.stream_id)})"
+                f"{self.log_prefix} 开始第{self._cycle_counter}次思考(频率: {TempMethodsHFC.get_talk_value(self.stream_id)})"
             )
 
             # 第一步：动作检查
@@ -547,7 +547,9 @@ class HeartFChatting:
             )
             need_reply = new_message_count >= random.randint(2, 3) or time.time() - self.last_read_time > 90
             if need_reply:
-                logger.info(f"{self.log_prefix} 从思考到回复，共有{new_message_count}条新消息，使用引用回复，或者上次回复时间超过90秒")
+                logger.info(
+                    f"{self.log_prefix} 从思考到回复，共有{new_message_count}条新消息，使用引用回复，或者上次回复时间超过90秒"
+                )
 
         reply_text = ""
         first_replied = False
@@ -665,7 +667,7 @@ class HeartFChatting:
                                         cleaned_uw.append(s)
                             if cleaned_uw:
                                 unknown_words = cleaned_uw
-                        
+
                         # 从 Planner 的 action_data 中提取 quote_message 参数
                         qm = action_planner_info.action_data.get("quote")
                         if qm is not None:
@@ -676,7 +678,7 @@ class HeartFChatting:
                                 quote_message = qm.lower() in ("true", "1", "yes")
                             elif isinstance(qm, (int, float)):
                                 quote_message = bool(qm)
-                                
+
                         logger.info(f"{self.log_prefix} {qm}引用回复设置: {quote_message}")
 
                     success, llm_response = await generator_api.generate_reply(
@@ -748,3 +750,64 @@ class HeartFChatting:
                 "loop_info": None,
                 "error": str(e),
             }
+
+
+class TempMethodsHFC:
+    @staticmethod
+    def get_talk_value(chat_id: Optional[str]) -> float:
+        result = global_config.chat.talk_value or 0.0000001
+        if not global_config.chat.enable_talk_value_rules or not global_config.chat.talk_value_rules:
+            return result
+        import time
+
+        local_time = time.localtime()
+        now_min = local_time.tm_hour * 60 + local_time.tm_min
+        # 先处理特定规则
+        if chat_id:
+            for rule in global_config.chat.talk_value_rules:
+                if not rule.platform and not rule.item_id:
+                    continue  # 一起留空表示全局，跳过
+                is_group = rule.rule_type == "group"
+                from src.chat.message_receive.chat_stream import get_chat_manager
+
+                stream_id = get_chat_manager().get_stream_id(rule.platform, str(rule.item_id), is_group)
+                if stream_id != chat_id:
+                    continue
+                parsed_range = TempMethodsHFC._parse_range(rule.time)
+                if not parsed_range:
+                    continue
+                start_min, end_min = parsed_range
+                in_range: bool = False
+                if start_min <= end_min:
+                    in_range = start_min <= now_min <= end_min
+                else:
+                    in_range = now_min >= start_min or now_min <= end_min
+                if in_range:
+                    return rule.value or 0.0
+        # 再处理全局规则
+        for rule in global_config.chat.talk_value_rules:
+            if rule.platform or rule.item_id:
+                continue  # 有指定表示特定，跳过
+            parsed_range = TempMethodsHFC._parse_range(rule.time)
+            if not parsed_range:
+                continue
+            start_min, end_min = parsed_range
+            in_range: bool = False
+            if start_min <= end_min:
+                in_range = start_min <= now_min <= end_min
+            else:
+                in_range = now_min >= start_min or now_min <= end_min
+            if in_range:
+                return rule.value or 0.0000001
+        return result
+
+    @staticmethod
+    def _parse_range(range_str: str) -> Optional[tuple[int, int]]:
+        """解析 "HH:MM-HH:MM" 到 (start_min, end_min)。"""
+        try:
+            start_str, end_str = [s.strip() for s in range_str.split("-")]
+            sh, sm = [int(x) for x in start_str.split(":")]
+            eh, em = [int(x) for x in end_str.split(":")]
+            return sh * 60 + sm, eh * 60 + em
+        except Exception:
+            return None

@@ -5,6 +5,7 @@ from src.common.logger import get_logger
 from src.config.config import global_config
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.chat.utils.chat_message_builder import get_raw_msg_by_timestamp_with_chat_inclusive
+from src.chat.utils.common_utils import TempMethodsExpression
 from src.bw_learner.expression_learner import expression_learner_manager
 from src.bw_learner.jargon_miner import miner_manager
 
@@ -38,7 +39,7 @@ class MessageRecorder:
         """初始化提取参数"""
         # 获取 expression 配置
         _, self.enable_expression_learning, self.enable_jargon_learning = (
-            global_config.expression.get_expression_config_for_chat(self.chat_id)
+            TempMethodsExpression.get_expression_config_for_chat(self.chat_id)
         )
         self.min_messages_for_extraction = 30
         self.min_extraction_interval = 60

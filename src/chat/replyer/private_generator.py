@@ -18,6 +18,7 @@ from src.chat.message_receive.uni_message_sender import UniversalMessageSender
 from src.chat.utils.timer_calculator import Timer  # <--- Import Timer
 from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.chat.utils.prompt_builder import global_prompt_manager
+from src.chat.utils.common_utils import TempMethodsExpression
 from src.chat.utils.chat_message_builder import (
     build_readable_messages,
     get_raw_msg_before_timestamp_with_chat,
@@ -260,7 +261,7 @@ class PrivateReplyer:
             str: 表达习惯信息字符串
         """
         # 检查是否允许在此聊天流中使用表达
-        use_expression, _, _ = global_config.expression.get_expression_config_for_chat(self.chat_stream.stream_id)
+        use_expression, _, _ = TempMethodsExpression.get_expression_config_for_chat(self.chat_stream.stream_id)
         if not use_expression:
             return "", []
         style_habits = []

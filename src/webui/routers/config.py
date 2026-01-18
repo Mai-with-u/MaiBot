@@ -32,7 +32,7 @@ from src.config.official_configs import (
     DebugConfig,
     VoiceConfig,
 )
-from src.config.api_ada_configs import (
+from src.config.model_configs import (
     ModelTaskConfig,
     ModelInfo,
     APIProvider,
