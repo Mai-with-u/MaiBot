@@ -2,12 +2,13 @@
 
 import json
 from typing import Optional, List, Annotated
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Header , Cookie
 from pydantic import BaseModel, Field
 from peewee import fn
 
 from src.common.logger import get_logger
 from src.common.database.database_model import Jargon, ChatStreams
+from src.webui.core import get_token_manager, verify_auth_token_from_cookie_or_header
 
 logger = get_logger("webui.jargon")
 
@@ -177,6 +178,12 @@ class ChatListResponse(BaseModel):
     success: bool = True
     data: List[ChatInfoResponse]
 
+def verify_auth_token(
+    maibot_session: Optional[str] = None,
+    authorization: Optional[str] = None,
+) -> bool:
+    """验证认证 Token，支持 Cookie 和 Header"""
+    return verify_auth_token_from_cookie_or_header(maibot_session, authorization)
 
 # ==================== 工具函数 ====================
 
@@ -216,9 +223,13 @@ async def get_jargon_list(
     chat_id: Optional[str] = Query(None, description="按聊天ID筛选"),
     is_jargon: Optional[bool] = Query(None, description="按是否是黑话筛选"),
     is_global: Optional[bool] = Query(None, description="按是否全局筛选"),
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
 ):
     """获取黑话列表"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         # 构建查询
         query = Jargon.select()
 
@@ -273,9 +284,14 @@ async def get_jargon_list(
 
 
 @router.get("/chats", response_model=ChatListResponse)
-async def get_chat_list():
+async def get_chat_list(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """获取所有有黑话记录的聊天列表"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         # 获取所有不同的 chat_id
         chat_ids = Jargon.select(Jargon.chat_id).distinct().where(Jargon.chat_id.is_null(False))
 
@@ -320,9 +336,14 @@ async def get_chat_list():
 
 
 @router.get("/stats/summary", response_model=JargonStatsResponse)
-async def get_jargon_stats():
+async def get_jargon_stats(
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """获取黑话统计数据"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         # 总数量
         total = Jargon.select().count()
 
@@ -373,9 +394,15 @@ async def get_jargon_stats():
 
 
 @router.get("/{jargon_id}", response_model=JargonDetailResponse)
-async def get_jargon_detail(jargon_id: int):
+async def get_jargon_detail(
+    jargon_id: int,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+    ):
     """获取黑话详情"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         jargon = Jargon.get_or_none(Jargon.id == jargon_id)
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
@@ -390,9 +417,15 @@ async def get_jargon_detail(jargon_id: int):
 
 
 @router.post("/", response_model=JargonCreateResponse)
-async def create_jargon(request: JargonCreateRequest):
+async def create_jargon(
+    request: JargonCreateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """创建黑话"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         # 检查是否已存在相同内容的黑话
         existing = Jargon.get_or_none((Jargon.content == request.content) & (Jargon.chat_id == request.chat_id))
         if existing:
@@ -426,9 +459,16 @@ async def create_jargon(request: JargonCreateRequest):
 
 
 @router.patch("/{jargon_id}", response_model=JargonUpdateResponse)
-async def update_jargon(jargon_id: int, request: JargonUpdateRequest):
+async def update_jargon(
+    jargon_id: int,
+    request: JargonUpdateRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """更新黑话（增量更新）"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         jargon = Jargon.get_or_none(Jargon.id == jargon_id)
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
@@ -457,9 +497,14 @@ async def update_jargon(jargon_id: int, request: JargonUpdateRequest):
 
 
 @router.delete("/{jargon_id}", response_model=JargonDeleteResponse)
-async def delete_jargon(jargon_id: int):
+async def delete_jargon(jargon_id: int,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """删除黑话"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         jargon = Jargon.get_or_none(Jargon.id == jargon_id)
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
@@ -483,9 +528,15 @@ async def delete_jargon(jargon_id: int):
 
 
 @router.post("/batch/delete", response_model=JargonDeleteResponse)
-async def batch_delete_jargons(request: BatchDeleteRequest):
+async def batch_delete_jargons(
+    request: BatchDeleteRequest,
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """批量删除黑话"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         if not request.ids:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
@@ -510,9 +561,13 @@ async def batch_delete_jargons(request: BatchDeleteRequest):
 async def batch_set_jargon_status(
     ids: Annotated[List[int], Query(description="黑话ID列表")],
     is_jargon: Annotated[bool, Query(description="是否是黑话")],
+    maibot_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
 ):
     """批量设置黑话状态"""
     try:
+        verify_auth_token(maibot_session, authorization)
+
         if not ids:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
