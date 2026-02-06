@@ -20,7 +20,7 @@ from src.chat.utils.chat_message_builder import (
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
 )
-from src.chat.utils.utils import get_chat_type_and_target_info
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.plugin_system.base.component_types import ActionInfo, ComponentType, ActionActivationType
@@ -280,6 +280,8 @@ class BrainPlanner:
             show_actions=True,
         )
 
+        previous_obs_time_mark = self.last_obs_time_mark
+
         message_list_before_now_short = message_list_before_now[-int(global_config.chat.max_context_size * 0.3) :]
         chat_content_block_short, message_id_list_short = build_readable_messages_with_id(
             messages=message_list_before_now_short,
@@ -321,6 +323,21 @@ class BrainPlanner:
             available_actions=available_actions,
             loop_start_time=loop_start_time,
         )
+
+        has_new_user_message = any(
+            (msg.time or 0.0) > previous_obs_time_mark
+            and not is_bot_self(msg.user_info.platform or "", str(msg.user_info.user_id))
+            for msg in message_list_before_now
+        )
+        if not has_new_user_message:
+            non_side_effect_actions = {"reply", "wait", "wait_time", "listening", "complete_talk", "no_reply"}
+            side_effect_actions = [a.action_type for a in actions if a.action_type not in non_side_effect_actions]
+            if side_effect_actions:
+                logger.info(
+                    f"{self.log_prefix}检测到无新用户消息，跳过副作用动作: {' '.join(side_effect_actions)}"
+                )
+                actions = self._create_complete_talk("没有新的用户消息，跳过副作用动作", available_actions)
+                reasoning = f"{reasoning}；检测到无新用户消息，已跳过副作用动作"
 
         # 记录和展示计划日志
         logger.info(
