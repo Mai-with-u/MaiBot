@@ -104,6 +104,7 @@ class BrainChatting:
 
         # side-effect 动作幂等缓存，避免同一触发消息在短时间内重复执行。
         self._recent_side_effect_actions: Dict[str, float] = {}
+        self._side_effect_dedupe_window_sec = 20.0
 
     async def start(self):
         """检查是否需要启动主循环，如果未激活则启动。"""
@@ -186,7 +187,7 @@ class BrainChatting:
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
     def _cleanup_recent_side_effect_actions(self, now: float) -> None:
-        dedupe_window_sec = 120.0
+        dedupe_window_sec = self._side_effect_dedupe_window_sec
         expired_keys = [
             key
             for key, ts in self._recent_side_effect_actions.items()
@@ -196,7 +197,7 @@ class BrainChatting:
             del self._recent_side_effect_actions[key]
 
     def _is_duplicate_side_effect_action(self, key: str, now: float) -> bool:
-        dedupe_window_sec = 120.0
+        dedupe_window_sec = self._side_effect_dedupe_window_sec
         last_ts = self._recent_side_effect_actions.get(key)
         return last_ts is not None and now - last_ts <= dedupe_window_sec
 
