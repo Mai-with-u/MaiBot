@@ -162,7 +162,6 @@ class BrainChatting:
         )
 
     async def _loopbody(self):  # sourcery skip: hoist-if-from-if
-        # 获取最新消息（用于上下文，但不影响是否调用 observe）
         recent_messages_list = message_api.get_messages_by_time_in_chat(
             chat_id=self.stream_id,
             start_time=self.last_read_time,
@@ -174,20 +173,20 @@ class BrainChatting:
             filter_intercept_message_level=1,
         )
 
-        # 如果有新消息，更新 last_read_time 并触发事件以打断正在进行的 wait
-        if len(recent_messages_list) >= 1:
-            self.last_read_time = time.time()
-            self._new_message_event.set()  # 触发新消息事件，打断 wait
+        # 没有新增用户消息时，直接等待下一轮，避免对旧上下文反复规划。
+        if not recent_messages_list:
+            await asyncio.sleep(0.2)
+            return True
 
-        # 总是执行一次思考迭代（不管有没有新消息）
-        # wait 动作会在其内部等待，不需要在这里处理
+        self.last_read_time = time.time()
+        self._new_message_event.set()  # 触发新消息事件，打断正在进行的 wait
+
         should_continue = await self._observe(recent_messages_list=recent_messages_list)
 
         if not should_continue:
             # 选择了 complete_talk，返回 False 表示需要等待新消息
             return False
 
-        # 继续下一次迭代（除非选择了 complete_talk）
         # 短暂等待后再继续，避免过于频繁的循环
         await asyncio.sleep(0.1)
 
