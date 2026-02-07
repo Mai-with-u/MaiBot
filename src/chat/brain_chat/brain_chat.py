@@ -625,7 +625,7 @@ class BrainChatting:
                     self._cleanup_recent_side_effect_actions(now)
                     if self._is_duplicate_side_effect_action(side_effect_action_key, now):
                         logger.info(
-                            f"{self.log_prefix} 跳过重复副作用动作: {action_planner_info.action_type}"
+                            f"{self.log_prefix} 跳过重复动作: {action_planner_info.action_type}"
                         )
                         return {
                             "action_type": action_planner_info.action_type,
