@@ -104,7 +104,7 @@ class BrainChatting:
 
         # side-effect 动作幂等缓存，避免同一触发消息在短时间内重复执行。
         self._recent_side_effect_actions: Dict[str, float] = {}
-        self._side_effect_dedupe_window_sec = 20.0
+        self._side_effect_dedupe_window_sec = 100.0
 
     async def start(self):
         """检查是否需要启动主循环，如果未激活则启动。"""
