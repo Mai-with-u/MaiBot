@@ -104,7 +104,7 @@ class BrainChatting:
 
         # side-effect 动作幂等缓存，避免同一触发消息在短时间内重复执行。
         self._recent_side_effect_actions: Dict[str, float] = {}
-        self._side_effect_dedupe_window_sec = 100.0
+        self._side_effect_dedupe_window_sec = 10.0
 
     async def start(self):
         """检查是否需要启动主循环，如果未激活则启动。"""
@@ -213,13 +213,11 @@ class BrainChatting:
             filter_intercept_message_level=1,
         )
 
-        # 没有新增用户消息时，直接等待下一轮，避免对旧上下文反复规划。
-        if not recent_messages_list:
-            await asyncio.sleep(0.2)
-            return True
-
-        self.last_read_time = time.time()
-        self._new_message_event.set()  # 触发新消息事件，打断正在进行的 wait
+        # 仅在有新消息时更新读取时间并触发事件。
+        # 无新消息时仍允许继续思考，具体动作由 Planner 限制为 reply/wait。
+        if recent_messages_list:
+            self.last_read_time = time.time()
+            self._new_message_event.set()  # 触发新消息事件，打断正在进行的 wait
 
         should_continue = await self._observe(recent_messages_list=recent_messages_list)
 

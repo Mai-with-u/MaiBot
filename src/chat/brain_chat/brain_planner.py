@@ -330,14 +330,16 @@ class BrainPlanner:
             for msg in message_list_before_now
         )
         if not has_new_user_message:
-            non_side_effect_actions = {"reply", "wait", "wait_time", "listening", "complete_talk", "no_reply"}
-            side_effect_actions = [a.action_type for a in actions if a.action_type not in non_side_effect_actions]
-            if side_effect_actions:
+            actions, dropped_actions = self._restrict_actions_without_new_user_message(
+                actions=actions,
+                available_actions=available_actions,
+                message_id_list=message_id_list,
+            )
+            if dropped_actions:
                 logger.info(
-                    f"{self.log_prefix}检测到无新用户消息，跳过副作用动作: {' '.join(side_effect_actions)}"
+                    f"{self.log_prefix}检测到无新用户消息，仅保留 reply/wait/complete_talk，移除动作: {' '.join(dropped_actions)}"
                 )
-                actions = self._create_complete_talk("没有新的用户消息，跳过副作用动作", available_actions)
-                reasoning = f"{reasoning}；检测到无新用户消息，已跳过副作用动作"
+                reasoning = f"{reasoning}；检测到无新用户消息，仅保留 reply/wait/complete_talk"
 
         # 记录和展示计划日志
         logger.info(
@@ -610,6 +612,44 @@ class BrainPlanner:
                 available_actions=available_actions,
             )
         ]
+
+    def _restrict_actions_without_new_user_message(
+        self,
+        actions: List[ActionPlannerInfo],
+        available_actions: Dict[str, ActionInfo],
+        message_id_list: List[Tuple[str, "DatabaseMessages"]],
+    ) -> Tuple[List[ActionPlannerInfo], List[str]]:
+        """无新用户消息时，仅保留 reply/wait/complete_talk。"""
+        allowed_actions: List[ActionPlannerInfo] = []
+        dropped_actions: List[str] = []
+
+        for action in actions:
+            if action.action_type in {"reply", "complete_talk"}:
+                allowed_actions.append(action)
+                continue
+
+            if action.action_type in {"wait", "listening", "wait_time"}:
+                action.action_type = "wait"
+                action.action_data = action.action_data or {}
+                action.action_data.setdefault("wait_seconds", 5)
+                allowed_actions.append(action)
+                continue
+
+            dropped_actions.append(action.action_type)
+
+        if allowed_actions:
+            return allowed_actions, dropped_actions
+
+        target_message = message_id_list[-1][1] if message_id_list else None
+        fallback_wait = ActionPlannerInfo(
+            action_type="wait",
+            reasoning="没有新的用户消息，进入等待",
+            action_data={"wait_seconds": 5},
+            action_message=target_message,
+            available_actions=available_actions,
+        )
+
+        return [fallback_wait], dropped_actions
 
     def add_plan_log(self, reasoning: str, actions: List[ActionPlannerInfo]):
         """添加计划日志"""
