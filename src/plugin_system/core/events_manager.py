@@ -325,9 +325,10 @@ class EventsManager:
 
             task_name = f"{handler.plugin_name}-{handler.handler_name}"
             task.set_name(task_name)
-            task.add_done_callback(lambda t: self._task_done_callback(t, event_type))
+            handler_name = handler.handler_name
+            task.add_done_callback(lambda t: self._task_done_callback(t, event_type, handler_name))
 
-            self._handler_tasks.setdefault(handler.handler_name, []).append(task)
+            self._handler_tasks.setdefault(handler_name, []).append(task)
         except Exception as e:
             logger.error(f"创建事件处理器任务 {handler.handler_name} 时发生异常: {e}", exc_info=True)
 
@@ -382,6 +383,7 @@ class EventsManager:
         self,
         task: asyncio.Task[Tuple[bool, bool, str | None, CustomEventHandlerResult | None, MaiMessages | None]],
         event_type: EventType | str,
+        handler_name: str,
     ):
         """任务完成回调"""
         task_name = task.get_name() or "Unknown Task"
@@ -406,7 +408,10 @@ class EventsManager:
             logger.error(f"事件处理任务 {task_name} 发生异常: {e}")
         finally:
             with contextlib.suppress(ValueError, KeyError):
-                self._handler_tasks[task_name].remove(task)
+                tasks = self._handler_tasks[handler_name]
+                tasks.remove(task)
+                if not tasks:
+                    del self._handler_tasks[handler_name]
 
 
 events_manager = EventsManager()
