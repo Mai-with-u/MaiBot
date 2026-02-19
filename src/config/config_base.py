@@ -77,6 +77,8 @@ class ConfigBase:
             # 检查提供的value是否为list
             if not isinstance(value, list):
                 raise TypeError(f"Expected an list for {field_type.__name__}, got {type(value).__name__}")
+            if field_type_args == () and field_origin_type:
+                return field_origin_type(value)
 
             if field_origin_type is list:
                 # 如果列表元素类型是ConfigBase的子类，则对每个元素调用from_dict
@@ -90,8 +92,18 @@ class ConfigBase:
             elif field_origin_type is set:
                 return {cls._convert_field(item, field_type_args[0]) for item in value}
             elif field_origin_type is tuple:
+                # fix: support Tuple[int, ...]
+                if len(field_type_args) == 2 and field_type_args[1] is Ellipsis:
+                    return tuple(cls._convert_field(item, field_type_args[0]) for item in value)
+                
+                elif Ellipsis in field_type_args:
+                    raise TypeError(
+                        f"Invalid tuple annotation: {field_type}. "
+                        "Only tuple[T, ...] (variadic homogeneous) or tuple[T1, T2, ...] (fixed length) is supported."
+                    )
+                
                 # 检查提供的value长度是否与类型参数一致
-                if len(value) != len(field_type_args):
+                elif len(value) != len(field_type_args):
                     raise TypeError(
                         f"Expected {len(field_type_args)} items for {field_type.__name__}, got {len(value)}"
                     )
@@ -157,6 +169,10 @@ class ConfigBase:
 
         if field_type is Any or isinstance(value, field_type):
             return value
+        
+        # fix: bool("false") => True
+        if field_type is bool and type(value) is str and value.lower() in ("f", "false", "0"):
+            return False
 
         # 其他类型，尝试直接转换
         try:
