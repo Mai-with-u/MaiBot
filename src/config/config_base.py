@@ -78,7 +78,7 @@ class ConfigBase:
             if not isinstance(value, list):
                 raise TypeError(f"Expected an list for {field_type.__name__}, got {type(value).__name__}")
             if field_type_args == () and field_origin_type:
-                return field_origin_type(value)
+                raise TypeError(f"Unsupported type: DO NOT use raw type '{field_origin_type.__name__}'. Please use parameterized type like '{field_origin_type.__name__}[T]' instead.")
 
             if field_origin_type is list:
                 # 如果列表元素类型是ConfigBase的子类，则对每个元素调用from_dict
