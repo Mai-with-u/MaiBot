@@ -27,5 +27,5 @@ toml>=0.10.2
 tomlkit>=0.13.3
 urllib3>=2.5.0
 uvicorn>=0.35.0
-msgpack
-zstandard
+msgpack>=1.1.2
+zstandard>=0.25.0
