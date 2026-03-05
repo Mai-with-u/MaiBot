@@ -114,9 +114,11 @@ class EmbeddingStore:
         
         self.dirty = False  # 标记是否有新增数据需要重建索引
 
+        # 多线程配置参数验证和设置
         self.max_workers = max(MIN_WORKERS, min(MAX_WORKERS, max_workers))
         self.chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, chunk_size))
 
+        # 如果配置值被调整，记录日志
         if self.max_workers != max_workers:
             logger.warning(
                 f"max_workers 已从 {max_workers} 调整为 {self.max_workers} (范围: {MIN_WORKERS}-{MAX_WORKERS})"
@@ -131,8 +133,6 @@ class EmbeddingStore:
         self._cache: OrderedDict[str, EmbeddingStoreItem] = OrderedDict()
         self._cache_hits = 0
         self._cache_misses = 0
-        
-        # 磁盘数据索引（hash -> 行号），用于快速定位
         self._disk_index: Dict[str, int] = {}
         self._disk_data_frame = None
         
