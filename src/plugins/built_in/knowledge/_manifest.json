@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "name": "LPMM 知识库插件 (Knowledge Search)",
+  "version": "2.0.0",
+  "description": "从 LPMM 知识库中搜索相关信息，供 LLM 工具调用",
+  "author": {
+    "name": "MaiBot团队",
+    "url": "https://github.com/MaiM-with-u"
+  },
+  "license": "GPL-v3.0-or-later",
+  "host_application": {
+    "min_version": "1.0.0"
+  },
+  "homepage_url": "https://github.com/MaiM-with-u/maibot",
+  "repository_url": "https://github.com/MaiM-with-u/maibot",
+  "keywords": ["knowledge", "lpmm", "search", "tool", "built-in"],
+  "categories": ["Knowledge", "Tools"],
+  "default_locale": "zh-CN",
+  "plugin_info": {
+    "is_built_in": true,
+    "plugin_type": "tool_provider",
+    "components": [
+      {
+        "type": "tool",
+        "name": "lpmm_search_knowledge",
+        "description": "从知识库中搜索相关信息"
+      }
+    ]
+  },
+  "capabilities": [
+    "knowledge.search"
+  ]
+}

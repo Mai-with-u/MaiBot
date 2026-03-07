@@ -167,4 +167,3 @@ def legacy_servers_list_to_claude_config(servers_list_json: str) -> str:
     if not mcp_servers:
         return ""
     return json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False, indent=2)
-

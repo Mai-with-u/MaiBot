@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "BetterEmoji",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "更好的表情包管理插件",
   "author": {
     "name": "SengokuCola",
@@ -9,7 +9,7 @@
   },
   "license": "GPL-v3.0-or-later",
   "host_application": {
-    "min_version": "0.10.4"
+    "min_version": "1.0.0"
   },
   "homepage_url": "https://github.com/SengokuCola/BetterEmoji",
   "repository_url": "https://github.com/SengokuCola/BetterEmoji",
@@ -19,46 +19,49 @@
     "plugin"
   ],
   "categories": [
-    "Examples",
-    "Tutorial"
+    "Emoji",
+    "Management"
   ],
   "default_locale": "zh-CN",
   "locales_path": "_locales",
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "emoji_manage",
+    "capabilities": [
+      "emoji.get_random",
+      "emoji.get_count",
+      "emoji.get_info",
+      "emoji.get_all",
+      "emoji.register_emoji",
+      "emoji.delete_emoji",
+      "send.text",
+      "send.forward"
+    ],
     "components": [
       {
-        "type": "action",
-        "name": "hello_greeting",
-        "description": "向用户发送问候消息"
-      },
-      {
-        "type": "action",
-        "name": "bye_greeting",
-        "description": "向用户发送告别消息",
-        "activation_modes": [
-          "keyword"
-        ],
-        "keywords": [
-          "再见",
-          "bye",
-          "88",
-          "拜拜"
-        ]
+        "type": "command",
+        "name": "add_emoji",
+        "description": "添加表情包",
+        "pattern": "/emoji add"
       },
       {
         "type": "command",
-        "name": "time",
-        "description": "查询当前时间",
-        "pattern": "/time"
+        "name": "emoji_list",
+        "description": "列表表情包",
+        "pattern": "/emoji list"
+      },
+      {
+        "type": "command",
+        "name": "delete_emoji",
+        "description": "删除表情包",
+        "pattern": "/emoji delete"
+      },
+      {
+        "type": "command",
+        "name": "random_emojis",
+        "description": "发送多张随机表情包",
+        "pattern": "/random_emojis"
       }
-    ],
-    "features": [
-      "问候和告别功能",
-      "时间查询命令",
-      "配置文件示例",
-      "新手教程代码"
     ]
   },
   "id": "SengokuCola.BetterEmoji"

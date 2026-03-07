@@ -22,7 +22,7 @@ from openai.types.chat import (
 )
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 
-from src.config.api_ada_configs import ModelInfo, APIProvider
+from src.config.model_configs import ModelInfo, APIProvider
 from src.common.logger import get_logger
 from .base_client import APIResponse, UsageRecord, BaseClient, client_registry
 from ..exceptions import (
@@ -33,10 +33,32 @@ from ..exceptions import (
     EmptyResponseException,
 )
 from ..payload_content.message import Message, RoleType
-from ..payload_content.resp_format import RespFormat
+from ..payload_content.resp_format import RespFormat, RespFormatType
 from ..payload_content.tool_option import ToolOption, ToolParam, ToolCall
 
 logger = get_logger("llm_models")
+
+
+def _convert_response_format(response_format: RespFormat | None) -> Any:
+    """
+    转换响应格式 - 将内部RespFormat转换为OpenAI API所需格式
+    """
+    if response_format is None:
+        return NOT_GIVEN
+
+    if response_format.format_type == RespFormatType.TEXT:
+        return NOT_GIVEN
+
+    if response_format.format_type == RespFormatType.JSON_OBJ:
+        return {"type": "json_object"}
+
+    if response_format.format_type == RespFormatType.JSON_SCHEMA:
+        return {
+            "type": "json_schema",
+            "json_schema": response_format.schema,
+        }
+
+    return NOT_GIVEN
 
 
 def _convert_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
@@ -458,8 +480,8 @@ def _default_normal_response_parser(
                 if not isinstance(arguments, dict):
                     # 此时为了调试方便，建议打印出 arguments 的类型
                     raise RespParseException(
-                        resp, 
-                        f"响应解析失败，工具调用参数无法解析为字典类型 type={type(arguments)} arguments={arguments}"
+                        resp,
+                        f"响应解析失败，工具调用参数无法解析为字典类型 type={type(arguments)} arguments={arguments}",
                     )
                 api_response.tool_calls.append(ToolCall(call.id, call.function.name, arguments))
             except json.JSONDecodeError as e:
@@ -553,6 +575,7 @@ class OpenaiClient(BaseClient):
         messages: Iterable[ChatCompletionMessageParam] = _convert_messages(message_list)
         # 将tool_options转换为OpenAI API所需的格式
         tools: Iterable[ChatCompletionToolParam] = _convert_tool_options(tool_options) if tool_options else NOT_GIVEN  # type: ignore
+        openai_response_format = _convert_response_format(response_format)
 
         try:
             if model_info.force_stream_mode:
@@ -564,7 +587,7 @@ class OpenaiClient(BaseClient):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=True,
-                        response_format=NOT_GIVEN,
+                        response_format=openai_response_format,
                         extra_body=extra_params,
                     )
                 )
@@ -587,7 +610,7 @@ class OpenaiClient(BaseClient):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=False,
-                        response_format=NOT_GIVEN,
+                        response_format=openai_response_format,
                         extra_body=extra_params,
                     )
                 )

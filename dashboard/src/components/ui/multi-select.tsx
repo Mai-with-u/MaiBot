@@ -79,7 +79,7 @@ function SortableBadge({
   }
 
   // 处理删除按钮点击，阻止事件冒泡和默认行为
-  const handleRemoveClick = (e: React.MouseEvent) => {
+  const handleRemoveClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.preventDefault()
     e.stopPropagation()
     onRemove(value)
@@ -121,7 +121,7 @@ function SortableBadge({
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
-              handleRemoveClick(e as any)
+              handleRemoveClick(e)
             }
           }}
         >

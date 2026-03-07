@@ -1,50 +1,178 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+
 import { updateBotConfigSection } from '@/lib/config-api'
 import type { ConfigSectionName } from '../types'
 
-export interface UseAutoSaveOptions {
-  /** 防抖延迟时间（毫秒），默认 2000ms */
+/**
+ * Self-contained auto-save hook configuration
+ * @template T The type of data being saved
+ */
+export interface UseAutoSaveConfig<T> {
+  /** Function to save data, should return a promise */
+  saveFn: (data: T) => Promise<void>
+  /** Debounce delay in milliseconds, default 2000ms */
   debounceMs?: number
-  /** 保存成功回调 */
+  /** Callback when save succeeds */
   onSaveSuccess?: () => void
-  /** 保存失败回调 */
+  /** Callback when save fails */
+  onSaveError?: (error: Error) => void
+}
+
+/**
+ * Self-contained auto-save hook return type (generic)
+ */
+export interface UseAutoSaveReturnGeneric<T> {
+  /** Trigger auto-save (debounced) */
+  save: (data: T) => void
+  /** Save immediately without debounce */
+  saveNow: (data: T) => Promise<void>
+  /** Cancel pending auto-save */
+  cancel: () => void
+  /** Whether currently saving */
+  isSaving: boolean
+  /** Error from last save attempt, or null */
+  error: Error | null
+}
+
+/**
+ * Self-contained generic auto-save hook
+ *
+ * Manages debouncing, pending state, and error handling internally.
+ * No external state dependencies required.
+ *
+ * @example
+ * ```tsx
+ * const { save, isSaving } = useAutoSaveGeneric<MyConfig>({
+ *   saveFn: async (config) => {
+ *     await updateMyConfig(config)
+ *   },
+ *   debounceMs: 2000,
+ * })
+ *
+ * useEffect(() => {
+ *   if (config) {
+ *     save(config)
+ *   }
+ * }, [config, save])
+ * ```
+ */
+export function useAutoSaveGeneric<T>(
+  config: UseAutoSaveConfig<T>
+): UseAutoSaveReturnGeneric<T> {
+  const { saveFn, debounceMs = 2000, onSaveSuccess, onSaveError } = config
+
+  // Internal state management
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Perform the actual save
+  const performSave = useCallback(
+    async (data: T) => {
+      try {
+        setIsSaving(true)
+        setError(null)
+        await saveFn(data)
+        onSaveSuccess?.()
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        setError(error)
+        console.error('Auto-save failed:', error)
+        onSaveError?.(error)
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [saveFn, onSaveSuccess, onSaveError]
+  )
+
+  // Debounced save
+  const save = useCallback(
+    (data: T) => {
+      // Clear existing timer
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+      }
+      // Set new timer
+      timerRef.current = setTimeout(() => {
+        performSave(data)
+      }, debounceMs)
+    },
+    [performSave, debounceMs]
+  )
+
+  // Save immediately
+  const saveNow = useCallback(
+    async (data: T) => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      await performSave(data)
+    },
+    [performSave]
+  )
+
+  // Cancel pending save
+  const cancel = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+      }
+    }
+  }, [])
+
+  return {
+    save,
+    saveNow,
+    cancel,
+    isSaving,
+    error,
+  }
+}
+
+/**
+ * Legacy wrapper for backward compatibility with old API
+ * Maintains external state for existing code
+ */
+export interface UseAutoSaveOptions {
+  /** Debounce delay in milliseconds, default 2000ms */
+  debounceMs?: number
+  /** Save success callback */
+  onSaveSuccess?: () => void
+  /** Save error callback */
   onSaveError?: (error: Error) => void
 }
 
 export interface UseAutoSaveReturn {
-  /** 触发自动保存 */
+  /** Trigger auto-save */
   triggerAutoSave: (sectionName: ConfigSectionName, sectionData: unknown) => void
-  /** 立即保存（不防抖） */
+  /** Save immediately */
   saveNow: (sectionName: ConfigSectionName, sectionData: unknown) => Promise<void>
-  /** 取消待处理的自动保存 */
+  /** Cancel pending auto-save */
   cancelPendingAutoSave: () => void
 }
 
 export interface AutoSaveState {
-  /** 是否正在保存中 */
+  /** Whether currently saving */
   isAutoSaving: boolean
-  /** 是否有未保存的更改 */
+  /** Whether has unsaved changes */
   hasUnsavedChanges: boolean
 }
 
 /**
- * 自动保存 hook
- * 
- * 用于监听配置变化并自动防抖保存到后端
- * 
- * @example
- * ```tsx
- * const { triggerAutoSave } = useAutoSave({
- *   isInitialLoad,
- *   setAutoSaving,
- *   setHasUnsavedChanges,
- * })
- * 
- * // 配置变化时触发
- * useEffect(() => {
- *   if (config) triggerAutoSave('bot', config)
- * }, [config])
- * ```
+ * Legacy auto-save hook for bot config
+ * Maintains backward compatibility with external state management
+ *
+ * @deprecated Use the generic useAutoSaveGeneric<T> instead
  */
 export function useAutoSave(
   isInitialLoad: boolean,
@@ -55,12 +183,15 @@ export function useAutoSave(
   const { debounceMs = 2000, onSaveSuccess, onSaveError } = options
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 执行保存操作
+  // Execute save operation
   const saveSection = useCallback(
     async (sectionName: ConfigSectionName, sectionData: unknown) => {
       try {
         setAutoSaving(true)
-        await updateBotConfigSection(sectionName, sectionData)
+        const result = await updateBotConfigSection(sectionName, sectionData)
+        if (!result.success) {
+          throw new Error(result.error)
+        }
         setHasUnsavedChanges(false)
         onSaveSuccess?.()
       } catch (error) {
@@ -74,7 +205,7 @@ export function useAutoSave(
     [setAutoSaving, setHasUnsavedChanges, onSaveSuccess, onSaveError]
   )
 
-  // 触发自动保存（带防抖）
+  // Trigger auto-save (with debounce)
   const triggerAutoSave = useCallback(
     (sectionName: ConfigSectionName, sectionData: unknown) => {
       if (isInitialLoad) return
@@ -92,7 +223,7 @@ export function useAutoSave(
     [isInitialLoad, setHasUnsavedChanges, saveSection, debounceMs]
   )
 
-  // 立即保存（不防抖）
+  // Save immediately (no debounce)
   const saveNow = useCallback(
     async (sectionName: ConfigSectionName, sectionData: unknown) => {
       if (autoSaveTimerRef.current) {
@@ -104,7 +235,7 @@ export function useAutoSave(
     [saveSection]
   )
 
-  // 取消待处理的自动保存
+  // Cancel pending auto-save
   const cancelPendingAutoSave = useCallback(() => {
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
@@ -112,7 +243,7 @@ export function useAutoSave(
     }
   }, [])
 
-  // 组件卸载时清理定时器
+  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (autoSaveTimerRef.current) {
@@ -130,22 +261,22 @@ export function useAutoSave(
 
 /**
  * 创建配置自动保存 effect
- * 
+ *
  * 这是一个工厂函数，用于创建监听特定配置变化并触发自动保存的 effect
  * 简化重复的 useEffect 代码
- * 
+ *
  * @example
  * ```tsx
  * // 使用方式 1: 直接在组件中调用
  * useConfigAutoSave(botConfig, 'bot', isInitialLoad, triggerAutoSave)
  * useConfigAutoSave(chatConfig, 'chat', isInitialLoad, triggerAutoSave)
- * 
+ *
  * // 使用方式 2: 批量配置
  * const configs = [
  *   { config: botConfig, section: 'bot' },
  *   { config: chatConfig, section: 'chat' },
  * ] as const
- * 
+ *
  * configs.forEach(({ config, section }) => {
  *   useConfigAutoSave(config, section, isInitialLoad, triggerAutoSave)
  * })

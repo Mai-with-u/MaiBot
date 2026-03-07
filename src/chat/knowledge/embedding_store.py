@@ -105,7 +105,7 @@ class EmbeddingStore:
         self.embedding_file_path = f"{dir_path}/{namespace}.parquet"
         self.index_file_path = f"{dir_path}/{namespace}.index"
         self.idx2hash_file_path = f"{dir_path}/{namespace}_i2h.json"
-        
+
         self.dirty = False  # 标记是否有新增数据需要重建索引
 
         # 多线程配置参数验证和设置

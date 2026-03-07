@@ -50,5 +50,5 @@ export function AnimationProvider({
     setEnableWavesBackground,
   }
 
-  return <AnimationContext.Provider value={value}>{children}</AnimationContext.Provider>
+  return <AnimationContext value={value}>{children}</AnimationContext>
 }

@@ -2,6 +2,7 @@ import re
 import asyncio
 import time
 import random
+import json
 
 from enum import Enum
 from rich.traceback import install
@@ -9,12 +10,13 @@ from typing import Tuple, List, Dict, Optional, Callable, Any, Set
 import traceback
 
 from src.common.logger import get_logger
-from src.config.config import model_config
-from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
+from src.config.config import config_manager
+from src.config.model_configs import APIProvider, ModelInfo, TaskConfig
 from .payload_content.message import MessageBuilder, Message
-from .payload_content.resp_format import RespFormat
+from .payload_content.resp_format import RespFormat, RespFormatType
 from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
 from .model_client.base_client import BaseClient, APIResponse, client_registry
+from .model_client import ensure_configured_clients_loaded
 from .utils import compress_messages, llm_usage_recorder
 from .exceptions import (
     NetworkConnectionError,
@@ -43,10 +45,92 @@ class LLMRequest:
         self.task_name = request_type
         self.model_for_task = model_set
         self.request_type = request_type
+        self._task_config_signature = self._build_task_config_signature(model_set)
+        self._task_config_name = self._resolve_task_config_name(model_set)
         self.model_usage: Dict[str, Tuple[int, int, int]] = {
             model: (0, 0, 0) for model in self.model_for_task.model_list
         }
         """模型使用量记录，用于进行负载均衡，对应为(total_tokens, penalty, usage_penalty)，惩罚值是为了能在某个模型请求不给力或正在被使用的时候进行调整"""
+
+    @staticmethod
+    def _build_task_config_signature(model_set: TaskConfig) -> tuple:
+        return (
+            tuple(model_set.model_list),
+            model_set.selection_strategy,
+            model_set.temperature,
+            model_set.max_tokens,
+            model_set.slow_threshold,
+        )
+
+    @staticmethod
+    def _iter_task_config_items(model_task_config: Any) -> list[tuple[str, TaskConfig]]:
+        cls = type(model_task_config)
+        if hasattr(cls, "model_fields"):
+            attrs = [name for name in cls.model_fields.keys() if not name.startswith("__")]
+        else:
+            attrs = [name for name in dir(model_task_config) if not name.startswith("__")]
+
+        items: list[tuple[str, TaskConfig]] = []
+        for attr in attrs:
+            value = getattr(model_task_config, attr, None)
+            if isinstance(value, TaskConfig):
+                items.append((attr, value))
+        return items
+
+    def _resolve_task_config_by_signature(self, model_set: TaskConfig) -> Optional[str]:
+        target_signature = self._build_task_config_signature(model_set)
+        model_task_config = config_manager.get_model_config().model_task_config
+        return next(
+            (
+                attr
+                for attr, value in self._iter_task_config_items(model_task_config)
+                if self._build_task_config_signature(value) == target_signature
+            ),
+            None,
+        )
+
+    def _resolve_task_config_name(self, model_set: TaskConfig) -> Optional[str]:
+        try:
+            model_task_config = config_manager.get_model_config().model_task_config
+        except Exception:
+            return None
+        for attr, value in self._iter_task_config_items(model_task_config):
+            if value is model_set:
+                return attr
+        try:
+            return self._resolve_task_config_by_signature(model_set)
+        except Exception:
+            return None
+        return None
+
+    def _get_latest_task_config(self) -> TaskConfig:
+        if self._task_config_name:
+            try:
+                model_task_config = config_manager.get_model_config().model_task_config
+                value = getattr(model_task_config, self._task_config_name, None)
+                if isinstance(value, TaskConfig):
+                    return value
+            except Exception:
+                return self.model_for_task
+        try:
+            if resolved_name := self._resolve_task_config_by_signature(self.model_for_task):
+                self._task_config_name = resolved_name
+                model_task_config = config_manager.get_model_config().model_task_config
+                value = getattr(model_task_config, resolved_name, None)
+                if isinstance(value, TaskConfig):
+                    return value
+        except Exception:
+            return self.model_for_task
+        return self.model_for_task
+
+    def _refresh_task_config(self) -> TaskConfig:
+        latest = self._get_latest_task_config()
+        if latest is not self.model_for_task:
+            self.model_for_task = latest
+            self._task_config_signature = self._build_task_config_signature(latest)
+        if list(self.model_usage.keys()) != latest.model_list:
+            self.model_usage = {model: self.model_usage.get(model, (0, 0, 0)) for model in latest.model_list}
+        return self.model_for_task
 
     def _check_slow_request(self, time_cost: float, model_name: str) -> None:
         """检查请求是否过慢并输出警告日志
@@ -80,6 +164,7 @@ class LLMRequest:
         Returns:
             (Tuple[str, str, str, Optional[List[ToolCall]]]): 响应内容、推理内容、模型名称、工具调用列表
         """
+        self._refresh_task_config()
         start_time = time.time()
 
         def message_factory(client: BaseClient) -> List[Message]:
@@ -123,6 +208,7 @@ class LLMRequest:
         Returns:
             (Optional[str]): 生成的文本描述或None
         """
+        self._refresh_task_config()
         response, _ = await self._execute_request(
             request_type=RequestType.AUDIO,
             audio_base64=voice_base64,
@@ -135,6 +221,7 @@ class LLMRequest:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: RespFormat | None = None,
         raise_when_empty: bool = True,
     ) -> Tuple[str, Tuple[str, str, Optional[List[ToolCall]]]]:
         """
@@ -144,10 +231,12 @@ class LLMRequest:
             temperature (float, optional): 温度参数
             max_tokens (int, optional): 最大token数
             tools (Optional[List[Dict[str, Any]]]): 工具列表
+            response_format (RespFormat | None): 响应格式
             raise_when_empty (bool): 当响应为空时是否抛出异常
         Returns:
             (Tuple[str, str, str, Optional[List[ToolCall]]]): 响应内容、推理内容、模型名称、工具调用列表
         """
+        self._refresh_task_config()
         start_time = time.time()
 
         def message_factory(client: BaseClient) -> List[Message]:
@@ -163,6 +252,7 @@ class LLMRequest:
             temperature=temperature,
             max_tokens=max_tokens,
             tool_options=tool_built,
+            response_format=response_format,
         )
 
         logger.debug(f"LLM请求总耗时: {time.time() - start_time}")
@@ -191,6 +281,7 @@ class LLMRequest:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: RespFormat | None = None,
         raise_when_empty: bool = True,
     ) -> Tuple[str, Tuple[str, str, Optional[List[ToolCall]]]]:
         """
@@ -200,10 +291,12 @@ class LLMRequest:
             temperature (float, optional): 温度参数
             max_tokens (int, optional): 最大token数
             tools (Optional[List[Dict[str, Any]]]): 工具列表
+            response_format (RespFormat | None): 响应格式
             raise_when_empty (bool): 当响应为空时是否抛出异常
         Returns:
             (Tuple[str, str, str, Optional[List[ToolCall]]]): 响应内容、推理内容、模型名称、工具调用列表
         """
+        self._refresh_task_config()
         start_time = time.time()
 
         tool_built = self._build_tool_options(tools)
@@ -214,6 +307,7 @@ class LLMRequest:
             temperature=temperature,
             max_tokens=max_tokens,
             tool_options=tool_built,
+            response_format=response_format,
         )
 
         time_cost = time.time() - start_time
@@ -238,6 +332,100 @@ class LLMRequest:
             )
         return content or "", (reasoning_content, model_info.name, tool_calls)
 
+    async def generate_structured_response_async(
+        self,
+        prompt: str,
+        schema: type | dict[str, Any],
+        fallback_result: dict[str, Any] | None = None,
+        temperature: Optional[float] = 0.0,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[dict[str, Any], Tuple[str, str, Optional[List[ToolCall]]], bool]:
+        """
+        结构化输出快速接口：
+        - 默认启用 JSON_SCHEMA 严格模式
+        - 单模型单次尝试（不重试、不切换模型）
+        - 失败时立即返回 fallback_result
+
+        Returns:
+            (结构化结果, (推理内容, 模型名, 工具调用), 是否成功)
+        """
+        self._refresh_task_config()
+        start_time = time.time()
+
+        message_builder = MessageBuilder()
+        message_builder.add_text_content(prompt)
+        message_list = [message_builder.build()]
+
+        response_format = RespFormat(schema=schema, format_type=RespFormatType.JSON_SCHEMA)
+        if response_format.schema:
+            response_format.schema["strict"] = True
+
+        model_info, api_provider, client = self._select_model()
+        fallback_data = fallback_result or {}
+
+        try:
+            response = await self._attempt_request_on_model(
+                model_info=model_info,
+                api_provider=api_provider,
+                client=client,
+                request_type=RequestType.RESPONSE,
+                message_list=message_list,
+                tool_options=None,
+                response_format=response_format,
+                stream_response_handler=None,
+                async_response_parser=None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                embedding_input=None,
+                audio_base64=None,
+                retry_limit=1,
+            )
+
+            time_cost = time.time() - start_time
+            self._check_slow_request(time_cost, model_info.name)
+
+            reasoning_content = response.reasoning_content or ""
+            tool_calls = response.tool_calls
+
+            parsed_result: dict[str, Any] | None = None
+            if response.content:
+                try:
+                    parsed = json.loads(response.content)
+                    if isinstance(parsed, dict):
+                        parsed_result = parsed
+                except json.JSONDecodeError:
+                    parsed_result = None
+
+            if parsed_result is None:
+                logger.warning(f"结构化输出解析失败，使用降级结果。模型: {model_info.name}")
+                total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
+                self.model_usage[model_info.name] = (total_tokens, penalty + 1, max(usage_penalty - 1, 0))
+                return fallback_data, (reasoning_content, model_info.name, tool_calls), False
+
+            total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
+            if response_usage := response.usage:
+                total_tokens += response_usage.total_tokens
+                llm_usage_recorder.record_usage_to_database(
+                    model_info=model_info,
+                    model_usage=response_usage,
+                    user_id="system",
+                    request_type=self.request_type,
+                    endpoint="/chat/completions",
+                    time_cost=time_cost,
+                )
+            self.model_usage[model_info.name] = (total_tokens, penalty, max(usage_penalty - 1, 0))
+            return parsed_result, (reasoning_content, model_info.name, tool_calls), True
+
+        except Exception as e:
+            time_cost = time.time() - start_time
+            self._check_slow_request(time_cost, model_info.name)
+            logger.warning(f"结构化输出请求失败，直接降级。模型: {model_info.name}, 错误: {e}")
+
+            total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
+            self.model_usage[model_info.name] = (total_tokens, penalty + 1, max(usage_penalty - 1, 0))
+
+            return fallback_data, ("", model_info.name, None), False
+
     async def get_embedding(self, embedding_input: str) -> Tuple[List[float], str]:
         """
         获取嵌入向量
@@ -246,6 +434,7 @@ class LLMRequest:
         Returns:
             (Tuple[List[float], str]): (嵌入向量，使用的模型名称)
         """
+        self._refresh_task_config()
         start_time = time.time()
         response, model_info = await self._execute_request(
             request_type=RequestType.EMBEDDING,
@@ -269,6 +458,7 @@ class LLMRequest:
         """
         根据配置的策略选择模型：balance（负载均衡）或 random（随机选择）
         """
+        self._refresh_task_config()
         available_models = {
             model: scores
             for model, scores in self.model_usage.items()
@@ -277,8 +467,10 @@ class LLMRequest:
         if not available_models:
             raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
 
+        ensure_configured_clients_loaded()
+
         strategy = self.model_for_task.selection_strategy.lower()
-        
+
         if strategy == "random":
             # 随机选择策略
             selected_model_name = random.choice(list(available_models.keys()))
@@ -295,9 +487,9 @@ class LLMRequest:
                 available_models,
                 key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
             )
-        
-        model_info = model_config.get_model_info(selected_model_name)
-        api_provider = model_config.get_provider(model_info.api_provider)
+
+        model_info = TempMethodsLLMUtils.get_model_info_by_name(selected_model_name)
+        api_provider = TempMethodsLLMUtils.get_provider_by_name(model_info.api_provider)
         force_new_client = self.request_type == "embedding"
         client = client_registry.get_client_class_instance(api_provider, force_new=force_new_client)
         logger.debug(f"选择请求模型: {model_info.name} (策略: {strategy})")
@@ -314,18 +506,20 @@ class LLMRequest:
         message_list: List[Message],
         tool_options: list[ToolOption] | None,
         response_format: RespFormat | None,
-        stream_response_handler: Optional[Callable],
-        async_response_parser: Optional[Callable],
+        stream_response_handler: Optional[Callable[..., Any]],
+        async_response_parser: Optional[Callable[..., Any]],
         temperature: Optional[float],
         max_tokens: Optional[int],
         embedding_input: str | None,
         audio_base64: str | None,
+        retry_limit: Optional[int] = None,
     ) -> APIResponse:
         """
         在单个模型上执行请求，包含针对临时错误的重试逻辑。
         如果成功，返回APIResponse。如果失败（重试耗尽或硬错误），则抛出ModelAttemptFailed异常。
         """
-        retry_remain = api_provider.max_retry
+        retry_remain = retry_limit if retry_limit is not None else api_provider.max_retry
+        retry_remain = max(1, retry_remain)
         compressed_messages: Optional[List[Message]] = None
 
         while retry_remain > 0:
@@ -456,7 +650,9 @@ class LLMRequest:
                 )
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
-        raise ModelAttemptFailed(f"任务 '{self.request_type or '未知任务'}' 的模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
+        raise ModelAttemptFailed(
+            f"任务 '{self.request_type or '未知任务'}' 的模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。"
+        )
 
     async def _execute_request(
         self,
@@ -464,8 +660,8 @@ class LLMRequest:
         message_factory: Optional[Callable[[BaseClient], List[Message]]] = None,
         tool_options: list[ToolOption] | None = None,
         response_format: RespFormat | None = None,
-        stream_response_handler: Optional[Callable] = None,
-        async_response_parser: Optional[Callable] = None,
+        stream_response_handler: Optional[Callable[..., Any]] = None,
+        async_response_parser: Optional[Callable[..., Any]] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         embedding_input: str | None = None,
@@ -576,3 +772,43 @@ class LLMRequest:
             original_error_msg = str(e.__cause__)
             return f"\n  底层异常类型: {original_error_type}\n  底层异常信息: {original_error_msg}"
         return ""
+
+
+class TempMethodsLLMUtils:
+    @staticmethod
+    def get_model_info_by_name(model_name: str) -> ModelInfo:
+        """根据模型名称获取模型信息
+
+        Args:
+            model_config: ModelConfig实例
+            model_name: 模型名称
+
+        Returns:
+            ModelInfo: 模型信息
+
+        Raises:
+            ValueError: 未找到指定模型
+        """
+        for model in config_manager.get_model_config().models:
+            if model.name == model_name:
+                return model
+        raise ValueError(f"未找到名为 '{model_name}' 的模型")
+
+    @staticmethod
+    def get_provider_by_name(provider_name: str) -> APIProvider:
+        """根据提供商名称获取提供商信息
+
+        Args:
+            model_config: ModelConfig实例
+            provider_name: 提供商名称
+
+        Returns:
+            APIProvider: API提供商信息
+
+        Raises:
+            ValueError: 未找到指定提供商
+        """
+        for provider in config_manager.get_model_config().api_providers:
+            if provider.name == provider_name:
+                return provider
+        raise ValueError(f"未找到名为 '{provider_name}' 的API提供商")

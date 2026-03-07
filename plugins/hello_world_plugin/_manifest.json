@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "Hello World 示例插件 (Hello World Plugin)",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "我的第一个MaiCore插件，包含问候功能和时间查询等基础示例",
   "author": {
     "name": "MaiBot开发团队",
@@ -9,7 +9,7 @@
   },
   "license": "GPL-v3.0-or-later",
   "host_application": {
-    "min_version": "0.8.0"
+    "min_version": "1.0.0"
   },
   "homepage_url": "https://github.com/MaiM-with-u/maibot",
   "repository_url": "https://github.com/MaiM-with-u/maibot",
@@ -29,7 +29,19 @@
   "plugin_info": {
     "is_built_in": false,
     "plugin_type": "example",
+    "capabilities": [
+      "send.text",
+      "send.forward",
+      "send.hybrid",
+      "emoji.get_random",
+      "config.get"
+    ],
     "components": [
+      {
+        "type": "tool",
+        "name": "compare_numbers",
+        "description": "比较两个数的大小"
+      },
       {
         "type": "action",
         "name": "hello_greeting",
@@ -39,28 +51,37 @@
         "type": "action",
         "name": "bye_greeting",
         "description": "向用户发送告别消息",
-        "activation_modes": [
-          "keyword"
-        ],
-        "keywords": [
-          "再见",
-          "bye",
-          "88",
-          "拜拜"
-        ]
+        "activation_modes": ["keyword"],
+        "keywords": ["再见", "bye", "88", "拜拜"]
       },
       {
         "type": "command",
         "name": "time",
         "description": "查询当前时间",
         "pattern": "/time"
+      },
+      {
+        "type": "command",
+        "name": "random_emojis",
+        "description": "发送多张随机表情包",
+        "pattern": "/random_emojis"
+      },
+      {
+        "type": "command",
+        "name": "test",
+        "description": "测试命令",
+        "pattern": "/test"
+      },
+      {
+        "type": "event_handler",
+        "name": "print_message_handler",
+        "description": "打印接收到的消息"
+      },
+      {
+        "type": "event_handler",
+        "name": "forward_messages_handler",
+        "description": "把接收到的消息转发到指定聊天ID"
       }
-    ],
-    "features": [
-      "问候和告别功能",
-      "时间查询命令",
-      "配置文件示例",
-      "新手教程代码"
     ]
   },
   "id": "MaiBot开发团队.maibot"

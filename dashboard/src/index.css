@@ -13,64 +13,186 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --primary-gradient: none; /* 默认无渐变 */
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
-    --chart-1: 221.2 83.2% 53.3%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
+    /* Color Tokens */
+    --color-primary: 221.2 83.2% 53.3%;
+    --color-primary-foreground: 210 40% 98%;
+    --color-primary-gradient: none;
+    --color-secondary: 210 40% 96.1%;
+    --color-secondary-foreground: 222.2 47.4% 11.2%;
+    --color-muted: 210 40% 96.1%;
+    --color-muted-foreground: 215.4 16.3% 40%;
+    --color-accent: 210 40% 96.1%;
+    --color-accent-foreground: 222.2 47.4% 11.2%;
+    --color-destructive: 0 84.2% 45%;
+    --color-destructive-foreground: 210 40% 98%;
+    --color-background: 0 0% 100%;
+    --color-foreground: 222.2 84% 4.9%;
+    --color-card: 0 0% 100%;
+    --color-card-foreground: 222.2 84% 4.9%;
+    --color-popover: 0 0% 100%;
+    --color-popover-foreground: 222.2 84% 4.9%;
+    --color-border: 214.3 31.8% 91.4%;
+    --color-input: 214.3 31.8% 91.4%;
+    --color-ring: 221.2 83.2% 53.3%;
+    --color-chart-1: 221.2 83.2% 53.3%;
+    --color-chart-2: 160 60% 45%;
+    --color-chart-3: 30 80% 55%;
+    --color-chart-4: 280 65% 60%;
+    --color-chart-5: 340 75% 55%;
+
+    /* Typography Tokens */
+    --typography-font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --typography-font-family-code: "JetBrains Mono", "Monaco", "Courier New", monospace;
+    --typography-font-size-xs: 0.75rem;
+    --typography-font-size-sm: 0.875rem;
+    --typography-font-size-base: 1rem;
+    --typography-font-size-lg: 1.125rem;
+    --typography-font-size-xl: 1.25rem;
+    --typography-font-size-2xl: 1.5rem;
+    --typography-font-weight-normal: 400;
+    --typography-font-weight-medium: 500;
+    --typography-font-weight-semibold: 600;
+    --typography-font-weight-bold: 700;
+    --typography-line-height-tight: 1.2;
+    --typography-line-height-normal: 1.5;
+    --typography-line-height-relaxed: 1.75;
+    --typography-letter-spacing-tight: -0.02em;
+    --typography-letter-spacing-normal: 0em;
+    --typography-letter-spacing-wide: 0.02em;
+
+    /* Visual Tokens */
+    --visual-radius-sm: 0.25rem;
+    --visual-radius-md: 0.375rem;
+    --visual-radius-lg: 0.5rem;
+    --visual-radius-xl: 0.75rem;
+    --visual-radius-full: 9999px;
+    --visual-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --visual-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --visual-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --visual-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    --visual-blur-sm: 4px;
+    --visual-blur-md: 12px;
+    --visual-blur-lg: 24px;
+    --visual-opacity-disabled: 0.5;
+    --visual-opacity-hover: 0.8;
+    --visual-opacity-overlay: 0.75;
+
+    /* Layout Tokens */
+    --layout-space-unit: 0.25rem;
+    --layout-space-xs: 0.5rem;
+    --layout-space-sm: 0.75rem;
+    --layout-space-md: 1rem;
+    --layout-space-lg: 1.5rem;
+    --layout-space-xl: 2rem;
+    --layout-space-2xl: 3rem;
+    --layout-sidebar-width: 16rem;
+    --layout-header-height: 3.5rem;
+    --layout-max-content-width: 1280px;
+
+    /* Animation Tokens */
+    --animation-anim-duration-fast: 150ms;
+    --animation-anim-duration-normal: 300ms;
+    --animation-anim-duration-slow: 500ms;
+    --animation-anim-easing-default: cubic-bezier(0.4, 0, 0.2, 1);
+    --animation-anim-easing-in: cubic-bezier(0.4, 0, 1, 1);
+    --animation-anim-easing-out: cubic-bezier(0, 0, 0.2, 1);
+    --animation-anim-easing-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --animation-transition-colors: color 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    --animation-transition-transform: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    --animation-transition-opacity: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Legacy Aliases (backward compatibility) */
+    --background: var(--color-background);
+    --foreground: var(--color-foreground);
+    --card: var(--color-card);
+    --card-foreground: var(--color-card-foreground);
+    --popover: var(--color-popover);
+    --popover-foreground: var(--color-popover-foreground);
+    --primary: var(--color-primary);
+    --primary-foreground: var(--color-primary-foreground);
+    --primary-gradient: var(--color-primary-gradient);
+    --secondary: var(--color-secondary);
+    --secondary-foreground: var(--color-secondary-foreground);
+    --muted: var(--color-muted);
+    --muted-foreground: var(--color-muted-foreground);
+    --accent: var(--color-accent);
+    --accent-foreground: var(--color-accent-foreground);
+    --destructive: var(--color-destructive);
+    --destructive-foreground: var(--color-destructive-foreground);
+    --border: var(--color-border);
+    --input: var(--color-input);
+    --ring: var(--color-ring);
+    --radius: var(--visual-radius-lg);
+    --chart-1: var(--color-chart-1);
+    --chart-2: var(--color-chart-2);
+    --chart-3: var(--color-chart-3);
+    --chart-4: var(--color-chart-4);
+    --chart-5: var(--color-chart-5);
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 210 40% 98%;
-    --primary-gradient: none; /* 默认无渐变 */
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
-    --chart-1: 217.2 91.2% 59.8%;
-    --chart-2: 160 60% 50%;
-    --chart-3: 30 80% 60%;
-    --chart-4: 280 65% 65%;
-    --chart-5: 340 75% 60%;
-  }
-}
+    /* Color Tokens */
+    --color-primary: 217.2 91.2% 59.8%;
+    --color-primary-foreground: 210 40% 98%;
+    --color-primary-gradient: none;
+    --color-secondary: 217.2 32.6% 17.5%;
+    --color-secondary-foreground: 210 40% 98%;
+    --color-muted: 217.2 32.6% 17.5%;
+    --color-muted-foreground: 215 20.2% 65.1%;
+    --color-accent: 217.2 32.6% 17.5%;
+    --color-accent-foreground: 210 40% 98%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 210 40% 98%;
+    --color-background: 222.2 84% 4.9%;
+    --color-foreground: 210 40% 98%;
+    --color-card: 222.2 84% 4.9%;
+    --color-card-foreground: 210 40% 98%;
+    --color-popover: 222.2 84% 4.9%;
+    --color-popover-foreground: 210 40% 98%;
+    --color-border: 217.2 32.6% 17.5%;
+    --color-input: 217.2 32.6% 17.5%;
+    --color-ring: 224.3 76.3% 48%;
+    --color-chart-1: 217.2 91.2% 59.8%;
+    --color-chart-2: 160 60% 50%;
+    --color-chart-3: 30 80% 60%;
+    --color-chart-4: 280 65% 65%;
+    --color-chart-5: 340 75% 60%;
 
-@layer base {
+    /* Visual Tokens (dark mode shadows) */
+    --visual-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
+    --visual-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    --visual-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    --visual-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+
+    /* Legacy Aliases (backward compatibility) */
+    --background: var(--color-background);
+    --foreground: var(--color-foreground);
+    --card: var(--color-card);
+    --card-foreground: var(--color-card-foreground);
+    --popover: var(--color-popover);
+    --popover-foreground: var(--color-popover-foreground);
+    --primary: var(--color-primary);
+    --primary-foreground: var(--color-primary-foreground);
+    --primary-gradient: var(--color-primary-gradient);
+    --secondary: var(--color-secondary);
+    --secondary-foreground: var(--color-secondary-foreground);
+    --muted: var(--color-muted);
+    --muted-foreground: var(--color-muted-foreground);
+    --accent: var(--color-accent);
+    --accent-foreground: var(--color-accent-foreground);
+    --destructive: var(--color-destructive);
+    --destructive-foreground: var(--color-destructive-foreground);
+    --border: var(--color-border);
+    --input: var(--color-input);
+    --ring: var(--color-ring);
+    --chart-1: var(--color-chart-1);
+    --chart-2: var(--color-chart-2);
+    --chart-3: var(--color-chart-3);
+    --chart-4: var(--color-chart-4);
+    --chart-5: var(--color-chart-5);
+  }
+
+
   * {
     @apply border-border;
   }
@@ -92,28 +214,24 @@
 }
 
 @layer utilities {
-  /* 渐变色背景工具类 */
   .bg-primary-gradient {
-    background: var(--primary-gradient, hsl(var(--primary)));
+    background: var(--color-primary-gradient, hsl(var(--color-primary)));
   }
   
-  /* 渐变色文字工具类 - 默认使用普通文字颜色 */
   .text-primary-gradient {
-    color: hsl(var(--primary));
+    color: hsl(var(--color-primary));
   }
   
-  /* 当应用了 has-gradient 类时，使用渐变文字效果 */
   .has-gradient .text-primary-gradient {
-    background: var(--primary-gradient);
+    background: var(--color-primary-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     color: transparent;
   }
   
-  /* 渐变色边框工具类 */
   .border-primary-gradient {
-    border-image: var(--primary-gradient, linear-gradient(to right, hsl(var(--primary)), hsl(var(--primary)))) 1;
+    border-image: var(--color-primary-gradient, linear-gradient(to right, hsl(var(--color-primary)), hsl(var(--color-primary)))) 1;
   }
 }
 
@@ -170,10 +288,9 @@
   pointer-events: auto;
 }
 
-/* 自定义滚动条样式 */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-color: hsl(var(--color-border)) transparent;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -187,14 +304,14 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
+  background: hsl(var(--color-border));
   border-radius: 4px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--color-muted-foreground) / 0.5);
   background-clip: content-box;
 }
 
@@ -203,3 +320,111 @@
 }
 
 
+
+/* ============================================================
+ * Touch & Pointer 优化 (Task 4)
+ * ============================================================ */
+
+/* 1. 全局 touch-action — 允许浏览器默认滚动/缩放，防止 300ms 延迟 */
+* {
+  touch-action: manipulation;
+}
+
+/* 可滚动容器恢复双向滚动 */
+.overflow-auto,
+.overflow-scroll,
+.overflow-x-auto,
+.overflow-x-scroll,
+.overflow-y-auto,
+.overflow-y-scroll {
+  touch-action: pan-x pan-y;
+}
+
+/* 图表/可视化区域：允许 pinch-zoom（Task 8 的 @use-gesture 也需要此配合）*/
+.recharts-wrapper,
+.react-flow__renderer {
+  touch-action: none;
+}
+
+/* 2. 触控目标最小尺寸 44×44px（WCAG 2.5.8）
+   pointer: coarse = 触控设备（手指精度低）*/
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  a,
+  input[type="checkbox"],
+  input[type="radio"],
+  select,
+  [role="menuitem"],
+  [role="option"],
+  [role="tab"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* 3. hover-only 反馈降级
+   hover: none = 设备主要输入不支持 hover（触控屏等）*/
+@media (hover: none) {
+  /* 触控设备上隐藏纯 hover 触发的视觉效果（如 tooltip 触发区）*/
+  .hover-only-visible {
+    display: none;
+  }
+}
+
+/* 4. 精细指针设备（鼠标）才启用的 hover 样式钩子 */
+@media (hover: hover) and (pointer: fine) {
+  /* 鼠标设备：保留原有 hover 效果，无需额外处理 */
+  .touch-device-only {
+    display: none;
+  }
+}
+/* ============================================================
+ * Touch 目标尺寸补丁 (Task 10)
+ * 对小型交互元素用 ::before 伪元素扩大触控区，视觉不变。
+ * ============================================================ */
+
+@media (pointer: coarse) {
+  /* Radix Checkbox: h-4 w-4 (16px) → 触控区拖展到 44px */
+  [data-radix-collection-item],
+  button[role='checkbox'],
+  [role='checkbox'] {
+    position: relative;
+  }
+  [data-radix-collection-item]::before,
+  button[role='checkbox']::before,
+  [role='checkbox']::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Radix Switch: h-5 w-9 (20px) → 触控区拖展到 44px */
+  [role='switch'] {
+    position: relative;
+  }
+  [role='switch']::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Radix Slider 拇指 */
+  [role='slider'] {
+    position: relative;
+  }
+  [role='slider']::before {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

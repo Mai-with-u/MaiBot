@@ -1,17 +1,17 @@
 import time
 import random
 import re
-
+from datetime import datetime
 from typing import List, Dict, Any, Tuple, Optional, Callable
 from rich.traceback import install
 
+from sqlmodel import select, col
 from src.config.config import global_config
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages, count_messages
 from src.common.data_models.database_data_model import DatabaseMessages, DatabaseActionRecords
-from src.common.data_models.message_data_model import MessageAndActionModel
-from src.common.database.database_model import ActionRecords
-from src.common.database.database_model import Images
+from src.common.database.database import get_db_session
+from src.common.database.database_model import ActionRecord, Images
 from src.person_info.person_info import Person, get_person_id
 from src.chat.utils.utils import translate_timestamp_to_human_readable, assign_message_ids, is_bot_self
 
@@ -198,37 +198,38 @@ def get_actions_by_timestamp_with_chat(
     limit_mode: str = "latest",
 ) -> List[DatabaseActionRecords]:
     """获取在特定聊天从指定时间戳到指定时间戳的动作记录，按时间升序排序，返回动作记录列表"""
-    query = ActionRecords.select().where(
-        (ActionRecords.chat_id == chat_id)
-        & (ActionRecords.time > timestamp_start)  # type: ignore
-        & (ActionRecords.time < timestamp_end)  # type: ignore
-    )
+    with get_db_session() as session:
+        statement = (
+            select(ActionRecord)
+            .where((col(ActionRecord.session_id) == chat_id))
+            .where(col(ActionRecord.timestamp) > datetime.fromtimestamp(timestamp_start))
+            .where(col(ActionRecord.timestamp) < datetime.fromtimestamp(timestamp_end))
+        )
 
-    if limit > 0:
-        if limit_mode == "latest":
-            query = query.order_by(ActionRecords.time.desc()).limit(limit)
-            # 获取后需要反转列表，以保持最终输出为时间升序
-            actions = list(query)
-            actions.reverse()
-        else:  # earliest
-            query = query.order_by(ActionRecords.time.asc()).limit(limit)
-    else:
-        query = query.order_by(ActionRecords.time.asc())
-
-    actions = list(query)
+        if limit > 0:
+            if limit_mode == "latest":
+                statement = statement.order_by(col(ActionRecord.timestamp).desc()).limit(limit)
+                actions = list(session.exec(statement).all())
+                actions = list(reversed(actions))
+            else:
+                statement = statement.order_by(col(ActionRecord.timestamp)).limit(limit)
+                actions = list(session.exec(statement).all())
+        else:
+            statement = statement.order_by(col(ActionRecord.timestamp))
+            actions = session.exec(statement).all()
     return [
         DatabaseActionRecords(
             action_id=action.action_id,
-            time=action.time,
+            time=action.timestamp.timestamp(),
             action_name=action.action_name,
-            action_data=action.action_data,
-            action_done=action.action_done,
-            action_build_into_prompt=action.action_build_into_prompt,
-            action_prompt_display=action.action_prompt_display,
-            chat_id=action.chat_id,
-            chat_info_stream_id=action.chat_info_stream_id,
-            chat_info_platform=action.chat_info_platform,
-            action_reasoning=action.action_reasoning,
+            action_data=action.action_data or "{}",
+            action_done=True,
+            action_build_into_prompt=bool(action.action_display_prompt),
+            action_prompt_display=action.action_display_prompt or "",
+            chat_id=action.session_id,
+            chat_info_stream_id=action.session_id,
+            chat_info_platform=global_config.bot.platform,
+            action_reasoning=action.action_reasoning or "",
         )
         for action in actions
     ]
@@ -238,25 +239,27 @@ def get_actions_by_timestamp_with_chat_inclusive(
     chat_id: str, timestamp_start: float, timestamp_end: float, limit: int = 0, limit_mode: str = "latest"
 ) -> List[Dict[str, Any]]:
     """获取在特定聊天从指定时间戳到指定时间戳的动作记录（包含边界），按时间升序排序，返回动作记录列表"""
-    query = ActionRecords.select().where(
-        (ActionRecords.chat_id == chat_id)
-        & (ActionRecords.time >= timestamp_start)  # type: ignore
-        & (ActionRecords.time <= timestamp_end)  # type: ignore
-    )
+    with get_db_session() as session:
+        statement = (
+            select(ActionRecord)
+            .where((col(ActionRecord.session_id) == chat_id))
+            .where(col(ActionRecord.timestamp) >= datetime.fromtimestamp(timestamp_start))
+            .where(col(ActionRecord.timestamp) <= datetime.fromtimestamp(timestamp_end))
+        )
 
-    if limit > 0:
-        if limit_mode == "latest":
-            query = query.order_by(ActionRecords.time.desc()).limit(limit)
-            # 获取后需要反转列表，以保持最终输出为时间升序
-            actions = list(query)
-            return [action.__data__ for action in reversed(actions)]
-        else:  # earliest
-            query = query.order_by(ActionRecords.time.asc()).limit(limit)
-    else:
-        query = query.order_by(ActionRecords.time.asc())
+        if limit > 0:
+            if limit_mode == "latest":
+                statement = statement.order_by(col(ActionRecord.timestamp).desc()).limit(limit)
+                actions = list(session.exec(statement).all())
+                actions = list(reversed(actions))
+            else:
+                statement = statement.order_by(col(ActionRecord.timestamp)).limit(limit)
+                actions = list(session.exec(statement).all())
+        else:
+            statement = statement.order_by(col(ActionRecord.timestamp))
+            actions = session.exec(statement).all()
 
-    actions = list(query)
-    return [action.__data__ for action in actions]
+    return [action.model_dump() for action in actions]
 
 
 def get_raw_msg_by_timestamp_random(
@@ -278,7 +281,7 @@ def get_raw_msg_by_timestamp_random(
 
 
 def get_raw_msg_by_timestamp_with_users(
-    timestamp_start: float, timestamp_end: float, person_ids: list, limit: int = 0, limit_mode: str = "latest"
+    timestamp_start: float, timestamp_end: float, person_ids: List[str], limit: int = 0, limit_mode: str = "latest"
 ) -> List[DatabaseMessages]:
     """获取某些特定用户在 *所有聊天* 中从指定时间戳到指定时间戳的消息，按时间升序排序，返回消息列表
     limit: 限制返回的消息数量，0为不限制
@@ -316,7 +319,7 @@ def get_raw_msg_before_timestamp_with_chat(
 
 
 def get_raw_msg_before_timestamp_with_users(
-    timestamp: float, person_ids: list, limit: int = 0
+    timestamp: float, person_ids: List[str], limit: int = 0
 ) -> List[DatabaseMessages]:
     """获取指定时间戳之前的消息，按时间升序排序，返回消息列表
     limit: 限制返回的消息数量，0为不限制
@@ -344,7 +347,7 @@ def num_new_messages_since(chat_id: str, timestamp_start: float = 0.0, timestamp
 
 
 def num_new_messages_since_with_users(
-    chat_id: str, timestamp_start: float, timestamp_end: float, person_ids: list
+    chat_id: str, timestamp_start: float, timestamp_end: float, person_ids: List[str]
 ) -> int:
     """检查某些特定用户在特定聊天在指定时间戳之间有多少新消息"""
     if not person_ids:  # 保持空列表检查
@@ -358,7 +361,7 @@ def num_new_messages_since_with_users(
 
 
 def _build_readable_messages_internal(
-    messages: List[MessageAndActionModel],
+    messages: List[DatabaseMessages],
     replace_bot_name: bool = True,
     timestamp_mode: str = "relative",
     truncate: bool = False,
@@ -413,7 +416,7 @@ def _build_readable_messages_internal(
         # 匹配 [picid:xxxxx] 格式
         pic_pattern = r"\[picid:([^\]]+)\]"
 
-        def replace_pic_id(match: re.Match) -> str:
+        def replace_pic_id(match: re.Match[str]) -> str:
             nonlocal current_pic_counter
             nonlocal pic_counter
             pic_id = match.group(1)
@@ -421,7 +424,8 @@ def _build_readable_messages_internal(
                 if pic_id not in pic_description_cache:
                     description = "内容正在阅读，请稍等"
                     try:
-                        image = Images.get_or_none(Images.image_id == pic_id)
+                        with get_db_session() as session:
+                            image = session.get(Images, int(pic_id)) if pic_id.isdigit() else None
                         if image and image.description:
                             description = image.description
                     except Exception:
@@ -438,16 +442,11 @@ def _build_readable_messages_internal(
 
     # 1: 获取发送者信息并提取消息组件
     for message in messages:
-        if message.is_action_record:
-            # 对于动作记录，也处理图片ID
-            content = process_pic_ids(message.display_message)
-            detailed_messages_raw.append((message.time, message.user_nickname, content, True))
-            continue
-
-        platform = message.user_platform
-        user_id = message.user_id
-        user_nickname = message.user_nickname
-        user_cardname = message.user_cardname
+        user_info = message.user_info
+        platform = user_info.platform
+        user_id = user_info.user_id
+        user_nickname = user_info.user_nickname
+        user_cardname = user_info.user_cardname
 
         timestamp = message.time
         content = message.display_message or message.processed_plain_text or ""
@@ -520,17 +519,17 @@ def _build_readable_messages_internal(
     output_lines: List[str] = []
 
     prev_timestamp: Optional[float] = None
-    for timestamp, name, content, is_action in detailed_message:
+    for timestamp, name, content, _is_action in detailed_message:
         # 检查是否需要插入长时间间隔提示
         if long_time_notice and prev_timestamp is not None:
             time_diff = timestamp - prev_timestamp
             time_diff_hours = time_diff / 3600
-            
+
             # 检查是否跨天
             prev_date = time.strftime("%Y-%m-%d", time.localtime(prev_timestamp))
             current_date = time.strftime("%Y-%m-%d", time.localtime(timestamp))
             is_cross_day = prev_date != current_date
-            
+
             # 如果间隔大于8小时或跨天，插入提示
             if time_diff_hours > 8 or is_cross_day:
                 # 格式化日期为中文格式：xxxx年xx月xx日（去掉前导零）
@@ -542,20 +541,15 @@ def _build_readable_messages_internal(
                 hours_str = f"{int(time_diff_hours)}h"
                 notice = f"以下聊天开始时间：{date_str}。距离上一条消息过去了{hours_str}\n"
                 output_lines.append(notice)
-        
+
         readable_time = translate_timestamp_to_human_readable(timestamp, mode=timestamp_mode)
 
         # 查找消息id（如果有）并构建id_prefix
         message_id = timestamp_to_id_mapping.get(timestamp, "")
         id_prefix = f"[{message_id}]" if message_id else ""
 
-        if is_action:
-            # 对于动作记录，使用特殊格式
-            output_lines.append(f"{id_prefix}{readable_time}, {content}")
-        else:
-            output_lines.append(f"{id_prefix}{readable_time}, {name}: {content}")
-        output_lines.append("\n")  # 在每个消息块后添加换行，保持可读性
-        
+        output_lines.append(f"{id_prefix}{readable_time}, {name}: {content}")
+        output_lines.append("\n")
         prev_timestamp = timestamp
 
     formatted_string = "".join(output_lines).strip()
@@ -592,7 +586,8 @@ def build_pic_mapping_info(pic_id_mapping: Dict[str, str]) -> str:
         # 从数据库中获取图片描述
         description = "内容正在阅读，请稍等"
         try:
-            image = Images.get_or_none(Images.image_id == pic_id)
+            with get_db_session() as session:
+                image = session.get(Images, int(pic_id)) if pic_id.isdigit() else None
             if image and image.description:
                 description = image.description
         except Exception:
@@ -663,7 +658,7 @@ async def build_readable_messages_with_list(
     允许通过参数控制格式化行为。
     """
     formatted_string, details_list, pic_id_mapping, _ = _build_readable_messages_internal(
-        [MessageAndActionModel.from_DatabaseMessages(msg) for msg in messages],
+        messages,
         replace_bot_name,
         timestamp_mode,
         truncate,
@@ -754,7 +749,7 @@ def build_readable_messages(
         filtered_messages = []
         for msg in messages:
             # 获取消息内容
-            content = msg.processed_plain_text
+            content = msg.processed_plain_text or ""
             # 移除表情包
             emoji_pattern = r"\[表情包：[^\]]+\]"
             content = re.sub(emoji_pattern, "", content)
@@ -765,17 +760,14 @@ def build_readable_messages(
 
         messages = filtered_messages
 
-    copy_messages: List[MessageAndActionModel] = []
+    copy_messages: List[DatabaseMessages] = []
     for msg in messages:
         if remove_emoji_stickers:
-            # 创建 MessageAndActionModel 但移除表情包
-            model = MessageAndActionModel.from_DatabaseMessages(msg)
             # 移除表情包
-            if model.processed_plain_text:
-                model.processed_plain_text = re.sub(r"\[表情包：[^\]]+\]", "", model.processed_plain_text)
-            copy_messages.append(model)
+            msg.processed_plain_text = re.sub(r"\[表情包：[^\]]+\]", "", msg.processed_plain_text or "")
+            copy_messages.append(msg)
         else:
-            copy_messages.append(MessageAndActionModel.from_DatabaseMessages(msg))
+            copy_messages.append(msg)
 
     if show_actions and copy_messages:
         # 获取所有消息的时间范围
@@ -786,40 +778,45 @@ def build_readable_messages(
         chat_id = messages[0].chat_id if messages else None
 
         # 获取这个时间范围内的动作记录，并匹配chat_id
-        actions_in_range = (
-            ActionRecords.select()
-            .where(
-                (ActionRecords.time >= min_time) & (ActionRecords.time <= max_time) & (ActionRecords.chat_id == chat_id)
-            )
-            .order_by(ActionRecords.time)
-        )
+        with get_db_session() as session:
+            actions_in_range = session.exec(
+                select(ActionRecord)
+                .where(col(ActionRecord.timestamp) >= datetime.fromtimestamp(min_time))
+                .where(col(ActionRecord.timestamp) <= datetime.fromtimestamp(max_time))
+                .where(col(ActionRecord.session_id) == chat_id)
+                .order_by(col(ActionRecord.timestamp))
+            ).all()
 
         # 获取最新消息之后的第一个动作记录
-        action_after_latest = (
-            ActionRecords.select()
-            .where((ActionRecords.time > max_time) & (ActionRecords.chat_id == chat_id))
-            .order_by(ActionRecords.time)
-            .limit(1)
-        )
+        with get_db_session() as session:
+            action_after_latest = session.exec(
+                select(ActionRecord)
+                .where(col(ActionRecord.timestamp) > datetime.fromtimestamp(max_time))
+                .where(col(ActionRecord.session_id) == chat_id)
+                .order_by(col(ActionRecord.timestamp))
+                .limit(1)
+            ).all()
 
         # 合并两部分动作记录
-        actions: List[ActionRecords] = list(actions_in_range) + list(action_after_latest)
+        actions: List[ActionRecord] = list(actions_in_range) + list(action_after_latest)
 
         # 将动作记录转换为消息格式
         for action in actions:
             # 只有当build_into_prompt为True时才添加动作记录
-            if action.action_build_into_prompt:
-                action_msg = MessageAndActionModel(
-                    time=float(action.time),  # type: ignore
-                    user_id=global_config.bot.qq_account,  # 使用机器人的QQ账号
-                    user_platform=global_config.bot.platform,  # 使用机器人的平台
-                    user_nickname=global_config.bot.nickname,  # 使用机器人的用户名
-                    user_cardname="",  # 机器人没有群名片
-                    processed_plain_text=f"{action.action_prompt_display}",
-                    display_message=f"{action.action_prompt_display}",
-                    chat_info_platform=str(action.chat_info_platform),
-                    is_action_record=True,  # 添加标识字段
-                    action_name=str(action.action_name),  # 保存动作名称
+            action_display_prompt = action.action_display_prompt or ""
+            if action_display_prompt:
+                action_msg = DatabaseMessages(
+                    message_id=f"action_{action.action_id}",
+                    time=float(action.timestamp.timestamp()),
+                    chat_id=chat_id or "",
+                    processed_plain_text=action_display_prompt,
+                    display_message=action_display_prompt,
+                    user_platform=global_config.bot.platform,
+                    user_id=str(global_config.bot.qq_account),
+                    user_nickname=global_config.bot.nickname,
+                    user_cardname="",
+                    chat_info_platform=str(global_config.bot.platform),
+                    chat_info_stream_id=chat_id or "",
                 )
                 copy_messages.append(action_msg)
 
@@ -1026,16 +1023,12 @@ async def get_person_id_list(messages: List[Dict[str, Any]]) -> List[str]:
     person_ids_set = set()  # 使用集合来自动去重
 
     for msg in messages:
-        platform: str = msg.get("user_platform")  # type: ignore
-        user_id: str = msg.get("user_id")  # type: ignore
+        platform = msg.get("user_platform") or ""
+        user_id = msg.get("user_id") or ""
 
         # 检查必要信息是否存在 且 不是机器人自己
         if not all([platform, user_id]) or user_id == global_config.bot.qq_account:
             continue
-
-        # 添加空值检查，防止 platform 为 None 时出错
-        if platform is None:
-            platform = "unknown"
 
         if person_id := get_person_id(platform, user_id):
             person_ids_set.add(person_id)

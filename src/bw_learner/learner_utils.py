@@ -60,31 +60,31 @@ def calculate_style_similarity(style1: str, style2: str) -> float:
     """
     计算两个 style 的相似度，返回0-1之间的值
     在计算前会移除"使用"和"句式"这两个词（参考 expression_similarity_analysis.py）
-    
+
     Args:
         style1: 第一个 style
         style2: 第二个 style
-    
+
     Returns:
         float: 相似度值，范围0-1
     """
     if not style1 or not style2:
         return 0.0
-    
+
     # 移除"使用"和"句式"这两个词
     def remove_ignored_words(text: str) -> str:
         """移除需要忽略的词"""
         text = text.replace("使用", "")
         text = text.replace("句式", "")
         return text.strip()
-    
+
     cleaned_style1 = remove_ignored_words(style1)
     cleaned_style2 = remove_ignored_words(style2)
-    
+
     # 如果清理后文本为空，返回0
     if not cleaned_style1 or not cleaned_style2:
         return 0.0
-    
+
     return difflib.SequenceMatcher(None, cleaned_style1, cleaned_style2).ratio()
 
 

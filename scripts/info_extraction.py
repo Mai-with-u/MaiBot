@@ -123,9 +123,7 @@ def _run(non_interactive: bool = False) -> None:  # sourcery skip: comprehension
     ensure_dirs()  # 确保目录存在
     # 新增用户确认提示
     if non_interactive:
-        logger.warning(
-            "当前处于非交互模式，将跳过费用与时长确认提示，直接开始进行实体提取操作。"
-        )
+        logger.warning("当前处于非交互模式，将跳过费用与时长确认提示，直接开始进行实体提取操作。")
     else:
         print("=== 重要操作确认，请认真阅读以下内容哦 ===")
         print("实体提取操作将会花费较多api余额和时间，建议在空闲时段执行。")

@@ -5,9 +5,9 @@ from PIL import Image
 from datetime import datetime
 
 from src.common.logger import get_logger
-from src.common.database.database import db  # 确保 db 被导入用于 create_tables
-from src.common.database.database_model import LLMUsage
-from src.config.api_ada_configs import ModelInfo
+from src.common.database.database import get_db_session
+from src.common.database.database_model import ModelUsage, ModelUser
+from src.config.model_configs import ModelInfo
 from .payload_content.message import Message, MessageBuilder
 from .model_client.base_client import UsageRecord
 
@@ -158,12 +158,7 @@ class LLMUsageRecorder:
     """
 
     def __init__(self):
-        try:
-            # 使用 Peewee 创建表，safe=True 表示如果表已存在则不会抛出错误
-            db.create_tables([LLMUsage], safe=True)
-            # logger.debug("LLMUsage 表已初始化/确保存在。")
-        except Exception as e:
-            logger.error(f"创建 LLMUsage 表失败: {str(e)}")
+        pass
 
     def record_usage_to_database(
         self,
@@ -178,22 +173,22 @@ class LLMUsageRecorder:
         output_cost = (model_usage.completion_tokens / 1000000) * model_info.price_out
         total_cost = round(input_cost + output_cost, 6)
         try:
-            # 使用 Peewee 模型创建记录
-            LLMUsage.create(
-                model_name=model_info.model_identifier,
-                model_assign_name=model_info.name,
-                model_api_provider=model_info.api_provider,
-                user_id=user_id,
-                request_type=request_type,
-                endpoint=endpoint,
-                prompt_tokens=model_usage.prompt_tokens or 0,
-                completion_tokens=model_usage.completion_tokens or 0,
-                total_tokens=model_usage.total_tokens or 0,
-                cost=total_cost or 0.0,
-                time_cost=round(time_cost or 0.0, 3),
-                status="success",
-                timestamp=datetime.now(),  # Peewee 会处理 DateTimeField
-            )
+            with get_db_session() as session:
+                record = ModelUsage(
+                    model_name=model_info.model_identifier,
+                    model_assign_name=model_info.name,
+                    model_api_provider_name=model_info.api_provider,
+                    endpoint=endpoint,
+                    user_type=ModelUser.SYSTEM,
+                    request_type=request_type,
+                    time_cost=round(time_cost or 0.0, 3),
+                    timestamp=datetime.now(),
+                    prompt_tokens=model_usage.prompt_tokens or 0,
+                    completion_tokens=model_usage.completion_tokens or 0,
+                    total_tokens=model_usage.total_tokens or 0,
+                    cost=total_cost or 0.0,
+                )
+                session.add(record)
             logger.debug(
                 f"Token使用情况 - 模型: {model_usage.model_name}, "
                 f"用户: {user_id}, 类型: {request_type}, "

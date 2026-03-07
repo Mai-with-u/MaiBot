@@ -1,11 +1,11 @@
-import asyncio
-
 import aiohttp
+import asyncio
+import certifi
 import platform
+import ssl
 
 from src.common.logger import get_logger
-from src.common.tcp_connector import get_tcp_connector
-from src.config.config import global_config
+from src.config.config import global_config, MMC_VERSION
 from src.manager.async_task_manager import AsyncTask
 from src.manager.local_store_manager import local_storage
 
@@ -13,6 +13,11 @@ logger = get_logger("remote")
 
 TELEMETRY_SERVER_URL = "http://hyybuth.xyz:10058"
 """遥测服务地址"""
+ssl_context = ssl.create_default_context(cafile=certifi.where())
+
+
+async def get_tcp_connector():
+    return aiohttp.TCPConnector(ssl=ssl_context)
 
 
 class TelemetryHeartBeatTask(AsyncTask):
@@ -35,7 +40,7 @@ class TelemetryHeartBeatTask(AsyncTask):
         info_dict = {
             "os_type": "Unknown",
             "py_version": platform.python_version(),
-            "mmc_version": global_config.MMC_VERSION,
+            "mmc_version": MMC_VERSION,
         }
 
         match platform.system():

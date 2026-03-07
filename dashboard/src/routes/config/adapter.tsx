@@ -418,7 +418,7 @@ export function AdapterConfigPage() {
           </CardHeader>
           <CollapsibleContent>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4" role="radiogroup" aria-label="部署模式选择">
               {/* 预设模式 */}
               <div
                 className={`border-2 rounded-lg p-3 md:p-4 cursor-pointer transition-all ${
@@ -426,7 +426,11 @@ export function AdapterConfigPage() {
                     ? 'border-primary bg-primary/5'
                     : 'border-muted hover:border-primary/50 active:border-primary/70'
                 }`}
+                role="radio"
+                aria-checked={mode === 'preset'}
+                tabIndex={0}
                 onClick={() => handleModeChange('preset')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleModeChange('preset') } }}
               >
                 <div className="flex items-start gap-2 md:gap-3">
                   <Package className="h-4 w-4 md:h-5 md:w-5 mt-0.5 flex-shrink-0" />
@@ -446,7 +450,11 @@ export function AdapterConfigPage() {
                     ? 'border-primary bg-primary/5'
                     : 'border-muted hover:border-primary/50 active:border-primary/70'
                 }`}
+                role="radio"
+                aria-checked={mode === 'upload'}
+                tabIndex={0}
                 onClick={() => handleModeChange('upload')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleModeChange('upload') } }}
               >
                 <div className="flex items-start gap-2 md:gap-3">
                   <Upload className="h-4 w-4 md:h-5 md:w-5 mt-0.5 flex-shrink-0" />
@@ -466,7 +474,11 @@ export function AdapterConfigPage() {
                     ? 'border-primary bg-primary/5'
                     : 'border-muted hover:border-primary/50 active:border-primary/70'
                 }`}
+                role="radio"
+                aria-checked={mode === 'path'}
+                tabIndex={0}
                 onClick={() => handleModeChange('path')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleModeChange('path') } }}
               >
                 <div className="flex items-start gap-2 md:gap-3">
                   <FolderOpen className="h-4 w-4 md:h-5 md:w-5 mt-0.5 flex-shrink-0" />
@@ -496,10 +508,14 @@ export function AdapterConfigPage() {
                             ? 'border-primary bg-primary/5'
                             : 'border-muted hover:border-primary/50'
                         }`}
+                        role="radio"
+                        aria-checked={isSelected}
+                        tabIndex={0}
                         onClick={() => {
                           setSelectedPreset(key as PresetKey)
                           handleLoadFromPreset(key as PresetKey)
                         }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedPreset(key as PresetKey); handleLoadFromPreset(key as PresetKey) } }}
                       >
                         <div className="flex items-start gap-3">
                           <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />

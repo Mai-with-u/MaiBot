@@ -8,38 +8,12 @@ from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config, model_config
 from src.common.logger import get_logger
 from src.common.database.database_model import Expression
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.prompt.prompt_manager import prompt_manager
 from src.bw_learner.learner_utils import weighted_sample
-from src.chat.message_receive.chat_stream import get_chat_manager
+from src.common.utils.utils_session import SessionUtils
+from src.chat.utils.common_utils import TempMethodsExpression
 
 logger = get_logger("expression_selector")
-
-
-def init_prompt():
-    expression_evaluation_prompt = """{chat_observe_info}
-
-你的名字是{bot_name}{target_message}
-{reply_reason_block}
-
-以下是可选的表达情境：
-{all_situations}
-
-请你分析聊天内容的语境、情绪、话题类型，从上述情境中选择最适合当前聊天情境的，最多{max_num}个情境。
-考虑因素包括：
-1.聊天的情绪氛围（轻松、严肃、幽默等）
-2.话题类型（日常、技术、游戏、情感等）
-3.情境与当前语境的匹配度
-{target_message_extra_block}
-
-请以JSON格式输出，只需要输出选中的情境编号：
-例如：
-{{
-    "selected_situations": [2, 3, 5, 7, 19]
-}}
-
-请严格按照JSON格式输出，不要包含其他内容：
-"""
-    Prompt(expression_evaluation_prompt, "expression_evaluation_prompt")
 
 
 class ExpressionSelector:
@@ -59,7 +33,7 @@ class ExpressionSelector:
             bool: 是否允许使用表达
         """
         try:
-            use_expression, _, _ = global_config.expression.get_expression_config_for_chat(chat_id)
+            use_expression, _, _ = TempMethodsExpression.get_expression_config_for_chat(chat_id)
             return use_expression
         except Exception as e:
             logger.error(f"检查表达使用权限失败: {e}")
@@ -76,8 +50,9 @@ class ExpressionSelector:
             id_str = parts[1]
             stream_type = parts[2]
             is_group = stream_type == "group"
-            # 统一通过 chat_manager 生成 stream_id，避免各处自行实现哈希逻辑
-            return get_chat_manager().get_stream_id(platform, str(id_str), is_group=is_group)
+            return SessionUtils.calculate_session_id(
+                platform, group_id=str(id_str) if is_group else None, user_id=None if is_group else str(id_str)
+            )
         except Exception:
             return None
 
@@ -124,7 +99,9 @@ class ExpressionSelector:
 
             # 查询所有相关chat_id的表达方式，排除 rejected=1 的，且只选择 count > 1 的
             # 如果 expression_checked_only 为 True，则只选择 checked=True 且 rejected=False 的
-            base_conditions = (Expression.chat_id.in_(related_chat_ids)) & (~Expression.rejected) & (Expression.count > 1)
+            base_conditions = (
+                (Expression.chat_id.in_(related_chat_ids)) & (~Expression.rejected) & (Expression.count > 1)
+            )
             if global_config.expression.expression_checked_only:
                 base_conditions = base_conditions & (Expression.checked)
             style_query = Expression.select().where(base_conditions)
@@ -148,13 +125,10 @@ class ExpressionSelector:
             if len(style_exprs) < min_required:
                 # 高 count 样本不足：如果还有候选，就降级为随机选 3 个；如果一个都没有，则直接返回空
                 if not style_exprs:
-                    logger.info(
-                        f"聊天流 {chat_id} 没有满足 count > 1 且未被拒绝的表达方式，简单模式不进行选择"
-                    )
+                    logger.info(f"聊天流 {chat_id} 没有满足 count > 1 且未被拒绝的表达方式，简单模式不进行选择")
                     # 完全没有高 count 样本时，退化为全量随机抽样（不进入LLM流程）
                     fallback_num = min(3, max_num) if max_num > 0 else 3
-                    fallback_selected = self._random_expressions(chat_id, fallback_num)
-                    if fallback_selected:
+                    if fallback_selected := self._random_expressions(chat_id, fallback_num):
                         self.update_expressions_last_active_time(fallback_selected)
                         selected_ids = [expr["id"] for expr in fallback_selected]
                         logger.info(
@@ -225,12 +199,7 @@ class ExpressionSelector:
             ]
 
             # 随机抽样
-            if style_exprs:
-                selected_style = weighted_sample(style_exprs, total_num)
-            else:
-                selected_style = []
-
-            return selected_style
+            return weighted_sample(style_exprs, total_num) if style_exprs else []
 
         except Exception as e:
             logger.error(f"随机选择表达方式失败: {e}")
@@ -404,15 +373,15 @@ class ExpressionSelector:
                 reply_reason_block = ""
 
             # 3. 构建prompt（只包含情境，不包含完整的表达方式）
-            prompt = (await global_prompt_manager.get_prompt_async("expression_evaluation_prompt")).format(
-                bot_name=global_config.bot.nickname,
-                chat_observe_info=chat_context,
-                all_situations=all_situations_str,
-                max_num=max_num,
-                target_message=target_message_str,
-                target_message_extra_block=target_message_extra_block,
-                reply_reason_block=reply_reason_block,
-            )
+            prompt_template = prompt_manager.get_prompt("expression_select")
+            prompt_template.add_context("bot_name", global_config.bot.nickname)
+            prompt_template.add_context("chat_observe_info", chat_context)
+            prompt_template.add_context("all_situations", all_situations_str)
+            prompt_template.add_context("max_num", str(max_num))
+            prompt_template.add_context("target_message", target_message_str)
+            prompt_template.add_context("target_message_extra_block", target_message_extra_block)
+            prompt_template.add_context("reply_reason_block", reply_reason_block)
+            prompt = await prompt_manager.render_prompt(prompt_template)
 
             # 4. 调用LLM
             content, (reasoning_content, model_name, _) = await self.llm_model.generate_response_async(prompt=prompt)
@@ -481,8 +450,6 @@ class ExpressionSelector:
                 expr_obj.save()
                 logger.debug("表达方式激活: 更新last_active_time in db")
 
-
-init_prompt()
 
 try:
     expression_selector = ExpressionSelector()

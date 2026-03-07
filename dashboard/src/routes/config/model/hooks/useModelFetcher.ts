@@ -88,11 +88,15 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
     setModelFetchError(null)
 
     try {
-      const models = await fetchProviderModels(
+      const result = await fetchProviderModels(
         providerName,
         template.modelFetcher.parser,
         template.modelFetcher.endpoint
       )
+      if (!result.success) {
+        throw new Error(result.error)
+      }
+      const models = result.data
       setAvailableModels(models)
       // 更新缓存
       modelListCache.set(cacheKey, { models, timestamp: Date.now() })

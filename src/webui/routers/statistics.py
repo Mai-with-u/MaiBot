@@ -1,13 +1,16 @@
 """统计数据 API 路由"""
 
-from fastapi import APIRouter, HTTPException, Depends, Cookie, Header
-from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
-from peewee import fn
+from typing import Any, Optional
 
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import desc, func, or_
+from sqlmodel import col, select
+
+from src.common.database.database import get_db_session
+from src.common.database.database_model import Messages, ModelUsage, OnlineTime
 from src.common.logger import get_logger
-from src.common.database.database_model import LLMUsage, OnlineTime, Messages
 from src.webui.core import verify_auth_token_from_cookie_or_header
 
 logger = get_logger("webui.statistics")
@@ -60,10 +63,10 @@ class DashboardData(BaseModel):
     """仪表盘数据"""
 
     summary: StatisticsSummary
-    model_stats: List[ModelStatistics]
-    hourly_data: List[TimeSeriesData]
-    daily_data: List[TimeSeriesData]
-    recent_activity: List[Dict[str, Any]]
+    model_stats: list[ModelStatistics]
+    hourly_data: list[TimeSeriesData]
+    daily_data: list[TimeSeriesData]
+    recent_activity: list[dict[str, Any]]
 
 
 @router.get("/dashboard", response_model=DashboardData)
@@ -111,46 +114,69 @@ async def get_dashboard_data(hours: int = 24, _auth: bool = Depends(require_auth
 
 async def _get_summary_statistics(start_time: datetime, end_time: datetime) -> StatisticsSummary:
     """获取摘要统计数据（优化：使用数据库聚合）"""
-    summary = StatisticsSummary()
+    summary = StatisticsSummary(
+        total_requests=0,
+        total_cost=0.0,
+        total_tokens=0,
+        online_time=0.0,
+        total_messages=0,
+        total_replies=0,
+        avg_response_time=0.0,
+        cost_per_hour=0.0,
+        tokens_per_hour=0.0,
+    )
 
     # 使用聚合查询替代全量加载
-    query = LLMUsage.select(
-        fn.COUNT(LLMUsage.id).alias("total_requests"),
-        fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("total_cost"),
-        fn.COALESCE(fn.SUM(LLMUsage.prompt_tokens + LLMUsage.completion_tokens), 0).alias("total_tokens"),
-        fn.COALESCE(fn.AVG(LLMUsage.time_cost), 0).alias("avg_response_time"),
-    ).where((LLMUsage.timestamp >= start_time) & (LLMUsage.timestamp <= end_time))
+    with get_db_session() as session:
+        statement = select(
+            func.count().label("total_requests"),
+            func.sum(col(ModelUsage.cost)).label("total_cost"),
+            func.sum(col(ModelUsage.total_tokens)).label("total_tokens"),
+            func.avg(col(ModelUsage.time_cost)).label("avg_response_time"),
+        ).where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
+        result = session.exec(statement).first()
 
-    result = query.dicts().get()
-    summary.total_requests = result["total_requests"]
-    summary.total_cost = result["total_cost"]
-    summary.total_tokens = result["total_tokens"]
-    summary.avg_response_time = result["avg_response_time"] or 0.0
+    if result:
+        total_requests, total_cost, total_tokens, avg_response_time = result
+        summary.total_requests = total_requests or 0
+        summary.total_cost = float(total_cost or 0.0)
+        summary.total_tokens = total_tokens or 0
+        summary.avg_response_time = float(avg_response_time or 0.0)
 
     # 查询在线时间 - 这个数据量通常不大，保留原逻辑
-    online_records = list(
-        OnlineTime.select().where((OnlineTime.start_timestamp >= start_time) | (OnlineTime.end_timestamp >= start_time))
-    )
+    with get_db_session() as session:
+        statement = select(OnlineTime).where(
+            or_(
+                col(OnlineTime.start_timestamp) >= start_time,
+                col(OnlineTime.end_timestamp) >= start_time,
+            )
+        )
+        online_records = session.exec(statement).all()
 
-    for record in online_records:
-        start = max(record.start_timestamp, start_time)
-        end = min(record.end_timestamp, end_time)
-        if end > start:
-            summary.online_time += (end - start).total_seconds()
+        for record in online_records:
+            start = max(record.start_timestamp, start_time)
+            end = min(record.end_timestamp, end_time)
+            if end > start:
+                summary.online_time += (end - start).total_seconds()
 
     # 查询消息数量 - 使用聚合优化
-    messages_query = Messages.select(fn.COUNT(Messages.id).alias("total")).where(
-        (Messages.time >= start_time.timestamp()) & (Messages.time <= end_time.timestamp())
-    )
-    summary.total_messages = messages_query.scalar() or 0
+    with get_db_session() as session:
+        statement = select(func.count()).where(
+            col(Messages.timestamp) >= start_time,
+            col(Messages.timestamp) <= end_time,
+        )
+        total_messages = session.exec(statement).one()
+    summary.total_messages = int(total_messages or 0)
 
     # 统计回复数量
-    replies_query = Messages.select(fn.COUNT(Messages.id).alias("total")).where(
-        (Messages.time >= start_time.timestamp())
-        & (Messages.time <= end_time.timestamp())
-        & (Messages.reply_to.is_null(False))
-    )
-    summary.total_replies = replies_query.scalar() or 0
+    with get_db_session() as session:
+        statement = select(func.count()).where(
+            col(Messages.timestamp) >= start_time,
+            col(Messages.timestamp) <= end_time,
+            col(Messages.reply_to).is_not(None),
+        )
+        total_replies = session.exec(statement).one()
+    summary.total_replies = int(total_replies or 0)
 
     # 计算派生指标
     if summary.online_time > 0:
@@ -161,55 +187,80 @@ async def _get_summary_statistics(start_time: datetime, end_time: datetime) -> S
     return summary
 
 
-async def _get_model_statistics(start_time: datetime) -> List[ModelStatistics]:
+async def _get_model_statistics(start_time: datetime) -> list[ModelStatistics]:
     """获取模型统计数据（优化：使用数据库聚合和分组）"""
     # 使用GROUP BY聚合，避免全量加载
-    query = (
-        LLMUsage.select(
-            fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name, "unknown").alias("model_name"),
-            fn.COUNT(LLMUsage.id).alias("request_count"),
-            fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("total_cost"),
-            fn.COALESCE(fn.SUM(LLMUsage.prompt_tokens + LLMUsage.completion_tokens), 0).alias("total_tokens"),
-            fn.COALESCE(fn.AVG(LLMUsage.time_cost), 0).alias("avg_response_time"),
-        )
-        .where(LLMUsage.timestamp >= start_time)
-        .group_by(fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name, "unknown"))
-        .order_by(fn.COUNT(LLMUsage.id).desc())
-        .limit(10)  # 只取前10个
+    statement = (
+        select(ModelUsage)
+        .where(col(ModelUsage.timestamp) >= start_time)
+        .order_by(desc(col(ModelUsage.timestamp)))
+        .limit(200)
     )
 
-    result = []
-    for row in query.dicts():
+    with get_db_session() as session:
+        rows = session.exec(statement).all()
+
+        aggregates: dict[str, dict[str, float | int]] = {}
+        for record in rows:
+            model_name = record.model_assign_name or record.model_name or "unknown"
+            if model_name not in aggregates:
+                aggregates[model_name] = {
+                    "request_count": 0,
+                    "total_cost": 0.0,
+                    "total_tokens": 0,
+                    "total_time_cost": 0.0,
+                    "time_cost_count": 0,
+                }
+            bucket = aggregates[model_name]
+            bucket["request_count"] = int(bucket["request_count"]) + 1
+            bucket["total_cost"] = float(bucket["total_cost"]) + float(record.cost or 0.0)
+            bucket["total_tokens"] = int(bucket["total_tokens"]) + int(record.total_tokens or 0)
+            if record.time_cost:
+                bucket["total_time_cost"] = float(bucket["total_time_cost"]) + float(record.time_cost)
+                bucket["time_cost_count"] = int(bucket["time_cost_count"]) + 1
+
+    result: list[ModelStatistics] = []
+    for model_name, bucket in sorted(
+        aggregates.items(),
+        key=lambda item: float(item[1]["request_count"]),
+        reverse=True,
+    )[:10]:
+        time_cost_count = int(bucket["time_cost_count"])
+        avg_time_cost = float(bucket["total_time_cost"]) / time_cost_count if time_cost_count > 0 else 0.0
         result.append(
             ModelStatistics(
-                model_name=row["model_name"],
-                request_count=row["request_count"],
-                total_cost=row["total_cost"],
-                total_tokens=row["total_tokens"],
-                avg_response_time=row["avg_response_time"] or 0.0,
+                model_name=model_name,
+                request_count=int(bucket["request_count"]),
+                total_cost=float(bucket["total_cost"]),
+                total_tokens=int(bucket["total_tokens"]),
+                avg_response_time=avg_time_cost,
             )
         )
 
     return result
 
 
-async def _get_hourly_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+async def _get_hourly_statistics(start_time: datetime, end_time: datetime) -> list[TimeSeriesData]:
     """获取小时级统计数据（优化：使用数据库聚合）"""
     # SQLite的日期时间函数进行小时分组
     # 使用strftime将timestamp格式化为小时级别
-    query = (
-        LLMUsage.select(
-            fn.strftime("%Y-%m-%dT%H:00:00", LLMUsage.timestamp).alias("hour"),
-            fn.COUNT(LLMUsage.id).alias("requests"),
-            fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("cost"),
-            fn.COALESCE(fn.SUM(LLMUsage.prompt_tokens + LLMUsage.completion_tokens), 0).alias("tokens"),
+    hour_expr = func.strftime("%Y-%m-%dT%H:00:00", col(ModelUsage.timestamp))
+    statement = (
+        select(
+            hour_expr.label("hour"),
+            func.count().label("requests"),
+            func.sum(col(ModelUsage.cost)).label("cost"),
+            func.sum(col(ModelUsage.total_tokens)).label("tokens"),
         )
-        .where((LLMUsage.timestamp >= start_time) & (LLMUsage.timestamp <= end_time))
-        .group_by(fn.strftime("%Y-%m-%dT%H:00:00", LLMUsage.timestamp))
+        .where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
+        .group_by(hour_expr)
     )
 
+    with get_db_session() as session:
+        rows = session.exec(statement).all()
+
     # 转换为字典以快速查找
-    data_dict = {row["hour"]: row for row in query.dicts()}
+    data_dict = {row[0]: row for row in rows}
 
     # 填充所有小时（包括没有数据的）
     result = []
@@ -219,7 +270,12 @@ async def _get_hourly_statistics(start_time: datetime, end_time: datetime) -> Li
         if hour_str in data_dict:
             row = data_dict[hour_str]
             result.append(
-                TimeSeriesData(timestamp=hour_str, requests=row["requests"], cost=row["cost"], tokens=row["tokens"])
+                TimeSeriesData(
+                    timestamp=hour_str,
+                    requests=row[1] or 0,
+                    cost=float(row[2] or 0.0),
+                    tokens=row[3] or 0,
+                )
             )
         else:
             result.append(TimeSeriesData(timestamp=hour_str, requests=0, cost=0.0, tokens=0))
@@ -228,22 +284,26 @@ async def _get_hourly_statistics(start_time: datetime, end_time: datetime) -> Li
     return result
 
 
-async def _get_daily_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+async def _get_daily_statistics(start_time: datetime, end_time: datetime) -> list[TimeSeriesData]:
     """获取日级统计数据（优化：使用数据库聚合）"""
     # 使用strftime按日期分组
-    query = (
-        LLMUsage.select(
-            fn.strftime("%Y-%m-%dT00:00:00", LLMUsage.timestamp).alias("day"),
-            fn.COUNT(LLMUsage.id).alias("requests"),
-            fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("cost"),
-            fn.COALESCE(fn.SUM(LLMUsage.prompt_tokens + LLMUsage.completion_tokens), 0).alias("tokens"),
+    day_expr = func.strftime("%Y-%m-%dT00:00:00", col(ModelUsage.timestamp))
+    statement = (
+        select(
+            day_expr.label("day"),
+            func.count().label("requests"),
+            func.sum(col(ModelUsage.cost)).label("cost"),
+            func.sum(col(ModelUsage.total_tokens)).label("tokens"),
         )
-        .where((LLMUsage.timestamp >= start_time) & (LLMUsage.timestamp <= end_time))
-        .group_by(fn.strftime("%Y-%m-%dT00:00:00", LLMUsage.timestamp))
+        .where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
+        .group_by(day_expr)
     )
 
+    with get_db_session() as session:
+        rows = session.exec(statement).all()
+
     # 转换为字典
-    data_dict = {row["day"]: row for row in query.dicts()}
+    data_dict = {row[0]: row for row in rows}
 
     # 填充所有天
     result = []
@@ -253,7 +313,12 @@ async def _get_daily_statistics(start_time: datetime, end_time: datetime) -> Lis
         if day_str in data_dict:
             row = data_dict[day_str]
             result.append(
-                TimeSeriesData(timestamp=day_str, requests=row["requests"], cost=row["cost"], tokens=row["tokens"])
+                TimeSeriesData(
+                    timestamp=day_str,
+                    requests=row[1] or 0,
+                    cost=float(row[2] or 0.0),
+                    tokens=row[3] or 0,
+                )
             )
         else:
             result.append(TimeSeriesData(timestamp=day_str, requests=0, cost=0.0, tokens=0))
@@ -262,23 +327,25 @@ async def _get_daily_statistics(start_time: datetime, end_time: datetime) -> Lis
     return result
 
 
-async def _get_recent_activity(limit: int = 10) -> List[Dict[str, Any]]:
+async def _get_recent_activity(limit: int = 10) -> list[dict[str, Any]]:
     """获取最近活动"""
-    records = list(LLMUsage.select().order_by(LLMUsage.timestamp.desc()).limit(limit))
+    with get_db_session() as session:
+        statement = select(ModelUsage).order_by(desc(col(ModelUsage.timestamp))).limit(limit)
+        records = session.exec(statement).all()
 
-    activities = []
-    for record in records:
-        activities.append(
-            {
-                "timestamp": record.timestamp.isoformat(),
-                "model": record.model_assign_name or record.model_name,
-                "request_type": record.request_type,
-                "tokens": (record.prompt_tokens or 0) + (record.completion_tokens or 0),
-                "cost": record.cost or 0.0,
-                "time_cost": record.time_cost or 0.0,
-                "status": record.status,
-            }
-        )
+        activities = []
+        for record in records:
+            activities.append(
+                {
+                    "timestamp": record.timestamp.isoformat(),
+                    "model": record.model_assign_name or record.model_name,
+                    "request_type": record.request_type,
+                    "tokens": record.total_tokens or 0,
+                    "cost": record.cost or 0.0,
+                    "time_cost": record.time_cost or 0.0,
+                    "status": None,
+                }
+            )
 
     return activities
 

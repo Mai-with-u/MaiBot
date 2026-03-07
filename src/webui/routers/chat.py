@@ -7,15 +7,19 @@
 
 import time
 import uuid
-from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, Cookie, Header
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
 
-from src.common.logger import get_logger
-from src.common.database.database_model import Messages, PersonInfo
-from src.config.config import global_config
+from fastapi import APIRouter, Cookie, Depends, Header, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from sqlalchemy import case, desc, func
+from sqlmodel import col, select, delete
+
 from src.chat.message_receive.bot import chat_bot
-from src.webui.core import verify_auth_token_from_cookie_or_header, get_token_manager
+from src.common.database.database import get_db_session
+from src.common.database.database_model import Messages, PersonInfo
+from src.common.logger import get_logger
+from src.config.config import global_config
+from src.webui.core import get_token_manager, verify_auth_token_from_cookie_or_header
 from src.webui.routers.websocket.auth import verify_ws_token
 
 logger = get_logger("webui.chat")
@@ -96,7 +100,7 @@ class ChatHistoryManager:
             "id": msg.message_id,
             "type": "bot" if is_bot else "user",
             "content": msg.processed_plain_text or msg.display_message or "",
-            "timestamp": msg.time,
+            "timestamp": msg.timestamp.timestamp(),
             "sender_name": msg.user_nickname or (global_config.bot.nickname if is_bot else "未知用户"),
             "sender_id": "bot" if is_bot else user_id,
             "is_bot": is_bot,
@@ -112,12 +116,14 @@ class ChatHistoryManager:
         target_group_id = group_id if group_id else WEBUI_CHAT_GROUP_ID
         try:
             # 查询指定群的消息，按时间排序
-            messages = (
-                Messages.select()
-                .where(Messages.chat_info_group_id == target_group_id)
-                .order_by(Messages.time.desc())
-                .limit(limit)
-            )
+            with get_db_session() as session:
+                statement = (
+                    select(Messages)
+                    .where(col(Messages.group_id) == target_group_id)
+                    .order_by(desc(col(Messages.timestamp)))
+                    .limit(limit)
+                )
+                messages = session.exec(statement).all()
 
             # 转换为列表并反转（使最旧的消息在前）
             # 传递 group_id 以便正确判断虚拟群中的机器人消息
@@ -138,7 +144,10 @@ class ChatHistoryManager:
         """
         target_group_id = group_id if group_id else WEBUI_CHAT_GROUP_ID
         try:
-            deleted = Messages.delete().where(Messages.chat_info_group_id == target_group_id).execute()
+            with get_db_session() as session:
+                statement = delete(Messages).where(col(Messages.group_id) == target_group_id)
+                result = session.exec(statement)
+                deleted = result.rowcount or 0
             logger.info(f"已清空 {deleted} 条聊天记录 (group_id={target_group_id})")
             return deleted
         except Exception as e:
@@ -171,14 +180,14 @@ class ChatConnectionManager:
             del self.user_sessions[user_id]
         logger.info(f"WebUI 聊天会话已断开: session={session_id}")
 
-    async def send_message(self, session_id: str, message: dict):
+    async def send_message(self, session_id: str, message: dict[str, Any]):
         if session_id in self.active_connections:
             try:
                 await self.active_connections[session_id].send_json(message)
             except Exception as e:
                 logger.error(f"发送消息失败: {e}")
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict[str, Any]):
         """广播消息给所有连接"""
         for session_id in list(self.active_connections.keys()):
             await self.send_message(session_id, message)
@@ -290,19 +299,19 @@ async def get_available_platforms(_auth: bool = Depends(require_auth)):
     从 PersonInfo 表中获取所有已知的平台
     """
     try:
-        from peewee import fn
-
         # 查询所有不同的平台
-        platforms = (
-            PersonInfo.select(PersonInfo.platform, fn.COUNT(PersonInfo.id).alias("count"))
-            .group_by(PersonInfo.platform)
-            .order_by(fn.COUNT(PersonInfo.id).desc())
-        )
+        with get_db_session() as session:
+            statement = (
+                select(PersonInfo.platform, func.count().label("count"))
+                .group_by(PersonInfo.platform)
+                .order_by(func.count().desc())
+            )
+            platforms = session.exec(statement).all()
 
         result = []
-        for p in platforms:
-            if p.platform:  # 排除空平台
-                result.append({"platform": p.platform, "count": p.count})
+        for platform, count in platforms:
+            if platform:
+                result.append({"platform": platform, "count": count})
 
         return {"success": True, "platforms": result}
     except Exception as e:
@@ -326,33 +335,36 @@ async def get_persons_by_platform(
     """
     try:
         # 构建查询
-        query = PersonInfo.select().where(PersonInfo.platform == platform)
+        statement = select(PersonInfo).where(col(PersonInfo.platform) == platform)
 
         # 搜索过滤
         if search:
-            query = query.where(
-                (PersonInfo.person_name.contains(search))
-                | (PersonInfo.nickname.contains(search))
-                | (PersonInfo.user_id.contains(search))
+            statement = statement.where(
+                (col(PersonInfo.person_name).contains(search))
+                | (col(PersonInfo.user_nickname).contains(search))
+                | (col(PersonInfo.user_id).contains(search))
             )
 
         # 按最后交互时间排序，优先显示活跃用户
-        from peewee import Case
+        statement = statement.order_by(
+            case((col(PersonInfo.last_known_time).is_(None), 1), else_=0),
+            col(PersonInfo.last_known_time).desc(),
+        ).limit(limit)
 
-        query = query.order_by(Case(None, [(PersonInfo.last_know.is_null(), 1)], 0), PersonInfo.last_know.desc())
-        query = query.limit(limit)
+        with get_db_session() as session:
+            persons = session.exec(statement).all()
 
         result = []
-        for person in query:
+        for person in persons:
             result.append(
                 {
                     "person_id": person.person_id,
                     "user_id": person.user_id,
                     "person_name": person.person_name,
-                    "nickname": person.nickname,
+                    "nickname": person.user_nickname,
                     "is_known": person.is_known,
                     "platform": person.platform,
-                    "display_name": person.person_name or person.nickname or person.user_id,
+                    "display_name": person.person_name or person.user_nickname or person.user_id,
                 }
             )
 
@@ -451,7 +463,9 @@ async def websocket_chat(
     # 如果 URL 参数中提供了虚拟身份信息，自动配置
     if platform and person_id:
         try:
-            person = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
+            with get_db_session() as session:
+                statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
+                person = session.exec(statement).first()
             if person:
                 # 使用前端传递的 group_id，如果没有则生成一个稳定的
                 virtual_group_id = group_id or f"{VIRTUAL_GROUP_ID_PREFIX}{platform}_{person.user_id}"
@@ -460,7 +474,7 @@ async def websocket_chat(
                     platform=person.platform,
                     person_id=person.person_id,
                     user_id=person.user_id,
-                    user_nickname=person.person_name or person.nickname or person.user_id,
+                    user_nickname=person.person_name or person.user_nickname or person.user_id,
                     group_id=virtual_group_id,
                     group_name=group_name or "WebUI虚拟群聊",
                 )
@@ -474,7 +488,7 @@ async def websocket_chat(
 
     try:
         # 构建会话信息
-        session_info_data = {
+        session_info_data: dict[str, Any] = {
             "type": "session_info",
             "session_id": session_id,
             "user_id": user_id,
@@ -644,7 +658,13 @@ async def websocket_chat(
 
                     # 获取用户信息
                     try:
-                        person = PersonInfo.get_or_none(PersonInfo.person_id == virtual_data.get("person_id"))
+                        with get_db_session() as session:
+                            statement = (
+                                select(PersonInfo)
+                                .where(col(PersonInfo.person_id) == virtual_data.get("person_id"))
+                                .limit(1)
+                            )
+                            person = session.exec(statement).first()
                         if not person:
                             await chat_manager.send_message(
                                 session_id,
@@ -668,7 +688,7 @@ async def websocket_chat(
                             platform=person.platform,
                             person_id=person.person_id,
                             user_id=person.user_id,
-                            user_nickname=person.person_name or person.nickname or person.user_id,
+                            user_nickname=person.person_name or person.user_nickname or person.user_id,
                             group_id=group_id,
                             group_name=virtual_data.get("group_name", "WebUI虚拟群聊"),
                         )
@@ -772,7 +792,7 @@ async def get_chat_info(_auth: bool = Depends(require_auth)):
     }
 
 
-def get_webui_chat_broadcaster() -> tuple:
+def get_webui_chat_broadcaster() -> tuple[ChatConnectionManager, str]:
     """获取 WebUI 聊天广播器，供外部模块使用
 
     Returns:

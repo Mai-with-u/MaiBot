@@ -1,9 +1,9 @@
 import json
 import re
 from typing import Dict, Any, Optional, Tuple, List, Union
-from src.common.logger import get_module_logger
+from src.common.logger import get_logger
 
-logger = get_module_logger("pfc_utils")
+logger = get_logger("pfc_utils")
 
 
 def get_items_from_json(

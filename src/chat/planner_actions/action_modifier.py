@@ -4,14 +4,11 @@ from typing import List, Dict, TYPE_CHECKING, Tuple
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.chat.message_receive.chat_stream import get_chat_manager, ChatMessageContext
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as _chat_manager
 from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.utils.chat_message_builder import get_raw_msg_before_timestamp_with_chat, build_readable_messages
-from src.plugin_system.base.component_types import ActionInfo, ActionActivationType
-from src.plugin_system.core.global_announcement_manager import global_announcement_manager
-
-if TYPE_CHECKING:
-    from src.chat.message_receive.chat_stream import ChatStream
+from src.core.types import ActionActivationType, ActionInfo
+from src.core.announcement_manager import global_announcement_manager
 
 logger = get_logger("action_manager")
 
@@ -27,8 +24,8 @@ class ActionModifier:
     def __init__(self, action_manager: ActionManager, chat_id: str):
         """初始化动作处理器"""
         self.chat_id = chat_id
-        self.chat_stream: ChatStream = get_chat_manager().get_stream(self.chat_id)  # type: ignore
-        self.log_prefix = f"[{get_chat_manager().get_stream_name(self.chat_id) or self.chat_id}]"
+        self.chat_stream: BotChatSession = _chat_manager.get_session_by_session_id(self.chat_id)  # type: ignore
+        self.log_prefix = f"[{_chat_manager.get_session_name(self.chat_id) or self.chat_id}]"
 
         self.action_manager = action_manager
 
@@ -121,7 +118,7 @@ class ActionModifier:
         available_actions_text = "、".join(available_actions) if available_actions else "无"
         logger.debug(f"{self.log_prefix} 当前可用动作: {available_actions_text}||移除: {removals_summary}")
 
-    def _check_action_associated_types(self, all_actions: Dict[str, ActionInfo], chat_context: ChatMessageContext):
+    def _check_action_associated_types(self, all_actions: Dict[str, ActionInfo], chat_context: BotChatSession):
         type_mismatched_actions: List[Tuple[str, str]] = []
         for action_name, action_info in all_actions.items():
             if action_info.associated_types and not chat_context.check_types(action_info.associated_types):

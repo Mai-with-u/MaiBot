@@ -302,7 +302,7 @@ export function PluginMirrorsPage() {
           <Card>
             {/* 桌面端表格 */}
             <div className="hidden md:block">
-              <Table>
+              <Table aria-label="插件镜像源列表">
                 <TableHeader>
                   <TableRow>
                     <TableHead>状态</TableHead>

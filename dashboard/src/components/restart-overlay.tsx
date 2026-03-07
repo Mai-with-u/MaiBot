@@ -17,6 +17,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Loader2,
   CheckCircle2,
@@ -70,6 +71,7 @@ const getStatusConfig = (
   status: RestartStatus,
   checkAttempts: number,
   maxAttempts: number,
+  t: (key: string, opts?: Record<string, unknown>) => string,
   customTitle?: string,
   customDescription?: string
 ): StatusConfig => {
@@ -82,33 +84,33 @@ const getStatusConfig = (
     },
     requesting: {
       icon: <Loader2 className="h-16 w-16 text-primary animate-spin" />,
-      title: customTitle ?? '准备重启',
-      description: customDescription ?? '正在发送重启请求...',
-      tip: '🔄 正在准备重启麦麦...',
+      title: customTitle ?? t('restart.preparing'),
+      description: customDescription ?? t('restart.preparingDesc'),
+      tip: t('restart.preparingTip'),
     },
     restarting: {
       icon: <Loader2 className="h-16 w-16 text-primary animate-spin" />,
-      title: customTitle ?? '正在重启麦麦',
-      description: customDescription ?? '请稍候，麦麦正在重启中...',
-      tip: '🔄 配置已保存，正在重启主程序...',
+      title: customTitle ?? t('restart.restarting'),
+      description: customDescription ?? t('restart.restartingDesc'),
+      tip: t('restart.restartingTip'),
     },
     checking: {
       icon: <Loader2 className="h-16 w-16 text-primary animate-spin" />,
-      title: '检查服务状态',
-      description: `等待服务恢复... (${checkAttempts}/${maxAttempts})`,
-      tip: '⏳ 正在等待服务恢复，请勿关闭页面...',
+      title: t('restart.checking'),
+      description: t('restart.checkingDesc', { current: checkAttempts, max: maxAttempts }),
+      tip: t('restart.checkingTip'),
     },
     success: {
       icon: <CheckCircle2 className="h-16 w-16 text-green-500" />,
-      title: '重启成功',
-      description: '正在跳转到登录页面...',
-      tip: '✅ 配置已生效，服务运行正常',
+      title: t('restart.success'),
+      description: t('restart.successDesc'),
+      tip: t('restart.successTip'),
     },
     failed: {
       icon: <AlertCircle className="h-16 w-16 text-destructive" />,
-      title: '重启超时',
-      description: '服务未能在预期时间内恢复',
-      tip: '⚠️ 如果长时间无响应，请尝试手动重启',
+      title: t('restart.failed'),
+      description: t('restart.failedDesc'),
+      tip: t('restart.failedTip'),
     },
   }
   return configs[status]
@@ -192,6 +194,7 @@ function RestartOverlayContent({
   className,
 }: RestartOverlayContentProps) {
   const { status, progress, elapsedTime, checkAttempts, maxAttempts } = state
+  const { t } = useTranslation()
 
   // 回调处理
   useEffect(() => {
@@ -206,6 +209,7 @@ function RestartOverlayContent({
     status,
     checkAttempts,
     maxAttempts,
+    t,
     title,
     description
   )
@@ -246,7 +250,7 @@ function RestartOverlayContent({
             <Progress value={progress} className="h-2" />
             <div className="flex justify-between text-sm text-muted-foreground">
               <span>{progress}%</span>
-              <span>已用时: {formatTime(elapsedTime)}</span>
+              <span>{t('restart.elapsed')} {formatTime(elapsedTime)}</span>
             </div>
           </div>
         )}
@@ -265,11 +269,11 @@ function RestartOverlayContent({
               className="flex-1"
             >
               <RefreshCw className="mr-2 h-4 w-4" />
-              刷新页面
+              {t('restart.refreshPage')}
             </Button>
             <Button onClick={onRetry} variant="secondary" className="flex-1">
               <RotateCcw className="mr-2 h-4 w-4" />
-              重试检测
+              {t('restart.retryCheck')}
             </Button>
           </div>
         )}

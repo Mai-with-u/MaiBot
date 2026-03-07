@@ -12,36 +12,34 @@ from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.common.data_models.llm_data_model import LLMGenerationDataModel
 from src.config.config import global_config, model_config
 from src.llm_models.utils_model import LLMRequest
-from src.chat.message_receive.message import UserInfo, Seg, MessageRecv, MessageSending
-from src.chat.message_receive.chat_stream import ChatStream
+from maim_message import Seg
+
+from src.common.data_models.mai_message_data_model import MaiMessage, UserInfo
+from src.chat.message_receive.message import MessageSending
+from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.uni_message_sender import UniversalMessageSender
 from src.chat.utils.timer_calculator import Timer  # <--- Import Timer
 from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
-from src.chat.utils.prompt_builder import global_prompt_manager
+from src.prompt.prompt_manager import prompt_manager
 from src.chat.utils.chat_message_builder import (
     build_readable_messages,
     get_raw_msg_before_timestamp_with_chat,
     replace_user_references,
 )
 from src.bw_learner.expression_selector import expression_selector
-from src.plugin_system.apis.message_api import translate_pid_to_description
+from src.services.message_service import translate_pid_to_description
 
 # from src.memory_system.memory_activator import MemoryActivator
 from src.person_info.person_info import Person
-from src.plugin_system.base.component_types import ActionInfo, EventType
-from src.plugin_system.apis import llm_api
+from src.core.types import ActionInfo, EventType
+from src.services import llm_service as llm_api
 
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
-from src.chat.replyer.prompt.lpmm_prompt import init_lpmm_prompt
-from src.chat.replyer.prompt.replyer_prompt import init_replyer_prompt
-from src.chat.replyer.prompt.rewrite_prompt import init_rewrite_prompt
-from src.memory_system.memory_retrieval import init_memory_retrieval_prompt, build_memory_retrieval_prompt
+from src.memory_system.memory_retrieval import init_memory_retrieval_sys, build_memory_retrieval_prompt
 from src.bw_learner.jargon_explainer import explain_jargon_in_context, retrieve_concepts_with_jargon
+from src.chat.utils.common_utils import TempMethodsExpression
 
-init_lpmm_prompt()
-init_replyer_prompt()
-init_rewrite_prompt()
-init_memory_retrieval_prompt()
+init_memory_retrieval_sys()
 
 
 logger = get_logger("replyer")
@@ -50,17 +48,17 @@ logger = get_logger("replyer")
 class DefaultReplyer:
     def __init__(
         self,
-        chat_stream: ChatStream,
+        chat_stream: BotChatSession,
         request_type: str = "replyer",
     ):
         self.express_model = LLMRequest(model_set=model_config.model_task_config.replyer, request_type=request_type)
         self.chat_stream = chat_stream
-        self.is_group_chat, self.chat_target_info = get_chat_type_and_target_info(self.chat_stream.stream_id)
+        self.is_group_chat, self.chat_target_info = get_chat_type_and_target_info(self.chat_stream.session_id)
         self.heart_fc_sender = UniversalMessageSender()
 
-        from src.plugin_system.core.tool_use import ToolExecutor  # 延迟导入ToolExecutor，不然会循环依赖
+        from src.chat.tool_executor import ToolExecutor
 
-        self.tool_executor = ToolExecutor(chat_id=self.chat_stream.stream_id, enable_cache=True, cache_ttl=3)
+        self.tool_executor = ToolExecutor(chat_id=self.chat_stream.session_id, enable_cache=True, cache_ttl=3)
 
     async def generate_reply_with_context(
         self,
@@ -72,7 +70,7 @@ class DefaultReplyer:
         from_plugin: bool = True,
         stream_id: Optional[str] = None,
         reply_message: Optional[DatabaseMessages] = None,
-        reply_time_point: Optional[float] = time.time(),
+        reply_time_point: float = time.time(),
         think_level: int = 1,
         unknown_words: Optional[List[str]] = None,
         log_reply: bool = True,
@@ -137,7 +135,7 @@ class DefaultReplyer:
                 if log_reply:
                     try:
                         PlanReplyLogger.log_reply(
-                            chat_id=self.chat_stream.stream_id,
+                            chat_id=self.chat_stream.session_id,
                             prompt="",
                             output=None,
                             processed_output=None,
@@ -151,11 +149,13 @@ class DefaultReplyer:
                     except Exception:
                         logger.exception("记录reply日志失败")
                 return False, llm_response
-            from src.plugin_system.core.events_manager import events_manager
+            from src.core.event_bus import event_bus
+            from src.chat.event_helpers import build_event_message
 
             if not from_plugin:
-                continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.POST_LLM, None, prompt, None, stream_id=stream_id
+                _event_msg = build_event_message(EventType.POST_LLM, llm_prompt=prompt, stream_id=stream_id)
+                continue_flag, modified_message = await event_bus.emit(
+                    EventType.POST_LLM, _event_msg
                 )
                 if not continue_flag:
                     raise UserWarning("插件于请求前中断了内容生成")
@@ -177,7 +177,11 @@ class DefaultReplyer:
                 # 统一输出所有日志信息，使用try-except确保即使某个步骤出错也能输出
                 try:
                     # 1. 输出回复准备日志
-                    timing_log_str = f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s" if timing_logs or almost_zero_str else "回复准备: 无计时信息"
+                    timing_log_str = (
+                        f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s"
+                        if timing_logs or almost_zero_str
+                        else "回复准备: 无计时信息"
+                    )
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
@@ -203,7 +207,7 @@ class DefaultReplyer:
                 try:
                     if log_reply:
                         PlanReplyLogger.log_reply(
-                            chat_id=self.chat_stream.stream_id,
+                            chat_id=self.chat_stream.session_id,
                             prompt=prompt,
                             output=content,
                             processed_output=None,
@@ -215,8 +219,9 @@ class DefaultReplyer:
                         )
                 except Exception:
                     logger.exception("记录reply日志失败")
-                continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.AFTER_LLM, None, prompt, llm_response, stream_id=stream_id
+                _event_msg = build_event_message(EventType.AFTER_LLM, llm_prompt=prompt, llm_response=llm_response, stream_id=stream_id)
+                continue_flag, modified_message = await event_bus.emit(
+                    EventType.AFTER_LLM, _event_msg
                 )
                 if not from_plugin and not continue_flag:
                     raise UserWarning("插件于请求后取消了内容生成")
@@ -236,7 +241,11 @@ class DefaultReplyer:
                 # 即使LLM生成失败，也尝试输出已收集的日志信息
                 try:
                     # 1. 输出回复准备日志
-                    timing_log_str = f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s" if timing_logs or almost_zero_str else "回复准备: 无计时信息"
+                    timing_log_str = (
+                        f"回复准备: {'; '.join(timing_logs)}; {almost_zero_str} <0.1s"
+                        if timing_logs or almost_zero_str
+                        else "回复准备: 无计时信息"
+                    )
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
@@ -256,7 +265,7 @@ class DefaultReplyer:
                 if log_reply:
                     try:
                         PlanReplyLogger.log_reply(
-                            chat_id=self.chat_stream.stream_id,
+                            chat_id=self.chat_stream.session_id,
                             prompt=prompt or "",
                             output=None,
                             processed_output=None,
@@ -350,14 +359,14 @@ class DefaultReplyer:
             str: 表达习惯信息字符串
         """
         # 检查是否允许在此聊天流中使用表达
-        use_expression, _, _ = global_config.expression.get_expression_config_for_chat(self.chat_stream.stream_id)
+        use_expression, _, _ = TempMethodsExpression.get_expression_config_for_chat(self.chat_stream.session_id)
         if not use_expression:
             return "", []
         style_habits = []
         # 使用从处理器传来的选中表达方式
         # 使用模型预测选择表达方式
         selected_expressions, selected_ids = await expression_selector.select_suitable_expressions(
-            self.chat_stream.stream_id,
+            self.chat_stream.session_id,
             chat_history,
             max_num=8,
             target_message=target,
@@ -611,7 +620,7 @@ class DefaultReplyer:
 
         # 默认 / context 模式：使用上下文自动匹配黑话
         try:
-            return await explain_jargon_in_context(chat_id, messages_short, chat_talking_prompt_short)
+            return await explain_jargon_in_context(chat_id, messages_short, chat_talking_prompt_short) or ""
         except Exception as e:
             logger.error(f"上下文黑话解释失败: {e}")
             return ""
@@ -699,10 +708,11 @@ class DefaultReplyer:
             # 判断是否为群聊
             is_group = stream_type == "group"
 
-            # 使用 ChatManager 提供的接口生成 chat_id，避免在此重复实现逻辑
-            from src.chat.message_receive.chat_stream import get_chat_manager
+            from src.common.utils.utils_session import SessionUtils
 
-            chat_id = get_chat_manager().get_stream_id(platform, str(id_str), is_group=is_group)
+            chat_id = SessionUtils.calculate_session_id(
+                platform, group_id=str(id_str) if is_group else None, user_id=str(id_str) if not is_group else None
+            )
             return chat_id, prompt_content
 
         except (ValueError, IndexError):
@@ -754,7 +764,7 @@ class DefaultReplyer:
         available_actions: Optional[Dict[str, ActionInfo]] = None,
         chosen_actions: Optional[List[ActionPlannerInfo]] = None,
         enable_tool: bool = True,
-        reply_time_point: Optional[float] = time.time(),
+        reply_time_point: float = time.time(),
         think_level: int = 1,
         unknown_words: Optional[List[str]] = None,
     ) -> Tuple[str, List[int], List[str], str]:
@@ -775,7 +785,7 @@ class DefaultReplyer:
         if available_actions is None:
             available_actions = {}
         chat_stream = self.chat_stream
-        chat_id = chat_stream.stream_id
+        chat_id = chat_stream.session_id
         _is_group_chat = bool(chat_stream.group_info)
         platform = chat_stream.platform
 
@@ -859,7 +869,12 @@ class DefaultReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=think_level, unknown_words=unknown_words
+                    chat_talking_prompt_short,
+                    sender,
+                    target,
+                    self.chat_stream,
+                    think_level=think_level,
+                    unknown_words=unknown_words,
                 ),
                 "memory_retrieval",
             ),
@@ -933,7 +948,7 @@ class DefaultReplyer:
         else:
             reply_target_block = ""
 
-
+        dialogue_prompt: str = ""
         if message_list_before_now_long:
             latest_msgs = message_list_before_now_long[-int(global_config.chat.max_context_size) :]
             dialogue_prompt = build_readable_messages(
@@ -952,9 +967,9 @@ class DefaultReplyer:
         # think_level=0: 轻量回复（简短平淡）
         # think_level=1: 中等回复（日常口语化）
         if think_level == 0:
-            prompt_name = "replyer_prompt_0"
+            prompt_name = "replyer_light"
         else:  # think_level == 1 或默认
-            prompt_name = "replyer_prompt"
+            prompt_name = "replyer"
 
         # 根据配置构建最终的 reply_style：支持 multiple_reply_style 按概率随机替换
         reply_style = global_config.personality.reply_style
@@ -967,28 +982,28 @@ class DefaultReplyer:
                 # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
                 reply_style = global_config.personality.reply_style
 
-        return await global_prompt_manager.format_prompt(
-            prompt_name,
-            expression_habits_block=expression_habits_block,
-            tool_info_block=tool_info,
-            bot_name=global_config.bot.nickname,
-            knowledge_prompt=prompt_info,
-            # relation_info_block=relation_info,
-            extra_info_block=extra_info_block,
-            jargon_explanation=jargon_explanation,
-            identity=personality_prompt,
-            action_descriptions=actions_info,
-            sender_name=sender,
-            dialogue_prompt=dialogue_prompt,
-            time_block=time_block,
-            reply_target_block=reply_target_block,
-            reply_style=reply_style,
-            keywords_reaction_prompt=keywords_reaction_prompt,
-            moderation_prompt=moderation_prompt_block,
-            memory_retrieval=memory_retrieval,
-            chat_prompt=chat_prompt_block,
-            planner_reasoning=planner_reasoning,
-        ), selected_expressions, timing_logs, almost_zero_str
+        prompt = prompt_manager.get_prompt(prompt_name)
+        prompt.add_context("expression_habits_block", expression_habits_block)
+        prompt.add_context("tool_info_block", tool_info)
+        prompt.add_context("bot_name", global_config.bot.nickname)
+        prompt.add_context("knowledge_prompt", prompt_info)
+        # prompt.add_context("relation_info_block", relation_info)
+        prompt.add_context("extra_info_block", extra_info_block)
+        prompt.add_context("jargon_explanation", jargon_explanation)
+        prompt.add_context("identity", personality_prompt)
+        prompt.add_context("action_descriptions", actions_info)
+        prompt.add_context("sender_name", sender)
+        prompt.add_context("dialogue_prompt", dialogue_prompt)
+        prompt.add_context("time_block", time_block)
+        prompt.add_context("reply_target_block", reply_target_block)
+        prompt.add_context("reply_style", reply_style)
+        prompt.add_context("keywords_reaction_prompt", keywords_reaction_prompt)
+        prompt.add_context("moderation_prompt", moderation_prompt_block)
+        prompt.add_context("memory_retrieval", memory_retrieval)
+        prompt.add_context("chat_prompt", chat_prompt_block)
+        prompt.add_context("planner_reasoning", planner_reasoning)
+        formatted_prompt = await prompt_manager.render_prompt(prompt)
+        return (formatted_prompt, selected_expressions, timing_logs, almost_zero_str)
 
     async def build_prompt_rewrite_context(
         self,
@@ -997,7 +1012,7 @@ class DefaultReplyer:
         reply_to: str,
     ) -> str:  # sourcery skip: merge-else-if-into-elif, remove-redundant-if
         chat_stream = self.chat_stream
-        chat_id = chat_stream.stream_id
+        chat_id = chat_stream.session_id
         sender, target = self._parse_reply_target(reply_to)
         target = replace_user_references(target, chat_stream.platform, replace_bot_name=True)
 
@@ -1058,37 +1073,36 @@ class DefaultReplyer:
         else:
             reply_target_block = ""
 
-        chat_target_1 = await global_prompt_manager.get_prompt_async("chat_target_group1")
-        chat_target_2 = await global_prompt_manager.get_prompt_async("chat_target_group2")
-
-        template_name = "default_expressor_prompt"
+        chat_target_1_prompt = prompt_manager.get_prompt("chat_target_group1")
+        chat_target_1 = await prompt_manager.render_prompt(chat_target_1_prompt)
+        chat_target_2_prompt = prompt_manager.get_prompt("chat_target_group2")
+        chat_target_2 = await prompt_manager.render_prompt(chat_target_2_prompt)
 
         # 根据配置构建最终的 reply_style：支持 multiple_reply_style 按概率随机替换
         reply_style = global_config.personality.reply_style
-        multi_styles = getattr(global_config.personality, "multiple_reply_style", None) or []
-        multi_prob = getattr(global_config.personality, "multiple_probability", 0.0) or 0.0
+        multi_styles = global_config.personality.multiple_reply_style
+        multi_prob = global_config.personality.multiple_probability or 0.0
         if multi_styles and multi_prob > 0 and random.random() < multi_prob:
             try:
-                reply_style = random.choice(list(multi_styles))
+                reply_style = random.choice(multi_styles)
             except Exception:
                 reply_style = global_config.personality.reply_style
 
-        return await global_prompt_manager.format_prompt(
-            template_name,
-            expression_habits_block=expression_habits_block,
-            # relation_info_block=relation_info,
-            chat_target=chat_target_1,
-            time_block=time_block,
-            chat_info=chat_talking_prompt_half,
-            identity=personality_prompt,
-            chat_target_2=chat_target_2,
-            reply_target_block=reply_target_block,
-            raw_reply=raw_reply,
-            reason=reason,
-            reply_style=reply_style,
-            keywords_reaction_prompt=keywords_reaction_prompt,
-            moderation_prompt=moderation_prompt_block,
-        )
+        prompt_template = prompt_manager.get_prompt("default_expressor")
+        prompt_template.add_context("expression_habits_block", expression_habits_block)
+        # prompt_template.add_context("relation_info_block", relation_info)
+        prompt_template.add_context("chat_target", chat_target_1)
+        prompt_template.add_context("time_block", time_block)
+        prompt_template.add_context("chat_info", chat_talking_prompt_half)
+        prompt_template.add_context("identity", personality_prompt)
+        prompt_template.add_context("chat_target_2", chat_target_2)
+        prompt_template.add_context("reply_target_block", reply_target_block)
+        prompt_template.add_context("raw_reply", raw_reply)
+        prompt_template.add_context("reason", reason)
+        prompt_template.add_context("reply_style", reply_style)
+        prompt_template.add_context("keywords_reaction_prompt", keywords_reaction_prompt)
+        prompt_template.add_context("moderation_prompt", moderation_prompt_block)
+        return await prompt_manager.render_prompt(prompt_template)
 
     async def _build_single_sending_message(
         self,
@@ -1098,29 +1112,27 @@ class DefaultReplyer:
         is_emoji: bool,
         thinking_start_time: float,
         display_message: str,
-        anchor_message: Optional[MessageRecv] = None,
+        anchor_message: Optional[MaiMessage] = None,
     ) -> MessageSending:
         """构建单个发送消息"""
 
         bot_user_info = UserInfo(
-            user_id=global_config.bot.qq_account,
+            user_id=str(global_config.bot.qq_account),
             user_nickname=global_config.bot.nickname,
-            platform=self.chat_stream.platform,
         )
 
-        # await anchor_message.process()
         sender_info = anchor_message.message_info.user_info if anchor_message else None
 
         return MessageSending(
-            message_id=message_id,  # 使用片段的唯一ID
-            chat_stream=self.chat_stream,
+            message_id=message_id,
+            session=self.chat_stream,
             bot_user_info=bot_user_info,
             sender_info=sender_info,
             message_segment=message_segment,
-            reply=anchor_message,  # 回复原始锚点
+            reply=anchor_message,
             is_head=reply_to,
             is_emoji=is_emoji,
-            thinking_start_time=thinking_start_time,  # 传递原始思考开始时间
+            thinking_start_time=thinking_start_time,
             display_message=display_message,
         )
 
@@ -1161,18 +1173,13 @@ class DefaultReplyer:
             if global_config.lpmm_knowledge.lpmm_mode == "agent":
                 return ""
 
-            time_now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-            bot_name = global_config.bot.nickname
-
-            prompt = await global_prompt_manager.format_prompt(
-                "lpmm_get_knowledge_prompt",
-                bot_name=bot_name,
-                time_now=time_now,
-                chat_history=message,
-                sender=sender,
-                target_message=target,
-            )
+            template_prompt = prompt_manager.get_prompt("lpmm_get_knowledge")
+            template_prompt.add_context("bot_name", global_config.bot.nickname)
+            template_prompt.add_context("time_now", lambda _: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+            template_prompt.add_context("chat_history", message)
+            template_prompt.add_context("sender", sender)
+            template_prompt.add_context("target_message", target)
+            prompt = await prompt_manager.render_prompt(template_prompt)
             _, _, _, _, tool_calls = await llm_api.generate_with_model_with_tools(
                 prompt,
                 model_config=model_config.model_task_config.tool_use,

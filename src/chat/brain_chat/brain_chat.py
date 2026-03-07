@@ -9,7 +9,7 @@ from src.config.config import global_config
 from src.common.logger import get_logger
 from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.common.data_models.message_data_model import ReplyContentType
-from src.chat.message_receive.chat_stream import ChatStream, get_chat_manager
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as _chat_manager
 from src.chat.utils.prompt_builder import global_prompt_manager
 from src.chat.utils.timer_calculator import Timer
 from src.chat.brain_chat.brain_planner import BrainPlanner
@@ -19,9 +19,10 @@ from src.chat.heart_flow.hfc_utils import CycleDetail
 from src.bw_learner.expression_learner import expression_learner_manager
 from src.bw_learner.message_recorder import extract_and_distribute_messages
 from src.person_info.person_info import Person
-from src.plugin_system.base.component_types import EventType, ActionInfo
-from src.plugin_system.core import events_manager
-from src.plugin_system.apis import generator_api, send_api, message_api, database_api
+from src.core.types import ActionInfo, EventType
+from src.core.event_bus import event_bus
+from src.chat.event_helpers import build_event_message
+from src.services import generator_service as generator_api, send_service as send_api, message_service as message_api, database_service as database_api
 from src.chat.utils.chat_message_builder import (
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
@@ -73,10 +74,10 @@ class BrainChatting:
         """
         # 基础属性
         self.stream_id: str = chat_id  # 聊天流ID
-        self.chat_stream: ChatStream = get_chat_manager().get_stream(self.stream_id)  # type: ignore
+        self.chat_stream: BotChatSession = _chat_manager.get_session_by_session_id(self.stream_id)  # type: ignore
         if not self.chat_stream:
             raise ValueError(f"无法找到聊天流: {self.stream_id}")
-        self.log_prefix = f"[{get_chat_manager().get_stream_name(self.stream_id) or self.stream_id}]"
+        self.log_prefix = f"[{_chat_manager.get_session_name(self.stream_id) or self.stream_id}]"
 
         self.expression_learner = expression_learner_manager.get_expression_learner(self.stream_id)
 
@@ -313,10 +314,11 @@ class BrainChatting:
                 current_available_actions=available_actions,
                 chat_content_block=chat_content_block,
                 message_id_list=message_id_list,
-                prompt_key="brain_planner_prompt_react",
+                prompt_key="brain_planner",
             )
-            continue_flag, modified_message = await events_manager.handle_mai_events(
-                EventType.ON_PLAN, None, prompt_info[0], None, self.chat_stream.stream_id
+            _event_msg = build_event_message(EventType.ON_PLAN, llm_prompt=prompt_info[0], stream_id=self.chat_stream.stream_id)
+            continue_flag, modified_message = await event_bus.emit(
+                EventType.ON_PLAN, _event_msg
             )
             if not continue_flag:
                 return False
@@ -704,10 +706,7 @@ class BrainChatting:
 
                             # 等待指定时间，但可被新消息打断
                             try:
-                                await asyncio.wait_for(
-                                    self._new_message_event.wait(),
-                                    timeout=wait_seconds
-                                )
+                                await asyncio.wait_for(self._new_message_event.wait(), timeout=wait_seconds)
                                 # 如果事件被触发，说明有新消息到达
                                 logger.info(f"{self.log_prefix} wait 动作被新消息打断，提前结束等待")
                             except asyncio.TimeoutError:
@@ -731,7 +730,9 @@ class BrainChatting:
                             # 使用默认等待时间
                             wait_seconds = 3
 
-                            logger.info(f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒（可被新消息打断）")
+                            logger.info(
+                                f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒（可被新消息打断）"
+                            )
 
                             # 清除事件状态，准备等待新消息
                             self._new_message_event.clear()
@@ -749,10 +750,7 @@ class BrainChatting:
 
                             # 等待指定时间，但可被新消息打断
                             try:
-                                await asyncio.wait_for(
-                                    self._new_message_event.wait(),
-                                    timeout=wait_seconds
-                                )
+                                await asyncio.wait_for(self._new_message_event.wait(), timeout=wait_seconds)
                                 # 如果事件被触发，说明有新消息到达
                                 logger.info(f"{self.log_prefix} listening 动作被新消息打断，提前结束等待")
                             except asyncio.TimeoutError:

@@ -1,0 +1,98 @@
+name: Publish WebUI Dist
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - r-dev
+    paths:
+      - "dashboard/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-24.04
+    environment: webui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.0"
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: |
+          bun install
+          bun run build
+
+      - name: Prepare dist package
+        run: |
+          rm -rf .webui_dist_pkg
+          mkdir -p .webui_dist_pkg/maibot_dashboard/dist
+          BASE_VERSION=$(python -c "import json; print(json.load(open('dashboard/package.json'))['version'])")
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            WEBUI_VERSION="${BASE_VERSION}"
+          else
+            TODAY=$(date -u +%Y%m%d)
+            WEBUI_VERSION="${BASE_VERSION}.dev${TODAY}${GITHUB_RUN_NUMBER}"
+          fi
+          cat > .webui_dist_pkg/pyproject.toml <<EOF
+          [project]
+          name = "maibot-dashboard"
+          version = "${WEBUI_VERSION}"
+          description = "MaiBot WebUI static assets"
+          readme = "README.md"
+          requires-python = ">=3.10"
+
+          [build-system]
+          requires = ["setuptools>=80.9.0", "wheel"]
+          build-backend = "setuptools.build_meta"
+
+          [tool.setuptools]
+          include-package-data = true
+
+          [tool.setuptools.packages.find]
+          where = ["."]
+          include = ["maibot_dashboard"]
+          exclude = ["maibot_dashboard.dist*"]
+
+          [tool.setuptools.package-data]
+          maibot_dashboard = ["dist/**"]
+          EOF
+          cat > .webui_dist_pkg/README.md <<'EOF'
+          # MaiBot WebUI Dist
+
+          该包仅包含 MaiBot WebUI 的前端构建产物（dist）。
+          EOF
+          cat > .webui_dist_pkg/maibot_dashboard/__init__.py <<'EOF'
+          from .resources import get_dist_path
+
+          __all__ = ["get_dist_path"]
+          EOF
+          cat > .webui_dist_pkg/maibot_dashboard/resources.py <<'EOF'
+          from pathlib import Path
+
+          def get_dist_path() -> Path:
+              return Path(__file__).parent / "dist"
+          EOF
+          cp -a dashboard/dist/. .webui_dist_pkg/maibot_dashboard/dist/
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and publish
+        working-directory: .webui_dist_pkg
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine upload -u __token__ -p "$PYPI_API_TOKEN" dist/*

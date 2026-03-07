@@ -3,10 +3,14 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from typing import Callable, Any, Optional
 
-from src.config.api_ada_configs import ModelInfo, APIProvider
+from src.common.logger import get_logger
+from src.config.config import config_manager
+from src.config.model_configs import ModelInfo, APIProvider
 from ..payload_content.message import Message
 from ..payload_content.resp_format import RespFormat
 from ..payload_content.tool_option import ToolOption, ToolCall
+
+logger = get_logger("model_client_registry")
 
 
 @dataclass
@@ -144,6 +148,7 @@ class ClientRegistry:
         """APIProvider.type -> BaseClient的映射表"""
         self.client_instance_cache: dict[str, BaseClient] = {}
         """APIProvider.name -> BaseClient的映射表"""
+        config_manager.register_reload_callback(self.clear_client_instance_cache)
 
     def register_client_class(self, client_type: str):
         """
@@ -169,6 +174,10 @@ class ClientRegistry:
         Returns:
             BaseClient: 注册的API客户端实例
         """
+        from . import ensure_client_type_loaded
+
+        ensure_client_type_loaded(api_provider.client_type)
+
         # 如果强制创建新实例，直接创建不使用缓存
         if force_new:
             if client_class := self.client_registry.get(api_provider.client_type):
@@ -183,6 +192,10 @@ class ClientRegistry:
             else:
                 raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
         return self.client_instance_cache[api_provider.name]
+
+    def clear_client_instance_cache(self) -> None:
+        self.client_instance_cache.clear()
+        logger.info("检测到配置重载，已清空LLM客户端实例缓存")
 
 
 client_registry = ClientRegistry()

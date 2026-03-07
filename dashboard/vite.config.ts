@@ -23,6 +23,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    include: ['react', 'react-dom'],
+  },
   build: {
     rollupOptions: {
       output: {
@@ -107,7 +110,6 @@ export default defineConfig({
             'tailwind-merge',
             'class-variance-authority',
             'axios',
-            'jotai',
           ],
           
           // 其他

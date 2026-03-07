@@ -19,10 +19,10 @@ sys.path.insert(0, project_root)
 
 try:
     from src.common.database.database_model import ChatStreams
-    from src.chat.message_receive.chat_stream import get_chat_manager
+    from src.chat.message_receive.chat_manager import chat_manager as _script_chat_manager
 except ImportError:
     ChatStreams = None
-    get_chat_manager = None
+    _script_chat_manager = None
 
 
 def get_chat_name(chat_id: str) -> str:

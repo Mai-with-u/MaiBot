@@ -400,7 +400,7 @@ export default function PackDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <Table>
+                <Table aria-label="API 提供商配置列表">
                   <TableHeader>
                     <TableRow>
                       <TableHead>名称</TableHead>
@@ -435,7 +435,7 @@ export default function PackDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <Table>
+                <Table aria-label="模型配置列表">
                   <TableHeader>
                     <TableRow>
                       <TableHead>模型名称</TableHead>

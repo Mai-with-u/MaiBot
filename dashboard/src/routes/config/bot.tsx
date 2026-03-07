@@ -1,21 +1,7 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  BotInfoSection,
-  PersonalitySection,
-  ChatSection,
-  DreamSection,
-  LPMMSection,
-  LogSection,
-  DebugSection,
-  ExperimentalSection,
-  MaimMessageSection,
-  TelemetrySection,
-  FeaturesSection,
-  ExpressionSection,
-  ProcessingSection,
-  MessageReceiveSection,
-  WebUISection,
-} from './bot/sections'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { parse as parseToml } from 'smol-toml'
+
+import { AlertDescription, Alert } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,51 +13,116 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Save, Power, Code2, Layout } from 'lucide-react'
-import { getBotConfig, updateBotConfig, getBotConfigRaw, updateBotConfigRaw } from '@/lib/config-api'
-import { useToast } from '@/hooks/use-toast'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Info } from 'lucide-react'
-import { RestartOverlay } from '@/components/restart-overlay'
-import { RestartProvider, useRestart } from '@/lib/restart-context'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CodeEditor } from '@/components'
-import { parse as parseToml } from 'smol-toml'
+import { DynamicConfigForm } from '@/components/dynamic-form'
+import { RestartOverlay } from '@/components/restart-overlay'
+import { useToast } from '@/hooks/use-toast'
+import { getBotConfig, getBotConfigRaw, getBotConfigSchema, updateBotConfig, updateBotConfigRaw } from '@/lib/config-api'
+import { fieldHooks } from '@/lib/field-hooks'
+import { RestartProvider, useRestart } from '@/lib/restart-context'
 
-// 导入模块化的类型定义
+import { Code2, Info, Layout, Power, Save } from 'lucide-react'
+
+import type { ConfigSchema } from '@/types/config-schema'
 import type {
   BotConfig,
-  PersonalityConfig,
   ChatConfig,
-  ExpressionConfig,
+  ChineseTypoConfig,
+  DebugConfig,
+  DreamConfig,
   EmojiConfig,
+  ExperimentalConfig,
+  ExpressionConfig,
+  KeywordReactionConfig,
+  LogConfig,
+  LPMMKnowledgeConfig,
+  MaimMessageConfig,
   MemoryConfig,
+  MessageReceiveConfig,
+  PersonalityConfig,
+  ResponsePostProcessConfig,
+  ResponseSplitterConfig,
+  TelemetryConfig,
   ToolConfig,
   VoiceConfig,
-  MessageReceiveConfig,
-  DreamConfig,
-  LPMMKnowledgeConfig,
-  KeywordReactionConfig,
-  ResponsePostProcessConfig,
-  ChineseTypoConfig,
-  ResponseSplitterConfig,
-  LogConfig,
-  DebugConfig,
-  ExperimentalConfig,
-  MaimMessageConfig,
-  TelemetryConfig,
   WebUIConfig,
 } from './bot/types'
-
-// 导入 useAutoSave hook
 import { useAutoSave, useConfigAutoSave } from './bot/hooks'
-
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
-
+import { ChatSectionHook } from './bot/hooks'
+import {
+  BotInfoSection,
+  DebugSection,
+  DreamSection,
+  ExperimentalSection,
+  ExpressionSection,
+  FeaturesSection,
+  LogSection,
+  LPMMSection,
+  MaimMessageSection,
+  MessageReceiveSection,
+  PersonalitySection,
+  ProcessingSection,
+  TelemetrySection,
+  WebUISection,
+} from './bot/sections'
 // ==================== 常量定义 ====================
 /** Toast 显示前的延迟时间 (毫秒) */
 const TOAST_DISPLAY_DELAY = 500
+
+/** Tab 标签页的首选排列顺序 (host field name) */
+const TAB_ORDER = [
+  'bot', 'personality', 'chat', 'expression', 'emoji',
+  'response_post_process', 'dream', 'lpmm_knowledge', 'webui', 'debug',
+]
+
+// ==================== Tab 分组类型与构建 ====================
+interface TabGroup {
+  id: string
+  label: string
+  icon: string
+  sections: string[]
+}
+
+/**
+ * 从 schema 的 nested 字段解析出 tab 分组信息。
+ * - 有 uiLabel 且无 uiParent → 独立 tab (host)
+ * - 有 uiParent → 归入对应 host tab 的 sections
+ */
+function buildTabGroupsFromSchema(schema: ConfigSchema): TabGroup[] {
+  const nested = schema.nested || {}
+  const hosts = new Map<string, TabGroup>()
+  const children: Array<{ fieldName: string; parentId: string }> = []
+
+  for (const [fieldName, fieldSchema] of Object.entries(nested)) {
+    if (fieldSchema.uiLabel && !fieldSchema.uiParent) {
+      hosts.set(fieldName, {
+        id: fieldName,
+        label: fieldSchema.uiLabel,
+        icon: fieldSchema.uiIcon || '',
+        sections: [fieldName],
+      })
+    } else if (fieldSchema.uiParent) {
+      children.push({ fieldName, parentId: fieldSchema.uiParent })
+    }
+  }
+
+  for (const { fieldName, parentId } of children) {
+    const parent = hosts.get(parentId)
+    if (parent) {
+      parent.sections.push(fieldName)
+    }
+  }
+
+  // 按 TAB_ORDER 排序；未列入的 tab 追加到末尾
+  return Array.from(hosts.values()).sort((a, b) => {
+    const ai = TAB_ORDER.indexOf(a.id)
+    const bi = TAB_ORDER.indexOf(b.id)
+    return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi)
+  })
+}
 
 // 主导出组件：包装 RestartProvider
 export function BotConfigPage() {
@@ -117,6 +168,9 @@ function BotConfigPageContent() {
   const [maimMessageConfig, setMaimMessageConfig] = useState<MaimMessageConfig | null>(null)
   const [telemetryConfig, setTelemetryConfig] = useState<TelemetryConfig | null>(null)
   const [webuiConfig, setWebuiConfig] = useState<WebUIConfig | null>(null)
+
+  // Schema 状态（用于动态 tab 分组）
+  const [configSchema, setConfigSchema] = useState<ConfigSchema | null>(null)
 
   // 用于标记初始加载和配置缓存
   const initialLoadRef = useRef(true)
@@ -191,8 +245,8 @@ function BotConfigPageContent() {
     setBotConfig(config.bot as BotConfig)
     setPersonalityConfig(config.personality as PersonalityConfig)
     
-    // 确保 talk_value_rules 有默认值
-    const chatConfigData = config.chat as ChatConfig
+    // 确保 chat 配置和 talk_value_rules 有默认值
+    const chatConfigData = (config.chat ?? {}) as ChatConfig
     if (!chatConfigData.talk_value_rules) {
       chatConfigData.talk_value_rules = []
     }
@@ -258,7 +312,16 @@ function BotConfigPageContent() {
   // 加载源代码
   const loadSourceCode = useCallback(async () => {
     try {
-      const raw = await getBotConfigRaw()
+      const result = await getBotConfigRaw()
+      if (!result.success) {
+        toast({
+          variant: 'destructive',
+          title: '加载失败',
+          description: result.error,
+        })
+        return
+      }
+      const raw = (result.data as unknown as Record<string, unknown>).content as string
       // 将 TOML 基本字符串中的转义序列转换为实际字符以便在编辑器中正确显示
       // 使用正则表达式只处理双引号字符串内的转义序列，不影响单引号字符串
       const unescaped = raw.replace(/"([^"]*)"/g, (_match, content) => {
@@ -285,8 +348,20 @@ function BotConfigPageContent() {
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)
-      const config = await getBotConfig()
-      parseAndSetConfig(config)
+      const [result, schemaResult] = await Promise.all([getBotConfig(), getBotConfigSchema()])
+      if (!result.success) {
+        toast({
+          title: '加载失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+      parseAndSetConfig((result.data as Record<string, unknown>).config as Record<string, unknown>)
+      if (schemaResult.success && schemaResult.data) {
+        setConfigSchema((schemaResult.data as unknown as Record<string, unknown>).schema as ConfigSchema)
+      }
       setHasUnsavedChanges(false)
       initialLoadRef.current = false
       
@@ -307,6 +382,13 @@ function BotConfigPageContent() {
   useEffect(() => {
     loadConfig()
   }, [loadConfig])
+
+  useEffect(() => {
+    fieldHooks.register('chat', ChatSectionHook, 'replace')
+    return () => {
+      fieldHooks.unregister('chat')
+    }
+  }, [])
 
   // 使用模块化的 useAutoSave hook
   const { triggerAutoSave, cancelPendingAutoSave } = useAutoSave(
@@ -371,7 +453,18 @@ function BotConfigPageContent() {
           .replace(/\r/g, '\\r')  // 回车符
         return `"${encoded}"`
       })
-      await updateBotConfigRaw(escaped)
+      const result = await updateBotConfigRaw(escaped)
+      if (!result.success) {
+        setHasTomlError(true)
+        const errorMsg = result.error
+        setTomlErrorMessage(errorMsg)
+        toast({
+          variant: 'destructive',
+          title: '保存失败',
+          description: errorMsg,
+        })
+        return
+      }
       setHasUnsavedChanges(false)
       setHasTomlError(false)
       setTomlErrorMessage('')
@@ -412,8 +505,16 @@ function BotConfigPageContent() {
     } else {
       // 切换回可视化时,直接重新加载配置但不显示全局 loading
       try {
-        const config = await getBotConfig()
-        parseAndSetConfig(config)
+        const result = await getBotConfig()
+        if (!result.success) {
+          toast({
+            title: '加载失败',
+            description: result.error,
+            variant: 'destructive',
+          })
+          return
+        }
+        parseAndSetConfig((result.data as Record<string, unknown>).config as Record<string, unknown>)
         setHasUnsavedChanges(false)
       } catch (error) {
         console.error('加载配置失败:', error)
@@ -433,7 +534,16 @@ function BotConfigPageContent() {
       // 取消待处理的自动保存
       cancelPendingAutoSave()
       
-      await updateBotConfig(buildFullConfig())
+      const result = await updateBotConfig(buildFullConfig())
+      if (!result.success) {
+        toast({
+          title: '保存失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -463,7 +573,16 @@ function BotConfigPageContent() {
       // 取消待处理的自动保存
       cancelPendingAutoSave()
       
-      await updateBotConfig(buildFullConfig())
+      const result = await updateBotConfig(buildFullConfig())
+      if (!result.success) {
+        toast({
+          title: '保存失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -483,6 +602,12 @@ function BotConfigPageContent() {
       setSaving(false)
     }
   }
+
+  // 根据 schema 构建 tab 分组
+  const tabGroups = useMemo(() => {
+    if (!configSchema) return []
+    return buildTabGroupsFromSchema(configSchema)
+  }, [configSchema])
 
   if (loading) {
     return (
@@ -613,7 +738,6 @@ function BotConfigPageContent() {
                 }
               }}
               language="toml"
-              theme="dark"
               height="calc(100vh - 280px)"
               minHeight="500px"
               placeholder="TOML 配置内容"
@@ -623,113 +747,187 @@ function BotConfigPageContent() {
 
         {/* 可视化模式 */}
         {editMode === 'visual' && (
-          <>
-        {/* 标签页 */}
-        <Tabs defaultValue="bot" className="w-full">
-          <TabsList className="flex flex-wrap h-auto gap-1 p-1 sm:grid sm:grid-cols-5 lg:grid-cols-10">
-            <TabsTrigger value="bot" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">基本信息</TabsTrigger>
-            <TabsTrigger value="personality" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">人格</TabsTrigger>
-            <TabsTrigger value="chat" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">聊天</TabsTrigger>
-            <TabsTrigger value="expression" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">表达</TabsTrigger>
-            <TabsTrigger value="features" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">功能</TabsTrigger>
-            <TabsTrigger value="processing" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">处理</TabsTrigger>
-            <TabsTrigger value="dream" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">做梦</TabsTrigger>
-            <TabsTrigger value="lpmm" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">知识库</TabsTrigger>
-            <TabsTrigger value="webui" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">WebUI</TabsTrigger>
-            <TabsTrigger value="other" className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm">其他</TabsTrigger>
-          </TabsList>
-          {/* 基本信息 */}
-          <TabsContent value="bot" className="space-y-4">
-            {botConfig && <BotInfoSection config={botConfig} onChange={setBotConfig} />}
-          </TabsContent>
-
-        {/* 人格配置 */}
-        <TabsContent value="personality" className="space-y-4">
-          {personalityConfig && (
-            <PersonalitySection config={personalityConfig} onChange={setPersonalityConfig} />
-          )}
-        </TabsContent>
-
-        {/* 聊天配置 */}
-        <TabsContent value="chat" className="space-y-4">
-          {chatConfig && <ChatSection config={chatConfig} onChange={setChatConfig} />}
-        </TabsContent>
-
-        {/* 表达配置 */}
-        <TabsContent value="expression" className="space-y-4">
-          {expressionConfig && (
-            <ExpressionSection config={expressionConfig} onChange={setExpressionConfig} />
-          )}
-        </TabsContent>
-
-        {/* 功能配置（合并表情、记忆、工具） */}
-        <TabsContent value="features" className="space-y-4">
-          {emojiConfig && memoryConfig && toolConfig && voiceConfig && (
-            <FeaturesSection
-              emojiConfig={emojiConfig}
-              memoryConfig={memoryConfig}
-              toolConfig={toolConfig}
-              voiceConfig={voiceConfig}
-              onEmojiChange={setEmojiConfig}
-              onMemoryChange={setMemoryConfig}
-              onToolChange={setToolConfig}
-              onVoiceChange={setVoiceConfig}
-            />
-          )}
-        </TabsContent>
-
-        {/* 处理配置（关键词反应和回复后处理） */}
-        <TabsContent value="processing" className="space-y-4">
-          {keywordReactionConfig && responsePostProcessConfig && chineseTypoConfig && responseSplitterConfig && (
-            <ProcessingSection
-              keywordReactionConfig={keywordReactionConfig}
-              responsePostProcessConfig={responsePostProcessConfig}
-              chineseTypoConfig={chineseTypoConfig}
-              responseSplitterConfig={responseSplitterConfig}
-              onKeywordReactionChange={setKeywordReactionConfig}
-              onResponsePostProcessChange={setResponsePostProcessConfig}
-              onChineseTypoChange={setChineseTypoConfig}
-              onResponseSplitterChange={setResponseSplitterConfig}
-            />
-          )}
-          {messageReceiveConfig && (
-            <MessageReceiveSection
-              config={messageReceiveConfig}
-              onChange={setMessageReceiveConfig}
-            />
-          )}
-        </TabsContent>
-
-        {/* 做梦配置 */}
-        <TabsContent value="dream" className="space-y-4">
-          {dreamConfig && <DreamSection config={dreamConfig} onChange={setDreamConfig} />}
-        </TabsContent>
-
-        {/* 知识库配置 */}
-        <TabsContent value="lpmm" className="space-y-4">
-          {lpmmConfig && <LPMMSection config={lpmmConfig} onChange={setLpmmConfig} />}
-        </TabsContent>
-
-        {/* WebUI 配置 */}
-        <TabsContent value="webui" className="space-y-4">
-          {webuiConfig && <WebUISection config={webuiConfig} onChange={setWebuiConfig} />}
-        </TabsContent>
-
-        {/* 其他配置 */}
-        <TabsContent value="other" className="space-y-4">
-          {logConfig && <LogSection config={logConfig} onChange={setLogConfig} />}
-          {debugConfig && <DebugSection config={debugConfig} onChange={setDebugConfig} />}
-          {experimentalConfig && <ExperimentalSection config={experimentalConfig} onChange={setExperimentalConfig} />}
-          {maimMessageConfig && <MaimMessageSection config={maimMessageConfig} onChange={setMaimMessageConfig} />}
-          {telemetryConfig && <TelemetrySection config={telemetryConfig} onChange={setTelemetryConfig} />}
-        </TabsContent>
-        </Tabs>
-        </>
+          <DynamicConfigTabs
+            tabGroups={tabGroups}
+            botConfig={botConfig} setBotConfig={setBotConfig}
+            personalityConfig={personalityConfig} setPersonalityConfig={setPersonalityConfig}
+            chatConfig={chatConfig} setChatConfig={setChatConfig}
+            expressionConfig={expressionConfig} setExpressionConfig={setExpressionConfig}
+            emojiConfig={emojiConfig} setEmojiConfig={setEmojiConfig}
+            memoryConfig={memoryConfig} setMemoryConfig={setMemoryConfig}
+            toolConfig={toolConfig} setToolConfig={setToolConfig}
+            voiceConfig={voiceConfig} setVoiceConfig={setVoiceConfig}
+            messageReceiveConfig={messageReceiveConfig} setMessageReceiveConfig={setMessageReceiveConfig}
+            dreamConfig={dreamConfig} setDreamConfig={setDreamConfig}
+            lpmmConfig={lpmmConfig} setLpmmConfig={setLpmmConfig}
+            keywordReactionConfig={keywordReactionConfig} setKeywordReactionConfig={setKeywordReactionConfig}
+            responsePostProcessConfig={responsePostProcessConfig} setResponsePostProcessConfig={setResponsePostProcessConfig}
+            chineseTypoConfig={chineseTypoConfig} setChineseTypoConfig={setChineseTypoConfig}
+            responseSplitterConfig={responseSplitterConfig} setResponseSplitterConfig={setResponseSplitterConfig}
+            logConfig={logConfig} setLogConfig={setLogConfig}
+            debugConfig={debugConfig} setDebugConfig={setDebugConfig}
+            experimentalConfig={experimentalConfig} setExperimentalConfig={setExperimentalConfig}
+            maimMessageConfig={maimMessageConfig} setMaimMessageConfig={setMaimMessageConfig}
+            telemetryConfig={telemetryConfig} setTelemetryConfig={setTelemetryConfig}
+            webuiConfig={webuiConfig} setWebuiConfig={setWebuiConfig}
+            setHasUnsavedChanges={setHasUnsavedChanges}
+          />
         )}
 
         {/* 重启遮罩层 */}
         <RestartOverlay />
       </div>
     </ScrollArea>
+  )
+}
+
+// ==================== 动态 Tab 渲染组件 ====================
+
+interface DynamicConfigTabsProps {
+  tabGroups: TabGroup[]
+  botConfig: BotConfig | null
+  setBotConfig: (c: BotConfig) => void
+  personalityConfig: PersonalityConfig | null
+  setPersonalityConfig: (c: PersonalityConfig) => void
+  chatConfig: ChatConfig | null
+  setChatConfig: (c: ChatConfig) => void
+  expressionConfig: ExpressionConfig | null
+  setExpressionConfig: (c: ExpressionConfig) => void
+  emojiConfig: EmojiConfig | null
+  setEmojiConfig: (c: EmojiConfig) => void
+  memoryConfig: MemoryConfig | null
+  setMemoryConfig: (c: MemoryConfig) => void
+  toolConfig: ToolConfig | null
+  setToolConfig: (c: ToolConfig) => void
+  voiceConfig: VoiceConfig | null
+  setVoiceConfig: (c: VoiceConfig) => void
+  messageReceiveConfig: MessageReceiveConfig | null
+  setMessageReceiveConfig: (c: MessageReceiveConfig) => void
+  dreamConfig: DreamConfig | null
+  setDreamConfig: (c: DreamConfig) => void
+  lpmmConfig: LPMMKnowledgeConfig | null
+  setLpmmConfig: (c: LPMMKnowledgeConfig) => void
+  keywordReactionConfig: KeywordReactionConfig | null
+  setKeywordReactionConfig: (c: KeywordReactionConfig) => void
+  responsePostProcessConfig: ResponsePostProcessConfig | null
+  setResponsePostProcessConfig: (c: ResponsePostProcessConfig) => void
+  chineseTypoConfig: ChineseTypoConfig | null
+  setChineseTypoConfig: (c: ChineseTypoConfig) => void
+  responseSplitterConfig: ResponseSplitterConfig | null
+  setResponseSplitterConfig: (c: ResponseSplitterConfig) => void
+  logConfig: LogConfig | null
+  setLogConfig: (c: LogConfig) => void
+  debugConfig: DebugConfig | null
+  setDebugConfig: (c: DebugConfig) => void
+  experimentalConfig: ExperimentalConfig | null
+  setExperimentalConfig: (c: ExperimentalConfig) => void
+  maimMessageConfig: MaimMessageConfig | null
+  setMaimMessageConfig: (c: MaimMessageConfig) => void
+  telemetryConfig: TelemetryConfig | null
+  setTelemetryConfig: (c: TelemetryConfig) => void
+  webuiConfig: WebUIConfig | null
+  setWebuiConfig: (c: WebUIConfig) => void
+  setHasUnsavedChanges: (v: boolean) => void
+}
+
+function DynamicConfigTabs(props: DynamicConfigTabsProps) {
+  const { tabGroups } = props
+
+  // 每个 tab host field name → 对应的 ReactNode 内容
+  const tabContentMap: Record<string, React.ReactNode> = {
+    bot: props.botConfig && (
+      <BotInfoSection config={props.botConfig} onChange={props.setBotConfig} />
+    ),
+    personality: props.personalityConfig && (
+      <PersonalitySection config={props.personalityConfig} onChange={props.setPersonalityConfig} />
+    ),
+    chat: props.chatConfig && (
+      <DynamicConfigForm
+        schema={{ className: 'ChatConfig', classDoc: '聊天配置', fields: [], nested: {} }}
+        values={{ chat: props.chatConfig }}
+        onChange={(field, value) => {
+          if (field === 'chat') {
+            props.setChatConfig(value as ChatConfig)
+            props.setHasUnsavedChanges(true)
+          }
+        }}
+        hooks={fieldHooks}
+      />
+    ),
+    expression: props.expressionConfig && (
+      <ExpressionSection config={props.expressionConfig} onChange={props.setExpressionConfig} />
+    ),
+    emoji: props.emojiConfig && props.memoryConfig && props.toolConfig && props.voiceConfig && (
+      <FeaturesSection
+        emojiConfig={props.emojiConfig}
+        memoryConfig={props.memoryConfig}
+        toolConfig={props.toolConfig}
+        voiceConfig={props.voiceConfig}
+        onEmojiChange={props.setEmojiConfig}
+        onMemoryChange={props.setMemoryConfig}
+        onToolChange={props.setToolConfig}
+        onVoiceChange={props.setVoiceConfig}
+      />
+    ),
+    response_post_process: (
+      <>
+        {props.keywordReactionConfig && props.responsePostProcessConfig && props.chineseTypoConfig && props.responseSplitterConfig && (
+          <ProcessingSection
+            keywordReactionConfig={props.keywordReactionConfig}
+            responsePostProcessConfig={props.responsePostProcessConfig}
+            chineseTypoConfig={props.chineseTypoConfig}
+            responseSplitterConfig={props.responseSplitterConfig}
+            onKeywordReactionChange={props.setKeywordReactionConfig}
+            onResponsePostProcessChange={props.setResponsePostProcessConfig}
+            onChineseTypoChange={props.setChineseTypoConfig}
+            onResponseSplitterChange={props.setResponseSplitterConfig}
+          />
+        )}
+        {props.messageReceiveConfig && (
+          <MessageReceiveSection config={props.messageReceiveConfig} onChange={props.setMessageReceiveConfig} />
+        )}
+      </>
+    ),
+    dream: props.dreamConfig && (
+      <DreamSection config={props.dreamConfig} onChange={props.setDreamConfig} />
+    ),
+    lpmm_knowledge: props.lpmmConfig && (
+      <LPMMSection config={props.lpmmConfig} onChange={props.setLpmmConfig} />
+    ),
+    webui: props.webuiConfig && (
+      <WebUISection config={props.webuiConfig} onChange={props.setWebuiConfig} />
+    ),
+    debug: (
+      <>
+        {props.logConfig && <LogSection config={props.logConfig} onChange={props.setLogConfig} />}
+        {props.debugConfig && <DebugSection config={props.debugConfig} onChange={props.setDebugConfig} />}
+        {props.experimentalConfig && <ExperimentalSection config={props.experimentalConfig} onChange={props.setExperimentalConfig} />}
+        {props.maimMessageConfig && <MaimMessageSection config={props.maimMessageConfig} onChange={props.setMaimMessageConfig} />}
+        {props.telemetryConfig && <TelemetrySection config={props.telemetryConfig} onChange={props.setTelemetryConfig} />}
+      </>
+    ),
+  }
+
+  if (tabGroups.length === 0) return null
+
+  return (
+    <Tabs defaultValue={tabGroups[0].id} className="w-full">
+      <TabsList className="flex flex-wrap h-auto gap-1 p-1">
+        {tabGroups.map((tab) => (
+          <TabsTrigger
+            key={tab.id}
+            value={tab.id}
+            className="text-xs px-2 py-1.5 sm:px-3 sm:py-2 data-[state=active]:shadow-sm"
+          >
+            {tab.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {tabGroups.map((tab) => (
+        <TabsContent key={tab.id} value={tab.id} className="space-y-4">
+          {tabContentMap[tab.id]}
+        </TabsContent>
+      ))}
+    </Tabs>
   )
 }

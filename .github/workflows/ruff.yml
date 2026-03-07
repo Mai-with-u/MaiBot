@@ -8,17 +8,12 @@ on:
   #     - dev-refactor # 例如：匹配所有以 feature/ 开头的分支
   #     # 添加你希望触发此 workflow 的其他分支
   workflow_dispatch: # 允许手动触发工作流
-    branches:
-      - main
-      - dev
-      - dev-refactor
-
 permissions:
   contents: write
 
 jobs:
   ruff:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ubuntu-24.04
     # 关键修改：添加条件判断
     # 确保只有在 event_name 是 'push' 且不是由 Pull Request 引起的 push 时才运行
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/pull/')

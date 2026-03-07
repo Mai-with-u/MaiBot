@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -52,6 +53,7 @@ import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { ExpressionReviewer } from '@/components/expression-reviewer'
 import { getReviewStats } from '@/lib/expression-api'
+import { ZoomableChart } from '@/components/ui/zoomable-chart'
 
 // 主导出组件：包装 RestartProvider
 export function IndexPage() {
@@ -128,6 +130,7 @@ const generatePieColors = (count: number): string[] => {
 
 // 内部实现组件
 function IndexPageContent() {
+  const { t } = useTranslation()
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingProgress, setLoadingProgress] = useState(0)
@@ -161,9 +164,9 @@ function IndexPageContent() {
   // 获取审核统计
   const fetchReviewStats = useCallback(async () => {
     try {
-      const data = await getReviewStats()
-      if (isMountedRef.current) {
-        setUncheckedCount(data.unchecked)
+      const result = await getReviewStats()
+      if (result.success && isMountedRef.current) {
+        setUncheckedCount(result.data.unchecked)
       }
     } catch (error) {
       console.error('获取审核统计失败:', error)
@@ -178,15 +181,15 @@ function IndexPageContent() {
       if (isMountedRef.current) {
         setHitokoto({
           hitokoto: response.data.hitokoto,
-          from: response.data.from || response.data.from_who || '未知'
+          from: response.data.from || response.data.from_who || t('home.unknownSource')
         })
       }
     } catch (error) {
       console.error('获取一言失败:', error)
       if (isMountedRef.current) {
         setHitokoto({
-          hitokoto: '人生就像一盒巧克力，你永远不知道下一颗是什么味道。',
-          from: '阿甘正传'
+          hitokoto: t('home.hitokotoFallback'),
+          from: t('home.hitokotoFallbackFrom')
         })
       }
     } finally {
@@ -194,7 +197,7 @@ function IndexPageContent() {
         setHitokotoLoading(false)
       }
     }
-  }, [])
+  }, [t])
 
   // 获取机器人状态
   const fetchBotStatus = useCallback(async () => {
@@ -309,8 +312,8 @@ function IndexPageContent() {
         <div className="text-center space-y-6 w-full max-w-md px-4">
           <RefreshCw className="h-12 w-12 animate-spin mx-auto text-primary" />
           <div className="space-y-2">
-            <p className="text-lg font-medium">加载统计数据中...</p>
-            <p className="text-sm text-muted-foreground">正在获取麦麦运行数据</p>
+            <p className="text-lg font-medium">{t('home.loading')}</p>
+            <p className="text-sm text-muted-foreground">{t('home.loadingHint')}</p>
           </div>
           <div className="space-y-2">
             <Progress value={loadingProgress} className="h-2" />
@@ -347,7 +350,7 @@ function IndexPageContent() {
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600)
     const minutes = Math.floor((seconds % 3600) / 60)
-    return `${hours}小时${minutes}分钟`
+    return t('home.time.hoursMinutes', { hours, minutes })
   }
 
   // 格式化大数字（自动选择合适单位）
@@ -402,16 +405,16 @@ function IndexPageContent() {
   // 图表配置
   const chartConfig = {
     requests: {
-      label: '请求数',
-      color: 'hsl(var(--chart-1))',
+      label: t('home.charts.requests'),
+      color: 'hsl(var(--color-chart-1))',
     },
     cost: {
-      label: '花费(¥)',
-      color: 'hsl(var(--chart-2))',
+      label: t('home.charts.cost'),
+      color: 'hsl(var(--color-chart-2))',
     },
     tokens: {
       label: 'Tokens',
-      color: 'hsl(var(--chart-3))',
+      color: 'hsl(var(--color-chart-3))',
     },
   } satisfies ChartConfig
 
@@ -421,17 +424,17 @@ function IndexPageContent() {
       {/* 标题和控制栏 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">实时监控面板</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">{t('home.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            麦麦运行状态和统计数据一览
+            {t('home.subtitle')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Tabs value={timeRange.toString()} onValueChange={(v) => setTimeRange(Number(v))}>
             <TabsList className="grid grid-cols-3 w-full sm:w-auto">
-              <TabsTrigger value="24">24小时</TabsTrigger>
-              <TabsTrigger value="168">7天</TabsTrigger>
-              <TabsTrigger value="720">30天</TabsTrigger>
+              <TabsTrigger value="24">{t('home.timeRange.24h')}</TabsTrigger>
+              <TabsTrigger value="168">{t('home.timeRange.7d')}</TabsTrigger>
+              <TabsTrigger value="720">{t('home.timeRange.30d')}</TabsTrigger>
             </TabsList>
           </Tabs>
           <Button
@@ -441,7 +444,7 @@ function IndexPageContent() {
             className="gap-2"
           >
             <RefreshCw className={`h-4 w-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">自动刷新</span>
+            <span className="hidden sm:inline">{t('home.autoRefresh')}</span>
           </Button>
           <Button variant="outline" size="sm" onClick={fetchDashboardData}>
             <RefreshCw className="h-4 w-4" />
@@ -476,7 +479,7 @@ function IndexPageContent() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Power className="h-4 w-4" />
-              麦麦状态
+              {t('home.botStatus.title')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -487,7 +490,7 @@ function IndexPageContent() {
                     <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse" />
                     <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">
                       <CheckCircle2 className="h-3 w-3 mr-1" />
-                      运行中
+                      {t('home.botStatus.running')}
                     </Badge>
                   </>
                 ) : (
@@ -495,7 +498,7 @@ function IndexPageContent() {
                     <div className="h-3 w-3 rounded-full bg-red-500" />
                     <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50">
                       <AlertCircle className="h-3 w-3 mr-1" />
-                      已停止
+                      {t('home.botStatus.stopped')}
                     </Badge>
                   </>
                 )}
@@ -504,7 +507,7 @@ function IndexPageContent() {
                 <div className="text-xs text-muted-foreground">
                   <span>v{botStatus.version}</span>
                   <span className="mx-2">|</span>
-                  <span>运行 {formatTime(botStatus.uptime)}</span>
+                  <span>{t('home.botStatus.uptime', { time: formatTime(botStatus.uptime) })}</span>
                 </div>
               )}
             </div>
@@ -516,7 +519,7 @@ function IndexPageContent() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Zap className="h-4 w-4" />
-              快速操作
+              {t('home.quickActions.title')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -529,7 +532,7 @@ function IndexPageContent() {
                 className="gap-2"
               >
                 <RotateCcw className={`h-4 w-4 ${isRestarting ? 'animate-spin' : ''}`} />
-                {isRestarting ? '重启中...' : '重启麦麦'}
+                {isRestarting ? t('home.quickActions.restarting') : t('home.quickActions.restart')}
               </Button>
               <Button 
                 variant="outline" 
@@ -538,7 +541,7 @@ function IndexPageContent() {
                 className="gap-2"
               >
                 <ClipboardCheck className="h-4 w-4" />
-                表达审核
+                {t('home.quickActions.expressionReview')}
                 {uncheckedCount > 0 && (
                   <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-orange-500 text-white">
                     {uncheckedCount > 99 ? '99+' : uncheckedCount}
@@ -548,19 +551,19 @@ function IndexPageContent() {
               <Button variant="outline" size="sm" asChild className="gap-2">
                 <Link to="/logs">
                   <FileText className="h-4 w-4" />
-                  查看日志
+                  {t('home.quickActions.viewLogs')}
                 </Link>
               </Button>
               <Button variant="outline" size="sm" asChild className="gap-2">
                 <Link to="/plugins">
                   <Puzzle className="h-4 w-4" />
-                  插件管理
+                  {t('home.quickActions.pluginManage')}
                 </Link>
               </Button>
               <Button variant="outline" size="sm" asChild className="gap-2">
                 <Link to="/settings">
                   <Settings className="h-4 w-4" />
-                  系统设置
+                  {t('home.quickActions.systemSettings')}
                 </Link>
               </Button>
             </div>
@@ -572,10 +575,10 @@ function IndexPageContent() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <ClipboardList className="h-4 w-4" />
-              反馈问卷
+              {t('home.survey.title')}
             </CardTitle>
             <CardDescription className="text-xs">
-              帮助我们改进产品体验
+              {t('home.survey.description')}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -583,13 +586,13 @@ function IndexPageContent() {
               <Button variant="outline" size="sm" asChild className="gap-2">
                 <Link to="/survey/webui-feedback">
                   <FileText className="h-4 w-4" />
-                  WebUI 反馈
+                  {t('home.survey.webui')}
                 </Link>
               </Button>
               <Button variant="outline" size="sm" asChild className="gap-2">
                 <Link to="/survey/maibot-feedback">
                   <MessageSquare className="h-4 w-4" />
-                  麦麦反馈
+                  {t('home.survey.maibot')}
                 </Link>
               </Button>
             </div>
@@ -601,7 +604,7 @@ function IndexPageContent() {
       <div className="grid gap-4 grid-cols-1 xs:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">总请求数</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.totalRequests')}</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -612,14 +615,14 @@ function IndexPageContent() {
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              最近{timeRange < 48 ? timeRange + '小时' : Math.floor(timeRange / 24) + '天'}
+              {t('home.stats.recentPeriod', { range: timeRange < 48 ? timeRange + t('home.stats.hours') : Math.floor(timeRange / 24) + t('home.stats.days') })}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">总花费</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.totalCost')}</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -630,14 +633,14 @@ function IndexPageContent() {
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {summary.cost_per_hour > 0 ? `¥${summary.cost_per_hour.toFixed(2)}/小时` : '暂无数据'}
+              {summary.cost_per_hour > 0 ? t('home.stats.perHour', { value: `¥${summary.cost_per_hour.toFixed(2)}` }) : t('home.stats.noData')}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Token消耗</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.tokenUsage')}</CardTitle>
             <Database className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -649,20 +652,20 @@ function IndexPageContent() {
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               {summary.tokens_per_hour > 0
-                ? `${formatNumber(summary.tokens_per_hour).display}/小时`
-                : '暂无数据'}
+                ? t('home.stats.perHour', { value: formatNumber(summary.tokens_per_hour).display })
+                : t('home.stats.noData')}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">平均响应</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.avgResponse')}</CardTitle>
             <Zap className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{summary.avg_response_time.toFixed(2)}s</div>
-            <p className="text-xs text-muted-foreground mt-1">API平均耗时</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('home.stats.avgResponseDesc')}</p>
           </CardContent>
         </Card>
       </div>
@@ -671,20 +674,20 @@ function IndexPageContent() {
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">在线时长</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.onlineTime')}</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-xl font-bold">
               {formatTime(summary.online_time)}
-              <span className="text-xs font-normal text-muted-foreground ml-1">({summary.online_time.toLocaleString()}秒)</span>
+              <span className="text-xs font-normal text-muted-foreground ml-1">({summary.online_time.toLocaleString()}{t('home.stats.seconds')})</span>
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">消息处理</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.messageProcessing')}</CardTitle>
             <MessageSquare className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -695,17 +698,17 @@ function IndexPageContent() {
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              回复 {formatNumber(summary.total_replies).display}
+              {t('home.stats.replied', { num: formatNumber(summary.total_replies).display })}
               {formatNumber(summary.total_replies).needsExact && (
                 <span>({formatNumber(summary.total_replies).exact})</span>
-              )} 条
+              )}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">成本效率</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('home.stats.costEfficiency')}</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -714,7 +717,7 @@ function IndexPageContent() {
                 ? `¥${((summary.total_cost / summary.total_messages) * 100).toFixed(2)}`
                 : '¥0.00'}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">每100条消息</p>
+            <p className="text-xs text-muted-foreground mt-1">{t('home.stats.per100Messages')}</p>
           </CardContent>
         </Card>
       </div>
@@ -722,33 +725,34 @@ function IndexPageContent() {
       {/* 图表区域 */}
       <Tabs defaultValue="trends" className="space-y-4">
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
-          <TabsTrigger value="trends">趋势</TabsTrigger>
-          <TabsTrigger value="models">模型</TabsTrigger>
-          <TabsTrigger value="activity">活动</TabsTrigger>
-          <TabsTrigger value="daily">日统计</TabsTrigger>
+          <TabsTrigger value="trends">{t('home.charts.tabs.trends')}</TabsTrigger>
+          <TabsTrigger value="models">{t('home.charts.tabs.models')}</TabsTrigger>
+          <TabsTrigger value="activity">{t('home.charts.tabs.activity')}</TabsTrigger>
+          <TabsTrigger value="daily">{t('home.charts.tabs.daily')}</TabsTrigger>
         </TabsList>
 
         {/* 趋势图表 */}
         <TabsContent value="trends" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>请求趋势</CardTitle>
-              <CardDescription>最近{timeRange}小时的请求量变化</CardDescription>
+              <CardTitle>{t('home.charts.requestTrend')}</CardTitle>
+              <CardDescription>{t('home.charts.requestTrendDesc', { hours: timeRange })}</CardDescription>
             </CardHeader>
             <CardContent>
+              <ZoomableChart aria-label={t('home.ariaLabel.requestTrend')}>
               <ChartContainer config={chartConfig} className="h-[300px] sm:h-[400px] w-full aspect-auto">
                 <LineChart data={hourly_data}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted-foreground) / 0.2)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--color-muted-foreground) / 0.2)" />
                   <XAxis
                     dataKey="timestamp"
                     tickFormatter={(value) => formatDateTime(value)}
                     angle={-45}
                     textAnchor="end"
                     height={60}
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    stroke="hsl(var(--color-muted-foreground))"
+                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
                   />
-                  <YAxis stroke="hsl(var(--muted-foreground))" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                  <YAxis stroke="hsl(var(--color-muted-foreground))" tick={{ fill: 'hsl(var(--color-muted-foreground))' }} />
                   <ChartTooltip
                     content={<ChartTooltipContent labelFormatter={(value) => formatDateTime(value as string)} />}
                   />
@@ -760,63 +764,68 @@ function IndexPageContent() {
                   />
                 </LineChart>
               </ChartContainer>
+              </ZoomableChart>
             </CardContent>
           </Card>
 
           <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>花费趋势</CardTitle>
-                <CardDescription>API调用成本变化</CardDescription>
+                <CardTitle>{t('home.charts.costTrend')}</CardTitle>
+                <CardDescription>{t('home.charts.costTrendDesc')}</CardDescription>
               </CardHeader>
               <CardContent>
+                <ZoomableChart aria-label={t('home.ariaLabel.costTrend')}>
                 <ChartContainer config={chartConfig} className="h-[250px] sm:h-[300px] w-full aspect-auto">
                   <BarChart data={hourly_data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted-foreground) / 0.2)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--color-muted-foreground) / 0.2)" />
                     <XAxis
                       dataKey="timestamp"
                       tickFormatter={(value) => formatDateTime(value)}
                       angle={-45}
                       textAnchor="end"
                       height={60}
-                      stroke="hsl(var(--muted-foreground))"
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
                     />
-                    <YAxis stroke="hsl(var(--muted-foreground))" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                    <YAxis stroke="hsl(var(--color-muted-foreground))" tick={{ fill: 'hsl(var(--color-muted-foreground))' }} />
                     <ChartTooltip
                       content={<ChartTooltipContent labelFormatter={(value) => formatDateTime(value as string)} />}
                     />
                     <Bar dataKey="cost" fill="var(--color-cost)" />
                   </BarChart>
                 </ChartContainer>
+                </ZoomableChart>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Token消耗</CardTitle>
-                <CardDescription>Token使用量变化</CardDescription>
+                <CardTitle>{t('home.charts.tokenUsage')}</CardTitle>
+                <CardDescription>{t('home.charts.tokenUsageDesc')}</CardDescription>
               </CardHeader>
               <CardContent>
+                <ZoomableChart aria-label={t('home.ariaLabel.tokenUsage')}>
                 <ChartContainer config={chartConfig} className="h-[250px] sm:h-[300px] w-full aspect-auto">
                   <BarChart data={hourly_data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted-foreground) / 0.2)" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--color-muted-foreground) / 0.2)" />
                     <XAxis
                       dataKey="timestamp"
                       tickFormatter={(value) => formatDateTime(value)}
                       angle={-45}
                       textAnchor="end"
                       height={60}
-                      stroke="hsl(var(--muted-foreground))"
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                      stroke="hsl(var(--color-muted-foreground))"
+                      tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
                     />
-                    <YAxis stroke="hsl(var(--muted-foreground))" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                    <YAxis stroke="hsl(var(--color-muted-foreground))" tick={{ fill: 'hsl(var(--color-muted-foreground))' }} />
                     <ChartTooltip
                       content={<ChartTooltipContent labelFormatter={(value) => formatDateTime(value as string)} />}
                     />
                     <Bar dataKey="tokens" fill="var(--color-tokens)" />
                   </BarChart>
                 </ChartContainer>
+                </ZoomableChart>
               </CardContent>
             </Card>
           </div>
@@ -827,8 +836,8 @@ function IndexPageContent() {
           <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>模型请求分布</CardTitle>
-                <CardDescription>各模型使用占比 (共 {model_stats.length} 个模型)</CardDescription>
+                <CardTitle>{t('home.charts.modelDistribution')}</CardTitle>
+                <CardDescription>{t('home.charts.modelDistributionDesc', { count: model_stats.length })}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ChartContainer
@@ -871,8 +880,8 @@ function IndexPageContent() {
 
             <Card>
               <CardHeader>
-                <CardTitle>模型详细统计</CardTitle>
-                <CardDescription>请求数、花费和性能</CardDescription>
+                <CardTitle>{t('home.charts.modelDetails')}</CardTitle>
+                <CardDescription>{t('home.charts.modelDetailsDesc')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[300px] sm:h-[400px]">
@@ -889,19 +898,19 @@ function IndexPageContent() {
                           <div
                             className="w-3 h-3 rounded-full ml-2 flex-shrink-0"
                             style={{
-                              backgroundColor: `hsl(var(--chart-${(index % 5) + 1}))`,
+                              backgroundColor: `hsl(var(--color-chart-${(index % 5) + 1}))`,
                             }}
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div>
-                            <span className="text-muted-foreground">请求数:</span>
+                            <span className="text-muted-foreground">{t('home.charts.requestCount')}:</span>
                             <span className="ml-1 font-medium">
                               {stat.request_count.toLocaleString()}
                             </span>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">花费:</span>
+                            <span className="text-muted-foreground">{t('home.charts.costLabel')}:</span>
                             <span className="ml-1 font-medium">¥{stat.total_cost.toFixed(2)}</span>
                           </div>
                           <div>
@@ -911,7 +920,7 @@ function IndexPageContent() {
                             </span>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">平均耗时:</span>
+                            <span className="text-muted-foreground">{t('home.charts.avgTime')}:</span>
                             <span className="ml-1 font-medium">
                               {stat.avg_response_time.toFixed(2)}s
                             </span>
@@ -928,8 +937,8 @@ function IndexPageContent() {
         <TabsContent value="activity">
           <Card>
             <CardHeader>
-              <CardTitle>最近活动</CardTitle>
-              <CardDescription>最新的API调用记录</CardDescription>
+              <CardTitle>{t('home.charts.recentActivity')}</CardTitle>
+              <CardDescription>{t('home.charts.recentActivityDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[400px] sm:h-[500px]">
@@ -956,15 +965,15 @@ function IndexPageContent() {
                           <span className="ml-1">{activity.tokens}</span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">花费:</span>
+                          <span className="text-muted-foreground">{t('home.charts.costLabel')}:</span>
                           <span className="ml-1">¥{activity.cost.toFixed(4)}</span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">耗时:</span>
+                          <span className="text-muted-foreground">{t('home.charts.timeCost')}:</span>
                           <span className="ml-1">{activity.time_cost.toFixed(2)}s</span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">状态:</span>
+                          <span className="text-muted-foreground">{t('home.charts.status')}:</span>
                           <span
                             className={`ml-1 ${activity.status === 'success' ? 'text-green-600' : 'text-red-600'}`}
                           >
@@ -984,36 +993,36 @@ function IndexPageContent() {
         <TabsContent value="daily">
           <Card>
             <CardHeader>
-              <CardTitle>每日统计</CardTitle>
-              <CardDescription>最近7天的数据汇总</CardDescription>
+              <CardTitle>{t('home.charts.dailyStats')}</CardTitle>
+              <CardDescription>{t('home.charts.dailyStatsDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
               <ChartContainer
                 config={{
                   requests: {
-                    label: '请求数',
-                    color: 'hsl(var(--chart-1))',
+                    label: t('home.charts.requests'),
+                    color: 'hsl(var(--color-chart-1))',
                   },
                   cost: {
-                    label: '花费(¥)',
-                    color: 'hsl(var(--chart-2))',
+                    label: t('home.charts.cost'),
+                    color: 'hsl(var(--color-chart-2))',
                   },
                 }}
                 className="h-[400px] sm:h-[500px] w-full aspect-auto"
               >
                 <BarChart data={daily_data}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--muted-foreground) / 0.2)" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--color-muted-foreground) / 0.2)" />
                   <XAxis
                     dataKey="timestamp"
                     tickFormatter={(value) => {
                       const date = new Date(value)
                       return `${date.getMonth() + 1}/${date.getDate()}`
                     }}
-                    stroke="hsl(var(--muted-foreground))"
-                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    stroke="hsl(var(--color-muted-foreground))"
+                    tick={{ fill: 'hsl(var(--color-muted-foreground))' }}
                   />
-                  <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                  <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--muted-foreground))" tick={{ fill: 'hsl(var(--muted-foreground))' }} />
+                  <YAxis yAxisId="left" stroke="hsl(var(--color-muted-foreground))" tick={{ fill: 'hsl(var(--color-muted-foreground))' }} />
+                  <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--color-muted-foreground))" tick={{ fill: 'hsl(var(--color-muted-foreground))' }} />
                   <ChartTooltip
                     content={
                       <ChartTooltipContent

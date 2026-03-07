@@ -8,7 +8,10 @@
  * 4. 冲突检测（防止与AI自动检查冲突）
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { animated, useSpring } from '@react-spring/web'
+
+const AnimatedDiv = animated('div')
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -80,9 +83,10 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
   const [quickLoading, setQuickLoading] = useState(false)
   const [quickTotal, setQuickTotal] = useState(0)
   const [quickPage, setQuickPage] = useState(1)
-  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null)
-  const [swipeOffset, setSwipeOffset] = useState(0)
-  const [isAnimating, setIsAnimating] = useState(false)
+  const swipeDirectionRef = useRef<'left' | 'right' | null>(null)
+  const isAnimatingRef = useRef(false)
+  const [cardSpring, cardApi] = useSpring(() => ({ x: 0, opacity: 1, rotate: 0, config: { tension: 300, friction: 30 } }))
+  const swipeOffsetRef = useRef(0)
   const [conflictId, setConflictId] = useState<number | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
@@ -105,27 +109,43 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
   const loadStats = useCallback(async () => {
     try {
       setStatsLoading(true)
-      const data = await getReviewStats()
-      setStats(data)
+      const result = await getReviewStats()
+      if (result.success) {
+        setStats(result.data)
+      } else {
+        toast({
+          title: '错误',
+          description: result.error,
+          variant: 'destructive',
+        })
+      }
     } catch (error) {
       console.error('加载统计失败:', error)
     } finally {
       setStatsLoading(false)
     }
-  }, [])
+  }, [toast])
 
   // 加载列表
   const loadList = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await getReviewList({
+      const result = await getReviewList({
         page,
         page_size: pageSize,
         filter_type: filterType,
         search: search || undefined,
       })
-      setExpressions(response.data)
-      setTotal(response.total)
+      if (result.success) {
+        setExpressions(result.data.data)
+        setTotal(result.data.total)
+      } else {
+        toast({
+          title: '加载失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+      }
     } catch (error) {
       toast({
         title: '加载失败',
@@ -137,19 +157,19 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
     }
   }, [page, pageSize, filterType, search, toast])
 
-  // 加载聊天名称映射
+  // 加载聚天名称映射
   const loadChatNames = useCallback(async () => {
     try {
-      const response = await getChatList()
-      if (response?.data) {
+      const result = await getChatList()
+      if (result.success) {
         const nameMap = new Map<string, string>()
-        response.data.forEach((chat: ChatInfo) => {
+        result.data.forEach((chat: ChatInfo) => {
           nameMap.set(chat.chat_id, chat.chat_name)
         })
         setChatNameMap(nameMap)
       }
     } catch (error) {
-      console.error('加载聊天名称失败:', error)
+      console.error('加载聚天名称失败:', error)
     }
   }, [])
 
@@ -158,24 +178,32 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
     try {
       setQuickLoading(true)
       const pageToLoad = append ? quickPage + 1 : quickPage
-      const response = await getReviewList({
+      const result = await getReviewList({
         page: pageToLoad,
         page_size: 20,
         filter_type: quickFilterType,
       })
       
-      if (append) {
-        // 追加模式：拼接数据
-        setQuickExpressions(prev => [...prev, ...response.data])
-        setQuickPage(pageToLoad)
+      if (result.success) {
+        if (append) {
+          // 追加模式：拼接数据
+          setQuickExpressions(prev => [...prev, ...result.data.data])
+          setQuickPage(pageToLoad)
+        } else {
+          // 替换模式
+          setQuickExpressions(result.data.data)
+        }
+        
+        setQuickTotal(result.data.total)
+        if (resetIndex) {
+          setQuickCurrentIndex(0)
+        }
       } else {
-        // 替换模式
-        setQuickExpressions(response.data)
-      }
-      
-      setQuickTotal(response.total)
-      if (resetIndex) {
-        setQuickCurrentIndex(0)
+        toast({
+          title: '加载失败',
+          description: result.error,
+          variant: 'destructive',
+        })
       }
     } catch (error) {
       toast({
@@ -235,25 +263,34 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
   // 快速审核 - 执行审核操作
   const handleQuickReview = useCallback(async (rejected: boolean) => {
     const currentExpr = quickExpressions[quickCurrentIndex]
-    if (!currentExpr || isAnimating) return
+    if (!currentExpr || isAnimatingRef.current) return
 
     const directions = getAllowedDirections(currentExpr)
     if ((rejected && !directions.left) || (!rejected && !directions.right)) {
       return
     }
 
-    setIsAnimating(true)
-    setSwipeDirection(rejected ? 'left' : 'right')
-    setSwipeOffset(rejected ? -400 : 400)
+    isAnimatingRef.current = true
+    swipeDirectionRef.current = rejected ? 'left' : 'right'
+    cardApi.start({ x: rejected ? -400 : 400, rotate: rejected ? -20 : 20, opacity: 0 })
 
     try {
-      const response = await batchReviewExpressions([{
+      const result = await batchReviewExpressions([{
         id: currentExpr.id,
         rejected,
         require_unchecked: quickFilterType === 'unchecked',
       }])
 
-      if (response.results[0]?.success) {
+      if (!result.success) {
+        toast({
+          title: '操作失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        return
+      }
+
+      if (result.data.results[0]?.success) {
         toast({
           title: rejected ? '已拒绝' : '已通过',
           description: `表达方式 #${currentExpr.id} ${rejected ? '已拒绝' : '已通过'}`,
@@ -270,9 +307,10 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
           }
           
           // 重置状态
-          setSwipeDirection(null)
-          setSwipeOffset(0)
-          setIsAnimating(false)
+          swipeDirectionRef.current = null
+          swipeOffsetRef.current = 0
+          cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+          isAnimatingRef.current = false
           
           // 刷新统计
           loadStats()
@@ -294,9 +332,10 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
         // 播放冲突动画后刷新
         setTimeout(() => {
           setConflictId(null)
-          setSwipeDirection(null)
-          setSwipeOffset(0)
-          setIsAnimating(false)
+          swipeDirectionRef.current = null
+          swipeOffsetRef.current = 0
+          cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+          isAnimatingRef.current = false
           loadQuickList(false) // 重新加载当前页
           loadStats()
         }, 1500)
@@ -307,35 +346,36 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
         description: error instanceof Error ? error.message : '未知错误',
         variant: 'destructive',
       })
-      setSwipeDirection(null)
-      setSwipeOffset(0)
-      setIsAnimating(false)
+      swipeDirectionRef.current = null
+      swipeOffsetRef.current = 0
+      cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+      isAnimatingRef.current = false
     }
-  }, [quickExpressions, quickCurrentIndex, isAnimating, getAllowedDirections, quickFilterType, toast, loadStats, quickTotal, loadQuickList])
+  }, [quickExpressions, quickCurrentIndex, isAnimatingRef, getAllowedDirections, quickFilterType, toast, loadStats, quickTotal, loadQuickList])
 
   // 拖拽开始
   const handleDragStart = useCallback((clientX: number, clientY: number) => {
-    if (isAnimating) return
+    if (isAnimatingRef.current) return
     dragStartRef.current = { x: clientX, y: clientY }
     isDraggingRef.current = false
-  }, [isAnimating])
+  }, [isAnimatingRef])
 
   // 触发无效操作动画
   const triggerInvalidAnimation = useCallback((direction: 'left' | 'right') => {
-    if (isAnimating) return
-    setIsAnimating(true)
+    if (isAnimatingRef.current) return
+    isAnimatingRef.current = true
     // 模拟向该方向移动一点
-    setSwipeOffset(direction === 'left' ? -30 : 30)
+    cardApi.start({ x: direction === 'left' ? -30 : 30, immediate: true })
     
     setTimeout(() => {
-      setSwipeOffset(0)
-      setTimeout(() => setIsAnimating(false), 300)
+      cardApi.start({ x: 0 })
+      setTimeout(() => { isAnimatingRef.current = false }, 300)
     }, 150)
-  }, [isAnimating])
+  }, [cardApi])
 
   // 拖拽移动
   const handleDragMove = useCallback((clientX: number) => {
-    if (!dragStartRef.current || isAnimating) return
+    if (!dragStartRef.current || isAnimatingRef.current) return
     
     const deltaX = clientX - dragStartRef.current.x
     const currentExpr = quickExpressions[quickCurrentIndex]
@@ -343,42 +383,48 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
     
     // 检查方向限制
     if (deltaX < 0 && !directions.left) {
-      setSwipeOffset(deltaX * 0.2) // 提供阻力反馈
-      setSwipeDirection(null)
+      cardApi.start({ x: deltaX * 0.2, immediate: true }) // 提供阻力反馈
+      swipeOffsetRef.current = deltaX * 0.2
+      swipeDirectionRef.current = null
       return
     }
     if (deltaX > 0 && !directions.right) {
-      setSwipeOffset(deltaX * 0.2)
-      setSwipeDirection(null)
+      cardApi.start({ x: deltaX * 0.2, immediate: true })
+      swipeOffsetRef.current = deltaX * 0.2
+      swipeDirectionRef.current = null
       return
     }
 
     isDraggingRef.current = true
-    setSwipeOffset(deltaX)
+    swipeOffsetRef.current = deltaX
+    cardApi.start({ x: deltaX, rotate: deltaX * 0.05, opacity: Math.max(0, 1 - Math.abs(deltaX) / 500), immediate: true })
+    cardApi.start({ x: deltaX, rotate: deltaX * 0.05, opacity: Math.max(0, 1 - Math.abs(deltaX) / 500), immediate: true })
     
     if (Math.abs(deltaX) > 50) {
-      setSwipeDirection(deltaX > 0 ? 'right' : 'left')
+      swipeDirectionRef.current = deltaX > 0 ? 'right' : 'left'
     } else {
-      setSwipeDirection(null)
+      swipeDirectionRef.current = null
     }
-  }, [quickExpressions, quickCurrentIndex, getAllowedDirections, isAnimating])
+  }, [quickExpressions, quickCurrentIndex, getAllowedDirections, cardApi])
 
   // 拖拽结束
   const handleDragEnd = useCallback(() => {
     if (!dragStartRef.current) return
     
     const threshold = 100
-    if (Math.abs(swipeOffset) > threshold && swipeDirection) {
-      handleQuickReview(swipeDirection === 'left')
+    const currentX = cardSpring.x.get()
+    if (Math.abs(currentX) > threshold && swipeDirectionRef.current) {
+      handleQuickReview(swipeDirectionRef.current === 'left')
     } else {
       // 回弹
-      setSwipeOffset(0)
-      setSwipeDirection(null)
+      cardApi.start({ x: 0, rotate: 0, opacity: 1 })
+      swipeOffsetRef.current = 0
+      swipeDirectionRef.current = null
     }
     
     dragStartRef.current = null
     isDraggingRef.current = false
-  }, [swipeOffset, swipeDirection, handleQuickReview])
+  }, [cardSpring.x, handleQuickReview, cardApi])
 
   // 鼠标事件处理
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -430,7 +476,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
       e.stopPropagation()
       e.stopImmediatePropagation()
       
-      if (isAnimating || quickLoading) return
+      if (isAnimatingRef.current || quickLoading) return
       
       const currentExpr = quickExpressions[quickCurrentIndex]
       const directions = getAllowedDirections(currentExpr)
@@ -463,7 +509,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
     // 使用 capture 模式，在事件到达 Tabs 之前拦截
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [open, reviewMode, quickExpressions, quickCurrentIndex, isAnimating, quickLoading, getAllowedDirections, handleQuickReview, triggerInvalidAnimation])
+  }, [open, reviewMode, quickExpressions, quickCurrentIndex, isAnimatingRef, quickLoading, getAllowedDirections, handleQuickReview, triggerInvalidAnimation])
 
   // 动态加载更多数据 - 当接近列表末尾时自动加载
   useEffect(() => {
@@ -514,11 +560,20 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
     try {
       setProcessingIds((prev) => new Set(prev).add(id))
       
-      const response = await batchReviewExpressions([
+      const result = await batchReviewExpressions([
         { id, rejected, require_unchecked: filterType === 'unchecked' }
       ])
       
-      if (response.results[0]?.success) {
+      if (!result.success) {
+        toast({
+          title: '操作失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        return
+      }
+
+      if (result.data.results[0]?.success) {
         toast({
           title: rejected ? '已拒绝' : '已通过',
           description: `表达方式 #${id} ${rejected ? '已拒绝' : '已通过'}`,
@@ -529,7 +584,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
       } else {
         toast({
           title: '操作失败',
-          description: response.results[0]?.message || '未知错误',
+          description: result.data.results[0]?.message || '未知错误',
           variant: 'destructive',
         })
       }
@@ -568,12 +623,21 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
         require_unchecked: filterType === 'unchecked',
       }))
       
-      const response = await batchReviewExpressions(items)
+      const result = await batchReviewExpressions(items)
       
+      if (!result.success) {
+        toast({
+          title: '批量审核失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        return
+      }
+
       toast({
         title: '批量审核完成',
-        description: `成功 ${response.succeeded} 条，失败 ${response.failed} 条`,
-        variant: response.failed > 0 ? 'destructive' : 'default',
+        description: `成功 ${result.data.succeeded} 条，失败 ${result.data.failed} 条`,
+        variant: result.data.failed > 0 ? 'destructive' : 'default',
       })
       
       // 清空选择并刷新
@@ -1355,7 +1419,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                         <>
                           <div className={cn(
                             'flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-300',
-                            swipeDirection === 'left' ? 'bg-red-500/20 text-red-500 scale-110' : 'bg-muted/50 text-muted-foreground opacity-0',
+                            swipeDirectionRef.current === 'left' ? 'bg-red-500/20 text-red-500 scale-110' : 'bg-muted/50 text-muted-foreground opacity-0',
                             !directions.left && 'invisible'
                           )}>
                             <XCircle className="h-8 w-8" />
@@ -1363,7 +1427,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                           </div>
                           <div className={cn(
                             'flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-300',
-                            swipeDirection === 'right' ? 'bg-green-500/20 text-green-500 scale-110' : 'bg-muted/50 text-muted-foreground opacity-0',
+                            swipeDirectionRef.current === 'right' ? 'bg-green-500/20 text-green-500 scale-110' : 'bg-muted/50 text-muted-foreground opacity-0',
                             !directions.right && 'invisible'
                           )}>
                             <span className="font-bold text-lg hidden sm:inline">通过</span>
@@ -1375,7 +1439,12 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                   </div>
 
                   {/* 堆叠卡片 */}
-                  <div className="relative w-full max-w-md h-[400px] flex items-center justify-center">
+                  <div
+                    className="relative w-full max-w-md h-[400px] flex items-center justify-center"
+                    role="listbox"
+                    aria-label="待审核的表达方式"
+                    aria-activedescendant={quickExpressions[quickCurrentIndex] ? `quick-expr-${quickExpressions[quickCurrentIndex].id}` : undefined}
+                  >
                     {quickExpressions
                       .slice(quickCurrentIndex, quickCurrentIndex + 5)
                       .reverse()
@@ -1391,17 +1460,16 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                           transition: isCurrent && !isDraggingRef.current ? 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)' : 'none',
                         }
 
-                        if (isCurrent) {
-                          // 当前卡片样式
+if (isCurrent) {
+                          // 当前卡片：样式由 useSpring 控制，通过 animated.div 渲染
+                          // style 仅保留非动画属性
                           style = {
                             ...style,
-                            transform: `translateX(${swipeOffset}px) rotate(${swipeOffset * 0.05}deg)`,
-                            opacity: Math.max(0, 1 - Math.abs(swipeOffset) / 500),
                             cursor: 'grab',
                           }
                         } else {
                           // 后方卡片样式
-                          const progress = Math.min(Math.abs(swipeOffset) / 200, 1) // 0 to 1
+                          const progress = Math.min(Math.abs(swipeOffsetRef.current) / 200, 1) // 0 to 1
                           
                           // 计算指定索引的样式属性
                           const getStyleForIndex = (i: number) => {
@@ -1436,27 +1504,30 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                           }
                         }
 
-                        return (
-                          <div
+                        return isCurrent ? (
+                          <AnimatedDiv
                             key={expr.id}
-                            ref={isCurrent ? cardRef : undefined}
+                            ref={cardRef}
+                            role="option"
+                            id={`quick-expr-${expr.id}`}
+                            aria-selected={true}
                             className={cn(
                               'bg-card border rounded-xl shadow-xl p-6 select-none h-full flex flex-col',
-                              isCurrent && 'active:cursor-grabbing shadow-2xl ring-1 ring-border/50',
+                              'active:cursor-grabbing shadow-2xl ring-1 ring-border/50',
                               // 冲突动效
-                              isCurrent && conflictId === expr.id && 'ring-4 ring-orange-500/50 bg-orange-50/10'
+                              conflictId === expr.id && 'ring-4 ring-orange-500/50 bg-orange-50/10'
                             )}
-                            style={style}
-                            onMouseDown={isCurrent ? handleMouseDown : undefined}
-                            onMouseMove={isCurrent ? handleMouseMove : undefined}
-                            onMouseUp={isCurrent ? handleMouseUp : undefined}
-                            onMouseLeave={isCurrent ? handleMouseLeave : undefined}
-                            onTouchStart={isCurrent ? handleTouchStart : undefined}
-                            onTouchMove={isCurrent ? handleTouchMove : undefined}
-                            onTouchEnd={isCurrent ? handleTouchEnd : undefined}
+                            style={{ ...style, ...cardSpring }}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
+                            onMouseLeave={handleMouseLeave}
+                            onTouchStart={handleTouchStart}
+                            onTouchMove={handleTouchMove}
+                            onTouchEnd={handleTouchEnd}
                           >
                             {/* 冲突提示遮罩 */}
-                            {isCurrent && conflictId === expr.id && (
+                            {conflictId === expr.id && (
                               <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in duration-300 rounded-xl">
                                 <div className="relative">
                                   <div className="absolute inset-0 bg-orange-500/20 rounded-full animate-ping" />
@@ -1466,21 +1537,18 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                                 <p className="text-muted-foreground mt-2 animate-in slide-in-from-bottom-3 fade-in duration-700">后台任务已处理此条目</p>
                               </div>
                             )}
-
                             {/* 无效操作提示 */}
-                            {isCurrent && (
-                              <div className={cn(
-                                "absolute inset-0 flex items-center justify-center z-20 pointer-events-none transition-opacity duration-200",
-                                ((swipeOffset < -10 && !getAllowedDirections(expr).left) || (swipeOffset > 10 && !getAllowedDirections(expr).right)) 
-                                  ? "opacity-100" 
-                                  : "opacity-0"
-                              )}>
-                                <div className="bg-background/80 backdrop-blur-sm p-4 rounded-full shadow-lg border border-border">
-                                  <Ban className="h-12 w-12 text-muted-foreground" />
-                                </div>
+                            <div className={cn(
+                              "absolute inset-0 flex items-center justify-center z-20 pointer-events-none transition-opacity duration-200",
+                              ((swipeOffsetRef.current < -10 && !getAllowedDirections(expr).left) || (swipeOffsetRef.current > 10 && !getAllowedDirections(expr).right))
+                                ? "opacity-100"
+                                : "opacity-0"
+                            )}>
+                              <div className="bg-background/80 backdrop-blur-sm p-4 rounded-full shadow-lg border border-border">
+                                <Ban className="h-12 w-12 text-muted-foreground" />
                               </div>
-                            )}
-
+                            </div>
+                            {/* 内容区 */}
                             <div className="space-y-4 flex-1">
                               {/* 状态和ID */}
                               <div className="flex items-center justify-between">
@@ -1490,7 +1558,6 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                                   {getModifierBadge(expr.modified_by)}
                                 </div>
                               </div>
-
                               {/* 情景 */}
                               <div className="space-y-1.5">
                                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">情景</label>
@@ -1498,7 +1565,6 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                                   <p className="text-lg font-medium leading-relaxed">{expr.situation}</p>
                                 </div>
                               </div>
-
                               {/* 风格 */}
                               <div className="space-y-1.5">
                                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">风格</label>
@@ -1511,7 +1577,59 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                                 </div>
                               </div>
                             </div>
-
+                            {/* 底部信息 */}
+                            <div className="mt-auto pt-4 border-t flex items-center justify-between text-xs text-muted-foreground">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                                  <User className="h-3 w-3" />
+                                </div>
+                                <span title={getChatName(expr.chat_id)} className="truncate max-w-[120px] font-medium">
+                                  {getChatName(expr.chat_id)}
+                                </span>
+                              </div>
+                              <span className="font-mono">{formatTime(expr.create_date)}</span>
+                            </div>
+                          </AnimatedDiv>
+                        ) : (
+                          <div
+                            key={expr.id}
+                            role="option"
+                            id={`quick-expr-${expr.id}`}
+                            aria-selected={false}
+                            className={cn(
+                              'bg-card border rounded-xl shadow-xl p-6 select-none h-full flex flex-col'
+                            )}
+                            style={style}
+                          >
+                            {/* 内容区 */}
+                            <div className="space-y-4 flex-1">
+                              {/* 状态和ID */}
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-muted-foreground font-mono">#{expr.id}</span>
+                                <div className="flex items-center gap-2">
+                                  {getStatusBadge(expr)}
+                                  {getModifierBadge(expr.modified_by)}
+                                </div>
+                              </div>
+                              {/* 情景 */}
+                              <div className="space-y-1.5">
+                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">情景</label>
+                                <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
+                                  <p className="text-lg font-medium leading-relaxed">{expr.situation}</p>
+                                </div>
+                              </div>
+                              {/* 风格 */}
+                              <div className="space-y-1.5">
+                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">风格</label>
+                                <div className="flex flex-wrap gap-2">
+                                  {expr.style.split(/[,，]/).map((s, i) => (
+                                    <Badge key={i} variant="secondary" className="font-normal">
+                                      {s.trim()}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
                             {/* 底部信息 */}
                             <div className="mt-auto pt-4 border-t flex items-center justify-between text-xs text-muted-foreground">
                               <div className="flex items-center gap-2">
@@ -1544,7 +1662,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                               !directions.left ? 'opacity-30 cursor-not-allowed' : 'hover:bg-red-50 hover:text-red-600 hover:border-red-200'
                             )}
                             onClick={() => directions.left && handleQuickReview(true)}
-                            disabled={!directions.left || isAnimating}
+                            disabled={!directions.left || isAnimatingRef.current}
                           >
                             <XCircle className="h-8 w-8" />
                           </Button>
@@ -1556,7 +1674,7 @@ export function ExpressionReviewer({ open, onOpenChange }: ExpressionReviewerPro
                               !directions.right ? 'opacity-30 cursor-not-allowed' : 'hover:bg-green-50 hover:text-green-600 hover:border-green-200'
                             )}
                             onClick={() => directions.right && handleQuickReview(false)}
-                            disabled={!directions.right || isAnimating}
+                            disabled={!directions.right || isAnimatingRef.current}
                           >
                             <CheckCircle2 className="h-8 w-8" />
                           </Button>

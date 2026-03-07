@@ -29,6 +29,7 @@ except ImportError as e:
 
 logger = get_logger("lpmm_interactive_manager")
 
+
 async def interactive_add():
     """交互式导入知识"""
     print("\n" + "=" * 40)
@@ -38,7 +39,7 @@ async def interactive_add():
     print("      - 支持多段落，段落间请保留空行。")
     print("      - 输入完成后，在新起的一行输入 'EOF' 并回车结束输入。")
     print("-" * 40)
-    
+
     lines = []
     while True:
         try:
@@ -48,7 +49,7 @@ async def interactive_add():
             lines.append(line)
         except EOFError:
             break
-            
+
     text = "\n".join(lines).strip()
     if not text:
         print("\n[!] 内容为空，操作已取消。")
@@ -58,7 +59,7 @@ async def interactive_add():
     try:
         # 使用 lpmm_ops.py 中的接口
         result = await lpmm_ops.add_content(text)
-        
+
         if result["status"] == "success":
             print(f"\n[√] 成功：{result['message']}")
             print(f"    实际新增段落数: {result.get('count', 0)}")
@@ -67,6 +68,7 @@ async def interactive_add():
     except Exception as e:
         print(f"\n[×] 发生异常: {e}")
         logger.error(f"add_content 异常: {e}", exc_info=True)
+
 
 async def interactive_delete():
     """交互式删除知识"""
@@ -77,10 +79,10 @@ async def interactive_delete():
     print("  1. 关键词模糊匹配（删除包含关键词的所有段落）")
     print("  2. 完整文段匹配（删除完全匹配的段落）")
     print("-" * 40)
-    
+
     mode = input("请选择删除模式 (1/2): ").strip()
     exact_match = False
-    
+
     if mode == "2":
         exact_match = True
         print("\n[完整文段匹配模式]")
@@ -102,14 +104,18 @@ async def interactive_delete():
             print("\n[!] 无效选择，默认使用关键词模糊匹配模式。")
         print("\n[关键词模糊匹配模式]")
         keyword = input("请输入匹配关键词: ").strip()
-    
+
     if not keyword:
         print("\n[!] 输入为空，操作已取消。")
         return
-        
+
     print("-" * 40)
-    confirm = input(f"危险确认：确定要删除所有匹配 '{keyword[:50]}{'...' if len(keyword) > 50 else ''}' 的知识吗？(y/N): ").strip().lower()
-    if confirm != 'y':
+    confirm = (
+        input(f"危险确认：确定要删除所有匹配 '{keyword[:50]}{'...' if len(keyword) > 50 else ''}' 的知识吗？(y/N): ")
+        .strip()
+        .lower()
+    )
+    if confirm != "y":
         print("\n[!] 已取消删除操作。")
         return
 
@@ -117,7 +123,7 @@ async def interactive_delete():
     try:
         # 使用 lpmm_ops.py 中的接口
         result = await lpmm_ops.delete(keyword, exact_match=exact_match)
-        
+
         if result["status"] == "success":
             print(f"\n[√] 成功：{result['message']}")
             print(f"    删除条数: {result.get('deleted_count', 0)}")
@@ -128,6 +134,7 @@ async def interactive_delete():
     except Exception as e:
         print(f"\n[×] 发生异常: {e}")
         logger.error(f"delete 异常: {e}", exc_info=True)
+
 
 async def interactive_clear():
     """交互式清空知识库"""
@@ -141,39 +148,44 @@ async def interactive_clear():
     print("      - 整个知识图谱")
     print("      - 此操作不可恢复！")
     print("-" * 40)
-    
+
     # 双重确认
     confirm1 = input("⚠️  第一次确认：确定要清空整个知识库吗？(输入 'YES' 继续): ").strip()
     if confirm1 != "YES":
         print("\n[!] 已取消清空操作。")
         return
-    
+
     print("\n" + "=" * 40)
     confirm2 = input("⚠️  第二次确认：此操作不可恢复，请再次输入 'CLEAR' 确认: ").strip()
     if confirm2 != "CLEAR":
         print("\n[!] 已取消清空操作。")
         return
-    
+
     print("\n[进度] 正在清空知识库...")
     try:
         # 使用 lpmm_ops.py 中的接口
         result = await lpmm_ops.clear_all()
-        
+
         if result["status"] == "success":
             print(f"\n[√] 成功：{result['message']}")
             stats = result.get("stats", {})
             before = stats.get("before", {})
             after = stats.get("after", {})
             print("\n[统计信息]")
-            print(f"  清空前: 段落={before.get('paragraphs', 0)}, 实体={before.get('entities', 0)}, "
-                  f"关系={before.get('relations', 0)}, KG节点={before.get('kg_nodes', 0)}, KG边={before.get('kg_edges', 0)}")
-            print(f"  清空后: 段落={after.get('paragraphs', 0)}, 实体={after.get('entities', 0)}, "
-                  f"关系={after.get('relations', 0)}, KG节点={after.get('kg_nodes', 0)}, KG边={after.get('kg_edges', 0)}")
+            print(
+                f"  清空前: 段落={before.get('paragraphs', 0)}, 实体={before.get('entities', 0)}, "
+                f"关系={before.get('relations', 0)}, KG节点={before.get('kg_nodes', 0)}, KG边={before.get('kg_edges', 0)}"
+            )
+            print(
+                f"  清空后: 段落={after.get('paragraphs', 0)}, 实体={after.get('entities', 0)}, "
+                f"关系={after.get('relations', 0)}, KG节点={after.get('kg_nodes', 0)}, KG边={after.get('kg_edges', 0)}"
+            )
         else:
             print(f"\n[×] 失败：{result['message']}")
     except Exception as e:
         print(f"\n[×] 发生异常: {e}")
         logger.error(f"clear_all 异常: {e}", exc_info=True)
+
 
 async def interactive_search():
     """交互式查询知识"""
@@ -182,25 +194,25 @@ async def interactive_search():
     print("=" * 40)
     print("说明：输入查询问题或关键词，系统会返回相关的知识段落。")
     print("-" * 40)
-    
+
     # 确保 LPMM 已初始化
     if not global_config.lpmm_knowledge.enable:
         print("\n[!] 警告：LPMM 知识库在配置中未启用。")
         return
-    
+
     try:
         lpmm_start_up()
     except Exception as e:
         print(f"\n[!] LPMM 初始化失败: {e}")
         logger.error(f"LPMM 初始化失败: {e}", exc_info=True)
         return
-    
+
     query = input("请输入查询问题或关键词: ").strip()
-    
+
     if not query:
         print("\n[!] 查询内容为空，操作已取消。")
         return
-    
+
     # 询问返回条数
     print("-" * 40)
     limit_str = input("希望返回的相关知识条数（默认3，直接回车使用默认值）: ").strip()
@@ -210,11 +222,11 @@ async def interactive_search():
     except ValueError:
         limit = 3
         print("[!] 输入无效，使用默认值 3。")
-    
+
     print("\n[进度] 正在查询知识库...")
     try:
         result = await query_lpmm_knowledge(query, limit=limit)
-        
+
         print("\n" + "=" * 60)
         print("[查询结果]")
         print("=" * 60)
@@ -223,6 +235,7 @@ async def interactive_search():
     except Exception as e:
         print(f"\n[×] 查询失败: {e}")
         logger.error(f"查询异常: {e}", exc_info=True)
+
 
 async def main():
     """主循环"""
@@ -236,9 +249,9 @@ async def main():
         print("║  4. 清空知识库 (Clear All) ⚠️        ║")
         print("║  0. 退出 (Exit)                     ║")
         print("╚" + "═" * 38 + "╝")
-        
+
         choice = input("请选择操作编号: ").strip()
-        
+
         if choice == "1":
             await interactive_add()
         elif choice == "2":
@@ -253,6 +266,7 @@ async def main():
         else:
             print("\n[!] 无效的选择，请输入 0, 1, 2, 3 或 4。")
 
+
 if __name__ == "__main__":
     try:
         # 运行主循环
@@ -262,4 +276,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n[!] 程序运行出错: {e}")
         logger.error(f"Main loop 异常: {e}", exc_info=True)
-

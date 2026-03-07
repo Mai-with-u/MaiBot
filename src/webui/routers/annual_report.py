@@ -1,23 +1,25 @@
 """麦麦 2025 年度总结 API 路由"""
 
-from fastapi import APIRouter, HTTPException, Depends, Cookie, Header
-from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Optional
 from datetime import datetime
-from peewee import fn
+from typing import Any, Optional
 
-from src.common.logger import get_logger
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import desc, func
+from sqlmodel import col, select
+
+from src.common.database.database import get_db_session
 from src.common.database.database_model import (
-    LLMUsage,
-    OnlineTime,
-    Messages,
-    ChatStreams,
-    PersonInfo,
-    Emoji,
+    ActionRecord,
     Expression,
-    ActionRecords,
+    Images,
     Jargon,
+    Messages,
+    ModelUsage,
+    OnlineTime,
+    PersonInfo,
 )
+from src.common.logger import get_logger
 from src.webui.core import verify_auth_token_from_cookie_or_header
 
 logger = get_logger("webui.annual_report")
@@ -45,7 +47,7 @@ class TimeFootprintData(BaseModel):
     first_message_content: Optional[str] = Field(None, description="初次消息内容(截断)")
     busiest_day: Optional[str] = Field(None, description="最忙碌的一天")
     busiest_day_count: int = Field(0, description="最忙碌那天的消息数")
-    hourly_distribution: List[int] = Field(default_factory=lambda: [0] * 24, description="24小时活跃分布")
+    hourly_distribution: list[int] = Field(default_factory=lambda: [0] * 24, description="24小时活跃分布")
     midnight_chat_count: int = Field(0, description="深夜(0-4点)互动次数")
     is_night_owl: bool = Field(False, description="是否是夜猫子")
 
@@ -54,8 +56,8 @@ class SocialNetworkData(BaseModel):
     """社交网络数据"""
 
     total_groups: int = Field(0, description="加入的群组总数")
-    top_groups: List[Dict[str, Any]] = Field(default_factory=list, description="话痨群组TOP5")
-    top_users: List[Dict[str, Any]] = Field(default_factory=list, description="互动最多的用户TOP5")
+    top_groups: list[dict[str, Any]] = Field(default_factory=list, description="话痨群组TOP5")
+    top_users: list[dict[str, Any]] = Field(default_factory=list, description="互动最多的用户TOP5")
     at_count: int = Field(0, description="被@次数")
     mentioned_count: int = Field(0, description="被提及次数")
     longest_companion_user: Optional[str] = Field(None, description="最长情陪伴的用户")
@@ -69,11 +71,11 @@ class BrainPowerData(BaseModel):
     total_cost: float = Field(0.0, description="年度总花费")
     favorite_model: Optional[str] = Field(None, description="最爱用的模型")
     favorite_model_count: int = Field(0, description="最爱模型的调用次数")
-    model_distribution: List[Dict[str, Any]] = Field(default_factory=list, description="模型使用分布")
-    top_reply_models: List[Dict[str, Any]] = Field(default_factory=list, description="最喜欢的回复模型TOP5")
+    model_distribution: list[dict[str, Any]] = Field(default_factory=list, description="模型使用分布")
+    top_reply_models: list[dict[str, Any]] = Field(default_factory=list, description="最喜欢的回复模型TOP5")
     most_expensive_cost: float = Field(0.0, description="最昂贵的一次思考花费")
     most_expensive_time: Optional[str] = Field(None, description="最昂贵思考的时间")
-    top_token_consumers: List[Dict[str, Any]] = Field(default_factory=list, description="烧钱大户TOP3")
+    top_token_consumers: list[dict[str, Any]] = Field(default_factory=list, description="烧钱大户TOP3")
     silence_rate: float = Field(0.0, description="高冷指数(沉默率)")
     total_actions: int = Field(0, description="总动作数")
     no_reply_count: int = Field(0, description="选择沉默的次数")
@@ -88,23 +90,23 @@ class BrainPowerData(BaseModel):
 class ExpressionVibeData(BaseModel):
     """个性与表达数据"""
 
-    top_emoji: Optional[Dict[str, Any]] = Field(None, description="表情包之王")
-    top_emojis: List[Dict[str, Any]] = Field(default_factory=list, description="TOP3表情包")
-    top_expressions: List[Dict[str, Any]] = Field(default_factory=list, description="印象最深刻的表达风格")
+    top_emoji: Optional[dict[str, Any]] = Field(None, description="表情包之王")
+    top_emojis: list[dict[str, Any]] = Field(default_factory=list, description="TOP3表情包")
+    top_expressions: list[dict[str, Any]] = Field(default_factory=list, description="印象最深刻的表达风格")
     rejected_expression_count: int = Field(0, description="被拒绝的表达次数")
     checked_expression_count: int = Field(0, description="已检查的表达次数")
     total_expressions: int = Field(0, description="表达总数")
-    action_types: List[Dict[str, Any]] = Field(default_factory=list, description="动作类型分布")
+    action_types: list[dict[str, Any]] = Field(default_factory=list, description="动作类型分布")
     image_processed_count: int = Field(0, description="处理的图片数量")
-    late_night_reply: Optional[Dict[str, Any]] = Field(None, description="深夜还在回复")
-    favorite_reply: Optional[Dict[str, Any]] = Field(None, description="最喜欢的回复")
+    late_night_reply: Optional[dict[str, Any]] = Field(None, description="深夜还在回复")
+    favorite_reply: Optional[dict[str, Any]] = Field(None, description="最喜欢的回复")
 
 
 class AchievementData(BaseModel):
     """趣味成就数据"""
 
     new_jargon_count: int = Field(0, description="新学到的黑话数量")
-    sample_jargons: List[Dict[str, Any]] = Field(default_factory=list, description="代表性黑话示例")
+    sample_jargons: list[dict[str, Any]] = Field(default_factory=list, description="代表性黑话示例")
     total_messages: int = Field(0, description="总消息数")
     total_replies: int = Field(0, description="总回复数")
 
@@ -115,11 +117,11 @@ class AnnualReportData(BaseModel):
     year: int = Field(2025, description="报告年份")
     bot_name: str = Field("麦麦", description="Bot名称")
     generated_at: str = Field(..., description="报告生成时间")
-    time_footprint: TimeFootprintData = Field(default_factory=TimeFootprintData)
-    social_network: SocialNetworkData = Field(default_factory=SocialNetworkData)
-    brain_power: BrainPowerData = Field(default_factory=BrainPowerData)
-    expression_vibe: ExpressionVibeData = Field(default_factory=ExpressionVibeData)
-    achievements: AchievementData = Field(default_factory=AchievementData)
+    time_footprint: TimeFootprintData = Field(default_factory=lambda: TimeFootprintData.model_construct())
+    social_network: SocialNetworkData = Field(default_factory=lambda: SocialNetworkData.model_construct())
+    brain_power: BrainPowerData = Field(default_factory=lambda: BrainPowerData.model_construct())
+    expression_vibe: ExpressionVibeData = Field(default_factory=lambda: ExpressionVibeData.model_construct())
+    achievements: AchievementData = Field(default_factory=lambda: AchievementData.model_construct())
 
 
 # ==================== 辅助函数 ====================
@@ -144,17 +146,18 @@ def get_year_datetime_range(year: int = 2025) -> tuple[datetime, datetime]:
 
 async def get_time_footprint(year: int = 2025) -> TimeFootprintData:
     """获取时光足迹数据"""
-    data = TimeFootprintData()
+    data = TimeFootprintData.model_construct()
     start_ts, end_ts = get_year_time_range(year)
     start_dt, end_dt = get_year_datetime_range(year)
 
     try:
         # 1. 年度在线时长
-        online_records = list(
-            OnlineTime.select().where(
-                (OnlineTime.start_timestamp >= start_dt) | (OnlineTime.end_timestamp <= end_dt)
+        with get_db_session() as session:
+            statement = select(OnlineTime).where(
+                col(OnlineTime.start_timestamp) >= start_dt,
+                col(OnlineTime.end_timestamp) <= end_dt,
             )
-        )
+            online_records = session.exec(statement).all()
         total_seconds = 0
         for record in online_records:
             try:
@@ -167,50 +170,66 @@ async def get_time_footprint(year: int = 2025) -> TimeFootprintData:
         data.total_online_hours = round(total_seconds / 3600, 2)
 
         # 2. 初次相遇 - 年度第一条消息
-        first_msg = (
-            Messages.select()
-            .where((Messages.time >= start_ts) & (Messages.time <= end_ts))
-            .order_by(Messages.time.asc())
-            .first()
-        )
+        with get_db_session() as session:
+            statement = (
+                select(Messages)
+                .where(
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                )
+                .order_by(col(Messages.timestamp).asc())
+                .limit(1)
+            )
+            first_msg = session.exec(statement).first()
         if first_msg:
-            data.first_message_time = datetime.fromtimestamp(first_msg.time).strftime("%Y-%m-%d %H:%M:%S")
+            data.first_message_time = first_msg.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             data.first_message_user = first_msg.user_nickname or first_msg.user_id or "未知用户"
             content = first_msg.processed_plain_text or first_msg.display_message or ""
             data.first_message_content = content[:50] + "..." if len(content) > 50 else content
 
         # 3. 最忙碌的一天
         # 使用 SQLite 的 date 函数按日期分组
-        busiest_query = (
-            Messages.select(
-                fn.date(Messages.time, "unixepoch").alias("day"),
-                fn.COUNT(Messages.id).alias("count"),
+        day_expr = func.date(col(Messages.timestamp))
+        with get_db_session() as session:
+            statement = (
+                select(
+                    day_expr.label("day"),
+                    func.count().label("count"),
+                )
+                .where(
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                )
+                .group_by(day_expr)
+                .order_by(func.count().desc())
+                .limit(1)
             )
-            .where((Messages.time >= start_ts) & (Messages.time <= end_ts))
-            .group_by(fn.date(Messages.time, "unixepoch"))
-            .order_by(fn.COUNT(Messages.id).desc())
-            .limit(1)
-        )
-        busiest_result = list(busiest_query.dicts())
+            busiest_result = session.exec(statement).all()
         if busiest_result:
-            data.busiest_day = busiest_result[0].get("day")
-            data.busiest_day_count = busiest_result[0].get("count", 0)
+            data.busiest_day = busiest_result[0][0]
+            data.busiest_day_count = busiest_result[0][1] or 0
 
         # 4. 昼夜节律 - 24小时活跃分布
-        hourly_query = (
-            Messages.select(
-                fn.strftime("%H", Messages.time, "unixepoch").alias("hour"),
-                fn.COUNT(Messages.id).alias("count"),
+        hour_expr = func.strftime("%H", col(Messages.timestamp))
+        with get_db_session() as session:
+            statement = (
+                select(
+                    hour_expr.label("hour"),
+                    func.count().label("count"),
+                )
+                .where(
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                )
+                .group_by(hour_expr)
             )
-            .where((Messages.time >= start_ts) & (Messages.time <= end_ts))
-            .group_by(fn.strftime("%H", Messages.time, "unixepoch"))
-        )
+            hourly_rows = session.exec(statement).all()
         hourly_distribution = [0] * 24
-        for row in hourly_query.dicts():
+        for row in hourly_rows:
             try:
-                hour = int(row.get("hour", 0))
+                hour = int(row[0] or 0)
                 if 0 <= hour < 24:
-                    hourly_distribution[hour] = row.get("count", 0)
+                    hourly_distribution[hour] = row[1] or 0
             except (ValueError, TypeError):
                 continue
         data.hourly_distribution = hourly_distribution
@@ -235,111 +254,119 @@ async def get_time_footprint(year: int = 2025) -> TimeFootprintData:
 async def get_social_network(year: int = 2025) -> SocialNetworkData:
     """获取社交网络数据"""
     from src.config.config import global_config
-    
-    data = SocialNetworkData()
+
+    data = SocialNetworkData.model_construct()
     start_ts, end_ts = get_year_time_range(year)
-    
+
     # 获取 bot 自身的 QQ 账号，用于过滤
     bot_qq = str(global_config.bot.qq_account or "")
 
     try:
         # 1. 加入的群组总数
-        data.total_groups = ChatStreams.select().where(ChatStreams.group_id.is_null(False)).count()
+        with get_db_session() as session:
+            statement = select(func.count(func.distinct(col(Messages.group_id)))).where(
+                col(Messages.group_id).is_not(None),
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+            )
+            data.total_groups = int(session.exec(statement).first() or 0)
 
         # 2. 话痨群组 TOP3
-        top_groups_query = (
-            Messages.select(
-                Messages.chat_info_group_id,
-                Messages.chat_info_group_name,
-                fn.COUNT(Messages.id).alias("count"),
+        with get_db_session() as session:
+            statement = (
+                select(
+                    col(Messages.group_id),
+                    func.max(col(Messages.group_name)).label("group_name"),
+                    func.count().label("count"),
+                )
+                .where(
+                    col(Messages.group_id).is_not(None),
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                )
+                .group_by(col(Messages.group_id))
+                .order_by(func.count().desc())
+                .limit(5)
             )
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.chat_info_group_id.is_null(False))
-            )
-            .group_by(Messages.chat_info_group_id)
-            .order_by(fn.COUNT(Messages.id).desc())
-            .limit(5)
-        )
+            top_groups_rows = session.exec(statement).all()
         data.top_groups = [
             {
-                "group_id": row["chat_info_group_id"],
-                "group_name": row["chat_info_group_name"] or "未知群组",
-                "message_count": row["count"],
-                "is_webui": str(row["chat_info_group_id"]).startswith("webui_"),
+                "group_id": row[0],
+                "group_name": row[1] or "未知群组",
+                "message_count": row[2] or 0,
+                "is_webui": str(row[0]).startswith("webui_"),
             }
-            for row in top_groups_query.dicts()
+            for row in top_groups_rows
         ]
 
         # 3. 互动最多的用户 TOP5（过滤 bot 自身）
-        top_users_query = (
-            Messages.select(
-                Messages.user_id,
-                Messages.user_nickname,
-                fn.COUNT(Messages.id).alias("count"),
+        with get_db_session() as session:
+            statement = (
+                select(
+                    col(Messages.user_id),
+                    func.max(col(Messages.user_nickname)).label("user_nickname"),
+                    func.count().label("count"),
+                )
+                .where(
+                    col(Messages.user_id).is_not(None),
+                    col(Messages.user_id) != bot_qq,
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                )
+                .group_by(col(Messages.user_id))
+                .order_by(func.count().desc())
+                .limit(5)
             )
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.user_id.is_null(False))
-                & (Messages.user_id != bot_qq)  # 过滤 bot 自身
-            )
-            .group_by(Messages.user_id)
-            .order_by(fn.COUNT(Messages.id).desc())
-            .limit(5)
-        )
+            top_users_rows = session.exec(statement).all()
         data.top_users = [
             {
-                "user_id": row["user_id"],
-                "user_nickname": row["user_nickname"] or "未知用户",
-                "message_count": row["count"],
-                "is_webui": str(row["user_id"]).startswith("webui_"),
+                "user_id": row[0],
+                "user_nickname": row[1] or "未知用户",
+                "message_count": row[2] or 0,
+                "is_webui": str(row[0]).startswith("webui_"),
             }
-            for row in top_users_query.dicts()
+            for row in top_users_rows
         ]
 
         # 4. 被@次数
-        data.at_count = (
-            Messages.select()
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.is_at == True)
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(Messages.is_at),
             )
-            .count()
-        )
+            data.at_count = int(session.exec(statement).first() or 0)
 
         # 5. 被提及次数
-        data.mentioned_count = (
-            Messages.select()
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.is_mentioned == True)
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(Messages.is_mentioned),
             )
-            .count()
-        )
+            data.mentioned_count = int(session.exec(statement).first() or 0)
 
         # 6. 最长情陪伴的用户（过滤 bot 自身）
-        companion_query = (
-            ChatStreams.select(
-                ChatStreams.user_id,
-                ChatStreams.user_nickname,
-                (ChatStreams.last_active_time - ChatStreams.create_time).alias("duration"),
+        with get_db_session() as session:
+            statement = select(PersonInfo).where(
+                col(PersonInfo.user_id) != bot_qq,
+                col(PersonInfo.first_known_time).is_not(None),
+                col(PersonInfo.last_known_time).is_not(None),
             )
-            .where(
-                (ChatStreams.user_id.is_null(False))
-                & (ChatStreams.user_id != bot_qq)  # 过滤 bot 自身
-            )
-            .order_by((ChatStreams.last_active_time - ChatStreams.create_time).desc())
-            .limit(1)
-        )
-        companion_result = list(companion_query.dicts())
-        if companion_result:
-            data.longest_companion_user = companion_result[0].get("user_nickname") or "未知用户"
-            duration = companion_result[0].get("duration", 0) or 0
-            data.longest_companion_days = int(duration / 86400)  # 转换为天
+            persons = session.exec(statement).all()
+        if persons:
+
+            def _companion_days(person: PersonInfo) -> float:
+                if not person.first_known_time or not person.last_known_time:
+                    return 0.0
+                return (person.last_known_time - person.first_known_time).total_seconds()
+
+            longest = max(persons, key=_companion_days)
+            data.longest_companion_user = longest.person_name or longest.user_nickname or longest.user_id
+            data.longest_companion_days = int(_companion_days(longest) / 86400)
+        else:
+            data.longest_companion_user = None
+            data.longest_companion_days = 0
 
     except Exception as e:
         logger.error(f"获取社交网络数据失败: {e}")
@@ -352,162 +379,139 @@ async def get_social_network(year: int = 2025) -> SocialNetworkData:
 
 async def get_brain_power(year: int = 2025) -> BrainPowerData:
     """获取最强大脑数据"""
-    data = BrainPowerData()
+    data = BrainPowerData.model_construct()
     start_dt, end_dt = get_year_datetime_range(year)
     start_ts, end_ts = get_year_time_range(year)
 
     try:
         # 1. 年度消耗 Token 总量和总花费
-        token_query = LLMUsage.select(
-            fn.COALESCE(fn.SUM(LLMUsage.total_tokens), 0).alias("total_tokens"),
-            fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("total_cost"),
-        ).where((LLMUsage.timestamp >= start_dt) & (LLMUsage.timestamp <= end_dt))
-        result = token_query.dicts().get()
-        data.total_tokens = int(result.get("total_tokens", 0) or 0)
-        data.total_cost = round(float(result.get("total_cost", 0) or 0), 4)
+        with get_db_session() as session:
+            statement = select(
+                func.sum(col(ModelUsage.total_tokens)).label("total_tokens"),
+                func.sum(col(ModelUsage.cost)).label("total_cost"),
+            ).where(col(ModelUsage.timestamp) >= start_dt, col(ModelUsage.timestamp) <= end_dt)
+            result = session.exec(statement).first()
+        if result:
+            data.total_tokens = int(result[0] or 0)
+            data.total_cost = round(float(result[1] or 0), 4)
 
         # 2. 最爱用的模型
-        model_query = (
-            LLMUsage.select(
-                fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name).alias("model"),
-                fn.COUNT(LLMUsage.id).alias("count"),
-                fn.COALESCE(fn.SUM(LLMUsage.total_tokens), 0).alias("tokens"),
-                fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("cost"),
+        with get_db_session() as session:
+            statement = (
+                select(ModelUsage)
+                .where(col(ModelUsage.timestamp) >= start_dt, col(ModelUsage.timestamp) <= end_dt)
+                .order_by(desc(col(ModelUsage.timestamp)))
             )
-            .where((LLMUsage.timestamp >= start_dt) & (LLMUsage.timestamp <= end_dt))
-            .group_by(fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name))
-            .order_by(fn.COUNT(LLMUsage.id).desc())
-            .limit(10)
-        )
-        model_results = list(model_query.dicts())
+            records = session.exec(statement).all()
+
+        model_agg: dict[str, dict[str, float | int]] = {}
+        for record in records:
+            model_name = record.model_assign_name or record.model_name or "unknown"
+            if model_name not in model_agg:
+                model_agg[model_name] = {"count": 0, "tokens": 0, "cost": 0.0}
+            bucket = model_agg[model_name]
+            bucket["count"] = int(bucket["count"]) + 1
+            bucket["tokens"] = int(bucket["tokens"]) + int(record.total_tokens or 0)
+            bucket["cost"] = float(bucket["cost"]) + float(record.cost or 0.0)
+
+        model_results = sorted(
+            model_agg.items(),
+            key=lambda item: float(item[1]["count"]),
+            reverse=True,
+        )[:10]
         if model_results:
-            data.favorite_model = model_results[0].get("model")
-            data.favorite_model_count = model_results[0].get("count", 0)
+            data.favorite_model = model_results[0][0]
+            data.favorite_model_count = int(model_results[0][1]["count"])
             data.model_distribution = [
                 {
-                    "model": row["model"],
-                    "count": row["count"],
-                    "tokens": row["tokens"],
-                    "cost": round(row["cost"], 4),
+                    "model": model_name,
+                    "count": int(bucket["count"]),
+                    "tokens": int(bucket["tokens"]),
+                    "cost": round(float(bucket["cost"]), 4),
                 }
-                for row in model_results
+                for model_name, bucket in model_results
             ]
 
         # 3. 最昂贵的一次思考
-        expensive_query = (
-            LLMUsage.select(LLMUsage.cost, LLMUsage.timestamp)
-            .where((LLMUsage.timestamp >= start_dt) & (LLMUsage.timestamp <= end_dt))
-            .order_by(LLMUsage.cost.desc())
-            .limit(1)
-        )
-        expensive_result = expensive_query.first()
-        if expensive_result:
-            data.most_expensive_cost = round(expensive_result.cost or 0, 4)
-            data.most_expensive_time = expensive_result.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        if records:
+            expensive_record = max(records, key=lambda record: record.cost or 0.0)
+            data.most_expensive_cost = round(expensive_record.cost or 0.0, 4)
+            data.most_expensive_time = expensive_record.timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
         # 4. 烧钱大户 TOP3 (按用户，过滤 system)
-        consumer_query = (
-            LLMUsage.select(
-                LLMUsage.user_id,
-                fn.COALESCE(fn.SUM(LLMUsage.cost), 0).alias("cost"),
-                fn.COALESCE(fn.SUM(LLMUsage.total_tokens), 0).alias("tokens"),
-            )
-            .where(
-                (LLMUsage.timestamp >= start_dt)
-                & (LLMUsage.timestamp <= end_dt)
-                & (LLMUsage.user_id != "system")  # 过滤 system 用户
-                & (LLMUsage.user_id.is_null(False))
-            )
-            .group_by(LLMUsage.user_id)
-            .order_by(fn.SUM(LLMUsage.cost).desc())
-            .limit(3)
-        )
+        consumer_agg: dict[str, dict[str, float | int]] = {}
+        for record in records:
+            user_id = record.model_api_provider_name
+            if not user_id or user_id == "system":
+                continue
+            if user_id not in consumer_agg:
+                consumer_agg[user_id] = {"cost": 0.0, "tokens": 0}
+            bucket = consumer_agg[user_id]
+            bucket["cost"] = float(bucket["cost"]) + float(record.cost or 0.0)
+            bucket["tokens"] = int(bucket["tokens"]) + int(record.total_tokens or 0)
+
         data.top_token_consumers = [
             {
-                "user_id": row["user_id"],
-                "cost": round(row["cost"], 4),
-                "tokens": row["tokens"],
+                "user_id": user_id,
+                "cost": round(float(bucket["cost"]), 4),
+                "tokens": int(bucket["tokens"]),
             }
-            for row in consumer_query.dicts()
+            for user_id, bucket in sorted(
+                consumer_agg.items(),
+                key=lambda item: float(item[1]["cost"]),
+                reverse=True,
+            )[:3]
         ]
 
         # 5. 最喜欢的回复模型 TOP5（按模型的回复次数统计，只统计 replyer 调用）
         # 假设 replyer 调用有特定的 model_assign_name 格式或可以通过某种方式识别
-        reply_model_query = (
-            LLMUsage.select(
-                fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name).alias("model"),
-                fn.COUNT(LLMUsage.id).alias("count"),
-            )
-            .where(
-                (LLMUsage.timestamp >= start_dt)
-                & (LLMUsage.timestamp <= end_dt)
-                & (
-                    LLMUsage.model_assign_name.contains("replyer")
-                    | LLMUsage.model_assign_name.contains("回复")
-                    | LLMUsage.model_assign_name.is_null(True)  # 包含没有 assign_name 的情况
-                )
-            )
-            .group_by(fn.COALESCE(LLMUsage.model_assign_name, LLMUsage.model_name))
-            .order_by(fn.COUNT(LLMUsage.id).desc())
-            .limit(5)
-        )
+        reply_model_agg: dict[str, int] = {}
+        for record in records:
+            model_assign_name = record.model_assign_name or ""
+            if "replyer" not in model_assign_name and "回复" not in model_assign_name:
+                continue
+            model_name = model_assign_name or record.model_name or "unknown"
+            reply_model_agg[model_name] = reply_model_agg.get(model_name, 0) + 1
         data.top_reply_models = [
-            {"model": row["model"], "count": row["count"]}
-            for row in reply_model_query.dicts()
+            {"model": model_name, "count": count}
+            for model_name, count in sorted(reply_model_agg.items(), key=lambda item: item[1], reverse=True)[:5]
         ]
 
         # 6. 高冷指数 (沉默率) - 基于 ActionRecords
-        total_actions = ActionRecords.select().where(
-            (ActionRecords.time >= start_ts) & (ActionRecords.time <= end_ts)
-        ).count()
-        no_reply_count = ActionRecords.select().where(
-            (ActionRecords.time >= start_ts)
-            & (ActionRecords.time <= end_ts)
-            & (ActionRecords.action_name == "no_reply")
-        ).count()
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(ActionRecord.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(ActionRecord.timestamp) <= datetime.fromtimestamp(end_ts),
+            )
+            total_actions = int(session.exec(statement).first() or 0)
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(ActionRecord.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(ActionRecord.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(ActionRecord.action_name) == "no_reply",
+            )
+            no_reply_count = int(session.exec(statement).first() or 0)
         data.total_actions = total_actions
         data.no_reply_count = no_reply_count
         data.silence_rate = round(no_reply_count / total_actions * 100, 2) if total_actions > 0 else 0
 
         # 6. 情绪波动 (兴趣值)
-        interest_query = Messages.select(
-            fn.AVG(Messages.interest_value).alias("avg_interest"),
-            fn.MAX(Messages.interest_value).alias("max_interest"),
-        ).where(
-            (Messages.time >= start_ts)
-            & (Messages.time <= end_ts)
-            & (Messages.interest_value.is_null(False))
-        )
-        interest_result = interest_query.dicts().get()
-        data.avg_interest_value = round(float(interest_result.get("avg_interest") or 0), 2)
-        data.max_interest_value = round(float(interest_result.get("max_interest") or 0), 2)
+        data.avg_interest_value = 0.0
+        data.max_interest_value = 0.0
 
         # 找到最高兴趣值的时间
         if data.max_interest_value > 0:
-            max_interest_msg = (
-                Messages.select(Messages.time)
-                .where(
-                    (Messages.time >= start_ts)
-                    & (Messages.time <= end_ts)
-                    & (Messages.interest_value == data.max_interest_value)
-                )
-                .first()
-            )
-            if max_interest_msg:
-                data.max_interest_time = datetime.fromtimestamp(max_interest_msg.time).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+            data.max_interest_time = None
 
         # 7. 思考深度 (基于 action_reasoning 长度)
-        reasoning_records = (
-            ActionRecords.select(ActionRecords.action_reasoning, ActionRecords.time)
-            .where(
-                (ActionRecords.time >= start_ts)
-                & (ActionRecords.time <= end_ts)
-                & (ActionRecords.action_reasoning.is_null(False))
-                & (ActionRecords.action_reasoning != "")
+        with get_db_session() as session:
+            statement = select(ActionRecord).where(
+                col(ActionRecord.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(ActionRecord.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(ActionRecord.action_reasoning).is_not(None),
+                col(ActionRecord.action_reasoning) != "",
             )
-        )
+            reasoning_records = session.exec(statement).all()
         reasoning_lengths = []
         max_len = 0
         max_len_time = None
@@ -517,13 +521,13 @@ async def get_brain_power(year: int = 2025) -> BrainPowerData:
                 reasoning_lengths.append(length)
                 if length > max_len:
                     max_len = length
-                    max_len_time = record.time
-        
+                max_len_time = record.timestamp
+
         if reasoning_lengths:
             data.avg_reasoning_length = round(sum(reasoning_lengths) / len(reasoning_lengths), 1)
             data.max_reasoning_length = max_len
             if max_len_time:
-                data.max_reasoning_time = datetime.fromtimestamp(max_len_time).strftime("%Y-%m-%d %H:%M:%S")
+                data.max_reasoning_time = max_len_time.strftime("%Y-%m-%d %H:%M:%S")
 
     except Exception as e:
         logger.error(f"获取最强大脑数据失败: {e}")
@@ -537,178 +541,156 @@ async def get_brain_power(year: int = 2025) -> BrainPowerData:
 async def get_expression_vibe(year: int = 2025) -> ExpressionVibeData:
     """获取个性与表达数据"""
     from src.config.config import global_config
-    
-    data = ExpressionVibeData()
+
+    data = ExpressionVibeData.model_construct()
     start_ts, end_ts = get_year_time_range(year)
-    
+
     # 获取 bot 自身的 QQ 账号，用于筛选 bot 发送的消息
     bot_qq = str(global_config.bot.qq_account or "")
 
     try:
         # 1. 表情包之王 - 使用次数最多的表情包
-        top_emoji_query = (
-            Emoji.select(Emoji.id, Emoji.full_path, Emoji.description, Emoji.usage_count, Emoji.emoji_hash)
-            .where(Emoji.is_registered == True)
-            .order_by(Emoji.usage_count.desc())
-            .limit(5)
-        )
-        top_emojis = list(top_emoji_query.dicts())
+        with get_db_session() as session:
+            statement = (
+                select(Images).where(col(Images.is_registered)).order_by(desc(col(Images.query_count))).limit(5)
+            )
+            top_emojis = session.exec(statement).all()
         if top_emojis:
             data.top_emoji = {
-                "id": top_emojis[0].get("id"),
-                "path": top_emojis[0].get("full_path"),
-                "description": top_emojis[0].get("description"),
-                "usage_count": top_emojis[0].get("usage_count", 0),
-                "hash": top_emojis[0].get("emoji_hash"),
+                "id": top_emojis[0].id,
+                "path": top_emojis[0].full_path,
+                "description": top_emojis[0].description,
+                "usage_count": top_emojis[0].query_count,
+                "hash": top_emojis[0].image_hash,
             }
             data.top_emojis = [
                 {
-                    "id": e.get("id"),
-                    "path": e.get("full_path"),
-                    "description": e.get("description"),
-                    "usage_count": e.get("usage_count", 0),
-                    "hash": e.get("emoji_hash"),
+                    "id": e.id,
+                    "path": e.full_path,
+                    "description": e.description,
+                    "usage_count": e.query_count,
+                    "hash": e.image_hash,
                 }
                 for e in top_emojis
             ]
 
         # 2. 百变麦麦 - 最常用的表达风格
-        expression_query = (
-            Expression.select(
-                Expression.style,
-                fn.SUM(Expression.count).alias("total_count"),
+        with get_db_session() as session:
+            statement = (
+                select(Expression.style, func.sum(col(Expression.count)).label("total_count"))
+                .where(
+                    col(Expression.last_active_time) >= datetime.fromtimestamp(start_ts),
+                    col(Expression.last_active_time) <= datetime.fromtimestamp(end_ts),
+                )
+                .group_by(Expression.style)
+                .order_by(func.sum(col(Expression.count)).desc())
+                .limit(5)
             )
-            .where(
-                (Expression.last_active_time >= start_ts)
-                & (Expression.last_active_time <= end_ts)
-            )
-            .group_by(Expression.style)
-            .order_by(fn.SUM(Expression.count).desc())
-            .limit(5)
-        )
-        data.top_expressions = [
-            {"style": row["style"], "count": row["total_count"]}
-            for row in expression_query.dicts()
-        ]
+            expression_rows = session.exec(statement).all()
+        data.top_expressions = [{"style": row[0], "count": row[1] or 0} for row in expression_rows]
 
         # 3. 被拒绝的表达
-        data.rejected_expression_count = (
-            Expression.select()
-            .where(
-                (Expression.last_active_time >= start_ts)
-                & (Expression.last_active_time <= end_ts)
-                & (Expression.rejected == True)
-            )
-            .count()
-        )
+        data.rejected_expression_count = 0
 
         # 4. 已检查的表达
-        data.checked_expression_count = (
-            Expression.select()
-            .where(
-                (Expression.last_active_time >= start_ts)
-                & (Expression.last_active_time <= end_ts)
-                & (Expression.checked == True)
-            )
-            .count()
-        )
+        data.checked_expression_count = 0
 
         # 5. 表达总数
-        data.total_expressions = (
-            Expression.select()
-            .where(
-                (Expression.last_active_time >= start_ts)
-                & (Expression.last_active_time <= end_ts)
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Expression.last_active_time) >= datetime.fromtimestamp(start_ts),
+                col(Expression.last_active_time) <= datetime.fromtimestamp(end_ts),
             )
-            .count()
-        )
+            data.total_expressions = int(session.exec(statement).first() or 0)
 
         # 6. 动作类型分布 (过滤无意义的动作)
         # 过滤掉: no_reply_until_call, make_question, no_action, wait, complete_talk, listening, block_and_ignore
         excluded_actions = [
-            "reply", "no_reply", "no_reply_until_call", "make_question", 
-            "no_action", "wait", "complete_talk", "listening", "block_and_ignore"
+            "reply",
+            "no_reply",
+            "no_reply_until_call",
+            "make_question",
+            "no_action",
+            "wait",
+            "complete_talk",
+            "listening",
+            "block_and_ignore",
         ]
-        action_query = (
-            ActionRecords.select(
-                ActionRecords.action_name,
-                fn.COUNT(ActionRecords.id).alias("count"),
+        with get_db_session() as session:
+            statement = (
+                select(ActionRecord.action_name, func.count().label("count"))
+                .where(
+                    col(ActionRecord.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(ActionRecord.timestamp) <= datetime.fromtimestamp(end_ts),
+                    col(ActionRecord.action_name).not_in(excluded_actions),
+                )
+                .group_by(ActionRecord.action_name)
+                .order_by(func.count().desc())
+                .limit(10)
             )
-            .where(
-                (ActionRecords.time >= start_ts)
-                & (ActionRecords.time <= end_ts)
-                & (ActionRecords.action_name.not_in(excluded_actions))
-            )
-            .group_by(ActionRecords.action_name)
-            .order_by(fn.COUNT(ActionRecords.id).desc())
-            .limit(10)
-        )
-        data.action_types = [
-            {"action": row["action_name"], "count": row["count"]}
-            for row in action_query.dicts()
-        ]
+            action_rows = session.exec(statement).all()
+        data.action_types = [{"action": row[0], "count": row[1]} for row in action_rows]
 
         # 7. 处理的图片数量
-        data.image_processed_count = (
-            Messages.select()
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.is_picid == True)
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(Messages.is_picture),
             )
-            .count()
-        )
+            data.image_processed_count = int(session.exec(statement).first() or 0)
 
         # 8. 深夜还在回复 (0-6点最晚的10条消息中随机抽取一条)
         import random
         import re
-        
+
         def clean_message_content(content: str) -> str:
             """清理消息内容，移除回复引用等标记"""
             if not content:
                 return ""
             # 移除 [回复<xxx:xxx> 的消息：...] 格式的引用
-            content = re.sub(r'\[回复<[^>]+>\s*的消息[：:][^\]]*\]', '', content)
+            content = re.sub(r"\[回复<[^>]+>\s*的消息[：:][^\]]*\]", "", content)
             # 移除 [图片] [表情] 等标记
-            content = re.sub(r'\[(图片|表情|语音|视频|文件)\]', '', content)
+            content = re.sub(r"\[(图片|表情|语音|视频|文件)\]", "", content)
             # 移除多余的空白
-            content = re.sub(r'\s+', ' ', content).strip()
+            content = re.sub(r"\s+", " ", content).strip()
             return content
-        
+
         # 使用 user_id 判断是否是 bot 发送的消息
-        late_night_messages = list(
-            Messages.select(
-                Messages.time,
-                Messages.processed_plain_text,
-                Messages.display_message,
+        with get_db_session() as session:
+            statement = (
+                select(Messages)
+                .where(
+                    col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                    col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                    col(Messages.user_id) == bot_qq,
+                )
+                .order_by(desc(col(Messages.timestamp)))
+                .limit(200)
             )
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.user_id == bot_qq)  # bot 发送的消息
-            )
-            .order_by(Messages.time.desc())
-        )
+            late_night_messages = session.exec(statement).all()
         # 筛选出0-6点的消息
         late_night_filtered = []
         for msg in late_night_messages:
-            msg_dt = datetime.fromtimestamp(msg.time)
+            msg_dt = msg.timestamp
             hour = msg_dt.hour
             if 0 <= hour < 6:  # 0点到6点
                 raw_content = msg.processed_plain_text or msg.display_message or ""
                 cleaned_content = clean_message_content(raw_content)
                 # 只保留有意义的内容
                 if cleaned_content and len(cleaned_content) > 2:
-                    late_night_filtered.append({
-                        "time": msg.time,
-                        "hour": hour,
-                        "minute": msg_dt.minute,
-                        "content": cleaned_content,
-                        "datetime_str": msg_dt.strftime("%H:%M"),
-                    })
+                    late_night_filtered.append(
+                        {
+                            "time": msg_dt.timestamp(),
+                            "hour": hour,
+                            "minute": msg_dt.minute,
+                            "content": cleaned_content,
+                            "datetime_str": msg_dt.strftime("%H:%M"),
+                        }
+                    )
             if len(late_night_filtered) >= 10:
                 break
-        
+
         if late_night_filtered:
             selected = random.choice(late_night_filtered)
             content = selected["content"][:50] + "..." if len(selected["content"]) > 50 else selected["content"]
@@ -720,18 +702,17 @@ async def get_expression_vibe(year: int = 2025) -> ExpressionVibeData:
         # 9. 最喜欢的回复（按 action_data 统计回复内容出现次数）
         from collections import Counter
         import json as json_lib
-        
-        reply_records = (
-            ActionRecords.select(ActionRecords.action_data)
-            .where(
-                (ActionRecords.time >= start_ts)
-                & (ActionRecords.time <= end_ts)
-                & (ActionRecords.action_name == "reply")
-                & (ActionRecords.action_data.is_null(False))
-                & (ActionRecords.action_data != "")
+
+        with get_db_session() as session:
+            statement = select(ActionRecord).where(
+                col(ActionRecord.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(ActionRecord.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(ActionRecord.action_name) == "reply",
+                col(ActionRecord.action_data).is_not(None),
+                col(ActionRecord.action_data) != "",
             )
-        )
-        
+            reply_records = session.exec(statement).all()
+
         reply_contents = []
         for record in reply_records:
             try:
@@ -748,11 +729,12 @@ async def get_expression_vibe(year: int = 2025) -> ExpressionVibeData:
                             content = parsed
                     except (json_lib.JSONDecodeError, TypeError):
                         pass
-                    
+
                     # 如果 JSON 解析失败，尝试解析 Python 字典字符串格式
                     # 例如: "{'reply_text': '墨白灵不知道哦'}"
                     if content is None:
                         import ast
+
                         try:
                             parsed = ast.literal_eval(action_data)
                             if isinstance(parsed, dict):
@@ -762,13 +744,13 @@ async def get_expression_vibe(year: int = 2025) -> ExpressionVibeData:
                         except (ValueError, SyntaxError):
                             # 无法解析，使用原始字符串
                             content = action_data
-                    
+
                     # 只统计有意义的回复（长度大于2）
                     if content and len(content) > 2:
                         reply_contents.append(content)
             except Exception:
                 continue
-        
+
         if reply_contents:
             content_counter = Counter(reply_contents)
             most_common = content_counter.most_common(1)
@@ -792,21 +774,20 @@ async def get_expression_vibe(year: int = 2025) -> ExpressionVibeData:
 
 async def get_achievements(year: int = 2025) -> AchievementData:
     """获取趣味成就数据"""
-    data = AchievementData()
+    data = AchievementData.model_construct()
     start_ts, end_ts = get_year_time_range(year)
 
     try:
         # 1. 新学到的黑话数量
         # Jargon 表没有时间字段,统计全部已确认的黑话
-        data.new_jargon_count = Jargon.select().where(Jargon.is_jargon == True).count()
+        with get_db_session() as session:
+            statement = select(func.count()).where(col(Jargon.is_jargon))
+            data.new_jargon_count = int(session.exec(statement).first() or 0)
 
         # 2. 代表性黑话示例
-        jargon_samples = (
-            Jargon.select(Jargon.content, Jargon.meaning, Jargon.count)
-            .where(Jargon.is_jargon == True)
-            .order_by(Jargon.count.desc())
-            .limit(5)
-        )
+        with get_db_session() as session:
+            statement = select(Jargon).where(col(Jargon.is_jargon)).order_by(desc(col(Jargon.count))).limit(5)
+            jargon_samples = session.exec(statement).all()
         data.sample_jargons = [
             {
                 "content": j.content,
@@ -817,22 +798,21 @@ async def get_achievements(year: int = 2025) -> AchievementData:
         ]
 
         # 3. 总消息数
-        data.total_messages = (
-            Messages.select()
-            .where((Messages.time >= start_ts) & (Messages.time <= end_ts))
-            .count()
-        )
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+            )
+            data.total_messages = int(session.exec(statement).first() or 0)
 
         # 4. 总回复数 (有 reply_to 的消息)
-        data.total_replies = (
-            Messages.select()
-            .where(
-                (Messages.time >= start_ts)
-                & (Messages.time <= end_ts)
-                & (Messages.reply_to.is_null(False))
+        with get_db_session() as session:
+            statement = select(func.count()).where(
+                col(Messages.timestamp) >= datetime.fromtimestamp(start_ts),
+                col(Messages.timestamp) <= datetime.fromtimestamp(end_ts),
+                col(Messages.reply_to).is_not(None),
             )
-            .count()
-        )
+            data.total_replies = int(session.exec(statement).first() or 0)
 
     except Exception as e:
         logger.error(f"获取趣味成就数据失败: {e}")
@@ -856,9 +836,9 @@ async def get_full_annual_report(year: int = 2025, _auth: bool = Depends(require
     """
     try:
         from src.config.config import global_config
-        
+
         logger.info(f"开始生成 {year} 年度报告...")
-        
+
         # 获取 bot 名称
         bot_name = global_config.bot.nickname or "麦麦"
 

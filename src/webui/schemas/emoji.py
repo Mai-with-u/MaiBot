@@ -7,7 +7,6 @@ class EmojiResponse(BaseModel):
 
     id: int
     full_path: str
-    format: str
     emoji_hash: str
     description: str
     query_count: int
@@ -16,7 +15,6 @@ class EmojiResponse(BaseModel):
     emotion: Optional[str]
     record_time: float
     register_time: Optional[float]
-    usage_count: int
     last_used_time: Optional[float]
 
 

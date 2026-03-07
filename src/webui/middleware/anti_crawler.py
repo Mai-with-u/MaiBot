@@ -124,6 +124,7 @@ SCANNER_SPECIFIC_HEADERS = {
 # loose: 宽松模式（较宽松的检测，较高的频率限制）
 # basic: 基础模式（只记录恶意访问，不阻止，不限制请求数，不跟踪IP）
 
+
 # IP白名单配置（从配置文件读取，逗号分隔）
 # 支持格式：
 # - 精确IP：127.0.0.1, 192.168.1.100
@@ -151,7 +152,7 @@ def _parse_allowed_ips(ip_string: str) -> list:
         ip_entry = ip_entry.strip()  # 去除空格
         if not ip_entry:
             continue
-        
+
         # 跳过注释行（以#开头）
         if ip_entry.startswith("#"):
             continue
@@ -237,19 +238,21 @@ def _convert_wildcard_to_regex(wildcard_pattern: str) -> Optional[str]:
 def _get_anti_crawler_config():
     """获取防爬虫配置"""
     from src.config.config import global_config
+
     return {
-        'mode': global_config.webui.anti_crawler_mode,
-        'allowed_ips': _parse_allowed_ips(global_config.webui.allowed_ips),
-        'trusted_proxies': _parse_allowed_ips(global_config.webui.trusted_proxies),
-        'trust_xff': global_config.webui.trust_xff
+        "mode": global_config.webui.anti_crawler_mode,
+        "allowed_ips": _parse_allowed_ips(global_config.webui.allowed_ips),
+        "trusted_proxies": _parse_allowed_ips(global_config.webui.trusted_proxies),
+        "trust_xff": global_config.webui.trust_xff,
     }
+
 
 # 初始化配置（将在模块加载时执行）
 _config = _get_anti_crawler_config()
-ANTI_CRAWLER_MODE = _config['mode']
-ALLOWED_IPS = _config['allowed_ips']
-TRUSTED_PROXIES = _config['trusted_proxies']
-TRUST_XFF = _config['trust_xff']
+ANTI_CRAWLER_MODE = _config["mode"]
+ALLOWED_IPS = _config["allowed_ips"]
+TRUSTED_PROXIES = _config["trusted_proxies"]
+TRUST_XFF = _config["trust_xff"]
 
 
 def _get_mode_config(mode: str) -> dict:

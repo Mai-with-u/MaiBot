@@ -1,16 +1,24 @@
-import time
+from dataclasses import dataclass
 from typing import Optional, Dict, Any
+
+import time
 
 from src.config.config import global_config
 from src.common.logger import get_logger
-from src.chat.message_receive.chat_stream import get_chat_manager
-from src.plugin_system.apis import send_api
-from maim_message.message_base import GroupInfo
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.services import send_service as send_api
 
 from src.common.message_repository import count_messages
 
 logger = get_logger(__name__)
 
+@dataclass
+class CyclePlanInfo:
+    ...
+    
+@dataclass
+class CycleActionInfo:
+    ...
 
 class CycleDetail:
     """循环信息记录类"""
@@ -22,8 +30,8 @@ class CycleDetail:
         self.end_time: Optional[float] = None
         self.timers: Dict[str, float] = {}
 
-        self.loop_plan_info: Dict[str, Any] = {}
-        self.loop_action_info: Dict[str, Any] = {}
+        self.loop_plan_info: CyclePlanInfo = CyclePlanInfo()
+        self.loop_action_info: CycleActionInfo = CycleActionInfo()
 
     def to_dict(self) -> Dict[str, Any]:
         """将循环信息转换为字典格式"""
@@ -112,28 +120,24 @@ def get_recent_message_stats(minutes: float = 30, chat_id: Optional[str] = None)
 
 
 async def send_typing():
-    group_info = GroupInfo(platform="amaidesu_default", group_id="114514", group_name="内心")
-
-    chat = await get_chat_manager().get_or_create_stream(
+    chat = await _chat_manager.get_or_create_session(
         platform="amaidesu_default",
-        user_info=None,
-        group_info=group_info,
+        user_id="114514",
+        group_id="114514",
     )
 
     await send_api.custom_to_stream(
-        message_type="state", content="typing", stream_id=chat.stream_id, storage_message=False
+        message_type="state", content="typing", stream_id=chat.session_id, storage_message=False
     )
 
 
 async def stop_typing():
-    group_info = GroupInfo(platform="amaidesu_default", group_id="114514", group_name="内心")
-
-    chat = await get_chat_manager().get_or_create_stream(
+    chat = await _chat_manager.get_or_create_session(
         platform="amaidesu_default",
-        user_info=None,
-        group_info=group_info,
+        user_id="114514",
+        group_id="114514",
     )
 
     await send_api.custom_to_stream(
-        message_type="state", content="stop_typing", stream_id=chat.stream_id, storage_message=False
+        message_type="state", content="stop_typing", stream_id=chat.session_id, storage_message=False
     )

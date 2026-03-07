@@ -9,7 +9,7 @@
   },
   "license": "GPL-v3.0-or-later",
   "host_application": {
-    "min_version": "0.10.3"
+    "min_version": "1.0.0"
   },
   "homepage_url": "https://github.com/SengokuCola/BetterFrequency",
   "repository_url": "https://github.com/SengokuCola/BetterFrequency",

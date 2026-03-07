@@ -7,7 +7,7 @@ from src.chat.utils.chat_message_builder import build_readable_messages, get_raw
 
 # from src.config.config import global_config
 from typing import Dict, Any, Optional
-from src.chat.message_receive.message import Message
+from src.common.data_models.mai_message_data_model import MaiMessage
 from .pfc_types import ConversationState
 from .pfc import ChatObserver, GoalAnalyzer
 from .message_sender import DirectMessageSender
@@ -16,9 +16,8 @@ from .action_planner import ActionPlanner
 from .observation_info import ObservationInfo
 from .conversation_info import ConversationInfo  # 确保导入 ConversationInfo
 from .reply_generator import ReplyGenerator
-from src.chat.message_receive.chat_stream import ChatStream
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as _chat_manager
 from maim_message import UserInfo
-from src.chat.message_receive.chat_stream import get_chat_manager
 from .pfc_KnowledgeFetcher import KnowledgeFetcher
 from .waiter import Waiter
 
@@ -60,7 +59,7 @@ class Conversation:
             self.direct_sender = DirectMessageSender(self.private_name)
 
             # 获取聊天流信息
-            self.chat_stream = get_chat_manager().get_stream(self.stream_id)
+            self.chat_stream = _chat_manager.get_session_by_session_id(self.stream_id)
 
             self.stop_action_planner = False
         except Exception as e:
@@ -89,33 +88,53 @@ class Conversation:
                 timestamp=time.time(),
                 limit=30,  # 加载最近30条作为初始上下文，可以调整
             )
-            chat_talking_prompt = await build_readable_messages(
+            chat_talking_prompt = build_readable_messages(
                 initial_messages,
                 replace_bot_name=True,
-                merge_messages=False,
                 timestamp_mode="relative",
                 read_mark=0.0,
             )
             if initial_messages:
+                # 将 DatabaseMessages 列表转换为 PFC 期望的 dict 格式（保持嵌套结构）
+                initial_messages_dict: list[dict] = []
+                for msg in initial_messages:
+                    msg_dict = {
+                        "message_id": msg.message_id,
+                        "time": msg.time,
+                        "chat_id": msg.chat_id,
+                        "processed_plain_text": msg.processed_plain_text,
+                        "display_message": msg.display_message,
+                        "is_mentioned": msg.is_mentioned,
+                        "is_command": msg.is_command,
+                        "user_info": {
+                            "user_id": msg.user_info.user_id if msg.user_info else "",
+                            "user_nickname": msg.user_info.user_nickname if msg.user_info else "",
+                            "user_cardname": msg.user_info.user_cardname if msg.user_info else None,
+                            "platform": msg.user_info.platform if msg.user_info else "",
+                        },
+                    }
+                    initial_messages_dict.append(msg_dict)
+
                 # 将加载的消息填充到 ObservationInfo 的 chat_history
-                self.observation_info.chat_history = initial_messages
+                self.observation_info.chat_history = initial_messages_dict
                 self.observation_info.chat_history_str = chat_talking_prompt + "\n"
-                self.observation_info.chat_history_count = len(initial_messages)
+                self.observation_info.chat_history_count = len(initial_messages_dict)
 
                 # 更新 ObservationInfo 中的时间戳等信息
-                last_msg = initial_messages[-1]
-                self.observation_info.last_message_time = last_msg.get("time")
-                last_user_info = UserInfo.from_dict(last_msg.get("user_info", {}))
+                last_msg_dict: dict = initial_messages_dict[-1]
+                self.observation_info.last_message_time = last_msg_dict.get("time")
+                last_user_info = UserInfo.from_dict(last_msg_dict.get("user_info", {}))
                 self.observation_info.last_message_sender = last_user_info.user_id
-                self.observation_info.last_message_content = last_msg.get("processed_plain_text", "")
+                self.observation_info.last_message_content = last_msg_dict.get("processed_plain_text", "")
 
                 logger.info(
-                    f"[私聊][{self.private_name}]成功加载 {len(initial_messages)} 条初始聊天记录。最后一条消息时间: {self.observation_info.last_message_time}"
+                    f"[私聊][{self.private_name}]成功加载 {len(initial_messages_dict)} 条初始聊天记录。最后一条消息时间: {self.observation_info.last_message_time}"
                 )
 
                 # 让 ChatObserver 从加载的最后一条消息之后开始同步
-                self.chat_observer.last_message_time = self.observation_info.last_message_time
-                self.chat_observer.last_message_read = last_msg  # 更新 observer 的最后读取记录
+                if self.observation_info.last_message_time:
+                    self.chat_observer.last_message_time = self.observation_info.last_message_time
+                self.chat_observer.last_message_read = last_msg_dict  # 更新 observer 的最后读取记录
             else:
                 logger.info(f"[私聊][{self.private_name}]没有找到初始聊天记录。")
 
@@ -245,34 +264,34 @@ class Conversation:
             return True
         return False
 
-    def _convert_to_message(self, msg_dict: Dict[str, Any]) -> Message:
-        """将消息字典转换为Message对象"""
+    def _convert_to_message(self, msg_dict: Dict[str, Any]) -> MaiMessage:
+        """将消息字典转换为MaiMessage对象"""
+        from datetime import datetime as dt
+        from src.common.data_models.mai_message_data_model import UserInfo as MaiUserInfo, MessageInfo
+        from src.common.data_models.message_component_data_model import MessageSequence
+
         try:
-            # 尝试从 msg_dict 直接获取 chat_stream，如果失败则从全局 get_chat_manager 获取
-            chat_info = msg_dict.get("chat_info")
-            if chat_info and isinstance(chat_info, dict):
-                chat_stream = ChatStream.from_dict(chat_info)
-            elif self.chat_stream:  # 使用实例变量中的 chat_stream
-                chat_stream = self.chat_stream
-            else:  # Fallback: 尝试从 manager 获取 (可能需要 stream_id)
-                chat_stream = get_chat_manager().get_stream(self.stream_id)
-                if not chat_stream:
-                    raise ValueError(f"无法确定 ChatStream for stream_id {self.stream_id}")
-
-            user_info = UserInfo.from_dict(msg_dict.get("user_info", {}))
-
-            return Message(
-                message_id=msg_dict.get("message_id", f"gen_{time.time()}"),  # 提供默认 ID
-                chat_stream=chat_stream,  # 使用确定的 chat_stream
-                time=msg_dict.get("time", time.time()),  # 提供默认时间
-                user_info=user_info,
-                processed_plain_text=msg_dict.get("processed_plain_text", ""),
-                detailed_plain_text=msg_dict.get("detailed_plain_text", ""),
+            user_info_dict = msg_dict.get("user_info", {})
+            user_info = MaiUserInfo(
+                user_id=user_info_dict.get("user_id", ""),
+                user_nickname=user_info_dict.get("user_nickname", ""),
+                user_cardname=user_info_dict.get("user_cardname"),
             )
+
+            msg = MaiMessage(
+                message_id=msg_dict.get("message_id", f"gen_{time.time()}"),
+                timestamp=dt.fromtimestamp(msg_dict.get("time", time.time())),
+            )
+            msg.message_info = MessageInfo(user_info=user_info)
+            msg.platform = user_info_dict.get("platform", "")
+            msg.session_id = self.stream_id
+            msg.processed_plain_text = msg_dict.get("processed_plain_text", "")
+            msg.raw_message = MessageSequence(components=[])
+            msg.initialized = True
+            return msg
         except Exception as e:
             logger.warning(f"[私聊][{self.private_name}]转换消息时出错: {e}")
-            # 可以选择返回 None 或重新抛出异常，这里选择重新抛出以指示问题
-            raise ValueError(f"无法将字典转换为 Message 对象: {e}") from e
+            raise ValueError(f"无法将字典转换为 MaiMessage 对象: {e}") from e
 
     async def _handle_action(
         self, action: str, reason: str, observation_info: ObservationInfo, conversation_info: ConversationInfo
@@ -667,7 +686,7 @@ class Conversation:
                 logger.error(f"[私聊][{self.private_name}]DirectMessageSender 未初始化，无法发送回复。")
                 return
             if not self.chat_stream:
-                logger.error(f"[私聊][{self.private_name}]ChatStream 未初始化，无法发送回复。")
+                logger.error(f"[私聊][{self.private_name}]会话未初始化，无法发送回复。")
                 return
 
             await self.direct_sender.send_message(chat_stream=self.chat_stream, content=reply_content)

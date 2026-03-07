@@ -7,10 +7,10 @@ import { useTour } from './use-tour'
 const joyrideStyles = {
   options: {
     zIndex: 10000,
-    primaryColor: 'hsl(var(--primary))',
-    textColor: 'hsl(var(--foreground))',
-    backgroundColor: 'hsl(var(--background))',
-    arrowColor: 'hsl(var(--background))',
+    primaryColor: 'hsl(var(--color-primary))',
+    textColor: 'hsl(var(--color-foreground))',
+    backgroundColor: 'hsl(var(--color-background))',
+    arrowColor: 'hsl(var(--color-background))',
     overlayColor: 'rgba(0, 0, 0, 0.5)',
   },
   tooltip: {
@@ -30,23 +30,23 @@ const joyrideStyles = {
     padding: '0.5rem 0',
   },
   buttonNext: {
-    backgroundColor: 'hsl(var(--primary))',
-    color: 'hsl(var(--primary-foreground))',
+    backgroundColor: 'hsl(var(--color-primary))',
+    color: 'hsl(var(--color-primary-foreground))',
     borderRadius: 'calc(var(--radius) - 2px)',
     fontSize: '0.875rem',
     padding: '0.5rem 1rem',
   },
   buttonBack: {
-    color: 'hsl(var(--muted-foreground))',
+    color: 'hsl(var(--color-muted-foreground))',
     fontSize: '0.875rem',
     marginRight: '0.5rem',
   },
   buttonSkip: {
-    color: 'hsl(var(--muted-foreground))',
+    color: 'hsl(var(--color-muted-foreground))',
     fontSize: '0.875rem',
   },
   buttonClose: {
-    color: 'hsl(var(--muted-foreground))',
+    color: 'hsl(var(--color-muted-foreground))',
   },
   spotlight: {
     borderRadius: 'var(--radius)',

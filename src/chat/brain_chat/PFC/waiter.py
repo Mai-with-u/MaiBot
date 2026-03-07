@@ -1,4 +1,4 @@
-from src.common.logger import get_module_logger
+from src.common.logger import get_logger
 from .chat_observer import ChatObserver
 from .conversation_info import ConversationInfo
 
@@ -7,7 +7,7 @@ from src.config.config import global_config
 import time
 import asyncio
 
-logger = get_module_logger("waiter")
+logger = get_logger("waiter")
 
 # --- 在这里设定你想要的超时时间（秒） ---
 # 例如： 120 秒 = 2 分钟
@@ -19,7 +19,7 @@ class Waiter:
 
     def __init__(self, stream_id: str, private_name: str):
         self.chat_observer = ChatObserver.get_instance(stream_id, private_name)
-        self.name = global_config.BOT_NICKNAME
+        self.name = global_config.bot.nickname
         self.private_name = private_name
         # self.wait_accumulated_time = 0 # 不再需要累加计时
 

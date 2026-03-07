@@ -3,6 +3,7 @@
  * 监听 models 和 taskConfig 变化，自动保存到服务器
  */
 import { useRef, useEffect, useCallback } from 'react'
+import type { RefObject } from 'react'
 import { updateModelConfigSection } from '@/lib/config-api'
 import type { ModelInfo, ModelTaskConfig } from '../types'
 
@@ -23,7 +24,7 @@ interface UseModelAutoSaveReturn {
   /** 清除所有待执行的保存定时器 */
   clearTimers: () => void
   /** 初始加载状态标记引用 (用于设置初始加载完成) */
-  initialLoadRef: React.MutableRefObject<boolean>
+  initialLoadRef: RefObject<boolean>
 }
 
 /**
@@ -84,7 +85,10 @@ export function useModelAutoSave(
       onSavingChange?.(true)
       // 清理每个模型中的 null 值
       const cleanedModels = newModels.map(cleanModelForSave)
-      await updateModelConfigSection('models', cleanedModels)
+      const result = await updateModelConfigSection('models', cleanedModels)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
       onUnsavedChange?.(false)
     } catch (error) {
       console.error('自动保存模型列表失败:', error)
@@ -98,7 +102,10 @@ export function useModelAutoSave(
   const autoSaveTaskConfig = useCallback(async (newTaskConfig: ModelTaskConfig) => {
     try {
       onSavingChange?.(true)
-      await updateModelConfigSection('model_task_config', newTaskConfig)
+      const result = await updateModelConfigSection('model_task_config', newTaskConfig)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
       onUnsavedChange?.(false)
     } catch (error) {
       console.error('自动保存任务配置失败:', error)

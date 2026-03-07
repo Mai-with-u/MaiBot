@@ -3,14 +3,14 @@ import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from peewee import fn
+from sqlalchemy import func as fn
 
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
 from src.common.database.database_model import ChatHistory
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.prompt.prompt_manager import prompt_manager
 from src.llm_models.payload_content.message import MessageBuilder, RoleType, Message
-from src.plugin_system.apis import llm_api
+from src.services import llm_service as llm_api
 from src.dream.dream_generator import generate_dream_summary
 
 # dream 工具工厂函数
@@ -25,60 +25,6 @@ from src.dream.tools.delete_jargon_tool import make_delete_jargon
 from src.dream.tools.update_jargon_tool import make_update_jargon
 
 logger = get_logger("dream_agent")
-
-
-def init_dream_prompts() -> None:
-    """初始化 dream agent 的提示词"""
-    Prompt(
-        """
-你的名字是{bot_name}，你现在处于"梦境维护模式（dream agent）"。
-你可以自由地在 ChatHistory 库中探索、整理、创建和删改记录，以帮助自己在未来更好地回忆和理解对话历史。
-
-本轮要维护的聊天ID：{chat_id}
-本轮随机选中的起始记忆 ID：{start_memory_id}
-请优先以这条起始记忆为切入点，先理解它的内容与上下文，再决定如何在其附近进行创建新概括、重写或删除等整理操作；如果起始记忆为空，则由你自行选择合适的切入点。
-
-你可以使用的工具包括：
-**ChatHistory 维护工具：**
-- search_chat_history：根据关键词或参与人搜索该 chat_id 下的历史记忆概括列表
-- get_chat_history_detail：查看某条概括的详细内容
-- create_chat_history：根据整理后的理解创建一条新的 ChatHistory 概括记录（主题、概括、关键词、关键信息等）
-- update_chat_history：在不改变事实的前提下重写或精炼主题、概括、关键词、关键信息
-- delete_chat_history：删除明显冗余、噪声、错误或无意义的记录，或者非常有时效性的信息，或者无太多有用信息的日常互动。
-你也可以先用 create_chat_history 创建一条新的综合概括，再对旧的冗余记录执行多次 delete_chat_history 来完成“合并”效果。
-
-**Jargon（黑话）维护工具（只读，禁止修改）：**
-- search_jargon：根据一个或多个关键词搜索Jargon 记录，通常是含义不明确的词条或者特殊的缩写
-
-**通用工具：**
-- finish_maintenance：当你认为当前维护工作已经完成，没有更多需要整理的内容时，调用此工具来结束本次运行
-
-**工作目标**：
-- 发现冗余、重复或高度相似的记录，并进行合并或删除；
-- 发现主题/概括过于含糊、啰嗦或缺少关键信息的记录，进行重写和精简；
-- summary要尽可能保持有用的信息；
-- 尽量保持信息的真实与可用性，不要凭空捏造事实。
-
-**合并准则**
-- 你可以新建一个记录，然后删除旧记录来实现合并。
-- 如果两个或多个记录的主题相似，内容是对主题不同方面的信息或讨论，且信息量较少，则可以合并为一条记录。
-- 如果两个记录冲突，可以根据逻辑保留一个或者进行整合，也可以采取更新的记录，删除旧的记录
-
-**轮次信息**：
-- 本次维护最多执行 {max_iterations} 轮
-- 每轮开始时，系统会告知你当前是第几轮，还剩多少轮
-- 如果提前完成维护工作，可以调用 finish_maintenance 工具主动结束
-
-**每一轮的执行方式（必须遵守）：**
-- 第一步：先用一小段中文自然语言，写出你的「思考」和本轮计划（例如要查什么、准备怎么合并/修改）；
-- 第二步：在这段思考之后，再通过工具调用来执行你的计划（可以调用 0~N 个工具）；
-- 第三步：收到工具结果后，在下一轮继续先写出新的思考，再视情况继续调用工具。
-
-请不要在没有先写出思考的情况下直接调用工具。
-只输出你的思考内容或工具调用结果，由系统负责真正执行工具调用。
-""",
-        name="dream_react_head_prompt",
-    )
 
 
 class DreamTool:
@@ -140,8 +86,8 @@ def init_dream_tools(chat_id: str) -> None:
     finish_maintenance = make_finish_maintenance(chat_id)
 
     search_jargon = make_search_jargon(chat_id)
-    delete_jargon = make_delete_jargon(chat_id)
-    update_jargon = make_update_jargon(chat_id)
+    _delete_jargon = make_delete_jargon(chat_id)
+    _update_jargon = make_update_jargon(chat_id)
 
     _dream_tool_registry.register_tool(
         DreamTool(
@@ -278,17 +224,17 @@ async def run_dream_agent_once(
     tool_registry = get_dream_tool_registry()
     tool_defs = tool_registry.get_tool_definitions()
 
-    bot_name = global_config.bot.nickname
-    time_now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-    head_prompt = await global_prompt_manager.format_prompt(
-        "dream_react_head_prompt",
-        bot_name=bot_name,
-        time_now=time_now,
-        chat_id=chat_id,
-        start_memory_id=start_memory_id if start_memory_id is not None else "无（本轮由你自由选择切入点）",
-        max_iterations=max_iterations,
+    head_prompt_template = prompt_manager.get_prompt("dream_react_head")
+    head_prompt_template.add_context("bot_name", global_config.bot.nickname)
+    head_prompt_template.add_context("time_now", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+    head_prompt_template.add_context("chat_id", chat_id)
+    head_prompt_template.add_context(
+        "start_memory_id",
+        str(start_memory_id) if start_memory_id is not None else "无（本轮由你自由选择切入点）",
     )
+    head_prompt_template.add_context("max_iterations", str(max_iterations))
+
+    head_prompt = await prompt_manager.render_prompt(head_prompt_template)
 
     conversation_messages: List[Message] = []
 
@@ -558,7 +504,7 @@ async def start_dream_scheduler(
 
             start_ts = time.time()
             # 检查当前时间是否在允许做梦的时间段内
-            if not global_config.dream.is_in_dream_time():
+            if not TempMethodsDream.is_in_dream_time():
                 logger.debug("[dream] 当前时间不在允许做梦的时间段内，跳过本次执行")
             else:
                 try:
@@ -575,5 +521,32 @@ async def start_dream_scheduler(
         raise
 
 
-# 初始化提示词
-init_dream_prompts()
+class TempMethodsDream:
+    @staticmethod
+    def is_in_dream_time() -> bool:
+        if not global_config.dream.dream_time_ranges:
+            return True
+        now_min = time.localtime()
+        now_total_min = now_min.tm_hour * 60 + now_min.tm_min
+        for time_range in global_config.dream.dream_time_ranges:
+            if parsed := TempMethodsDream._parse_range(time_range):
+                start_min, end_min = parsed
+                if TempMethodsDream._in_range(now_total_min, start_min, end_min):
+                    return True
+        return False
+
+    @staticmethod
+    def _in_range(now_min, start_min, end_min) -> bool:
+        if start_min <= end_min:
+            return start_min <= now_min <= end_min
+        return now_min >= start_min or now_min <= end_min
+
+    @staticmethod
+    def _parse_range(range_str: str) -> Optional[Tuple[int, int]]:
+        try:
+            start_str, end_str = [s.strip() for s in range_str.split("-")]
+            sh, sm = [int(x) for x in start_str.split(":")]
+            eh, em = [int(x) for x in end_str.split(":")]
+            return sh * 60 + sm, eh * 60 + em
+        except Exception:
+            return None

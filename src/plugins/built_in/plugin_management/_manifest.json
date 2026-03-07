@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "name": "插件和组件管理 (Plugin and Component Management)",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "通过系统API管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。",
   "author": {
     "name": "MaiBot团队",
@@ -9,7 +9,7 @@
   },
   "license": "GPL-v3.0-or-later",
   "host_application": {
-    "min_version": "0.10.1"
+    "min_version": "1.0.0"
   },
   "homepage_url": "https://github.com/MaiM-with-u/maibot",
   "repository_url": "https://github.com/MaiM-with-u/maibot",
@@ -28,10 +28,22 @@
   "plugin_info": {
     "is_built_in": true,
     "plugin_type": "plugin_management",
+    "capabilities": [
+      "component.get_all_plugins",
+      "component.list_loaded_plugins",
+      "component.list_registered_plugins",
+      "component.enable",
+      "component.disable",
+      "component.load_plugin",
+      "component.unload_plugin",
+      "component.reload_plugin",
+      "send.text",
+      "config.get"
+    ],
     "components": [
       {
         "type": "command",
-        "name": "plugin_management",
+        "name": "management",
         "description": "管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。"
       }
     ]

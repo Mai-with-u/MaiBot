@@ -13,7 +13,7 @@ from src.config.config import global_config, model_config
 from src.common.logger import get_logger
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.common.data_models.info_data_model import ActionPlannerInfo
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.prompt.prompt_manager import prompt_manager
 from src.chat.utils.chat_message_builder import (
     build_readable_actions,
     get_actions_by_timestamp_with_chat,
@@ -22,9 +22,9 @@ from src.chat.utils.chat_message_builder import (
 )
 from src.chat.utils.utils import get_chat_type_and_target_info
 from src.chat.planner_actions.action_manager import ActionManager
-from src.chat.message_receive.chat_stream import get_chat_manager
-from src.plugin_system.base.component_types import ActionInfo, ComponentType, ActionActivationType
-from src.plugin_system.core.component_registry import component_registry
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.core.types import ActionActivationType, ActionInfo, ComponentType
+from src.core.component_registry import component_registry
 
 if TYPE_CHECKING:
     from src.common.data_models.info_data_model import TargetPersonInfo
@@ -35,112 +35,10 @@ logger = get_logger("planner")
 install(extra_lines=3)
 
 
-def init_prompt():
-    # ReAct 形式的 Planner Prompt
-    Prompt(
-        """
-{time_block}
-{name_block}
-{chat_context_description}，以下是具体的聊天内容
-
-**聊天内容**
-{chat_content_block}
-
-**动作记录**
-{actions_before_now_block}
-
-**可用的action**
-reply
-动作描述：
-进行回复，你可以自然的顺着正在进行的聊天内容进行回复或自然的提出一个问题
-{{
-    "action": "reply",
-    "target_message_id":"想要回复的消息id",
-    "reason":"回复的原因"
-}}
-
-wait
-动作描述：
-暂时不再发言，等待指定时间。适用于以下情况：
-- 你已经表达清楚一轮，想给对方留出空间
-- 你感觉对方的话还没说完，或者自己刚刚发了好几条连续消息
-- 你想要等待一定时间来让对方把话说完，或者等待对方反应
-- 你想保持安静，专注"听"而不是马上回复
-请你根据上下文来判断要等待多久，请你灵活判断：
-- 如果你们交流间隔时间很短，聊的很频繁，不宜等待太久
-- 如果你们交流间隔时间很长，聊的很少，可以等待较长时间
-{{
-    "action": "wait",
-    "target_message_id":"想要作为这次等待依据的消息id（通常是对方的最新消息）",
-    "wait_seconds": 等待的秒数（必填，例如：5 表示等待5秒）,
-    "reason":"选择等待的原因"
-}}
-
-complete_talk
-动作描述：
-当前聊天暂时结束了，对方离开，没有更多话题了
-你可以使用该动作来暂时休息，等待对方有新发言再继续：
-- 多次wait之后，对方迟迟不回复消息才用
-- 如果对方只是短暂不回复，应该使用wait而不是complete_talk
-- 聊天内容显示当前聊天已经结束或者没有新内容时候，选择complete_talk
-选择此动作后，将不再继续循环思考，直到收到对方的新消息
-{{
-    "action": "complete_talk",
-    "target_message_id":"触发完成对话的消息id（通常是对方的最新消息）",
-    "reason":"选择完成对话的原因"
-}}
-
-{action_options_text}
-
-请选择合适的action，并说明触发action的消息id和选择该action的原因。消息id格式:m+数字
-先输出你的选择思考理由，再输出你选择的action，理由是一段平文本，不要分点，精简。
-**动作选择要求**
-请你根据聊天内容,用户的最新消息和以下标准选择合适的动作:
-{plan_style}
-{moderation_prompt}
-
-请选择所有符合使用要求的action，动作用json格式输出，如果输出多个json，每个json都要单独用```json包裹，你可以重复使用同一个动作或不同动作:
-**示例**
-// 理由文本
-```json
-{{
-    "action":"动作名",
-    "target_message_id":"触发动作的消息id",
-    //对应参数
-}}
-```
-```json
-{{
-    "action":"动作名",
-    "target_message_id":"触发动作的消息id",
-    //对应参数
-}}
-```
-
-""",
-        "brain_planner_prompt_react",
-    )
-
-    Prompt(
-        """
-{action_name}
-动作描述：{action_description}
-使用条件：
-{action_require}
-{{
-    "action": "{action_name}",{action_parameters},
-    "target_message_id":"触发action的消息id",
-    "reason":"触发action的原因"
-}}
-""",
-        "brain_action_prompt",
-    )
-
-
 class BrainPlanner:
     def __init__(self, chat_id: str, action_manager: ActionManager):
         self.chat_id = chat_id
-        self.log_prefix = f"[{get_chat_manager().get_stream_name(chat_id) or chat_id}]"
+        self.log_prefix = f"[{_chat_manager.get_session_name(chat_id) or chat_id}]"
         self.action_manager = action_manager
         # LLM规划器配置
         self.planner_llm = LLMRequest(
@@ -302,7 +200,7 @@ class BrainPlanner:
 
         prompt_build_start = time.perf_counter()
         # 构建包含所有动作的提示词：使用统一的 ReAct Prompt
-        prompt_key = "brain_planner_prompt_react"
+        prompt_key = "brain_planner"
         # 这里不记录日志，避免重复打印，由调用方按需控制 log_prompt
         prompt, message_id_list = await self.build_planner_prompt(
             chat_target_info=chat_target_info,
@@ -356,7 +254,7 @@ class BrainPlanner:
         message_id_list: List[Tuple[str, "DatabaseMessages"]],
         chat_content_block: str = "",
         interest: str = "",
-        prompt_key: str = "brain_planner_prompt_react",
+        prompt_key: str = "brain_planner",
     ) -> tuple[str, List[Tuple[str, "DatabaseMessages"]]]:
         """构建 Planner LLM 的提示词 (获取模板并填充数据)"""
         try:
@@ -373,6 +271,7 @@ class BrainPlanner:
             else:
                 actions_before_now_block = ""
 
+            chat_context_description: str = ""
             if chat_target_info:
                 # 构建聊天上下文描述
                 chat_context_description = (
@@ -392,18 +291,17 @@ class BrainPlanner:
             name_block = f"你的名字是{bot_name}{bot_nickname}，请注意哪些是你自己的发言。"
 
             # 获取主规划器模板并填充
-            planner_prompt_template = await global_prompt_manager.get_prompt_async(prompt_key)
-            prompt = planner_prompt_template.format(
-                time_block=time_block,
-                chat_context_description=chat_context_description,
-                chat_content_block=chat_content_block,
-                actions_before_now_block=actions_before_now_block,
-                action_options_text=action_options_block,
-                moderation_prompt=moderation_prompt_block,
-                name_block=name_block,
-                interest=interest,
-                plan_style=global_config.experimental.private_plan_style,
-            )
+            planner_prompt_template = prompt_manager.get_prompt(prompt_key)
+            planner_prompt_template.add_context("time_block", time_block)
+            planner_prompt_template.add_context("chat_context_description", chat_context_description)
+            planner_prompt_template.add_context("chat_content_block", chat_content_block)
+            planner_prompt_template.add_context("actions_before_now_block", actions_before_now_block)
+            planner_prompt_template.add_context("action_options_text", action_options_block)
+            planner_prompt_template.add_context("moderation_prompt", moderation_prompt_block)
+            planner_prompt_template.add_context("name_block", name_block)
+            planner_prompt_template.add_context("interest", interest)
+            planner_prompt_template.add_context("plan_style", global_config.experimental.private_plan_style)
+            prompt = await prompt_manager.render_prompt(planner_prompt_template)
 
             return prompt, message_id_list
         except Exception as e:
@@ -483,13 +381,12 @@ class BrainPlanner:
             require_text = require_text.rstrip("\n")
 
             # 获取动作提示模板并填充
-            using_action_prompt = await global_prompt_manager.get_prompt_async("brain_action_prompt")
-            using_action_prompt = using_action_prompt.format(
-                action_name=action_name,
-                action_description=action_info.description,
-                action_parameters=param_text,
-                action_require=require_text,
-            )
+            using_action_prompt_template = prompt_manager.get_prompt("brain_action")
+            using_action_prompt_template.add_context("action_name", action_name)
+            using_action_prompt_template.add_context("action_description", action_info.description)
+            using_action_prompt_template.add_context("action_parameters", param_text)
+            using_action_prompt_template.add_context("action_require", require_text)
+            using_action_prompt = await prompt_manager.render_prompt(using_action_prompt_template)
 
             action_options_block += using_action_prompt
 
@@ -534,15 +431,21 @@ class BrainPlanner:
         except Exception as req_e:
             logger.error(f"{self.log_prefix}LLM 请求执行失败: {req_e}")
             extracted_reasoning = f"LLM 请求失败，模型出现问题: {req_e}"
-            return extracted_reasoning, [
-                ActionPlannerInfo(
-                    action_type="complete_talk",
-                    reasoning=extracted_reasoning,
-                    action_data={},
-                    action_message=None,
-                    available_actions=available_actions,
-                )
-            ], llm_content, llm_reasoning, llm_duration_ms
+            return (
+                extracted_reasoning,
+                [
+                    ActionPlannerInfo(
+                        action_type="complete_talk",
+                        reasoning=extracted_reasoning,
+                        action_data={},
+                        action_message=None,
+                        available_actions=available_actions,
+                    )
+                ],
+                llm_content,
+                llm_reasoning,
+                llm_duration_ms,
+            )
 
         # 解析LLM响应
         if llm_content:
@@ -713,6 +616,3 @@ class BrainPlanner:
                         logger.debug(f"处理不完整的JSON代码块时出错: {e}")
 
         return json_objects, reasoning_content
-
-
-init_prompt()

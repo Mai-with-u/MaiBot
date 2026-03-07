@@ -1,6 +1,6 @@
 from typing import Optional
-from fastapi import Depends, Cookie, Header, Request, HTTPException
-from .core import get_current_token, get_token_manager, check_auth_rate_limit, check_api_rate_limit
+from fastapi import Depends, Cookie, Header, Request
+from .core import get_current_token, get_token_manager, check_auth_rate_limit
 
 
 async def require_auth(

@@ -16,16 +16,16 @@ export function useChatNameMap() {
   const loadChatNameMap = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await getChatList()
-      if (response?.data) {
+      const result = await getChatList()
+      if (result.success) {
         const nameMap = new Map<string, string>()
-        response.data.forEach((chat: ChatInfo) => {
+        result.data.forEach((chat: ChatInfo) => {
           nameMap.set(chat.chat_id, chat.chat_name)
         })
         setChatNameMap(nameMap)
       }
     } catch (error) {
-      console.error('加载聊天列表失败:', error)
+      console.error('加载聚天列表失败:', error)
     } finally {
       setLoading(false)
     }

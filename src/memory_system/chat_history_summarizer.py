@@ -17,76 +17,16 @@ from src.common.logger import get_logger
 from src.common.data_models.database_data_model import DatabaseMessages
 from src.config.config import model_config, global_config
 from src.llm_models.utils_model import LLMRequest
-from src.plugin_system.apis import message_api
+from src.services import message_service as message_api
 from src.chat.utils.chat_message_builder import build_readable_messages
 from src.chat.utils.utils import is_bot_self
 from src.person_info.person_info import Person
-from src.chat.message_receive.chat_stream import get_chat_manager
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.prompt.prompt_manager import prompt_manager
 
 logger = get_logger("chat_history_summarizer")
 
 HIPPO_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "hippo_memorizer"
-
-
-def init_prompt():
-    """初始化提示词模板"""
-
-    topic_analysis_prompt = """【历史话题标题列表】（仅标题，不含具体内容）：
-{history_topics_block}
-【历史话题标题列表结束】
-
-【本次聊天记录】（每条消息前有编号，用于后续引用）：
-{messages_block}
-【本次聊天记录结束】
-
-请完成以下任务：
-**识别话题**
-1. 识别【本次聊天记录】中正在进行的一个或多个话题；
-2. 【本次聊天记录】的中的消息可能与历史话题有关，也可能毫无关联。
-2. 判断【历史话题标题列表】中的话题是否在【本次聊天记录】中出现，如果出现，则直接使用该历史话题标题字符串；
-
-**选取消息**
-1. 对于每个话题（新话题或历史话题），从上述带编号的消息中选出与该话题强相关的消息编号列表；
-2. 每个话题用一句话清晰地描述正在发生的事件，必须包含时间（大致即可）、人物、主要事件和主题，保证精准且有区分度； 
-
-请先输出一段简短思考，说明有什么话题，哪些是不包含在历史话题中的，哪些是包含在历史话题中的，并说明为什么；
-然后严格以 JSON 格式输出【本次聊天记录】中涉及的话题，格式如下：
-[
-  {{
-    "topic": "话题",
-    "message_indices": [1, 2, 5]
-  }},
-  ...
-]
-"""
-    Prompt(topic_analysis_prompt, "hippo_topic_analysis_prompt")
-
-    topic_summary_prompt = """
-请基于以下话题，对聊天记录片段进行概括，提取以下信息：
-
-**话题**：{topic}
-
-**要求**：
-1. 关键词：提取与话题相关的关键词，用列表形式返回（3-10个关键词）
-2. 概括：对这段话的平文本概括（50-200字），要求：
-   - 仔细地转述发生的事件和聊天内容；
-   - 重点突出事件的发展过程和结果；
-   - 围绕话题这个中心进行概括。
-   - 提取话题中的关键信息点，关键信息点应该简洁明了。
-
-请以JSON格式返回，格式如下：
-{{
-    "keywords": ["关键词1", "关键词2", ...],
-    "summary": "概括内容"
-}}
-
-聊天记录：
-{original_text}
-
-请直接返回JSON，不要包含其他内容。
-"""
-    Prompt(topic_summary_prompt, "hippo_topic_summary_prompt")
 
 
 @dataclass
@@ -160,7 +100,7 @@ class ChatHistorySummarizer:
     def _get_chat_display_name(self) -> str:
         """获取聊天显示名称"""
         try:
-            chat_name = get_chat_manager().get_stream_name(self.chat_id)
+            chat_name = _chat_manager.get_session_name(self.chat_id)
             if chat_name:
                 return chat_name
             # 如果获取失败，使用简化的chat_id显示
@@ -380,12 +320,16 @@ class ChatHistorySummarizer:
         # 条件1: 消息数量达到阈值，触发一次检查
         if message_count >= message_threshold:
             should_check = True
-            logger.info(f"{self.log_prefix} 触发检查条件: 消息数量达到 {message_count} 条（阈值: {message_threshold}条）")
+            logger.info(
+                f"{self.log_prefix} 触发检查条件: 消息数量达到 {message_count} 条（阈值: {message_threshold}条）"
+            )
 
         # 条件2: 距离上一次检查超过时间阈值且消息数量达到最小阈值，触发一次检查
         elif time_since_last_check > time_threshold_seconds and message_count >= min_messages:
             should_check = True
-            logger.info(f"{self.log_prefix} 触发检查条件: 距上次检查 {time_str}（阈值: {time_threshold_hours}小时）且消息数量达到 {message_count} 条（阈值: {min_messages}条）")
+            logger.info(
+                f"{self.log_prefix} 触发检查条件: 距上次检查 {time_str}（阈值: {time_threshold_hours}小时）且消息数量达到 {message_count} 条（阈值: {min_messages}条）"
+            )
 
         if should_check:
             await self._run_topic_check_and_update_cache(messages)
@@ -539,7 +483,9 @@ class ChatHistorySummarizer:
         topics_to_finalize: List[str] = []
         for topic, item in self.topic_cache.items():
             if item.no_update_checks >= no_update_checks_threshold:
-                logger.info(f"{self.log_prefix} 话题[{topic}] 连续 {no_update_checks_threshold} 次检查无新增内容，触发打包存储")
+                logger.info(
+                    f"{self.log_prefix} 话题[{topic}] 连续 {no_update_checks_threshold} 次检查无新增内容，触发打包存储"
+                )
                 topics_to_finalize.append(topic)
                 continue
             if len(item.messages) > message_count_threshold:
@@ -712,11 +658,10 @@ class ChatHistorySummarizer:
         history_topics_block = "\n".join(f"- {t}" for t in existing_topics) if existing_topics else "（当前无历史话题）"
         messages_block = "\n".join(numbered_lines)
 
-        prompt = await global_prompt_manager.format_prompt(
-            "hippo_topic_analysis_prompt",
-            history_topics_block=history_topics_block,
-            messages_block=messages_block,
-        )
+        prompt_template = prompt_manager.get_prompt("hippo_topic_analysis")
+        prompt_template.add_context("history_topics_block", history_topics_block)
+        prompt_template.add_context("messages_block", messages_block)
+        prompt = await prompt_manager.render_prompt(prompt_template)
 
         try:
             response, _ = await self.summarizer_llm.generate_response_async(
@@ -826,23 +771,17 @@ class ChatHistorySummarizer:
         while attempt < max_retries:
             attempt += 1
             success, keywords, summary = await self._compress_with_llm(original_text, topic)
-            
+
             if success and keywords and summary:
                 # 成功获取到有效的 keywords 和 summary
                 if attempt > 1:
-                    logger.info(
-                        f"{self.log_prefix} 话题[{topic}] LLM 概括在第 {attempt} 次重试后成功"
-                    )
+                    logger.info(f"{self.log_prefix} 话题[{topic}] LLM 概括在第 {attempt} 次重试后成功")
                 break
-            
+
             if attempt < max_retries:
-                logger.warning(
-                    f"{self.log_prefix} 话题[{topic}] LLM 概括失败（第 {attempt} 次尝试），准备重试"
-                )
+                logger.warning(f"{self.log_prefix} 话题[{topic}] LLM 概括失败（第 {attempt} 次尝试），准备重试")
             else:
-                logger.error(
-                    f"{self.log_prefix} 话题[{topic}] LLM 概括连续 {max_retries} 次失败，放弃存储"
-                )
+                logger.error(f"{self.log_prefix} 话题[{topic}] LLM 概括连续 {max_retries} 次失败，放弃存储")
 
         if not success or not keywords or not summary:
             logger.warning(f"{self.log_prefix} 话题[{topic}] LLM 概括失败，不写入数据库")
@@ -875,11 +814,10 @@ class ChatHistorySummarizer:
         Returns:
             tuple[bool, List[str], str]: (是否成功, 关键词列表, 概括)
         """
-        prompt = await global_prompt_manager.format_prompt(
-            "hippo_topic_summary_prompt",
-            topic=topic,
-            original_text=original_text,
-        )
+        prompt_template = prompt_manager.get_prompt("hippo_topic_summary")
+        prompt_template.add_context("topic", topic)
+        prompt_template.add_context("original_text", original_text)
+        prompt = await prompt_manager.render_prompt(prompt_template)
 
         try:
             response, _ = await self.summarizer_llm.generate_response_async(prompt=prompt)
@@ -943,7 +881,7 @@ class ChatHistorySummarizer:
 
             keywords = result.get("keywords", [])
             summary = result.get("summary", "")
-            
+
             # 检查必需字段是否为空
             if not keywords or not summary:
                 logger.warning(f"{self.log_prefix} LLM返回的JSON中缺少必需字段，原文\n{response}")
@@ -975,7 +913,7 @@ class ChatHistorySummarizer:
         """存储到数据库"""
         try:
             from src.common.database.database_model import ChatHistory
-            from src.plugin_system.apis import database_api
+            from src.services import database_service as database_api
 
             # 准备数据
             data = {
@@ -1046,7 +984,7 @@ class ChatHistorySummarizer:
 
             # 1. 话题主题
             # if theme:
-                # content_parts.append(f"话题：{theme}")
+            # content_parts.append(f"话题：{theme}")
 
             # 2. 概括内容
             if summary:
@@ -1134,6 +1072,3 @@ class ChatHistorySummarizer:
 
             traceback.print_exc()
             self._running = False
-
-
-init_prompt()

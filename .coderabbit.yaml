@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "zh-CN"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  poem: false
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+      - "dev"
+  path_filters:
+    - "!logs/**"
+    - "!data/**"
+    - "!depends-data/**"
+    - "!dashboard/dist-electron/**"
+    - "!dashboard/node_modules/**"
+    - "!**/*.log"
+    - "!**/*.jsonl"
+    - "!**/*.db"
+    - "!**/*.db-shm"
+    - "!**/*.db-wal"
+    - "!**/*.bak"
+  path_instructions:
+    - path: "src/**/*.py"
+      instructions: |
+        本项目使用 Ruff 进行代码检查与格式化，行宽限制为 120 字符，字符串使用双引号。
+        请重点关注以下方面：
+        - 异步代码的正确性（async/await 使用是否合理）
+        - 异常处理是否覆盖了边界情况
+        - import 顺序需遵循项目规范：标准库/第三方库在前，本地模块在后；本地同级模块使用相对导入，跨目录使用以 `from src` 开头的绝对导入
+        - 避免硬编码的敏感信息（API Key、密码等）
+    - path: "plugins/**/*.py"
+      instructions: |
+        插件目录，请关注插件接口的规范使用以及与核心模块的依赖隔离性。
+    - path: "*.toml"
+      instructions: |
+        配置文件，请检查字段合法性和格式规范，注意不要泄露敏感默认值。
+
+chat:
+  auto_reply: true

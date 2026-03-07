@@ -41,4 +41,3 @@ def make_get_chat_history_detail(chat_id: str):  # chat_id 目前未直接使用
             return f"get_chat_history_detail 执行失败: {e}"
 
     return get_chat_history_detail
-

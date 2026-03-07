@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from typing import List, Union, Dict, Any
+from typing import List, Union
 
 from .global_logger import logger
 from . import prompt_template
@@ -192,17 +192,15 @@ class IEProcess:
 
         results = []
         total = len(paragraphs)
-        
+
         for i, pg in enumerate(paragraphs, start=1):
             # 打印进度日志，让用户知道没有卡死
             logger.info(f"[IEProcess] 正在处理第 {i}/{total} 段文本 (长度: {len(pg)})...")
-            
+
             # 使用 asyncio.to_thread 包装同步阻塞调用，防止死锁
             # 这样 info_extract_from_str 内部的 asyncio.run 会在独立线程的新 loop 中运行
             try:
-                entities, triples = await asyncio.to_thread(
-                    info_extract_from_str, self.llm_ner, self.llm_rdf, pg
-                )
+                entities, triples = await asyncio.to_thread(info_extract_from_str, self.llm_ner, self.llm_rdf, pg)
 
                 if entities is not None:
                     results.append(

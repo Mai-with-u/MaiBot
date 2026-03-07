@@ -1,10 +1,10 @@
 import time
 from typing import Dict, Optional
-from src.common.logger import get_module_logger
+from src.common.logger import get_logger
 from .conversation import Conversation
 import traceback
 
-logger = get_module_logger("pfc_manager")
+logger = get_logger("pfc_manager")
 
 
 class PFCManager:

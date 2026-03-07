@@ -131,10 +131,37 @@ export function PluginDetailPage() {
           getInstalledPlugins(),
         ])
 
-        setGitStatus(gitStatusResult)
-        setMaimaiVersion(versionResult)
-        setIsInstalled(checkPluginInstalled(search.pluginId, installedPlugins))
-        setInstalledVersion(getInstalledPluginVersion(search.pluginId, installedPlugins))
+        if (!gitStatusResult.success) {
+          toast({
+            title: 'Git 状态检查失败',
+            description: gitStatusResult.error,
+            variant: 'destructive',
+          })
+        } else {
+          setGitStatus(gitStatusResult.data)
+        }
+        
+        if (!versionResult.success) {
+          toast({
+            title: '版本获取失败',
+            description: versionResult.error,
+            variant: 'destructive',
+          })
+        } else {
+          setMaimaiVersion(versionResult.data)
+        }
+        
+        if (!installedPlugins.success) {
+          toast({
+            title: '获取已安装插件失败',
+            description: installedPlugins.error,
+            variant: 'destructive',
+          })
+          return
+        }
+        
+        setIsInstalled(checkPluginInstalled(search.pluginId, installedPlugins.data))
+        setInstalledVersion(getInstalledPluginVersion(search.pluginId, installedPlugins.data))
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
       } finally {
@@ -243,7 +270,16 @@ export function PluginDetailPage() {
     try {
       setOperating(true)
 
-      await installPlugin(plugin.id, plugin.manifest.repository_url || '', 'main')
+      const installResult = await installPlugin(plugin.id, plugin.manifest.repository_url || '', 'main')
+      
+      if (!installResult.success) {
+        toast({
+          title: '安装失败',
+          description: installResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
 
       // 记录下载统计
       recordPluginDownload(plugin.id).catch((err) => {
@@ -256,9 +292,17 @@ export function PluginDetailPage() {
       })
 
       // 重新加载安装状态
-      const installedPlugins = await getInstalledPlugins()
-      setIsInstalled(checkPluginInstalled(plugin.id, installedPlugins))
-      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPlugins))
+      const installedPluginsResult = await getInstalledPlugins()
+      if (!installedPluginsResult.success) {
+        toast({
+          title: '获取已安装插件失败',
+          description: installedPluginsResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
+      setIsInstalled(checkPluginInstalled(plugin.id, installedPluginsResult.data))
+      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPluginsResult.data))
     } catch (error) {
       toast({
         title: '安装失败',
@@ -277,7 +321,16 @@ export function PluginDetailPage() {
     try {
       setOperating(true)
 
-      await uninstallPlugin(plugin.id)
+      const uninstallResult = await uninstallPlugin(plugin.id)
+      
+      if (!uninstallResult.success) {
+        toast({
+          title: '卸载失败',
+          description: uninstallResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
 
       toast({
         title: '卸载成功',
@@ -285,9 +338,17 @@ export function PluginDetailPage() {
       })
 
       // 重新加载安装状态
-      const installedPlugins = await getInstalledPlugins()
-      setIsInstalled(checkPluginInstalled(plugin.id, installedPlugins))
-      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPlugins))
+      const installedPluginsResult = await getInstalledPlugins()
+      if (!installedPluginsResult.success) {
+        toast({
+          title: '获取已安装插件失败',
+          description: installedPluginsResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
+      setIsInstalled(checkPluginInstalled(plugin.id, installedPluginsResult.data))
+      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPluginsResult.data))
     } catch (error) {
       toast({
         title: '卸载失败',
@@ -306,17 +367,34 @@ export function PluginDetailPage() {
     try {
       setOperating(true)
 
-      const result = await updatePlugin(plugin.id, plugin.manifest.repository_url || '', 'main')
+      const updateResult = await updatePlugin(plugin.id, plugin.manifest.repository_url || '', 'main')
+      
+      if (!updateResult.success) {
+        toast({
+          title: '更新失败',
+          description: updateResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
 
       toast({
         title: '更新成功',
-        description: `${plugin.manifest.name} 已从 ${result.old_version} 更新到 ${result.new_version}`,
+        description: `${plugin.manifest.name} 已从 ${updateResult.data.old_version} 更新到 ${updateResult.data.new_version}`,
       })
 
       // 重新加载安装状态
-      const installedPlugins = await getInstalledPlugins()
-      setIsInstalled(checkPluginInstalled(plugin.id, installedPlugins))
-      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPlugins))
+      const installedPluginsResult = await getInstalledPlugins()
+      if (!installedPluginsResult.success) {
+        toast({
+          title: '获取已安装插件失败',
+          description: installedPluginsResult.error,
+          variant: 'destructive',
+        })
+        return
+      }
+      setIsInstalled(checkPluginInstalled(plugin.id, installedPluginsResult.data))
+      setInstalledVersion(getInstalledPluginVersion(plugin.id, installedPluginsResult.data))
     } catch (error) {
       toast({
         title: '更新失败',

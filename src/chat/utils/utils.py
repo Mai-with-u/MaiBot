@@ -12,8 +12,8 @@ from typing import Optional, Tuple, List, TYPE_CHECKING
 from src.common.logger import get_logger
 from src.common.data_models.database_data_model import DatabaseMessages
 from src.config.config import global_config, model_config
-from src.chat.message_receive.message import MessageRecv
-from src.chat.message_receive.chat_stream import get_chat_manager
+from src.chat.message_receive.message import SessionMessage
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.llm_models.utils_model import LLMRequest
 from src.person_info.person_info import Person
 from .typo_generator import ChineseTypoGenerator
@@ -114,10 +114,10 @@ def is_bot_self(platform: str, user_id: str) -> bool:
     return user_id_str == qq_account
 
 
-def is_mentioned_bot_in_message(message: MessageRecv) -> tuple[bool, bool, float]:
+def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, float]:
     """检查消息是否提到了机器人（统一多平台实现）"""
     text = message.processed_plain_text or ""
-    platform = getattr(message.message_info, "platform", "") or ""
+    platform = message.platform or ""
 
     # 获取各平台账号
     platforms_list = getattr(global_config.bot, "platforms", []) or []
@@ -696,15 +696,23 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["TargetP
     chat_target_info = None
 
     try:
-        if chat_stream := get_chat_manager().get_stream(chat_id):
-            if chat_stream.group_info:
+        if chat_stream := _chat_manager.get_session_by_session_id(chat_id):
+            if chat_stream.is_group_session:
                 is_group_chat = True
                 chat_target_info = None  # Explicitly None for group chat
-            elif chat_stream.user_info:  # It's a private chat
+            elif chat_stream.user_id:  # It's a private chat
                 is_group_chat = False
-                user_info = chat_stream.user_info
                 platform: str = chat_stream.platform
-                user_id: str = user_info.user_id  # type: ignore
+                user_id: str = chat_stream.user_id
+
+                # Try to get nickname from context
+                user_nickname = None
+                if (
+                    chat_stream.context
+                    and chat_stream.context.message
+                    and chat_stream.context.message.message_info.user_info
+                ):
+                    user_nickname = chat_stream.context.message.message_info.user_info.user_nickname
 
                 from src.common.data_models.info_data_model import TargetPersonInfo  # 解决循环导入问题
 
@@ -712,7 +720,7 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["TargetP
                 target_info = TargetPersonInfo(
                     platform=platform,
                     user_id=user_id,
-                    user_nickname=user_info.user_nickname,  # type: ignore
+                    user_nickname=user_nickname,  # type: ignore
                     person_id=None,
                     person_name=None,
                 )
@@ -721,7 +729,7 @@ def get_chat_type_and_target_info(chat_id: str) -> Tuple[bool, Optional["TargetP
                 try:
                     person = Person(platform=platform, user_id=user_id)
                     if not person.is_known:
-                        logger.warning(f"用户 {user_info.user_nickname} 尚未认识")
+                        logger.warning(f"用户 {user_nickname} 尚未认识")
                         # 如果用户尚未认识，则返回False和None
                         return False, None
                     if person.person_id:

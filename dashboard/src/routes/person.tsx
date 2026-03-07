@@ -1,28 +1,20 @@
-import { Users, Search, Edit, Trash2, Eye, User, MessageSquare, Hash, Clock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useState, useEffect, useMemo } from 'react'
-import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { useToast } from '@/hooks/use-toast'
-import { Checkbox } from '@/components/ui/checkbox'
+
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Edit,
+  Eye,
+  Hash,
+  Search,
+  Trash2,
+  User,
+  Users,
+} from 'lucide-react'
+import { Clock, MessageSquare } from 'lucide-react'
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +25,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -41,9 +46,29 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+
+import { useToast } from '@/hooks/use-toast'
+
+import {
+  batchDeletePersons,
+  deletePerson,
+  getPersonDetail,
+  getPersonList,
+  getPersonStats,
+  updatePerson,
+} from '@/lib/person-api'
+import { cn } from '@/lib/utils'
+
 import type { PersonInfo, PersonUpdateRequest } from '@/types/person'
-import { getPersonList, getPersonDetail, updatePerson, deletePerson, getPersonStats, batchDeletePersons } from '@/lib/person-api'
 
 export function PersonManagementPage() {
   const [persons, setPersons] = useState<PersonInfo[]>([])
@@ -68,15 +93,18 @@ export function PersonManagementPage() {
   const loadPersons = async () => {
     try {
       setLoading(true)
-      const response = await getPersonList({
+      const result = await getPersonList({
         page,
         page_size: pageSize,
         search: search || undefined,
         is_known: filterKnown,
         platform: filterPlatform,
       })
-      setPersons(response.data)
-      setTotal(response.total)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
+      setPersons(result.data.data)
+      setTotal(result.data.total)
     } catch (error) {
       toast({
         title: '加载失败',
@@ -91,9 +119,9 @@ export function PersonManagementPage() {
   // 加载统计数据
   const loadStats = async () => {
     try {
-      const response = await getPersonStats()
-      if (response?.data) {
-        setStats(response.data)
+      const result = await getPersonStats()
+      if (result.success) {
+        setStats(result.data)
       }
     } catch (error) {
       console.error('加载统计数据失败:', error)
@@ -110,8 +138,11 @@ export function PersonManagementPage() {
   // 查看详情
   const handleViewDetail = async (person: PersonInfo) => {
     try {
-      const response = await getPersonDetail(person.person_id)
-      setSelectedPerson(response.data)
+      const result = await getPersonDetail(person.person_id)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
+      setSelectedPerson(result.data)
       setIsDetailDialogOpen(true)
     } catch (error) {
       toast({
@@ -131,7 +162,10 @@ export function PersonManagementPage() {
   // 删除人物
   const handleDelete = async (person: PersonInfo) => {
     try {
-      await deletePerson(person.person_id)
+      const result = await deletePerson(person.person_id)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
       toast({
         title: '删除成功',
         description: `已删除人物信息: ${person.person_name || person.nickname || person.user_id}`,
@@ -190,9 +224,12 @@ export function PersonManagementPage() {
   const handleBatchDelete = async () => {
     try {
       const result = await batchDeletePersons(Array.from(selectedPersons))
+      if (!result.success) {
+        throw new Error(result.error)
+      }
       toast({
         title: '批量删除完成',
-        description: result.message,
+        description: result.data.message,
       })
       setSelectedPersons(new Set())
       setBatchDeleteDialogOpen(false)
@@ -378,7 +415,7 @@ export function PersonManagementPage() {
       <div className="rounded-lg border bg-card">
         {/* 桌面端表格视图 */}
         <div className="hidden md:block">
-          <Table>
+          <Table aria-label="人物信息列表">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12">
@@ -858,7 +895,10 @@ function PersonEditDialog({
 
     try {
       setSaving(true)
-      await updatePerson(person.person_id, formData)
+      const result = await updatePerson(person.person_id, formData)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
       toast({
         title: '保存成功',
         description: '人物信息已更新',

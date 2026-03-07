@@ -239,9 +239,10 @@ export function PluginStats({ pluginId, compact = false }: PluginStatsProps) {
 
               {/* 评论 */}
               <div>
-                <label className="text-sm font-medium mb-2 block">评论（可选）</label>
+                <label htmlFor="plugin-rating-comment" className="text-sm font-medium mb-2 block">评论（可选）</label>
                 <Textarea
                   value={userComment}
+                  id="plugin-rating-comment"
                   onChange={(e) => setUserComment(e.target.value)}
                   placeholder="分享你的使用体验..."
                   rows={4}

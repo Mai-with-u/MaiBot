@@ -2,6 +2,7 @@
 配置管理API路由
 """
 
+import copy
 import os
 import tomlkit
 from fastapi import APIRouter, HTTPException, Body, Depends, Cookie, Header
@@ -9,8 +10,9 @@ from typing import Any, Annotated, Optional
 
 from src.common.logger import get_logger
 from src.webui.core import verify_auth_token_from_cookie_or_header
-from src.common.toml_utils import save_toml_with_format, _update_toml_doc
-from src.config.config import Config, APIAdapterConfig, CONFIG_DIR, PROJECT_ROOT
+from src.webui.utils.toml_utils import save_toml_with_format, _update_toml_doc
+from src.config.config import Config, ModelConfig, CONFIG_DIR, PROJECT_ROOT
+from src.config.config_base import AttributeData
 from src.config.official_configs import (
     BotConfig,
     PersonalityConfig,
@@ -32,7 +34,7 @@ from src.config.official_configs import (
     DebugConfig,
     VoiceConfig,
 )
-from src.config.api_ada_configs import (
+from src.config.model_configs import (
     ModelTaskConfig,
     ModelInfo,
     APIProvider,
@@ -48,6 +50,15 @@ RawContentBody = Annotated[str, Body(embed=True)]
 PathBody = Annotated[dict[str, str], Body()]
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+
+def _toml_to_plain_dict(obj: Any) -> Any:
+    """递归转换 tomlkit 文档/Table 为纯 Python 字典，避免 from_dict 触发 tomlkit __setitem__"""
+    if isinstance(obj, dict):
+        return {str(k): _toml_to_plain_dict(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_toml_to_plain_dict(v) for v in obj]
+    return obj
 
 
 def require_auth(
@@ -77,7 +88,7 @@ async def get_bot_config_schema(_auth: bool = Depends(require_auth)):
 async def get_model_config_schema(_auth: bool = Depends(require_auth)):
     """获取模型配置架构（包含提供商和模型任务配置）"""
     try:
-        schema = ConfigSchemaGenerator.generate_config_schema(APIAdapterConfig)
+        schema = ConfigSchemaGenerator.generate_config_schema(ModelConfig)
         return {"success": True, "schema": schema}
     except Exception as e:
         logger.error(f"获取模型配置架构失败: {e}")
@@ -204,7 +215,7 @@ async def update_bot_config(config_data: ConfigBody, _auth: bool = Depends(requi
     try:
         # 验证配置数据
         try:
-            Config.from_dict(config_data)
+            Config.from_dict(AttributeData(), copy.deepcopy(config_data))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
@@ -227,7 +238,7 @@ async def update_model_config(config_data: ConfigBody, _auth: bool = Depends(req
     try:
         # 验证配置数据
         try:
-            APIAdapterConfig.from_dict(config_data)
+            ModelConfig.from_dict(AttributeData(), copy.deepcopy(config_data))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
@@ -277,7 +288,7 @@ async def update_bot_config_section(section_name: str, section_data: SectionBody
 
         # 验证完整配置
         try:
-            Config.from_dict(config_data)
+            Config.from_dict(AttributeData(), _toml_to_plain_dict(config_data))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
@@ -327,7 +338,7 @@ async def update_bot_config_raw(raw_content: RawContentBody, _auth: bool = Depen
 
         # 验证配置数据结构
         try:
-            Config.from_dict(config_data)
+            Config.from_dict(AttributeData(), _toml_to_plain_dict(config_data))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
@@ -377,7 +388,7 @@ async def update_model_config_section(
 
         # 验证完整配置
         try:
-            APIAdapterConfig.from_dict(config_data)
+            ModelConfig.from_dict(AttributeData(), _toml_to_plain_dict(config_data))
         except Exception as e:
             logger.error(f"配置数据验证失败，详细错误: {str(e)}")
             # 特殊处理：如果是更新 api_providers，检查是否有模型引用了已删除的provider

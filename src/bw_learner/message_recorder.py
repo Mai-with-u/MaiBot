@@ -2,9 +2,9 @@ import time
 import asyncio
 from typing import List, Any
 from src.common.logger import get_logger
-from src.config.config import global_config
-from src.chat.message_receive.chat_stream import get_chat_manager
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.chat.utils.chat_message_builder import get_raw_msg_by_timestamp_with_chat_inclusive
+from src.chat.utils.common_utils import TempMethodsExpression
 from src.bw_learner.expression_learner import expression_learner_manager
 from src.bw_learner.jargon_miner import miner_manager
 
@@ -18,8 +18,8 @@ class MessageRecorder:
 
     def __init__(self, chat_id: str) -> None:
         self.chat_id = chat_id
-        self.chat_stream = get_chat_manager().get_stream(chat_id)
-        self.chat_name = get_chat_manager().get_stream_name(chat_id) or chat_id
+        self.chat_stream = _chat_manager.get_session_by_session_id(chat_id)
+        self.chat_name = _chat_manager.get_session_name(chat_id) or chat_id
 
         # 维护每个chat的上次提取时间
         self.last_extraction_time: float = time.time()
@@ -38,7 +38,7 @@ class MessageRecorder:
         """初始化提取参数"""
         # 获取 expression 配置
         _, self.enable_expression_learning, self.enable_jargon_learning = (
-            global_config.expression.get_expression_config_for_chat(self.chat_id)
+            TempMethodsExpression.get_expression_config_for_chat(self.chat_id)
         )
         self.min_messages_for_extraction = 30
         self.min_extraction_interval = 60
@@ -118,9 +118,7 @@ class MessageRecorder:
 
                 # 触发 expression_learner 和 jargon_miner 的处理
                 if self.enable_expression_learning:
-                    asyncio.create_task(
-                        self._trigger_expression_learning(messages)
-                    )
+                    asyncio.create_task(self._trigger_expression_learning(messages))
 
             except Exception as e:
                 logger.error(f"为聊天流 {self.chat_name} 提取和分发消息失败: {e}")
@@ -129,9 +127,7 @@ class MessageRecorder:
                 traceback.print_exc()
                 # 即使失败也保持时间戳更新，避免频繁重试
 
-    async def _trigger_expression_learning(
-        self, messages: List[Any]
-    ) -> None:
+    async def _trigger_expression_learning(self, messages: List[Any]) -> None:
         """
         触发 expression 学习，使用指定的消息列表
 

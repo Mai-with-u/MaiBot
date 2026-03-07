@@ -30,7 +30,7 @@ async def query_words(chat_id: str, words: str) -> str:
             if separator in words:
                 words_list = [w.strip() for w in words.split(separator) if w.strip()]
                 break
-        
+
         # 如果没有找到分隔符，整个字符串作为一个词语
         if not words_list:
             words_list = [words.strip()]
@@ -76,4 +76,3 @@ def register_tool():
         ],
         execute_func=query_words,
     )
-

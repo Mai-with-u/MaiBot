@@ -1,17 +1,48 @@
 import time
 import asyncio
 import traceback
+from datetime import datetime
 from typing import Optional, Dict, Any, List
-from src.common.logger import get_module_logger
+from src.common.logger import get_logger
+from sqlmodel import select, col
+from src.common.database.database import get_db_session
+from src.common.database.database_model import Messages
 from maim_message import UserInfo
-from ...config.config import global_config
+from src.config.config import global_config
 from .chat_states import NotificationManager, create_new_message_notification, create_cold_chat_notification
-from .message_storage import MongoDBMessageStorage
 from rich.traceback import install
 
 install(extra_lines=3)
 
-logger = get_module_logger("chat_observer")
+logger = get_logger("chat_observer")
+
+
+def _message_to_dict(message: Messages) -> Dict[str, Any]:
+    """Convert Peewee Message model to dict for PFC compatibility
+
+    Args:
+        message: Peewee Messages model instance
+
+    Returns:
+        Dict[str, Any]: Message dictionary
+    """
+    message_timestamp = message.timestamp.timestamp() if isinstance(message.timestamp, datetime) else message.timestamp
+    return {
+        "message_id": message.message_id,
+        "time": message_timestamp,
+        "chat_id": message.session_id,
+        "user_id": message.user_id,
+        "user_nickname": message.user_nickname,
+        "processed_plain_text": message.processed_plain_text,
+        "display_message": message.display_message,
+        "is_mentioned": message.is_mentioned,
+        "is_command": message.is_command,
+        # Add user_info dict for compatibility with existing code
+        "user_info": {
+            "user_id": message.user_id,
+            "user_nickname": message.user_nickname,
+        },
+    }
 
 
 class ChatObserver:
@@ -49,12 +80,8 @@ class ChatObserver:
 
         self.stream_id = stream_id
         self.private_name = private_name
-        self.message_storage = MongoDBMessageStorage()
 
-        # self.last_user_speak_time: Optional[float] = None  # 对方上次发言时间
-        # self.last_bot_speak_time: Optional[float] = None  # 机器人上次发言时间
-        # self.last_check_time: float = time.time()  # 上次查看聊天记录时间
-        self.last_message_read: Optional[Dict[str, Any]] = None  # 最后读取的消息ID
+        self.last_message_read: Optional[Dict[str, Any]] = None
         self.last_message_time: float = time.time()
 
         self.waiting_start_time: float = time.time()  # 等待开始时间，初始化为当前时间
@@ -86,7 +113,13 @@ class ChatObserver:
         """
         logger.debug(f"[私聊][{self.private_name}]检查距离上一次观察之后是否有了新消息: {self.last_check_time}")
 
-        new_message_exists = await self.message_storage.has_new_messages(self.stream_id, self.last_check_time)
+        last_check_time = self.last_check_time or 0.0
+        last_check_dt = datetime.fromtimestamp(last_check_time)
+        with get_db_session() as session:
+            statement = select(Messages).where(
+                (col(Messages.session_id) == self.stream_id) & (col(Messages.timestamp) > last_check_dt)
+            )
+            new_message_exists = session.exec(statement).first() is not None
 
         if new_message_exists:
             logger.debug(f"[私聊][{self.private_name}]发现新消息")
@@ -157,49 +190,21 @@ class ChatObserver:
         )
         return has_new
 
-    def get_message_history(
-        self,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
-        limit: Optional[int] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """获取消息历史
-
-        Args:
-            start_time: 开始时间戳
-            end_time: 结束时间戳
-            limit: 限制返回消息数量
-            user_id: 指定用户ID
-
-        Returns:
-            List[Dict[str, Any]]: 消息列表
-        """
-        filtered_messages = self.message_history
-
-        if start_time is not None:
-            filtered_messages = [m for m in filtered_messages if m["time"] >= start_time]
-
-        if end_time is not None:
-            filtered_messages = [m for m in filtered_messages if m["time"] <= end_time]
-
-        if user_id is not None:
-            filtered_messages = [
-                m for m in filtered_messages if UserInfo.from_dict(m.get("user_info", {})).user_id == user_id
-            ]
-
-        if limit is not None:
-            filtered_messages = filtered_messages[-limit:]
-
-        return filtered_messages
-
     async def _fetch_new_messages(self) -> List[Dict[str, Any]]:
         """获取新消息
 
         Returns:
             List[Dict[str, Any]]: 新消息列表
         """
-        new_messages = await self.message_storage.get_messages_after(self.stream_id, self.last_message_time)
+        last_message_time = self.last_message_time or 0.0
+        last_message_dt = datetime.fromtimestamp(last_message_time)
+        with get_db_session() as session:
+            statement = (
+                select(Messages)
+                .where((col(Messages.session_id) == self.stream_id) & (col(Messages.timestamp) > last_message_dt))
+                .order_by(col(Messages.timestamp))
+            )
+            new_messages = [_message_to_dict(msg) for msg in session.exec(statement).all()]
 
         if new_messages:
             self.last_message_read = new_messages[-1]
@@ -218,7 +223,17 @@ class ChatObserver:
         Returns:
             List[Dict[str, Any]]: 最多5条消息
         """
-        new_messages = await self.message_storage.get_messages_before(self.stream_id, time_point)
+        time_point_dt = datetime.fromtimestamp(time_point)
+        with get_db_session() as session:
+            statement = (
+                select(Messages)
+                .where((col(Messages.session_id) == self.stream_id) & (col(Messages.timestamp) < time_point_dt))
+                .order_by(col(Messages.timestamp))
+                .limit(5)
+            )
+            messages = list(session.exec(statement).all())
+        messages.reverse()
+        new_messages = [_message_to_dict(msg) for msg in messages]
 
         if new_messages:
             self.last_message_read = new_messages[-1]["message_id"]
@@ -319,7 +334,7 @@ class ChatObserver:
         for msg in messages:
             try:
                 user_info = UserInfo.from_dict(msg.get("user_info", {}))
-                if user_info.user_id == global_config.BOT_QQ:
+                if user_info.user_id == global_config.bot.qq_account:
                     self.update_bot_speak_time(msg["time"])
                 else:
                     self.update_user_speak_time(msg["time"])

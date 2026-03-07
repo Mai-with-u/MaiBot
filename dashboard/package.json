@@ -1,16 +1,96 @@
 {
   "name": "maibot-dashboard",
   "private": true,
-  "version": "0.11.6",
+  "version": "1.0.0",
   "type": "module",
+  "main": "./out/main/index.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "electron:dev": "electron-vite dev",
+    "electron:build": "electron-vite build",
+    "electron:preview": "electron-vite preview",
+    "electron:dist": "electron-vite build && electron-builder",
+    "electron:dist:mac": "electron-vite build && electron-builder --mac",
+    "electron:dist:win": "electron-vite build && electron-builder --win",
+    "electron:dist:linux": "electron-vite build && electron-builder --linux"
+  },
+  "build": {
+    "appId": "org.maibot.dashboard",
+    "productName": "MaiBot Dashboard",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "electron/resources"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "electron/resources/icon.icns",
+      "darkModeSupport": true
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/resources/icon.ico"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/resources/icon.png",
+      "category": "Utility"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
   },
   "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-javascript": "^6.2.4",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-python": "^6.2.1",
@@ -57,12 +137,15 @@
     "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "html-to-image": "^1.11.13",
-    "jotai": "^2.16.0",
+    "i18next": "^25.8.13",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "idb": "^8.0.3",
     "katex": "^0.16.27",
     "lucide-react": "^0.556.0",
     "react": "^19.2.1",
     "react-day-picker": "^9.12.0",
     "react-dom": "^19.2.1",
+    "react-i18next": "^16.5.4",
     "react-joyride": "^2.9.3",
     "react-markdown": "^10.1.0",
     "reactflow": "^11.11.4",
@@ -71,25 +154,39 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "smol-toml": "^1.5.2",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "@react-spring/web": "^9.7.5",
+    "@use-gesture/react": "^10.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.10.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
+    "@vitest/ui": "^4.0.18",
     "autoprefixer": "^10.4.22",
+    "electron": "^40.6.1",
+    "electron-builder": "^26.8.1",
+    "electron-store": "11.0.2",
+    "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "jsdom": "^28.1.0",
     "postcss": "^8.5.6",
     "prettier": "^3.7.4",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "tailwindcss": "^3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.49.0",
-    "vite": "^7.2.7"
+    "vite": "^7.2.7",
+    "vitest": "^4.0.18",
+    "eslint-plugin-jsx-a11y": "^6.10.2"
   }
 }

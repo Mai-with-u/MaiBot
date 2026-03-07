@@ -1,3 +1,4 @@
+# raise RuntimeError("System Not Ready")
 import asyncio
 import hashlib
 import os
@@ -43,6 +44,11 @@ logger = get_logger("main")
 
 # 定义重启退出码
 RESTART_EXIT_CODE = 42
+print("-----------------------------------------")
+print("\n\n\n\n\n")
+print("警告：Dev进入不稳定开发状态，任何插件与WebUI均可能无法正常工作！")
+print("\n\n\n\n\n")
+print("-----------------------------------------")
 
 
 def run_runner_process():
@@ -180,20 +186,24 @@ async def graceful_shutdown():  # sourcery skip: use-named-expression
         logger.info("正在优雅关闭麦麦...")
 
         # 关闭 WebUI 服务器
-        try:
-            from src.webui.webui_server import get_webui_server
+        # try:
+        #     from src.webui.webui_server import get_webui_server
 
-            webui_server = get_webui_server()
-            if webui_server and webui_server._server:
-                await webui_server.shutdown()
-        except Exception as e:
-            logger.warning(f"关闭 WebUI 服务器时出错: {e}")
+        #     webui_server = get_webui_server()
+        #     if webui_server and webui_server._server:
+        #         await webui_server.shutdown()
+        # except Exception as e:
+        #     logger.warning(f"关闭 WebUI 服务器时出错: {e}")
 
-        from src.plugin_system.core.events_manager import events_manager
-        from src.plugin_system.base.component_types import EventType
+        from src.core.event_bus import event_bus
+        from src.core.types import EventType
 
         # 触发 ON_STOP 事件
-        await events_manager.handle_mai_events(event_type=EventType.ON_STOP)
+        await event_bus.emit(event_type=EventType.ON_STOP)
+
+        # 停止新版本插件运行时
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+        await get_plugin_runtime_manager().stop()
 
         # 停止所有异步任务
         await async_task_manager.stop_and_wait_all_tasks()

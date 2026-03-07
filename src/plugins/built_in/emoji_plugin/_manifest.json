@@ -1,34 +1,38 @@
 {
   "manifest_version": 1,
   "name": "Emoji插件 (Emoji Actions)",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "可以发送和管理Emoji",
   "author": {
     "name": "SengokuCola",
     "url": "https://github.com/MaiM-with-u"
   },
   "license": "GPL-v3.0-or-later",
-  
   "host_application": {
-    "min_version": "0.10.0"
+    "min_version": "1.0.0"
   },
   "homepage_url": "https://github.com/MaiM-with-u/maibot",
   "repository_url": "https://github.com/MaiM-with-u/maibot",
   "keywords": ["emoji", "action", "built-in"],
   "categories": ["Emoji"],
-  
   "default_locale": "zh-CN",
-  "locales_path": "_locales",
-  
   "plugin_info": {
     "is_built_in": true,
     "plugin_type": "action_provider",
     "components": [
       {
         "type": "action",
-        "name": "emoji", 
+        "name": "emoji",
         "description": "发送表情包辅助表达情绪"
       }
     ]
-  }
+  },
+  "capabilities": [
+    "emoji.get_random",
+    "message.get_recent",
+    "message.build_readable",
+    "llm.generate",
+    "send.emoji",
+    "config.get"
+  ]
 }

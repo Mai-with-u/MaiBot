@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
-import { python } from '@codemirror/lang-python'
+import { css } from '@codemirror/lang-css'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
+import { python } from '@codemirror/lang-python'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from '@codemirror/view'
 import { StreamLanguage } from '@codemirror/language'
 import { toml as tomlMode } from '@codemirror/legacy-modes/mode/toml'
 
-export type Language = 'python' | 'json' | 'toml' | 'text'
+import { useTheme } from '@/components/use-theme'
+
+export type Language = 'python' | 'json' | 'toml' | 'css' | 'text'
 
 interface CodeEditorProps {
   value: string
+
   onChange?: (value: string) => void
   language?: Language
   readOnly?: boolean
@@ -27,6 +31,7 @@ const languageExtensions: Record<Language, any[]> = {
   python: [python()],
   json: [json(), jsonParseLinter()],
   toml: [StreamLanguage.define(tomlMode)],
+  css: [css()],
   text: [],
 }
 
@@ -39,10 +44,11 @@ export function CodeEditor({
   minHeight,
   maxHeight,
   placeholder,
-  theme = 'dark',
+  theme,
   className = '',
 }: CodeEditorProps) {
   const [mounted, setMounted] = useState(false)
+  const { resolvedTheme } = useTheme()
 
   useEffect(() => {
     setMounted(true)
@@ -81,6 +87,9 @@ export function CodeEditor({
     extensions.push(EditorView.editable.of(false))
   }
 
+  // 如果外部传了 theme prop 则使用，否则从 context 自动获取
+  const effectiveTheme = theme ?? resolvedTheme
+
   return (
     <div className={`rounded-md overflow-hidden border custom-scrollbar ${className}`}>
       <CodeMirror
@@ -88,7 +97,7 @@ export function CodeEditor({
         height={height}
         minHeight={minHeight}
         maxHeight={maxHeight}
-        theme={theme === 'dark' ? oneDark : undefined}
+        theme={effectiveTheme === 'dark' ? oneDark : undefined}
         extensions={extensions}
         onChange={onChange}
         placeholder={placeholder}

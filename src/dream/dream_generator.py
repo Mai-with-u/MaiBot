@@ -1,13 +1,14 @@
-import random
 from typing import List, Optional
+import random
+import json
 
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
-from src.chat.utils.prompt_builder import Prompt
 from src.llm_models.payload_content.message import RoleType, Message
+from src.prompt.prompt_manager import prompt_manager
 from src.llm_models.utils_model import LLMRequest
-from src.chat.message_receive.chat_stream import get_chat_manager
-from src.plugin_system.apis import send_api
+from src.common.utils.utils_session import SessionUtils
+from src.services import send_service as send_api
 
 logger = get_logger("dream_generator")
 
@@ -44,27 +45,6 @@ def get_random_dream_styles(count: int = 2) -> List[str]:
     """从梦境风格列表中随机选择指定数量的风格"""
     return random.sample(DREAM_STYLES, min(count, len(DREAM_STYLES)))
 
-def init_dream_summary_prompt() -> None:
-    """初始化梦境总结的提示词"""
-    Prompt(
-        """
-你刚刚完成了一次对聊天记录的记忆整理工作。以下是整理过程的摘要：
-整理过程：
-{conversation_text}
-
-请将这次整理涉及的相关信息改写为一个富有诗意和想象力的"梦境"，请你仅使用具体的记忆的内容，而不是整理过程编写。
-要求：
-1. 使用第一人称视角
-2. 叙述直白，不要复杂修辞，口语化
-3. 长度控制在200-800字
-4. 用中文输出
-梦境风格：
-{dream_styles}
-请直接输出梦境内容，不要添加其他说明：
-""",
-        name="dream_summary_prompt",
-    )
-
 
 async def generate_dream_summary(
     chat_id: str,
@@ -74,9 +54,6 @@ async def generate_dream_summary(
 ) -> None:
     """生成梦境总结，输出到日志，并根据配置可选地推送给指定用户"""
     try:
-        import json
-        from src.chat.utils.prompt_builder import global_prompt_manager
-
         # 第一步：建立工具调用结果映射 (call_id -> result)
         tool_results_map: dict[str, str] = {}
         for msg in conversation_messages:
@@ -164,14 +141,13 @@ async def generate_dream_summary(
         dream_styles_text = "\n".join([f"{i + 1}. {style}" for i, style in enumerate(selected_styles)])
 
         # 使用 Prompt 管理器格式化梦境生成 prompt
-        dream_prompt = await global_prompt_manager.format_prompt(
-            "dream_summary_prompt",
-            chat_id=chat_id,
-            total_iterations=total_iterations,
-            time_cost=time_cost,
-            conversation_text=conversation_text,
-            dream_styles=dream_styles_text,
-        )
+        dream_prompt_template = prompt_manager.get_prompt("dream_summary")
+        dream_prompt_template.add_context("chat_id", chat_id)
+        dream_prompt_template.add_context("total_iterations", str(total_iterations))
+        dream_prompt_template.add_context("time_cost", str(time_cost))
+        dream_prompt_template.add_context("conversation_text", conversation_text)
+        dream_prompt_template.add_context("dream_styles", dream_styles_text)
+        dream_prompt = await prompt_manager.render_prompt(dream_prompt_template)
 
         # 调用 utils 模型生成梦境
         summary_model = LLMRequest(
@@ -199,15 +175,12 @@ async def generate_dream_summary(
                     else:
                         platform, user_id = parts[0].strip(), parts[1].strip()
                         if not platform or not user_id:
-                            logger.warning(
-                                f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}"
-                            )
+                            logger.warning(f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}")
                         else:
                             # 默认为私聊会话
-                            stream_id = get_chat_manager().get_stream_id(
+                            stream_id = SessionUtils.calculate_session_id(
                                 platform=platform,
-                                id=str(user_id),
-                                is_group=False,
+                                user_id=str(user_id),
                             )
                             if not stream_id:
                                 logger.error(
@@ -227,9 +200,7 @@ async def generate_dream_summary(
                                         f"[dream][梦境总结] 已将梦境结果发送给配置的目标用户: {platform}:{user_id}"
                                     )
                                 else:
-                                    logger.error(
-                                        f"[dream][梦境总结] 向 {platform}:{user_id} 发送梦境结果失败"
-                                    )
+                                    logger.error(f"[dream][梦境总结] 向 {platform}:{user_id} 发送梦境结果失败")
             except Exception as send_exc:
                 logger.error(f"[dream][梦境总结] 发送梦境结果到配置用户时出错: {send_exc}", exc_info=True)
         else:
@@ -237,6 +208,3 @@ async def generate_dream_summary(
 
     except Exception as e:
         logger.error(f"[dream][梦境总结] 生成梦境总结失败: {e}", exc_info=True)
-
-
-init_dream_summary_prompt()

@@ -39,6 +39,7 @@ queue_update.txt
 .env
 .env.*
 .cursor
+start_all.bat
 config/bot_config_dev.toml
 config/bot_config.toml
 config/bot_config.toml.bak
@@ -92,7 +93,6 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -354,3 +354,6 @@ interested_rates.txt
 MaiBot.code-workspace
 *.lock
 actionlint
+.sisyphus/
+dist-electron/
+packages/

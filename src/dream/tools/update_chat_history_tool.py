@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 from src.common.logger import get_logger
 from src.common.database.database_model import ChatHistory
-from src.plugin_system.apis import database_api
+from src.services import database_service as database_api
 
 logger = get_logger("dream_agent")
 
@@ -46,4 +46,3 @@ def make_update_chat_history(chat_id: str):  # chat_id 目前未直接使用，�
             return f"update_chat_history 执行失败: {e}"
 
     return update_chat_history
-

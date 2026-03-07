@@ -228,7 +228,10 @@ export function PlannerMonitor({ autoRefresh, refreshKey }: PlannerMonitorProps)
                       <div
                         key={chat.chat_id}
                         className="border rounded-lg p-4 hover:bg-accent/50 transition-colors cursor-pointer"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => handleChatClick(chat)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleChatClick(chat) } }}
                       >
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
@@ -327,7 +330,10 @@ export function PlannerMonitor({ autoRefresh, refreshKey }: PlannerMonitorProps)
                         <div
                           key={plan.filename}
                           className="border rounded-lg p-3 hover:bg-accent/50 transition-colors cursor-pointer"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => handleLogClick(plan.chat_id, plan.filename)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleLogClick(plan.chat_id, plan.filename) } }}
                         >
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-medium text-muted-foreground">

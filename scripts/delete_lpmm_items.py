@@ -171,7 +171,9 @@ def main():
             sys.exit(1)
 
         if not args.raw_index:
-            logger.info(f"{raw_path} 共解析出 {len(paragraphs)} 个段落，请通过 --raw-index 指定要删除的段落，例如 --raw-index 1,3")
+            logger.info(
+                f"{raw_path} 共解析出 {len(paragraphs)} 个段落，请通过 --raw-index 指定要删除的段落，例如 --raw-index 1,3"
+            )
             sys.exit(1)
 
         # 解析索引列表（1-based）

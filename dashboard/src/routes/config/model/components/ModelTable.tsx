@@ -54,7 +54,7 @@ export const ModelTable = React.memo(function ModelTable({
   return (
     <div className="hidden md:block rounded-lg border bg-card overflow-hidden">
       <div className="overflow-x-auto">
-        <Table>
+        <Table aria-label="模型列表">
           <TableHeader>
             <TableRow>
               <TableHead className="w-12">

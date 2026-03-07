@@ -4,7 +4,7 @@ on: [pull_request]
 
 jobs:
   conflict-check:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ubuntu-24.04
     outputs:
       conflict: ${{ steps.check-conflicts.outputs.conflict }}
     steps:
@@ -25,7 +25,7 @@ jobs:
           }
         shell: pwsh
   labeler:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ubuntu-24.04
     needs: conflict-check
     if: needs.conflict-check.outputs.conflict == 'true'
     steps:

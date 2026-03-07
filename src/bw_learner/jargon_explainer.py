@@ -6,7 +6,7 @@ from src.common.logger import get_logger
 from src.common.database.database_model import Jargon
 from src.llm_models.utils_model import LLMRequest
 from src.config.config import model_config, global_config
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.prompt.prompt_manager import prompt_manager
 from src.bw_learner.jargon_miner import search_jargon
 from src.bw_learner.learner_utils import (
     is_bot_message,
@@ -16,27 +16,6 @@ from src.bw_learner.learner_utils import (
 )
 
 logger = get_logger("jargon")
-
-
-def _init_explainer_prompts() -> None:
-    """初始化黑话解释器相关的prompt"""
-    # Prompt：概括黑话解释结果
-    summarize_prompt_str = """上下文聊天内容:
-{chat_context}
-
-在上下文中提取到的黑话及其含义:
-{jargon_explanations}
-
-请根据上述信息，对黑话解释进行概括和整理。
-- 如果上下文中有黑话出现，请简要说明这些黑话在上下文中的使用情况
-- 将所有黑话解释整理成简洁、易读的一段话
-- 输出格式要自然，适合作为回复参考信息
-请输出概括后的黑话解释（直接输出一段平文本，不要标题，无特殊格式或markdown格式，不要使用JSON格式）：
-"""
-    Prompt(summarize_prompt_str, "jargon_explainer_summarize_prompt")
-
-
-_init_explainer_prompts()
 
 
 class JargonExplainer:
@@ -222,11 +201,10 @@ class JargonExplainer:
         explanations_text = "\n".join(jargon_explanations)
 
         # 使用LLM概括黑话解释
-        summarize_prompt = await global_prompt_manager.format_prompt(
-            "jargon_explainer_summarize_prompt",
-            chat_context=chat_context,
-            jargon_explanations=explanations_text,
-        )
+        prompt_of_summarize = prompt_manager.get_prompt("jargon_explainer_summarize")
+        prompt_of_summarize.add_context("chat_context", lambda _: chat_context)
+        prompt_of_summarize.add_context("jargon_explanations", lambda _: explanations_text)
+        summarize_prompt = await prompt_manager.render_prompt(prompt_of_summarize)
 
         summary, _ = await self.llm.generate_response_async(summarize_prompt, temperature=0.3)
         if not summary:

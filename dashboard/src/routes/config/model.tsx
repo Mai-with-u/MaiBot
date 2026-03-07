@@ -58,8 +58,12 @@ import { SharePackDialog } from '@/components/share-pack-dialog'
 
 // 导入模块化的类型定义和组件
 import type { ModelInfo, ProviderConfig, ModelTaskConfig, TaskConfig } from './model/types'
-import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
+import { Pagination, ModelTable, ModelCardList } from './model/components'
 import { useModelTour, useModelFetcher, useModelAutoSave } from './model/hooks'
+
+// 导入动态表单和 Hook 系统
+import { DynamicConfigForm } from '@/components/dynamic-form'
+import { fieldHooks } from '@/lib/field-hooks'
 
 // 主导出组件：包装 RestartProvider
 export function ModelConfigPage() {
@@ -75,7 +79,6 @@ function ModelConfigPageContent() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [providers, setProviders] = useState<string[]>([])
   const [providerConfigs, setProviderConfigs] = useState<ProviderConfig[]>([])
-  const [modelNames, setModelNames] = useState<string[]>([])
   const [taskConfig, setTaskConfig] = useState<ModelTaskConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -176,10 +179,19 @@ function ModelConfigPageContent() {
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)
-      const config = await getModelConfig()
+      const result = await getModelConfig()
+      if (!result.success) {
+        toast({
+          title: '加载失败',
+          description: result.error,
+          variant: 'destructive',
+        })
+        setLoading(false)
+        return
+      }
+      const config = result.data
       const modelList = (config.models as ModelInfo[]) || []
       setModels(modelList)
-      setModelNames(modelList.map((m) => m.name))
       
       const providerList = (config.api_providers as ProviderConfig[]) || []
       setProviders(providerList.map((p) => p.name))
@@ -286,11 +298,30 @@ function ModelConfigPageContent() {
     try {
       setSaving(true)
       clearAutoSaveTimers()
-      const config = await getModelConfig()
+      const resultGet = await getModelConfig()
+      if (!resultGet.success) {
+        toast({
+          title: '保存失败',
+          description: resultGet.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+      const config = resultGet.data
       // 清理每个模型中的 null 值
       config.models = models.map(cleanModelForSave)
       config.model_task_config = taskConfig
-      await updateModelConfig(config)
+      const resultUpdate = await updateModelConfig(config)
+      if (!resultUpdate.success) {
+        toast({
+          title: '保存失败',
+          description: resultUpdate.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -316,11 +347,30 @@ function ModelConfigPageContent() {
       // 先取消自动保存定时器
       clearAutoSaveTimers()
 
-      const config = await getModelConfig()
+      const resultGet = await getModelConfig()
+      if (!resultGet.success) {
+        toast({
+          title: '保存失败',
+          description: resultGet.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+      const config = resultGet.data
       // 清理每个模型中的 null 值
       config.models = models.map(cleanModelForSave)
       config.model_task_config = taskConfig
-      await updateModelConfig(config)
+      const resultUpdate = await updateModelConfig(config)
+      if (!resultUpdate.success) {
+        toast({
+          title: '保存失败',
+          description: resultUpdate.error,
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -429,8 +479,6 @@ function ModelConfigPageContent() {
     }
     
     setModels(newModels)
-    // 立即更新模型名称列表
-    setModelNames(newModels.map((m) => m.name))
 
     // 如果模型名称发生变化，更新任务配置中对该模型的引用
     if (oldModelName && oldModelName !== modelToSave.name && taskConfig) {
@@ -488,8 +536,6 @@ function ModelConfigPageContent() {
     if (deletingIndex !== null) {
       const newModels = models.filter((_, i) => i !== deletingIndex)
       setModels(newModels)
-      // 立即更新模型名称列表
-      setModelNames(newModels.map((m) => m.name))
       // 重新检查任务配置问题
       checkTaskConfigIssues(taskConfig, newModels)
       toast({
@@ -542,8 +588,6 @@ function ModelConfigPageContent() {
     const deletedCount = selectedModels.size
     const newModels = models.filter((_, index) => !selectedModels.has(index))
     setModels(newModels)
-    // 立即更新模型名称列表
-    setModelNames(newModels.map((m) => m.name))
     // 重新检查任务配置问题
     checkTaskConfigIssues(taskConfig, newModels)
     setSelectedModels(new Set())
@@ -554,53 +598,6 @@ function ModelConfigPageContent() {
     })
   }
 
-  // 更新任务配置
-  const updateTaskConfig = (
-    taskName: keyof ModelTaskConfig,
-    field: keyof TaskConfig,
-    value: string[] | number | string
-  ) => {
-    if (!taskConfig) return
-    
-    // 检测 embedding 模型列表变化
-    if (taskName === 'embedding' && field === 'model_list' && Array.isArray(value)) {
-      const previousModels = previousEmbeddingModelsRef.current
-      const newModels = value as string[]
-      
-      // 判断是否有变化（添加、删除或替换）
-      const hasChanges = 
-        previousModels.length !== newModels.length ||
-        previousModels.some(model => !newModels.includes(model)) ||
-        newModels.some(model => !previousModels.includes(model))
-      
-      if (hasChanges && previousModels.length > 0) {
-        // 存储待更新的配置
-        pendingEmbeddingUpdateRef.current = { field, value }
-        // 显示警告对话框
-        setEmbeddingWarningOpen(true)
-        return
-      }
-    }
-    
-    // 正常更新配置
-    const newTaskConfig = {
-      ...taskConfig,
-      [taskName]: {
-        ...taskConfig[taskName],
-        [field]: value,
-      },
-    }
-    setTaskConfig(newTaskConfig)
-    
-    // 重新检查任务配置问题
-    checkTaskConfigIssues(newTaskConfig, models)
-    
-    // 如果是 embedding 模型列表，更新 ref
-    if (taskName === 'embedding' && field === 'model_list' && Array.isArray(value)) {
-      previousEmbeddingModelsRef.current = [...(value as string[])]
-    }
-  }
-  
   // 确认更新嵌入模型
   const handleConfirmEmbeddingChange = () => {
     if (!taskConfig || !pendingEmbeddingUpdateRef.current) return
@@ -918,101 +915,22 @@ function ModelConfigPageContent() {
           </p>
 
           {taskConfig && (
-            <div className="grid gap-4 sm:gap-6">
-              {/* Utils 任务 */}
-              <TaskConfigCard
-                title="组件模型 (utils)"
-                description="用于表情包、取名、关系、情绪变化等组件"
-                taskConfig={taskConfig.utils}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('utils', field, value)}
-                dataTour="task-model-select"
-              />
-
-              {/* Tool Use 任务 */}
-              <TaskConfigCard
-                title="工具调用模型 (tool_use)"
-                description="需要使用支持工具调用的模型"
-                taskConfig={taskConfig.tool_use}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('tool_use', field, value)}
-              />
-
-              {/* Replyer 任务 */}
-              <TaskConfigCard
-                title="首要回复模型 (replyer)"
-                description="用于表达器和表达方式学习"
-                taskConfig={taskConfig.replyer}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('replyer', field, value)}
-              />
-
-              {/* Planner 任务 */}
-              <TaskConfigCard
-                title="决策模型 (planner)"
-                description="负责决定麦麦该什么时候回复"
-                taskConfig={taskConfig.planner}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('planner', field, value)}
-              />
-
-              {/* VLM 任务 */}
-              <TaskConfigCard
-                title="图像识别模型 (vlm)"
-                description="视觉语言模型"
-                taskConfig={taskConfig.vlm}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('vlm', field, value)}
-                hideTemperature
-              />
-
-              {/* Voice 任务 */}
-              <TaskConfigCard
-                title="语音识别模型 (voice)"
-                description="语音转文字"
-                taskConfig={taskConfig.voice}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('voice', field, value)}
-                hideTemperature
-                hideMaxTokens
-              />
-
-              {/* Embedding 任务 */}
-              <TaskConfigCard
-                title="嵌入模型 (embedding)"
-                description="用于向量化"
-                taskConfig={taskConfig.embedding}
-                modelNames={modelNames}
-                onChange={(field, value) => updateTaskConfig('embedding', field, value)}
-                hideTemperature
-                hideMaxTokens
-              />
-
-              {/* LPMM 相关任务 */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">LPMM 知识库模型</h3>
-                
-                <TaskConfigCard
-                  title="实体提取模型 (lpmm_entity_extract)"
-                  description="从文本中提取实体"
-                  taskConfig={taskConfig.lpmm_entity_extract}
-                  modelNames={modelNames}
-                  onChange={(field, value) =>
-                    updateTaskConfig('lpmm_entity_extract', field, value)
-                  }
-                />
-
-                <TaskConfigCard
-                  title="RDF 构建模型 (lpmm_rdf_build)"
-                  description="构建知识图谱"
-                  taskConfig={taskConfig.lpmm_rdf_build}
-                  modelNames={modelNames}
-                  onChange={(field, value) =>
-                    updateTaskConfig('lpmm_rdf_build', field, value)
-                  }
-                />
-              </div>
-            </div>
+            <DynamicConfigForm
+              schema={{
+                className: 'TaskConfig',
+                classDoc: '任务配置',
+                fields: [],
+                nested: {},
+              }}
+              values={{ taskConfig }}
+              onChange={(field, value) => {
+                if (field === 'taskConfig') {
+                  setTaskConfig(value as ModelTaskConfig)
+                  setHasUnsavedChanges(true)
+                }
+              }}
+              hooks={fieldHooks}
+            />
           )}
         </TabsContent>
       </Tabs>

@@ -30,9 +30,8 @@ def _parse_blacklist_to_chat_ids(blacklist: list[str]) -> Set[str]:
         return chat_ids
 
     try:
-        from src.chat.message_receive.chat_stream import get_chat_manager
+        from src.common.utils.utils_session import SessionUtils
 
-        chat_manager = get_chat_manager()
         for blacklist_item in blacklist:
             if not isinstance(blacklist_item, str):
                 continue
@@ -51,7 +50,10 @@ def _parse_blacklist_to_chat_ids(blacklist: list[str]) -> Set[str]:
                 is_group = stream_type == "group"
 
                 # 转换为chat_id
-                chat_id = chat_manager.get_stream_id(platform, str(id_str), is_group=is_group)
+                if is_group:
+                    chat_id = SessionUtils.calculate_session_id(platform, group_id=str(id_str))
+                else:
+                    chat_id = SessionUtils.calculate_session_id(platform, user_id=str(id_str))
                 if chat_id:
                     chat_ids.add(chat_id)
                 else:
@@ -105,25 +107,27 @@ async def search_chat_history(
         # 检查参数
         if not keyword and not participant and not start_time and not end_time:
             return "未指定查询参数（需要提供keyword、participant、start_time或end_time之一）"
-        
+
         # 解析时间参数
         start_timestamp = None
         end_timestamp = None
-        
+
         if start_time:
             try:
                 from src.memory_system.memory_utils import parse_datetime_to_timestamp
+
                 start_timestamp = parse_datetime_to_timestamp(start_time)
             except ValueError as e:
                 return f"开始时间格式错误: {str(e)}，支持格式如：'2025-01-01' 或 '2025-01-01 12:00:00' 或 '2025/01/01'"
-        
+
         if end_time:
             try:
                 from src.memory_system.memory_utils import parse_datetime_to_timestamp
+
                 end_timestamp = parse_datetime_to_timestamp(end_time)
             except ValueError as e:
                 return f"结束时间格式错误: {str(e)}，支持格式如：'2025-01-01' 或 '2025-01-01 12:00:00' 或 '2025/01/01'"
-        
+
         # 验证时间范围
         if start_timestamp and end_timestamp and start_timestamp > end_timestamp:
             return "开始时间不能晚于结束时间"
@@ -158,23 +162,20 @@ async def search_chat_history(
                     f"search_chat_history 当前聊天流在黑名单中，强制使用本地查询，chat_id={chat_id}, keyword={keyword}, participant={participant}"
                 )
             query = ChatHistory.select().where(ChatHistory.chat_id == chat_id)
-        
+
         # 添加时间过滤条件
         if start_timestamp is not None and end_timestamp is not None:
             # 查询指定时间段内的记录（记录的时间范围与查询时间段有交集）
             # 记录的开始时间在查询时间段内，或记录的结束时间在查询时间段内，或记录完全包含查询时间段
             query = query.where(
                 (
-                    (ChatHistory.start_time >= start_timestamp)
-                    & (ChatHistory.start_time <= end_timestamp)
+                    (ChatHistory.start_time >= start_timestamp) & (ChatHistory.start_time <= end_timestamp)
                 )  # 记录开始时间在查询时间段内
                 | (
-                    (ChatHistory.end_time >= start_timestamp)
-                    & (ChatHistory.end_time <= end_timestamp)
+                    (ChatHistory.end_time >= start_timestamp) & (ChatHistory.end_time <= end_timestamp)
                 )  # 记录结束时间在查询时间段内
                 | (
-                    (ChatHistory.start_time <= start_timestamp)
-                    & (ChatHistory.end_time >= end_timestamp)
+                    (ChatHistory.start_time <= start_timestamp) & (ChatHistory.end_time >= end_timestamp)
                 )  # 记录完全包含查询时间段
             )
             logger.debug(
@@ -226,9 +227,9 @@ async def search_chat_history(
             if keyword:
                 keyword_matched = False
                 # 解析多个关键词（支持空格、逗号等分隔符）
-                keywords_list = parse_keywords_string(keyword)
-                if not keywords_list:
-                    keywords_list = [keyword.strip()] if keyword.strip() else []
+                keywords_list = parse_keywords_string(keyword) or (
+                    [keyword.strip()] if keyword.strip() else []
+                )
 
                 # 转换为小写以便匹配
                 keywords_lower = [kw.lower() for kw in keywords_list if kw.strip()]
@@ -302,7 +303,7 @@ async def search_chat_history(
                     time_desc = f"时间<='{end_str}'"
                 if time_desc:
                     conditions.append(time_desc)
-            
+
             if conditions:
                 conditions_str = "且".join(conditions)
                 return f"未找到满足条件（{conditions_str}）的聊天记录"

@@ -395,8 +395,7 @@ class KGManager:
             appear_cnt = self.ent_appear_cnt.get(ent_hash)
             if not appear_cnt or appear_cnt <= 0:
                 logger.debug(
-                    f"实体 {ent_hash} 在 ent_appear_cnt 中不存在或计数为 0，"
-                    f"将使用 1.0 作为默认出现次数参与权重计算"
+                    f"实体 {ent_hash} 在 ent_appear_cnt 中不存在或计数为 0，将使用 1.0 作为默认出现次数参与权重计算"
                 )
                 appear_cnt = 1.0
             ent_weights[ent_hash] = float(np.sum(scores)) / float(appear_cnt)

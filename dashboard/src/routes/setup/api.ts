@@ -1,11 +1,13 @@
 // 设置向导API调用函数
 
+import { parseResponse, throwIfError } from '@/lib/api-helpers'
 import { fetchWithAuth, getAuthHeaders } from '@/lib/fetch-with-auth'
+
 import type {
   BotBasicConfig,
-  PersonalityConfig,
   EmojiConfig,
   OtherBasicConfig,
+  PersonalityConfig,
   SiliconFlowConfig,
 } from './types'
 
@@ -18,12 +20,11 @@ export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取Bot配置失败')
-  }
-
-  const data = await response.json()
-  const botConfig = data.config.bot || {}
+  const result = await parseResponse<{ config: { bot?: BotBasicConfig } }>(
+    response
+  )
+  const data = throwIfError(result)
+  const botConfig = (data.config.bot || {}) as Partial<BotBasicConfig>
 
   return {
     qq_account: botConfig.qq_account || 0,
@@ -39,12 +40,11 @@ export async function loadPersonalityConfig(): Promise<PersonalityConfig> {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取人格配置失败')
-  }
-
-  const data = await response.json()
-  const personalityConfig = data.config.personality || {}
+  const result = await parseResponse<{
+    config: { personality?: PersonalityConfig }
+  }>(response)
+  const data = throwIfError(result)
+  const personalityConfig = (data.config.personality || {}) as Partial<PersonalityConfig>
 
   return {
     personality: personalityConfig.personality || '',
@@ -62,12 +62,11 @@ export async function loadEmojiConfig(): Promise<EmojiConfig> {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取表情包配置失败')
-  }
-
-  const data = await response.json()
-  const emojiConfig = data.config.emoji || {}
+  const result = await parseResponse<{ config: { emoji?: EmojiConfig } }>(
+    response
+  )
+  const data = throwIfError(result)
+  const emojiConfig = (data.config.emoji || {}) as Partial<EmojiConfig>
 
   return {
     emoji_chance: emojiConfig.emoji_chance ?? 0.4,
@@ -87,11 +86,13 @@ export async function loadOtherBasicConfig(): Promise<OtherBasicConfig> {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取其他配置失败')
-  }
-
-  const data = await response.json()
+  const result = await parseResponse<{
+    config: {
+      tool?: { enable_tool?: boolean }
+      expression?: { all_global_jargon?: boolean }
+    }
+  }>(response)
+  const data = throwIfError(result)
   const config = data.config
 
   const toolConfig = config.tool || {}
@@ -110,18 +111,17 @@ export async function loadSiliconFlowConfig(): Promise<SiliconFlowConfig> {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取模型配置失败')
-  }
-
-  const data = await response.json()
+  const result = await parseResponse<{
+    config: {
+      api_providers?: Array<{ name: string; api_key?: string }>
+    }
+  }>(response)
+  const data = throwIfError(result)
   const modelConfig = data.config
 
   // 获取SiliconFlow提供商的API Key
   const apiProviders = modelConfig.api_providers || []
-  const siliconFlowProvider = apiProviders.find(
-    (p: Record<string, unknown>) => p.name === 'SiliconFlow'
-  )
+  const siliconFlowProvider = apiProviders.find((p) => p.name === 'SiliconFlow')
 
   return {
     api_key: siliconFlowProvider?.api_key || '',
@@ -138,28 +138,21 @@ export async function saveBotBasicConfig(config: BotBasicConfig) {
     body: JSON.stringify(config),
   })
 
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '保存Bot基础配置失败')
-  }
-
-  return await response.json()
+  const result = await parseResponse(response)
+  return throwIfError(result)
 }
 
 // 保存人格配置
 export async function savePersonalityConfig(config: PersonalityConfig) {
   const response = await fetchWithAuth('/api/webui/config/bot/section/personality', {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(config),
-  })
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(config),
+    }
+  )
 
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '保存人格配置失败')
-  }
-
-  return await response.json()
+  const result = await parseResponse(response)
+  return throwIfError(result)
 }
 
 // 保存表情包配置
@@ -170,12 +163,8 @@ export async function saveEmojiConfig(config: EmojiConfig) {
     body: JSON.stringify(config),
   })
 
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '保存表情包配置失败')
-  }
-
-  return await response.json()
+  const result = await parseResponse(response)
+  return throwIfError(result)
 }
 
 // 保存其他基础配置（工具、情绪、黑话）
@@ -205,10 +194,8 @@ export async function saveOtherBasicConfig(config: OtherBasicConfig) {
 
   // 检查所有请求是否成功
   for (const response of results) {
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || '保存其他配置失败')
-    }
+    const result = await parseResponse(response)
+    throwIfError(result)
   }
 
   return { success: true }
@@ -222,18 +209,17 @@ export async function saveSiliconFlowConfig(config: SiliconFlowConfig) {
     headers: getAuthHeaders(),
   })
 
-  if (!response.ok) {
-    throw new Error('读取模型配置失败')
-  }
-
-  const currentModelConfig = await response.json()
+  const result = await parseResponse<{
+    config: {
+      api_providers?: Array<Record<string, unknown>>
+    }
+  }>(response)
+  const currentModelConfig = throwIfError(result)
   const modelConfig = currentModelConfig.config
 
   // 2. 更新SiliconFlow提供商的API Key
   const apiProviders = modelConfig.api_providers || []
-  const siliconFlowIndex = apiProviders.findIndex(
-    (p: Record<string, unknown>) => p.name === 'SiliconFlow'
-  )
+  const siliconFlowIndex = apiProviders.findIndex((p) => p.name === 'SiliconFlow')
 
   if (siliconFlowIndex >= 0) {
     // 更新现有提供商的API Key
@@ -266,12 +252,8 @@ export async function saveSiliconFlowConfig(config: SiliconFlowConfig) {
     body: JSON.stringify(updatedConfig),
   })
 
-  if (!saveResponse.ok) {
-    const error = await saveResponse.json()
-    throw new Error(error.detail || '保存模型配置失败')
-  }
-
-  return await saveResponse.json()
+  const saveResult = await parseResponse(saveResponse)
+  return throwIfError(saveResult)
 }
 
 // 标记设置完成
@@ -280,10 +262,6 @@ export async function completeSetup() {
     method: 'POST',
   })
 
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.message || '标记配置完成失败')
-  }
-
-  return await response.json()
+  const result = await parseResponse(response)
+  return throwIfError(result)
 }

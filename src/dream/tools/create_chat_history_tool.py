@@ -63,4 +63,3 @@ def make_create_chat_history(chat_id: str):
             return f"create_chat_history 执行失败: {e}"
 
     return create_chat_history
-

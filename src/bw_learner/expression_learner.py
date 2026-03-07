@@ -11,8 +11,8 @@ from src.config.config import model_config, global_config
 from src.chat.utils.chat_message_builder import (
     build_anonymous_messages,
 )
-from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
-from src.chat.message_receive.chat_stream import get_chat_manager
+from src.prompt.prompt_manager import prompt_manager
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.bw_learner.learner_utils import (
     filter_message_content,
     is_bot_message,
@@ -32,60 +32,6 @@ from src.bw_learner.expression_auto_check_task import (
 logger = get_logger("expressor")
 
 
-def init_prompt() -> None:
-    learn_style_prompt = """{chat_str}
-你的名字是{bot_name},现在请你完成两个提取任务
-任务1：请从上面这段群聊中用户的语言风格和说话方式
-1. 只考虑文字，不要考虑表情包和图片
-2. 不要总结SELF的发言，因为这是你自己的发言，不要重复学习你自己的发言
-3. 不要涉及具体的人名，也不要涉及具体名词
-4. 思考有没有特殊的梗，一并总结成语言风格
-5. 例子仅供参考，请严格根据群聊内容总结!!!
-注意：总结成如下格式的规律，总结的内容要详细，但具有概括性：
-例如：当"AAAAA"时，可以"BBBBB", AAAAA代表某个场景，不超过20个字。BBBBB代表对应的语言风格，特定句式或表达方式，不超过20个字。
-表达方式在3-5个左右，不要超过10个
-
-
-任务2：请从上面这段聊天内容中提取"可能是黑话"的候选项（黑话/俚语/网络缩写/口头禅）。
-- 必须为对话中真实出现过的短词或短语
-- 必须是你无法理解含义的词语，没有明确含义的词语，请不要选择有明确含义，或者含义清晰的词语
-- 排除：人名、@、表情包/图片中的内容、纯标点、常规功能词（如的、了、呢、啊等）
-- 每个词条长度建议 2-8 个字符（不强制），尽量短小
-- 请你提取出可能的黑话，最多30个黑话，请尽量提取所有
-
-黑话必须为以下几种类型：
-- 由字母构成的，汉语拼音首字母的简写词，例如：nb、yyds、xswl
-- 英文词语的缩写，用英文字母概括一个词汇或含义，例如：CPU、GPU、API
-- 中文词语的缩写，用几个汉字概括一个词汇或含义，例如：社死、内卷
-
-输出要求：
-将表达方式，语言风格和黑话以 JSON 数组输出，每个元素为一个对象，结构如下（注意字段名）：
-注意请不要输出重复内容，请对表达方式和黑话进行去重。
-
-[
-  {{"situation": "AAAAA", "style": "BBBBB", "source_id": "3"}},
-  {{"situation": "CCCC", "style": "DDDD", "source_id": "7"}}
-  {{"situation": "对某件事表示十分惊叹", "style": "使用 我嘞个xxxx", "source_id": "[消息编号]"}},
-  {{"situation": "表示讽刺的赞同，不讲道理", "style": "对对对", "source_id": "[消息编号]"}},
-  {{"situation": "当涉及游戏相关时，夸赞，略带戏谑意味", "style": "使用 这么强！", "source_id": "[消息编号]"}},
-  {{"content": "词条", "source_id": "12"}},
-  {{"content": "词条2", "source_id": "5"}}
-]
-
-其中：
-表达方式条目：
-- situation：表示“在什么情境下”的简短概括（不超过20个字）
-- style：表示对应的语言风格或常用表达（不超过20个字）
-- source_id：该表达方式对应的“来源行编号”，即上方聊天记录中方括号里的数字（例如 [3]），请只输出数字本身，不要包含方括号
-黑话jargon条目：
-- content:表示黑话的内容
-- source_id：该黑话对应的“来源行编号”，即上方聊天记录中方括号里的数字（例如 [3]），请只输出数字本身，不要包含方括号
-
-现在请你输出 JSON：
-"""
-    Prompt(learn_style_prompt, "learn_style_prompt")
-
-
 class ExpressionLearner:
     def __init__(self, chat_id: str) -> None:
         self.express_learn_model: LLMRequest = LLMRequest(
@@ -96,8 +42,8 @@ class ExpressionLearner:
         )
         self.check_model: Optional[LLMRequest] = None  # 检查用的 LLM 实例，延迟初始化
         self.chat_id = chat_id
-        self.chat_stream = get_chat_manager().get_stream(chat_id)
-        self.chat_name = get_chat_manager().get_stream_name(chat_id) or chat_id
+        self.chat_stream = _chat_manager.get_session_by_session_id(chat_id)
+        self.chat_name = _chat_manager.get_session_name(chat_id) or chat_id
 
         # 学习锁，防止并发执行学习任务
         self._learning_lock = asyncio.Lock()
@@ -105,7 +51,7 @@ class ExpressionLearner:
     async def learn_and_store(
         self,
         messages: List[Any],
-    ) -> List[Tuple[str, str, str]]:
+    ) -> Optional[List[Tuple[str, str, str]]]:
         """
         学习并存储表达方式
 
@@ -122,11 +68,11 @@ class ExpressionLearner:
         # 学习用（开启行编号，便于溯源）
         random_msg_str: str = await build_anonymous_messages(random_msg, show_ids=True)
 
-        prompt: str = await global_prompt_manager.format_prompt(
-            "learn_style_prompt",
-            bot_name=global_config.bot.nickname,
-            chat_str=random_msg_str,
-        )
+        prompt_template = prompt_manager.get_prompt("learn_style")
+        prompt_template.add_context("bot_name", global_config.bot.nickname)
+        prompt_template.add_context("chat_str", random_msg_str)
+
+        prompt = await prompt_manager.render_prompt(prompt_template)
 
         # print(f"random_msg_str:{random_msg_str}")
         # logger.info(f"学习{type_str}的prompt: {prompt}")
@@ -186,14 +132,14 @@ class ExpressionLearner:
 
         # 展示学到的表达方式
         learnt_expressions_str = ""
-        for (situation,style) in learnt_expressions:
+        for situation, style in learnt_expressions:
             learnt_expressions_str += f"{situation}->{style}\n"
         logger.info(f"在 {self.chat_name} 学习到表达风格:\n{learnt_expressions_str}")
 
         current_time = time.time()
 
         # 存储到数据库 Expression 表
-        for (situation,style) in learnt_expressions:
+        for situation, style in learnt_expressions:
             await self._upsert_expression_record(
                 situation=situation,
                 style=style,
@@ -209,11 +155,11 @@ class ExpressionLearner:
     ) -> List[Tuple[str, str, str]]:
         """
         过滤表达方式，移除不符合条件的条目
-        
+
         Args:
             expressions: 表达方式列表，每个元素是 (situation, style, source_id)
             messages: 原始消息列表，用于溯源和验证
-            
+
         Returns:
             过滤后的表达方式列表，每个元素是 (situation, style, context)
         """
@@ -255,9 +201,7 @@ class ExpressionLearner:
 
             # 过滤掉包含 SELF 的内容（不学习）
             if "SELF" in (situation or "") or "SELF" in (style or "") or "SELF" in context:
-                logger.info(
-                    f"跳过包含 SELF 的表达方式: situation={situation}, style={style}, source_id={source_id}"
-                )
+                logger.info(f"跳过包含 SELF 的表达方式: situation={situation}, style={style}, source_id={source_id}")
                 continue
 
             # 过滤掉 style 与机器人名称/昵称重复的表达
@@ -269,19 +213,20 @@ class ExpressionLearner:
                 continue
 
             # 过滤掉包含 "表情：" 或 "表情:" 的内容
-            if "表情：" in (situation or "") or "表情:" in (situation or "") or \
-               "表情：" in (style or "") or "表情:" in (style or "") or \
-               "表情：" in context or "表情:" in context:
-                logger.info(
-                    f"跳过包含表情标记的表达方式: situation={situation}, style={style}, source_id={source_id}"
-                )
+            if (
+                "表情：" in (situation or "")
+                or "表情:" in (situation or "")
+                or "表情：" in (style or "")
+                or "表情:" in (style or "")
+                or "表情：" in context
+                or "表情:" in context
+            ):
+                logger.info(f"跳过包含表情标记的表达方式: situation={situation}, style={style}, source_id={source_id}")
                 continue
 
             # 过滤掉包含 "[图片" 的内容
             if "[图片" in (situation or "") or "[图片" in (style or "") or "[图片" in context:
-                logger.info(
-                    f"跳过包含图片标记的表达方式: situation={situation}, style={style}, source_id={source_id}"
-                )
+                logger.info(f"跳过包含图片标记的表达方式: situation={situation}, style={style}, source_id={source_id}")
                 continue
 
             filtered_expressions.append((situation, style))
@@ -347,7 +292,7 @@ class ExpressionLearner:
         """
         更新现有 Expression 记录（situation 完全匹配或相似的情况）
         将新的 situation 添加到 content_list，不合并 style
-        
+
         Args:
             use_llm_summary: 是否使用 LLM 进行总结，完全匹配时为 False，相似匹配时为 True
         """
@@ -383,26 +328,28 @@ class ExpressionLearner:
             return []
         return [str(item) for item in data if isinstance(item, str)] if isinstance(data, list) else []
 
-    async def _find_similar_situation_expression(self, situation: str, similarity_threshold: float = 0.75) -> Tuple[Optional[Expression], float]:
+    async def _find_similar_situation_expression(
+        self, situation: str, similarity_threshold: float = 0.75
+    ) -> Tuple[Optional[Expression], float]:
         """
         查找具有相似 situation 的 Expression 记录
         检查 content_list 中的每一项
-        
+
         Args:
             situation: 要查找的 situation
             similarity_threshold: 相似度阈值，默认 0.75
-            
+
         Returns:
-            Tuple[Optional[Expression], float]: 
+            Tuple[Optional[Expression], float]:
                 - 找到的最相似的 Expression 对象，如果没有找到则返回 None
                 - 相似度值（如果找到匹配，范围在 similarity_threshold 到 1.0 之间）
         """
         # 查询同一 chat_id 的所有记录
         all_expressions = Expression.select().where(Expression.chat_id == self.chat_id)
-        
+
         best_match = None
         best_similarity = 0.0
-        
+
         for expr in all_expressions:
             # 检查 content_list 中的每一项
             content_list = self._parse_content_list(expr.content_list)
@@ -411,10 +358,12 @@ class ExpressionLearner:
                 if similarity >= similarity_threshold and similarity > best_similarity:
                     best_similarity = similarity
                     best_match = expr
-        
+
         if best_match:
-            logger.debug(f"找到相似的 situation: 相似度={best_similarity:.3f}, 现有='{best_match.situation}', 新='{situation}'")
-        
+            logger.debug(
+                f"找到相似的 situation: 相似度={best_similarity:.3f}, 现有='{best_match.situation}', 新='{situation}'"
+            )
+
         return best_match, best_similarity
 
     async def _compose_situation_text(self, content_list: List[str], fallback: str = "") -> str:
@@ -442,8 +391,7 @@ class ExpressionLearner:
         if self.check_model is None:
             try:
                 self.check_model = LLMRequest(
-                    model_set=model_config.model_task_config.tool_use,
-                    request_type="expression.check"
+                    model_set=model_config.model_task_config.tool_use, request_type="expression.check"
                 )
                 logger.debug("检查用 LLM 实例初始化成功")
             except Exception as e:
@@ -452,7 +400,7 @@ class ExpressionLearner:
     async def _check_expression_immediately(self, expr_obj: Expression) -> None:
         """
         立即检查表达方式（在 count 增加后调用）
-        
+
         Args:
             expr_obj: 要检查的表达方式对象
         """
@@ -469,10 +417,7 @@ class ExpressionLearner:
                 return
 
             # 执行 LLM 评估
-            suitable, reason, error = await single_expression_check(
-                expr_obj.situation,
-                expr_obj.style
-            )
+            suitable, reason, error = await single_expression_check(expr_obj.situation, expr_obj.style)
 
             # 更新数据库
             expr_obj.checked = True
@@ -497,48 +442,45 @@ class ExpressionLearner:
     def _check_cached_jargons_in_messages(self, messages: List[Any]) -> List[Tuple[str, str]]:
         """
         检查缓存中的 jargon 是否出现在 messages 中
-        
+
         Args:
             messages: 消息列表
-            
+
         Returns:
             List[Tuple[str, str]]: 匹配到的黑话条目列表，每个元素是 (content, source_id)
         """
         if not messages:
             return []
-        
+
         # 获取 jargon_miner 实例
         jargon_miner = miner_manager.get_miner(self.chat_id)
-        
+
         # 获取缓存中的所有 jargon
         cached_jargons = jargon_miner.get_cached_jargons()
         if not cached_jargons:
             return []
-        
+
         matched_entries: List[Tuple[str, str]] = []
-        
+
         # 遍历 messages，检查缓存中的 jargon 是否出现
         for i, msg in enumerate(messages):
             # 跳过机器人自己的消息
             if is_bot_message(msg):
                 continue
-            
+
             # 获取消息文本
-            msg_text = (
-                getattr(msg, "processed_plain_text", None) or 
-                ""
-            ).strip()
-            
+            msg_text = (getattr(msg, "processed_plain_text", None) or "").strip()
+
             if not msg_text:
                 continue
-            
+
             # 检查每个缓存中的 jargon 是否出现在消息文本中
             for jargon in cached_jargons:
                 if not jargon or not jargon.strip():
                     continue
-                
+
                 jargon_content = jargon.strip()
-                
+
                 # 使用正则匹配，考虑单词边界（类似 jargon_explainer 中的逻辑）
                 pattern = re.escape(jargon_content)
                 # 对于中文，使用更宽松的匹配；对于英文/数字，使用单词边界
@@ -548,12 +490,12 @@ class ExpressionLearner:
                 else:
                     # 纯英文/数字，使用单词边界
                     search_pattern = r"\b" + pattern + r"\b"
-                
+
                 if re.search(search_pattern, msg_text, re.IGNORECASE):
                     # 找到匹配，构建条目（source_id 从 1 开始，因为 build_anonymous_messages 的编号从 1 开始）
                     source_id = str(i + 1)
                     matched_entries.append((jargon_content, source_id))
-        
+
         return matched_entries
 
     async def _process_jargon_entries(self, jargon_entries: List[Tuple[str, str]], messages: List[Any]) -> None:
@@ -619,9 +561,6 @@ class ExpressionLearner:
 
         # 调用 jargon_miner 处理这些条目
         await jargon_miner.process_extracted_entries(entries)
-
-
-init_prompt()
 
 
 class ExpressionLearnerManager:

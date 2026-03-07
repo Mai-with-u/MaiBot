@@ -11,6 +11,17 @@
     <link rel="icon" type="image/x-icon" href="/maimai.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MaiBot Dashboard</title>
+    <script>
+      (function() {
+        const mode = localStorage.getItem('maibot-theme-mode') 
+          || localStorage.getItem('ui-theme')
+          || localStorage.getItem('maibot-ui-theme');
+        const theme = mode === 'system' || !mode 
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          : mode;
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root" class="notranslate"></div>

@@ -1,7 +1,8 @@
 """FastAPI 应用工厂 - 创建和配置 WebUI 应用实例"""
 
-import mimetypes
+from importlib import import_module
 from pathlib import Path
+import mimetypes
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -113,12 +114,15 @@ def _setup_static_files(app: FastAPI):
     mimetypes.add_type("text/css", ".css")
     mimetypes.add_type("application/json", ".json")
 
-    base_dir = Path(__file__).parent.parent.parent
-    static_path = base_dir / "webui" / "dist"
+    static_path = _resolve_static_path()
+    if static_path is None:
+        logger.warning("❌ WebUI 静态文件目录不存在")
+        logger.warning("💡 请先构建前端: cd dashboard && npm run build")
+        return
 
     if not static_path.exists():
         logger.warning(f"❌ WebUI 静态文件目录不存在: {static_path}")
-        logger.warning("💡 请先构建前端: cd webui && npm run build")
+        logger.warning("💡 请先构建前端: cd dashboard && npm run build")
         return
 
     if not (static_path / "index.html").exists():
@@ -146,6 +150,24 @@ def _setup_static_files(app: FastAPI):
         return response
 
     logger.info(f"✅ WebUI 静态文件服务已配置: {static_path}")
+
+
+def _resolve_static_path() -> Path | None:
+    try:
+        module = import_module("maibot_dashboard")
+        get_dist_path = getattr(module, "get_dist_path", None)
+        if callable(get_dist_path):
+            package_path = get_dist_path()
+            if isinstance(package_path, Path) and package_path.exists():
+                return package_path
+    except Exception:
+        pass
+
+    base_dir = Path(__file__).parent.parent.parent
+    static_path = base_dir / "webui" / "dist"
+    if static_path.exists():
+        return static_path
+    return None
 
 
 def show_access_token():

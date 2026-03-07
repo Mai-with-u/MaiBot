@@ -1,11 +1,11 @@
 from typing import Tuple, List, Dict, Any
 from src.common.logger import get_logger
 from src.llm_models.utils_model import LLMRequest
-from src.config.config import global_config
+from src.config.config import global_config, model_config
 import random
 from .chat_observer import ChatObserver
 from .reply_checker import ReplyChecker
-from .observation_info import ObservationInfo
+from .observation_info import ObservationInfo, dict_to_database_message
 from .conversation_info import ConversationInfo
 from src.chat.utils.chat_message_builder import build_readable_messages
 
@@ -87,13 +87,11 @@ class ReplyGenerator:
 
     def __init__(self, stream_id: str, private_name: str):
         self.llm = LLMRequest(
-            model=global_config.llm_PFC_chat,
-            temperature=global_config.llm_PFC_chat["temp"],
-            max_tokens=300,
+            model_set=model_config.model_task_config.replyer,
             request_type="reply_generation",
         )
         self.personality_info = self._get_personality_prompt()
-        self.name = global_config.BOT_NICKNAME
+        self.name = global_config.bot.nickname
         self.private_name = private_name
         self.chat_observer = ChatObserver.get_instance(stream_id, private_name)
         self.reply_checker = ReplyChecker(stream_id, private_name)
@@ -101,7 +99,7 @@ class ReplyGenerator:
     def _get_personality_prompt(self) -> str:
         """获取个性提示信息"""
         prompt_personality = global_config.personality.personality
-        
+
         # 检查是否需要随机替换为状态
         if (
             global_config.personality.states
@@ -109,8 +107,8 @@ class ReplyGenerator:
             and random.random() < global_config.personality.state_probability
         ):
             prompt_personality = random.choice(global_config.personality.states)
-        
-        bot_name = global_config.BOT_NICKNAME
+
+        bot_name = global_config.bot.nickname
         return f"你的名字是{bot_name},你{prompt_personality};"
 
     # 修改 generate 方法签名，增加 action_type 参数
@@ -188,10 +186,10 @@ class ReplyGenerator:
         chat_history_text = observation_info.chat_history_str
         if observation_info.new_messages_count > 0 and observation_info.unprocessed_messages:
             new_messages_list = observation_info.unprocessed_messages
-            new_messages_str = await build_readable_messages(
-                new_messages_list,
+            db_messages = [dict_to_database_message(m) for m in new_messages_list]
+            new_messages_str = build_readable_messages(
+                db_messages,
                 replace_bot_name=True,
-                merge_messages=False,
                 timestamp_mode="relative",
                 read_mark=0.0,
             )

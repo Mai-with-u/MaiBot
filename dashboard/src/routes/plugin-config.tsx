@@ -341,16 +341,44 @@ function PluginConfigEditor({ plugin, onBack }: PluginConfigEditorProps) {
   const loadConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const [schemaData, configData, rawConfigData] = await Promise.all([
+      const [schemaResult, configResult, rawResult] = await Promise.all([
         getPluginConfigSchema(plugin.id),
         getPluginConfig(plugin.id),
         getPluginConfigRaw(plugin.id)
       ])
-      setSchema(schemaData)
-      setConfig(configData)
-      setOriginalConfig(JSON.parse(JSON.stringify(configData)))
-      setSourceCode(rawConfigData)
-      setOriginalSourceCode(rawConfigData)
+      
+      if (!schemaResult.success) {
+        toast({
+          title: '加载配置架构失败',
+          description: schemaResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
+      
+      if (!configResult.success) {
+        toast({
+          title: '加载配置数据失败',
+          description: configResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
+      
+      if (!rawResult.success) {
+        toast({
+          title: '加载原始配置失败',
+          description: rawResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
+      
+      setSchema(schemaResult.data)
+      setConfig(configResult.data)
+      setOriginalConfig(JSON.parse(JSON.stringify(configResult.data)))
+      setSourceCode(rawResult.data)
+      setOriginalSourceCode(rawResult.data)
     } catch (error) {
       toast({
         title: '加载配置失败',
@@ -433,7 +461,15 @@ function PluginConfigEditor({ plugin, onBack }: PluginConfigEditorProps) {
   // 重置配置
   const handleReset = async () => {
     try {
-      await resetPluginConfig(plugin.id)
+      const resetResult = await resetPluginConfig(plugin.id)
+      if (!resetResult.success) {
+        toast({
+          title: '重置失败',
+          description: resetResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
       toast({
         title: '配置已重置',
         description: '下次加载插件时将使用默认配置'
@@ -452,10 +488,18 @@ function PluginConfigEditor({ plugin, onBack }: PluginConfigEditorProps) {
   // 切换启用状态
   const handleToggle = async () => {
     try {
-      const result = await togglePlugin(plugin.id)
+      const toggleResult = await togglePlugin(plugin.id)
+      if (!toggleResult.success) {
+        toast({
+          title: '切换失败',
+          description: toggleResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
       toast({
-        title: result.message,
-        description: result.note
+        title: toggleResult.data.message,
+        description: toggleResult.data.note
       })
       loadConfig()
     } catch (error) {
@@ -602,20 +646,19 @@ function PluginConfigEditor({ plugin, onBack }: PluginConfigEditorProps) {
             </AlertDescription>
           </Alert>
           
-          <CodeEditor
-            value={sourceCode}
-            onChange={(value) => {
-              setSourceCode(value)
-              if (hasTomlError) {
-                setHasTomlError(false)
-              }
-            }}
-            language="toml"
-            theme="dark"
-            height="calc(100vh - 350px)"
-            minHeight="500px"
-            placeholder="TOML 配置内容"
-          />
+            <CodeEditor
+              value={sourceCode}
+              onChange={(value) => {
+                setSourceCode(value)
+                if (hasTomlError) {
+                  setHasTomlError(false)
+                }
+              }}
+              language="toml"
+              height="calc(100vh - 350px)"
+              minHeight="500px"
+              placeholder="TOML 配置内容"
+            />
         </div>
       )}
 
@@ -724,8 +767,16 @@ function PluginConfigPageContent() {
   const loadPlugins = async () => {
     setLoading(true)
     try {
-      const data = await getInstalledPlugins()
-      setPlugins(data)
+      const installedResult = await getInstalledPlugins()
+      if (!installedResult.success) {
+        toast({
+          title: '加载插件列表失败',
+          description: installedResult.error,
+          variant: 'destructive'
+        })
+        return
+      }
+      setPlugins(installedResult.data)
     } catch (error) {
       toast({
         title: '加载插件列表失败',
@@ -873,7 +924,10 @@ function PluginConfigPageContent() {
                   <div
                     key={plugin.id}
                     className="flex items-center justify-between p-4 rounded-lg border hover:bg-muted/50 cursor-pointer transition-colors"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedPlugin(plugin)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedPlugin(plugin) } }}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">

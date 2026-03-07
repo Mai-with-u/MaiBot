@@ -136,4 +136,3 @@ class PlanReplyLogger:
             return str(value)
         # Fallback to string for other complex types
         return str(value)
-

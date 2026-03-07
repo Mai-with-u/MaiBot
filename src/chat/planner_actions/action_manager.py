@@ -1,20 +1,34 @@
-from typing import Dict, Optional, Type
+from typing import Dict, Optional, Tuple
 
-from src.chat.message_receive.chat_stream import ChatStream
+from src.chat.message_receive.chat_manager import BotChatSession
 from src.common.logger import get_logger
 from src.common.data_models.database_data_model import DatabaseMessages
-from src.plugin_system.core.component_registry import component_registry
-from src.plugin_system.base.component_types import ComponentType, ActionInfo
-from src.plugin_system.base.base_action import BaseAction
+from src.core.component_registry import component_registry, ActionExecutor
+from src.core.types import ActionInfo, ComponentType
 
 logger = get_logger("action_manager")
+
+
+class ActionHandle:
+    """Action 执行句柄
+
+    不依赖任何插件基类，内部持有 executor (async callable) 和绑定参数。
+    brain_chat 调用 ``await handle.execute()`` 即可。
+    """
+
+    def __init__(self, executor: ActionExecutor, **kwargs):
+        self._executor = executor
+        self._kwargs = kwargs
+
+    async def execute(self) -> Tuple[bool, str]:
+        return await self._executor(**self._kwargs)
 
 
 class ActionManager:
     """
     动作管理器，用于管理各种类型的动作
 
-    现在统一使用新插件系统，简化了原有的新旧兼容逻辑。
+    使用核心组件注册表的 executor-based 模式。
     """
 
     def __init__(self):
@@ -35,13 +49,13 @@ class ActionManager:
         action_reasoning: str,
         cycle_timers: dict,
         thinking_id: str,
-        chat_stream: ChatStream,
+        chat_stream: BotChatSession,
         log_prefix: str,
         shutting_down: bool = False,
         action_message: Optional[DatabaseMessages] = None,
-    ) -> Optional[BaseAction]:
+    ) -> Optional[ActionHandle]:
         """
-        创建动作处理器实例
+        创建动作执行句柄
 
         Args:
             action_name: 动作名称
@@ -52,30 +66,26 @@ class ActionManager:
             chat_stream: 聊天流
             log_prefix: 日志前缀
             shutting_down: 是否正在关闭
+            action_message: 动作消息记录
 
         Returns:
-            Optional[BaseAction]: 创建的动作处理器实例，如果动作名称未注册则返回None
+            Optional[ActionHandle]: 执行句柄，如果动作未注册则返回 None
         """
         try:
-            # 获取组件类 - 明确指定查询Action类型
-            component_class: Type[BaseAction] = component_registry.get_component_class(
-                action_name, ComponentType.ACTION
-            )  # type: ignore
-            if not component_class:
+            executor = component_registry.get_action_executor(action_name)
+            if not executor:
                 logger.warning(f"{log_prefix} 未找到Action组件: {action_name}")
                 return None
 
-            # 获取组件信息
-            component_info = component_registry.get_component_info(action_name, ComponentType.ACTION)
-            if not component_info:
+            info = component_registry.get_action_info(action_name)
+            if not info:
                 logger.warning(f"{log_prefix} 未找到Action组件信息: {action_name}")
                 return None
 
-            # 获取插件配置
-            plugin_config = component_registry.get_plugin_config(component_info.plugin_name)
+            plugin_config = component_registry.get_plugin_config(info.plugin_name) or {}
 
-            # 创建动作实例
-            instance = component_class(
+            handle = ActionHandle(
+                executor,
                 action_data=action_data,
                 action_reasoning=action_reasoning,
                 cycle_timers=cycle_timers,
@@ -87,11 +97,11 @@ class ActionManager:
                 action_message=action_message,
             )
 
-            logger.debug(f"创建Action实例成功: {action_name}")
-            return instance
+            logger.debug(f"创建Action执行句柄成功: {action_name}")
+            return handle
 
         except Exception as e:
-            logger.error(f"创建Action实例失败 {action_name}: {e}")
+            logger.error(f"创建Action执行句柄失败 {action_name}: {e}")
             import traceback
 
             logger.error(traceback.format_exc())

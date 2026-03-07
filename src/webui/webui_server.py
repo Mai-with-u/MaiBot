@@ -1,11 +1,26 @@
 """独立的 WebUI 服务器 - 运行在 0.0.0.0:8001"""
 
-import asyncio
 from uvicorn import Config, Server as UvicornServer
+
+import asyncio
+
 from src.common.logger import get_logger
+from src.common.utils.port_checker import assert_port_available, is_port_conflict_error, log_port_conflict
+from src.config.config import config_manager
 from src.webui.app import create_app, show_access_token
 
 logger = get_logger("webui_server")
+
+
+class _ASGIProxy:
+    def __init__(self, app):
+        self._app = app
+
+    def set_app(self, app) -> None:
+        self._app = app
+
+    async def __call__(self, scope, receive, send):
+        await self._app(scope, receive, send)
 
 
 class WebUIServer:
@@ -14,22 +29,27 @@ class WebUIServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8001):
         self.host = host
         self.port = port
-        self.app = create_app(host=host, port=port, enable_static=True)
+        self._app = create_app(host=host, port=port, enable_static=True)
+        self.app = _ASGIProxy(self._app)
         self._server = None
 
         show_access_token()
+        config_manager.register_reload_callback(self.reload_app)
+
+    async def reload_app(self) -> None:
+        self._app = create_app(host=self.host, port=self.port, enable_static=True)
+        self.app.set_app(self._app)
+        logger.info("WebUI 应用已热重载")
 
     async def start(self):
         """启动服务器"""
-        # 预先检查端口是否可用
-        if not self._check_port_available():
-            error_msg = f"❌ WebUI 服务器启动失败: 端口 {self.port} 已被占用"
-            logger.error(error_msg)
-            logger.error(f"💡 请检查是否有其他程序正在使用端口 {self.port}")
-            logger.error("💡 可以在 .env 文件中修改 WEBUI_PORT 来更改 WebUI 端口")
-            logger.error(f"💡 Windows 用户可以运行: netstat -ano | findstr :{self.port}")
-            logger.error(f"💡 Linux/Mac 用户可以运行: lsof -i :{self.port}")
-            raise OSError(f"端口 {self.port} 已被占用，无法启动 WebUI 服务器")
+        assert_port_available(
+            host=self.host,
+            port=self.port,
+            service_name="WebUI 服务器",
+            logger=logger,
+            config_hint="WEBUI_PORT (.env)",
+        )
 
         config = Config(
             app=self.app,
@@ -60,40 +80,22 @@ class WebUIServer:
         try:
             await self._server.serve()
         except OSError as e:
-            # 处理端口绑定相关的错误
-            if "address already in use" in str(e).lower() or e.errno in (98, 10048):  # 98: Linux, 10048: Windows
-                logger.error(f"❌ WebUI 服务器启动失败: 端口 {self.port} 已被占用")
-                logger.error(f"💡 请检查是否有其他程序正在使用端口 {self.port}")
-                logger.error("💡 可以在 .env 文件中修改 WEBUI_PORT 来更改 WebUI 端口")
+            if is_port_conflict_error(e):
+                log_port_conflict(
+                    logger,
+                    service_name="WebUI 服务器",
+                    host=self.host,
+                    port=self.port,
+                    config_hint="WEBUI_PORT (.env)",
+                )
             else:
                 logger.error(f"❌ WebUI 服务器启动失败 (网络错误): {e}")
             raise
         except Exception as e:
             logger.error(f"❌ WebUI 服务器运行错误: {e}", exc_info=True)
             raise
-
-    def _check_port_available(self) -> bool:
-        """检查端口是否可用（支持 IPv4 和 IPv6）"""
-        import socket
-
-        # 判断使用 IPv4 还是 IPv6
-        if ":" in self.host:
-            # IPv6 地址
-            family = socket.AF_INET6
-            test_host = self.host if self.host != "::" else "::1"
-        else:
-            # IPv4 地址
-            family = socket.AF_INET
-            test_host = self.host if self.host != "0.0.0.0" else "127.0.0.1"
-
-        try:
-            with socket.socket(family, socket.SOCK_STREAM) as s:
-                s.settimeout(1)
-                # 尝试绑定端口
-                s.bind((test_host, self.port))
-                return True
-        except OSError:
-            return False
+        finally:
+            config_manager.unregister_reload_callback(self.reload_app)
 
     async def shutdown(self):
         """关闭服务器"""

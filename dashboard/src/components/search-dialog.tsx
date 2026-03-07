@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Search, FileText, Server, Boxes, Smile, MessageSquare, UserCircle, FileSearch, BarChart3, Package, Settings, Home, Hash } from 'lucide-react'
 import { useNavigate } from '@tanstack/react-router'
+import { useTranslation } from 'react-i18next'
+
 import {
   Dialog,
   DialogContent,
@@ -24,97 +26,98 @@ interface SearchItem {
   category: string
 }
 
-const searchItems: SearchItem[] = [
-  {
-    icon: Home,
-    title: '首页',
-    description: '查看仪表板概览',
-    path: '/',
-    category: '概览',
-  },
-  {
-    icon: FileText,
-    title: '麦麦主程序配置',
-    description: '配置麦麦的核心设置',
-    path: '/config/bot',
-    category: '配置',
-  },
-  {
-    icon: Server,
-    title: '麦麦模型提供商配置',
-    description: '配置模型提供商',
-    path: '/config/modelProvider',
-    category: '配置',
-  },
-  {
-    icon: Boxes,
-    title: '麦麦模型配置',
-    description: '配置模型参数',
-    path: '/config/model',
-    category: '配置',
-  },
-  {
-    icon: Smile,
-    title: '表情包管理',
-    description: '管理麦麦的表情包',
-    path: '/resource/emoji',
-    category: '资源',
-  },
-  {
-    icon: MessageSquare,
-    title: '表达方式管理',
-    description: '管理麦麦的表达方式',
-    path: '/resource/expression',
-    category: '资源',
-  },
-  {
-    icon: UserCircle,
-    title: '人物信息管理',
-    description: '管理人物信息',
-    path: '/resource/person',
-    category: '资源',
-  },
-  {
-    icon: Hash,
-    title: '黑话管理',
-    description: '管理麦麦学习到的黑话和俚语',
-    path: '/resource/jargon',
-    category: '资源',
-  },
-  {
-    icon: BarChart3,
-    title: '统计信息',
-    description: '查看使用统计',
-    path: '/statistics',
-    category: '监控',
-  },
-  {
-    icon: Package,
-    title: '插件市场',
-    description: '浏览和安装插件',
-    path: '/plugins',
-    category: '扩展',
-  },
-  {
-    icon: FileSearch,
-    title: '日志查看器',
-    description: '查看系统日志',
-    path: '/logs',
-    category: '监控',
-  },
-  {
-    icon: Settings,
-    title: '系统设置',
-    description: '配置系统参数',
-    path: '/settings',
-    category: '系统',
-  },
-]
-
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const navigate = useNavigate()
+  const { t } = useTranslation()
+
+  const searchItems: SearchItem[] = useMemo(() => [
+    {
+      icon: Home,
+      title: t('search.items.home'),
+      description: t('search.items.homeDesc'),
+      path: '/',
+      category: t('search.categories.overview'),
+    },
+    {
+      icon: FileText,
+      title: t('search.items.botConfig'),
+      description: t('search.items.botConfigDesc'),
+      path: '/config/bot',
+      category: t('search.categories.config'),
+    },
+    {
+      icon: Server,
+      title: t('search.items.modelProvider'),
+      description: t('search.items.modelProviderDesc'),
+      path: '/config/modelProvider',
+      category: t('search.categories.config'),
+    },
+    {
+      icon: Boxes,
+      title: t('search.items.model'),
+      description: t('search.items.modelDesc'),
+      path: '/config/model',
+      category: t('search.categories.config'),
+    },
+    {
+      icon: Smile,
+      title: t('search.items.emoji'),
+      description: t('search.items.emojiDesc'),
+      path: '/resource/emoji',
+      category: t('search.categories.resources'),
+    },
+    {
+      icon: MessageSquare,
+      title: t('search.items.expression'),
+      description: t('search.items.expressionDesc'),
+      path: '/resource/expression',
+      category: t('search.categories.resources'),
+    },
+    {
+      icon: UserCircle,
+      title: t('search.items.person'),
+      description: t('search.items.personDesc'),
+      path: '/resource/person',
+      category: t('search.categories.resources'),
+    },
+    {
+      icon: Hash,
+      title: t('search.items.jargon'),
+      description: t('search.items.jargonDesc'),
+      path: '/resource/jargon',
+      category: t('search.categories.resources'),
+    },
+    {
+      icon: BarChart3,
+      title: t('search.items.statistics'),
+      description: t('search.items.statisticsDesc'),
+      path: '/statistics',
+      category: t('search.categories.monitor'),
+    },
+    {
+      icon: Package,
+      title: t('search.items.plugins'),
+      description: t('search.items.pluginsDesc'),
+      path: '/plugins',
+      category: t('search.categories.extensions'),
+    },
+    {
+      icon: FileSearch,
+      title: t('search.items.logs'),
+      description: t('search.items.logsDesc'),
+      path: '/logs',
+      category: t('search.categories.monitor'),
+    },
+    {
+      icon: Settings,
+      title: t('search.items.settings'),
+      description: t('search.items.settingsDesc'),
+      path: '/settings',
+      category: t('search.categories.system'),
+    },
+  ], [t])
 
   // 过滤搜索结果
   const filteredItems = searchItems.filter(
@@ -154,7 +157,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl p-0 gap-0">
         <DialogHeader className="px-4 pt-4 pb-0">
-          <DialogTitle className="sr-only">搜索</DialogTitle>
+          <DialogTitle className="sr-only">{t('search.title')}</DialogTitle>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -164,7 +167,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                 setSelectedIndex(0)
               }}
               onKeyDown={handleKeyDown}
-              placeholder="搜索页面..."
+              placeholder={t('search.placeholder')}
               className="h-12 pl-11 text-base border-0 focus-visible:ring-0 shadow-none"
               autoFocus
             />
@@ -207,7 +210,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Search className="h-12 w-12 text-muted-foreground/50 mb-4" />
                 <p className="text-sm text-muted-foreground">
-                  {searchQuery ? '未找到匹配的页面' : '输入关键词开始搜索'}
+                  {searchQuery ? t('search.noResults') : t('search.startSearch')}
                 </p>
               </div>
             )}
@@ -219,15 +222,15 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             <span className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-muted rounded border">↑</kbd>
               <kbd className="px-1.5 py-0.5 bg-muted rounded border">↓</kbd>
-              导航
+              {t('search.navigate')}
             </span>
             <span className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-muted rounded border">Enter</kbd>
-              选择
+              {t('search.select')}
             </span>
             <span className="flex items-center gap-1">
               <kbd className="px-1.5 py-0.5 bg-muted rounded border">Esc</kbd>
-              关闭
+              {t('search.close')}
             </span>
           </div>
         </div>

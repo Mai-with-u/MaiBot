@@ -3,11 +3,16 @@
 from fastapi import APIRouter, HTTPException, Header, Query, Cookie
 from pydantic import BaseModel
 from typing import Optional, List, Dict
+from datetime import datetime
+
+from sqlalchemy import case
+from sqlmodel import col, select, delete
+
 from src.common.logger import get_logger
+from src.common.database.database import get_db_session
 from src.common.database.database_model import PersonInfo
 from src.webui.core import verify_auth_token_from_cookie_or_header
 import json
-import time
 
 logger = get_logger("webui.person")
 
@@ -28,7 +33,7 @@ class PersonInfoResponse(BaseModel):
     nickname: Optional[str]
     group_nick_name: Optional[List[Dict[str, str]]]  # 解析后的 JSON
     memory_points: Optional[str]
-    know_times: Optional[float]
+    know_times: Optional[int]
     know_since: Optional[float]
     last_know: Optional[float]
 
@@ -111,20 +116,22 @@ def parse_group_nick_name(group_nick_name_str: Optional[str]) -> Optional[List[D
 
 def person_to_response(person: PersonInfo) -> PersonInfoResponse:
     """将 PersonInfo 模型转换为响应对象"""
+    know_since = person.first_known_time.timestamp() if person.first_known_time else None
+    last_know = person.last_known_time.timestamp() if person.last_known_time else None
     return PersonInfoResponse(
-        id=person.id,
+        id=person.id or 0,
         is_known=person.is_known,
         person_id=person.person_id,
         person_name=person.person_name,
         name_reason=person.name_reason,
         platform=person.platform,
         user_id=person.user_id,
-        nickname=person.nickname,
-        group_nick_name=parse_group_nick_name(person.group_nick_name),
+        nickname=person.user_nickname,
+        group_nick_name=parse_group_nick_name(person.group_nickname),
         memory_points=person.memory_points,
-        know_times=person.know_times,
-        know_since=person.know_since,
-        last_know=person.last_know,
+        know_times=person.know_counts,
+        know_since=know_since,
+        last_know=last_know,
     )
 
 
@@ -156,38 +163,50 @@ async def get_person_list(
         verify_auth_token(maibot_session, authorization)
 
         # 构建查询
-        query = PersonInfo.select()
+        statement = select(PersonInfo)
 
         # 搜索过滤
         if search:
-            query = query.where(
-                (PersonInfo.person_name.contains(search))
-                | (PersonInfo.nickname.contains(search))
-                | (PersonInfo.user_id.contains(search))
+            statement = statement.where(
+                (col(PersonInfo.person_name).contains(search))
+                | (col(PersonInfo.user_nickname).contains(search))
+                | (col(PersonInfo.user_id).contains(search))
             )
 
         # 已认识状态过滤
         if is_known is not None:
-            query = query.where(PersonInfo.is_known == is_known)
+            statement = statement.where(col(PersonInfo.is_known) == is_known)
 
         # 平台过滤
         if platform:
-            query = query.where(PersonInfo.platform == platform)
+            statement = statement.where(col(PersonInfo.platform) == platform)
 
         # 排序：最后更新时间倒序（NULL 值放在最后）
         # Peewee 不支持 nulls_last，使用 CASE WHEN 来实现
-        from peewee import Case
+        statement = statement.order_by(
+            case((col(PersonInfo.last_known_time).is_(None), 1), else_=0),
+            col(PersonInfo.last_known_time).desc(),
+        )
 
-        query = query.order_by(Case(None, [(PersonInfo.last_know.is_null(), 1)], 0), PersonInfo.last_know.desc())
-
-        # 获取总数
-        total = query.count()
-
-        # 分页
         offset = (page - 1) * page_size
-        persons = query.offset(offset).limit(page_size)
+        statement = statement.offset(offset).limit(page_size)
 
-        # 转换为响应对象
+        with get_db_session() as session:
+            persons = session.exec(statement).all()
+
+            count_statement = select(PersonInfo.id)
+            if search:
+                count_statement = count_statement.where(
+                    (col(PersonInfo.person_name).contains(search))
+                    | (col(PersonInfo.user_nickname).contains(search))
+                    | (col(PersonInfo.user_id).contains(search))
+                )
+            if is_known is not None:
+                count_statement = count_statement.where(col(PersonInfo.is_known) == is_known)
+            if platform:
+                count_statement = count_statement.where(col(PersonInfo.platform) == platform)
+            total = len(session.exec(count_statement).all())
+
         data = [person_to_response(person) for person in persons]
 
         return PersonListResponse(success=True, total=total, page=page, page_size=page_size, data=data)
@@ -216,7 +235,9 @@ async def get_person_detail(
     try:
         verify_auth_token(maibot_session, authorization)
 
-        person = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
+        with get_db_session() as session:
+            statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
+            person = session.exec(statement).first()
 
         if not person:
             raise HTTPException(status_code=404, detail=f"未找到 ID 为 {person_id} 的人物信息")
@@ -251,7 +272,9 @@ async def update_person(
     try:
         verify_auth_token(maibot_session, authorization)
 
-        person = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
+        with get_db_session() as session:
+            statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
+            person = session.exec(statement).first()
 
         if not person:
             raise HTTPException(status_code=404, detail=f"未找到 ID 为 {person_id} 的人物信息")
@@ -263,13 +286,18 @@ async def update_person(
             raise HTTPException(status_code=400, detail="未提供任何需要更新的字段")
 
         # 更新最后修改时间
-        update_data["last_know"] = time.time()
+        update_data["last_known_time"] = datetime.now()
 
         # 执行更新
-        for field, value in update_data.items():
-            setattr(person, field, value)
-
-        person.save()
+        with get_db_session() as session:
+            db_person = session.exec(select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)).first()
+            if not db_person:
+                raise HTTPException(status_code=404, detail=f"未找到 ID 为 {person_id} 的人物信息")
+            for field, value in update_data.items():
+                if hasattr(db_person, field):
+                    setattr(db_person, field, value)
+            session.add(db_person)
+            person = db_person
 
         logger.info(f"人物信息已更新: {person_id}, 字段: {list(update_data.keys())}")
 
@@ -301,16 +329,19 @@ async def delete_person(
     try:
         verify_auth_token(maibot_session, authorization)
 
-        person = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
+        with get_db_session() as session:
+            statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
+            person = session.exec(statement).first()
 
         if not person:
             raise HTTPException(status_code=404, detail=f"未找到 ID 为 {person_id} 的人物信息")
 
         # 记录删除信息
-        person_name = person.person_name or person.nickname or person.user_id
+        person_name = person.person_name or person.user_nickname or person.user_id
 
         # 执行删除
-        person.delete_instance()
+        with get_db_session() as session:
+            session.exec(delete(PersonInfo).where(col(PersonInfo.person_id) == person_id))
 
         logger.info(f"人物信息已删除: {person_id} ({person_name})")
 
@@ -337,15 +368,17 @@ async def get_person_stats(maibot_session: Optional[str] = Cookie(None), authori
     try:
         verify_auth_token(maibot_session, authorization)
 
-        total = PersonInfo.select().count()
-        known = PersonInfo.select().where(PersonInfo.is_known).count()
+        with get_db_session() as session:
+            total = len(session.exec(select(PersonInfo.id)).all())
+            known = len(session.exec(select(PersonInfo.id).where(col(PersonInfo.is_known))).all())
         unknown = total - known
 
         # 按平台统计
         platforms = {}
-        for person in PersonInfo.select(PersonInfo.platform):
-            platform = person.platform
-            platforms[platform] = platforms.get(platform, 0) + 1
+        with get_db_session() as session:
+            for platform in session.exec(select(PersonInfo.platform)).all():
+                if platform:
+                    platforms[platform] = platforms.get(platform, 0) + 1
 
         return {"success": True, "data": {"total": total, "known": known, "unknown": unknown, "platforms": platforms}}
 
@@ -384,14 +417,17 @@ async def batch_delete_persons(
 
         for person_id in request.person_ids:
             try:
-                person = PersonInfo.get_or_none(PersonInfo.person_id == person_id)
-                if person:
-                    person.delete_instance()
-                    deleted_count += 1
-                    logger.info(f"批量删除: {person_id}")
-                else:
-                    failed_count += 1
-                    failed_ids.append(person_id)
+                with get_db_session() as session:
+                    person = session.exec(
+                        select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
+                    ).first()
+                    if person:
+                        session.exec(delete(PersonInfo).where(col(PersonInfo.person_id) == person_id))
+                        deleted_count += 1
+                        logger.info(f"批量删除: {person_id}")
+                    else:
+                        failed_count += 1
+                        failed_ids.append(person_id)
             except Exception as e:
                 logger.error(f"删除 {person_id} 失败: {e}")
                 failed_count += 1

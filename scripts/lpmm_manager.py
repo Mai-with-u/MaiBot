@@ -21,18 +21,18 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from src.common.logger import get_logger  # type: ignore
-from src.config.config import global_config, model_config  # type: ignore
+from src.common.logger import get_logger  # type: ignore  # noqa: E402
+from src.config.config import global_config, model_config  # type: ignore  # noqa: E402
 
 # 引入各功能脚本的入口函数
-from import_openie import main as import_openie_main  # type: ignore
-from info_extraction import main as info_extraction_main  # type: ignore
-from delete_lpmm_items import main as delete_lpmm_items_main  # type: ignore
-from inspect_lpmm_batch import main as inspect_lpmm_batch_main  # type: ignore
-from inspect_lpmm_global import main as inspect_lpmm_global_main  # type: ignore
-from refresh_lpmm_knowledge import main as refresh_lpmm_knowledge_main  # type: ignore
-from test_lpmm_retrieval import main as test_lpmm_retrieval_main  # type: ignore
-from raw_data_preprocessor import load_raw_data  # type: ignore
+from import_openie import main as import_openie_main  # type: ignore  # noqa: E402
+from info_extraction import main as info_extraction_main  # type: ignore  # noqa: E402
+from delete_lpmm_items import main as delete_lpmm_items_main  # type: ignore  # noqa: E402
+from inspect_lpmm_batch import main as inspect_lpmm_batch_main  # type: ignore  # noqa: E402
+from inspect_lpmm_global import main as inspect_lpmm_global_main  # type: ignore  # noqa: E402
+from refresh_lpmm_knowledge import main as refresh_lpmm_knowledge_main  # type: ignore  # noqa: E402
+from test_lpmm_retrieval import main as test_lpmm_retrieval_main  # type: ignore  # noqa: E402
+from raw_data_preprocessor import load_raw_data  # type: ignore  # noqa: E402
 
 
 logger = get_logger("lpmm_manager")
@@ -69,15 +69,10 @@ def _check_before_info_extract(non_interactive: bool = False) -> bool:
     raw_dir = Path(PROJECT_ROOT) / "data" / "lpmm_raw_data"
     txt_files = list(raw_dir.glob("*.txt"))
     if not txt_files:
-        msg = (
-            f"[WARN] 未在 {raw_dir} 下找到任何 .txt 原始语料文件，"
-            "info_extraction 可能立即退出或无数据可处理。"
-        )
+        msg = f"[WARN] 未在 {raw_dir} 下找到任何 .txt 原始语料文件，info_extraction 可能立即退出或无数据可处理。"
         print(msg)
         if non_interactive:
-            logger.error(
-                "非交互模式下要求原始语料目录中已存在可用的 .txt 文件，请先准备好数据再重试。"
-            )
+            logger.error("非交互模式下要求原始语料目录中已存在可用的 .txt 文件，请先准备好数据再重试。")
             return False
         cont = input("仍然继续执行信息提取吗？(y/n): ").strip().lower()
         return cont == "y"
@@ -89,15 +84,10 @@ def _check_before_import_openie(non_interactive: bool = False) -> bool:
     openie_dir = Path(PROJECT_ROOT) / "data" / "openie"
     json_files = list(openie_dir.glob("*.json"))
     if not json_files:
-        msg = (
-            f"[WARN] 未在 {openie_dir} 下找到任何 OpenIE JSON 文件，"
-            "import_openie 可能会因为找不到批次而失败。"
-        )
+        msg = f"[WARN] 未在 {openie_dir} 下找到任何 OpenIE JSON 文件，import_openie 可能会因为找不到批次而失败。"
         print(msg)
         if non_interactive:
-            logger.error(
-                "非交互模式下要求 data/openie 目录中已存在可用的 OpenIE JSON 文件，请先执行信息提取脚本。"
-            )
+            logger.error("非交互模式下要求 data/openie 目录中已存在可用的 OpenIE JSON 文件，请先执行信息提取脚本。")
             return False
         cont = input("仍然继续执行导入吗？(y/n): ").strip().lower()
         return cont == "y"
@@ -108,10 +98,7 @@ def _warn_if_lpmm_disabled() -> None:
     """在部分操作前提醒 lpmm_knowledge.enable 状态。"""
     try:
         if not getattr(global_config.lpmm_knowledge, "enable", False):
-            print(
-                "[WARN] 当前配置 lpmm_knowledge.enable = false，"
-                "刷新或检索测试可能无法在聊天侧真正启用 LPMM。"
-            )
+            print("[WARN] 当前配置 lpmm_knowledge.enable = false，刷新或检索测试可能无法在聊天侧真正启用 LPMM。")
     except Exception:
         # 配置异常时不阻断主流程，仅忽略提示
         pass
@@ -131,10 +118,7 @@ def run_action(action: str, extra_args: Optional[List[str]] = None) -> None:
         if action == "prepare_raw":
             logger.info("开始预处理原始语料 (data/lpmm_raw_data/*.txt)...")
             sha_list, raw_data = load_raw_data()
-            print(
-                f"\n[PREPARE_RAW] 完成原始语料预处理：共 {len(raw_data)} 条段落，"
-                f"去重后哈希数 {len(sha_list)}。"
-            )
+            print(f"\n[PREPARE_RAW] 完成原始语料预处理：共 {len(raw_data)} 条段落，去重后哈希数 {len(sha_list)}。")
         elif action == "info_extract":
             if not _check_before_info_extract("--non-interactive" in extra_args):
                 print("已根据用户选择，取消执行信息提取。")
@@ -164,10 +148,7 @@ def run_action(action: str, extra_args: Optional[List[str]] = None) -> None:
             # 一键流水线：预处理原始语料 -> 信息抽取 -> 导入 -> 刷新
             logger.info("开始 full_import：预处理原始语料 -> 信息抽取 -> 导入 -> 刷新")
             sha_list, raw_data = load_raw_data()
-            print(
-                f"\n[FULL_IMPORT] 原始语料预处理完成：共 {len(raw_data)} 条段落，"
-                f"去重后哈希数 {len(sha_list)}。"
-            )
+            print(f"\n[FULL_IMPORT] 原始语料预处理完成：共 {len(raw_data)} 条段落，去重后哈希数 {len(sha_list)}。")
             non_interactive = "--non-interactive" in extra_args
             if not _check_before_info_extract(non_interactive):
                 print("已根据用户选择，取消 full_import（信息提取阶段被取消）。")
@@ -345,9 +326,9 @@ def _interactive_build_delete_args() -> List[str]:
     )
 
     # 快速选项：按推荐方式清理所有相关实体/关系
-    quick_all = input(
-        "是否使用推荐策略：同时删除关联的实体向量/节点、关系向量，并清理孤立实体？(Y/n): "
-    ).strip().lower()
+    quick_all = (
+        input("是否使用推荐策略：同时删除关联的实体向量/节点、关系向量，并清理孤立实体？(Y/n): ").strip().lower()
+    )
     if quick_all in ("", "y", "yes"):
         args.extend(["--delete-entities", "--delete-relations", "--remove-orphan-entities"])
     else:
@@ -375,9 +356,7 @@ def _interactive_build_delete_args() -> List[str]:
 
 def _interactive_build_batch_inspect_args() -> List[str]:
     """为 inspect_lpmm_batch 构造 --openie-file 参数。"""
-    path = _interactive_choose_openie_file(
-        "请输入要检查的 OpenIE JSON 文件路径（回车跳过，由子脚本自行交互）："
-    )
+    path = _interactive_choose_openie_file("请输入要检查的 OpenIE JSON 文件路径（回车跳过，由子脚本自行交互）：")
     if not path:
         return []
     return ["--openie-file", path]
@@ -385,11 +364,7 @@ def _interactive_build_batch_inspect_args() -> List[str]:
 
 def _interactive_build_test_args() -> List[str]:
     """为 test_lpmm_retrieval 构造自定义测试用例参数。"""
-    print(
-        "\n[TEST] 你可以：\n"
-        "- 直接回车使用内置的默认测试用例；\n"
-        "- 或者输入一条自定义问题，并指定期望命中的关键字。"
-    )
+    print("\n[TEST] 你可以：\n- 直接回车使用内置的默认测试用例；\n- 或者输入一条自定义问题，并指定期望命中的关键字。")
     query = input("请输入自定义测试问题（回车则使用默认用例）：").strip()
     if not query:
         return []
@@ -422,9 +397,7 @@ def _run_embedding_helper() -> None:
     print(f"- 当前配置中的嵌入维度 (lpmm_knowledge.embedding_dimension): {current_dim}")
     print(f"- 测试文件路径: {EMBEDDING_TEST_FILE}")
 
-    new_dim = input(
-        "\n如果你计划更换嵌入模型，请在此输入“新的嵌入维度”（仅用于记录与提示，回车则跳过）："
-    ).strip()
+    new_dim = input("\n如果你计划更换嵌入模型，请在此输入“新的嵌入维度”（仅用于记录与提示，回车则跳过）：").strip()
     if new_dim and not new_dim.isdigit():
         print("输入的维度不是纯数字，已取消操作。")
         return
@@ -537,5 +510,3 @@ def main(argv: Optional[list[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-
-

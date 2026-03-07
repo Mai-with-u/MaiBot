@@ -153,7 +153,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <TourContext.Provider
+    <TourContext
       value={{
         state,
         tours,
@@ -172,6 +172,6 @@ export function TourProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-    </TourContext.Provider>
+    </TourContext>
   )
 }

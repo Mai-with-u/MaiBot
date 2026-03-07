@@ -4,7 +4,7 @@ from . import BaseDataModel
 
 if TYPE_CHECKING:
     from .database_data_model import DatabaseMessages
-    from src.plugin_system.base.component_types import ActionInfo
+    from src.core.types import ActionInfo
 
 
 @dataclass

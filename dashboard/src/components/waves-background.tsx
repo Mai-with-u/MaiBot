@@ -354,7 +354,7 @@ export function WavesBackground() {
           left: 0,
           width: '0.5rem',
           height: '0.5rem',
-          background: 'hsl(var(--primary) / 0.3)',
+          background: 'hsl(var(--color-primary) / 0.3)',
           borderRadius: '50%',
           transform: 'translate3d(calc(var(--x, -0.5rem) - 50%), calc(var(--y, 50%) - 50%), 0)',
           willChange: 'transform',
@@ -372,7 +372,7 @@ export function WavesBackground() {
         <style>{`
           path {
             fill: none;
-            stroke: hsl(var(--primary) / 0.20);
+            stroke: hsl(var(--color-primary) / 0.20);
             stroke-width: 1px;
           }
         `}</style>
