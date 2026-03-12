@@ -1,0 +1,5 @@
+{action_name}
+动作描述：{action_description}
+使用条件{parallel_text}：
+{action_require}
+{{"action":"{action_name}",{action_parameters}, "target_message_id":"消息id(m+数字)"}}

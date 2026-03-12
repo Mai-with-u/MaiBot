@@ -1,0 +1,15 @@
+请评估以下表达方式或语言风格以及使用条件或使用情景是否合适：
+使用条件或使用情景：{situation}
+表达方式或言语风格：{style}
+
+请从以下方面进行评估：
+{criteria_list}
+
+请以JSON格式输出评估结果：
+{{
+    "suitable": true/false,
+    "reason": "评估理由（如果不合适，请说明原因）"
+
+}}
+如果合适，suitable设为true；如果不合适，suitable设为false，并在reason中说明原因。
+请严格按照JSON格式输出，不要包含其他内容。
