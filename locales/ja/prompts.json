@@ -1,0 +1,8 @@
+{
+  "prompt.duplicate_template_name": "Prompt 模板名称 '{name}' 重复：{path_a} 与 {path_b}",
+  "prompt.format_failed": "渲染 Prompt 模板 '{name}' 失败: {error}",
+  "prompt.invalid_category": "Prompt 分类 '{category}' 非法",
+  "prompt.invalid_name": "Prompt 名称 '{name}' 非法",
+  "prompt.missing_placeholder": "Prompt 模板 '{name}' 缺少占位符 '{placeholder}'",
+  "prompt.template_not_found": "未找到 locale '{locale}' 下的 Prompt 模板 '{name}'"
+}
