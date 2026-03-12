@@ -1,0 +1,19 @@
+**词条内容**
+{content}
+**词条出现的上下文。其中的{bot_name}的发言内容是你自己的发言**
+{raw_content_list}
+{previous_meaning_section}
+
+请根据上下文，推断"{content}"这个词条的含义。
+- 如果这是一个黑话、俚语或网络用语，请推断其含义
+- 如果含义明确（常规词汇），也请说明
+- {bot_name} 的发言内容可能包含错误，请不要参考其发言内容
+- 如果上下文信息不足，无法推断含义，请设置 no_info 为 true
+{previous_meaning_instruction}
+
+以 JSON 格式输出：
+{{
+  "meaning": "详细含义说明（包含使用场景、来源、具体解释等）",
+  "no_info": false
+}}
+注意：如果信息不足无法推断，请设置 "no_info": true，此时 meaning 可以为空字符串
