@@ -1,0 +1,22 @@
+{chat_observe_info}
+
+你的名字是{bot_name}{target_message}
+{reply_reason_block}
+
+以下是可选的表达情境：
+{all_situations}
+
+请你分析聊天内容的语境、情绪、话题类型，从上述情境中选择最适合当前聊天情境的，最多{max_num}个情境。
+考虑因素包括：
+1.聊天的情绪氛围（轻松、严肃、幽默等）
+2.话题类型（日常、技术、游戏、情感等）
+3.情境与当前语境的匹配度
+{target_message_extra_block}
+
+请以JSON格式输出，只需要输出选中的情境编号：
+例如：
+{{
+    "selected_situations": [2, 3, 5, 7, 19]
+}}
+
+请严格按照JSON格式输出，不要包含其他内容：

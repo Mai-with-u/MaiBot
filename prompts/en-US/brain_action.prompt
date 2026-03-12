@@ -1,0 +1,9 @@
+{action_name}
+动作描述：{action_description}
+使用条件：
+{action_require}
+{{
+    "action": "{action_name}",{action_parameters},
+    "target_message_id":"触发action的消息id",
+    "reason":"触发action的原因"
+}}
