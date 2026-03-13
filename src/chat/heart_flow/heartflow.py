@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 from typing import Any, Optional, Dict
 
@@ -15,14 +16,23 @@ class Heartflow:
 
     def __init__(self):
         self.heartflow_chat_list: Dict[Any, HeartFChatting | BrainChatting] = {}
+        self._create_locks: Dict[Any, asyncio.Lock] = {}
 
     async def get_or_create_heartflow_chat(self, chat_id: Any) -> Optional[HeartFChatting | BrainChatting]:
         """获取或创建一个新的HeartFChatting实例"""
-        try:
+        if chat_id in self.heartflow_chat_list:
+            if chat := self.heartflow_chat_list.get(chat_id):
+                return chat
+
+        # 获取 per-chat_id 锁，防止并发创建多个实例
+        if chat_id not in self._create_locks:
+            self._create_locks[chat_id] = asyncio.Lock()
+        async with self._create_locks[chat_id]:
+            # 在等待锁期间可能已被其他协程创建
             if chat_id in self.heartflow_chat_list:
                 if chat := self.heartflow_chat_list.get(chat_id):
                     return chat
-            else:
+            try:
                 chat_stream: ChatStream | None = get_chat_manager().get_stream(chat_id)
                 if not chat_stream:
                     raise ValueError(f"未找到 chat_id={chat_id} 的聊天流")
@@ -33,10 +43,10 @@ class Heartflow:
                 await new_chat.start()
                 self.heartflow_chat_list[chat_id] = new_chat
                 return new_chat
-        except Exception as e:
-            logger.error(f"创建心流聊天 {chat_id} 失败: {e}", exc_info=True)
-            traceback.print_exc()
-            return None
+            except Exception as e:
+                logger.error(f"创建心流聊天 {chat_id} 失败: {e}", exc_info=True)
+                traceback.print_exc()
+                return None
 
 
 heartflow = Heartflow()

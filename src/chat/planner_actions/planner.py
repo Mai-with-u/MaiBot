@@ -233,13 +233,19 @@ class ActionPlanner:
             target_message = None
 
             target_message_id = action_json.get("target_message_id")
+            target_id_fallback = False
             if target_message_id:
                 # 根据target_message_id查找原始消息
                 target_message = self.find_message_by_id(target_message_id, message_id_list)
                 if target_message is None:
-                    logger.warning(f"{self.log_prefix}无法找到target_message_id '{target_message_id}' 对应的消息")
-                    # 选择最新消息作为target_message
+                    available_ids = [item[0] for item in message_id_list[-10:]]
+                    logger.warning(
+                        f"{self.log_prefix}无法找到target_message_id '{target_message_id}' 对应的消息，"
+                        f"可用ID(最近10条): {available_ids}，将使用最新消息但禁用引用"
+                    )
+                    # 选择最新消息作为target_message，但标记为回退
                     target_message = message_id_list[-1][1]
+                    target_id_fallback = True
             else:
                 target_message = message_id_list[-1][1]
                 logger.debug(f"{self.log_prefix}动作'{action}'缺少target_message_id，使用最新消息作为target_message")
@@ -264,6 +270,10 @@ class ActionPlanner:
                     f"LLM 返回了当前不可用的动作 '{action}' (可用: {available_action_names})。原始理由: {reasoning}"
                 )
                 action = "no_reply"
+
+            # 如果target_message_id查找失败并回退到最新消息，禁用引用以避免错误引用
+            if target_id_fallback:
+                action_data["quote"] = False
 
             # 创建ActionPlannerInfo对象
             # 将列表转换为字典格式
@@ -511,8 +521,8 @@ class ActionPlanner:
             
             # 如果没有回复该消息，强制添加回复 action
             if not has_reply_to_force_message:
-                # 移除所有 no_reply action（如果有）
-                actions = [a for a in actions if a.action_type != "no_reply"]
+                # 移除所有 no_reply 和已有的 reply action，防止产生多个 reply 导致重复回复
+                actions = [a for a in actions if a.action_type not in ("no_reply", "reply")]
                 
                 # 创建强制回复 action
                 available_actions_dict = dict(current_available_actions)
@@ -526,7 +536,7 @@ class ActionPlanner:
                 )
                 # 将强制回复 action 放在最前面
                 actions.insert(0, force_reply_action)
-                logger.info(f"{self.log_prefix} 检测到强制回复消息，已添加回复动作")
+                logger.info(f"{self.log_prefix} 检测到强制回复消息，已替换已有reply并添加强制回复动作")
 
         logger.info(
             f"{self.log_prefix}Planner:{reasoning}。选择了{len(actions)}个动作: {' '.join([a.action_type for a in actions])}"
