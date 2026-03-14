@@ -661,7 +661,12 @@ async def _async_main() -> None:
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _mark_runner_shutting_down)
+        try:
+            loop.add_signal_handler(sig, _mark_runner_shutting_down)
+        except NotImplementedError:
+            logger.warning(f"当前平台/事件循环不支持 signal handler，跳过注册信号 {sig!s}")
+        except RuntimeError as exc:
+            logger.warning(f"注册信号处理器失败，跳过信号 {sig!s}: {exc}")
 
     await runner.run()
 
