@@ -20,6 +20,7 @@ import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 
 const LANGUAGE_CODES = ['zh', 'en', 'ja', 'ko'] as const
+const LANGUAGE_NAMES: Record<typeof LANGUAGE_CODES[number], string> = { "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어" }
 
 interface HeaderProps {
   sidebarOpen: boolean
@@ -138,12 +139,14 @@ export function Header({
             <Button variant="ghost" size="sm" className="gap-2">
               <Globe className="h-4 w-4" />
               <span className="hidden sm:inline text-xs">
-                {t(`language.${currentLang.split('-')[0] as 'zh' | 'en' | 'ja' | 'ko'}`) ?? currentLang}
+                {LANGUAGE_NAMES[currentLang.split('-')[0] as 'zh' | 'en' | 'ja' | 'ko'] ?? currentLang}
               </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {LANGUAGE_CODES.map((code) => (
+            {
+
+              LANGUAGE_CODES.map((code) => (
               <DropdownMenuItem
                 key={code}
                 onClick={() => i18nInstance.changeLanguage(code)}
@@ -155,7 +158,7 @@ export function Header({
                 {currentLang.split('-')[0] === code && (
                   <span className="mr-2">✓</span>
                 )}
-                {t(`language.${code}`)}
+                {LANGUAGE_NAMES[code]}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

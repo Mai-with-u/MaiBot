@@ -1,5 +1,4 @@
 {
-  "language": { "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어" },
   "header": {
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開する",
@@ -89,7 +88,7 @@
       "animationSpeed": "アニメーション速度",
       "backgroundImage": "背景画像",
       "backgroundBlur": "背景ぼかし",
-      "backgroundOpacity": "背景透明度",
+      "backgroundOpacity": "背景の透明度",
       "lightDesc": "常にライトテーマを使用",
       "darkDesc": "常にダークテーマを使用",
       "systemDesc": "システム設定に従って自動切り替え",
@@ -119,7 +118,7 @@
       "fontFamilySerif": "セリフ (Serif)",
       "fontFamilyMono": "等幅 (Monospace)",
       "baseFontSize": "基準フォントサイズ (Base Size)",
-      "lineHeight": "行高 (Line Height)",
+      "lineHeight": "行の高さ (Line Height)",
       "lineHeightPlaceholder": "行高を選択",
       "lineHeightCompact": "コンパクト (1.2)",
       "lineHeightNormal": "標準 (1.5)",
@@ -186,7 +185,7 @@
       "hide": "非表示",
       "show": "表示",
       "copyTip": "クリップボードにコピー",
-      "regenerateShort": "生成",
+      "regenerateShort": "生成する",
       "confirmRegenerateFullDesc": "新しい 64 桁のセキュアトークンを生成し、現在の Token を即座に無効にします。新しい Token で再ログインが必要です。この操作は元に戻せません。続けますか？",
       "confirmGenerate": "生成を確認",
       "tokenStorePlaceholder": "Token はセキュアな Cookie に保存されています",
@@ -196,7 +195,7 @@
       "tokenReqTitle": "Token セキュリティ要件:",
       "tokenValid": "Token のフォーマットは正しく使用できます",
       "updateBtn": "カスタム Token を更新",
-      "updating": "更新中...",
+      "updating": "更新しています...",
       "dialogTitle": "新しい Access Token",
       "dialogDesc": "これが新しい Token です。すぐに保存してください。このウィンドウを閉じるとログインページにリダイレクトされます。",
       "dialogTokenLabel": "新しい Token (64 桁セキュアトークン)",
@@ -247,10 +246,10 @@
       "logCacheSizeDesc": "ログビューアがキャッシュする最大ログ数を制御します。大きい値はより多くのメモリを使用します。",
       "logCacheSizeUnit": "件",
       "dataSyncIntervalLabel": "ホームデータ更新間隔",
-      "dataSyncIntervalUnit": "秒",
+      "dataSyncIntervalUnit": "秒間",
       "dataSyncIntervalDesc": "ホーム画面の統計データの自動更新間隔を制御します",
       "wsReconnectLabel": "WebSocket 再接続間隔",
-      "wsReconnectUnit": "秒",
+      "wsReconnectUnit": "秒間",
       "wsReconnectDesc": "ログ WebSocket 切断後の再接続基本間隔",
       "wsMaxReconnectLabel": "WebSocket 最大再接続回数",
       "wsMaxReconnectUnit": "回",
@@ -294,7 +293,7 @@
       "openSource": "オープンソース",
       "aboutApp": "MaiBot Dashboard について",
       "version": "バージョン:",
-      "author": "作者",
+      "author": "開発者",
       "techStack": "技術スタック",
       "frontendFramework": "フロントエンドフレームワーク",
       "uiComponents": "UI コンポーネント",
@@ -380,11 +379,225 @@
     "switchToLight": "ライトモードに切り替える",
     "switchToDark": "ダークモードに切り替える"
   },
+  "setupPage": {
+    "steps": {
+      "botBasic": {
+        "title": "Bot基本設定",
+        "description": "ボットの基本情報を設定します"
+      },
+      "personality": {
+        "title": "人格設定",
+        "description": "ボットの性格や話し方を定義します"
+      },
+      "emoji": {
+        "title": "絵文字パック",
+        "description": "絵文字パック関連の設定を行います"
+      },
+      "other": {
+        "title": "その他の設定",
+        "description": "ツールや感情システムなどを設定します"
+      },
+      "siliconFlow": {
+        "title": "API設定",
+        "description": "SiliconFlow API キーを設定します"
+      }
+    },
+    "loading": {
+      "title": "設定を読み込み中...",
+      "description": "既存の設定を読み取っています"
+    },
+    "header": {
+      "title": "初回セットアップウィザード",
+      "description": "{{appName}} の初期設定を一緒に完了しましょう"
+    },
+    "progress": {
+      "stepCounter": "ステップ {{current}} / {{total}}"
+    },
+    "validation": {
+      "selectPlatform": "プラットフォームを選択してください",
+      "enterNickname": "ニックネームを入力してください",
+      "enterQqAccount": "QQ アカウントを入力してください",
+      "enterAccountId": "アカウント ID を入力してください"
+    },
+    "toast": {
+      "loadFailedTitle": "設定の読み込みに失敗しました",
+      "loadFailedDescription": "既存の設定を読み込めなかったため、デフォルト値を使用します",
+      "saveSuccessTitle": "保存しました",
+      "saveSuccessDescription": "{{step}} を保存しました",
+      "saveFailedTitle": "保存に失敗しました",
+      "validationFailedTitle": "入力内容を確認してください",
+      "completeSuccessTitle": "設定が完了しました",
+      "completeSuccessDescription": "新しい設定を反映するために {{appName}} を再起動しています...",
+      "completeFailedTitle": "設定の完了に失敗しました",
+      "skipFailedTitle": "セットアップのスキップに失敗しました",
+      "unknownError": "不明なエラー"
+    },
+    "actions": {
+      "previous": "前へ",
+      "next": "次へ",
+      "skip": "ウィザードをスキップ",
+      "complete": "設定を完了",
+      "saving": "保存中...",
+      "completing": "完了処理中..."
+    },
+    "skipDialog": {
+      "title": "セットアップウィザードをスキップしますか？",
+      "description": "システム設定からいつでも再度セットアップウィザードを開けます。スキップしてもよろしいですか？",
+      "confirm": "スキップする"
+    },
+    "footer": "これらの設定はいつでも設定画面から変更できます",
+    "defaults": {
+      "personality": {
+        "personality": "女子大生で、現在大学2年生。掲示板を見るのが好き。",
+        "replyStyle": "返信は淡々と、短めにし、中国語で話してください。自分の学科背景をわざと強調しないでください。Tieba、Zhihu、Weibo の返信スタイルを参考にできます。",
+        "interest": "技術、ゲーム、アニメ、日常の話題に興味があり、重すぎたり厳粛すぎたりする話題は好みません。",
+        "planStyle": "1. 利用可能な **すべて** の action の **各アクション** が現在の条件に合うか考え、会話内容に合えば使用してください\n2. 同じ内容がすでに実行されている場合は繰り返さないでください\n3. 発言頻度を調整し、発言しすぎないでください\n4. 誰かがあなたにうんざりしている場合は、返信を減らしてください\n5. 誰かがあなたを攻撃したり感情的になったりした場合は、適切に対応してください",
+        "privatePlanStyle": "1. 利用可能な **すべて** の action の **各アクション** が現在の条件に合うか考え、会話内容に合えば使用してください\n2. 同じ内容がすでに実行されている場合は繰り返さないでください\n3. すでに返信した文には再度返信しないでください"
+      },
+      "emoji": {
+        "filtrationPrompt": "公序良俗に反しないこと"
+      }
+    },
+    "forms": {
+      "botBasic": {
+        "platform": {
+          "label": "プラットフォーム *",
+          "placeholder": "プラットフォームを選択",
+          "description": "ボットが動作するプラットフォームを選択します",
+          "options": {
+            "custom": "その他のプラットフォーム"
+          }
+        },
+        "customPlatform": {
+          "label": "プラットフォーム名 *",
+          "placeholder": "matrix などのプラットフォーム名を入力"
+        },
+        "qqAccount": {
+          "label": "QQ アカウント *",
+          "placeholder": "ボットの QQ アカウントを入力",
+          "description": "ボットのログインに使用する QQ アカウントです"
+        },
+        "primaryAccount": {
+          "label": "アカウント ID *",
+          "placeholder": "ボットのアカウント ID を入力",
+          "description": "このプラットフォーム上でのボットのアカウント識別子です"
+        },
+        "nickname": {
+          "label": "ニックネーム *",
+          "placeholder": "ボットのニックネームを入力",
+          "description": "ボットの主な呼び名です"
+        },
+        "alias": {
+          "label": "別名",
+          "placeholder": "別名を入力して Enter で追加",
+          "add": "追加",
+          "description": "ボットの他の呼び名を複数追加できます",
+          "remove": "別名 {{alias}} を削除"
+        }
+      },
+      "personality": {
+        "personality": {
+          "label": "人格特性 *",
+          "placeholder": "ボットの人格や設定を説明してください（120文字以内推奨）",
+          "description": "例：大学2年生の女子大生で、Tieba をよく見ている"
+        },
+        "replyStyle": {
+          "label": "話し方 *",
+          "placeholder": "ボットの話し方や表現の癖を説明してください",
+          "description": "例：返信は淡々と短めにし、中国語で話し、Tieba・Zhihu・Weibo の雰囲気を参考にする"
+        },
+        "interest": {
+          "label": "興味 *",
+          "placeholder": "ボットが興味を持つ話題を説明してください",
+          "description": "どの話題に返信しやすくなるかに影響します"
+        },
+        "planStyle": {
+          "label": "グループチャットのルール *",
+          "placeholder": "グループチャットでの行動方針やルール",
+          "description": "返信頻度や条件など、グループチャットでの振る舞いを定義します"
+        },
+        "privatePlanStyle": {
+          "label": "個別チャットのルール *",
+          "placeholder": "個別チャットでの行動方針やルール",
+          "description": "個別チャットでの振る舞いを定義します"
+        }
+      },
+      "emoji": {
+        "emojiChance": {
+          "label": "絵文字パック発動確率",
+          "description": "ボットが絵文字を送る確率です"
+        },
+        "maxRegNum": {
+          "label": "最大絵文字数",
+          "description": "ボットが保存できる絵文字の最大数です"
+        },
+        "doReplace": {
+          "label": "上限到達時に置き換える",
+          "description": "有効にすると古い絵文字を削除し、無効にすると新しい絵文字を収集しません"
+        },
+        "checkInterval": {
+          "label": "確認間隔（分）",
+          "description": "絵文字の登録、破損、削除を確認する間隔です"
+        },
+        "stealEmoji": {
+          "label": "絵文字を収集する",
+          "description": "一部の絵文字をボットが自分用に保存できるようにします"
+        },
+        "contentFiltration": {
+          "label": "絵文字フィルタリングを有効にする",
+          "description": "条件に合う絵文字だけを保存します"
+        },
+        "filtrationPrompt": {
+          "label": "フィルタ条件",
+          "placeholder": "例：公序良俗に反しないこと",
+          "description": "保存する絵文字の条件を説明してください"
+        }
+      },
+      "other": {
+        "enableTool": {
+          "label": "ツールシステムを有効にする",
+          "description": "ボットが各種ツールを使って機能を拡張できるようにします"
+        },
+        "allGlobal": {
+          "label": "グローバルスラングモードを有効にする",
+          "description": "グループ内のスラングを学習して使えるようにします"
+        }
+      },
+      "siliconFlow": {
+        "about": {
+          "title": "SiliconFlow について",
+          "description": "SiliconFlow は DeepSeek V3、Qwen、ビジョンモデル、音声認識、埋め込みモデルなど幅広いモデルを提供します。API Key が1つあれば MaiBot の全機能を利用できます。",
+          "link": "SiliconFlow で API Key を取得する"
+        },
+        "apiKey": {
+          "label": "SiliconFlow API Key *",
+          "description": "SiliconFlow の API Key を入力してください。入力後、MaiBot が必要なモデルを自動設定します。",
+          "show": "API Key を表示",
+          "hide": "API Key を隠す"
+        },
+        "autoConfig": {
+          "title": "以下のモデルが自動設定されます：",
+          "items": {
+            "deepseek": "DeepSeek V3 - メインの会話・ツールモデル",
+            "qwen3": "Qwen3 30B - 頻繁な小タスクとツール呼び出し",
+            "qwen3Vl": "Qwen3 VL 30B - 画像認識",
+            "senseVoice": "SenseVoice - 音声認識",
+            "bgeM3": "BGE-M3 - テキスト埋め込み",
+            "lpmm": "知識ベース関連モデル (LPMM)"
+          }
+        },
+        "hint": {
+          "title": "ヒント：",
+          "description": "ウィザード完了後は、「システム設定 -> モデル設定」でさらに API プロバイダーやモデルを追加できます。"
+        }
+      }
+    }
+  },
   "common": {
     "loading": "読み込み中...",
     "error": "エラー",
     "retry": "再試行",
-    "save": "保存",
+    "save": "保存する",
     "cancel": "キャンセル",
     "confirm": "確認",
     "delete": "削除",
@@ -392,7 +605,7 @@
     "close": "閉じる",
     "search": "検索",
     "noData": "データなし",
-    "success": "成功",
+    "success": "成功しました",
     "failed": "失敗"
   },
   "restart": {
@@ -519,7 +732,7 @@
       "noData": "データなし",
       "replied": "返信 {{num}} 件",
       "per100Messages": "100メッセージあたり",
-      "seconds": "秒",
+      "seconds": "秒間",
       "hours": "時間",
       "days": "日"
     },

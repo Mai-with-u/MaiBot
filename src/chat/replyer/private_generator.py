@@ -18,7 +18,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.uni_message_sender import UniversalMessageSender
 from src.chat.utils.timer_calculator import Timer
-from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
+from src.chat.utils.utils import get_bot_account, get_chat_type_and_target_info, is_bot_self
 from src.prompt.prompt_manager import prompt_manager
 from src.chat.utils.common_utils import TempMethodsExpression
 from src.services.message_service import (
@@ -955,6 +955,10 @@ class PrivateReplyer:
         anchor_message: Optional[MaiMessage] = None,
     ) -> SessionMessage:
         """构建单个发送消息"""
+        bot_user_id = get_bot_account(self.chat_stream.platform)
+        if not bot_user_id:
+            logger.error(f"平台 {self.chat_stream.platform} 未配置机器人账号，无法构建发送消息")
+            raise RuntimeError(f"平台 {self.chat_stream.platform} 未配置机器人账号")
 
         maim_message = MessageBase(
             message_info=BaseMessageInfo(
@@ -962,7 +966,7 @@ class PrivateReplyer:
                 message_id=message_id,
                 time=thinking_start_time,
                 user_info=MaimUserInfo(
-                    user_id=str(global_config.bot.qq_account),
+                    user_id=bot_user_id,
                     user_nickname=global_config.bot.nickname,
                 ),
                 group_info=None,

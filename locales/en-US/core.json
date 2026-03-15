@@ -1,7 +1,8 @@
 {
-  "core.operation_failed": "操作失败: {error}",
+  "core.not_found": "Not Found",
+  "core.operation_failed": "Operation failed: {error}",
   "core.tasks_cancelled": {
-    "one": "已取消 {count} 个任务",
-    "other": "已取消 {count} 个任务"
+    "one": "Cancelled {count} task",
+    "other": "Cancelled {count} tasks"
   }
 }

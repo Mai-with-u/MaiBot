@@ -9,7 +9,9 @@ export interface SetupStep {
 
 // 步骤1：Bot基础信息
 export interface BotBasicConfig {
-  qq_account: number
+  platform: string        // Primary platform name (normalized, lowercase)
+  qq_account: number      // QQ account (preserved always for webui compat)
+  platforms: string[]     // Other platform accounts "platform:account"
   nickname: string
   alias_names: string[]
 }

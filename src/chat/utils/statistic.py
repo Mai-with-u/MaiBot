@@ -2106,12 +2106,7 @@ class StatisticOutputTask(AsyncTask):
         total_replies = [0] * len(time_points)
         total_online_hours = [0.0] * len(time_points)
 
-        # 获取bot的QQ账号
-        bot_qq_account = (
-            str(global_config.bot.qq_account)
-            if hasattr(global_config, "bot") and hasattr(global_config.bot, "qq_account")
-            else ""
-        )
+        from src.chat.utils.utils import is_bot_self
 
         interval_seconds = interval_hours * 3600
 
@@ -2148,7 +2143,7 @@ class StatisticOutputTask(AsyncTask):
             if 0 <= interval_index < len(time_points):
                 total_messages[interval_index] += 1
                 # 检查是否是bot发送的消息（回复）
-                if bot_qq_account and message.user_id == bot_qq_account:
+                if is_bot_self(message.platform or "", message.user_id or ""):
                     total_replies[interval_index] += 1
 
         # 查询在线时间记录

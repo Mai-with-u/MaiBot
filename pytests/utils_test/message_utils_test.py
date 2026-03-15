@@ -200,7 +200,7 @@ def dummy_number_to_short_id(original_id: int, salt: str, length: int = 6) -> st
     return "X" * length  # 返回固定的字符串，长度由参数决定，模拟生成短ID的行为
 
 
-def dummy_is_bot_self(user_id: str, platform) -> bool:
+def dummy_is_bot_self(platform, user_id: str) -> bool:
     return user_id == "bot_self"
 
 

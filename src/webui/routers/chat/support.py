@@ -11,11 +11,11 @@ from sqlmodel import col, delete, select
 
 from src.chat.message_receive.bot import chat_bot
 from src.chat.message_receive.message import SessionMessage
+from src.chat.utils.utils import is_bot_self
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, PersonInfo
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
-from src.common.utils.system_utils import is_bot_self
 from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 from src.webui.core import get_token_manager
@@ -62,12 +62,7 @@ class ChatHistoryManager:
     def _message_to_dict(self, msg: SessionMessage, group_id: Optional[str] = None) -> dict[str, Any]:
         user_info = msg.message_info.user_info
         user_id = user_info.user_id or ""
-        is_bot = is_bot_self(user_id, msg.platform)
-
-        if not is_bot and group_id and group_id.startswith(VIRTUAL_GROUP_ID_PREFIX):
-            is_bot = user_id == str(global_config.bot.qq_account)
-        elif not is_bot:
-            is_bot = not user_id.startswith(WEBUI_USER_ID_PREFIX)
+        is_bot = is_bot_self(msg.platform, user_id)
 
         return {
             "id": msg.message_id,

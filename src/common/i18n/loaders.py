@@ -4,6 +4,7 @@ from pathlib import Path
 from string import Formatter
 
 import json
+import locale
 
 from .exceptions import (
     DuplicateTranslationKeyError,
@@ -13,7 +14,7 @@ from .exceptions import (
 )
 
 _FORMATTER = Formatter()
-DEFAULT_LOCALE = "zh-CN"
+_FALLBACK_DEFAULT_LOCALE = "zh-CN"
 PLURAL_CATEGORIES = {"zero", "one", "two", "few", "many", "other"}
 TranslationValue = str | dict[str, str]
 
@@ -48,6 +49,27 @@ def normalize_locale(locale: str) -> str:
         else:
             normalized_parts.append(part)
     return "-".join(normalized_parts)
+
+
+def _detect_default_locale() -> str:
+    try:
+        system_locale, _encoding = locale.getlocale()
+    except (TypeError, ValueError, locale.Error):
+        system_locale = None
+
+    if system_locale:
+        try:
+            normalized_locale = normalize_locale(system_locale)
+        except InvalidLocaleError:
+            normalized_locale = ""
+
+        if normalized_locale and (get_locales_root() / normalized_locale).is_dir():
+            return normalized_locale
+
+    return _FALLBACK_DEFAULT_LOCALE
+
+
+DEFAULT_LOCALE = _detect_default_locale()
 
 
 def to_babel_locale(locale: str) -> str:

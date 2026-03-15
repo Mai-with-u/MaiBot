@@ -8,7 +8,7 @@ import asyncio
 import hashlib
 import os
 import platform
-import shutil
+# import shutil
 import subprocess
 import sys
 import time
@@ -28,17 +28,19 @@ template_env_path = Path(__file__).parent / "template" / "template.env"
 if env_path.exists():
     load_dotenv(str(env_path), override=True)
 else:
-    try:
-        if template_env_path.exists():
-            shutil.copyfile(template_env_path, env_path)
-            print(t("startup.env_created"))
-            load_dotenv(str(env_path), override=True)
-        else:
-            print(t("startup.env_template_missing"))
-            raise FileNotFoundError(t("startup.env_file_missing"))
-    except Exception as e:
-        print(t("startup.env_auto_create_failed", error=e))
-        raise
+    print("[WIP] no .env file found, and templates is not ready yet.")
+    raise
+    # try:
+    #     if template_env_path.exists():
+    #         shutil.copyfile(template_env_path, env_path)
+    #         print(t("startup.env_created"))
+    #         load_dotenv(str(env_path), override=True)
+    #     else:
+    #         print(t("startup.env_template_missing"))
+    #         raise FileNotFoundError(t("startup.env_file_missing"))
+    # except Exception as e:
+    #     print(t("startup.env_auto_create_failed", error=e))
+    #     raise
 
 set_locale(os.getenv("MAIBOT_LOCALE", "zh-CN"))
 

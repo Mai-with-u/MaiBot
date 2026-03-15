@@ -686,17 +686,14 @@ def test_prompt_manager_save_prompts_io_error_on_write(tmp_path, monkeypatch):
     p1 = Prompt(prompt_name="save_error", template="T")
     manager.add_prompt(p1, need_save=True)
 
-    class FakeFile:
-        def __enter__(self):
+    original_write_text = Path.write_text
+
+    def fake_write_text(self, *args, **kwargs):
+        if self == custom_dir / f"save_error{SUFFIX_PROMPT}":
             raise OSError("disk write error")
+        return original_write_text(self, *args, **kwargs)
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_open(*_args, **_kwargs):
-        return FakeFile()
-
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(Path, "write_text", fake_write_text)
 
     # Act / Assert
     with pytest.raises(OSError) as exc_info:
@@ -721,21 +718,14 @@ def test_prompt_manager_load_prompts_io_error_from_default_dir(tmp_path, monkeyp
 
     prompt_file = write_source_prompt(prompts_dir, "bad", "content")
 
-    class FakeFile:
-        def __enter__(self):
+    original_read_text = Path.read_text
+
+    def fake_read_text(self, *args, **kwargs):
+        if self == prompt_file:
             raise OSError("read error")
+        return original_read_text(self, *args, **kwargs)
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_open(*args, **kwargs):
-        # 只对 default 目录下的文件触发错误，其余正常（如果有）
-        file_path = Path(args[0])
-        if file_path == prompt_file:
-            return FakeFile()
-        return open(*args, **kwargs)
-
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
     manager = PromptManager()
 
     # Act / Assert
@@ -772,21 +762,14 @@ def test_prompt_manager_load_prompts_io_error_from_custom_dir(tmp_path, monkeypa
     only_custom_file = custom_dir / f"only_custom{SUFFIX_PROMPT}"
     only_custom_file.write_text("only", encoding="utf-8")
 
-    class FakeFile:
-        def __enter__(self):
+    original_read_text = Path.read_text
+
+    def fake_read_text(self, *args, **kwargs):
+        if self.parent == custom_dir:
             raise OSError("custom read error")
+        return original_read_text(self, *args, **kwargs)
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_open(*args, **kwargs):
-        file_path = Path(args[0])
-        # 对 custom 目录下的 prompt 文件统一触发错误
-        if file_path.parent == custom_dir:
-            return FakeFile()
-        return open(*args, **kwargs)
-
-    monkeypatch.setattr("builtins.open", fake_open)
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
     manager = PromptManager()
 
     # Act / Assert

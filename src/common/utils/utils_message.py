@@ -367,7 +367,7 @@ class MessageUtils:
             anonymous_name = anonymize_mapping[msg_usr_info.user_id][0]
             new_message.message_info.user_info.user_nickname = anonymous_name
             new_message.message_info.user_info.user_cardname = anonymous_name
-        if replace_bot_name and target_bot_name and is_bot_self(msg_usr_info.user_id, platform):
+        if replace_bot_name and target_bot_name and is_bot_self(platform, msg_usr_info.user_id):
             new_message.message_info.user_info.user_nickname = target_bot_name
             new_message.message_info.user_info.user_cardname = target_bot_name
         return new_message
@@ -437,7 +437,7 @@ class MessageUtils:
             anonymous_name = anonymize_mapping[user_id][0]
             component.target_user_nickname = anonymous_name
             component.target_user_cardname = anonymous_name
-        if replace_bot_name and target_bot_name and is_bot_self(user_id, platform):
+        if replace_bot_name and target_bot_name and is_bot_self(platform, user_id):
             component.target_user_nickname = target_bot_name
             component.target_user_cardname = target_bot_name
         return component
@@ -473,7 +473,7 @@ class MessageUtils:
                 anonymous_name = anonymize_mapping[user_id][0]
                 comp.user_nickname = anonymous_name
                 comp.user_cardname = anonymous_name
-            if replace_bot_name and target_bot_name and is_bot_self(user_id, platform):
+            if replace_bot_name and target_bot_name and is_bot_self(platform, user_id):
                 comp.user_nickname = target_bot_name
                 comp.user_cardname = target_bot_name
             comp.content = [  # 递归处理转发消息中的组件
@@ -512,7 +512,7 @@ class MessageUtils:
                 anonymous_name = anonymize_mapping[user_id][0]
                 component.target_message_sender_nickname = anonymous_name
                 component.target_message_sender_cardname = anonymous_name
-            if replace_bot_name and target_bot_name and is_bot_self(user_id, platform):
+            if replace_bot_name and target_bot_name and is_bot_self(platform, user_id):
                 component.target_message_sender_nickname = target_bot_name
                 component.target_message_sender_cardname = target_bot_name
         else:

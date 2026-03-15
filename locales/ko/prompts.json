@@ -1,0 +1,8 @@
+{
+  "prompt.duplicate_template_name": "Prompt 템플릿 이름 '{name}' 이 중복되었습니다: {path_a} 와 {path_b}",
+  "prompt.format_failed": "Prompt 템플릿 '{name}' 렌더링 실패: {error}",
+  "prompt.invalid_category": "Prompt 카테고리 '{category}' 가 잘못되었습니다",
+  "prompt.invalid_name": "Prompt 이름 '{name}' 이 잘못되었습니다",
+  "prompt.missing_placeholder": "Prompt 템플릿 '{name}' 에 플레이스홀더 '{placeholder}' 가 없습니다",
+  "prompt.template_not_found": "locale '{locale}' 에서 Prompt 템플릿 '{name}' 을 찾을 수 없습니다"
+}

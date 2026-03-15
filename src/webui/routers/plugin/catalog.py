@@ -106,6 +106,8 @@ async def update_mirror(
         if mirror is None:
             raise HTTPException(status_code=404, detail=f"未找到镜像源: {mirror_id}")
         return _mirror_to_response(mirror)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:

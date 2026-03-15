@@ -256,43 +256,9 @@ class Person:
         Returns:
             bool: 如果是机器人自己则返回 True，否则返回 False
         """
-        if not platform or not user_id:
-            return False
+        from src.chat.utils.utils import is_bot_self
 
-        # 将 user_id 转为字符串进行比较
-        user_id_str = str(user_id)
-
-        # 获取机器人的 QQ 账号（主账号）
-        qq_account = str(global_config.bot.qq_account or "")
-
-        # QQ 平台：直接比较 QQ 账号
-        if platform == "qq":
-            return user_id_str == qq_account
-
-        # WebUI 平台：机器人回复时使用的是 QQ 账号，所以也比较 QQ 账号
-        if platform == "webui":
-            return user_id_str == qq_account
-
-        # 获取各平台账号映射
-        platforms_list = getattr(global_config.bot, "platforms", []) or []
-        platform_accounts = {}
-        for platform_entry in platforms_list:
-            if ":" in platform_entry:
-                platform_name, account = platform_entry.split(":", 1)
-                platform_accounts[platform_name.strip()] = account.strip()
-
-        # Telegram 平台
-        if platform == "telegram":
-            tg_account = platform_accounts.get("tg", "") or platform_accounts.get("telegram", "")
-            return user_id_str == tg_account if tg_account else False
-
-        # 其他平台：尝试从 platforms 配置中查找
-        platform_account = platform_accounts.get(platform, "")
-        if platform_account:
-            return user_id_str == platform_account
-
-        # 默认情况：与主 QQ 账号比较（兼容性）
-        return user_id_str == qq_account
+        return is_bot_self(platform, user_id)
 
     def __init__(self, platform: str = "", user_id: str = "", person_id: str = "", person_name: str = ""):
         # 使用统一的机器人识别函数（支持多平台，包括 WebUI）
@@ -731,15 +697,15 @@ class PersonInfoManager:
             bot_name = global_config.bot.nickname
 
             qv_name_prompt = f"你是{bot_name}，一个伪装成人类的AI，你不能让别人发现这一点，"
-            qv_name_prompt += f"现在你想给一个用户取一个昵称，用户的qq昵称是{user_nickname}，"
-            qv_name_prompt += f"用户的qq群昵称名是{user_cardname}，"
+            qv_name_prompt += f"现在你想给一个用户取一个昵称，用户的昵称是{user_nickname}，"
+            qv_name_prompt += f"用户的群昵称名是{user_cardname}，"
             if user_avatar:
-                qv_name_prompt += f"用户的qq头像是{user_avatar}，"
+                qv_name_prompt += f"用户的头像是{user_avatar}，"
             if old_name:
                 qv_name_prompt += f"你之前叫他{old_name}，是因为{old_reason}，"
 
             qv_name_prompt += f"\n其他取名的要求是：{request}，不要太浮夸，简短，"
-            qv_name_prompt += "\n请根据以上用户信息，想想你叫他什么比较好，不要太浮夸，请最好使用用户的qq昵称或群昵称原文，可以稍作修改，优先使用原文。优先使用用户的qq昵称或者群昵称原文。"
+            qv_name_prompt += "\n请根据以上用户信息，想想你叫他什么比较好，不要太浮夸，请最好使用用户的昵称或群昵称原文，可以稍作修改，优先使用原文。优先使用用户的昵称或者群昵称原文。"
 
             if existing_names_str:
                 qv_name_prompt += f"\n请注意，以下名称已被你尝试过或已知存在，请避免：{existing_names_str}。\n"

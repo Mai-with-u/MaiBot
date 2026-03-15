@@ -10,11 +10,26 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from src.common.logger import get_logger
+from src.webui.utils.network_security import validate_public_url
 
 logger = get_logger("webui.git_mirror")
 
 # 导入进度更新函数（避免循环导入）
 _update_progress = None
+
+
+def _validate_mirror_prefix(url: str, field_name: str) -> str:
+    try:
+        return validate_public_url(url)
+    except ValueError as e:
+        raise ValueError(f"{field_name} 非法: {e}") from e
+
+
+def _validate_custom_outbound_url(url: str) -> str:
+    try:
+        return validate_public_url(url)
+    except ValueError as e:
+        raise ValueError(f"目标 URL 非法: {e}") from e
 
 
 def set_update_progress_callback(callback):
@@ -200,6 +215,9 @@ class GitMirrorConfig:
         if self.get_mirror_by_id(mirror_id):
             raise ValueError(f"镜像源 ID 已存在: {mirror_id}")
 
+        raw_prefix = _validate_mirror_prefix(raw_prefix, "Raw 前缀")
+        clone_prefix = _validate_mirror_prefix(clone_prefix, "克隆前缀")
+
         # 如果未指定优先级，使用最大优先级 + 1
         if priority is None:
             max_priority = max((m.get("priority", 0) for m in self.mirrors), default=0)
@@ -241,8 +259,10 @@ class GitMirrorConfig:
                 if name is not None:
                     mirror["name"] = name
                 if raw_prefix is not None:
+                    raw_prefix = _validate_mirror_prefix(raw_prefix, "Raw 前缀")
                     mirror["raw_prefix"] = raw_prefix
                 if clone_prefix is not None:
+                    clone_prefix = _validate_mirror_prefix(clone_prefix, "克隆前缀")
                     mirror["clone_prefix"] = clone_prefix
                 if enabled is not None:
                     mirror["enabled"] = enabled
@@ -372,7 +392,18 @@ class GitMirrorService:
         logger.info(f"开始获取 Raw 文件: {owner}/{repo}/{branch}/{file_path}")
 
         if custom_url:
-            # 使用自定义 URL
+            try:
+                custom_url = _validate_custom_outbound_url(custom_url)
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "mirror_used": "custom",
+                    "attempts": 0,
+                    "url": custom_url,
+                    "status_code": 400,
+                }
+
             return await self._fetch_with_url(custom_url, "custom")
 
         # 确定要使用的镜像源列表
@@ -443,8 +474,11 @@ class GitMirrorService:
         self, owner: str, repo: str, branch: str, file_path: str, mirror: Dict[str, Any]
     ) -> Dict[str, Any]:
         """从指定镜像源获取文件"""
-        # 构建 URL
-        raw_prefix = mirror["raw_prefix"]
+        try:
+            raw_prefix = _validate_mirror_prefix(mirror["raw_prefix"], "镜像 Raw 前缀")
+        except ValueError as e:
+            return {"success": False, "error": str(e), "mirror_used": mirror.get("id"), "attempts": 0, "status_code": 400}
+
         url = f"{raw_prefix}/{owner}/{repo}/{branch}/{file_path}"
 
         return await self._fetch_with_url(url, mirror["id"])
@@ -515,7 +549,18 @@ class GitMirrorService:
         logger.info(f"开始克隆仓库: {owner}/{repo} 到 {target_path}")
 
         if custom_url:
-            # 使用自定义 URL
+            try:
+                custom_url = _validate_custom_outbound_url(custom_url)
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "mirror_used": "custom",
+                    "attempts": 0,
+                    "url": custom_url,
+                    "status_code": 400,
+                }
+
             return await self._clone_with_url(custom_url, target_path, branch, depth, "custom")
 
         # 确定要使用的镜像源列表
@@ -549,8 +594,11 @@ class GitMirrorService:
         mirror: Dict[str, Any],
     ) -> Dict[str, Any]:
         """从指定镜像源克隆仓库"""
-        # 构建克隆 URL
-        clone_prefix = mirror["clone_prefix"]
+        try:
+            clone_prefix = _validate_mirror_prefix(mirror["clone_prefix"], "镜像克隆前缀")
+        except ValueError as e:
+            return {"success": False, "error": str(e), "mirror_used": mirror.get("id"), "attempts": 0, "status_code": 400}
+
         url = f"{clone_prefix}/{owner}/{repo}.git"
 
         return await self._clone_with_url(url, target_path, branch, depth, mirror["id"])

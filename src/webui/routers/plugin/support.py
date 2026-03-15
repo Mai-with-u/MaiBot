@@ -44,6 +44,50 @@ def validate_safe_path(user_path: str, base_path: Path) -> Path:
     return target_path
 
 
+def _resolve_safe_plugin_directory(plugin_path: Path, plugins_dir: Path, strict: bool) -> Optional[Path]:
+    try:
+        if plugin_path.is_symlink():
+            raise HTTPException(status_code=400, detail="插件目录不能是符号链接")
+
+        resolved_plugins_dir = plugins_dir.resolve()
+        resolved_plugin_path = plugin_path.resolve()
+        resolved_plugin_path.relative_to(resolved_plugins_dir)
+
+        if not resolved_plugin_path.is_dir():
+            return None
+
+        return resolved_plugin_path
+    except HTTPException:
+        if strict:
+            raise
+        logger.warning(f"已跳过不安全的插件目录: {plugin_path}")
+        return None
+    except (OSError, RuntimeError, ValueError):
+        if strict:
+            raise HTTPException(status_code=400, detail="插件目录超出允许范围")
+        logger.warning(f"已跳过越界的插件目录: {plugin_path}")
+        return None
+
+
+def resolve_plugin_file_path(plugin_path: Path, relative_path: str, allow_missing: bool = True) -> Path:
+    plugin_root = plugin_path.resolve()
+    target_path = plugin_root / relative_path
+
+    if target_path.exists() and target_path.is_symlink():
+        raise HTTPException(status_code=400, detail=f"插件文件不能是符号链接: {relative_path}")
+
+    try:
+        resolved_target_path = target_path.resolve()
+        resolved_target_path.relative_to(plugin_root)
+    except (OSError, RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"插件文件超出允许范围: {relative_path}") from e
+
+    if not allow_missing and not resolved_target_path.exists():
+        raise HTTPException(status_code=404, detail=f"插件文件不存在: {relative_path}")
+
+    return resolved_target_path
+
+
 def validate_plugin_id(plugin_id: str) -> str:
     if not plugin_id or not plugin_id.strip():
         logger.warning("非法插件 ID: 空字符串")
@@ -164,9 +208,13 @@ def get_plugin_candidate_paths(plugin_id: str) -> tuple[Path, Path]:
 
 def resolve_installed_plugin_path(plugin_id: str) -> Optional[Path]:
     new_format_path, old_format_path = get_plugin_candidate_paths(plugin_id)
+    plugins_dir = get_plugins_dir()
+
     if new_format_path.exists():
-        return new_format_path
-    return old_format_path if old_format_path.exists() else None
+        return _resolve_safe_plugin_directory(new_format_path, plugins_dir, strict=True)
+    if old_format_path.exists():
+        return _resolve_safe_plugin_directory(old_format_path, plugins_dir, strict=True)
+    return None
 
 
 def parse_repository_url(repository_url: str) -> tuple[str, str, str]:
@@ -181,6 +229,16 @@ def load_manifest_json(manifest_path: Path) -> Optional[dict[str, Any]]:
     if not manifest_path.exists():
         return None
 
+    if manifest_path.is_symlink():
+        logger.warning(f"已拒绝读取符号链接 manifest: {manifest_path}")
+        return None
+
+    try:
+        manifest_path.resolve().relative_to(manifest_path.parent.resolve())
+    except (OSError, RuntimeError, ValueError):
+        logger.warning(f"已拒绝读取越界 manifest: {manifest_path}")
+        return None
+
     try:
         with open(manifest_path, "r", encoding="utf-8") as file_obj:
             return cast(dict[str, Any], json.load(file_obj))
@@ -189,12 +247,19 @@ def load_manifest_json(manifest_path: Path) -> Optional[dict[str, Any]]:
 
 
 def iter_plugin_directories() -> list[Path]:
-    return [path for path in get_plugins_dir().iterdir() if path.is_dir()]
+    plugins_dir = get_plugins_dir()
+    plugin_directories: list[Path] = []
+    for path in plugins_dir.iterdir():
+        safe_path = _resolve_safe_plugin_directory(path, plugins_dir, strict=False)
+        if safe_path is not None:
+            plugin_directories.append(safe_path)
+    return plugin_directories
 
 
 def find_plugin_path_by_id(plugin_id: str) -> Optional[Path]:
     for plugin_path in iter_plugin_directories():
-        manifest = load_manifest_json(plugin_path / "_manifest.json")
+        manifest_path = resolve_plugin_file_path(plugin_path, "_manifest.json")
+        manifest = load_manifest_json(manifest_path)
         if manifest is not None and (manifest.get("id") == plugin_id or plugin_path.name == plugin_id):
             return plugin_path
     return None
@@ -214,6 +279,9 @@ def backup_file(file_path: Path, action: str, move_file: bool = False) -> Option
 
 
 def remove_tree(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(f"拒绝删除符号链接路径: {path}")
+
     def remove_readonly(func: Any, target_path: str, _: Any) -> None:
         os.chmod(target_path, stat.S_IWRITE)
         func(target_path)

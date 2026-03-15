@@ -27,7 +27,9 @@ export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
   const botConfig = (data.config.bot || {}) as Partial<BotBasicConfig>
 
   return {
+    platform: botConfig.platform || (botConfig.qq_account ? 'qq' : ''),
     qq_account: botConfig.qq_account || 0,
+    platforms: botConfig.platforms || [],
     nickname: botConfig.nickname || '',
     alias_names: botConfig.alias_names || [],
   }

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from src.common.logger import get_logger
 from src.config.config import CONFIG_DIR
 from src.webui.dependencies import require_auth
+from src.webui.utils.network_security import validate_public_url
 
 logger = get_logger("webui")
 
@@ -102,7 +103,12 @@ async def _fetch_models_from_provider(
     Returns:
         模型列表
     """
-    url = f"{_normalize_url(base_url)}{endpoint}"
+    try:
+        base_url = validate_public_url(_normalize_url(base_url))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    url = f"{base_url}{endpoint}"
 
     # 根据客户端类型设置请求头
     headers = {}
@@ -265,6 +271,11 @@ async def test_provider_connection(
     base_url = _normalize_url(base_url)
     if not base_url:
         raise HTTPException(status_code=400, detail="base_url 不能为空")
+
+    try:
+        base_url = validate_public_url(base_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     result = {
         "network_ok": False,

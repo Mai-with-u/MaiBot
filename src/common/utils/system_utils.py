@@ -1,8 +1,11 @@
-# TODO: 这个函数的实现非常临时，后续需要替换为更完善的实现，比如直接从配置文件中读取机器人自己的 ID，或者通过 API 获取机器人自己的信息等
-def is_bot_self(user_id: str, platform: str) -> bool:
+# TODO: 这个包装层后续可以删除，统一直接使用 src.chat.utils.utils.is_bot_self
+# 注意：参数顺序已从旧版 (user_id, platform) 变更为 (platform, user_id)，与统一接口一致
+def is_bot_self(platform: str, user_id: str) -> bool:
     """
-    判断用户 ID 是否是机器人自己
+    判断用户 ID 是否是机器人自己。
 
-    临时方法，后续会替换为更完善的实现
+    当前仅保留兼容入口，真实实现委托给统一的多平台判断函数。
     """
-    return user_id == "bot_self" and platform == "test_platform"
+    from src.chat.utils.utils import is_bot_self as _is_bot_self
+
+    return _is_bot_self(platform, user_id)

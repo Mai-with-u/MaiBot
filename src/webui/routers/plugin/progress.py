@@ -89,12 +89,6 @@ async def websocket_plugin_progress(websocket: WebSocket, token: Optional[str] =
                 is_authenticated = True
                 logger.debug("插件进度 WebSocket 使用 Cookie 认证成功")
 
-    if not is_authenticated and token:
-        token_manager = get_token_manager()
-        if token_manager.verify_token(token):
-            is_authenticated = True
-            logger.debug("插件进度 WebSocket 使用 session token 认证成功")
-
     if not is_authenticated:
         logger.warning("插件进度 WebSocket 连接被拒绝：认证失败")
         await websocket.close(code=4001, reason="认证失败，请重新登录")

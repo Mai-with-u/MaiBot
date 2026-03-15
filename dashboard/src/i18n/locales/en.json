@@ -1,5 +1,4 @@
 {
-  "language": { "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어" },
   "header": {
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
@@ -379,6 +378,220 @@
     "connFailed": "Failed to connect to the server. Please check your network connection.",
     "switchToLight": "Switch to light mode",
     "switchToDark": "Switch to dark mode"
+  },
+  "setupPage": {
+    "steps": {
+      "botBasic": {
+        "title": "Bot Basics",
+        "description": "Configure the bot's basic information"
+      },
+      "personality": {
+        "title": "Personality",
+        "description": "Define the bot's personality and speaking style"
+      },
+      "emoji": {
+        "title": "Emoji",
+        "description": "Configure emoji-related settings"
+      },
+      "other": {
+        "title": "Other Settings",
+        "description": "Configure tools, emotion system, and more"
+      },
+      "siliconFlow": {
+        "title": "API Setup",
+        "description": "Configure the SiliconFlow API key"
+      }
+    },
+    "loading": {
+      "title": "Loading configuration...",
+      "description": "Reading existing configuration"
+    },
+    "header": {
+      "title": "Initial Setup Wizard",
+      "description": "Let's complete the initial setup for {{appName}}"
+    },
+    "progress": {
+      "stepCounter": "Step {{current}} / {{total}}"
+    },
+    "validation": {
+      "selectPlatform": "Please select a platform",
+      "enterNickname": "Please enter a nickname",
+      "enterQqAccount": "Please enter a QQ account",
+      "enterAccountId": "Please enter an account ID"
+    },
+    "toast": {
+      "loadFailedTitle": "Failed to load configuration",
+      "loadFailedDescription": "Unable to load the existing configuration. Default values will be used.",
+      "saveSuccessTitle": "Saved successfully",
+      "saveSuccessDescription": "{{step}} configuration has been saved",
+      "saveFailedTitle": "Save failed",
+      "validationFailedTitle": "Validation failed",
+      "completeSuccessTitle": "Setup complete",
+      "completeSuccessDescription": "{{appName}} is restarting to apply the new configuration...",
+      "completeFailedTitle": "Setup failed",
+      "skipFailedTitle": "Failed to skip the setup wizard",
+      "unknownError": "Unknown error"
+    },
+    "actions": {
+      "previous": "Previous",
+      "next": "Next",
+      "skip": "Skip Wizard",
+      "complete": "Complete Setup",
+      "saving": "Saving...",
+      "completing": "Completing..."
+    },
+    "skipDialog": {
+      "title": "Skip the setup wizard?",
+      "description": "You can reopen the setup wizard anytime from System Settings. Are you sure you want to skip it?",
+      "confirm": "Skip Anyway"
+    },
+    "footer": "You can change these settings anytime in Settings",
+    "defaults": {
+      "personality": {
+        "personality": "She is a sophomore college student who spends time on Tieba.",
+        "replyStyle": "Keep replies plain and concise, speak Chinese, and avoid deliberately emphasizing any academic background. You can refer to the reply styles commonly seen on Tieba, Zhihu, and Weibo.",
+        "interest": "Interested in technology, games, anime, and everyday topics, and dislikes topics that are overly heavy or serious.",
+        "planStyle": "1. Consider **every action** in **all** available actions and use it if its conditions match the current conversation.\n2. Do not repeat content that has already been executed.\n3. Control how often you speak and avoid replying too frequently.\n4. If someone seems annoyed with you, reduce your replies.\n5. If someone attacks you or becomes emotional, respond appropriately.",
+        "privatePlanStyle": "1. Consider **every action** in **all** available actions and use it if its conditions match the current conversation.\n2. Do not repeat content that has already been executed.\n3. If a sentence has already been replied to, do not reply to it again."
+      },
+      "emoji": {
+        "filtrationPrompt": "Appropriate and safe for general audiences"
+      }
+    },
+    "forms": {
+      "botBasic": {
+        "platform": {
+          "label": "Platform *",
+          "placeholder": "Select a platform",
+          "description": "Choose the platform where the bot runs",
+          "options": {
+            "custom": "Other Platform"
+          }
+        },
+        "customPlatform": {
+          "label": "Platform Name *",
+          "placeholder": "Enter a platform name, such as matrix"
+        },
+        "qqAccount": {
+          "label": "QQ Account *",
+          "placeholder": "Enter the bot's QQ account",
+          "description": "The QQ account used to log in the bot"
+        },
+        "primaryAccount": {
+          "label": "Account ID *",
+          "placeholder": "Enter the bot's account ID",
+          "description": "The bot's account identifier on this platform"
+        },
+        "nickname": {
+          "label": "Nickname *",
+          "placeholder": "Enter the bot's nickname",
+          "description": "The bot's primary display name"
+        },
+        "alias": {
+          "label": "Aliases",
+          "placeholder": "Type an alias and press Enter to add it",
+          "add": "Add",
+          "description": "Other names for the bot. You can add multiple aliases.",
+          "remove": "Remove alias {{alias}}"
+        }
+      },
+      "personality": {
+        "personality": {
+          "label": "Personality Traits *",
+          "placeholder": "Describe the bot's personality and identity traits (recommended within 120 characters)",
+          "description": "Example: a sophomore college girl who browses Tieba"
+        },
+        "replyStyle": {
+          "label": "Reply Style *",
+          "placeholder": "Describe how the bot speaks and expresses itself",
+          "description": "Example: keep replies plain and concise, speak Chinese, and refer to styles seen on Tieba, Zhihu, and Weibo"
+        },
+        "interest": {
+          "label": "Interests *",
+          "placeholder": "Describe the topics the bot is interested in",
+          "description": "This affects which topics the bot is more likely to respond to"
+        },
+        "planStyle": {
+          "label": "Group Chat Rules *",
+          "placeholder": "The bot's behavior style and rules in group chats",
+          "description": "Defines how the bot acts in group chats, such as reply frequency and conditions"
+        },
+        "privatePlanStyle": {
+          "label": "Private Chat Rules *",
+          "placeholder": "The bot's behavior style and rules in private chats",
+          "description": "Defines how the bot behaves in private chats"
+        }
+      },
+      "emoji": {
+        "emojiChance": {
+          "label": "Emoji Activation Chance",
+          "description": "How likely the bot is to send an emoji"
+        },
+        "maxRegNum": {
+          "label": "Maximum Emoji Count",
+          "description": "The maximum number of emojis the bot can store"
+        },
+        "doReplace": {
+          "label": "Replace When Full",
+          "description": "When enabled, old emojis will be removed; when disabled, new emojis will no longer be collected"
+        },
+        "checkInterval": {
+          "label": "Check Interval (Minutes)",
+          "description": "How often to check emoji registration, damage, and deletion"
+        },
+        "stealEmoji": {
+          "label": "Collect Emojis",
+          "description": "Allow the bot to keep certain emojis for itself"
+        },
+        "contentFiltration": {
+          "label": "Enable Emoji Filtering",
+          "description": "Only save emojis that meet the requirements"
+        },
+        "filtrationPrompt": {
+          "label": "Filter Requirements",
+          "placeholder": "For example: appropriate and safe for general audiences",
+          "description": "Describe what kind of emojis should be allowed"
+        }
+      },
+      "other": {
+        "enableTool": {
+          "label": "Enable Tool System",
+          "description": "Allow the bot to use tools to enhance its capabilities"
+        },
+        "allGlobal": {
+          "label": "Enable Global Slang Mode",
+          "description": "Allow the bot to learn and use group-specific slang"
+        }
+      },
+      "siliconFlow": {
+        "about": {
+          "title": "About SiliconFlow",
+          "description": "SiliconFlow provides broad model coverage, including DeepSeek V3, Qwen, vision models, speech recognition, and embedding models. A single API key unlocks all MaiBot features.",
+          "link": "Get an API key from SiliconFlow"
+        },
+        "apiKey": {
+          "label": "SiliconFlow API Key *",
+          "description": "Enter your SiliconFlow API key. Once provided, MaiBot will automatically configure all required models.",
+          "show": "Show API key",
+          "hide": "Hide API key"
+        },
+        "autoConfig": {
+          "title": "The following models will be configured automatically:",
+          "items": {
+            "deepseek": "DeepSeek V3 - primary chat and tool model",
+            "qwen3": "Qwen3 30B - frequent small tasks and tool calls",
+            "qwen3Vl": "Qwen3 VL 30B - image recognition",
+            "senseVoice": "SenseVoice - speech recognition",
+            "bgeM3": "BGE-M3 - text embeddings",
+            "lpmm": "Knowledge-base-related models (LPMM)"
+          }
+        },
+        "hint": {
+          "title": "Tip: ",
+          "description": "After finishing the wizard, you can add more API providers and models in \"System Settings -> Model Config\"."
+        }
+      }
+    }
   },
   "common": {
     "loading": "Loading...",

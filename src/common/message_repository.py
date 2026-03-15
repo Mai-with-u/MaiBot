@@ -1,17 +1,16 @@
-import traceback
 from datetime import datetime
 from typing import Any
 
 import json
+import traceback
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, not_, or_
 from sqlmodel import col, select
 
+from src.chat.message_receive.message import SessionMessage
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages
-from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
-from src.config.config import global_config
 
 logger = get_logger(__name__)
 
@@ -163,7 +162,29 @@ def find_messages(
             after_time=after_time,
         )
         if filter_bot:
-            conditions.append(Messages.user_id != global_config.bot.qq_account)
+            from src.chat.utils.utils import get_all_bot_accounts, get_bot_account
+
+            bot_accounts = get_all_bot_accounts()
+            exclusion_conditions: list[Any] = []
+            if bot_accounts:
+                exclusion_conditions.append(
+                    or_(
+                        *[
+                            and_(Messages.platform == platform_name, Messages.user_id == account)
+                            for platform_name, account in bot_accounts.items()
+                        ]
+                    )
+                )
+
+            # 兼容旧数据：历史机器人消息在所有平台上都使用 QQ 账号作为 user_id 存储，
+            # 例如旧 Telegram bot 消息的 (platform="telegram", user_id=qq_account)。
+            # plan 建议的 ("", qq_account) pair 只能覆盖空 platform 行，无法覆盖这种情况。
+            # 因此这里使用全局 user_id 匹配作为临时方案，待 DB 迁移后应移除此兜底。
+            if qq_fallback := get_bot_account("qq"):
+                exclusion_conditions.append(Messages.user_id == qq_fallback)
+
+            if exclusion_conditions:
+                conditions.append(not_(or_(*exclusion_conditions)))
         if filter_command:
             conditions.append(Messages.is_command == False)  # noqa: E712
 

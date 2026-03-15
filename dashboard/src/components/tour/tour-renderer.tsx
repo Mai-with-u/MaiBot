@@ -203,7 +203,6 @@ export function TourRenderer() {
             zIndex: 99999,
           },
         },
-        disableAnimation: true,
       }}
     />
   )

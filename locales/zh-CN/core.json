@@ -1,4 +1,5 @@
 {
+  "core.not_found": "未找到资源",
   "core.operation_failed": "操作失败: {error}",
   "core.tasks_cancelled": {
     "one": "已取消 {count} 个任务",

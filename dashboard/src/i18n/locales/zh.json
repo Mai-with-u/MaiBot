@@ -1,5 +1,4 @@
 {
-  "language": { "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어" },
   "header": {
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
@@ -379,6 +378,220 @@
     "connFailed": "连接服务器失败，请检查网络连接",
     "switchToLight": "切换到浅色模式",
     "switchToDark": "切换到深色模式"
+  },
+  "setupPage": {
+    "steps": {
+      "botBasic": {
+        "title": "Bot基础",
+        "description": "配置机器人的基本信息"
+      },
+      "personality": {
+        "title": "人格配置",
+        "description": "定义机器人的性格和说话风格"
+      },
+      "emoji": {
+        "title": "表情包",
+        "description": "配置表情包相关设置"
+      },
+      "other": {
+        "title": "其他设置",
+        "description": "工具、情绪系统等配置"
+      },
+      "siliconFlow": {
+        "title": "API配置",
+        "description": "配置硅基流动 API 密钥"
+      }
+    },
+    "loading": {
+      "title": "加载配置中...",
+      "description": "正在读取现有配置"
+    },
+    "header": {
+      "title": "首次配置向导",
+      "description": "让我们一起完成 {{appName}} 的初始配置"
+    },
+    "progress": {
+      "stepCounter": "步骤 {{current}} / {{total}}"
+    },
+    "validation": {
+      "selectPlatform": "请选择平台",
+      "enterNickname": "请输入昵称",
+      "enterQqAccount": "请输入 QQ 账号",
+      "enterAccountId": "请输入账号 ID"
+    },
+    "toast": {
+      "loadFailedTitle": "加载配置失败",
+      "loadFailedDescription": "无法加载现有配置，将使用默认值",
+      "saveSuccessTitle": "保存成功",
+      "saveSuccessDescription": "{{step}} 配置已保存",
+      "saveFailedTitle": "保存失败",
+      "validationFailedTitle": "验证失败",
+      "completeSuccessTitle": "配置完成",
+      "completeSuccessDescription": "{{appName}} 正在重启以应用新配置...",
+      "completeFailedTitle": "配置失败",
+      "skipFailedTitle": "跳过失败",
+      "unknownError": "未知错误"
+    },
+    "actions": {
+      "previous": "上一步",
+      "next": "下一步",
+      "skip": "跳过向导",
+      "complete": "完成配置",
+      "saving": "保存中...",
+      "completing": "完成中..."
+    },
+    "skipDialog": {
+      "title": "确认跳过配置向导",
+      "description": "您可以随时在系统设置中重新进入配置向导。确定要跳过吗？",
+      "confirm": "确认跳过"
+    },
+    "footer": "您可以随时在设置中修改这些配置",
+    "defaults": {
+      "personality": {
+        "personality": "是一个女大学生，现在在读大二，会刷贴吧。",
+        "replyStyle": "请回复得平淡一些，简短一些，说中文，不要刻意突出自身学科背景。可以参考贴吧、知乎和微博的回复风格。",
+        "interest": "对技术相关话题、游戏和动漫相关话题感兴趣，也对日常话题感兴趣，不喜欢太过沉重严肃的话题。",
+        "planStyle": "1.思考**所有**的可用的 action 中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用\n2.如果相同的内容已经被执行，请不要重复执行\n3.请控制你的发言频率，不要太过频繁地发言\n4.如果有人对你感到厌烦，请减少回复\n5.如果有人对你进行攻击，或者情绪激动，请你以合适的方法应对",
+        "privatePlanStyle": "1.思考**所有**的可用的 action 中的**每个动作**是否符合当下条件，如果动作使用条件符合聊天内容就使用\n2.如果相同的内容已经被执行，请不要重复执行\n3.某句话如果已经被回复过，不要重复回复"
+      },
+      "emoji": {
+        "filtrationPrompt": "符合公序良俗"
+      }
+    },
+    "forms": {
+      "botBasic": {
+        "platform": {
+          "label": "平台 *",
+          "placeholder": "请选择平台",
+          "description": "选择机器人运行的平台",
+          "options": {
+            "custom": "其他平台"
+          }
+        },
+        "customPlatform": {
+          "label": "平台名称 *",
+          "placeholder": "请输入平台名称，如 matrix"
+        },
+        "qqAccount": {
+          "label": "QQ账号 *",
+          "placeholder": "请输入机器人的 QQ 账号",
+          "description": "机器人登录使用的 QQ 账号"
+        },
+        "primaryAccount": {
+          "label": "账号 ID *",
+          "placeholder": "请输入机器人的账号 ID",
+          "description": "机器人在该平台上的账号标识"
+        },
+        "nickname": {
+          "label": "昵称 *",
+          "placeholder": "请输入机器人的昵称",
+          "description": "机器人的主要称呼名称"
+        },
+        "alias": {
+          "label": "别名",
+          "placeholder": "输入别名后按回车添加",
+          "add": "添加",
+          "description": "机器人的其他称呼，可以添加多个",
+          "remove": "移除别名 {{alias}}"
+        }
+      },
+      "personality": {
+        "personality": {
+          "label": "人格特征 *",
+          "placeholder": "描述机器人的人格特质和身份特征（建议 120 字以内）",
+          "description": "例如：是一个女大学生，现在在读大二，会刷贴吧"
+        },
+        "replyStyle": {
+          "label": "表达风格 *",
+          "placeholder": "描述机器人说话的表达风格、表达习惯",
+          "description": "例如：回复平淡一些，简短一些，说中文，参考贴吧、知乎和微博的回复风格"
+        },
+        "interest": {
+          "label": "兴趣 *",
+          "placeholder": "描述机器人感兴趣的话题",
+          "description": "会影响机器人对什么话题进行回复"
+        },
+        "planStyle": {
+          "label": "群聊说话规则 *",
+          "placeholder": "机器人在群聊中的行为风格和规则",
+          "description": "定义机器人在群聊中如何行动，例如回复频率、条件等"
+        },
+        "privatePlanStyle": {
+          "label": "私聊说话规则 *",
+          "placeholder": "机器人在私聊中的行为风格和规则",
+          "description": "定义机器人在私聊中的行为方式"
+        }
+      },
+      "emoji": {
+        "emojiChance": {
+          "label": "表情包激活概率",
+          "description": "机器人发送表情包的概率"
+        },
+        "maxRegNum": {
+          "label": "最大表情包数量",
+          "description": "机器人最多保存的表情包数量"
+        },
+        "doReplace": {
+          "label": "达到最大数量时替换",
+          "description": "开启后会删除旧表情包，关闭则不再收集新表情包"
+        },
+        "checkInterval": {
+          "label": "检查间隔（分钟）",
+          "description": "检查表情包注册、破损、删除的时间间隔"
+        },
+        "stealEmoji": {
+          "label": "偷取表情包",
+          "description": "允许机器人将一些表情包据为己有"
+        },
+        "contentFiltration": {
+          "label": "启用表情包过滤",
+          "description": "只保存符合要求的表情包"
+        },
+        "filtrationPrompt": {
+          "label": "过滤要求",
+          "placeholder": "例如：符合公序良俗",
+          "description": "描述表情包应该符合的要求"
+        }
+      },
+      "other": {
+        "enableTool": {
+          "label": "启用工具系统",
+          "description": "允许机器人使用各种工具增强功能"
+        },
+        "allGlobal": {
+          "label": "启用全局黑话模式",
+          "description": "允许机器人学习和使用群组黑话"
+        }
+      },
+      "siliconFlow": {
+        "about": {
+          "title": "关于硅基流动 (SiliconFlow)",
+          "description": "硅基流动提供了完整的模型覆盖，包括 DeepSeek V3、Qwen、视觉模型、语音识别和嵌入模型。只需一个 API Key 即可使用麦麦的所有功能！",
+          "link": "前往硅基流动获取 API Key"
+        },
+        "apiKey": {
+          "label": "SiliconFlow API Key *",
+          "description": "请输入您的硅基流动 API 密钥。获取后，麦麦将自动配置所有必需的模型。",
+          "show": "显示 API Key",
+          "hide": "隐藏 API Key"
+        },
+        "autoConfig": {
+          "title": "将自动配置以下模型：",
+          "items": {
+            "deepseek": "DeepSeek V3 - 主要对话和工具模型",
+            "qwen3": "Qwen3 30B - 高频小任务和工具调用",
+            "qwen3Vl": "Qwen3 VL 30B - 图像识别",
+            "senseVoice": "SenseVoice - 语音识别",
+            "bgeM3": "BGE-M3 - 文本嵌入",
+            "lpmm": "知识库相关模型 (LPMM)"
+          }
+        },
+        "hint": {
+          "title": "💡 提示：",
+          "description": "完成向导后，您可以在“系统设置 -> 模型配置”中添加更多 API 提供商和模型。"
+        }
+      }
+    }
   },
   "common": {
     "loading": "加载中...",

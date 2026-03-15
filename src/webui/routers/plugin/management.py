@@ -13,11 +13,12 @@ from .schemas import InstallPluginRequest, UninstallPluginRequest, UpdatePluginR
 from .support import (
     find_plugin_path_by_id,
     get_plugin_candidate_paths,
-    get_plugins_dir,
+    iter_plugin_directories,
     load_manifest_json,
     parse_repository_url,
     remove_tree,
     require_plugin_token,
+    resolve_plugin_file_path,
     resolve_installed_plugin_path,
     validate_plugin_id,
 )
@@ -56,7 +57,8 @@ def _infer_plugin_id(folder_name: str, manifest: dict[str, Any], manifest_path: 
     logger.info(f"为插件 {folder_name} 自动生成 ID: {plugin_id}")
     manifest["id"] = plugin_id
     try:
-        with open(manifest_path, "w", encoding="utf-8") as file_obj:
+        safe_manifest_path = resolve_plugin_file_path(manifest_path.parent, "_manifest.json")
+        with open(safe_manifest_path, "w", encoding="utf-8") as file_obj:
             json.dump(manifest, file_obj, ensure_ascii=False, indent=2)
     except Exception as write_error:
         logger.warning(f"无法写入 ID 到 manifest: {write_error}")
@@ -91,10 +93,10 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
         if not result.get("success"):
             error_msg = str(result.get("error", "克隆失败"))
             await update_progress(stage="error", progress=0, message="克隆仓库失败", operation="install", plugin_id=plugin_id, error=error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
+            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=error_msg)
 
         await update_progress(stage="loading", progress=85, message="验证插件文件...", operation="install", plugin_id=plugin_id)
-        manifest_path = target_path / "_manifest.json"
+        manifest_path = resolve_plugin_file_path(target_path, "_manifest.json")
         if not manifest_path.exists():
             remove_tree(target_path)
             await update_progress(stage="error", progress=0, message="插件缺少 _manifest.json", operation="install", plugin_id=plugin_id, error="无效的插件格式")
@@ -140,7 +142,7 @@ async def uninstall_plugin(request: UninstallPluginRequest, maibot_session: Opti
             raise HTTPException(status_code=404, detail="插件未安装")
 
         await update_progress(stage="loading", progress=30, message=f"正在删除插件文件: {plugin_path}", operation="uninstall", plugin_id=plugin_id)
-        manifest = load_manifest_json(plugin_path / "_manifest.json")
+        manifest = load_manifest_json(resolve_plugin_file_path(plugin_path, "_manifest.json"))
         plugin_name = str(manifest.get("name", plugin_id)) if manifest is not None else plugin_id
         await update_progress(stage="loading", progress=50, message=f"正在删除 {plugin_name}...", operation="uninstall", plugin_id=plugin_id)
         remove_tree(plugin_path)
@@ -173,7 +175,7 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
             await update_progress(stage="error", progress=0, message="插件不存在", operation="update", plugin_id=plugin_id, error="插件未安装，请先安装")
             raise HTTPException(status_code=404, detail="插件未安装")
 
-        manifest = load_manifest_json(plugin_path / "_manifest.json")
+        manifest = load_manifest_json(resolve_plugin_file_path(plugin_path, "_manifest.json"))
         old_version = str(manifest.get("version", "unknown")) if manifest is not None else "unknown"
         await update_progress(stage="loading", progress=10, message=f"当前版本: {old_version}，准备更新...", operation="update", plugin_id=plugin_id)
         await update_progress(stage="loading", progress=20, message="正在删除旧版本...", operation="update", plugin_id=plugin_id)
@@ -190,10 +192,10 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
         if not result.get("success"):
             error_msg = str(result.get("error", "克隆失败"))
             await update_progress(stage="error", progress=0, message="下载新版本失败", operation="update", plugin_id=plugin_id, error=error_msg)
-            raise HTTPException(status_code=500, detail=error_msg)
+            raise HTTPException(status_code=int(result.get("status_code", 500)), detail=error_msg)
 
         await update_progress(stage="loading", progress=90, message="验证新版本...", operation="update", plugin_id=plugin_id)
-        new_manifest_path = plugin_path / "_manifest.json"
+        new_manifest_path = resolve_plugin_file_path(plugin_path, "_manifest.json")
         if not new_manifest_path.exists():
             remove_tree(plugin_path)
             await update_progress(stage="error", progress=0, message="新版本缺少 _manifest.json", operation="update", plugin_id=plugin_id, error="无效的插件格式")
@@ -225,23 +227,22 @@ async def get_installed_plugins(maibot_session: Optional[str] = Cookie(None)) ->
     logger.info("收到获取已安装插件列表请求")
 
     try:
-        plugins_dir = get_plugins_dir()
         installed_plugins: list[dict[str, Any]] = []
-        for plugin_path in plugins_dir.iterdir():
-            if not plugin_path.is_dir():
-                continue
+        for plugin_path in iter_plugin_directories():
             folder_name = plugin_path.name
             if folder_name.startswith(".") or folder_name.startswith("__"):
                 continue
 
-            manifest_path = plugin_path / "_manifest.json"
+            manifest_path = resolve_plugin_file_path(plugin_path, "_manifest.json")
             if not manifest_path.exists():
                 logger.warning(f"插件文件夹 {folder_name} 缺少 _manifest.json，跳过")
                 continue
 
             try:
-                with open(manifest_path, "r", encoding="utf-8") as file_obj:
-                    manifest = json.load(file_obj)
+                manifest = load_manifest_json(manifest_path)
+                if manifest is None:
+                    logger.warning(f"插件文件夹 {folder_name} 的 _manifest.json 不安全或无效，跳过")
+                    continue
                 if "name" not in manifest or "version" not in manifest:
                     logger.warning(f"插件文件夹 {folder_name} 的 _manifest.json 格式无效，跳过")
                     continue
@@ -286,7 +287,7 @@ async def get_local_plugin_readme(plugin_id: str, maibot_session: Optional[str] 
             return {"success": False, "error": "插件未安装"}
 
         for readme_name in ["README.md", "readme.md", "Readme.md", "README.MD"]:
-            readme_path = plugin_path / readme_name
+            readme_path = resolve_plugin_file_path(plugin_path, readme_name)
             if readme_path.exists():
                 try:
                     with open(readme_path, "r", encoding="utf-8") as file_obj:

@@ -122,7 +122,11 @@ class ActionPlanner:
             msg_text = re.sub(pic_pattern, replace_pic_id, msg_text)
 
             # 替换用户引用格式：回复<aaa:bbb> 和 @<aaa:bbb>
-            platform = message.platform or "qq"
+            platform = message.platform or ""
+            if not platform:
+                logger.warning(
+                    f"{self.log_prefix}planner: message {message.message_id} has no platform set, bot-self detection will be skipped"
+                )
             msg_text = replace_user_references(msg_text, platform, replace_bot_name=True)
 
             # 替换单独的 <用户名:用户ID> 格式（replace_user_references 已处理回复<和@<格式）
@@ -135,7 +139,7 @@ class ActionPlanner:
                 user_id = user_match.group(2)
                 try:
                     # 检查是否是机器人自己
-                    if user_id == global_config.bot.qq_account:
+                    if is_bot_self(platform, str(user_id)):
                         return f"{global_config.bot.nickname}(你)"
                     person = Person(platform=platform, user_id=user_id)
                     return person.person_name or user_name

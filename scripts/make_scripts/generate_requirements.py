@@ -8,7 +8,7 @@ def generate_requirements(pyproject_path="pyproject.toml", output_path="requirem
             pyproject_data = tomlkit.load(file)
 
         # 获取 pyproject.toml 中的 dependencies 列表
-        pyproject_dependencies = set(pyproject_data.get("project", {}).get("dependencies", []))
+        pyproject_dependencies = pyproject_data.get("project", {}).get("dependencies", [])
         if not pyproject_dependencies:
             print("未找到 dependencies 部分，无法生成 requirements.txt")
             return
@@ -20,14 +20,14 @@ def generate_requirements(pyproject_path="pyproject.toml", output_path="requirem
         except FileNotFoundError:
             requirements = set()
 
-        if extra_dependencies := requirements - pyproject_dependencies:
+        if extra_dependencies := requirements - set(pyproject_dependencies):
             print("警告: 以下依赖项存在于 requirements.txt 中，但未在 pyproject.toml 中找到:")
             for dep in extra_dependencies:
                 print(f"  - {dep}")
 
         # 写入更新后的 requirements.txt 文件
         with open(output_path, "w", encoding="utf-8") as file:
-            file.write("\n".join(sorted(pyproject_dependencies)))
+            file.write("\n".join(pyproject_dependencies))
 
         print(f"requirements.txt 文件已生成: {output_path}")
     except FileNotFoundError:

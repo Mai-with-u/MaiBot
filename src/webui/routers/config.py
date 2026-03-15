@@ -4,6 +4,7 @@
 
 import copy
 import os
+from pathlib import Path
 from typing import Any, Annotated, Optional
 
 import tomlkit
@@ -420,6 +421,32 @@ def _normalize_adapter_path(path: str) -> str:
     return os.path.normpath(os.path.join(PROJECT_ROOT, path))
 
 
+def _get_allowed_adapter_config_roots() -> tuple[Path, ...]:
+    project_root = Path(PROJECT_ROOT).resolve()
+    return (
+        project_root,
+        (project_root.parent / "MaiBot-Napcat-Adapter").resolve(),
+        Path("/MaiMBot/adapters-config").resolve(),
+    )
+
+
+def _resolve_safe_adapter_config_path(path: str) -> Path:
+    normalized_path = _normalize_adapter_path(path)
+    candidate_path = Path(normalized_path).expanduser().resolve()
+
+    if candidate_path.suffix.lower() != ".toml":
+        raise HTTPException(status_code=400, detail="只支持 .toml 格式的配置文件")
+
+    for allowed_root in _get_allowed_adapter_config_roots():
+        try:
+            candidate_path.relative_to(allowed_root)
+            return candidate_path
+        except ValueError:
+            continue
+
+    raise HTTPException(status_code=400, detail="适配器配置路径超出允许范围")
+
+
 def _to_relative_path(path: str) -> str:
     """尝试将绝对路径转换为相对于项目根目录的相对路径，如果无法转换则返回原路径"""
     if not path or not os.path.isabs(path):
@@ -457,8 +484,11 @@ async def get_adapter_config_path():
         if not adapter_config_path:
             return {"success": True, "path": None}
 
-        # 将路径规范化为绝对路径
-        abs_path = _normalize_adapter_path(adapter_config_path)
+        try:
+            abs_path = str(_resolve_safe_adapter_config_path(adapter_config_path))
+        except HTTPException:
+            logger.warning(f"已忽略不安全的适配器配置路径: {adapter_config_path}")
+            return {"success": True, "path": None}
 
         # 检查文件是否存在并返回最后修改时间
         if os.path.exists(abs_path):
@@ -497,8 +527,7 @@ async def save_adapter_config_path(data: PathBody):
         else:
             webui_data = {}
 
-        # 将路径规范化为绝对路径
-        abs_path = _normalize_adapter_path(path)
+        abs_path = str(_resolve_safe_adapter_config_path(path))
 
         # 尝试转换为相对路径保存（如果文件在项目目录内）
         save_path = _to_relative_path(abs_path)
@@ -528,16 +557,11 @@ async def get_adapter_config(path: str):
         if not path:
             raise HTTPException(status_code=400, detail="路径参数不能为空")
 
-        # 将路径规范化为绝对路径
-        abs_path = _normalize_adapter_path(path)
+        abs_path = str(_resolve_safe_adapter_config_path(path))
 
         # 检查文件是否存在
         if not os.path.exists(abs_path):
             raise HTTPException(status_code=404, detail=f"配置文件不存在: {path}")
-
-        # 检查文件扩展名
-        if not abs_path.endswith(".toml"):
-            raise HTTPException(status_code=400, detail="只支持 .toml 格式的配置文件")
 
         # 读取文件内容
         with open(abs_path, "r", encoding="utf-8") as f:
@@ -565,12 +589,7 @@ async def save_adapter_config(data: PathBody):
         if content is None:
             raise HTTPException(status_code=400, detail="配置内容不能为空")
 
-        # 将路径规范化为绝对路径
-        abs_path = _normalize_adapter_path(path)
-
-        # 检查文件扩展名
-        if not abs_path.endswith(".toml"):
-            raise HTTPException(status_code=400, detail="只支持 .toml 格式的配置文件")
+        abs_path = str(_resolve_safe_adapter_config_path(path))
 
         # 验证 TOML 格式
         try:

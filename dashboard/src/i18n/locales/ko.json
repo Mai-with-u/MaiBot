@@ -1,5 +1,4 @@
 {
-  "language": { "zh": "中文", "en": "English", "ja": "日本語", "ko": "한국어" },
   "header": {
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기",
@@ -379,6 +378,220 @@
     "connFailed": "서버에 연결하지 못했습니다. 네트워크 연결을 확인해 주세요.",
     "switchToLight": "라이트 모드로 전환",
     "switchToDark": "다크 모드로 전환"
+  },
+  "setupPage": {
+    "steps": {
+      "botBasic": {
+        "title": "Bot 기본 설정",
+        "description": "봇의 기본 정보를 설정합니다"
+      },
+      "personality": {
+        "title": "성격 설정",
+        "description": "봇의 성격과 말투를 정의합니다"
+      },
+      "emoji": {
+        "title": "이모지 팩",
+        "description": "이모지 관련 설정을 구성합니다"
+      },
+      "other": {
+        "title": "기타 설정",
+        "description": "도구, 감정 시스템 등의 설정을 구성합니다"
+      },
+      "siliconFlow": {
+        "title": "API 설정",
+        "description": "SiliconFlow API 키를 설정합니다"
+      }
+    },
+    "loading": {
+      "title": "설정을 불러오는 중...",
+      "description": "기존 설정을 읽고 있습니다"
+    },
+    "header": {
+      "title": "초기 설정 마법사",
+      "description": "{{appName}}의 초기 설정을 함께 완료해 봅시다"
+    },
+    "progress": {
+      "stepCounter": "단계 {{current}} / {{total}}"
+    },
+    "validation": {
+      "selectPlatform": "플랫폼을 선택해 주세요",
+      "enterNickname": "닉네임을 입력해 주세요",
+      "enterQqAccount": "QQ 계정을 입력해 주세요",
+      "enterAccountId": "계정 ID를 입력해 주세요"
+    },
+    "toast": {
+      "loadFailedTitle": "설정 불러오기에 실패했습니다",
+      "loadFailedDescription": "기존 설정을 불러올 수 없어 기본값을 사용합니다",
+      "saveSuccessTitle": "저장되었습니다",
+      "saveSuccessDescription": "{{step}} 설정이 저장되었습니다",
+      "saveFailedTitle": "저장에 실패했습니다",
+      "validationFailedTitle": "입력값을 확인해 주세요",
+      "completeSuccessTitle": "설정이 완료되었습니다",
+      "completeSuccessDescription": "새 설정을 적용하기 위해 {{appName}}을(를) 재시작하는 중입니다...",
+      "completeFailedTitle": "설정 완료에 실패했습니다",
+      "skipFailedTitle": "설정 마법사 건너뛰기에 실패했습니다",
+      "unknownError": "알 수 없는 오류"
+    },
+    "actions": {
+      "previous": "이전",
+      "next": "다음",
+      "skip": "마법사 건너뛰기",
+      "complete": "설정 완료",
+      "saving": "저장 중...",
+      "completing": "완료 중..."
+    },
+    "skipDialog": {
+      "title": "설정 마법사를 건너뛸까요?",
+      "description": "시스템 설정에서 언제든지 다시 설정 마법사를 열 수 있습니다. 정말 건너뛰시겠습니까?",
+      "confirm": "건너뛰기"
+    },
+    "footer": "이 설정들은 언제든지 설정 화면에서 변경할 수 있습니다",
+    "defaults": {
+      "personality": {
+        "personality": "여자 대학생이며 현재 2학년이고, Tieba 같은 커뮤니티를 자주 봅니다.",
+        "replyStyle": "답변은 담백하고 짧게 하며 중국어로 말하세요. 자신의 학과 배경을 일부러 강조하지 마세요. Tieba, Zhihu, Weibo의 답변 스타일을 참고할 수 있습니다.",
+        "interest": "기술, 게임, 애니메이션, 일상적인 주제에 관심이 있고, 너무 무겁거나 엄숙한 주제는 좋아하지 않습니다.",
+        "planStyle": "1. 사용 가능한 **모든** action 의 **각 동작** 이 현재 조건에 맞는지 검토하고, 대화 내용에 맞으면 사용하세요\n2. 같은 내용이 이미 실행되었다면 반복하지 마세요\n3. 발화 빈도를 조절하고 너무 자주 말하지 마세요\n4. 누군가 당신을 귀찮아하는 것 같다면 답장을 줄이세요\n5. 누군가 당신을 공격하거나 감정적으로 반응하면 적절하게 대응하세요",
+        "privatePlanStyle": "1. 사용 가능한 **모든** action 의 **각 동작** 이 현재 조건에 맞는지 검토하고, 대화 내용에 맞으면 사용하세요\n2. 같은 내용이 이미 실행되었다면 반복하지 마세요\n3. 이미 답한 문장에는 다시 답하지 마세요"
+      },
+      "emoji": {
+        "filtrationPrompt": "공공질서와 미풍양속에 어긋나지 않음"
+      }
+    },
+    "forms": {
+      "botBasic": {
+        "platform": {
+          "label": "플랫폼 *",
+          "placeholder": "플랫폼 선택",
+          "description": "봇이 실행될 플랫폼을 선택합니다",
+          "options": {
+            "custom": "기타 플랫폼"
+          }
+        },
+        "customPlatform": {
+          "label": "플랫폼 이름 *",
+          "placeholder": "예: matrix 와 같은 플랫폼 이름 입력"
+        },
+        "qqAccount": {
+          "label": "QQ 계정 *",
+          "placeholder": "봇의 QQ 계정을 입력하세요",
+          "description": "봇 로그인에 사용하는 QQ 계정입니다"
+        },
+        "primaryAccount": {
+          "label": "계정 ID *",
+          "placeholder": "봇의 계정 ID를 입력하세요",
+          "description": "이 플랫폼에서 봇을 식별하는 계정 ID입니다"
+        },
+        "nickname": {
+          "label": "닉네임 *",
+          "placeholder": "봇의 닉네임을 입력하세요",
+          "description": "봇의 대표 호칭입니다"
+        },
+        "alias": {
+          "label": "별칭",
+          "placeholder": "별칭을 입력하고 Enter 로 추가",
+          "add": "추가",
+          "description": "봇의 다른 호칭을 여러 개 추가할 수 있습니다",
+          "remove": "별칭 {{alias}} 제거"
+        }
+      },
+      "personality": {
+        "personality": {
+          "label": "성격 특성 *",
+          "placeholder": "봇의 성격과 설정을 설명해 주세요 (권장 120자 이내)",
+          "description": "예: 대학 2학년 여자 대학생으로 Tieba 를 자주 본다"
+        },
+        "replyStyle": {
+          "label": "말투 *",
+          "placeholder": "봇이 말하는 방식과 표현 습관을 설명해 주세요",
+          "description": "예: 답변은 담백하고 짧게, 중국어로 말하며 Tieba, Zhihu, Weibo 스타일을 참고한다"
+        },
+        "interest": {
+          "label": "관심사 *",
+          "placeholder": "봇이 관심을 가지는 주제를 설명해 주세요",
+          "description": "어떤 주제에 더 잘 반응할지에 영향을 줍니다"
+        },
+        "planStyle": {
+          "label": "그룹 채팅 규칙 *",
+          "placeholder": "그룹 채팅에서의 행동 스타일과 규칙",
+          "description": "답장 빈도와 조건 등 그룹 채팅에서의 행동 방식을 정의합니다"
+        },
+        "privatePlanStyle": {
+          "label": "개인 채팅 규칙 *",
+          "placeholder": "개인 채팅에서의 행동 스타일과 규칙",
+          "description": "개인 채팅에서의 행동 방식을 정의합니다"
+        }
+      },
+      "emoji": {
+        "emojiChance": {
+          "label": "이모지 활성화 확률",
+          "description": "봇이 이모지를 보낼 확률입니다"
+        },
+        "maxRegNum": {
+          "label": "최대 이모지 수",
+          "description": "봇이 저장할 수 있는 이모지의 최대 개수입니다"
+        },
+        "doReplace": {
+          "label": "최대 수 도달 시 교체",
+          "description": "켜면 오래된 이모지를 삭제하고, 끄면 새 이모지를 더 이상 수집하지 않습니다"
+        },
+        "checkInterval": {
+          "label": "확인 간격 (분)",
+          "description": "이모지 등록, 손상, 삭제를 확인하는 간격입니다"
+        },
+        "stealEmoji": {
+          "label": "이모지 수집",
+          "description": "일부 이모지를 봇이 자신의 것으로 저장할 수 있게 합니다"
+        },
+        "contentFiltration": {
+          "label": "이모지 필터링 사용",
+          "description": "조건에 맞는 이모지만 저장합니다"
+        },
+        "filtrationPrompt": {
+          "label": "필터 조건",
+          "placeholder": "예: 공공질서와 미풍양속에 어긋나지 않음",
+          "description": "저장할 이모지가 충족해야 하는 조건을 설명해 주세요"
+        }
+      },
+      "other": {
+        "enableTool": {
+          "label": "도구 시스템 사용",
+          "description": "봇이 다양한 도구를 사용해 기능을 확장할 수 있게 합니다"
+        },
+        "allGlobal": {
+          "label": "전역 슬랭 모드 사용",
+          "description": "봇이 그룹 슬랭을 학습하고 사용할 수 있게 합니다"
+        }
+      },
+      "siliconFlow": {
+        "about": {
+          "title": "SiliconFlow 소개",
+          "description": "SiliconFlow 는 DeepSeek V3, Qwen, 비전 모델, 음성 인식, 임베딩 모델 등 폭넓은 모델을 제공합니다. API Key 하나로 MaiBot 의 모든 기능을 사용할 수 있습니다.",
+          "link": "SiliconFlow 에서 API Key 받기"
+        },
+        "apiKey": {
+          "label": "SiliconFlow API Key *",
+          "description": "SiliconFlow API Key를 입력해 주세요. 입력하면 MaiBot 이 필요한 모델을 자동으로 구성합니다.",
+          "show": "API Key 표시",
+          "hide": "API Key 숨기기"
+        },
+        "autoConfig": {
+          "title": "다음 모델이 자동으로 구성됩니다:",
+          "items": {
+            "deepseek": "DeepSeek V3 - 주요 대화 및 도구 모델",
+            "qwen3": "Qwen3 30B - 잦은 소규모 작업과 도구 호출",
+            "qwen3Vl": "Qwen3 VL 30B - 이미지 인식",
+            "senseVoice": "SenseVoice - 음성 인식",
+            "bgeM3": "BGE-M3 - 텍스트 임베딩",
+            "lpmm": "지식 베이스 관련 모델 (LPMM)"
+          }
+        },
+        "hint": {
+          "title": "팁: ",
+          "description": "마법사를 마친 뒤에는 \"시스템 설정 -> 모델 설정\"에서 더 많은 API 제공자와 모델을 추가할 수 있습니다."
+        }
+      }
+    }
   },
   "common": {
     "loading": "로딩 중...",
