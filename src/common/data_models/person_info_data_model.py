@@ -60,7 +60,20 @@ class MaiPersonInfo(BaseDatabaseDataModel[PersonInfo]):
     @classmethod
     def from_db_instance(cls, db_record: "PersonInfo"):
         nickname_json = json.loads(db_record.group_cardname) if db_record.group_cardname else None
-        group_cardname_list = [GroupCardnameInfo(**item) for item in nickname_json] if nickname_json else None
+        if isinstance(nickname_json, list):
+            normalized_group_cardname_list = []
+            for item in nickname_json:
+                if not isinstance(item, dict):
+                    continue
+                normalized_group_cardname_list.append(
+                    GroupCardnameInfo(
+                        group_id=str(item.get("group_id", "")),
+                        group_cardname=str(item.get("group_cardname", item.get("group_nick_name", ""))),
+                    )
+                )
+            group_cardname_list = normalized_group_cardname_list
+        else:
+            group_cardname_list = None
         memory_points = json.loads(db_record.memory_points) if db_record.memory_points else None
         return cls(
             is_known=db_record.is_known,

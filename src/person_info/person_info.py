@@ -486,13 +486,26 @@ class Person:
                     else:
                         self.memory_points = []
 
-                    # 处理group_nick_name字段（JSON格式的列表）
+                    # 处理 group_cardname 字段（JSON 格式的列表）
                     if record.group_cardname:
                         try:
                             loaded_group_nick_names = json.loads(record.group_cardname)
-                            # 确保是列表格式
+                            # 兼容旧结构 [{"group_id": str, "group_nick_name": str}]
+                            # 统一归一化为内部使用的 [{"group_id": str, "group_nick_name": str}]
                             if isinstance(loaded_group_nick_names, list):
-                                self.group_nick_name = loaded_group_nick_names
+                                normalized_group_nick_names = []
+                                for item in loaded_group_nick_names:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    normalized_group_nick_names.append(
+                                        {
+                                            "group_id": str(item.get("group_id", "")),
+                                            "group_nick_name": str(
+                                                item.get("group_nick_name", item.get("group_cardname", ""))
+                                            ),
+                                        }
+                                    )
+                                self.group_nick_name = normalized_group_nick_names
                             else:
                                 self.group_nick_name = []
                         except (json.JSONDecodeError, TypeError):
@@ -520,8 +533,17 @@ class Person:
                 if self.memory_points
                 else json.dumps([], ensure_ascii=False)
             )
-            group_nickname_value = (
-                json.dumps(self.group_nick_name, ensure_ascii=False)
+            group_cardname_value = (
+                json.dumps(
+                    [
+                        {
+                            "group_id": item.get("group_id", ""),
+                            "group_cardname": item.get("group_cardname", item.get("group_nick_name", "")),
+                        }
+                        for item in self.group_nick_name
+                    ],
+                    ensure_ascii=False,
+                )
                 if self.group_nick_name
                 else json.dumps([], ensure_ascii=False)
             )
@@ -544,7 +566,7 @@ class Person:
                     record.first_known_time = first_known_time
                     record.last_known_time = last_known_time
                     record.memory_points = memory_points_value
-                    record.group_nickname = group_nickname_value
+                    record.group_cardname = group_cardname_value
                     session.add(record)
                     logger.debug(f"已同步用户 {self.person_id} 的信息到数据库")
                 else:
@@ -560,7 +582,7 @@ class Person:
                         first_known_time=first_known_time,
                         last_known_time=last_known_time,
                         memory_points=memory_points_value,
-                        group_nickname=group_nickname_value,
+                        group_cardname=group_cardname_value,
                     )
                     session.add(record)
                     logger.debug(f"已创建用户 {self.person_id} 的信息到数据库")
