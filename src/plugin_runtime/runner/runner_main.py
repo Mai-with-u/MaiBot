@@ -581,16 +581,27 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
     import sysconfig
 
     # 保留: 标准库路径 + site-packages（含 SDK 和依赖）
+    # 额外保留 Python 扩展模块目录（如 Windows 下的 DLLs、lib-dynload），
+    # 否则像 _multiprocessing 这类扩展模块会在隔离后导入失败。
     stdlib_paths = set()
     for key in ("stdlib", "platstdlib", "purelib", "platlib"):
         if path := sysconfig.get_path(key):
             stdlib_paths.add(os.path.normpath(path))
 
+    extension_module_paths = set()
+    for p in sys.path:
+        norm = os.path.normpath(p)
+        lower_norm = norm.lower()
+        if "dlls" in lower_norm or "lib-dynload" in lower_norm:
+            extension_module_paths.add(norm)
+
     allowed = set()
     for p in sys.path:
         norm = os.path.normpath(p)
-        # 保留标准库和 site-packages
+        # 保留标准库、扩展模块目录和 site-packages
         if any(norm.startswith(sp) for sp in stdlib_paths):
+            allowed.add(p)
+        if norm in extension_module_paths:
             allowed.add(p)
         # 保留 site-packages（第三方库 + SDK）
         if "site-packages" in norm or "dist-packages" in norm:
