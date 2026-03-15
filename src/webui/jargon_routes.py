@@ -1,12 +1,14 @@
 """黑话（俚语）管理路由"""
 
 import json
+import sqlite3
 from typing import Optional, List, Annotated
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from peewee import fn
 
 from src.common.logger import get_logger
+from src.common.database.database import db
 from src.common.database.database_model import Jargon, ChatStreams
 
 logger = get_logger("webui.jargon")
@@ -64,6 +66,90 @@ def get_display_name_for_chat_id(chat_id_str: str) -> str:
             names.append(stream_id[:8] + "..." if len(stream_id) > 8 else stream_id)
 
     return ", ".join(names) if names else chat_id_str
+
+
+def _decode_jargon_text(value, jargon_id: int, field_name: str) -> Optional[str]:
+    """安全解码黑话字段，兼容数据库中的脏 UTF-8 数据。"""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            logger.warning(f"读取黑话字段失败: id={jargon_id}, field={field_name}, error={exc}")
+            return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _fetch_jargon_rows(
+    page: int,
+    page_size: int,
+    search: Optional[str] = None,
+    chat_id: Optional[str] = None,
+    is_jargon: Optional[bool] = None,
+    is_global: Optional[bool] = None,
+) -> tuple[int, list[sqlite3.Row]]:
+    """绕开 Peewee 对坏 TEXT 的自动 UTF-8 解码，直接以 bytes 读取 Jargon 行。"""
+    where_clauses: list[str] = []
+    params: list[object] = []
+
+    if search:
+        like_value = f"%{search}%"
+        where_clauses.append("(content LIKE ? OR meaning LIKE ? OR raw_content LIKE ?)")
+        params.extend([like_value, like_value, like_value])
+
+    if chat_id:
+        stream_ids = parse_chat_id_to_stream_ids(chat_id)
+        if stream_ids:
+            where_clauses.append("chat_id LIKE ?")
+            params.append(f"%{stream_ids[0]}%")
+        else:
+            where_clauses.append("chat_id = ?")
+            params.append(chat_id)
+
+    if is_jargon is not None:
+        where_clauses.append("is_jargon = ?")
+        params.append(1 if is_jargon else 0)
+
+    if is_global is not None:
+        where_clauses.append("is_global = ?")
+        params.append(1 if is_global else 0)
+
+    where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    base_sql = (
+        "SELECT id, content, raw_content, meaning, chat_id, is_global, count, "
+        "is_jargon, is_complete, inference_with_context, inference_content_only FROM jargon"
+    )
+
+    conn = sqlite3.connect(db.database)
+    try:
+        conn.text_factory = bytes
+        conn.row_factory = sqlite3.Row
+
+        total = conn.execute(f"SELECT COUNT(*) FROM jargon{where_sql}", params).fetchone()[0]
+        rows = conn.execute(
+            f"{base_sql}{where_sql} ORDER BY count DESC, id DESC LIMIT ? OFFSET ?",
+            [*params, page_size, (page - 1) * page_size],
+        ).fetchall()
+        return int(total or 0), rows
+    finally:
+        conn.close()
+
+
+def _fetch_jargon_row_by_id(jargon_id: int) -> Optional[sqlite3.Row]:
+    """按 ID 安全读取单条黑话记录。"""
+    conn = sqlite3.connect(db.database)
+    try:
+        conn.text_factory = bytes
+        conn.row_factory = sqlite3.Row
+        return conn.execute(
+            "SELECT id, content, raw_content, meaning, chat_id, is_global, count, "
+            "is_jargon, is_complete, inference_with_context, inference_content_only "
+            "FROM jargon WHERE id = ? LIMIT 1",
+            (jargon_id,),
+        ).fetchone()
+    finally:
+        conn.close()
 
 
 # ==================== 请求/响应模型 ====================
@@ -181,27 +267,52 @@ class ChatListResponse(BaseModel):
 # ==================== 工具函数 ====================
 
 
-def jargon_to_dict(jargon: Jargon) -> dict:
-    """将 Jargon ORM 对象转换为字典"""
-    # 解析 chat_id 获取显示名称和 stream_id
-    chat_name = get_display_name_for_chat_id(jargon.chat_id) if jargon.chat_id else None
-    stream_ids = parse_chat_id_to_stream_ids(jargon.chat_id) if jargon.chat_id else []
+def jargon_to_dict(jargon: Jargon | sqlite3.Row | dict) -> dict:
+    """将 Jargon 记录转换为字典，对异常字段与脏 UTF-8 数据做容错处理。"""
+
+    def _safe_get(obj, field: str, default=None):
+        try:
+            if isinstance(obj, (sqlite3.Row, dict)):
+                value = obj[field]
+            else:
+                value = getattr(obj, field)
+            return default if value is None else value
+        except Exception as exc:
+            logger.warning(f"读取黑话字段失败: id={jargon_id}, field={field}, error={exc}")
+            return default
+
+    jargon_id = int(_safe_get(jargon, "id", 0) or 0)
+    chat_id = _decode_jargon_text(_safe_get(jargon, "chat_id", b""), jargon_id, "chat_id") or ""
+    chat_name = get_display_name_for_chat_id(chat_id) if chat_id else None
+    stream_ids = parse_chat_id_to_stream_ids(chat_id) if chat_id else []
     stream_id = stream_ids[0] if stream_ids else None
 
+    raw_content = _decode_jargon_text(_safe_get(jargon, "raw_content", None), jargon_id, "raw_content")
+    meaning = _decode_jargon_text(_safe_get(jargon, "meaning", None), jargon_id, "meaning")
+    content = _decode_jargon_text(_safe_get(jargon, "content", b""), jargon_id, "content") or ""
+
+    is_jargon = _safe_get(jargon, "is_jargon", None)
+    if is_jargon is not None:
+        is_jargon = bool(is_jargon)
+
     return {
-        "id": jargon.id,
-        "content": jargon.content,
-        "raw_content": jargon.raw_content,
-        "meaning": jargon.meaning,
-        "chat_id": jargon.chat_id,
+        "id": jargon_id,
+        "content": content,
+        "raw_content": raw_content,
+        "meaning": meaning,
+        "chat_id": chat_id,
         "stream_id": stream_id,
         "chat_name": chat_name,
-        "is_global": jargon.is_global,
-        "count": jargon.count,
-        "is_jargon": jargon.is_jargon,
-        "is_complete": jargon.is_complete,
-        "inference_with_context": jargon.inference_with_context,
-        "inference_content_only": jargon.inference_content_only,
+        "is_global": bool(_safe_get(jargon, "is_global", False)),
+        "count": int(_safe_get(jargon, "count", 0) or 0),
+        "is_jargon": is_jargon,
+        "is_complete": bool(_safe_get(jargon, "is_complete", False)),
+        "inference_with_context": _decode_jargon_text(
+            _safe_get(jargon, "inference_with_context", None), jargon_id, "inference_with_context"
+        ),
+        "inference_content_only": _decode_jargon_text(
+            _safe_get(jargon, "inference_content_only", None), jargon_id, "inference_content_only"
+        ),
     }
 
 
@@ -219,45 +330,23 @@ async def get_jargon_list(
 ):
     """获取黑话列表"""
     try:
-        # 构建查询
-        query = Jargon.select()
+        total, rows = _fetch_jargon_rows(
+            page=page,
+            page_size=page_size,
+            search=search,
+            chat_id=chat_id,
+            is_jargon=is_jargon,
+            is_global=is_global,
+        )
 
-        # 搜索过滤
-        if search:
-            query = query.where(
-                (Jargon.content.contains(search))
-                | (Jargon.meaning.contains(search))
-                | (Jargon.raw_content.contains(search))
-            )
-
-        # 按聊天ID筛选（使用 contains 匹配，因为 chat_id 是 JSON 格式）
-        if chat_id:
-            # 从传入的 chat_id 中解析出 stream_id
-            stream_ids = parse_chat_id_to_stream_ids(chat_id)
-            if stream_ids:
-                # 使用第一个 stream_id 进行模糊匹配
-                query = query.where(Jargon.chat_id.contains(stream_ids[0]))
-            else:
-                # 如果无法解析，使用精确匹配
-                query = query.where(Jargon.chat_id == chat_id)
-
-        # 按是否是黑话筛选
-        if is_jargon is not None:
-            query = query.where(Jargon.is_jargon == is_jargon)
-
-        # 按是否全局筛选
-        if is_global is not None:
-            query = query.where(Jargon.is_global == is_global)
-
-        # 获取总数
-        total = query.count()
-
-        # 分页和排序（按使用次数降序）
-        query = query.order_by(Jargon.count.desc(), Jargon.id.desc())
-        query = query.paginate(page, page_size)
-
-        # 转换为响应格式
-        data = [jargon_to_dict(j) for j in query]
+        data = []
+        for row in rows:
+            try:
+                data.append(jargon_to_dict(row))
+            except Exception as item_error:
+                row_id = row["id"] if isinstance(row, sqlite3.Row) and "id" in row.keys() else "unknown"
+                logger.warning(f"跳过异常黑话记录: id={row_id}, error={item_error}")
+                continue
 
         return JargonListResponse(
             success=True,
@@ -376,11 +465,18 @@ async def get_jargon_stats():
 async def get_jargon_detail(jargon_id: int):
     """获取黑话详情"""
     try:
-        jargon = Jargon.get_or_none(Jargon.id == jargon_id)
-        if not jargon:
+        # 详情页也使用安全读取，避免坏的 raw_content 在 Peewee ORM 解码阶段直接抛错
+        row = _fetch_jargon_row_by_id(jargon_id)
+        if not row:
             raise HTTPException(status_code=404, detail="黑话不存在")
 
-        return JargonDetailResponse(success=True, data=jargon_to_dict(jargon))
+        try:
+            data = jargon_to_dict(row)
+        except Exception as item_error:
+            logger.error(f"解析黑话详情失败: id={jargon_id}, error={item_error}")
+            raise HTTPException(status_code=500, detail="黑话记录损坏，无法读取详情") from item_error
+
+        return JargonDetailResponse(success=True, data=data)
 
     except HTTPException:
         raise
