@@ -491,7 +491,24 @@ async def create_jargon(request: JargonCreateRequest):
 async def update_jargon(jargon_id: int, request: JargonUpdateRequest):
     """更新黑话（增量更新）"""
     try:
-        jargon = Jargon.get_or_none(Jargon.id == jargon_id)
+        # 更新接口同样避免直接读取 raw_content，防止坏数据在 ORM 解码阶段直接报错。
+        jargon = (
+            Jargon.select(
+                Jargon.id,
+                Jargon.content,
+                Jargon.meaning,
+                Jargon.chat_id,
+                Jargon.is_global,
+                Jargon.count,
+                Jargon.is_jargon,
+                Jargon.is_complete,
+                Jargon.inference_with_context,
+                Jargon.inference_content_only,
+            )
+            .where(Jargon.id == jargon_id)
+            .limit(1)
+            .first()
+        )
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
 
@@ -522,7 +539,13 @@ async def update_jargon(jargon_id: int, request: JargonUpdateRequest):
 async def delete_jargon(jargon_id: int):
     """删除黑话"""
     try:
-        jargon = Jargon.get_or_none(Jargon.id == jargon_id)
+        # 删除接口也避免直接读取 raw_content，防止坏数据在 ORM 解码阶段直接报错。
+        jargon = (
+            Jargon.select(Jargon.id, Jargon.content)
+            .where(Jargon.id == jargon_id)
+            .limit(1)
+            .first()
+        )
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
 
