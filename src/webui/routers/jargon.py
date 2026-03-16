@@ -66,6 +66,27 @@ def get_display_name_for_chat_id(chat_id_str: str) -> str:
     return ", ".join(names) if names else chat_id_str
 
 
+def _safe_raw_content(jargon_id: int) -> Optional[str]:
+    """
+    使用 Peewee 单独读取 raw_content，避免坏数据在主查询阶段拖垮整页。
+
+    说明：
+    - 列表页和详情页主查询尽量不直接触碰 raw_content
+    - 如果单条记录的 raw_content 解码失败，仅记录日志并返回 None
+    """
+    try:
+        row = (
+            Jargon.select(Jargon.raw_content)
+            .where(Jargon.id == jargon_id)
+            .limit(1)
+            .first()
+        )
+        return row.raw_content if row else None
+    except Exception as exc:
+        logger.warning(f"读取黑话字段失败: id={jargon_id}, field=raw_content, error={exc}")
+        return None
+
+
 # ==================== 请求/响应模型 ====================
 
 
@@ -182,18 +203,19 @@ class ChatListResponse(BaseModel):
 
 
 def jargon_to_dict(jargon: Jargon) -> dict:
-    """将 Jargon ORM 对象转换为字典"""
+    """将 Jargon ORM 对象转换为字典，并对 raw_content 做单条容错读取。"""
     # 解析 chat_id 获取显示名称和 stream_id
-    chat_name = get_display_name_for_chat_id(jargon.chat_id) if jargon.chat_id else None
-    stream_ids = parse_chat_id_to_stream_ids(jargon.chat_id) if jargon.chat_id else []
+    chat_id = jargon.chat_id or ""
+    chat_name = get_display_name_for_chat_id(chat_id) if chat_id else None
+    stream_ids = parse_chat_id_to_stream_ids(chat_id) if chat_id else []
     stream_id = stream_ids[0] if stream_ids else None
 
     return {
         "id": jargon.id,
         "content": jargon.content,
-        "raw_content": jargon.raw_content,
+        "raw_content": _safe_raw_content(jargon.id),
         "meaning": jargon.meaning,
-        "chat_id": jargon.chat_id,
+        "chat_id": chat_id,
         "stream_id": stream_id,
         "chat_name": chat_name,
         "is_global": jargon.is_global,
@@ -219,15 +241,26 @@ async def get_jargon_list(
 ):
     """获取黑话列表"""
     try:
-        # 构建查询
-        query = Jargon.select()
+        # 构建查询。列表页主查询不直接触碰 raw_content，避免坏数据在 ORM 解码阶段拖垮整页。
+        query = Jargon.select(
+            Jargon.id,
+            Jargon.content,
+            Jargon.meaning,
+            Jargon.chat_id,
+            Jargon.is_global,
+            Jargon.count,
+            Jargon.is_jargon,
+            Jargon.is_complete,
+            Jargon.inference_with_context,
+            Jargon.inference_content_only,
+        )
 
-        # 搜索过滤
+        # 搜索过滤。这里暂时不对 raw_content 做 contains，避免坏数据导致整页失败。
+        # raw_content 的读取在序列化阶段按单条记录单独处理。
         if search:
             query = query.where(
                 (Jargon.content.contains(search))
                 | (Jargon.meaning.contains(search))
-                | (Jargon.raw_content.contains(search))
             )
 
         # 按聊天ID筛选（使用 contains 匹配，因为 chat_id 是 JSON 格式）
@@ -256,8 +289,14 @@ async def get_jargon_list(
         query = query.order_by(Jargon.count.desc(), Jargon.id.desc())
         query = query.paginate(page, page_size)
 
-        # 转换为响应格式
-        data = [jargon_to_dict(j) for j in query]
+        # 转换为响应格式（单条坏数据不影响整页）
+        data = []
+        for j in query:
+            try:
+                data.append(jargon_to_dict(j))
+            except Exception as item_error:
+                logger.warning(f"跳过异常黑话记录: id={getattr(j, 'id', 'unknown')}, error={item_error}")
+                continue
 
         return JargonListResponse(
             success=True,
@@ -376,11 +415,34 @@ async def get_jargon_stats():
 async def get_jargon_detail(jargon_id: int):
     """获取黑话详情"""
     try:
-        jargon = Jargon.get_or_none(Jargon.id == jargon_id)
+        # 详情页也避免直接读取 raw_content，防止坏数据在 ORM 解码阶段直接报错。
+        jargon = (
+            Jargon.select(
+                Jargon.id,
+                Jargon.content,
+                Jargon.meaning,
+                Jargon.chat_id,
+                Jargon.is_global,
+                Jargon.count,
+                Jargon.is_jargon,
+                Jargon.is_complete,
+                Jargon.inference_with_context,
+                Jargon.inference_content_only,
+            )
+            .where(Jargon.id == jargon_id)
+            .limit(1)
+            .first()
+        )
         if not jargon:
             raise HTTPException(status_code=404, detail="黑话不存在")
 
-        return JargonDetailResponse(success=True, data=jargon_to_dict(jargon))
+        try:
+            data = jargon_to_dict(jargon)
+        except Exception as item_error:
+            logger.error(f"解析黑话详情失败: id={jargon_id}, error={item_error}")
+            raise HTTPException(status_code=500, detail="黑话记录损坏，无法读取详情") from item_error
+
+        return JargonDetailResponse(success=True, data=data)
 
     except HTTPException:
         raise
