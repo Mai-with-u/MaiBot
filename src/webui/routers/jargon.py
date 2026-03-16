@@ -248,7 +248,7 @@ def jargon_to_dict(jargon: Jargon, session: Session) -> Dict[str, Any]:
     return {
         "id": jargon.id,
         "content": jargon.content,
-        "raw_content": _safe_raw_content(session, jargon.id),
+        "raw_content": _safe_raw_content(session, jargon.id) if jargon.id is not None else None,
         "meaning": jargon.meaning,
         "chat_id": chat_id,
         "stream_id": chat_id or None,
