@@ -5,6 +5,7 @@ from typing import Annotated, Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import defer
 from sqlmodel import Session, col, delete, select
 
 from src.common.database.database import get_db_session
@@ -60,6 +61,21 @@ def get_display_name_for_chat_id(chat_id_str: str, session: Session) -> str:
         return str(chat_session.group_id)
 
     return chat_session.session_id[:20]
+
+
+def _safe_raw_content(session: Session, jargon_id: int) -> Optional[str]:
+    """
+    单独读取 raw_content，避免坏数据在主查询阶段拖垮整页。
+
+    说明：
+    - 列表页和详情页主查询尽量不直接触碰 raw_content
+    - 如果单条记录的 raw_content 解码失败，仅记录日志并返回 None
+    """
+    try:
+        return session.exec(select(Jargon.raw_content).where(col(Jargon.id) == jargon_id)).first()
+    except Exception as exc:
+        logger.warning(f"读取黑话字段失败: id={jargon_id}, field=raw_content, error={exc}")
+        return None
 
 
 # ==================== 请求/响应模型 ====================
@@ -225,14 +241,14 @@ def build_session_id_dict_for_chat(chat_id: str, count: int = 1) -> str:
 
 
 def jargon_to_dict(jargon: Jargon, session: Session) -> Dict[str, Any]:
-    """将 Jargon ORM 对象转换为字典"""
+    """将 Jargon ORM 对象转换为字典，并对 raw_content 做单条容错读取。"""
     chat_id = get_primary_chat_id(jargon.session_id_dict)
     chat_name = get_display_name_for_chat_id(chat_id, session) if chat_id else None
 
     return {
         "id": jargon.id,
         "content": jargon.content,
-        "raw_content": jargon.raw_content,
+        "raw_content": _safe_raw_content(session, jargon.id),
         "meaning": jargon.meaning,
         "chat_id": chat_id,
         "stream_id": chat_id or None,
@@ -258,13 +274,12 @@ async def get_jargon_list(
 ):
     """获取黑话列表"""
     try:
-        statement = select(Jargon)
+        statement = select(Jargon).options(defer(Jargon.raw_content))
 
         if search:
             search_filter = (
                 (col(Jargon.content).contains(search))
                 | (col(Jargon.meaning).contains(search))
-                | (col(Jargon.raw_content).contains(search))
             )
             statement = statement.where(search_filter)
 
@@ -288,7 +303,13 @@ async def get_jargon_list(
             total = len(jargons)
             offset = (page - 1) * page_size
             page_jargons = jargons[offset : offset + page_size]
-            data = [jargon_to_dict(jargon, session) for jargon in page_jargons]
+            data = []
+            for jargon in page_jargons:
+                try:
+                    data.append(jargon_to_dict(jargon, session))
+                except Exception as item_error:
+                    logger.warning(f"跳过异常黑话记录: id={getattr(jargon, 'id', 'unknown')}, error={item_error}")
+                    continue
 
         return JargonListResponse(
             success=True,
@@ -308,7 +329,7 @@ async def get_chat_list():
     """获取所有有黑话记录的聊天列表"""
     try:
         with get_db_session() as session:
-            jargons = session.exec(select(Jargon)).all()
+            jargons = session.exec(select(Jargon).options(defer(Jargon.raw_content))).all()
 
         seen_stream_ids: Set[str] = set()
         for jargon in jargons:
@@ -351,7 +372,7 @@ async def get_jargon_stats():
     """获取黑话统计数据"""
     try:
         with get_db_session() as session:
-            jargons = session.exec(select(Jargon)).all()
+            jargons = session.exec(select(Jargon).options(defer(Jargon.raw_content))).all()
 
         total = len(jargons)
         confirmed_jargon = sum(jargon.is_jargon is True for jargon in jargons)
@@ -390,9 +411,18 @@ async def get_jargon_detail(jargon_id: int):
     """获取黑话详情"""
     try:
         with get_db_session() as session:
-            if not (jargon := session.exec(select(Jargon).where(col(Jargon.id) == jargon_id)).first()):
+            if not (
+                jargon := session.exec(
+                    select(Jargon).options(defer(Jargon.raw_content)).where(col(Jargon.id) == jargon_id)
+                ).first()
+            ):
                 raise HTTPException(status_code=404, detail="黑话不存在")
-            data = JargonResponse(**jargon_to_dict(jargon, session))
+
+            try:
+                data = JargonResponse(**jargon_to_dict(jargon, session))
+            except Exception as item_error:
+                logger.error(f"解析黑话详情失败: id={jargon_id}, error={item_error}")
+                raise HTTPException(status_code=500, detail="黑话记录损坏，无法读取详情") from item_error
 
         return JargonDetailResponse(success=True, data=data)
 
@@ -408,7 +438,9 @@ async def create_jargon(request: JargonCreateRequest):
     """创建黑话"""
     try:
         with get_db_session() as session:
-            same_content_jargons = session.exec(select(Jargon).where(col(Jargon.content) == request.content)).all()
+            same_content_jargons = session.exec(
+                select(Jargon).options(defer(Jargon.raw_content)).where(col(Jargon.content) == request.content)
+            ).all()
             existing = next(
                 (jargon for jargon in same_content_jargons if has_chat_id(jargon.session_id_dict, request.chat_id)),
                 None,
@@ -445,7 +477,9 @@ async def update_jargon(jargon_id: int, request: JargonUpdateRequest):
     """更新黑话（增量更新）"""
     try:
         with get_db_session() as session:
-            jargon = session.exec(select(Jargon).where(col(Jargon.id) == jargon_id)).first()
+            jargon = session.exec(
+                select(Jargon).options(defer(Jargon.raw_content)).where(col(Jargon.id) == jargon_id)
+            ).first()
             if not jargon:
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
@@ -477,7 +511,9 @@ async def delete_jargon(jargon_id: int):
     """删除黑话"""
     try:
         with get_db_session() as session:
-            jargon = session.exec(select(Jargon).where(col(Jargon.id) == jargon_id)).first()
+            jargon = session.exec(
+                select(Jargon).options(defer(Jargon.raw_content)).where(col(Jargon.id) == jargon_id)
+            ).first()
             if not jargon:
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
@@ -532,7 +568,7 @@ async def batch_set_jargon_status(
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
         with get_db_session() as session:
-            jargons = session.exec(select(Jargon).where(col(Jargon.id).in_(ids))).all()
+            jargons = session.exec(select(Jargon).options(defer(Jargon.raw_content)).where(col(Jargon.id).in_(ids))).all()
             for jargon in jargons:
                 jargon.is_jargon = is_jargon
                 session.add(jargon)
