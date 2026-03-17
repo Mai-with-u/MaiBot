@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(Enum):
     """RPC 错误码枚举"""
 
     # 通用
@@ -18,17 +18,17 @@ class ErrorCode(str, Enum):
     E_TIMEOUT = "E_TIMEOUT"
     E_BAD_PAYLOAD = "E_BAD_PAYLOAD"
     E_PROTOCOL_MISMATCH = "E_PROTOCOL_MISMATCH"
+    E_SHUTTING_DOWN = "E_SHUTTING_DOWN"
 
     # 权限与策略
     E_UNAUTHORIZED = "E_UNAUTHORIZED"
     E_METHOD_NOT_ALLOWED = "E_METHOD_NOT_ALLOWED"
-    E_BACKPRESSURE = "E_BACKPRESSURE"
+    E_BACK_PRESSURE = "E_BACK_PRESSURE"
     E_HOST_OVERLOADED = "E_HOST_OVERLOADED"
 
     # 插件生命周期
     E_PLUGIN_CRASHED = "E_PLUGIN_CRASHED"
     E_PLUGIN_NOT_FOUND = "E_PLUGIN_NOT_FOUND"
-    E_GENERATION_MISMATCH = "E_GENERATION_MISMATCH"
     E_RELOAD_IN_PROGRESS = "E_RELOAD_IN_PROGRESS"
 
     # 能力调用
@@ -65,3 +65,13 @@ class RPCError(Exception):
             message=data.get("message", ""),
             details=data.get("details", {}),
         )
+
+    @classmethod
+    def from_exception(cls, exception: Exception, code_mapping: Optional[Dict[type[Exception], ErrorCode]] = None):
+        if isinstance(exception, cls):
+            return exception
+        if code_mapping:
+            for exception_type, code in code_mapping.items():
+                if isinstance(exception, exception_type):
+                    return cls(code=code, message=str(exception))
+        return cls(ErrorCode.E_UNKNOWN, str(exception))

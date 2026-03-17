@@ -40,6 +40,7 @@ class AuthorizationManager:
         self._permission_tokens.clear()
 
     def check_capability(self, plugin_id: str, capability: str) -> Tuple[bool, str]:
+        # sourcery skip: assign-if-exp, reintroduce-else, swap-if-else-branches, use-named-expression
         """检查插件是否有权调用某项能力
 
         Returns:

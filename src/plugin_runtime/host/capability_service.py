@@ -7,11 +7,7 @@ Host 端实现的能力服务，处理来自插件的 cap.* 请求。
 from typing import Any, Callable, Dict, List, Coroutine, TYPE_CHECKING
 
 from src.common.logger import get_logger
-from src.plugin_runtime.protocol.envelope import (
-    CapabilityRequestPayload,
-    CapabilityResponsePayload,
-    Envelope,
-)
+from src.plugin_runtime.protocol.envelope import CapabilityRequestPayload, CapabilityResponsePayload, Envelope
 from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
 
 if TYPE_CHECKING:
@@ -59,31 +55,19 @@ class CapabilityService:
         try:
             req = CapabilityRequestPayload.model_validate(envelope.payload)
         except Exception as e:
-            return envelope.make_error_response(
-                ErrorCode.E_BAD_PAYLOAD.value,
-                f"能力调用 payload 格式错误: {e}",
-            )
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, f"能力调用 payload 格式错误: {e}")
 
         capability = req.capability
 
         # 1. 权限校验
         allowed, reason = self._authorization.check_capability(plugin_id, capability)
         if not allowed:
-            error_code = (
-                ErrorCode.E_GENERATION_MISMATCH if "generation 不匹配" in reason else ErrorCode.E_CAPABILITY_DENIED
-            )
-            return envelope.make_error_response(
-                error_code.value,
-                reason,
-            )
+            return envelope.make_error_response(ErrorCode.E_CAPABILITY_DENIED.value, reason)
 
         # 2. 查找实现
         impl = self._implementations.get(capability)
         if impl is None:
-            return envelope.make_error_response(
-                ErrorCode.E_METHOD_NOT_ALLOWED.value,
-                f"未注册的能力: {capability}",
-            )
+            return envelope.make_error_response(ErrorCode.E_METHOD_NOT_ALLOWED.value, f"未注册的能力: {capability}")
 
         # 3. 执行
         try:
@@ -94,10 +78,7 @@ class CapabilityService:
             return envelope.make_error_response(e.code.value, e.message, e.details)
         except Exception as e:
             logger.error(f"能力 {capability} 执行异常: {e}", exc_info=True)
-            return envelope.make_error_response(
-                ErrorCode.E_CAPABILITY_FAILED.value,
-                str(e),
-            )
+            return envelope.make_error_response(ErrorCode.E_CAPABILITY_FAILED.value, str(e))
 
     def list_capabilities(self) -> List[str]:
         """列出所有已注册的能力"""
