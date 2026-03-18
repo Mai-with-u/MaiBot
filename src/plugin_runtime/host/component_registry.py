@@ -118,6 +118,10 @@ class MessageGatewayEntry(ComponentEntry):
     """MessageGateway 组件条目"""
 
     def __init__(self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any]) -> None:
+        platform = metadata.get("platform")
+        if not platform or not isinstance(platform, str):
+            raise ValueError(f"MessageGateway 组件 {plugin_id}.{name} 缺少有效的 platform 字段")
+        self.platform: str = platform
         super().__init__(name, component_type, plugin_id, metadata)
 
 
@@ -398,6 +402,27 @@ class ComponentRegistry:
                 handlers.append(comp)
         handlers.sort(key=lambda c: c.priority, reverse=True)
         return handlers
+
+    def get_message_gateways(
+        self, platform: str, *, enabled_only: bool = True, session_id: Optional[str] = None
+    ) -> Optional[MessageGatewayEntry]:
+        """查询消息网关组件。
+
+        Args:
+            platform (str): 平台名称
+            enabled_only (bool): 是否仅返回启用的组件
+            session_id (Optional[str]): 可选的会话ID，若提供则考虑会话禁用状态
+        Returns:
+            gateway (Optional[MessageGatewayEntry]): 符合条件的 MessageGateway 组件，可能不存在
+        """
+
+        for comp in self._by_type.get(ComponentTypes.MESSAGE_GATEWAY, {}).values():
+            if not isinstance(comp, MessageGatewayEntry):
+                continue
+            if enabled_only and not self.check_component_enabled(comp, session_id):
+                continue
+            if comp.platform == platform:
+                return comp # 返回第一个
 
     def get_tools(self, *, enabled_only: bool = True, session_id: Optional[str] = None) -> List[ToolEntry]:
         """查询所有工具组件。
