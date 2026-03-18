@@ -101,6 +101,7 @@ class EventHandlerEntry(ComponentEntry):
     def __init__(self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any]) -> None:
         self.event_type: str = metadata.get("event_type", "")
         self.weight: int = metadata.get("weight", 0)
+        self.intercept_message: bool = metadata.get("intercept_message", False)
         super().__init__(name, component_type, plugin_id, metadata)
 
 
@@ -356,7 +357,7 @@ class ComponentRegistry:
         self, event_type: str, *, enabled_only: bool = True, session_id: Optional[str] = None
     ) -> List[EventHandlerEntry]:
         """查询指定事件类型的事件处理器组件。
-        
+
         Args:
             event_type (str): 事件类型
             enabled_only (bool): 是否仅返回启用的组件
@@ -400,7 +401,7 @@ class ComponentRegistry:
 
     def get_tools(self, *, enabled_only: bool = True, session_id: Optional[str] = None) -> List[ToolEntry]:
         """查询所有工具组件。
-        
+
         Args:
             enabled_only (bool): 是否仅返回启用的组件
             session_id (Optional[str]): 可选的会话ID，若提供则考虑会话禁用状态
@@ -418,7 +419,7 @@ class ComponentRegistry:
     # ====== 统计信息 ======
     def get_stats(self) -> StatusDict:
         """获取注册统计。
-        
+
         Returns:
             stats (StatusDict): 组件统计信息，包括总数、各类型数量、插件数量等
         """
