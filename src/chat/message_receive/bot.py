@@ -310,6 +310,14 @@ class ChatBot:
             # logger.debug(str(message_data))
             maim_raw_message = MessageBase.from_dict(message_data)
             message = SessionMessage.from_maim_message(maim_raw_message)
+            await self.receive_message(message)
+
+        except Exception as e:
+            logger.error(f"预处理消息失败: {e}")
+            traceback.print_exc()
+
+    async def receive_message(self, message: SessionMessage):
+        try:
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
 
@@ -366,11 +374,11 @@ class ChatBot:
             # 命令处理 - 使用新插件系统检查并处理命令
             # 注意：命令返回的 response 当前只用于日志记录和流程判断，
             # 不会在这里自动作为回复消息发送回会话。
-            is_command, cmd_result, continue_process = await self._process_commands(message)
+            # is_command, cmd_result, continue_process = await self._process_commands(message)
 
-            # 如果是命令且不需要继续处理，则直接返回
-            if is_command and await self._handle_command_processing_result(message, cmd_result, continue_process):
-                return
+            # # 如果是命令且不需要继续处理，则直接返回
+            # if is_command and await self._handle_command_processing_result(message, cmd_result, continue_process):
+            #     return
 
             # continue_flag, modified_message = await events_manager.handle_mai_events(EventType.ON_MESSAGE, message)
             # if not continue_flag:
