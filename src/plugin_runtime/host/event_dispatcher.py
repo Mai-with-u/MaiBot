@@ -50,7 +50,6 @@ class EventDispatcher:
         self._component_registry: "ComponentRegistry" = component_registry
         self._result_history: Dict[str, List[EventResult]] = {}
         self._history_enabled: Set[str] = set()
-        # 保持 fire-and-forget task 的强引用，防止被 GC 回收
         self._background_tasks: Set[asyncio.Task] = set()
 
     def enable_history(self, event_type: str) -> None:
@@ -67,6 +66,13 @@ class EventDispatcher:
     def clear_history(self, event_type: str) -> None:
         if event_type in self._result_history:
             self._result_history[event_type] = []
+
+    async def stop(self):
+        """停止 EventDispatcher，取消所有未完成的后台任务"""
+        for task in self._background_tasks:
+            task.cancel()
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     async def dispatch_event(
         self,

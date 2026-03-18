@@ -134,9 +134,9 @@ class ComponentDeclaration(BaseModel):
     name: str = Field(description="组件名称")
     """组件名称"""
     component_type: str = Field(
-        description="组件类型：action/command/tool/event_handler/workflow_handler/message_gateway"
+        description="组件类型：action/command/tool/event_handler/hook_handler/message_gateway"
     )
-    """组件类型：`action`/`command`/`tool`/`event_handler`/`workflow_handler`/`message_gateway`"""
+    """组件类型：`action`/`command`/`tool`/`event_handler`/`hook_handler`/`message_gateway`"""
     plugin_id: str = Field(description="所属插件 ID")
     """所属插件 ID"""
     metadata: Dict[str, Any] = Field(default_factory=dict, description="组件元数据")

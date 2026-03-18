@@ -58,7 +58,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "plugin_runtime.host.component_registry": ("#ffaf00", None, False),
     "plugin_runtime.host.capability_service": ("#ffd700", None, False),
     "plugin_runtime.host.event_dispatcher": ("#87d700", None, False),
-    "plugin_runtime.host.workflow_executor": ("#5fd7af", None, False),
+    "plugin_runtime.host.hook_dispatcher": ("#5fd7af", None, False),
     "plugin_runtime.runner.main": ("#d787ff", None, False),
     "plugin_runtime.runner.rpc_client": ("#8787ff", None, False),
     "plugin_runtime.runner.manifest_validator": ("#5fafff", None, False),

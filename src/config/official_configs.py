@@ -1652,14 +1652,14 @@ class PluginRuntimeConfig(ConfigBase):
     )
     """等待 Runner 子进程启动并注册的超时时间（秒）"""
 
-    workflow_blocking_timeout_sec: float = Field(
-        default=120.0,
+    hook_blocking_timeout_sec: float = Field(
+        default=30,
         json_schema_extra={
             "x-widget": "number",
             "x-icon": "timer",
         },
     )
-    """Workflow 阻塞步骤的全局超时上限（秒）"""
+    """Hook 阻塞步骤的全局超时上限（秒）"""
 
     ipc_socket_path: str = Field(
         default="",

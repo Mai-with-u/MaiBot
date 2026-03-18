@@ -25,7 +25,7 @@ class ComponentTypes(str, Enum):
     COMMAND = "COMMAND"
     TOOL = "TOOL"
     EVENT_HANDLER = "EVENT_HANDLER"
-    WORKFLOW_HANDLER = "WORKFLOW_HANDLER"
+    HOOK_HANDLER = "HOOK_HANDLER"
     MESSAGE_GATEWAY = "MESSAGE_GATEWAY"
 
 
@@ -35,7 +35,7 @@ class StatusDict(TypedDict):
     COMMAND: int
     TOOL: int
     EVENT_HANDLER: int
-    WORKFLOW_HANDLER: int
+    HOOK_HANDLER: int
     MESSAGE_GATEWAY: int
     plugins: int
 
@@ -105,12 +105,13 @@ class EventHandlerEntry(ComponentEntry):
         super().__init__(name, component_type, plugin_id, metadata)
 
 
-class WorkflowHandlerEntry(ComponentEntry):
+class HookHandlerEntry(ComponentEntry):
     """WorkflowHandler 组件条目"""
 
     def __init__(self, name: str, component_type: str, plugin_id: str, metadata: Dict[str, Any]) -> None:
         self.stage: str = metadata.get("stage", "")
         self.priority: int = metadata.get("priority", 0)
+        self.blocking: bool = metadata.get("blocking", False)
         super().__init__(name, component_type, plugin_id, metadata)
 
 
@@ -172,8 +173,8 @@ class ComponentRegistry:
                 comp = ToolEntry(name, component_type, plugin_id, metadata)
             elif component_type == ComponentTypes.EVENT_HANDLER:
                 comp = EventHandlerEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.WORKFLOW_HANDLER:
-                comp = WorkflowHandlerEntry(name, component_type, plugin_id, metadata)
+            elif component_type == ComponentTypes.HOOK_HANDLER:
+                comp = HookHandlerEntry(name, component_type, plugin_id, metadata)
             elif component_type == ComponentTypes.MESSAGE_GATEWAY:
                 comp = MessageGatewayEntry(name, component_type, plugin_id, metadata)
             else:
@@ -380,23 +381,23 @@ class ComponentRegistry:
         handlers.sort(key=lambda c: c.weight, reverse=True)
         return handlers
 
-    def get_workflow_handlers(
+    def get_hook_handlers(
         self, stage: str, *, enabled_only: bool = True, session_id: Optional[str] = None
-    ) -> List[WorkflowHandlerEntry]:
-        """获取特定 workflow 阶段的所有步骤，按 priority 降序。
+    ) -> List[HookHandlerEntry]:
+        """获取特定 hook 阶段的所有步骤，按 priority 降序。
 
         Args:
-            stage: workflow 阶段名称
+            stage: hook 名称
             enabled_only: 是否仅返回启用的组件
             session_id: 可选的会话ID，若提供则考虑会话禁用状态
         Returns:
-            handlers (List[WorkflowHandlerEntry]): 符合条件的 WorkflowHandler 组件列表，按 priority 降序排序
+            handlers (List[HookHandlerEntry]): 符合条件的 HookHandler 组件列表，按 priority 降序排序
         """
-        handlers: List[WorkflowHandlerEntry] = []
-        for comp in self._by_type.get(ComponentTypes.WORKFLOW_HANDLER, {}).values():
+        handlers: List[HookHandlerEntry] = []
+        for comp in self._by_type.get(ComponentTypes.HOOK_HANDLER, {}).values():
             if enabled_only and not self.check_component_enabled(comp, session_id):
                 continue
-            if not isinstance(comp, WorkflowHandlerEntry):
+            if not isinstance(comp, HookHandlerEntry):
                 continue
             if comp.stage == stage:
                 handlers.append(comp)
