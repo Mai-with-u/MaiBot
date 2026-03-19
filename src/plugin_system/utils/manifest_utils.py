@@ -53,7 +53,7 @@ class VersionComparator:
             return "0.0.0"
 
         # 移除snapshot部分
-        normalized = re.sub(r"-snapshot\.\d+", "", version.strip())
+        normalized = re.sub(r"-.*$", "", version.strip())
 
         # 确保版本号格式正确
         if not re.match(r"^\d+(\.\d+){0,2}$", normalized):
