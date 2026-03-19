@@ -1,6 +1,6 @@
 """提供 Platform IO 层的中心 Broker 管理器。"""
 
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 import hashlib
 import json
@@ -59,7 +59,7 @@ class PlatformIOManager:
         if self._started:
             return
 
-        started_drivers: list[PlatformIODriver] = []
+        started_drivers: List[PlatformIODriver] = []
         try:
             for driver in self._driver_registry.list():
                 await driver.start()
@@ -86,7 +86,7 @@ class PlatformIOManager:
         if not self._started:
             return
 
-        stop_errors: list[str] = []
+        stop_errors: List[str] = []
         for driver in reversed(self._driver_registry.list()):
             try:
                 await driver.stop()
