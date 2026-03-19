@@ -14,10 +14,12 @@ import asyncio
 
 from src.common.logger import get_logger
 
+from .message_utils import PluginMessageUtils, MessageDict
 
 if TYPE_CHECKING:
     from .supervisor import PluginRunnerSupervisor
     from .component_registry import ComponentRegistry, EventHandlerEntry
+    from src.chat.message_receive.message import SessionMessage
 
 logger = get_logger("plugin_runtime.host.event_dispatcher")
 
@@ -34,7 +36,7 @@ class EventResult:
     handler_name: str
     success: bool = field(default=True)
     continue_processing: bool = field(default=True)
-    modified_message: Optional[Dict[str, Any]] = field(default=None)
+    modified_message: Optional[MessageDict] = field(default=None)
     custom_result: Any = field(default=None)
 
 
@@ -78,9 +80,9 @@ class EventDispatcher:
         self,
         event_type: str,
         supervisor: "PluginRunnerSupervisor",
-        message_dict: Optional[Dict[str, Any]] = None,
+        message: Optional["SessionMessage"] = None,
         extra_args: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    ) -> Tuple[bool, Optional["SessionMessage"]]:
         """分发事件到所有对应 handler 的便捷方法。
 
         内置了通过 PluginSupervisor.invoke_plugin 调用 plugin.emit_event 的逻辑，
@@ -93,14 +95,16 @@ class EventDispatcher:
             extra_args: 额外参数
 
         Returns:
-            (should_continue, modified_message_dict) (bool, Dict[str, Any] | None): (是否继续后续执行, 可选的修改后的消息字典)
+            (should_continue, modified_message_dict) (bool, SessionMessage | None): (是否继续后续执行, 可选的修改后的消息)
         """
         handler_entries = self._component_registry.get_event_handlers(event_type)
         if not handler_entries:
             return True, None
 
         should_continue = True
-        modified_message: Optional[Dict[str, Any]] = message_dict
+        modified_message: Optional[MessageDict] = (
+            PluginMessageUtils._session_message_to_dict(message) if message else None
+        )
         intercept_handlers: List["EventHandlerEntry"] = []
         non_blocking_handlers: List["EventHandlerEntry"] = []
 
@@ -136,8 +140,14 @@ class EventDispatcher:
                 task = asyncio.create_task(self._invoke_handler(supervisor, entry, args, event_type))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
-
-        return should_continue, modified_message
+        try:
+            modified_message_obj = (
+                PluginMessageUtils._build_session_message_from_dict(modified_message) if modified_message else None  # type: ignore
+            )
+        except Exception as e:
+            logger.error(f"构建修改后的 SessionMessage 失败: {e}")
+            modified_message_obj = None
+        return should_continue, modified_message_obj
 
     async def _invoke_handler(
         self,
