@@ -77,9 +77,11 @@ import fnmatch
 import hashlib
 import json
 import re
+import socket
 import time
 import uuid
 from collections import OrderedDict, deque
+from urllib.parse import urlparse
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -185,13 +187,36 @@ class ToolCallTracer:
         """清空记录"""
         self._records.clear()
     
+    # 匹配到这些模式的键名时，值将被脱敏
+    _SENSITIVE_KEY_PATTERNS = re.compile(
+        r"(token|key|secret|password|passwd|auth|credential|api_key|apikey|access_key|private)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _redact_sensitive(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """对字典中匹配敏感模式的键值进行脱敏"""
+        redacted: Dict[str, Any] = {}
+        for k, v in data.items():
+            if cls._SENSITIVE_KEY_PATTERNS.search(k):
+                redacted[k] = "***REDACTED***"
+            elif isinstance(v, dict):
+                redacted[k] = cls._redact_sensitive(v)
+            else:
+                redacted[k] = v
+        return redacted
+
     def _write_to_log(self, record: ToolCallRecord) -> None:
-        """写入 JSONL 日志文件"""
+        """写入 JSONL 日志文件（敏感字段已脱敏）"""
         try:
             if self._log_path:
                 self._log_path.parent.mkdir(parents=True, exist_ok=True)
+                record_dict = asdict(record)
+                # 对 arguments 字段进行脱敏处理
+                if "arguments" in record_dict and isinstance(record_dict["arguments"], dict):
+                    record_dict["arguments"] = self._redact_sensitive(record_dict["arguments"])
                 with open(self._log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+                    f.write(json.dumps(record_dict, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.warning(f"写入追踪日志失败: {e}")
     
@@ -810,6 +835,27 @@ class MCPToolProxy(BaseTool):
         return await self.execute(function_args)
 
 
+def _sanitize_tool_name(name: str) -> str:
+    """清理工具名称，仅保留字母、数字和下划线（防止注入）"""
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    # 移除连续下划线并去除首尾下划线
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    # 限制长度
+    return sanitized[:128] if sanitized else "unnamed_tool"
+
+
+def _sanitize_tool_description(description: str, max_length: int = 1024) -> str:
+    """清理工具描述，移除潜在的 prompt 注入内容并限制长度"""
+    # 移除可能用于 prompt 注入的控制序列
+    sanitized = re.sub(r"<\|.*?\|>", "", description)
+    # 移除 markdown 标题（常见注入载体）以外的过度格式化
+    sanitized = re.sub(r"(#{4,})", "####", sanitized)
+    # 截断到合理长度
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length] + "..."
+    return sanitized
+
+
 def create_mcp_tool_class(
     tool_key: str,
     tool_info: MCPToolInfo,
@@ -819,10 +865,14 @@ def create_mcp_tool_class(
     """根据 MCP 工具信息动态创建 BaseTool 子类"""
     parameters = parse_mcp_parameters(tool_info.input_schema)
     
-    class_name = f"MCPTool_{tool_info.server_name}_{tool_info.name}".replace("-", "_").replace(".", "_")
-    tool_name = tool_key.replace("-", "_").replace(".", "_")
+    # 安全: 仅允许字母数字和下划线，防止通过名称注入
+    safe_server_name = _sanitize_tool_name(tool_info.server_name)
+    safe_tool_name = _sanitize_tool_name(tool_info.name)
+    class_name = f"MCPTool_{safe_server_name}_{safe_tool_name}"
+    tool_name = _sanitize_tool_name(tool_key.replace("-", "_").replace(".", "_"))
     
-    description = tool_info.description
+    # 安全: 清理描述内容，防止 prompt 注入
+    description = _sanitize_tool_description(tool_info.description)
     if not description.endswith(f"[来自 MCP 服务器: {tool_info.server_name}]"):
         description = f"{description} [来自 MCP 服务器: {tool_info.server_name}]"
     
@@ -913,12 +963,69 @@ class MCPReadResourceTool(BaseTool):
     ]
     available_for_llm = True
     
+    # 允许的 URI scheme 白名单（排除 file:// 等危险协议）
+    _ALLOWED_SCHEMES = {"http", "https"}
+    # 禁止访问的内网 / 云元数据 IP 段
+    _BLOCKED_CIDRS = [
+        "127.0.0.0/8",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",   # AWS / cloud metadata
+        "100.64.0.0/10",    # Carrier-grade NAT
+        "0.0.0.0/8",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    ]
+
+    @classmethod
+    def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
+        """检查 URI 是否安全（防止 SSRF）。返回 (is_safe, reason)。"""
+        try:
+            parsed = urlparse(uri)
+        except Exception:
+            return False, "URI 格式无效"
+
+        scheme = (parsed.scheme or "").lower()
+
+        # 无 scheme 的 MCP 自定义 URI（如 "mydb://table/row"）放行，
+        # 由 MCP 服务器自身处理；仅拦截已知危险协议。
+        if scheme == "file":
+            return False, "不允许使用 file:// 协议"
+
+        # 对 http/https 做主机解析检查
+        if scheme in ("http", "https"):
+            hostname = parsed.hostname or ""
+            if not hostname:
+                return False, "缺少主机名"
+            # DNS 解析并检查是否为内网地址
+            try:
+                import ipaddress
+                addrinfos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+                for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                        return False, f"目标地址 {ip} 属于内网/保留地址段，已拦截"
+            except socket.gaierror:
+                return False, f"无法解析主机名: {hostname}"
+            except Exception as e:
+                return False, f"地址检查失败: {e}"
+
+        return True, ""
+
     async def execute(self, function_args: Dict[str, Any]) -> Dict[str, Any]:
         uri = function_args.get("uri", "")
         server_name = function_args.get("server_name")
         
         if not uri:
             return {"name": self.name, "content": "❌ 请提供资源 URI"}
+
+        # SSRF 防护：校验 URI 安全性
+        is_safe, reason = self._is_uri_safe(uri)
+        if not is_safe:
+            logger.warning(f"MCPReadResourceTool SSRF 拦截: uri={uri}, reason={reason}")
+            return {"name": self.name, "content": f"❌ 资源 URI 被拦截: {reason}"}
         
         result = await mcp_manager.read_resource(uri, server_name)
         
