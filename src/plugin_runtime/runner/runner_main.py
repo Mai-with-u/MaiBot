@@ -9,9 +9,8 @@
 6. 转发插件的能力调用到 Host
 """
 
-from typing import Any, Callable, Dict, List, Optional, Protocol, Set, Tuple, cast
-
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Protocol, Set, Tuple, cast
 
 import asyncio
 import contextlib
@@ -26,6 +25,7 @@ import tomllib
 from src.common.logger import get_console_handler, get_logger, initialize_logging
 from src.plugin_runtime import ENV_HOST_VERSION, ENV_IPC_ADDRESS, ENV_PLUGIN_DIRS, ENV_SESSION_TOKEN
 from src.plugin_runtime.protocol.envelope import (
+    AdapterDeclarationPayload,
     BootstrapPluginPayload,
     ComponentDeclaration,
     Envelope,
@@ -227,7 +227,7 @@ class PluginRunner:
             plugin_id: str = "",
             payload: Optional[Dict[str, Any]] = None,
         ) -> Any:
-            """桥接 PluginContext.call_capability → RPCClient.send_request。
+            """桥接 PluginContext 的原始 RPC 调用到 Host。
 
             无论调用方传入何种 plugin_id，实际发往 Host 的 plugin_id
             始终绑定为当前插件实例，避免伪造其他插件身份申请能力。
@@ -237,17 +237,13 @@ class PluginRunner:
                     f"插件 {bound_plugin_id} 尝试以 {plugin_id} 身份发起 RPC，已强制绑定回自身身份"
                 )
             resp = await rpc_client.send_request(
-                method="cap.call",
+                method=method,
                 plugin_id=bound_plugin_id,
-                payload={
-                    "capability": method,
-                    "args": payload or {},
-                },
+                payload=payload or {},
             )
-            # 从响应信封中提取业务结果
             if resp.error:
                 raise RuntimeError(resp.error.get("message", "能力调用失败"))
-            return resp.payload.get("result")
+            return resp.payload
 
         ctx = PluginContext(plugin_id=plugin_id, rpc_call=_rpc_call)
         cast(_ContextAwarePlugin, instance)._set_context(ctx)
@@ -286,6 +282,7 @@ class PluginRunner:
         self._rpc_client.register_method("plugin.invoke_command", self._handle_invoke)
         self._rpc_client.register_method("plugin.invoke_action", self._handle_invoke)
         self._rpc_client.register_method("plugin.invoke_tool", self._handle_invoke)
+        self._rpc_client.register_method("plugin.invoke_adapter", self._handle_invoke)
         self._rpc_client.register_method("plugin.emit_event", self._handle_event_invoke)
         self._rpc_client.register_method("plugin.invoke_hook", self._handle_hook_invoke)
         self._rpc_client.register_method("plugin.invoke_workflow_step", self._handle_workflow_step)
@@ -306,12 +303,14 @@ class PluginRunner:
         )
 
         try:
-            await self._rpc_client.send_request(
+            response = await self._rpc_client.send_request(
                 "plugin.bootstrap",
                 plugin_id=meta.plugin_id,
                 payload=payload.model_dump(),
                 timeout_ms=10000,
             )
+            if response.error:
+                raise RuntimeError(response.error.get("message", "插件 bootstrap 失败"))
             return True
         except Exception as e:
             logger.error(f"插件 {meta.plugin_id} bootstrap 失败: {e}")
@@ -320,6 +319,29 @@ class PluginRunner:
     async def _deactivate_plugin(self, meta: PluginMeta) -> None:
         """撤销 bootstrap 期间为插件签发的能力令牌。"""
         await self._bootstrap_plugin(meta, capabilities_required=[])
+
+    def _collect_adapter_declaration(self, meta: PluginMeta) -> Optional[AdapterDeclarationPayload]:
+        """从插件实例中提取适配器声明。
+
+        Args:
+            meta: 待提取声明的插件元数据。
+
+        Returns:
+            Optional[AdapterDeclarationPayload]: 若插件声明了适配器角色，则返回
+            经过校验的适配器声明；否则返回 ``None``。
+
+        Raises:
+            ValueError: 插件导出的适配器声明结构非法时抛出。
+        """
+        instance = meta.instance
+        if not hasattr(instance, "get_adapter_info"):
+            return None
+
+        adapter_info = instance.get_adapter_info()
+        if adapter_info is None:
+            return None
+
+        return AdapterDeclarationPayload.model_validate(adapter_info)
 
     async def _register_plugin(self, meta: PluginMeta) -> bool:
         """向 Host 注册单个插件。
@@ -346,20 +368,29 @@ class PluginRunner:
                 for comp_info in instance.get_components()
             )
 
+        try:
+            adapter = self._collect_adapter_declaration(meta)
+        except Exception as exc:
+            logger.error(f"插件 {meta.plugin_id} 适配器声明非法: {exc}", exc_info=True)
+            return False
+
         reg_payload = RegisterPluginPayload(
             plugin_id=meta.plugin_id,
             plugin_version=meta.version,
             components=components,
+            adapter=adapter,
             capabilities_required=meta.capabilities_required,
         )
 
         try:
-            _resp = await self._rpc_client.send_request(
+            response = await self._rpc_client.send_request(
                 "plugin.register_components",
                 plugin_id=meta.plugin_id,
                 payload=reg_payload.model_dump(),
                 timeout_ms=10000,
             )
+            if response.error:
+                raise RuntimeError(response.error.get("message", "插件注册失败"))
             logger.info(f"插件 {meta.plugin_id} 注册完成")
             return True
         except Exception as e:

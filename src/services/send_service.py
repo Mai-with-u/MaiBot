@@ -4,7 +4,7 @@
 提供发送各种类型消息的核心功能。
 """
 
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import time
 import traceback
@@ -19,6 +19,7 @@ from src.common.data_models.mai_message_data_model import MaiMessage
 from src.common.data_models.message_component_data_model import DictComponent, MessageSequence
 from src.common.logger import get_logger
 from src.config.config import global_config
+from src.platform_io.route_key_factory import RouteKeyFactory
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -29,6 +30,50 @@ logger = get_logger("send_service")
 # =============================================================================
 # 内部实现函数
 # =============================================================================
+
+
+def _inherit_platform_io_route_metadata(target_stream: Any) -> Dict[str, object]:
+    """从目标会话上下文继承 Platform IO 路由元数据。
+
+    Args:
+        target_stream: 当前消息要发送到的会话对象。
+
+    Returns:
+        Dict[str, object]: 可安全透传到出站消息 ``additional_config`` 中的
+        路由辅助字段。
+    """
+    inherited_metadata: Dict[str, object] = {}
+
+    context = getattr(target_stream, "context", None)
+    context_message = getattr(context, "message", None)
+    if context_message is None:
+        return inherited_metadata
+
+    additional_config = getattr(context_message.message_info, "additional_config", {})
+    if not isinstance(additional_config, dict):
+        return inherited_metadata
+
+    for key in (*RouteKeyFactory.ACCOUNT_ID_KEYS, *RouteKeyFactory.SCOPE_KEYS):
+        value = additional_config.get(key)
+        if value is None:
+            continue
+        normalized_value = str(value).strip()
+        if normalized_value:
+            inherited_metadata[key] = value
+
+    target_group_id = getattr(target_stream, "group_id", None)
+    if target_group_id is not None:
+        normalized_group_id = str(target_group_id).strip()
+        if normalized_group_id:
+            inherited_metadata["platform_io_target_group_id"] = normalized_group_id
+
+    target_user_id = getattr(target_stream, "user_id", None)
+    if target_user_id is not None:
+        normalized_user_id = str(target_user_id).strip()
+        if normalized_user_id:
+            inherited_metadata["platform_io_target_user_id"] = normalized_user_id
+
+    return inherited_metadata
 
 
 async def _send_to_target(
@@ -42,7 +87,22 @@ async def _send_to_target(
     show_log: bool = True,
     selected_expressions: Optional[List[int]] = None,
 ) -> bool:
-    """向指定目标发送消息的内部实现"""
+    """向指定目标发送消息。
+
+    Args:
+        message_segment: 待发送的消息段。
+        stream_id: 目标会话 ID。
+        display_message: 用于界面展示的文本内容。
+        typing: 是否显示输入中状态。
+        set_reply: 是否在发送时附带引用回复。
+        reply_message: 被回复的消息对象。
+        storage_message: 是否将发送结果写入消息存储。
+        show_log: 是否输出发送日志。
+        selected_expressions: 可选的表情候选索引列表。
+
+    Returns:
+        bool: 发送成功返回 ``True``，否则返回 ``False``。
+    """
     try:
         if set_reply and not reply_message:
             logger.warning("[SendService] 使用引用回复，但未提供回复消息")
@@ -80,7 +140,7 @@ async def _send_to_target(
                 platform=target_stream.platform,
             )
 
-        additional_config: dict[str, object] = {}
+        additional_config: Dict[str, object] = _inherit_platform_io_route_metadata(target_stream)
         if selected_expressions is not None:
             additional_config["selected_expressions"] = selected_expressions
         bot_user_id = get_bot_account(target_stream.platform)

@@ -7,10 +7,10 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-
 import logging as stdlib_logging
 import time
+
+from pydantic import BaseModel, Field
 
 
 # ====== 协议常量 ======
@@ -156,6 +156,8 @@ class RegisterPluginPayload(BaseModel):
     """插件版本"""
     components: List[ComponentDeclaration] = Field(default_factory=list, description="组件列表")
     """组件列表"""
+    adapter: Optional["AdapterDeclarationPayload"] = Field(default=None, description="可选的适配器声明")
+    """可选的适配器声明"""
     capabilities_required: List[str] = Field(default_factory=list, description="所需能力列表")
     """所需能力列表"""
 
@@ -283,6 +285,48 @@ class ReloadPluginResultPayload(BaseModel):
     """本次已卸载的插件列表"""
     failed_plugins: Dict[str, str] = Field(default_factory=dict, description="重载失败的插件及原因")
     """重载失败的插件及原因"""
+
+
+class AdapterDeclarationPayload(BaseModel):
+    """适配器插件声明载荷。"""
+
+    platform: str = Field(description="适配器负责的平台名称，例如 qq")
+    """适配器负责的平台名称，例如 qq"""
+    protocol: str = Field(default="", description="接入协议或实现名称，例如 napcat")
+    """接入协议或实现名称，例如 napcat"""
+    account_id: str = Field(default="", description="可选的账号 ID 或 self_id")
+    """可选的账号 ID 或 self_id"""
+    scope: str = Field(default="", description="可选的路由作用域")
+    """可选的路由作用域"""
+    send_method: str = Field(default="send_to_platform", description="Host 出站调用的插件方法名")
+    """Host 出站调用的插件方法名"""
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="适配器附加元数据")
+    """适配器附加元数据"""
+
+
+class ReceiveExternalMessagePayload(BaseModel):
+    """适配器插件向 Host 注入外部消息的请求载荷。"""
+
+    message: Dict[str, Any] = Field(description="符合 MessageDict 结构的标准消息字典")
+    """符合 MessageDict 结构的标准消息字典"""
+    route_metadata: Dict[str, Any] = Field(default_factory=dict, description="可选的路由辅助元数据")
+    """可选的路由辅助元数据"""
+    external_message_id: str = Field(default="", description="可选的外部平台消息 ID")
+    """可选的外部平台消息 ID"""
+    dedupe_key: str = Field(default="", description="可选的显式去重键")
+    """可选的显式去重键"""
+
+
+class ReceiveExternalMessageResultPayload(BaseModel):
+    """外部消息注入结果载荷。"""
+
+    accepted: bool = Field(description="Host 是否接受了本次消息注入")
+    """Host 是否接受了本次消息注入"""
+    route_key: Dict[str, Any] = Field(default_factory=dict, description="本次消息使用的归一路由键")
+    """本次消息使用的归一路由键"""
+
+
+RegisterPluginPayload.model_rebuild()
 
 
 # ====== 日志传输 ======

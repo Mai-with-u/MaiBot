@@ -3,9 +3,11 @@ Message Gateway 模块
 适配器专用，用于将其他平台的消息转换为系统内部的消息格式，并将系统消息转换为其他平台的格式。
 """
 
-from typing import Dict, Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict
 
 from src.common.logger import get_logger
+from src.platform_io import DeliveryStatus, get_platform_io_manager
+
 from .message_utils import PluginMessageUtils
 
 if TYPE_CHECKING:
@@ -17,25 +19,53 @@ logger = get_logger("plugin_runtime.host.message_gateway")
 
 
 class MessageGateway:
-    def __init__(self, component_registry: "ComponentRegistry") -> None:
-        self._component_registry = component_registry
+    """Host 侧消息网关包装器。"""
 
-    async def receive_external_message(self, external_message: Dict[str, Any]):
-        """
-        接收外部消息，转换为系统内部格式，并返回转换结果
+    def __init__(self, component_registry: "ComponentRegistry") -> None:
+        """初始化消息网关。
 
         Args:
-            external_message: 外部消息的字典格式数据
+            component_registry: 组件注册表。
+        """
+        self._component_registry = component_registry
+
+    def build_session_message(self, external_message: Dict[str, Any]) -> "SessionMessage":
+        """将标准消息字典转换为 ``SessionMessage``。
+
+        Args:
+            external_message: 外部消息的字典格式数据。
 
         Returns:
-            转换后的 SessionMessage 对象
+            SessionMessage: 转换后的内部消息对象。
+
+        Raises:
+            ValueError: 消息字典不合法时抛出。
         """
-        # 使用递归函数将外部消息字典转换为 SessionMessage
+        return PluginMessageUtils._build_session_message_from_dict(external_message)
+
+    def build_message_dict(self, internal_message: "SessionMessage") -> Dict[str, Any]:
+        """将 ``SessionMessage`` 转换为标准消息字典。
+
+        Args:
+            internal_message: 内部消息对象。
+
+        Returns:
+            Dict[str, Any]: 供适配器插件消费的标准消息字典。
+        """
+        return dict(PluginMessageUtils._session_message_to_dict(internal_message))
+
+    async def receive_external_message(self, external_message: Dict[str, Any]) -> None:
+        """接收外部消息并送入主消息链。
+
+        Args:
+            external_message: 外部消息的字典格式数据。
+        """
         try:
-            session_message = PluginMessageUtils._build_session_message_from_dict(external_message)
+            session_message = self.build_session_message(external_message)
         except Exception as e:
             logger.error(f"转换外部消息失败: {e}")
             return
+
         from src.chat.message_receive.bot import chat_bot
 
         await chat_bot.receive_message(session_message)
@@ -48,46 +78,32 @@ class MessageGateway:
         enabled_only: bool = True,
         save_to_db: bool = True,
     ) -> bool:
-        """
-        接收系统内部消息，转换为外部格式，并返回转换结果
+        """将内部消息通过 Platform IO 发送到外部平台。
 
         Args:
-            internal_message: 系统内部的 SessionMessage 对象
+            internal_message: 系统内部的 ``SessionMessage`` 对象。
+            supervisor: 当前持有该消息网关的 Supervisor。
+            enabled_only: 兼容旧签名的保留参数，当前由 Platform IO 统一裁决。
+            save_to_db: 发送成功后是否写入数据库。
 
         Returns:
-            转换是否成功
+            bool: 是否发送成功。
         """
-        try:
-            # 将 SessionMessage 转换为字典格式
-            message_dict = PluginMessageUtils._session_message_to_dict(internal_message)
-        except Exception as e:
-            logger.error(f"转换内部消息失败：{e}")
-            return False
-        gateway_entry = self._component_registry.get_message_gateways(
-            internal_message.platform,
-            enabled_only=enabled_only,
-            session_id=internal_message.session_id,
-        )
-        if not gateway_entry:
-            logger.warning(f"未找到适配平台 {internal_message.platform} 的消息网关组件，无法发送消息到外部平台")
-            return False
-        args = {"platform": internal_message.platform, "message": message_dict}
-        try:
-            resp_envelope = await supervisor.invoke_plugin(
-                "plugin.emit_event", gateway_entry.plugin_id, gateway_entry.name, args
-            )
-            logger.debug("信息发送成功")
-        except Exception as e:
-            logger.error(f"调用消息网关组件失败：{e}")
+        del enabled_only
+        del supervisor
+
+        platform_io_manager = get_platform_io_manager()
+        if not platform_io_manager.is_started:
+            logger.warning("Platform IO 尚未启动，无法通过适配器链路发送消息")
             return False
 
-        # 更新为实际id（如果组件返回了新的id）
-        actual_message_id = resp_envelope.payload.get("message_id")
-        try:
-            actual_message_id = str(actual_message_id)
-        except Exception:
-            actual_message_id = None
-        internal_message.message_id = actual_message_id or internal_message.message_id
+        route_key = platform_io_manager.build_route_key_from_message(internal_message)
+        receipt = await platform_io_manager.send_message(internal_message, route_key)
+        if receipt.status != DeliveryStatus.SENT:
+            logger.warning(f"通过适配器链路发送消息失败: {receipt.error or receipt.status}")
+            return False
+
+        internal_message.message_id = receipt.external_message_id or internal_message.message_id
         if save_to_db:
             try:
                 from src.common.utils.utils_message import MessageUtils

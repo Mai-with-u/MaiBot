@@ -1129,7 +1129,10 @@ class DefaultReplyer:
                     user_id=bot_user_id,
                     user_nickname=global_config.bot.nickname,
                 ),
-                additional_config={},
+                additional_config={
+                    "platform_io_target_group_id": self.chat_stream.group_id,
+                    "platform_io_target_user_id": self.chat_stream.user_id,
+                },
             ),
             message_segment=message_segment,
         )

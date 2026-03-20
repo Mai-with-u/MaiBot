@@ -209,6 +209,9 @@ class PluginMessageUtils:
         session_message.is_notify = message_dict.get("is_notify", False)
         if not isinstance(session_message.is_notify, bool):
             session_message.is_notify = False
+        session_message.session_id = message_dict.get("session_id", "")
+        if not isinstance(session_message.session_id, str):
+            session_message.session_id = ""
         session_message.reply_to = message_dict.get("reply_to")
         if session_message.reply_to is not None and not isinstance(session_message.reply_to, str):
             session_message.reply_to = None

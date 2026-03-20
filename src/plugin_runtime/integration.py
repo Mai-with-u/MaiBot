@@ -12,11 +12,13 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Dict, Ite
 
 import asyncio
 import json
+
 import tomlkit
 
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.config.file_watcher import FileChange, FileWatcher
+from src.platform_io import DeliveryReceipt, InboundMessageEnvelope, get_platform_io_manager
 from src.plugin_runtime.capabilities import (
     RuntimeComponentCapabilityMixin,
     RuntimeCoreCapabilityMixin,
@@ -57,6 +59,7 @@ class PluginRuntimeManager(
     """
 
     def __init__(self) -> None:
+        """初始化插件运行时管理器。"""
         from src.plugin_runtime.host.supervisor import PluginSupervisor
 
         self._builtin_supervisor: Optional[PluginSupervisor] = None
@@ -65,6 +68,22 @@ class PluginRuntimeManager(
         self._plugin_file_watcher: Optional[FileWatcher] = None
         self._plugin_source_watcher_subscription_id: Optional[str] = None
         self._plugin_config_watcher_subscriptions: Dict[str, Tuple[Path, str]] = {}
+
+    async def _dispatch_platform_inbound(self, envelope: InboundMessageEnvelope) -> None:
+        """接收 Platform IO 审核后的入站消息并送入主消息链。
+
+        Args:
+            envelope: Platform IO 产出的入站封装。
+        """
+        session_message = envelope.session_message
+        if session_message is None and envelope.payload is not None:
+            session_message = PluginMessageUtils._build_session_message_from_dict(dict(envelope.payload))
+        if session_message is None:
+            raise ValueError("Platform IO 入站封装缺少可用的 SessionMessage 或 payload")
+
+        from src.chat.message_receive.bot import chat_bot
+
+        await chat_bot.receive_message(session_message)
 
     # ─── 插件目录 ─────────────────────────────────────────────
 
@@ -110,6 +129,8 @@ class PluginRuntimeManager(
             logger.info("未找到任何插件目录，跳过插件运行时启动")
             return
 
+        platform_io_manager = get_platform_io_manager()
+
         # 从配置读取自定义 IPC socket 路径（留空则自动生成）
         socket_path_base = _cfg.ipc_socket_path or None
 
@@ -134,6 +155,9 @@ class PluginRuntimeManager(
 
         started_supervisors: List[PluginSupervisor] = []
         try:
+            platform_io_manager.set_inbound_dispatcher(self._dispatch_platform_inbound)
+            await platform_io_manager.start()
+
             if self._builtin_supervisor:
                 await self._builtin_supervisor.start()
                 started_supervisors.append(self._builtin_supervisor)
@@ -147,6 +171,11 @@ class PluginRuntimeManager(
             logger.error(f"插件运行时启动失败: {e}", exc_info=True)
             await self._stop_plugin_file_watcher()
             await asyncio.gather(*(sv.stop() for sv in started_supervisors), return_exceptions=True)
+            platform_io_manager.clear_inbound_dispatcher()
+            try:
+                await platform_io_manager.stop()
+            except Exception as platform_io_exc:
+                logger.warning(f"Platform IO 停止失败: {platform_io_exc}")
             self._started = False
             self._builtin_supervisor = None
             self._third_party_supervisor = None
@@ -156,6 +185,7 @@ class PluginRuntimeManager(
         if not self._started:
             return
 
+        platform_io_manager = get_platform_io_manager()
         await self._stop_plugin_file_watcher()
 
         coroutines: List[Coroutine[Any, Any, None]] = []
@@ -164,11 +194,23 @@ class PluginRuntimeManager(
         if self._third_party_supervisor:
             coroutines.append(self._third_party_supervisor.stop())
 
+        stop_errors: List[str] = []
         try:
-            await asyncio.gather(*coroutines, return_exceptions=True)
-            logger.info("插件运行时已停止")
-        except Exception as e:
-            logger.error(f"插件运行时停止失败: {e}", exc_info=True)
+            results = await asyncio.gather(*coroutines, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    stop_errors.append(str(result))
+
+            platform_io_manager.clear_inbound_dispatcher()
+            try:
+                await platform_io_manager.stop()
+            except Exception as exc:
+                stop_errors.append(f"Platform IO: {exc}")
+
+            if stop_errors:
+                logger.error(f"插件运行时停止过程中存在错误: {'; '.join(stop_errors)}")
+            else:
+                logger.info("插件运行时已停止")
         finally:
             self._started = False
             self._builtin_supervisor = None
@@ -176,6 +218,7 @@ class PluginRuntimeManager(
 
     @property
     def is_running(self) -> bool:
+        """返回插件运行时是否处于启动状态。"""
         return self._started
 
     @property
@@ -303,6 +346,37 @@ class PluginRuntimeManager(
             timeout_ms=timeout_ms,
         )
 
+    async def try_send_message_via_platform_io(
+        self,
+        message: "SessionMessage",
+    ) -> Optional[DeliveryReceipt]:
+        """尝试通过 Platform IO 中间层发送消息。
+
+        Args:
+            message: 待发送的内部会话消息。
+
+        Returns:
+            Optional[DeliveryReceipt]: 若当前消息存在 active 路由，则返回实际发送
+            结果；若没有可用路由或 Platform IO 尚未启动，则返回 ``None``。
+        """
+        if not self._started:
+            return None
+
+        platform_io_manager = get_platform_io_manager()
+        if not platform_io_manager.is_started:
+            return None
+
+        try:
+            route_key = platform_io_manager.build_route_key_from_message(message)
+        except Exception as exc:
+            logger.warning(f"根据消息构造 Platform IO 路由键失败: {exc}")
+            return None
+
+        if platform_io_manager.resolve_driver(route_key) is None:
+            return None
+
+        return await platform_io_manager.send_message(message, route_key)
+
     def _get_supervisors_for_plugin(self, plugin_id: str) -> List["PluginSupervisor"]:
         """返回当前持有指定插件的所有 Supervisor。
 
@@ -426,6 +500,11 @@ class PluginRuntimeManager(
         """为指定插件生成配置文件变更回调。"""
 
         async def _callback(changes: Sequence[FileChange]) -> None:
+            """将 watcher 事件转发到指定插件的配置处理逻辑。
+
+            Args:
+                changes: 当前批次收集到的文件变更列表。
+            """
             await self._handle_plugin_config_changes(plugin_id, changes)
 
         return _callback
@@ -542,6 +621,11 @@ class PluginRuntimeManager(
     # ─── 能力实现注册 ──────────────────────────────────────────
 
     def _register_capability_impls(self, supervisor: "PluginSupervisor") -> None:
+        """向指定 Supervisor 注册主程序能力实现。
+
+        Args:
+            supervisor: 需要注册能力实现的目标 Supervisor。
+        """
         register_capability_impls(self, supervisor)
 
 

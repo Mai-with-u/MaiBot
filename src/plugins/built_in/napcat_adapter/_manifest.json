@@ -1,0 +1,30 @@
+{
+  "manifest_version": 1,
+  "name": "napcat_adapter_builtin",
+  "version": "0.1.0",
+  "description": "Built-in NapCat adapter plugin for MVP message forwarding.",
+  "author": {
+    "name": "OpenAI Codex"
+  },
+  "license": "GPL-v3.0-or-later",
+  "host_application": {
+    "min_version": "1.0.0"
+  },
+  "keywords": [
+    "adapter",
+    "built-in",
+    "napcat",
+    "onebot",
+    "qq"
+  ],
+  "categories": [
+    "Adapter",
+    "Built-in"
+  ],
+  "default_locale": "en-US",
+  "plugin_info": {
+    "is_built_in": true,
+    "plugin_type": "adapter"
+  },
+  "capabilities": []
+}

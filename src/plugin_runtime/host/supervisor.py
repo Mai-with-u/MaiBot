@@ -8,13 +8,20 @@ import sys
 
 from src.common.logger import get_logger
 from src.config.config import global_config
+from src.platform_io import DriverKind, InboundMessageEnvelope, RouteBinding, RouteKey, get_platform_io_manager
+from src.platform_io.drivers import PluginPlatformDriver
+from src.platform_io.route_key_factory import RouteKeyFactory
+from src.platform_io.routing import RouteBindingConflictError
 from src.plugin_runtime import ENV_HOST_VERSION, ENV_IPC_ADDRESS, ENV_PLUGIN_DIRS, ENV_SESSION_TOKEN
 from src.plugin_runtime.protocol.envelope import (
+    AdapterDeclarationPayload,
     BootstrapPluginPayload,
     ConfigUpdatedPayload,
     Envelope,
     HealthPayload,
     PROTOCOL_VERSION,
+    ReceiveExternalMessagePayload,
+    ReceiveExternalMessageResultPayload,
     RegisterPluginPayload,
     ReloadPluginResultPayload,
     RunnerReadyPayload,
@@ -86,6 +93,7 @@ class PluginRunnerSupervisor:
 
         self._runner_process: Optional[asyncio.subprocess.Process] = None
         self._registered_plugins: Dict[str, RegisterPluginPayload] = {}
+        self._registered_adapters: Dict[str, AdapterDeclarationPayload] = {}
         self._runner_ready_events: asyncio.Event = asyncio.Event()
         self._runner_ready_payloads: RunnerReadyPayload = RunnerReadyPayload()
         self._health_task: Optional[asyncio.Task[None]] = None
@@ -257,6 +265,32 @@ class PluginRunnerSupervisor:
             timeout_ms,
         )
 
+    async def invoke_adapter(
+        self,
+        plugin_id: str,
+        method_name: str,
+        args: Optional[Dict[str, Any]] = None,
+        timeout_ms: int = 30000,
+    ) -> Envelope:
+        """调用适配器插件的专用方法。
+
+        Args:
+            plugin_id: 目标适配器插件 ID。
+            method_name: 要调用的插件方法名，例如 ``send_to_platform``。
+            args: 传递给插件方法的关键字参数。
+            timeout_ms: RPC 超时时间，单位毫秒。
+
+        Returns:
+            Envelope: Runner 返回的响应信封。
+        """
+        return await self.invoke_plugin(
+            method="plugin.invoke_adapter",
+            plugin_id=plugin_id,
+            component_name=method_name,
+            args=args,
+            timeout_ms=timeout_ms,
+        )
+
     async def reload_plugin(self, plugin_id: str, reason: str = "manual") -> bool:
         """按插件 ID 触发精确重载。
 
@@ -384,6 +418,7 @@ class PluginRunnerSupervisor:
     def _register_internal_methods(self) -> None:
         """注册 Host 侧内部 RPC 方法。"""
         self._rpc_server.register_method("cap.call", self._capability_service.handle_capability_request)
+        self._rpc_server.register_method("host.receive_external_message", self._handle_receive_external_message)
         self._rpc_server.register_method("plugin.bootstrap", self._handle_bootstrap_plugin)
         self._rpc_server.register_method("plugin.register_components", self._handle_register_plugin)
         self._rpc_server.register_method("plugin.register_plugin", self._handle_register_plugin)
@@ -427,6 +462,17 @@ class PluginRunnerSupervisor:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
 
         self._component_registry.remove_components_by_plugin(payload.plugin_id)
+        if payload.plugin_id in self._registered_adapters:
+            await self._unregister_adapter_driver(payload.plugin_id)
+
+        try:
+            if payload.adapter is not None:
+                await self._register_adapter_driver(payload.plugin_id, payload.adapter)
+        except RouteBindingConflictError as exc:
+            return envelope.make_error_response(ErrorCode.E_METHOD_NOT_ALLOWED.value, str(exc))
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_UNKNOWN.value, str(exc))
+
         registered_count = self._component_registry.register_plugin_components(
             payload.plugin_id,
             [component.model_dump() for component in payload.components],
@@ -438,6 +484,7 @@ class PluginRunnerSupervisor:
                 "accepted": True,
                 "plugin_id": payload.plugin_id,
                 "registered_components": registered_count,
+                "adapter_registered": payload.adapter is not None,
             }
         )
 
@@ -458,6 +505,7 @@ class PluginRunnerSupervisor:
         removed_components = self._component_registry.remove_components_by_plugin(payload.plugin_id)
         self._authorization.revoke_permission_token(payload.plugin_id)
         removed_registration = self._registered_plugins.pop(payload.plugin_id, None) is not None
+        await self._unregister_adapter_driver(payload.plugin_id)
 
         return envelope.make_response(
             payload={
@@ -468,6 +516,221 @@ class PluginRunnerSupervisor:
                 "removed_registration": removed_registration,
             }
         )
+
+    @staticmethod
+    def _build_adapter_driver_id(plugin_id: str) -> str:
+        """构造适配器驱动 ID。
+
+        Args:
+            plugin_id: 适配器插件 ID。
+
+        Returns:
+            str: 对应 Platform IO 中的驱动 ID。
+        """
+        return f"adapter:{plugin_id}"
+
+    async def _register_adapter_driver(self, plugin_id: str, adapter: AdapterDeclarationPayload) -> None:
+        """将适配器插件注册到 Platform IO。
+
+        Args:
+            plugin_id: 适配器插件 ID。
+            adapter: 经过校验的适配器声明。
+
+        Raises:
+            ValueError: 适配器路由冲突或驱动注册失败时抛出。
+        """
+        await self._unregister_adapter_driver(plugin_id)
+
+        platform_io_manager = get_platform_io_manager()
+        driver = PluginPlatformDriver(
+            driver_id=self._build_adapter_driver_id(plugin_id),
+            platform=adapter.platform,
+            account_id=adapter.account_id or None,
+            scope=adapter.scope or None,
+            plugin_id=plugin_id,
+            send_method=adapter.send_method,
+            supervisor=self,
+            metadata={
+                "protocol": adapter.protocol,
+                **adapter.metadata,
+            },
+        )
+        binding = RouteBinding(
+            route_key=driver.descriptor.route_key,
+            driver_id=driver.driver_id,
+            driver_kind=DriverKind.PLUGIN,
+            metadata={
+                "plugin_id": plugin_id,
+                "protocol": adapter.protocol,
+            },
+        )
+
+        try:
+            if platform_io_manager.is_started:
+                await platform_io_manager.add_driver(driver)
+            else:
+                platform_io_manager.register_driver(driver)
+            platform_io_manager.bind_route(binding)
+        except Exception:
+            with contextlib.suppress(Exception):
+                if platform_io_manager.is_started:
+                    await platform_io_manager.remove_driver(driver.driver_id)
+                else:
+                    platform_io_manager.unregister_driver(driver.driver_id)
+            raise
+
+        self._registered_adapters[plugin_id] = adapter
+
+    async def _unregister_adapter_driver(self, plugin_id: str) -> None:
+        """从 Platform IO 注销一个适配器驱动。
+
+        Args:
+            plugin_id: 适配器插件 ID。
+        """
+        platform_io_manager = get_platform_io_manager()
+        driver_id = self._build_adapter_driver_id(plugin_id)
+
+        with contextlib.suppress(Exception):
+            if platform_io_manager.is_started:
+                await platform_io_manager.remove_driver(driver_id)
+            else:
+                platform_io_manager.unregister_driver(driver_id)
+
+        self._registered_adapters.pop(plugin_id, None)
+
+    async def _unregister_all_adapter_drivers(self) -> None:
+        """注销当前 Supervisor 管理的全部适配器驱动。"""
+        plugin_ids = list(self._registered_adapters.keys())
+        for plugin_id in plugin_ids:
+            await self._unregister_adapter_driver(plugin_id)
+
+    @staticmethod
+    def _attach_inbound_route_metadata(
+        session_message: "SessionMessage",
+        route_key: RouteKey,
+        route_metadata: Dict[str, Any],
+    ) -> None:
+        """将入站路由信息写回消息的 ``additional_config``。
+
+        Args:
+            session_message: 已构造好的内部消息对象。
+            route_key: Host 为该消息解析出的标准路由键。
+            route_metadata: 适配器通过 RPC 补充的原始路由辅助元数据。
+        """
+        additional_config = session_message.message_info.additional_config
+        if not isinstance(additional_config, dict):
+            additional_config = {}
+            session_message.message_info.additional_config = additional_config
+
+        for key, value in route_metadata.items():
+            if value is None:
+                continue
+            normalized_value = str(value).strip()
+            if normalized_value:
+                additional_config[key] = value
+
+        if route_key.account_id:
+            additional_config.setdefault("platform_io_account_id", route_key.account_id)
+        if route_key.scope:
+            additional_config.setdefault("platform_io_scope", route_key.scope)
+
+    def _build_inbound_route_key(
+        self,
+        adapter: AdapterDeclarationPayload,
+        message: Dict[str, Any],
+        route_metadata: Dict[str, Any],
+    ) -> RouteKey:
+        """为适配器入站消息构造归一路由键。
+
+        Args:
+            adapter: 当前适配器声明。
+            message: 标准消息字典。
+            route_metadata: 插件补充的路由辅助元数据。
+
+        Returns:
+            RouteKey: 供 Platform IO 使用的规范化路由键。
+
+        Raises:
+            ValueError: 消息平台字段与适配器平台声明不一致时抛出。
+        """
+        message_platform = str(message.get("platform") or adapter.platform).strip()
+        if message_platform != adapter.platform:
+            raise ValueError(
+                f"外部消息平台 {message_platform} 与适配器 {adapter.platform} 不一致"
+            )
+
+        try:
+            route_key = RouteKeyFactory.from_message_dict(message)
+        except Exception:
+            route_key = RouteKey(platform=message_platform)
+
+        route_account_id, route_scope = RouteKeyFactory.extract_components(route_metadata)
+        account_id = route_key.account_id or route_account_id or adapter.account_id or None
+        scope = route_key.scope or route_scope or adapter.scope or None
+        return RouteKey(
+            platform=message_platform,
+            account_id=account_id,
+            scope=scope,
+        )
+
+    async def _handle_receive_external_message(self, envelope: Envelope) -> Envelope:
+        """处理适配器插件上报的外部入站消息。
+
+        Args:
+            envelope: RPC 请求信封。
+
+        Returns:
+            Envelope: 注入结果响应。
+        """
+        try:
+            payload = ReceiveExternalMessagePayload.model_validate(envelope.payload)
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
+        adapter = self._registered_adapters.get(envelope.plugin_id)
+        if adapter is None:
+            return envelope.make_error_response(
+                ErrorCode.E_METHOD_NOT_ALLOWED.value,
+                f"插件 {envelope.plugin_id} 未声明为适配器，不能注入外部消息",
+            )
+
+        try:
+            route_key = self._build_inbound_route_key(
+                adapter=adapter,
+                message=payload.message,
+                route_metadata=payload.route_metadata,
+            )
+            session_message = self._message_gateway.build_session_message(payload.message)
+            self._attach_inbound_route_metadata(session_message, route_key, payload.route_metadata)
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
+        platform_io_manager = get_platform_io_manager()
+        accepted = await platform_io_manager.accept_inbound(
+            InboundMessageEnvelope(
+                route_key=route_key,
+                driver_id=self._build_adapter_driver_id(envelope.plugin_id),
+                driver_kind=DriverKind.PLUGIN,
+                external_message_id=payload.external_message_id or str(payload.message.get("message_id") or "") or None,
+                dedupe_key=payload.dedupe_key or None,
+                session_message=session_message,
+                payload=payload.message,
+                metadata={
+                    "plugin_id": envelope.plugin_id,
+                    "protocol": adapter.protocol,
+                    **payload.route_metadata,
+                },
+            )
+        )
+        response = ReceiveExternalMessageResultPayload(
+            accepted=accepted,
+            route_key={
+                "platform": route_key.platform,
+                "account_id": route_key.account_id,
+                "scope": route_key.scope,
+            },
+        )
+        return envelope.make_response(payload=response.model_dump())
 
     async def _handle_runner_ready(self, envelope: Envelope) -> Envelope:
         """处理 Runner 就绪通知。
@@ -595,6 +858,7 @@ class PluginRunnerSupervisor:
                 await self._stderr_drain_task
             self._stderr_drain_task = None
 
+        await self._unregister_all_adapter_drivers()
         self._clear_runner_state()
 
     async def _health_check_loop(self) -> None:
@@ -671,6 +935,7 @@ class PluginRunnerSupervisor:
         self._authorization.clear()
         self._component_registry.clear()
         self._registered_plugins.clear()
+        self._registered_adapters.clear()
         self._runner_ready_events = asyncio.Event()
         self._runner_ready_payloads = RunnerReadyPayload()
 

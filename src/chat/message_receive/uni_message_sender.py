@@ -1,31 +1,37 @@
-from rich.traceback import install
-from typing import Optional
+from typing import Any, Optional, Tuple
 
 import asyncio
+import traceback
 
+from rich.traceback import install
 
-from src.common.message_server.api import get_global_api
-from src.common.logger import get_logger
-from src.common.database.database import get_db_session
 from src.chat.message_receive.message import SessionMessage
+from src.chat.utils.utils import calculate_typing_time, truncate_message
 from src.common.data_models.message_component_data_model import ReplyComponent
-from src.chat.utils.utils import truncate_message
-from src.chat.utils.utils import calculate_typing_time
+from src.common.database.database import get_db_session
+from src.common.logger import get_logger
+from src.common.message_server.api import get_global_api
+from src.webui.routers.chat.serializers import serialize_message_sequence
 
 install(extra_lines=3)
 
 logger = get_logger("sender")
 
 # WebUI 聊天室的消息广播器（延迟导入避免循环依赖）
-_webui_chat_broadcaster = None
+_webui_chat_broadcaster: Optional[Tuple[Any, Optional[str]]] = None
 
 # 虚拟群 ID 前缀（与 chat_routes.py 保持一致）
 VIRTUAL_GROUP_ID_PREFIX = "webui_virtual_group_"
 
 
 # TODO: 重构完成后完成webui相关
-def get_webui_chat_broadcaster():
-    """获取 WebUI 聊天室广播器"""
+def get_webui_chat_broadcaster() -> Tuple[Any, Optional[str]]:
+    """获取 WebUI 聊天室广播器。
+
+    Returns:
+        Tuple[Any, Optional[str]]: ``(chat_manager, platform_name)`` 二元组；
+        若 WebUI 相关模块不可用，则元素会退化为 ``None``。
+    """
     global _webui_chat_broadcaster
     if _webui_chat_broadcaster is None:
         try:
@@ -38,102 +44,36 @@ def get_webui_chat_broadcaster():
 
 
 def is_webui_virtual_group(group_id: str) -> bool:
-    """检查是否是 WebUI 虚拟群"""
-    return group_id and group_id.startswith(VIRTUAL_GROUP_ID_PREFIX)
-
-
-def parse_message_segments(segment) -> list:
-    """解析消息段，转换为 WebUI 可用的格式
-
-    参考 NapCat 适配器的消息解析逻辑
+    """检查是否是 WebUI 虚拟群。
 
     Args:
-        segment: Seg 消息段对象
+        group_id: 待判断的群 ID。
 
     Returns:
-        list: 消息段列表，每个元素为 {"type": "...", "data": ...}
+        bool: 若群 ID 属于 WebUI 虚拟群则返回 ``True``。
     """
-
-    result = []
-
-    if segment is None:
-        return result
-
-    if segment.type == "seglist":
-        # 处理消息段列表
-        if segment.data:
-            for seg in segment.data:
-                result.extend(parse_message_segments(seg))
-    elif segment.type == "text":
-        # 文本消息
-        if segment.data:
-            result.append({"type": "text", "data": segment.data})
-    elif segment.type == "image":
-        # 图片消息（base64）
-        if segment.data:
-            result.append({"type": "image", "data": f"data:image/png;base64,{segment.data}"})
-    elif segment.type == "emoji":
-        # 表情包消息（base64）
-        if segment.data:
-            result.append({"type": "emoji", "data": f"data:image/gif;base64,{segment.data}"})
-    elif segment.type == "imageurl":
-        # 图片链接消息
-        if segment.data:
-            result.append({"type": "image", "data": segment.data})
-    elif segment.type == "face":
-        # 原生表情
-        result.append({"type": "face", "data": segment.data})
-    elif segment.type == "voice":
-        # 语音消息（base64）
-        if segment.data:
-            result.append({"type": "voice", "data": f"data:audio/wav;base64,{segment.data}"})
-    elif segment.type == "voiceurl":
-        # 语音链接
-        if segment.data:
-            result.append({"type": "voice", "data": segment.data})
-    elif segment.type == "video":
-        # 视频消息（base64）
-        if segment.data:
-            result.append({"type": "video", "data": f"data:video/mp4;base64,{segment.data}"})
-    elif segment.type == "videourl":
-        # 视频链接
-        if segment.data:
-            result.append({"type": "video", "data": segment.data})
-    elif segment.type == "music":
-        # 音乐消息
-        result.append({"type": "music", "data": segment.data})
-    elif segment.type == "file":
-        # 文件消息
-        result.append({"type": "file", "data": segment.data})
-    elif segment.type == "reply":
-        # 回复消息
-        result.append({"type": "reply", "data": segment.data})
-    elif segment.type == "forward":
-        # 转发消息
-        forward_items = []
-        if segment.data:
-            for item in segment.data:
-                forward_items.append(
-                    {
-                        "content": parse_message_segments(item.get("message_segment", {}))
-                        if isinstance(item, dict)
-                        else []
-                    }
-                )
-        result.append({"type": "forward", "data": forward_items})
-    else:
-        # 未知类型，尝试作为文本处理
-        if segment.data:
-            result.append({"type": "unknown", "original_type": segment.type, "data": str(segment.data)})
-
-    return result
+    return bool(group_id) and group_id.startswith(VIRTUAL_GROUP_ID_PREFIX)
 
 
-async def _send_message(message: MessageSending, show_log=True) -> bool:
-    """合并后的消息发送函数，包含WS发送和日志记录"""
+async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
+    """执行统一的消息发送流程。
+
+    发送顺序为：
+    1. WebUI 特殊链路
+    2. Platform IO 适配器链路
+    3. 旧版 ``maim_message`` / API Server 链路
+
+    Args:
+        message: 待发送的内部会话消息。
+        show_log: 是否输出发送成功日志。
+
+    Returns:
+        bool: 是否最终发送成功。
+    """
     message_preview = truncate_message(message.processed_plain_text, max_length=200)
     platform = message.platform
-    group_id = message.session.group_id
+    group_info = message.message_info.group_info
+    group_id = group_info.group_id if group_info is not None else ""
 
     try:
         # 检查是否是 WebUI 平台的消息，或者是 WebUI 虚拟群的消息
@@ -146,7 +86,7 @@ async def _send_message(message: MessageSending, show_log=True) -> bool:
             from src.config.config import global_config
 
             # 解析消息段，获取富文本内容
-            message_segments = parse_message_segments(message.message_segment)
+            message_segments = serialize_message_sequence(message.raw_message)
 
             # 判断消息类型
             # 如果只有一个文本段，使用简单的 text 类型
@@ -184,8 +124,38 @@ async def _send_message(message: MessageSending, show_log=True) -> bool:
                     logger.info(f"已将消息  '{message_preview}'  发往 WebUI 聊天室")
             return True
 
+        try:
+            from src.platform_io import DeliveryStatus
+            from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+            receipt = await get_plugin_runtime_manager().try_send_message_via_platform_io(message)
+            if receipt is not None:
+                if receipt.status == DeliveryStatus.SENT:
+                    if show_log:
+                        logger.info(
+                            f"已通过 Platform IO 将消息 '{message_preview}' 发往平台'{platform}' "
+                            f"(driver: {receipt.driver_id or 'unknown'})"
+                        )
+                    return True
+
+                logger.warning(
+                    f"Platform IO 发送失败: platform={platform} driver={receipt.driver_id} "
+                    f"status={receipt.status} error={receipt.error}"
+                )
+                return False
+        except Exception as exc:
+            logger.warning(f"检查 Platform IO 出站链路时出现异常，将回退旧发送链: {exc}")
+
         # Fallback 逻辑: 尝试通过 API Server 发送
-        async def send_with_new_api(legacy_exception=None):
+        async def send_with_new_api(legacy_exception: Optional[Exception] = None) -> bool:
+            """通过 API Server 回退链路发送消息。
+
+            Args:
+                legacy_exception: 旧发送链已经抛出的异常；若回退也失败，则重新抛出。
+
+            Returns:
+                bool: 回退链路是否发送成功。
+            """
             try:
                 from src.config.config import global_config
 
@@ -289,7 +259,8 @@ async def _send_message(message: MessageSending, show_log=True) -> bool:
 class UniversalMessageSender:
     """管理消息的注册、即时处理、发送和存储，并跟踪思考状态。"""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """初始化统一消息发送器。"""
         pass
 
     async def send_message(
@@ -300,7 +271,7 @@ class UniversalMessageSender:
         reply_message_id: Optional[str] = None,
         storage_message: bool = True,
         show_log: bool = True,
-    ):
+    ) -> bool:
         """
         处理、发送并存储一条消息。
 
