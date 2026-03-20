@@ -78,6 +78,7 @@ import hashlib
 import json
 import re
 import socket
+import ipaddress
 import time
 import uuid
 from collections import OrderedDict, deque
@@ -195,16 +196,31 @@ class ToolCallTracer:
 
     @classmethod
     def _redact_sensitive(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-        """对字典中匹配敏感模式的键值进行脱敏"""
+        """对字典中匹配敏感模式的键值进行脱敏（递归处理嵌套 dict 与 list）"""
         redacted: Dict[str, Any] = {}
         for k, v in data.items():
             if cls._SENSITIVE_KEY_PATTERNS.search(k):
                 redacted[k] = "***REDACTED***"
             elif isinstance(v, dict):
                 redacted[k] = cls._redact_sensitive(v)
+            elif isinstance(v, list):
+                redacted[k] = cls._redact_sensitive_list(v)
             else:
                 redacted[k] = v
         return redacted
+
+    @classmethod
+    def _redact_sensitive_list(cls, items: list) -> list:
+        """递归脱敏列表中的字典元素"""
+        result = []
+        for item in items:
+            if isinstance(item, dict):
+                result.append(cls._redact_sensitive(item))
+            elif isinstance(item, list):
+                result.append(cls._redact_sensitive_list(item))
+            else:
+                result.append(item)
+        return result
 
     def _write_to_log(self, record: ToolCallRecord) -> None:
         """写入 JSONL 日志文件（敏感字段已脱敏）"""
@@ -873,8 +889,10 @@ def create_mcp_tool_class(
     
     # 安全: 清理描述内容，防止 prompt 注入
     description = _sanitize_tool_description(tool_info.description)
-    if not description.endswith(f"[来自 MCP 服务器: {tool_info.server_name}]"):
-        description = f"{description} [来自 MCP 服务器: {tool_info.server_name}]"
+    sanitized_server_label = _sanitize_tool_name(tool_info.server_name)
+    suffix = f"[来自 MCP 服务器: {sanitized_server_label}]"
+    if not description.endswith(suffix):
+        description = f"{description} {suffix}"
     
     tool_class = type(
         class_name,
@@ -965,20 +983,6 @@ class MCPReadResourceTool(BaseTool):
     
     # 允许的 URI scheme 白名单（排除 file:// 等危险协议）
     _ALLOWED_SCHEMES = {"http", "https"}
-    # 禁止访问的内网 / 云元数据 IP 段
-    _BLOCKED_CIDRS = [
-        "127.0.0.0/8",
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "169.254.0.0/16",   # AWS / cloud metadata
-        "100.64.0.0/10",    # Carrier-grade NAT
-        "0.0.0.0/8",
-        "::1/128",
-        "fc00::/7",
-        "fe80::/10",
-    ]
-
     @classmethod
     def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
         """检查 URI 是否安全（防止 SSRF）。返回 (is_safe, reason)。"""
@@ -1001,7 +1005,6 @@ class MCPReadResourceTool(BaseTool):
                 return False, "缺少主机名"
             # DNS 解析并检查是否为内网地址
             try:
-                import ipaddress
                 addrinfos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
                 for _family, _type, _proto, _canonname, sockaddr in addrinfos:
                     ip = ipaddress.ip_address(sockaddr[0])
@@ -1027,6 +1030,10 @@ class MCPReadResourceTool(BaseTool):
             logger.warning(f"MCPReadResourceTool SSRF 拦截: uri={uri}, reason={reason}")
             return {"name": self.name, "content": f"❌ 资源 URI 被拦截: {reason}"}
         
+        # NOTE: If the underlying MCP HTTP transport follows 3xx redirects,
+        # the redirected target is NOT re-validated here.  A future improvement
+        # should either disable automatic redirects in the MCP HTTP client or
+        # hook into the redirect chain to re-run _is_uri_safe on each hop.
         result = await mcp_manager.read_resource(uri, server_name)
         
         if result.success:
