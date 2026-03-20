@@ -1,9 +1,8 @@
 # 定义模块颜色映射
-from typing import Optional, Tuple, Dict
-
 import itertools
 import os
 import sys
+from typing import Dict, Optional, Tuple
 
 
 MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
@@ -54,15 +53,19 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "component_registry": ("#ffaf00", None, False),
     "plugin_runtime.integration": ("#d75f00", None, False),
     "plugin_runtime.host.supervisor": ("#ff5f00", None, False),
+    "plugin_runtime.host.runner_manager": ("#ff5f00", None, False),
     "plugin_runtime.host.rpc_server": ("#ff8700", None, False),
     "plugin_runtime.host.component_registry": ("#ffaf00", None, False),
     "plugin_runtime.host.capability_service": ("#ffd700", None, False),
     "plugin_runtime.host.event_dispatcher": ("#87d700", None, False),
     "plugin_runtime.host.hook_dispatcher": ("#5fd7af", None, False),
+    "plugin_runtime.host.message_gateway": ("#5fd7d7", None, False),
+    "plugin_runtime.host.message_utils": ("#5faf87", None, False),
     "plugin_runtime.runner.main": ("#d787ff", None, False),
     "plugin_runtime.runner.rpc_client": ("#8787ff", None, False),
     "plugin_runtime.runner.manifest_validator": ("#5fafff", None, False),
     "plugin_runtime.runner.plugin_loader": ("#00afaf", None, False),
+    "plugin.napcat_adapter_builtin": ("#00af87", None, False),
     "webui": ("#5f87ff", None, False),
     "webui.app": ("#5f87d7", None, False),
     "webui.api": ("#5fafff", None, False),
@@ -157,15 +160,20 @@ MODULE_ALIASES = {
     "chat_history_summarizer": "聊天概括器",
     "plugin_runtime.integration": "IPC插件系统",
     "plugin_runtime.host.supervisor": "插件监督器",
+    "plugin_runtime.host.runner_manager": "插件监督器",
     "plugin_runtime.host.rpc_server": "插件RPC服务",
     "plugin_runtime.host.component_registry": "插件组件注册",
     "plugin_runtime.host.capability_service": "插件能力服务",
     "plugin_runtime.host.event_dispatcher": "插件事件分发",
+    "plugin_runtime.host.hook_dispatcher": "插件Hook分发",
+    "plugin_runtime.host.message_gateway": "插件消息网关",
+    "plugin_runtime.host.message_utils": "插件消息工具",
     "plugin_runtime.host.workflow_executor": "插件工作流",
     "plugin_runtime.runner.main": "插件运行器",
     "plugin_runtime.runner.rpc_client": "插件RPC客户端",
     "plugin_runtime.runner.manifest_validator": "插件清单校验",
     "plugin_runtime.runner.plugin_loader": "插件加载器",
+    "plugin.napcat_adapter_builtin": "NapCat内置适配器",
     "webui": "WebUI",
     "webui.app": "WebUI应用",
     "webui.api": "WebUI接口",
