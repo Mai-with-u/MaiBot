@@ -174,7 +174,10 @@ class RuntimeComponentCapabilityMixin:
 
         if registered_supervisor is not None:
             try:
-                reloaded = await registered_supervisor.reload_plugins(reason=f"load {plugin_name}")
+                reloaded = await registered_supervisor.reload_plugins(
+                    plugin_ids=[plugin_name],
+                    reason=f"load {plugin_name}",
+                )
                 if reloaded:
                     return {"success": True, "count": 1}
                 return {"success": False, "error": f"插件 {plugin_name} 热重载失败，已回滚"}
@@ -186,7 +189,10 @@ class RuntimeComponentCapabilityMixin:
             for pdir in sv._plugin_dirs:
                 if (pdir / plugin_name).is_dir():
                     try:
-                        reloaded = await sv.reload_plugins(reason=f"load {plugin_name}")
+                        reloaded = await sv.reload_plugins(
+                            plugin_ids=[plugin_name],
+                            reason=f"load {plugin_name}",
+                        )
                         if reloaded:
                             return {"success": True, "count": 1}
                         return {"success": False, "error": f"插件 {plugin_name} 热重载失败，已回滚"}
@@ -222,7 +228,10 @@ class RuntimeComponentCapabilityMixin:
 
         if sv is not None:
             try:
-                reloaded = await sv.reload_plugins(reason=f"reload {plugin_name}")
+                reloaded = await sv.reload_plugins(
+                    plugin_ids=[plugin_name],
+                    reason=f"reload {plugin_name}",
+                )
                 if reloaded:
                     return {"success": True}
                 return {"success": False, "error": f"插件 {plugin_name} 热重载失败，已回滚"}

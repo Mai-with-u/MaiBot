@@ -144,7 +144,11 @@ class ComponentDeclaration(BaseModel):
 
 
 class RegisterPluginPayload(BaseModel):
-    """plugin.register_plugin 请求 payload"""
+    """插件组件注册请求载荷。
+
+    该模型同时用于 ``plugin.register_components`` 与兼容旧命名的
+    ``plugin.register_plugin`` 请求。
+    """
 
     plugin_id: str = Field(description="插件 ID")
     """插件 ID"""
@@ -246,6 +250,39 @@ class ShutdownPayload(BaseModel):
     """关停原因"""
     drain_timeout_ms: int = Field(default=5000, description="排空超时 (ms)")
     """排空超时 (ms)"""
+
+
+class UnregisterPluginPayload(BaseModel):
+    """插件注销请求载荷。"""
+
+    plugin_id: str = Field(description="插件 ID")
+    """插件 ID"""
+    reason: str = Field(default="manual", description="注销原因")
+    """注销原因"""
+
+
+class ReloadPluginPayload(BaseModel):
+    """插件重载请求载荷。"""
+
+    plugin_id: str = Field(description="目标插件 ID")
+    """目标插件 ID"""
+    reason: str = Field(default="manual", description="重载原因")
+    """重载原因"""
+
+
+class ReloadPluginResultPayload(BaseModel):
+    """插件重载结果载荷。"""
+
+    success: bool = Field(description="是否重载成功")
+    """是否重载成功"""
+    requested_plugin_id: str = Field(description="请求重载的插件 ID")
+    """请求重载的插件 ID"""
+    reloaded_plugins: List[str] = Field(default_factory=list, description="成功完成重载的插件列表")
+    """成功完成重载的插件列表"""
+    unloaded_plugins: List[str] = Field(default_factory=list, description="本次已卸载的插件列表")
+    """本次已卸载的插件列表"""
+    failed_plugins: Dict[str, str] = Field(default_factory=dict, description="重载失败的插件及原因")
+    """重载失败的插件及原因"""
 
 
 # ====== 日志传输 ======

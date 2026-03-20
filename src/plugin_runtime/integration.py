@@ -23,8 +23,10 @@ from src.plugin_runtime.capabilities import (
     RuntimeDataCapabilityMixin,
 )
 from src.plugin_runtime.capabilities.registry import register_capability_impls
+from src.plugin_runtime.host.message_utils import MessageDict, PluginMessageUtils
 
 if TYPE_CHECKING:
+    from src.chat.message_receive.message import SessionMessage
     from src.plugin_runtime.host.supervisor import PluginSupervisor
 
 logger = get_logger("plugin_runtime.integration")
@@ -223,9 +225,9 @@ class PluginRuntimeManager(
     async def bridge_event(
         self,
         event_type_value: str,
-        message_dict: Optional[Dict[str, Any]] = None,
+        message_dict: Optional[MessageDict] = None,
         extra_args: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    ) -> Tuple[bool, Optional[MessageDict]]:
         """将事件分发到所有 Supervisor
 
         Returns:
@@ -235,17 +237,23 @@ class PluginRuntimeManager(
             return True, None
 
         new_event_type: str = _EVENT_TYPE_MAP.get(event_type_value, event_type_value)
-        modified: Optional[Dict[str, Any]] = None
+        modified: Optional[MessageDict] = None
+        current_message: Optional["SessionMessage"] = (
+            PluginMessageUtils._build_session_message_from_dict(dict(message_dict))
+            if message_dict is not None
+            else None
+        )
 
         for sv in self.supervisors:
             try:
                 cont, mod = await sv.dispatch_event(
                     event_type=new_event_type,
-                    message=modified or message_dict,
+                    message=current_message,
                     extra_args=extra_args,
                 )
                 if mod is not None:
-                    modified = mod
+                    current_message = mod
+                    modified = PluginMessageUtils._session_message_to_dict(mod)
                 if not cont:
                     return False, modified
             except Exception as e:
@@ -477,7 +485,7 @@ class PluginRuntimeManager(
             logger.error(f"检测到重复插件 ID，跳过本次插件热重载: {details}")
             return
 
-        reload_supervisors: List[Any] = []
+        reload_supervisors: Dict[Any, List[str]] = {}
         changed_paths = [change.path.resolve() for change in changes]
 
         for supervisor in self.supervisors:
@@ -485,11 +493,13 @@ class PluginRuntimeManager(
                 plugin_id = self._match_plugin_id_for_supervisor(supervisor, path)
                 if plugin_id is None:
                     continue
-                if (path.name in {"plugin.py", "_manifest.json"} or path.suffix == ".py") and supervisor not in reload_supervisors:
-                    reload_supervisors.append(supervisor)
+                if path.name in {"plugin.py", "_manifest.json"} or path.suffix == ".py":
+                    reload_supervisors.setdefault(supervisor, [])
+                    if plugin_id not in reload_supervisors[supervisor]:
+                        reload_supervisors[supervisor].append(plugin_id)
 
-        for supervisor in reload_supervisors:
-            await supervisor.reload_plugins(reason="file_watcher")
+        for supervisor, plugin_ids in reload_supervisors.items():
+            await supervisor.reload_plugins(plugin_ids=plugin_ids, reason="file_watcher")
 
         if reload_supervisors:
             self._refresh_plugin_config_watch_subscriptions()

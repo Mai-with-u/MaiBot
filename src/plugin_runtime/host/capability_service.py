@@ -30,6 +30,11 @@ class CapabilityService:
     """
 
     def __init__(self, authorization: "AuthorizationManager") -> None:
+        """初始化能力服务。
+
+        Args:
+            authorization: 能力授权管理器。
+        """
         self._authorization = authorization
         # capability_name -> implementation
         self._implementations: Dict[str, CapabilityImpl] = {}
@@ -51,13 +56,19 @@ class CapabilityService:
         校验权限后调用对应实现。
         """
         plugin_id = envelope.plugin_id
+        payload = envelope.payload if isinstance(envelope.payload, dict) else {}
 
         try:
-            req = CapabilityRequestPayload.model_validate(envelope.payload)
-        except Exception as e:
-            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, f"能力调用 payload 格式错误: {e}")
+            req = CapabilityRequestPayload.model_validate(payload)
+            capability = req.capability
+            args = req.args
+        except Exception:
+            capability = envelope.method
+            raw_args = payload.get("args", payload)
+            args = raw_args if isinstance(raw_args, dict) else {}
 
-        capability = req.capability
+        if not capability:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, "能力调用缺少 capability")
 
         # 1. 权限校验
         allowed, reason = self._authorization.check_capability(plugin_id, capability)
@@ -71,7 +82,7 @@ class CapabilityService:
 
         # 3. 执行
         try:
-            result = await impl(plugin_id, capability, req.args)
+            result = await impl(plugin_id, capability, args)
             resp_payload = CapabilityResponsePayload(success=True, result=result)
             return envelope.make_response(payload=resp_payload.model_dump())
         except RPCError as e:

@@ -32,11 +32,22 @@ class PluginMeta:
         self,
         plugin_id: str,
         plugin_dir: str,
+        module_name: str,
         plugin_instance: Any,
         manifest: Dict[str, Any],
     ) -> None:
+        """初始化插件元数据。
+
+        Args:
+            plugin_id: 插件 ID。
+            plugin_dir: 插件目录绝对路径。
+            module_name: 插件入口模块名。
+            plugin_instance: 插件实例对象。
+            manifest: 解析后的 manifest 内容。
+        """
         self.plugin_id = plugin_id
         self.plugin_dir = plugin_dir
+        self.module_name = module_name
         self.instance = plugin_instance
         self.manifest = manifest
         self.version = manifest.get("version", "1.0.0")
@@ -45,6 +56,14 @@ class PluginMeta:
 
     @staticmethod
     def _extract_dependencies(manifest: Dict[str, Any]) -> List[str]:
+        """从 manifest 中提取依赖列表。
+
+        Args:
+            manifest: 插件 manifest。
+
+        Returns:
+            List[str]: 规范化后的依赖插件 ID 列表。
+        """
         raw = manifest.get("dependencies", [])
         result: List[str] = []
         for dep in raw:
@@ -66,19 +85,24 @@ class PluginLoader:
     """
 
     def __init__(self, host_version: str = "") -> None:
+        """初始化插件加载器。
+
+        Args:
+            host_version: Host 版本号，用于 manifest 兼容性校验。
+        """
         self._loaded_plugins: Dict[str, PluginMeta] = {}
         self._failed_plugins: Dict[str, str] = {}
         self._manifest_validator = ManifestValidator(host_version=host_version)
         self._compat_hook_installed = False
 
     def discover_and_load(self, plugin_dirs: List[str]) -> List[PluginMeta]:
-        """扫描多个目录并加载所有插件（含依赖排序和 manifest 校验）
+        """扫描多个目录并加载所有插件。
 
         Args:
-            plugin_dirs: 插件目录列表
+            plugin_dirs: 插件目录列表。
 
         Returns:
-            成功加载的插件元数据列表（按依赖顺序）
+            List[PluginMeta]: 成功加载的插件元数据列表，按依赖顺序排列。
         """
         candidates, duplicate_candidates = self._discover_candidates(plugin_dirs)
         self._record_duplicate_candidates(duplicate_candidates)
@@ -89,6 +113,18 @@ class PluginLoader:
 
         # 第三阶段：按依赖顺序加载
         return self._load_plugins_in_order(load_order, candidates)
+
+    def discover_candidates(self, plugin_dirs: List[str]) -> Tuple[Dict[str, PluginCandidate], Dict[str, List[Path]]]:
+        """扫描插件目录并返回候选插件。
+
+        Args:
+            plugin_dirs: 需要扫描的插件根目录列表。
+
+        Returns:
+            Tuple[Dict[str, PluginCandidate], Dict[str, List[Path]]]:
+                候选插件映射和重复插件 ID 冲突映射。
+        """
+        return self._discover_candidates(plugin_dirs)
 
     def _discover_candidates(self, plugin_dirs: List[str]) -> Tuple[Dict[str, PluginCandidate], Dict[str, List[Path]]]:
         """扫描插件目录并收集候选插件。"""
@@ -170,7 +206,6 @@ class PluginLoader:
             plugin_dir, manifest, plugin_path = candidates[plugin_id]
             try:
                 if meta := self._load_single_plugin(plugin_id, plugin_dir, manifest, plugin_path):
-                    self._loaded_plugins[meta.plugin_id] = meta
                     results.append(meta)
             except Exception as e:
                 self._failed_plugins[plugin_id] = str(e)
@@ -182,22 +217,109 @@ class PluginLoader:
         """获取已加载的插件"""
         return self._loaded_plugins.get(plugin_id)
 
+    def set_loaded_plugin(self, meta: PluginMeta) -> None:
+        """登记一个已经完成初始化的插件。
+
+        Args:
+            meta: 待登记的插件元数据。
+        """
+        self._loaded_plugins[meta.plugin_id] = meta
+
+    def remove_loaded_plugin(self, plugin_id: str) -> Optional[PluginMeta]:
+        """移除一个已加载插件的元数据。
+
+        Args:
+            plugin_id: 待移除的插件 ID。
+
+        Returns:
+            Optional[PluginMeta]: 被移除的插件元数据；不存在时返回 ``None``。
+        """
+        return self._loaded_plugins.pop(plugin_id, None)
+
+    def purge_plugin_modules(self, plugin_id: str, plugin_dir: str) -> List[str]:
+        """清理指定插件目录下的模块缓存。
+
+        Args:
+            plugin_id: 插件 ID。
+            plugin_dir: 插件目录绝对路径。
+
+        Returns:
+            List[str]: 已从 ``sys.modules`` 中移除的模块名列表。
+        """
+        removed_modules: List[str] = []
+        plugin_path = Path(plugin_dir).resolve()
+        synthetic_module_name = f"_maibot_plugin_{plugin_id}"
+
+        for module_name, module in list(sys.modules.items()):
+            if module_name == synthetic_module_name:
+                removed_modules.append(module_name)
+                sys.modules.pop(module_name, None)
+                continue
+
+            module_file = getattr(module, "__file__", None)
+            if module_file is None:
+                continue
+
+            try:
+                module_path = Path(module_file).resolve()
+            except Exception:
+                continue
+
+            if module_path.is_relative_to(plugin_path):
+                removed_modules.append(module_name)
+                sys.modules.pop(module_name, None)
+
+        importlib.invalidate_caches()
+        return removed_modules
+
     def list_plugins(self) -> List[str]:
         """列出所有已加载的插件 ID"""
         return list(self._loaded_plugins.keys())
 
     @property
     def failed_plugins(self) -> Dict[str, str]:
+        """返回当前记录的失败插件原因映射。"""
         return dict(self._failed_plugins)
 
     # ──── 依赖解析 ────────────────────────────────────────────
 
+    def resolve_dependencies(
+        self,
+        candidates: Dict[str, PluginCandidate],
+        extra_available: Optional[Set[str]] = None,
+    ) -> Tuple[List[str], Dict[str, str]]:
+        """解析候选插件的依赖顺序。
+
+        Args:
+            candidates: 待加载的候选插件集合。
+            extra_available: 视为已满足的外部依赖插件 ID 集合。
+
+        Returns:
+            Tuple[List[str], Dict[str, str]]: 可加载顺序和失败原因映射。
+        """
+        return self._resolve_dependencies(candidates, extra_available=extra_available)
+
+    def load_candidate(self, plugin_id: str, candidate: PluginCandidate) -> Optional[PluginMeta]:
+        """加载单个候选插件模块。
+
+        Args:
+            plugin_id: 插件 ID。
+            candidate: 候选插件三元组。
+
+        Returns:
+            Optional[PluginMeta]: 加载成功的插件元数据；失败时返回 ``None``。
+        """
+        plugin_dir, manifest, plugin_path = candidate
+        return self._load_single_plugin(plugin_id, plugin_dir, manifest, plugin_path)
+
     def _resolve_dependencies(
         self,
         candidates: Dict[str, PluginCandidate],
+        extra_available: Optional[Set[str]] = None,
     ) -> Tuple[List[str], Dict[str, str]]:
         """拓扑排序解析加载顺序，返回 (有序列表, 失败项 {id: reason})。"""
         available = set(candidates.keys())
+        satisfied_dependencies = set(extra_available or set())
         dep_graph: Dict[str, Set[str]] = {}
         failed: Dict[str, str] = {}
 
@@ -212,6 +334,8 @@ class PluginLoader:
                     continue
                 if dep_name in available:
                     resolved.add(dep_name)
+                elif dep_name in satisfied_dependencies:
+                    continue
                 else:
                     missing.append(dep_name)
             if missing:
@@ -271,33 +395,39 @@ class PluginLoader:
         sys.modules[module_name] = module
 
         plugin_parent_dir = plugin_dir.parent
-        with self._temporary_sys_path_entry(plugin_parent_dir):
-            spec.loader.exec_module(module)
+        try:
+            with self._temporary_sys_path_entry(plugin_parent_dir):
+                spec.loader.exec_module(module)
 
-            # 优先使用新版 create_plugin 工厂函数
-            create_plugin = getattr(module, "create_plugin", None)
-            if create_plugin is not None:
-                instance = create_plugin()
-                logger.info(f"插件 {plugin_id} v{manifest.get('version', '?')} 加载成功")
-                return PluginMeta(
-                    plugin_id=plugin_id,
-                    plugin_dir=str(plugin_dir),
-                    plugin_instance=instance,
-                    manifest=manifest,
-                )
+                # 优先使用新版 create_plugin 工厂函数
+                create_plugin = getattr(module, "create_plugin", None)
+                if create_plugin is not None:
+                    instance = create_plugin()
+                    logger.info(f"插件 {plugin_id} v{manifest.get('version', '?')} 加载成功")
+                    return PluginMeta(
+                        plugin_id=plugin_id,
+                        plugin_dir=str(plugin_dir),
+                        module_name=module_name,
+                        plugin_instance=instance,
+                        manifest=manifest,
+                    )
 
-            # 回退：检测旧版 @register_plugin 标记的 BasePlugin 子类
-            instance = self._try_load_legacy_plugin(module, plugin_id)
-            if instance is not None:
-                logger.info(
-                    f"插件 {plugin_id} v{manifest.get('version', '?')} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
-                )
-                return PluginMeta(
-                    plugin_id=plugin_id,
-                    plugin_dir=str(plugin_dir),
-                    plugin_instance=instance,
-                    manifest=manifest,
-                )
+                # 回退：检测旧版 @register_plugin 标记的 BasePlugin 子类
+                instance = self._try_load_legacy_plugin(module, plugin_id)
+                if instance is not None:
+                    logger.info(
+                        f"插件 {plugin_id} v{manifest.get('version', '?')} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
+                    )
+                    return PluginMeta(
+                        plugin_id=plugin_id,
+                        plugin_dir=str(plugin_dir),
+                        module_name=module_name,
+                        plugin_instance=instance,
+                        manifest=manifest,
+                    )
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
 
         logger.error(f"插件 {plugin_id} 缺少 create_plugin 工厂函数且未检测到旧版 BasePlugin")
         return None
