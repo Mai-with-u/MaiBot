@@ -1,6 +1,6 @@
 """内置 NapCat 适配器插件。
 
-当前实现是一个 MVP 版本，目标仅限于跑通基础消息收发链路：
+当前实现维持 MVP 范围，目标是跑通基础消息收发链路：
 1. 作为客户端连接 NapCat / OneBot v11 WebSocket 服务。
 2. 将入站消息事件转换为 Host 侧的 ``MessageDict``。
 3. 将 Host 出站消息转换为 OneBot 动作并发送。
@@ -8,45 +8,26 @@
 当前范围刻意收敛为：
 - 单连接
 - 文本、@、reply 基础转发
-- 暂不处理 ``notice`` / ``meta_event``
+- 暂不处理 ``notice`` / ``meta_event`` 的完整语义归一化
 - 暂不支持图片、语音、文件等复杂媒体
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, cast
-from uuid import uuid4
+from typing import Any, Dict, Mapping, Optional
 
 import asyncio
-import contextlib
-import json
-import time
 
 from maibot_sdk import Adapter, MaiBotPlugin
 
-if TYPE_CHECKING:
-    from aiohttp import ClientWebSocketResponse as AiohttpClientWebSocketResponse
-
-try:
-    from aiohttp import ClientSession, ClientTimeout, ClientWebSocketResponse, WSMsgType
-
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    ClientSession = cast(Any, None)
-    ClientTimeout = cast(Any, None)
-    ClientWebSocketResponse = cast(Any, None)
-    WSMsgType = cast(Any, None)
-    AIOHTTP_AVAILABLE = False
-
-if not TYPE_CHECKING:
-    AiohttpClientWebSocketResponse = Any
-
-
-SUPPORTED_CONFIG_VERSION = "0.1.0"
-DEFAULT_RECONNECT_DELAY_SEC = 5.0
-DEFAULT_HEARTBEAT_SEC = 30.0
-DEFAULT_ACTION_TIMEOUT_SEC = 15.0
-DEFAULT_CHAT_LIST_TYPE = "whitelist"
+from napcat_adapter.codec_inbound import NapCatInboundCodec
+from napcat_adapter.codec_outbound import NapCatOutboundCodec
+from napcat_adapter.config import NapCatPluginSettings
+from napcat_adapter.filters import NapCatChatFilter
+from napcat_adapter.qq_notice import NapCatNoticeCodec
+from napcat_adapter.qq_queries import NapCatQueryService
+from napcat_adapter.runtime_state import NapCatRuntimeStateManager
+from napcat_adapter.transport import NapCatTransportClient
 
 
 @Adapter(platform="qq", protocol="napcat", send_method="send_to_platform")
@@ -57,14 +38,14 @@ class NapCatAdapterPlugin(MaiBotPlugin):
         """初始化 NapCat 适配器插件实例。"""
         super().__init__()
         self._plugin_config: Dict[str, Any] = {}
-        self._connection_task: Optional[asyncio.Task[None]] = None
-        self._pending_actions: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
-        self._background_tasks: Set[asyncio.Task[Any]] = set()
-        self._reported_account_id: Optional[str] = None
-        self._reported_scope: Optional[str] = None
-        self._runtime_state_connected: bool = False
-        self._send_lock = asyncio.Lock()
-        self._ws: Optional[AiohttpClientWebSocketResponse] = None
+        self._settings: Optional[NapCatPluginSettings] = None
+        self._inbound_codec: Optional[NapCatInboundCodec] = None
+        self._outbound_codec = NapCatOutboundCodec()
+        self._chat_filter: Optional[NapCatChatFilter] = None
+        self._query_service: Optional[NapCatQueryService] = None
+        self._notice_codec: Optional[NapCatNoticeCodec] = None
+        self._runtime_state: Optional[NapCatRuntimeStateManager] = None
+        self._transport: Optional[NapCatTransportClient] = None
 
     def set_plugin_config(self, config: Dict[str, Any]) -> None:
         """设置插件配置内容。
@@ -79,9 +60,8 @@ class NapCatAdapterPlugin(MaiBotPlugin):
         await self._restart_connection_if_needed()
 
     async def on_unload(self) -> None:
-        """在插件卸载时关闭连接并清理后台任务。"""
+        """在插件卸载时关闭连接并清理运行时状态。"""
         await self._stop_connection()
-        await self._cancel_background_tasks()
 
     async def on_config_update(self, new_config: Dict[str, Any], version: str) -> None:
         """在配置更新后重载连接状态。
@@ -116,13 +96,14 @@ class NapCatAdapterPlugin(MaiBotPlugin):
         del metadata
         del kwargs
 
-        ws = self._ws
-        if ws is None or ws.closed:
-            return {"success": False, "error": "NapCat is not connected"}
+        self._ensure_runtime_components()
+        transport = self._transport
+        if transport is None:
+            return {"success": False, "error": "NapCat transport is not initialized"}
 
         try:
-            action_name, params = self._build_outbound_action(message, route or {})
-            response = await self._call_action(action_name, params)
+            action_name, params = self._outbound_codec.build_outbound_action(message, route or {})
+            response = await transport.call_action(action_name, params)
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
@@ -135,7 +116,7 @@ class NapCatAdapterPlugin(MaiBotPlugin):
 
         response_data = response.get("data", {})
         external_message_id = ""
-        if isinstance(response_data, dict):
+        if isinstance(response_data, Mapping):
             external_message_id = str(response_data.get("message_id") or "")
 
         return {
@@ -144,143 +125,109 @@ class NapCatAdapterPlugin(MaiBotPlugin):
             "metadata": {"action": action_name},
         }
 
-    async def _restart_connection_if_needed(self) -> None:
-        """根据当前配置重启连接循环。"""
-        await self._stop_connection()
-        if not self._should_connect():
-            self.ctx.logger.info("NapCat 适配器保持空闲状态，因为插件或配置未启用")
-            return
-        if not self._validate_current_config():
-            return
-        if not AIOHTTP_AVAILABLE:
-            self.ctx.logger.error("NapCat 适配器依赖 aiohttp，但当前环境未安装该依赖")
-            return
-        self._connection_task = asyncio.create_task(self._connection_loop(), name="napcat_adapter.connection")
+    def _ensure_runtime_components(self) -> None:
+        """确保运行时依赖对象已经完成初始化。"""
+        if self._chat_filter is None:
+            self._chat_filter = NapCatChatFilter(self.ctx.logger)
 
-    async def _stop_connection(self) -> None:
-        """停止当前连接并让所有等待中的动作失败返回。"""
-        connection_task = self._connection_task
-        self._connection_task = None
-
-        ws = self._ws
-        if ws is not None and not ws.closed:
-            with contextlib.suppress(Exception):
-                await ws.close()
-        self._ws = None
-
-        if connection_task is not None:
-            connection_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await connection_task
-
-        await self._report_adapter_disconnected()
-        self._fail_pending_actions("NapCat connection closed")
-
-    async def _cancel_background_tasks(self) -> None:
-        """取消所有仍在运行的入站后台任务。"""
-        background_tasks = list(self._background_tasks)
-        for task in background_tasks:
-            task.cancel()
-        if background_tasks:
-            with contextlib.suppress(Exception):
-                await asyncio.gather(*background_tasks, return_exceptions=True)
-        self._background_tasks.clear()
-
-    async def _connection_loop(self) -> None:
-        """维护单个 WebSocket 连接，并在断开后按配置重连。"""
-        assert ClientSession is not None
-        assert ClientTimeout is not None
-
-        while self._should_connect():
-            ws_url = self._get_string(self._connection_config(), "ws_url")
-            if not ws_url:
-                self.ctx.logger.warning("NapCat 适配器已启用，但 connection.ws_url 为空")
-                return
-
-            headers = self._build_headers()
-            timeout = ClientTimeout(total=None, connect=10)
-            heartbeat = self._get_positive_float(self._connection_config(), "heartbeat_sec", DEFAULT_HEARTBEAT_SEC)
-
-            try:
-                async with ClientSession(headers=headers, timeout=timeout) as session:
-                    async with session.ws_connect(ws_url, heartbeat=heartbeat or None) as ws:
-                        self._ws = ws
-                        self.ctx.logger.info(f"NapCat 适配器已连接: {ws_url}")
-                        await self._receive_loop(ws)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self.ctx.logger.warning(f"NapCat 适配器连接失败: {exc}")
-            finally:
-                self._ws = None
-                await self._report_adapter_disconnected()
-                self._fail_pending_actions("NapCat connection interrupted")
-
-            if not self._should_connect():
-                break
-
-            await asyncio.sleep(
-                self._get_positive_float(
-                    self._connection_config(),
-                    "reconnect_delay_sec",
-                    DEFAULT_RECONNECT_DELAY_SEC,
-                )
+        if self._transport is None:
+            self._transport = NapCatTransportClient(
+                logger=self.ctx.logger,
+                on_connection_opened=self._bootstrap_adapter_runtime_state,
+                on_connection_closed=self._handle_transport_disconnected,
+                on_payload=self._handle_transport_payload,
             )
 
-    async def _receive_loop(self, ws: AiohttpClientWebSocketResponse) -> None:
-        """持续消费 WebSocket 消息并分发处理。
+        if self._query_service is None:
+            self._query_service = NapCatQueryService(self.ctx.logger, self._transport)
+
+        if self._inbound_codec is None:
+            self._inbound_codec = NapCatInboundCodec(self.ctx.logger, self._query_service)
+
+        if self._notice_codec is None:
+            self._notice_codec = NapCatNoticeCodec(self.ctx.logger, self._query_service)
+
+        if self._runtime_state is None:
+            self._runtime_state = NapCatRuntimeStateManager(self.ctx.adapter, self.ctx.logger)
+
+    def _reload_settings(self) -> NapCatPluginSettings:
+        """重新解析当前插件配置。
+
+        Returns:
+            NapCatPluginSettings: 最新的规范化配置。
+        """
+        self._settings = NapCatPluginSettings.from_mapping(self._plugin_config, self.ctx.logger)
+        return self._settings
+
+    async def _restart_connection_if_needed(self) -> None:
+        """根据当前配置重启连接循环。"""
+        self._ensure_runtime_components()
+        settings = self._reload_settings()
+
+        await self._stop_connection()
+        if not settings.should_connect():
+            self.ctx.logger.info("NapCat 适配器保持空闲状态，因为插件或配置未启用")
+            return
+        if not settings.validate(self.ctx.logger):
+            return
+
+        transport = self._transport
+        assert transport is not None
+        if not transport.is_available():
+            self.ctx.logger.error("NapCat 适配器依赖 aiohttp，但当前环境未安装该依赖")
+            return
+
+        transport.configure(settings.napcat_server)
+        await transport.start()
+
+    async def _stop_connection(self) -> None:
+        """停止当前连接。"""
+        transport = self._transport
+        if transport is not None:
+            await transport.stop()
+            return
+
+        runtime_state = self._runtime_state
+        if runtime_state is not None:
+            await runtime_state.report_disconnected()
+
+    async def _handle_transport_payload(self, payload: Dict[str, Any]) -> None:
+        """处理来自传输层的非 echo 载荷。
 
         Args:
-            ws: 当前活跃的 WebSocket 连接对象。
+            payload: NapCat 推送的原始事件数据。
         """
-        assert WSMsgType is not None
-
-        bootstrap_task = asyncio.create_task(
-            self._bootstrap_adapter_runtime_state(),
-            name="napcat_adapter.bootstrap",
-        )
-        self._background_tasks.add(bootstrap_task)
-        bootstrap_task.add_done_callback(self._background_tasks.discard)
-
-        try:
-            async for ws_message in ws:
-                if ws_message.type != WSMsgType.TEXT:
-                    if ws_message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
-                        break
-                    continue
-
-                payload = self._parse_json_message(ws_message.data)
-                if payload is None:
-                    continue
-
-                if echo_id := str(payload.get("echo") or "").strip():
-                    self._resolve_pending_action(echo_id, payload)
-                    continue
-
-                if str(payload.get("post_type") or "").strip() != "message":
-                    continue
-
-                task = asyncio.create_task(self._handle_inbound_message(payload), name="napcat_adapter.inbound")
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
-        finally:
-            if not bootstrap_task.done():
-                bootstrap_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await bootstrap_task
+        post_type = str(payload.get("post_type") or "").strip()
+        if post_type == "message":
+            await self._handle_inbound_message(payload)
+            return
+        if post_type == "notice":
+            await self._handle_notice_event(payload)
+            return
+        if post_type == "meta_event":
+            await self._handle_meta_event(payload)
 
     async def _handle_inbound_message(self, payload: Dict[str, Any]) -> None:
         """处理单条 NapCat 入站消息并注入 Host。
 
         Args:
-            payload: NapCat / OneBot 推送的原始事件数据。
+            payload: NapCat / OneBot 推送的原始消息事件。
         """
+        self._ensure_runtime_components()
+        settings = self._settings or self._reload_settings()
+        chat_filter = self._chat_filter
+        inbound_codec = self._inbound_codec
+        runtime_state = self._runtime_state
+        assert chat_filter is not None
+        assert inbound_codec is not None
+        assert runtime_state is not None
+
         self_id = str(payload.get("self_id") or "").strip()
         if self_id:
-            await self._report_adapter_connected(self_id)
+            await runtime_state.report_connected(self_id, settings.napcat_server)
 
         sender = payload.get("sender", {})
-        if not isinstance(sender, dict):
+        if not isinstance(sender, Mapping):
             sender = {}
 
         sender_user_id = str(payload.get("user_id") or sender.get("user_id") or "").strip()
@@ -288,17 +235,17 @@ class NapCatAdapterPlugin(MaiBotPlugin):
             return
 
         group_id = str(payload.get("group_id") or "").strip()
-        if self_id and sender_user_id == self_id and self._get_bool(self._filters_config(), "ignore_self_message", True):
+        if self_id and sender_user_id == self_id and settings.filters.ignore_self_message:
             return
-        if not self._is_inbound_chat_allowed(sender_user_id, group_id):
+        if not chat_filter.is_inbound_chat_allowed(sender_user_id, group_id, settings.chat):
             return
 
-        message_dict = self._build_inbound_message_dict(payload, self_id, sender_user_id, sender)
+        message_dict = await inbound_codec.build_message_dict(payload, self_id, sender_user_id, sender)
         route_metadata: Dict[str, Any] = {}
         if self_id:
             route_metadata["self_id"] = self_id
-        if connection_id := self._get_string(self._connection_config(), "connection_id"):
-            route_metadata["connection_id"] = connection_id
+        if settings.napcat_server.connection_id:
+            route_metadata["connection_id"] = settings.napcat_server.connection_id
 
         external_message_id = str(payload.get("message_id") or "").strip()
         accepted = await self.ctx.adapter.receive_external_message(
@@ -310,305 +257,78 @@ class NapCatAdapterPlugin(MaiBotPlugin):
         if not accepted:
             self.ctx.logger.debug(f"Host 丢弃了 NapCat 入站消息: {external_message_id or '无消息 ID'}")
 
-    def _build_inbound_message_dict(
-        self,
-        payload: Dict[str, Any],
-        self_id: str,
-        sender_user_id: str,
-        sender: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """构造 Host 侧可接受的 ``MessageDict``。
+    async def _handle_notice_event(self, payload: Dict[str, Any]) -> None:
+        """处理 NapCat ``notice`` 事件并注入 Host。
 
         Args:
-            payload: NapCat 原始消息事件。
-            self_id: 当前机器人账号 ID。
-            sender_user_id: 发送者用户 ID。
-            sender: 发送者信息字典。
-
-        Returns:
-            Dict[str, Any]: 规范化后的 ``MessageDict``。
+            payload: NapCat 推送的通知事件。
         """
-        message_type = str(payload.get("message_type") or "").strip() or "private"
-        group_id = str(payload.get("group_id") or "").strip()
-        group_name = str(payload.get("group_name") or "").strip() or (f"group_{group_id}" if group_id else "")
-        user_nickname = str(sender.get("nickname") or sender.get("card") or sender_user_id).strip() or sender_user_id
-        user_cardname = str(sender.get("card") or "").strip() or None
+        self._ensure_runtime_components()
+        notice_codec = self._notice_codec
+        runtime_state = self._runtime_state
+        settings = self._settings or self._reload_settings()
+        assert notice_codec is not None
+        assert runtime_state is not None
 
-        raw_message, is_at = self._convert_inbound_segments(payload.get("message"), self_id)
-        raw_message_text = str(payload.get("raw_message") or "").strip()
-        if not raw_message:
-            raw_message = [{"type": "text", "data": raw_message_text or "[unsupported]"}]
+        self_id = str(payload.get("self_id") or "").strip()
+        if self_id:
+            await runtime_state.report_connected(self_id, settings.napcat_server)
 
-        plain_text = self._build_plain_text(raw_message, raw_message_text)
-        timestamp_seconds = payload.get("time")
-        if not isinstance(timestamp_seconds, (int, float)):
-            timestamp_seconds = time.time()
-
-        additional_config: Dict[str, Any] = {"self_id": self_id, "napcat_message_type": message_type}
-        if group_id:
-            additional_config["platform_io_target_group_id"] = group_id
-        else:
-            additional_config["platform_io_target_user_id"] = sender_user_id
-
-        message_info: Dict[str, Any] = {
-            "user_info": {
-                "user_id": sender_user_id,
-                "user_nickname": user_nickname,
-                "user_cardname": user_cardname,
-            },
-            "additional_config": additional_config,
-        }
-        if group_id:
-            message_info["group_info"] = {"group_id": group_id, "group_name": group_name}
-
-        message_id = str(payload.get("message_id") or f"napcat-{uuid4().hex}").strip()
-        return {
-            "message_id": message_id,
-            "timestamp": str(float(timestamp_seconds)),
-            "platform": "qq",
-            "message_info": message_info,
-            "raw_message": raw_message,
-            "is_mentioned": is_at,
-            "is_at": is_at,
-            "is_emoji": False,
-            "is_picture": False,
-            "is_command": plain_text.startswith("/"),
-            "is_notify": False,
-            "session_id": "",
-            "processed_plain_text": plain_text,
-            "display_message": plain_text,
-        }
-
-    def _convert_inbound_segments(self, message_payload: Any, self_id: str) -> Tuple[List[Dict[str, Any]], bool]:
-        """将 OneBot 消息段转换为 Host 消息段结构。
-
-        Args:
-            message_payload: OneBot 原始 ``message`` 字段。
-            self_id: 当前机器人账号 ID。
-
-        Returns:
-            Tuple[List[Dict[str, Any]], bool]: 转换后的消息段列表，以及是否 @ 到当前机器人。
-        """
-        if isinstance(message_payload, str):
-            normalized_text = message_payload.strip()
-            return ([{"type": "text", "data": normalized_text}] if normalized_text else []), False
-
-        if not isinstance(message_payload, list):
-            return [], False
-
-        converted_segments: List[Dict[str, Any]] = []
-        is_at = False
-        placeholder_texts = {
-            "face": "[face]",
-            "file": "[file]",
-            "image": "[image]",
-            "json": "[json]",
-            "record": "[voice]",
-            "video": "[video]",
-            "xml": "[xml]",
-        }
-
-        for segment in message_payload:
-            if not isinstance(segment, dict):
-                continue
-
-            segment_type = str(segment.get("type") or "").strip()
-            segment_data = segment.get("data", {})
-            if not isinstance(segment_data, dict):
-                segment_data = {}
-
-            if segment_type == "text":
-                if text_value := str(segment_data.get("text") or ""):
-                    converted_segments.append({"type": "text", "data": text_value})
-                continue
-
-            if segment_type == "at":
-                if target_user_id := str(segment_data.get("qq") or "").strip():
-                    converted_segments.append(
-                        {
-                            "type": "at",
-                            "data": {
-                                "target_user_id": target_user_id,
-                                "target_user_nickname": None,
-                                "target_user_cardname": None,
-                            },
-                        }
-                    )
-                    if self_id and target_user_id == self_id:
-                        is_at = True
-                continue
-
-            if segment_type == "reply":
-                if target_message_id := str(segment_data.get("id") or "").strip():
-                    converted_segments.append({"type": "reply", "data": target_message_id})
-                continue
-
-            if placeholder := placeholder_texts.get(segment_type):
-                converted_segments.append({"type": "text", "data": placeholder})
-
-        return converted_segments, is_at
-
-    def _build_outbound_action(
-        self,
-        message: Dict[str, Any],
-        route: Dict[str, Any],
-    ) -> Tuple[str, Dict[str, Any]]:
-        """为 Host 出站消息构造 OneBot 动作。
-
-        Args:
-            message: Host 侧标准 ``MessageDict``。
-            route: Platform IO 路由信息。
-
-        Returns:
-            Tuple[str, Dict[str, Any]]: 动作名称与参数字典。
-        """
-        message_info = message.get("message_info", {})
-        if not isinstance(message_info, dict):
-            message_info = {}
-
-        group_info = message_info.get("group_info", {})
-        if not isinstance(group_info, dict):
-            group_info = {}
-
-        additional_config = message_info.get("additional_config", {})
-        if not isinstance(additional_config, dict):
-            additional_config = {}
-
-        raw_message = message.get("raw_message", [])
-        segments = self._convert_outbound_segments(raw_message)
-
-        if target_group_id := str(
-            group_info.get("group_id") or additional_config.get("platform_io_target_group_id") or ""
-        ).strip():
-            return "send_group_msg", {"group_id": target_group_id, "message": segments}
-
-        if not (
-            target_user_id := str(
-                additional_config.get("platform_io_target_user_id")
-                or additional_config.get("target_user_id")
-                or route.get("target_user_id")
-                or ""
-            ).strip()
-        ):
-            raise ValueError("Outbound private message is missing target_user_id")
-
-        return "send_private_msg", {"message": segments, "user_id": target_user_id}
-
-    def _convert_outbound_segments(self, raw_message: Any) -> List[Dict[str, Any]]:
-        """将 Host 消息段转换为 OneBot 消息段。
-
-        Args:
-            raw_message: Host 侧 ``raw_message`` 字段。
-
-        Returns:
-            List[Dict[str, Any]]: OneBot 消息段列表。
-        """
-        if not isinstance(raw_message, list):
-            return [{"type": "text", "data": {"text": ""}}]
-
-        outbound_segments: List[Dict[str, Any]] = []
-        for item in raw_message:
-            if not isinstance(item, dict):
-                continue
-
-            item_type = str(item.get("type") or "").strip()
-            item_data = item.get("data")
-
-            if item_type == "text":
-                text_value = str(item_data or "")
-                outbound_segments.append({"type": "text", "data": {"text": text_value}})
-                continue
-
-            if item_type == "at" and isinstance(item_data, dict):
-                if target_user_id := str(item_data.get("target_user_id") or "").strip():
-                    outbound_segments.append({"type": "at", "data": {"qq": target_user_id}})
-                continue
-
-            if item_type == "reply":
-                if target_message_id := str(item_data or "").strip():
-                    outbound_segments.append({"type": "reply", "data": {"id": target_message_id}})
-                continue
-
-            fallback_text = f"[unsupported:{item_type or 'unknown'}]"
-            outbound_segments.append({"type": "text", "data": {"text": fallback_text}})
-
-        if not outbound_segments:
-            outbound_segments.append({"type": "text", "data": {"text": ""}})
-        return outbound_segments
-
-    async def _call_action(self, action_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """发送 OneBot 动作并等待对应的 echo 响应。
-
-        Args:
-            action_name: OneBot 动作名称。
-            params: 动作参数。
-
-        Returns:
-            Dict[str, Any]: NapCat 返回的原始响应字典。
-        """
-        ws = self._ws
-        if ws is None or ws.closed:
-            raise RuntimeError("NapCat is not connected")
-
-        echo_id = uuid4().hex
-        loop = asyncio.get_running_loop()
-        response_future: asyncio.Future[Dict[str, Any]] = loop.create_future()
-        self._pending_actions[echo_id] = response_future
-
-        request_payload = {"action": action_name, "params": params, "echo": echo_id}
-        try:
-            async with self._send_lock:
-                await ws.send_str(json.dumps(request_payload, ensure_ascii=False))
-            timeout_seconds = self._get_positive_float(
-                self._connection_config(),
-                "action_timeout_sec",
-                DEFAULT_ACTION_TIMEOUT_SEC,
-            )
-            return await asyncio.wait_for(response_future, timeout=timeout_seconds)
-        finally:
-            self._pending_actions.pop(echo_id, None)
-
-    def _resolve_pending_action(self, echo_id: str, payload: Dict[str, Any]) -> None:
-        """解析等待中的动作响应。
-
-        Args:
-            echo_id: 动作请求对应的 echo 标识。
-            payload: NapCat 返回的响应载荷。
-        """
-        response_future = self._pending_actions.get(echo_id)
-        if response_future is None or response_future.done():
+        message_dict = await notice_codec.build_notice_message_dict(payload)
+        if message_dict is None:
             return
-        response_future.set_result(payload)
 
-    def _fail_pending_actions(self, error_message: str) -> None:
-        """让所有等待中的动作以异常方式结束。
+        route_metadata: Dict[str, Any] = {}
+        if self_id:
+            route_metadata["self_id"] = self_id
+        if settings.napcat_server.connection_id:
+            route_metadata["connection_id"] = settings.napcat_server.connection_id
+
+        external_message_id = str(payload.get("message_id") or payload.get("notice_type") or "").strip()
+        accepted = await self.ctx.adapter.receive_external_message(
+            message_dict,
+            route_metadata=route_metadata,
+            external_message_id=external_message_id or None,
+            dedupe_key=external_message_id or None,
+        )
+        if not accepted:
+            self.ctx.logger.debug(f"Host 丢弃了 NapCat 通知事件: {external_message_id or '无消息 ID'}")
+
+    async def _handle_meta_event(self, payload: Dict[str, Any]) -> None:
+        """处理 NapCat ``meta_event`` 事件。
 
         Args:
-            error_message: 写入异常中的错误信息。
+            payload: NapCat 推送的元事件。
         """
-        for response_future in self._pending_actions.values():
-            if not response_future.done():
-                response_future.set_exception(RuntimeError(error_message))
-        self._pending_actions.clear()
+        self._ensure_runtime_components()
+        notice_codec = self._notice_codec
+        runtime_state = self._runtime_state
+        settings = self._settings or self._reload_settings()
+        assert notice_codec is not None
+        assert runtime_state is not None
+
+        self_id = str(payload.get("self_id") or "").strip()
+        if self_id:
+            await runtime_state.report_connected(self_id, settings.napcat_server)
+
+        await notice_codec.handle_meta_event(payload)
 
     async def _bootstrap_adapter_runtime_state(self) -> None:
-        """在连接建立后主动获取账号信息并激活适配器路由。
+        """在连接建立后主动获取账号信息并激活适配器路由。"""
+        transport = self._transport
+        query_service = self._query_service
+        runtime_state = self._runtime_state
+        settings = self._settings or self._reload_settings()
+        if transport is None or query_service is None or runtime_state is None:
+            return
 
-        该步骤会在 WebSocket 接收循环启动后异步执行，确保 `_call_action()`
-        发出的 `get_login_info` 请求能够被同一连接上的接收循环消费到 echo
-        响应，从而在真正收到业务消息前就完成 Host 侧 route 激活。
-        """
         max_attempts = 3
         last_error: Optional[Exception] = None
         for attempt in range(1, max_attempts + 1):
-            ws = self._ws
-            if ws is None or ws.closed:
-                return
-
             try:
-                response = await self._call_action("get_login_info", {})
-                self_id = self._extract_self_id_from_login_response(response)
-                await self._report_adapter_connected(self_id)
+                login_info = await query_service.get_login_info()
+                self_id = self._extract_self_id_from_login_response(login_info)
+                await runtime_state.report_connected(self_id, settings.napcat_server)
                 return
             except asyncio.CancelledError:
                 raise
@@ -623,429 +343,32 @@ class NapCatAdapterPlugin(MaiBotPlugin):
         if last_error is not None:
             self.ctx.logger.error(f"NapCat 适配器未能完成路由激活，连接将保持只接收状态: {last_error}")
 
+    async def _handle_transport_disconnected(self) -> None:
+        """处理传输层断开事件。"""
+        runtime_state = self._runtime_state
+        if runtime_state is not None:
+            await runtime_state.report_disconnected()
+
     @staticmethod
-    def _extract_self_id_from_login_response(response: Dict[str, Any]) -> str:
-        """从 `get_login_info` 响应中提取当前账号 ID。
+    def _extract_self_id_from_login_response(response: Optional[Dict[str, Any]]) -> str:
+        """从 ``get_login_info`` 查询结果中提取当前账号 ID。
 
         Args:
-            response: NapCat 返回的原始动作响应。
+            response: NapCat 返回的登录信息字典。
 
         Returns:
-            str: 规范化后的 `self_id` 字符串。
+            str: 规范化后的账号 ID 字符串。
 
         Raises:
             ValueError: 当响应中缺少有效账号 ID 时抛出。
         """
-        if str(response.get("status") or "").lower() != "ok":
-            raise ValueError(str(response.get("wording") or response.get("message") or "get_login_info failed"))
-
-        response_data = response.get("data", {})
-        if not isinstance(response_data, dict):
+        if not isinstance(response, Mapping):
             raise ValueError("get_login_info 响应缺少 data 字段")
 
-        self_id = str(response_data.get("user_id") or "").strip()
+        self_id = str(response.get("user_id") or "").strip()
         if not self_id:
             raise ValueError("get_login_info 响应缺少有效的 user_id")
         return self_id
-
-    async def _report_adapter_connected(self, account_id: str) -> None:
-        """向 Host 上报当前连接已就绪。
-
-        Args:
-            account_id: 当前 NapCat 连接对应的机器人账号 ID。
-        """
-        normalized_account_id = str(account_id).strip()
-        if not normalized_account_id:
-            return
-
-        scope = self._get_string(self._connection_config(), "connection_id").strip()
-        if (
-            self._runtime_state_connected
-            and self._reported_account_id == normalized_account_id
-            and self._reported_scope == (scope or None)
-        ):
-            return
-
-        accepted = False
-        try:
-            accepted = await self.ctx.adapter.update_runtime_state(
-                connected=True,
-                account_id=normalized_account_id,
-                scope=scope,
-                metadata={"ws_url": self._get_string(self._connection_config(), "ws_url")},
-            )
-        except Exception as exc:
-            self.ctx.logger.warning(f"NapCat 适配器上报连接就绪状态失败: {exc}")
-            return
-
-        if not accepted:
-            self.ctx.logger.warning("NapCat 适配器连接已建立，但 Host 未接受运行时状态更新")
-            return
-
-        self._runtime_state_connected = True
-        self._reported_account_id = normalized_account_id
-        self._reported_scope = scope or None
-        self.ctx.logger.info(
-            f"NapCat 适配器已激活路由: platform=qq account_id={normalized_account_id} "
-            f"scope={self._reported_scope or '*'}"
-        )
-
-    async def _report_adapter_disconnected(self) -> None:
-        """向 Host 上报当前连接已断开，并撤销适配器路由。"""
-        if not self._runtime_state_connected:
-            self._reported_account_id = None
-            self._reported_scope = None
-            return
-
-        try:
-            await self.ctx.adapter.update_runtime_state(connected=False)
-        except Exception as exc:
-            self.ctx.logger.warning(f"NapCat 适配器上报断开状态失败: {exc}")
-        finally:
-            self._runtime_state_connected = False
-            self._reported_account_id = None
-            self._reported_scope = None
-
-    def _build_headers(self) -> Dict[str, str]:
-        """构造连接 NapCat 所需的请求头。
-
-        Returns:
-            Dict[str, str]: WebSocket 握手请求头。
-        """
-        access_token = self._get_string(self._connection_config(), "access_token")
-        return {"Authorization": f"Bearer {access_token}"} if access_token else {}
-
-    def _parse_json_message(self, data: Any) -> Optional[Dict[str, Any]]:
-        """解析 WebSocket 文本消息中的 JSON 数据。
-
-        Args:
-            data: WebSocket 收到的原始文本数据。
-
-        Returns:
-            Optional[Dict[str, Any]]: 成功时返回字典，失败时返回 ``None``。
-        """
-        try:
-            payload = json.loads(str(data))
-        except Exception as exc:
-            self.ctx.logger.warning(f"NapCat 适配器解析 JSON 载荷失败: {exc}")
-            return None
-
-        return payload if isinstance(payload, dict) else None
-
-    def _build_plain_text(self, raw_message: List[Dict[str, Any]], fallback_text: str) -> str:
-        """从标准消息段中提取可展示的纯文本。
-
-        Args:
-            raw_message: 标准化后的消息段列表。
-            fallback_text: 当无法拼出文本时使用的回退文本。
-
-        Returns:
-            str: 用于 Host 展示和命令判断的纯文本内容。
-        """
-        plain_text_parts: List[str] = []
-        for item in raw_message:
-            if not isinstance(item, dict):
-                continue
-            item_type = str(item.get("type") or "").strip()
-            item_data = item.get("data")
-            if item_type == "text":
-                plain_text_parts.append(str(item_data or ""))
-            elif item_type == "at" and isinstance(item_data, dict):
-                plain_text_parts.append(f"@{item_data.get('target_user_id') or ''}")
-            elif item_type == "reply":
-                plain_text_parts.append("[reply]")
-
-        plain_text = "".join(part for part in plain_text_parts if part).strip()
-        return plain_text or fallback_text or "[unsupported]"
-
-    def _plugin_section(self) -> Dict[str, Any]:
-        """读取插件配置中的 ``plugin`` 段。
-
-        Returns:
-            Dict[str, Any]: ``plugin`` 配置字典。
-        """
-        plugin_section = self._plugin_config.get("plugin", {})
-        return plugin_section if isinstance(plugin_section, dict) else {}
-
-    def _connection_config(self) -> Dict[str, Any]:
-        """读取插件配置中的 ``connection`` 段。
-
-        Returns:
-            Dict[str, Any]: ``connection`` 配置字典。
-        """
-        connection_config = self._plugin_config.get("connection", {})
-        return connection_config if isinstance(connection_config, dict) else {}
-
-    def _filters_config(self) -> Dict[str, Any]:
-        """读取插件配置中的 ``filters`` 段。
-
-        Returns:
-            Dict[str, Any]: ``filters`` 配置字典。
-        """
-        filters_config = self._plugin_config.get("filters", {})
-        return filters_config if isinstance(filters_config, dict) else {}
-
-    def _chat_config(self) -> Dict[str, Any]:
-        """读取插件配置中的 ``chat`` 段。
-
-        Returns:
-            Dict[str, Any]: ``chat`` 配置字典。
-        """
-        chat_config = self._plugin_config.get("chat", {})
-        return chat_config if isinstance(chat_config, dict) else {}
-
-    def _is_inbound_chat_allowed(self, sender_user_id: str, group_id: str) -> bool:
-        """检查入站消息是否通过聊天名单过滤。
-
-        Args:
-            sender_user_id: 发送者用户 ID。
-            group_id: 群聊 ID；私聊时为空字符串。
-
-        Returns:
-            bool: 若消息允许继续进入 Host，则返回 ``True``。
-        """
-        chat_config = self._chat_config()
-        banned_user_ids = self._get_string_list(chat_config, "ban_user_id")
-        if sender_user_id in banned_user_ids:
-            self.ctx.logger.warning(f"NapCat 用户 {sender_user_id} 在全局禁止名单中，消息被丢弃")
-            return False
-
-        if group_id:
-            group_list_type = self._get_list_mode(chat_config, "group_list_type", DEFAULT_CHAT_LIST_TYPE)
-            group_id_list = self._get_string_list(chat_config, "group_list")
-            if not self._is_id_allowed_by_list_policy(group_id, group_list_type, group_id_list):
-                self.ctx.logger.warning(f"NapCat 群聊 {group_id} 未通过聊天名单过滤，消息被丢弃")
-                return False
-            return True
-
-        private_list_type = self._get_list_mode(chat_config, "private_list_type", DEFAULT_CHAT_LIST_TYPE)
-        private_id_list = self._get_string_list(chat_config, "private_list")
-        if not self._is_id_allowed_by_list_policy(sender_user_id, private_list_type, private_id_list):
-            self.ctx.logger.warning(f"NapCat 私聊用户 {sender_user_id} 未通过聊天名单过滤，消息被丢弃")
-            return False
-        return True
-
-    def _is_id_allowed_by_list_policy(
-        self,
-        target_id: str,
-        list_type: str,
-        configured_ids: Set[str],
-    ) -> bool:
-        """根据白名单或黑名单规则判断目标 ID 是否允许通过。
-
-        Args:
-            target_id: 待检查的目标 ID。
-            list_type: 名单模式，仅支持 ``whitelist`` 或 ``blacklist``。
-            configured_ids: 配置中的 ID 集合。
-
-        Returns:
-            bool: 若目标 ID 允许通过，则返回 ``True``。
-        """
-        if list_type == "whitelist":
-            return target_id in configured_ids
-        return target_id not in configured_ids
-
-    def _validate_current_config(self) -> bool:
-        """校验当前配置是否满足启动连接的前提条件。
-
-        Returns:
-            bool: 配置可用于启动连接时返回 ``True``。
-        """
-        if not self._validate_plugin_config_version():
-            return False
-
-        connection_config = self._connection_config()
-        ws_url = self._get_string(connection_config, "ws_url")
-        if not ws_url:
-            self.ctx.logger.warning("NapCat 适配器已启用，但 connection.ws_url 为空")
-            return False
-
-        self._validate_positive_float_setting(
-            connection_config,
-            "connection",
-            "reconnect_delay_sec",
-            DEFAULT_RECONNECT_DELAY_SEC,
-        )
-        self._validate_positive_float_setting(
-            connection_config,
-            "connection",
-            "heartbeat_sec",
-            DEFAULT_HEARTBEAT_SEC,
-        )
-        self._validate_positive_float_setting(
-            connection_config,
-            "connection",
-            "action_timeout_sec",
-            DEFAULT_ACTION_TIMEOUT_SEC,
-        )
-        self._validate_list_mode_setting(self._chat_config(), "chat", "group_list_type", DEFAULT_CHAT_LIST_TYPE)
-        self._validate_list_mode_setting(self._chat_config(), "chat", "private_list_type", DEFAULT_CHAT_LIST_TYPE)
-        return True
-
-    def _validate_plugin_config_version(self) -> bool:
-        """校验插件配置版本是否与当前实现兼容。
-
-        Returns:
-            bool: 版本兼容时返回 ``True``。
-        """
-        config_version = self._get_string(self._plugin_section(), "config_version")
-        if not config_version:
-            self.ctx.logger.error(
-                f"NapCat 适配器配置缺少 plugin.config_version，当前插件要求版本 {SUPPORTED_CONFIG_VERSION}"
-            )
-            return False
-
-        if config_version != SUPPORTED_CONFIG_VERSION:
-            self.ctx.logger.error(
-                "NapCat 适配器配置版本不兼容: "
-                f"当前为 {config_version}，当前插件要求 {SUPPORTED_CONFIG_VERSION}"
-            )
-            return False
-
-        return True
-
-    def _validate_positive_float_setting(
-        self,
-        mapping: Dict[str, Any],
-        section_name: str,
-        key: str,
-        default: float,
-    ) -> None:
-        """校验正浮点数配置项，并在非法时输出告警日志。
-
-        Args:
-            mapping: 待读取的配置字典。
-            section_name: 当前配置段名称。
-            key: 目标配置键名。
-            default: 配置非法时实际使用的默认值。
-        """
-        value = mapping.get(key, default)
-        if isinstance(value, (int, float)) and float(value) > 0:
-            return
-
-        self.ctx.logger.warning(
-            "NapCat 适配器配置项取值无效，已回退到默认值: "
-            f"{section_name}.{key}={value!r}，默认值为 {default}"
-        )
-
-    def _validate_list_mode_setting(
-        self,
-        mapping: Dict[str, Any],
-        section_name: str,
-        key: str,
-        default: str,
-    ) -> None:
-        """校验名单模式配置项，并在非法时输出告警日志。
-
-        Args:
-            mapping: 待读取的配置字典。
-            section_name: 当前配置段名称。
-            key: 目标配置键名。
-            default: 配置非法时实际使用的默认值。
-        """
-        value = mapping.get(key, default)
-        if isinstance(value, str) and value.strip() in {"whitelist", "blacklist"}:
-            return
-
-        self.ctx.logger.warning(
-            "NapCat 适配器配置项取值无效，已回退到默认值: "
-            f"{section_name}.{key}={value!r}，默认值为 {default}"
-        )
-
-    def _should_connect(self) -> bool:
-        """判断当前配置下是否应当启动连接。
-
-        Returns:
-            bool: 若启用了插件连接则返回 ``True``。
-        """
-        return self._get_bool(self._plugin_section(), "enabled", False)
-
-    @staticmethod
-    def _get_bool(mapping: Dict[str, Any], key: str, default: bool) -> bool:
-        """安全读取布尔配置值。
-
-        Args:
-            mapping: 待读取的配置字典。
-            key: 目标键名。
-            default: 读取失败时的默认值。
-
-        Returns:
-            bool: 解析后的布尔值。
-        """
-        value = mapping.get(key, default)
-        return value if isinstance(value, bool) else default
-
-    @staticmethod
-    def _get_positive_float(mapping: Dict[str, Any], key: str, default: float) -> float:
-        """安全读取正浮点数配置值。
-
-        Args:
-            mapping: 待读取的配置字典。
-            key: 目标键名。
-            default: 读取失败时的默认值。
-
-        Returns:
-            float: 合法的正浮点数；否则返回默认值。
-        """
-        value = mapping.get(key, default)
-        if isinstance(value, (int, float)) and float(value) > 0:
-            return float(value)
-        return default
-
-    @staticmethod
-    def _get_string(mapping: Dict[str, Any], key: str) -> str:
-        """安全读取字符串配置值。
-
-        Args:
-            mapping: 待读取的配置字典。
-            key: 目标键名。
-
-        Returns:
-            str: 去除首尾空白后的字符串值。
-        """
-        value = mapping.get(key)
-        return "" if value is None else str(value).strip()
-
-    @staticmethod
-    def _get_list_mode(mapping: Dict[str, Any], key: str, default: str) -> str:
-        """安全读取名单模式配置值。
-
-        Args:
-            mapping: 待读取的配置字典。
-            key: 目标键名。
-            default: 读取失败时的默认值。
-
-        Returns:
-            str: 合法的名单模式字符串。
-        """
-        value = mapping.get(key, default)
-        if isinstance(value, str):
-            normalized_value = value.strip()
-            if normalized_value in {"whitelist", "blacklist"}:
-                return normalized_value
-        return default
-
-    @staticmethod
-    def _get_string_list(mapping: Dict[str, Any], key: str) -> Set[str]:
-        """安全读取 ID 列表配置值。
-
-        Args:
-            mapping: 待读取的配置字典。
-            key: 目标键名。
-
-        Returns:
-            Set[str]: 去重后的字符串 ID 集合。
-        """
-        value = mapping.get(key, [])
-        if not isinstance(value, list):
-            return set()
-
-        normalized_values: Set[str] = set()
-        for item in value:
-            item_text = "" if item is None else str(item).strip()
-            if item_text:
-                normalized_values.add(item_text)
-        return normalized_values
 
 
 def create_plugin() -> NapCatAdapterPlugin:

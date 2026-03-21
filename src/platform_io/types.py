@@ -198,8 +198,9 @@ class InboundMessageEnvelope:
         driver_kind: 产出该消息的驱动类型。
         external_message_id: 可选的平台侧消息 ID，用于去重。
         dedupe_key: 可选的显式去重键。当外部消息没有稳定 ``message_id`` 时，
-            可由上游驱动提供消息指纹。若这里为空，中间层仍可能继续回退到
-            ``session_message.message_id`` 或 ``payload`` 指纹。
+            可由上游驱动提供稳定的技术性幂等键。若这里为空，中间层仅会继续
+            回退到 ``external_message_id`` 或 ``session_message.message_id``，
+            不会再根据 ``payload`` 内容猜测语义去重键。
         session_message: 可选的、已经完成规范化的 ``SessionMessage`` 对象。
         payload: 可选的原始字典载荷，供延迟转换或调试使用。
         metadata: 额外入站元数据，例如连接信息或追踪上下文。

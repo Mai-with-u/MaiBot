@@ -2,9 +2,6 @@
 
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
-import hashlib
-import json
-
 from src.common.logger import get_logger
 from src.platform_io.drivers.base import PlatformIODriver
 
@@ -438,12 +435,17 @@ class PlatformIOManager:
 
         Returns:
             Optional[str]: 若可以构造稳定去重键则返回该键，否则返回 ``None``。
+
+        Notes:
+            这里仅接受上游显式提供的稳定消息身份，例如 ``dedupe_key``、
+            平台侧 ``external_message_id`` 或已经完成规范化的
+            ``session_message.message_id``。Broker 不再根据 ``payload`` 内容
+            猜测语义去重键，避免把“短时间内两条内容刚好完全相同”的合法消息
+            误判为重复入站。
         """
         raw_dedupe_key = envelope.dedupe_key or envelope.external_message_id
         if raw_dedupe_key is None and envelope.session_message is not None:
             raw_dedupe_key = envelope.session_message.message_id
-        if raw_dedupe_key is None and envelope.payload is not None:
-            raw_dedupe_key = PlatformIOManager._build_payload_fingerprint(envelope.payload)
         if raw_dedupe_key is None:
             return None
 
@@ -452,29 +454,6 @@ class PlatformIOManager:
             return None
 
         return f"{envelope.route_key.to_dedupe_scope()}:{normalized_dedupe_key}"
-
-    @staticmethod
-    def _build_payload_fingerprint(payload: Dict[str, Any]) -> Optional[str]:
-        """根据消息载荷构造稳定指纹。
-
-        Args:
-            payload: 待构造指纹的原始载荷字典。
-
-        Returns:
-            Optional[str]: 若成功生成指纹则返回十六进制摘要，否则返回 ``None``。
-        """
-        try:
-            serialized_payload = json.dumps(
-                payload,
-                default=str,
-                ensure_ascii=True,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        except Exception:
-            return None
-
-        return hashlib.sha256(serialized_payload.encode()).hexdigest()
 
     @staticmethod
     def _validate_binding_against_driver(binding: RouteBinding, driver: PlatformIODriver) -> None:
