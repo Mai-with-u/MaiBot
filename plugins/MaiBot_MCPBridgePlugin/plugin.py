@@ -868,7 +868,7 @@ def _sanitize_tool_description(description: str, max_length: int = 1024) -> str:
     sanitized = re.sub(r"(#{4,})", "####", sanitized)
     # 截断到合理长度
     if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length] + "..."
+        sanitized = sanitized[:max_length - 3] + "..."
     return sanitized
 
 
@@ -984,8 +984,11 @@ class MCPReadResourceTool(BaseTool):
     # 允许的 URI scheme 白名单（排除 file:// 等危险协议）
     _ALLOWED_SCHEMES = {"http", "https"}
     @classmethod
-    def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
-        """检查 URI 是否安全（防止 SSRF）。返回 (is_safe, reason)。"""
+    async def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
+        """检查 URI 是否安全（防止 SSRF）。返回 (is_safe, reason)。
+
+        DNS 解析通过 loop.getaddrinfo 异步执行，避免阻塞事件循环。
+        """
         try:
             parsed = urlparse(uri)
         except Exception:
@@ -999,13 +1002,14 @@ class MCPReadResourceTool(BaseTool):
             return False, "不允许使用 file:// 协议"
 
         # 对 http/https 做主机解析检查
-        if scheme in ("http", "https"):
+        if scheme in cls._ALLOWED_SCHEMES:
             hostname = parsed.hostname or ""
             if not hostname:
                 return False, "缺少主机名"
-            # DNS 解析并检查是否为内网地址
+            # 异步 DNS 解析并检查是否为内网地址
             try:
-                addrinfos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+                loop = asyncio.get_event_loop()
+                addrinfos = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
                 for _family, _type, _proto, _canonname, sockaddr in addrinfos:
                     ip = ipaddress.ip_address(sockaddr[0])
                     if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
@@ -1025,7 +1029,7 @@ class MCPReadResourceTool(BaseTool):
             return {"name": self.name, "content": "❌ 请提供资源 URI"}
 
         # SSRF 防护：校验 URI 安全性
-        is_safe, reason = self._is_uri_safe(uri)
+        is_safe, reason = await self._is_uri_safe(uri)
         if not is_safe:
             logger.warning(f"MCPReadResourceTool SSRF 拦截: uri={uri}, reason={reason}")
             return {"name": self.name, "content": f"❌ 资源 URI 被拦截: {reason}"}
