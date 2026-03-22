@@ -96,6 +96,7 @@ class HeartFChatting:
         self.history_loop: List[CycleDetail] = []
         self._cycle_counter = 0
         self._current_cycle_detail: CycleDetail = None  # type: ignore
+        self._max_history_loop_size = 100  # 最大保留的思考记录数量
 
         self.last_read_time = time.time() - 2
 
@@ -162,6 +163,9 @@ class HeartFChatting:
         self.history_loop.append(self._current_cycle_detail)
         self._current_cycle_detail.timers = cycle_timers
         self._current_cycle_detail.end_time = time.time()
+        # 清理过期的思考记录，保留最近的最大数量
+        if len(self.history_loop) > self._max_history_loop_size:
+            self.history_loop = self.history_loop[-self._max_history_loop_size:]
 
     def print_cycle_info(self, cycle_timers):
         # 记录循环信息和计时器结果

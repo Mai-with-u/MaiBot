@@ -3,8 +3,10 @@ import json
 import os
 import math
 import asyncio
+import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -93,12 +95,16 @@ class EmbeddingStoreItem:
 
 
 class EmbeddingStore:
+    # 默认最大内存缓存条目数
+    DEFAULT_MAX_CACHE_SIZE = 5000
+    
     def __init__(
         self,
         namespace: str,
         dir_path: str,
         max_workers: int = DEFAULT_MAX_WORKERS,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        max_cache_size: int = None,
     ):
         self.namespace = namespace
         self.dir = dir_path
@@ -122,10 +128,100 @@ class EmbeddingStore:
                 f"chunk_size 已从 {chunk_size} 调整为 {self.chunk_size} (范围: {MIN_CHUNK_SIZE}-{MAX_CHUNK_SIZE})"
             )
 
-        self.store = {}
-
+        self.max_cache_size = max_cache_size or self.DEFAULT_MAX_CACHE_SIZE
+        
+        self._cache: OrderedDict[str, EmbeddingStoreItem] = OrderedDict()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._disk_index: Dict[str, int] = {}
+        self._disk_data_frame = None
+        
+        # FAISS索引常驻内存（用于快速检索）
         self.faiss_index = None
         self.idx2hash = None
+        
+        # 内存模式：True=全部加载到内存（小数据集），False=按需加载（大数据集）
+        self._memory_mode = True
+        
+    @property
+    def store(self) -> Dict[str, EmbeddingStoreItem]:
+        """兼容旧代码的store属性访问
+        
+        如果处于按需加载模式，返回当前缓存的内容
+        注意：这个方法主要用于写入操作，读取请用get_item方法
+        """
+        return self._cache
+    
+    def _ensure_cache_size(self):
+        """确保缓存不超过最大限制"""
+        while len(self._cache) > self.max_cache_size:
+            # 淘汰最久未使用的条目
+            oldest_key, oldest_item = self._cache.popitem(last=False)
+            # 帮助垃圾回收
+            del oldest_item
+            
+    def get_item(self, key: str) -> Optional[EmbeddingStoreItem]:
+        """获取条目，优先从缓存获取，缓存未命中则从磁盘加载
+        
+        Args:
+            key: 条目hash
+            
+        Returns:
+            EmbeddingStoreItem或None
+        """
+        if key in self._cache:
+            # 移动到末尾（最近使用）
+            item = self._cache.pop(key)
+            self._cache[key] = item
+            self._cache_hits += 1
+            return item
+        
+        if self._memory_mode:
+            self._cache_misses += 1
+            return None
+        
+        if key in self._disk_index and self._disk_data_frame is not None:
+            try:
+                row_idx = self._disk_index[key]
+                row = self._disk_data_frame.iloc[row_idx]
+                item = EmbeddingStoreItem(row["hash"], row["embedding"], row["str"])
+                
+                self._ensure_cache_size()
+                self._cache[key] = item
+                self._cache_misses += 1
+                return item
+            except Exception as e:
+                logger.warning(f"从磁盘加载条目 {key} 失败: {e}")
+                return None
+        
+        self._cache_misses += 1
+        return None
+    
+    def set_item(self, key: str, item: EmbeddingStoreItem):
+        """设置条目到缓存
+        
+        Args:
+            key: 条目hash
+            item: EmbeddingStoreItem对象
+        """
+        self._ensure_cache_size()
+        # 如果已存在，先删除再添加（移动到末尾）
+        if key in self._cache:
+            del self._cache[key]
+        self._cache[key] = item
+        
+    def get_cache_stats(self) -> Dict:
+        """获取缓存统计信息"""
+        total = self._cache_hits + self._cache_misses
+        hit_rate = self._cache_hits / total if total > 0 else 0
+        return {
+            "cache_size": len(self._cache),
+            "max_cache_size": self.max_cache_size,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "hit_rate": f"{hit_rate:.2%}",
+            "memory_mode": self._memory_mode,
+        }
 
     @staticmethod
     def hash_texts(namespace: str, texts: List[str]) -> List[str]:
@@ -418,26 +514,71 @@ class EmbeddingStore:
                 for s, embedding in embedding_results:
                     item_hash = self.namespace + "-" + get_sha256(s)
                     if embedding:  # 只有成功获取到嵌入才存入
-                        self.store[item_hash] = EmbeddingStoreItem(item_hash, embedding, s)
+                        item = EmbeddingStoreItem(item_hash, embedding, s)
+                        self.set_item(item_hash, item)
+                        # 同时更新磁盘索引（如果处于按需加载模式）
+                        if not self._memory_mode:
+                            self._disk_index[item_hash] = len(self._disk_index)
                         self.dirty = True
                     else:
                         logger.warning(f"跳过存储失败的嵌入: {s[:50]}...")
 
     def save_to_file(self) -> None:
-        """保存到文件"""
-        data = []
+        """保存到文件
+        
+        注意：按需加载模式下，需要合并内存缓存和磁盘数据
+        """
         logger.info(f"正在保存{self.namespace}嵌入库到文件{self.embedding_file_path}")
-        for item in self.store.values():
-            data.append(item.to_dict())
-        data_frame = pd.DataFrame(data)
+        
+        if not self._memory_mode and self._disk_data_frame is not None:
+            all_data = []
+            
+            # 先添加磁盘中的数据
+            for row in self._disk_data_frame.itertuples(index=False):
+                all_data.append({
+                    "hash": row.hash,
+                    "embedding": row.embedding,
+                    "str": row.str,
+                })
+            
+            # 再添加/更新缓存中的数据
+            cached_hashes = set()
+            for item in self._cache.values():
+                cached_hashes.add(item.hash)
+                all_data.append(item.to_dict())
+            
+            # 去重（缓存中的数据覆盖磁盘数据）
+            seen_hashes = set()
+            unique_data = []
+            for item in reversed(all_data):  # 从后往前，保留最新的
+                if item["hash"] not in seen_hashes:
+                    seen_hashes.add(item["hash"])
+                    unique_data.append(item)
+            
+            data_frame = pd.DataFrame(list(reversed(unique_data)))  # 恢复原始顺序
+            
+            del self._disk_data_frame
+            self._disk_data_frame = None
+            gc.collect()
+        else:
+            # 内存模式：直接保存缓存数据
+            data = []
+            for item in self._cache.values():
+                data.append(item.to_dict())
+            data_frame = pd.DataFrame(data)
 
         if not os.path.exists(self.dir):
             os.makedirs(self.dir, exist_ok=True)
-        if not os.path.exists(self.embedding_file_path):
-            open(self.embedding_file_path, "w").close()
 
         data_frame.to_parquet(self.embedding_file_path, engine="pyarrow", index=False)
-        logger.info(f"{self.namespace}嵌入库保存成功")
+        logger.info(f"{self.namespace}嵌入库保存成功，共{len(data_frame)}条")
+        
+        if not self._memory_mode:
+            del data_frame
+            gc.collect()
+            self._cache.clear()
+            self._disk_index.clear()
+            self.load_from_file()
 
         if self.faiss_index is not None and self.idx2hash is not None:
             logger.info(f"正在保存{self.namespace}嵌入库的FaissIndex到文件{self.index_file_path}")
@@ -449,30 +590,60 @@ class EmbeddingStore:
             logger.info(f"{self.namespace}嵌入库的idx2hash映射保存成功")
 
     def load_from_file(self) -> None:
-        """从文件中加载"""
+        """从文件中加载
+        
+        根据数据量自动选择加载模式：
+        - 数据量 <= max_cache_size: 全部加载到内存
+        - 数据量 > max_cache_size: 按需加载模式，只加载索引
+        """
         if not os.path.exists(self.embedding_file_path):
             raise Exception(f"文件{self.embedding_file_path}不存在")
-        logger.info("正在加载嵌入库...")
-        logger.debug(f"正在从文件{self.embedding_file_path}中加载{self.namespace}嵌入库")
+        
+        logger.info(f"正在加载{self.namespace}嵌入库...")
+        logger.debug(f"正在从文件{self.embedding_file_path}中加载")
+        
+        # 读取数据框获取总行数
         data_frame = pd.read_parquet(self.embedding_file_path, engine="pyarrow")
         total = len(data_frame)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            MofNCompleteColumn(),
-            "•",
-            TimeElapsedColumn(),
-            "<",
-            TimeRemainingColumn(),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("加载嵌入库", total=total)
-            for _, row in data_frame.iterrows():
-                self.store[row["hash"]] = EmbeddingStoreItem(row["hash"], row["embedding"], row["str"])
-                progress.update(task, advance=1)
-        logger.info(f"{self.namespace}嵌入库加载成功")
+        
+        # 根据数据量选择加载模式
+        if total <= self.max_cache_size:
+            # 小数据集：全部加载到内存
+            self._memory_mode = True
+            logger.info(f"{self.namespace}嵌入库数据量({total})小于缓存限制({self.max_cache_size})，使用内存模式")
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                MofNCompleteColumn(),
+                "•",
+                TimeElapsedColumn(),
+                "<",
+                TimeRemainingColumn(),
+                transient=False,
+            ) as progress:
+                task = progress.add_task("加载嵌入库", total=total)
+                for row in data_frame.itertuples(index=False):
+                    self._cache[row.hash] = EmbeddingStoreItem(row.hash, row.embedding, row.str)
+                    progress.update(task, advance=1)
+        else:
+            self._memory_mode = False
+            logger.info(f"{self.namespace}嵌入库数据量({total})超过缓存限制({self.max_cache_size})，使用按需加载模式")
+            
+            # 只构建磁盘索引，不加载数据
+            for idx, row in enumerate(data_frame.itertuples(index=False)):
+                self._disk_index[row.hash] = idx
+            
+            self._disk_data_frame = data_frame
+            
+            logger.info(f"{self.namespace}嵌入库磁盘索引构建完成，共{len(self._disk_index)}条")
+            return
+        
+        if self._memory_mode:
+            del data_frame
+        logger.info(f"{self.namespace}嵌入库加载成功，当前缓存{len(self._cache)}条")
 
         try:
             if os.path.exists(self.index_file_path):
@@ -499,32 +670,79 @@ class EmbeddingStore:
         self.dirty = False
 
     def build_faiss_index(self) -> None:
-        """重新构建Faiss索引，以余弦相似度为度量"""
-        # 空库直接跳过，清空索引映射
-        if not self.store:
+        """重新构建Faiss索引，以余弦相似度为度量
+        
+        注意：按需加载模式下，需要从磁盘加载所有嵌入向量构建索引
+        """
+        # 获取所有数据的keys
+        if self._memory_mode:
+            all_keys = list(self._cache.keys())
+        else:
+            # 按需加载模式：从磁盘索引获取所有keys
+            all_keys = list(self._disk_index.keys())
+        
+        if not all_keys:
+            if self.faiss_index is not None:
+                del self.faiss_index
+                self.faiss_index = None
             self.idx2hash = {}
-            self.faiss_index = None
             self.dirty = False
             return
 
-        # 获取所有的embedding
-        array = []
-        self.idx2hash = dict()
-        for key in self.store:
-            array.append(self.store[key].embedding)
-            self.idx2hash[str(len(array) - 1)] = key
-        embeddings = np.array(array, dtype=np.float32)
-        if embeddings.size == 0:
+        if self.faiss_index is not None:
+            del self.faiss_index
+            self.faiss_index = None
+
+        # 收集所有嵌入向量
+        embeddings_list = []
+        self.idx2hash = {}
+        
+        for i, key in enumerate(all_keys):
+            self.idx2hash[str(i)] = key
+            
+            if self._memory_mode:
+                # 内存模式：直接从缓存获取
+                item = self._cache.get(key)
+                if item:
+                    embeddings_list.append(item.embedding)
+            else:
+                # 按需加载模式：从磁盘加载
+                if key in self._disk_index and self._disk_data_frame is not None:
+                    try:
+                        row_idx = self._disk_index[key]
+                        row = self._disk_data_frame.iloc[row_idx]
+                        embeddings_list.append(row["embedding"])
+                    except Exception as e:
+                        logger.warning(f"加载嵌入向量 {key} 失败: {e}")
+                        # 使用零向量占位
+                        dim = global_config.lpmm_knowledge.embedding_dimension
+                        embeddings_list.append([0.0] * dim)
+        
+        if not embeddings_list:
             self.idx2hash = {}
             self.faiss_index = None
             self.dirty = False
             return
+            
+        embeddings = np.array(embeddings_list, dtype=np.float32)
+        del embeddings_list
+        
+        if embeddings.size == 0:
+            del embeddings
+            self.idx2hash = {}
+            self.faiss_index = None
+            self.dirty = False
+            return
+            
         # L2归一化
         faiss.normalize_L2(embeddings)
         # 构建索引
         self.faiss_index = faiss.IndexFlatIP(global_config.lpmm_knowledge.embedding_dimension)
         self.faiss_index.add(embeddings)
+        del embeddings
         self.dirty = False
+        
+        logger.info(f"{self.namespace} Faiss索引重建完成，共{len(self.idx2hash)}条")
 
     def delete_items(self, hashes: List[str]) -> Tuple[int, int]:
         """删除指定键的嵌入并重建 idx2hash（不直接重建 faiss）
@@ -538,16 +756,24 @@ class EmbeddingStore:
         deleted = 0
         skipped = 0
         for h in hashes:
-            if h in self.store:
-                self.store.pop(h)
+            found = False
+            # 从缓存中删除
+            if h in self._cache:
+                del self._cache[h]
+                found = True
+            # 从磁盘索引中删除
+            if h in self._disk_index:
+                del self._disk_index[h]
+                found = True
+            
+            if found:
                 deleted += 1
             else:
                 skipped += 1
 
-        # 重新构建 idx2hash 映射
-        self.idx2hash = {}
-        for idx, key in enumerate(self.store.keys()):
-            self.idx2hash[str(idx)] = key
+        # 重新构建 idx2hash 映射（基于剩余的所有keys）
+        all_keys = list(self._cache.keys()) if self._memory_mode else list(self._disk_index.keys())
+        self.idx2hash = {str(idx): key for idx, key in enumerate(all_keys)}
 
         # 删除后标记 dirty，faiss 重建由上层统一调用
         self.dirty = True
@@ -585,35 +811,56 @@ class EmbeddingStore:
 
 
 class EmbeddingManager:
-    def __init__(self, max_workers: int | None = None, chunk_size: int | None = None):
+    """嵌入管理器，管理段落、实体、关系三个嵌入存储
+    
+    内存优化：通过配置max_cache_size限制每个存储的内存缓存大小
+    """
+    
+    def __init__(self, max_workers: int | None = None, chunk_size: int | None = None, max_cache_size: int | None = None):
         """
         初始化EmbeddingManager
 
         Args:
             max_workers: 最大线程数
             chunk_size: 每个线程处理的数据块大小
+            max_cache_size: 每个存储的最大内存缓存条目数，None表示使用默认值(5000)
         """
         max_workers = max_workers if max_workers is not None else global_config.lpmm_knowledge.max_embedding_workers
         chunk_size = chunk_size if chunk_size is not None else global_config.lpmm_knowledge.embedding_chunk_size
+        
+        # 从配置读取缓存大小，如果没有则使用默认值
+        max_cache_size = max_cache_size or getattr(global_config.lpmm_knowledge, 'max_cache_size', None)
+        
         self.paragraphs_embedding_store = EmbeddingStore(
             "paragraph",  # type: ignore
             EMBEDDING_DATA_DIR_STR,
             max_workers=max_workers,
             chunk_size=chunk_size,
+            max_cache_size=max_cache_size,
         )
         self.entities_embedding_store = EmbeddingStore(
             "entity",  # type: ignore
             EMBEDDING_DATA_DIR_STR,
             max_workers=max_workers,
             chunk_size=chunk_size,
+            max_cache_size=max_cache_size,
         )
         self.relation_embedding_store = EmbeddingStore(
             "relation",  # type: ignore
             EMBEDDING_DATA_DIR_STR,
             max_workers=max_workers,
             chunk_size=chunk_size,
+            max_cache_size=max_cache_size,
         )
         self.stored_pg_hashes = set()
+        
+    def get_cache_stats(self) -> Dict:
+        """获取所有存储的缓存统计信息"""
+        return {
+            "paragraphs": self.paragraphs_embedding_store.get_cache_stats(),
+            "entities": self.entities_embedding_store.get_cache_stats(),
+            "relations": self.relation_embedding_store.get_cache_stats(),
+        }
 
     def check_all_embedding_model_consistency(self):
         """对所有嵌入库做模型一致性校验"""

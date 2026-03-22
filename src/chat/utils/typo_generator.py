@@ -19,6 +19,8 @@ logger = get_logger("typo_gen")
 
 
 class ChineseTypoGenerator:
+    _jieba_dict_cache = None
+
     def __init__(self, error_rate=0.3, min_freq=5, tone_error_rate=0.2, word_replace_rate=0.3, max_freq_diff=200):
         """
         初始化错别字生成器
@@ -35,13 +37,29 @@ class ChineseTypoGenerator:
         self.tone_error_rate = tone_error_rate
         self.word_replace_rate = word_replace_rate
         self.max_freq_diff = max_freq_diff
-
+        
         # 加载数据
         # print("正在加载汉字数据库，请稍候...")
         # logger.info("正在加载汉字数据库，请稍候...")
 
         self.pinyin_dict = self._create_pinyin_dict()
         self.char_frequency = self._load_or_create_char_frequency()
+        self._load_jieba_dict_once()
+
+    @classmethod
+    def _load_jieba_dict_once(cls):
+        """只加载一次 jieba 词典到类缓存"""
+        if cls._jieba_dict_cache is not None:
+            return
+        
+        dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
+        valid_words = {}
+        with open(dict_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    valid_words[parts[0]] = float(parts[1])
+        cls._jieba_dict_cache = valid_words
 
     def _load_or_create_char_frequency(self):
         """
@@ -251,18 +269,11 @@ class ChineseTypoGenerator:
 
         all_combinations = itertools.product(*candidates)
 
-        # 获取jieba词典和词频信息
-        dict_path = os.path.join(os.path.dirname(jieba.__file__), "dict.txt")
-        valid_words = {}  # 改用字典存储词语及其频率
-        with open(dict_path, "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    word_text = parts[0]
-                    word_freq = float(parts[1])  # 获取词频
-                    valid_words[word_text] = word_freq
+        valid_words = self._jieba_dict_cache
+        if valid_words is None:
+            self._load_jieba_dict_once()
+            valid_words = self._jieba_dict_cache
 
-        # 获取原词的词频作为参考
         original_word_freq = valid_words.get(word, 0)
         min_word_freq = original_word_freq * 0.1  # 设置最小词频为原词频的10%
 

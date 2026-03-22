@@ -230,7 +230,7 @@ class WebSocketLogHandler(logging.Handler):
             # 异步广播日志(不阻塞日志记录)
             try:
                 import asyncio
-                from src.webui.logs_ws import broadcast_log
+                from src.webui.routers.websocket.logs import broadcast_log
 
                 asyncio.run_coroutine_threadsafe(broadcast_log(log_data), self.loop)
             except Exception:

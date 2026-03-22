@@ -113,6 +113,10 @@ class MainSystem:
 
         logger.info("聊天管理器初始化成功")
 
+        # 启动 heartflow 清理任务
+        from src.chat.heart_flow.heartflow import heartflow
+        await heartflow.start_cleanup_task()
+
         # await asyncio.sleep(0.5) #防止logger输出飞了
 
         # 将bot.py中的chat_bot.message_process消息处理函数注册到api.py的消息处理基类中

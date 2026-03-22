@@ -118,6 +118,7 @@ class ChatManager:
 
     _instance = None
     _initialized = False
+    MAX_STREAMS_CACHE = 500  # 最大缓存数量
 
     def __new__(cls):
         if cls._instance is None:
@@ -286,6 +287,8 @@ class ChatManager:
             logger.error(f"聊天流 {stream_id} 不在最后消息列表中，可能是新创建的")
         # 保存到内存和数据库
         self.streams[stream_id] = stream
+        # LRU 缓存清理：当缓存数量超过最大值时，移除最久未活跃的流
+        self._enforce_max_cache_size()
         await self._save_stream(stream)
         return stream
 
@@ -317,6 +320,17 @@ class ChatManager:
             return f"{stream.user_info.user_nickname}的私聊"
         else:
             return None
+
+    def _enforce_max_cache_size(self):
+        """当缓存数量超过最大值时，移除最久未活跃的流"""
+        while len(self.streams) > self.MAX_STREAMS_CACHE:
+            oldest_stream_id = min(
+                self.streams.keys(),
+                key=lambda sid: self.streams[sid].last_active_time
+            )
+            self.streams.pop(oldest_stream_id, None)
+            self.last_messages.pop(oldest_stream_id, None)
+            logger.debug(f"移除最久未活跃的聊天流缓存: {oldest_stream_id}")
 
     @staticmethod
     async def _save_stream(stream: ChatStream):

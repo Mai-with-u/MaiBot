@@ -625,6 +625,8 @@ init_prompt()
 
 
 class ExpressionLearnerManager:
+    MAX_LEARNERS = 50  # 最大实例数量限制
+
     def __init__(self):
         self.expression_learners = {}
 
@@ -632,6 +634,11 @@ class ExpressionLearnerManager:
 
     def get_expression_learner(self, chat_id: str) -> ExpressionLearner:
         if chat_id not in self.expression_learners:
+            # 限制最大实例数量
+            while len(self.expression_learners) >= self.MAX_LEARNERS:
+                oldest_chat_id = next(iter(self.expression_learners.keys()))
+                self.expression_learners.pop(oldest_chat_id, None)
+                logger.debug(f"移除最久未使用的 ExpressionLearner: {oldest_chat_id}")
             self.expression_learners[chat_id] = ExpressionLearner(chat_id)
         return self.expression_learners[chat_id]
 

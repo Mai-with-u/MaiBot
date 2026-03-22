@@ -917,7 +917,8 @@ class EmojiManager:
                 image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
             image_bytes = base64.b64decode(image_base64)
             image_hash = hashlib.md5(image_bytes).hexdigest()
-            image_format = Image.open(io.BytesIO(image_bytes)).format.lower()  # type: ignore
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                image_format = img.format.lower() if img.format else "unknown"
 
             # 尝试从 EmojiDescriptionCache 表获取已有的详细描述
             existing_description = None
