@@ -185,7 +185,7 @@ async def graceful_shutdown():  # sourcery skip: use-named-expression
 
             webui_server = get_webui_server()
             if webui_server and webui_server._server:
-                await webui_server.shutdown()
+                asyncio.create_task(webui_server.shutdown())
         except Exception as e:
             logger.warning(f"关闭 WebUI 服务器时出错: {e}")
 
@@ -349,14 +349,14 @@ if __name__ == "__main__":
             if "main_tasks" in locals() and main_tasks and not main_tasks.done():
                 main_tasks.cancel()
                 try:
-                    loop.run_until_complete(main_tasks)
+                    loop.run_until_complete(graceful_shutdown())
                 except asyncio.CancelledError:
                     pass
 
             # 执行优雅关闭
             if loop and not loop.is_closed():
                 try:
-                    loop.run_until_complete(graceful_shutdown())
+                    loop.run_until_complete(main_tasks)
                 except Exception as ge:
                     logger.error(f"优雅关闭时发生错误: {ge}")
         # 新增：检测外部请求关闭
