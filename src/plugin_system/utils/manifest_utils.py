@@ -1,4 +1,4 @@
-"""
+﻿"""
 插件Manifest工具模块
 
 提供manifest文件的验证、生成和管理功能
@@ -41,33 +41,28 @@ class VersionComparator:
 
     @staticmethod
     def normalize_version(version: str) -> str:
-        """标准化版本号，移除snapshot标识
-
-        Args:
-            version: 原始版本号，如 "0.8.0-snapshot.1"
-
-        Returns:
-            str: 标准化后的版本号，如 "0.8.0"
-        """
+        """规范化版本号，移除预发布/构建后缀后再比较主版本。"""
         if not version:
             return "0.0.0"
 
-        # 移除snapshot部分
-        normalized = re.sub(r"-snapshot\.\d+", "", version.strip())
+        version = version.strip()
 
-        # 确保版本号格式正确
-        if not re.match(r"^\d+(\.\d+){0,2}$", normalized):
-            # 如果不是有效的版本号格式，返回默认版本
+        # 支持 semver 常见写法：
+        # - v0.13.0
+        # - 0.13.0-sakana.1
+        # - 0.13.0+build.1
+        match = re.match(r"^v?(\d+(?:\.\d+){0,2})(?:[-+][0-9A-Za-z.-]+)?$", version)
+        if not match:
             return "0.0.0"
 
-        # 尝试补全版本号
+        normalized = match.group(1)
+
         parts = normalized.split(".")
         while len(parts) < 3:
             parts.append("0")
         normalized = ".".join(parts[:3])
 
         return normalized
-
     @staticmethod
     def parse_version(version: str) -> Tuple[int, int, int]:
         """解析版本号为元组
