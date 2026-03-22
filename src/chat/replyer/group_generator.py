@@ -1,7 +1,6 @@
 import traceback
 import time
 import asyncio
-import importlib
 import random
 import re
 
@@ -36,6 +35,7 @@ from src.services import llm_service as llm_api
 
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.memory_system.memory_retrieval import init_memory_retrieval_sys, build_memory_retrieval_prompt
+from src.memory_system.retrieval_tools import get_tool_registry
 from src.bw_learner.jargon_explainer_old import explain_jargon_in_context, retrieve_concepts_with_jargon
 from src.chat.utils.common_utils import TempMethodsExpression
 
@@ -1164,29 +1164,14 @@ class DefaultReplyer:
     async def get_prompt_info(self, message: str, sender: str, target: str):
         related_info = ""
         start_time = time.time()
-        try:
-            knowledge_module = importlib.import_module("src.plugins.built_in.knowledge.lpmm_get_knowledge")
-        except ImportError:
-            logger.debug("LPMM知识库工具模块不存在，跳过获取知识库内容")
-            return ""
-
-        search_knowledge_tool = getattr(knowledge_module, "SearchKnowledgeFromLPMMTool", None)
+        search_knowledge_tool = get_tool_registry().get_tool("search_long_term_memory")
         if search_knowledge_tool is None:
-            logger.debug("LPMM知识库工具未提供 SearchKnowledgeFromLPMMTool，跳过获取知识库内容")
+            logger.debug("长期记忆检索工具未注册，跳过获取知识内容")
             return ""
 
-        logger.debug(f"获取知识库内容，元消息：{message[:30]}...，消息长度: {len(message)}")
-        # 从LPMM知识库获取知识
+        logger.debug(f"获取长期记忆内容，元消息：{message[:30]}...，消息长度: {len(message)}")
         try:
-            # 检查LPMM知识库是否启用
-            if not global_config.lpmm_knowledge.enable:
-                logger.debug("LPMM知识库未启用，跳过获取知识库内容")
-                return ""
-
-            if global_config.lpmm_knowledge.lpmm_mode == "agent":
-                return ""
-
-            template_prompt = prompt_manager.get_prompt("lpmm_get_knowledge")
+            template_prompt = prompt_manager.get_prompt("memory_get_knowledge")
             template_prompt.add_context("bot_name", global_config.bot.nickname)
             template_prompt.add_context("time_now", lambda _: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
             template_prompt.add_context("chat_history", message)
@@ -1202,24 +1187,31 @@ class DefaultReplyer:
             # logger.info(f"工具调用提示词: {prompt}")
             # logger.info(f"工具调用: {tool_calls}")
 
-            if tool_calls:
-                result = await self.tool_executor.execute_tool_call(tool_calls[0])
-                end_time = time.time()
-                if not result or not result.get("content"):
-                    logger.debug("从LPMM知识库获取知识失败，返回空知识...")
-                    return ""
-                found_knowledge_from_lpmm = result.get("content", "")
-                logger.info(
-                    f"从LPMM知识库获取知识，相关信息：{found_knowledge_from_lpmm[:100]}...，信息长度: {len(found_knowledge_from_lpmm)}"
-                )
-                related_info += found_knowledge_from_lpmm
-                logger.debug(f"获取知识库内容耗时: {(end_time - start_time):.3f}秒")
-                logger.debug(f"获取知识库内容，相关信息：{related_info[:100]}...，信息长度: {len(related_info)}")
-
-                return f"你有以下这些**知识**：\n{related_info}\n请你**记住上面的知识**，之后可能会用到。\n"
-            else:
-                logger.debug("模型认为不需要使用LPMM知识库")
+            if not tool_calls:
+                logger.debug("模型认为不需要使用长期记忆")
                 return ""
+
+            related_chunks: List[str] = []
+            for tool_call in tool_calls:
+                if tool_call.func_name != "search_long_term_memory":
+                    continue
+                tool_args = dict(tool_call.args or {})
+                tool_args.setdefault("chat_id", self.chat_stream.session_id)
+                result_text = await search_knowledge_tool.execute(**tool_args)
+                if result_text and "未找到" not in result_text:
+                    related_chunks.append(result_text)
+
+            if not related_chunks:
+                logger.debug("长期记忆未返回有效信息")
+                return ""
+
+            related_info = "\n".join(related_chunks)
+            end_time = time.time()
+            logger.info(f"从长期记忆获取知识，相关信息：{related_info[:100]}...，信息长度: {len(related_info)}")
+            logger.debug(f"获取知识库内容耗时: {(end_time - start_time):.3f}秒")
+            logger.debug(f"获取知识库内容，相关信息：{related_info[:100]}...，信息长度: {len(related_info)}")
+
+            return f"你有以下这些**知识**：\n{related_info}\n请你**记住上面的知识**，之后可能会用到。\n"
         except Exception as e:
             logger.error(f"获取知识库内容时发生异常: {str(e)}")
             return ""

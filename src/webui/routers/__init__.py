@@ -17,14 +17,14 @@ def get_all_routers() -> List[APIRouter]:
     from src.webui.api.planner import router as planner_router
     from src.webui.api.replier import router as replier_router
     from src.webui.routers.chat import router as chat_router
-    from src.webui.routers.knowledge import router as knowledge_router
+    from src.webui.routers.memory import compat_router as memory_compat_router
     from src.webui.routers.websocket.logs import router as logs_router
     from src.webui.routes import router as main_router
 
     return [
         main_router,
+        memory_compat_router,
         logs_router,
-        knowledge_router,
         chat_router,
         planner_router,
         replier_router,

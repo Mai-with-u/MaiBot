@@ -1,0 +1,52 @@
+# A_Memorix 插件依赖
+# 
+# 核心依赖 (必需)
+# ==================
+
+# 数值计算 - 用于向量操作、矩阵计算
+numpy>=1.20.0
+
+# 稀疏矩阵 - 用于图存储的邻接矩阵
+scipy>=1.7.0
+
+# 图结构处理（LPMM 转换）
+networkx>=3.0.0
+
+# Parquet 读取（LPMM 转换）
+pyarrow>=10.0.0
+
+# DataFrame 处理（LPMM 转换）
+pandas>=1.5.0
+
+# 异步事件循环嵌套 - 用于插件初始化时的异步操作
+nest-asyncio>=1.5.0
+
+# 向量索引 - 用于向量存储和检索
+faiss-cpu>=1.7.0
+
+# Web 服务器依赖 (可视化功能需要)
+# ==================
+
+# ASGI 服务器
+uvicorn>=0.20.0
+
+# Web 框架
+fastapi>=0.100.0
+
+# 数据验证
+pydantic>=2.0.0
+python-multipart>=0.0.9
+
+# 注意事项
+# ==================
+# 
+# 1. sqlite3 是 Python 标准库，无需安装
+# 2. json, re, time, pathlib 等都是标准库
+# 3. sentence-transformers 不需要（使用主程序 Embedding API）
+
+# UI 交互
+rich>=14.0.0
+tenacity>=8.0.0
+
+# 稀疏检索中文分词（可选，未安装时自动回退 char n-gram）
+jieba>=0.42.1

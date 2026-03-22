@@ -94,6 +94,11 @@ def _migrate_expression_learning_list(expr: dict[str, Any]) -> bool:
         ["", "enable", "enable", "enable"],
         ["qq:1919810:group", "enable", "enable", "enable"],
       ]
+    兼容旧旧格式：
+      learning_list = [
+        ["qq:1919810:group", "enable", "enable", "0.5"],
+        ["", "disable", "disable", "0.1"],
+      ]
     新：
       [[expression.learning_list]]
       platform="", item_id="", rule_type="group", use_expression=true, enable_learning=true, enable_jargon_learning=true
@@ -117,6 +122,16 @@ def _migrate_expression_learning_list(expr: dict[str, Any]) -> bool:
         use_expression = _parse_enable_disable(r[1])
         enable_learning = _parse_enable_disable(r[2])
         enable_jargon_learning = _parse_enable_disable(r[3])
+        if enable_jargon_learning is None:
+            # 更早期的配置在第 4 列记录的是一个已废弃的数值权重/阈值，
+            # 当前 schema 已没有对应字段。这里按保守策略兼容迁移：
+            # 丢弃旧数值，并将 enable_jargon_learning 置为 False。
+            try:
+                float(str(r[3]))
+            except (TypeError, ValueError):
+                pass
+            else:
+                enable_jargon_learning = False
         if use_expression is None or enable_learning is None or enable_jargon_learning is None:
             return False
 

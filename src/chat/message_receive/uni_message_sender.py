@@ -383,6 +383,13 @@ class UniversalMessageSender:
                 with get_db_session() as db_session:
                     db_session.add(message.to_db_instance())
 
+            try:
+                from src.services.memory_flow_service import memory_automation_service
+
+                await memory_automation_service.on_message_sent(message)
+            except Exception as exc:
+                logger.warning(f"[{chat_id}] 长期记忆人物事实写回注册失败: {exc}")
+
             return sent_msg
 
         except Exception as e:

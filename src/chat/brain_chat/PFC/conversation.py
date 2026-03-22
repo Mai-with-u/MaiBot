@@ -55,7 +55,7 @@ class Conversation:
             self.action_planner = ActionPlanner(self.stream_id, self.private_name)
             self.goal_analyzer = GoalAnalyzer(self.stream_id, self.private_name)
             self.reply_generator = ReplyGenerator(self.stream_id, self.private_name)
-            self.knowledge_fetcher = KnowledgeFetcher(self.private_name)
+            self.knowledge_fetcher = KnowledgeFetcher(self.private_name, self.stream_id)
             self.waiter = Waiter(self.stream_id, self.private_name)
             self.direct_sender = DirectMessageSender(self.private_name)
 

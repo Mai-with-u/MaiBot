@@ -6,9 +6,10 @@ import random
 import math
 
 from json_repair import repair_json
-from typing import Union, Optional, Dict
+from typing import Union, Optional, Dict, List
 from datetime import datetime
 
+from sqlalchemy import or_
 from sqlmodel import col, select
 
 from src.common.logger import get_logger
@@ -17,6 +18,7 @@ from src.common.database.database_model import PersonInfo
 from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config, model_config
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.services.memory_service import memory_service
 
 
 logger = get_logger("person_info")
@@ -37,14 +39,58 @@ def get_person_id(platform: str, user_id: Union[int, str]) -> str:
 
 def get_person_id_by_person_name(person_name: str) -> str:
     """根据用户名获取用户ID"""
+    clean_name = str(person_name or "").strip()
+    if not clean_name:
+        return ""
     try:
         with get_db_session() as session:
-            statement = select(PersonInfo).where(col(PersonInfo.person_name) == person_name).limit(1)
+            statement = (
+                select(PersonInfo)
+                .where(
+                    or_(
+                        col(PersonInfo.person_name) == clean_name,
+                        col(PersonInfo.user_nickname) == clean_name,
+                    )
+                )
+                .limit(1)
+            )
+            record = session.exec(statement).first()
+            if record and record.person_id:
+                return record.person_id
+
+            statement = (
+                select(PersonInfo)
+                .where(PersonInfo.group_cardname.contains(clean_name))
+                .limit(1)
+            )
             record = session.exec(statement).first()
         return record.person_id if record else ""
     except Exception as e:
-        logger.error(f"根据用户名 {person_name} 获取用户ID时出错: {e}")
+        logger.error(f"根据用户名 {clean_name} 获取用户ID时出错: {e}")
         return ""
+
+
+def resolve_person_id_for_memory(
+    *,
+    person_name: str = "",
+    platform: str = "",
+    user_id: Optional[Union[int, str]] = None,
+) -> str:
+    """统一人物记忆链路中的 person_id 解析。
+
+    优先使用已知的人物名称/别名，其次退回到平台 + user_id 的稳定 ID。
+    """
+    name_token = str(person_name or "").strip()
+    if name_token:
+        resolved = get_person_id_by_person_name(name_token)
+        if resolved:
+            return resolved
+
+    platform_token = str(platform or "").strip()
+    user_token = str(user_id or "").strip()
+    if platform_token and user_token:
+        return get_person_id(platform_token, user_token)
+    return ""
 
 
 def is_person_known(
@@ -537,79 +583,79 @@ class Person:
     async def build_relationship(self, chat_content: str = "", info_type=""):
         if not self.is_known:
             return ""
-        # 构建points文本
-
         nickname_str = ""
         if self.person_name != self.nickname:
             nickname_str = f"(ta在{self.platform}上的昵称是{self.nickname})"
 
-        relation_info = ""
+        async def _select_traits(query_text: str, traits: List[str], limit: int = 3) -> List[str]:
+            clean_traits = [trait.strip() for trait in traits if isinstance(trait, str) and trait.strip()]
+            if not clean_traits:
+                return []
+            if not query_text:
+                return clean_traits[:limit]
 
-        points_text = ""
-        category_list = self.get_all_category()
+            numbered_traits = "\n".join(f"{index}. {trait}" for index, trait in enumerate(clean_traits, start=1))
+            prompt = f"""当前关注内容：
+{query_text}
 
-        if chat_content:
-            prompt = f"""当前聊天内容：
-{chat_content}
+候选人物信息：
+{numbered_traits}
 
-分类列表：
-{category_list}
-**要求**：请你根据当前聊天内容，从以下分类中选择一个与聊天内容相关的分类，并用<>包裹输出，不要输出其他内容，不要输出引号或[]，严格用<>包裹：
-例如:
-<分类1><分类2><分类3>......
-如果没有相关的分类，请输出<none>"""
+请从候选人物信息中选择与当前关注内容最相关的编号，并用<>包裹输出，不要输出其他内容。
+例如：
+<1><3>
+如果都不相关，请输出<none>"""
 
-            response, _ = await relation_selection_model.generate_response_async(prompt)
-            # print(prompt)
-            # print(response)
-            category_list = extract_categories_from_response(response)
-            if "none" not in category_list:
-                for category in category_list:
-                    random_memory = self.get_random_memory_by_category(category, 2)
-                    if random_memory:
-                        random_memory_str = "\n".join(
-                            [get_memory_content_from_memory(memory) for memory in random_memory]
-                        )
-                        points_text = f"有关 {category} 的内容：{random_memory_str}"
-                        break
-        elif info_type:
-            prompt = f"""你需要获取用户{self.person_name}的 **{info_type}** 信息。
+            try:
+                response, _ = await relation_selection_model.generate_response_async(prompt)
+                selected_traits: List[str] = []
+                for raw_index in extract_categories_from_response(response):
+                    if raw_index == "none":
+                        return []
+                    try:
+                        trait_index = int(raw_index) - 1
+                    except ValueError:
+                        continue
+                    if 0 <= trait_index < len(clean_traits):
+                        trait = clean_traits[trait_index]
+                        if trait not in selected_traits:
+                            selected_traits.append(trait)
+                if selected_traits:
+                    return selected_traits[:limit]
+            except Exception as e:
+                logger.debug(f"筛选人物画像信息失败，使用默认画像摘要: {e}")
 
-现有信息类别列表：
-{category_list}
-**要求**：请你根据**{info_type}**，从以下分类中选择一个与**{info_type}**相关的分类，并用<>包裹输出，不要输出其他内容，不要输出引号或[]，严格用<>包裹：
-例如:
-<分类1><分类2><分类3>......
-如果没有相关的分类，请输出<none>"""
-            response, _ = await relation_selection_model.generate_response_async(prompt)
-            # print(prompt)
-            # print(response)
-            category_list = extract_categories_from_response(response)
-            if "none" not in category_list:
-                for category in category_list:
-                    random_memory = self.get_random_memory_by_category(category, 3)
-                    if random_memory:
-                        random_memory_str = "\n".join(
-                            [get_memory_content_from_memory(memory) for memory in random_memory]
-                        )
-                        points_text = f"有关 {category} 的内容：{random_memory_str}"
-                        break
-        else:
-            for category in category_list:
-                random_memory = self.get_random_memory_by_category(category, 1)[0]
-                if random_memory:
-                    points_text = f"有关 {category} 的内容：{get_memory_content_from_memory(random_memory)}"
-                    break
+            return clean_traits[:limit]
+
+        profile = await memory_service.get_person_profile(self.person_id, limit=8)
+        relation_parts: List[str] = []
+        if profile.summary.strip():
+            relation_parts.append(profile.summary.strip())
+
+        query_text = str(chat_content or info_type or "").strip()
+        selected_traits = await _select_traits(query_text, profile.traits, limit=3)
+        if not selected_traits and not query_text:
+            selected_traits = [trait for trait in profile.traits if trait][:2]
+
+        for trait in selected_traits:
+            clean_trait = str(trait).strip()
+            if clean_trait and clean_trait not in relation_parts:
+                relation_parts.append(clean_trait)
+
+        for evidence in profile.evidence:
+            content = str(evidence.get("content", "") or "").strip()
+            if content and content not in relation_parts:
+                relation_parts.append(content)
+            if len(relation_parts) >= 4:
+                break
 
         points_info = ""
-        if points_text:
-            points_info = f"你还记得有关{self.person_name}的内容：{points_text}"
+        if relation_parts:
+            points_info = f"你还记得有关{self.person_name}的内容：{'；'.join(relation_parts[:3])}"
 
         if not (nickname_str or points_info):
             return ""
-        relation_info = f"{self.person_name}:{nickname_str}{points_info}"
-
-        return relation_info
+        return f"{self.person_name}:{nickname_str}{points_info}"
 
 
 class PersonInfoManager:
@@ -776,7 +822,7 @@ person_info_manager = PersonInfoManager()
 
 
 async def store_person_memory_from_answer(person_name: str, memory_content: str, chat_id: str) -> None:
-    """将人物信息存入person_info的memory_points
+    """将人物事实写入统一长期记忆
 
     Args:
         person_name: 人物名称
@@ -784,6 +830,11 @@ async def store_person_memory_from_answer(person_name: str, memory_content: str,
         chat_id: 聊天ID
     """
     try:
+        content = str(memory_content or "").strip()
+        if not content:
+            logger.debug("人物记忆内容为空，跳过写入")
+            return
+
         # 从 chat_id 获取 session
         session = _chat_manager.get_session_by_session_id(chat_id)
         if not session:
@@ -794,16 +845,14 @@ async def store_person_memory_from_answer(person_name: str, memory_content: str,
 
         # 尝试从person_name查找person_id
         # 首先尝试通过person_name查找
-        person_id = get_person_id_by_person_name(person_name)
-
+        person_id = resolve_person_id_for_memory(
+            person_name=person_name,
+            platform=platform,
+            user_id=session.user_id,
+        )
         if not person_id:
-            # 如果通过person_name找不到，尝试从 session 获取 user_id
-            if platform and session.user_id:
-                user_id = session.user_id
-                person_id = get_person_id(platform, user_id)
-            else:
-                logger.warning(f"无法确定person_id for person_name: {person_name}, chat_id: {chat_id}")
-                return
+            logger.warning(f"无法确定person_id for person_name: {person_name}, chat_id: {chat_id}")
+            return
 
         # 创建或获取Person对象
         person = Person(person_id=person_id)
@@ -812,39 +861,34 @@ async def store_person_memory_from_answer(person_name: str, memory_content: str,
             logger.warning(f"用户 {person_name} (person_id: {person_id}) 尚未认识，无法存储记忆")
             return
 
-        # 确定记忆分类（可以根据memory_content判断，这里使用通用分类）
-        category = "其他"  # 默认分类，可以根据需要调整
+        memory_hash = hashlib.sha256(f"{person_id}\n{content}".encode("utf-8")).hexdigest()[:16]
+        result = await memory_service.ingest_text(
+            external_id=f"person_fact:{person_id}:{memory_hash}",
+            source_type="person_fact",
+            text=content,
+            chat_id=chat_id,
+            person_ids=[person_id],
+            participants=[person.person_name or person_name],
+            timestamp=time.time(),
+            tags=["person_fact"],
+            metadata={
+                "person_id": person_id,
+                "person_name": person.person_name or person_name,
+                "platform": platform,
+                "source": "person_info.store_person_memory_from_answer",
+            },
+            respect_filter=True,
+            user_id=str(session.user_id or "").strip(),
+            group_id=str(session.group_id or "").strip(),
+        )
 
-        # 记忆点格式：category:content:weight
-        weight = "1.0"  # 默认权重
-        memory_point = f"{category}:{memory_content}:{weight}"
-
-        # 添加到memory_points
-        if not person.memory_points:
-            person.memory_points = []
-
-        # 检查是否已存在相似的记忆点（避免重复）
-        is_duplicate = False
-        for existing_point in person.memory_points:
-            if existing_point and isinstance(existing_point, str):
-                parts = existing_point.split(":", 2)
-                if len(parts) >= 2:
-                    existing_content = parts[1].strip()
-                    # 简单相似度检查（如果内容相同或非常相似，则跳过）
-                    if (
-                        existing_content == memory_content
-                        or memory_content in existing_content
-                        or existing_content in memory_content
-                    ):
-                        is_duplicate = True
-                        break
-
-        if not is_duplicate:
-            person.memory_points.append(memory_point)
-            person.sync_to_database()
-            logger.info(f"成功添加记忆点到 {person_name} (person_id: {person_id}): {memory_point}")
+        if result.success:
+            if result.detail == "chat_filtered":
+                logger.debug(f"人物长期记忆被聊天过滤策略跳过: {person_name} (person_id: {person_id})")
+            else:
+                logger.info(f"成功写入人物长期记忆: {person_name} (person_id: {person_id})")
         else:
-            logger.debug(f"记忆点已存在，跳过: {memory_point}")
+            logger.warning(f"写入人物长期记忆失败: {person_name} (person_id: {person_id}) | {result.detail}")
 
     except Exception as e:
         logger.error(f"存储人物记忆失败: {e}")

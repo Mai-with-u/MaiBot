@@ -416,6 +416,24 @@ class MemoryConfig(ConfigBase):
     )
     """_wrap_全局记忆黑名单，当启用全局记忆时，不将特定聊天流纳入检索"""
 
+    long_term_auto_summary_enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-widget": "switch",
+            "x-icon": "book-open",
+        },
+    )
+    """是否自动启动聊天总结并导入长期记忆"""
+
+    person_fact_writeback_enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-widget": "switch",
+            "x-icon": "user-round-pen",
+        },
+    )
+    """是否在发送回复后自动提取并写回人物事实到长期记忆"""
+
     chat_history_topic_check_message_threshold: int = Field(
         default=80,
         ge=1,

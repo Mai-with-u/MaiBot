@@ -55,7 +55,7 @@ CONFIG_DIR: Path = PROJECT_ROOT / "config"
 BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 MMC_VERSION: str = "1.0.0"
-CONFIG_VERSION: str = "8.1.0"
+CONFIG_VERSION: str = "8.1.1"
 MODEL_CONFIG_VERSION: str = "1.12.0"
 
 logger = get_logger("config")

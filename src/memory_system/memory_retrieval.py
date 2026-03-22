@@ -237,8 +237,8 @@ async def _react_agent_solve_question(
         if first_head_prompt is None:
             # 第一次构建，使用初始的collected_info（即initial_info）
             initial_collected_info = initial_info or ""
-            # 使用 LPMM 知识库检索 prompt
-            first_head_prompt_template = prompt_manager.get_prompt("memory_retrieval_react_prompt_head_lpmm")
+            # 使用统一长期记忆检索 prompt
+            first_head_prompt_template = prompt_manager.get_prompt("memory_retrieval_react_prompt_head_memory")
             first_head_prompt_template.add_context("bot_name", bot_name)
             first_head_prompt_template.add_context("time_now", time_now)
             first_head_prompt_template.add_context("chat_history", chat_history)

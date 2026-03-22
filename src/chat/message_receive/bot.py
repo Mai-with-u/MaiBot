@@ -360,6 +360,12 @@ class ChatBot:
             user_id = user_info.user_id
             group_id = group_info.group_id if group_info else None
             _ = await chat_manager.get_or_create_session(platform, user_id, group_id)  # 确保会话存在
+            try:
+                from src.services.memory_flow_service import memory_automation_service
+
+                await memory_automation_service.on_incoming_message(message)
+            except Exception as exc:
+                logger.warning(f"[长期记忆自动总结] 注册会话总结器失败: {exc}")
 
             # message.update_chat_stream(chat)
 

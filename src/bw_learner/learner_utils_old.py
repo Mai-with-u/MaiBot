@@ -196,6 +196,32 @@ def contains_bot_self_name(content: str) -> bool:
     return any(name in target for name in candidates)
 
 
+def is_bot_message(msg: Any) -> bool:
+    """判断消息是否来自机器人自身。"""
+    if msg is None:
+        return False
+
+    bot_config = getattr(global_config, "bot", None)
+    if not bot_config:
+        return False
+
+    user_id = str(getattr(msg, "user_id", "") or getattr(getattr(msg, "user_info", None), "user_id", "") or "").strip()
+    if not user_id:
+        return False
+
+    known_accounts = {
+        str(getattr(bot_config, "qq_account", "") or "").strip(),
+        str(getattr(bot_config, "telegram_account", "") or "").strip(),
+    }
+
+    for platform in getattr(bot_config, "platforms", []) or []:
+        account = str(getattr(platform, "account", "") or getattr(platform, "id", "") or "").strip()
+        if account:
+            known_accounts.add(account)
+
+    return user_id in {account for account in known_accounts if account}
+
+
 # def build_context_paragraph(messages: List[Any], center_index: int) -> Optional[str]:
 #     """
 #     构建包含中心消息上下文的段落（前3条+后3条），使用标准的 readable builder 输出

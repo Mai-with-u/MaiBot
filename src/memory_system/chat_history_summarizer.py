@@ -931,12 +931,14 @@ class ChatHistorySummarizer:
             else:
                 logger.warning(f"{self.log_prefix} 存储聊天历史记录到数据库失败")
 
-            # 同时导入到LPMM知识库
-            if global_config.lpmm_knowledge.enable:
-                await self._import_to_lpmm_knowledge(
+            if saved_record and saved_record.get("id") is not None:
+                await self._import_to_long_term_memory(
+                    record_id=int(saved_record["id"]),
                     theme=theme,
                     summary=summary,
                     participants=participants,
+                    start_time=start_time,
+                    end_time=end_time,
                     original_text=original_text,
                 )
 
@@ -947,76 +949,131 @@ class ChatHistorySummarizer:
             traceback.print_exc()
             raise
 
-    async def _import_to_lpmm_knowledge(
+    async def _import_to_long_term_memory(
         self,
+        record_id: int,
         theme: str,
         summary: str,
         participants: List[str],
+        start_time: float,
+        end_time: float,
         original_text: str,
     ):
         """
-        将聊天历史总结导入到LPMM知识库
+        将聊天历史总结导入到统一长期记忆
 
         Args:
+            record_id: chat_history 主键
             theme: 话题主题
             summary: 概括内容
             participants: 参与者列表
+            start_time: 开始时间
+            end_time: 结束时间
             original_text: 原始文本（可能很长，需要截断）
         """
         try:
-            from src.chat.knowledge.lpmm_ops import lpmm_ops
+            from src.services.memory_service import memory_service
+            session = _chat_manager.get_session_by_session_id(self.session_id)
+            session_user_id = str(getattr(session, "user_id", "") or "").strip() if session else ""
+            session_group_id = str(getattr(session, "group_id", "") or "").strip() if session else ""
 
-            # 构造要导入的文本内容
-            # 格式：主题 + 概括 + 参与者信息 + 原始内容摘要
-            # 注意：使用单换行符连接，确保整个内容作为一段导入，不被LPMM分段
             content_parts = []
-
-            # 1. 话题主题
-            # if theme:
-            # content_parts.append(f"话题：{theme}")
-
-            # 2. 概括内容
+            if theme:
+                content_parts.append(f"主题：{theme}")
             if summary:
                 content_parts.append(f"概括：{summary}")
-
-            # 3. 参与者信息
             if participants:
                 participants_text = "、".join(participants)
                 content_parts.append(f"参与者：{participants_text}")
-
-            # 4. 原始文本摘要（如果原始文本太长，只取前500字）
-            # if original_text:
-            #     # 截断原始文本，避免过长
-            #     max_original_length = 500
-            #     if len(original_text) > max_original_length:
-            #         truncated_text = original_text[:max_original_length] + "..."
-            #         content_parts.append(f"原始内容摘要：{truncated_text}")
-            #     else:
-            #         content_parts.append(f"原始内容：{original_text}")
-
-            # 将所有部分合并为一个完整段落（使用单换行符，避免被LPMM分段）
-            # LPMM使用 \n\n 作为段落分隔符，所以这里使用 \n 确保不会被分段
             content_to_import = "\n".join(content_parts)
 
             if not content_to_import.strip():
-                logger.warning(f"{self.log_prefix} 聊天历史总结内容为空，跳过导入知识库")
+                logger.warning(f"{self.log_prefix} 聊天历史总结内容为空，改用插件侧 generate_from_chat 兜底")
+                await self._fallback_import_to_long_term_memory(
+                    record_id=record_id,
+                    theme=theme,
+                    participants=participants,
+                    start_time=start_time,
+                    end_time=end_time,
+                    original_text=original_text,
+                )
                 return
 
-            # 调用lpmm_ops导入
-            result = await lpmm_ops.add_content(text=content_to_import, auto_split=False)
-
-            if result["status"] == "success":
-                logger.info(
-                    f"{self.log_prefix} 成功将聊天历史总结导入到LPMM知识库 | 话题: {theme} | 新增段落数: {result.get('count', 0)}"
-                )
+            result = await memory_service.ingest_summary(
+                external_id=f"chat_history:{record_id}",
+                chat_id=self.session_id,
+                text=content_to_import,
+                participants=participants,
+                time_start=start_time,
+                time_end=end_time,
+                tags=[theme] if theme else [],
+                metadata={"theme": theme, "original_text_length": len(original_text or "")},
+                respect_filter=True,
+                user_id=session_user_id,
+                group_id=session_group_id,
+            )
+            if result.success:
+                if result.detail == "chat_filtered":
+                    logger.debug(f"{self.log_prefix} 聊天历史总结被聊天过滤策略跳过 | 话题: {theme}")
+                else:
+                    logger.info(f"{self.log_prefix} 成功将聊天历史总结导入到长期记忆 | 话题: {theme}")
             else:
-                logger.warning(
-                    f"{self.log_prefix} 将聊天历史总结导入到LPMM知识库失败 | 话题: {theme} | 错误: {result.get('message', '未知错误')}"
+                logger.warning(f"{self.log_prefix} 将聊天历史总结导入到长期记忆失败，尝试插件侧兜底 | 话题: {theme} | 错误: {result.detail}")
+                await self._fallback_import_to_long_term_memory(
+                    record_id=record_id,
+                    theme=theme,
+                    participants=participants,
+                    start_time=start_time,
+                    end_time=end_time,
+                    original_text=original_text,
                 )
 
         except Exception as e:
-            # 导入失败不应该影响数据库存储，只记录错误
-            logger.error(f"{self.log_prefix} 导入聊天历史总结到LPMM知识库时出错: {e}", exc_info=True)
+            logger.error(f"{self.log_prefix} 导入聊天历史总结到长期记忆时出错: {e}", exc_info=True)
+
+    async def _fallback_import_to_long_term_memory(
+        self,
+        *,
+        record_id: int,
+        theme: str,
+        participants: List[str],
+        start_time: float,
+        end_time: float,
+        original_text: str,
+    ) -> None:
+        try:
+            from src.services.memory_service import memory_service
+            session = _chat_manager.get_session_by_session_id(self.session_id)
+            session_user_id = str(getattr(session, "user_id", "") or "").strip() if session else ""
+            session_group_id = str(getattr(session, "group_id", "") or "").strip() if session else ""
+
+            result = await memory_service.ingest_summary(
+                external_id=f"chat_history:{record_id}",
+                chat_id=self.session_id,
+                text="",
+                participants=participants,
+                time_start=start_time,
+                time_end=end_time,
+                tags=[theme] if theme else [],
+                metadata={
+                    "theme": theme,
+                    "original_text_length": len(original_text or ""),
+                    "generate_from_chat": True,
+                    "context_length": global_config.memory.chat_history_topic_check_message_threshold,
+                },
+                respect_filter=True,
+                user_id=session_user_id,
+                group_id=session_group_id,
+            )
+            if result.success:
+                if result.detail == "chat_filtered":
+                    logger.debug(f"{self.log_prefix} 插件侧 generate_from_chat 兜底被聊天过滤策略跳过 | 话题: {theme}")
+                else:
+                    logger.info(f"{self.log_prefix} 插件侧 generate_from_chat 兜底导入成功 | 话题: {theme}")
+            else:
+                logger.warning(f"{self.log_prefix} 插件侧 generate_from_chat 兜底导入失败 | 话题: {theme} | 错误: {result.detail}")
+        except Exception as exc:
+            logger.error(f"{self.log_prefix} 插件侧兜底导入长期记忆失败: {exc}", exc_info=True)
 
     async def start(self):
         """启动后台定期检查循环"""

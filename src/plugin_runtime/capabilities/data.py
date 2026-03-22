@@ -672,12 +672,12 @@ class RuntimeDataCapabilityMixin:
             limit_value = 5
 
         try:
-            from src.chat.knowledge import qa_manager
+            from src.services.memory_service import memory_service
 
-            if qa_manager is None:
-                return {"success": True, "content": "LPMM知识库已禁用"}
-
-            knowledge_info = await qa_manager.get_knowledge(query, limit=limit_value)
+            result = await memory_service.search(query, limit=limit_value)
+            if not result.success:
+                return {"success": False, "error": result.error or "长期记忆检索失败"}
+            knowledge_info = result.to_text(limit=limit_value)
             content = f"你知道这些知识: {knowledge_info}" if knowledge_info else f"你不太了解有关{query}的知识"
             return {"success": True, "content": content}
         except Exception as e:
