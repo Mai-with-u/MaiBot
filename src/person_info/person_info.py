@@ -273,7 +273,9 @@ class Person:
         # 其他平台：尝试从 platforms 配置中查找
         platform_account = platform_accounts.get(platform, "")
         if platform_account:
-            return user_id_str == platform_account
+            if user_id_str == platform_account:
+                return True
+            return user_id_str == qq_account
 
         # 默认情况：与主 QQ 账号比较（兼容性）
         return user_id_str == qq_account
