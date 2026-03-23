@@ -60,8 +60,7 @@ async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
 
     发送顺序为：
     1. WebUI 特殊链路
-    2. Platform IO 适配器链路
-    3. 旧版 ``maim_message`` / API Server 链路
+    2. 旧版 ``maim_message`` / API Server 链路
 
     Args:
         message: 待发送的内部会话消息。
@@ -123,32 +122,6 @@ async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
                 else:
                     logger.info(f"已将消息  '{message_preview}'  发往 WebUI 聊天室")
             return True
-
-        try:
-            from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-            delivery_batch = await get_plugin_runtime_manager().try_send_message_via_platform_io(message)
-            if delivery_batch is not None:
-                if delivery_batch.has_success:
-                    successful_driver_ids = [
-                        receipt.driver_id or "unknown"
-                        for receipt in delivery_batch.sent_receipts
-                    ]
-                    if show_log:
-                        logger.info(
-                            f"已通过 Platform IO 将消息 '{message_preview}' 发往平台'{platform}' "
-                            f"(drivers: {', '.join(successful_driver_ids)})"
-                        )
-                    return True
-
-                failed_details = "; ".join(
-                    f"driver={receipt.driver_id} status={receipt.status} error={receipt.error}"
-                    for receipt in delivery_batch.failed_receipts
-                ) or "未命中任何发送路由"
-                logger.warning(f"Platform IO 发送失败: platform={platform} {failed_details}")
-                return False
-        except Exception as exc:
-            logger.warning(f"检查 Platform IO 出站链路时出现异常，将回退旧发送链: {exc}")
 
         # Fallback 逻辑: 尝试通过 API Server 发送
         async def send_with_new_api(legacy_exception: Optional[Exception] = None) -> bool:
@@ -260,8 +233,21 @@ async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
         raise e  # 重新抛出其他异常
 
 
+async def send_prepared_message_to_platform(message: SessionMessage, show_log: bool = True) -> bool:
+    """发送一条已完成预处理的消息到底层平台。
+
+    Args:
+        message: 已经完成回复组件注入、文本处理等预处理的消息对象。
+        show_log: 是否输出发送成功日志。
+
+    Returns:
+        bool: 发送成功时返回 ``True``。
+    """
+    return await _send_message(message, show_log=show_log)
+
+
 class UniversalMessageSender:
-    """管理消息的注册、即时处理、发送和存储，并跟踪思考状态。"""
+    """旧链与 WebUI 的底层发送器。"""
 
     def __init__(self) -> None:
         """初始化统一消息发送器。"""
@@ -276,17 +262,18 @@ class UniversalMessageSender:
         storage_message: bool = True,
         show_log: bool = True,
     ) -> bool:
-        """
-        处理、发送并存储一条消息。
+        """通过旧链或 WebUI 发送并存储一条消息。
 
-        参数：
-            message: MessageSession 对象，待发送的消息。
+        Args:
+            message: 待发送的内部消息对象。
             typing: 是否模拟打字等待。
-            set_reply: 是否构建回复引用消息。
+            set_reply: 是否构建引用回复消息。
+            reply_message_id: 被引用消息的 ID。
+            storage_message: 是否在发送成功后写入数据库。
+            show_log: 是否输出发送日志。
 
-
-        用法：
-            - typing=True 时，发送前会有打字等待。
+        Returns:
+            bool: 发送成功时返回 ``True``。
         """
         if not message.message_id:
             logger.error("消息缺少 message_id，无法发送")
@@ -339,7 +326,7 @@ class UniversalMessageSender:
                 )
                 await asyncio.sleep(typing_time)
 
-            sent_msg = await _send_message(message, show_log=show_log)
+            sent_msg = await send_prepared_message_to_platform(message, show_log=show_log)
             if not sent_msg:
                 return False
 

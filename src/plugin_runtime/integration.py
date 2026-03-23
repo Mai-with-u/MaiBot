@@ -157,7 +157,7 @@ class PluginRuntimeManager(
         started_supervisors: List[PluginSupervisor] = []
         try:
             platform_io_manager.set_inbound_dispatcher(self._dispatch_platform_inbound)
-            await platform_io_manager.start()
+            await platform_io_manager.ensure_send_pipeline_ready()
 
             if self._builtin_supervisor:
                 await self._builtin_supervisor.start()

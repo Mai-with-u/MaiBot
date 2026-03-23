@@ -21,7 +21,7 @@ class Server:
         self._server: Optional[UvicornServer] = None
         self.set_address(host, port)
 
-    def register_router(self, router: APIRouter, prefix: str = ""):
+    def register_router(self, router: APIRouter, prefix: str = ""): 
         """注册路由
 
         APIRouter 用于对相关的路由端点进行分组和模块化管理：

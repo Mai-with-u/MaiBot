@@ -1,27 +1,28 @@
-import time
+"""PFC 侧消息发送封装。"""
+
 from typing import Optional
 
-from maim_message import Seg
 from rich.traceback import install
 
-from src.common.data_models.mai_message_data_model import MaiMessage, UserInfo
 from src.chat.message_receive.chat_manager import BotChatSession
-from src.chat.message_receive.message import MessageSending
-from src.chat.message_receive.uni_message_sender import UniversalMessageSender
-from src.chat.utils.utils import get_bot_account
+from src.common.data_models.mai_message_data_model import MaiMessage
 from src.common.logger import get_logger
-from src.config.config import global_config
+from src.services import send_service as send_api
 
 install(extra_lines=3)
-
 
 logger = get_logger("message_sender")
 
 
 class DirectMessageSender:
-    """直接消息发送器"""
+    """直接消息发送器。"""
 
-    def __init__(self, private_name: str):
+    def __init__(self, private_name: str) -> None:
+        """初始化直接消息发送器。
+
+        Args:
+            private_name: 当前私聊实例的名称。
+        """
         self.private_name = private_name
 
     async def send_message(
@@ -30,58 +31,31 @@ class DirectMessageSender:
         content: str,
         reply_to_message: Optional[MaiMessage] = None,
     ) -> None:
-        """发送消息到聊天流
+        """发送文本消息到聊天流。
 
         Args:
-            chat_stream: 聊天会话
-            content: 消息内容
-            reply_to_message: 要回复的消息（可选）
+            chat_stream: 目标聊天会话。
+            content: 待发送的文本内容。
+            reply_to_message: 可选的引用回复锚点消息。
+
+        Raises:
+            RuntimeError: 当消息发送失败时抛出。
         """
         try:
-            # 创建消息内容
-            segments = Seg(type="seglist", data=[Seg(type="text", data=content)])
-
-            # 获取麦麦的信息
-            bot_user_id = get_bot_account(chat_stream.platform)
-            if not bot_user_id:
-                logger.error(f"[私聊][{self.private_name}]平台 {chat_stream.platform} 未配置机器人账号，无法发送消息")
-                raise RuntimeError(f"平台 {chat_stream.platform} 未配置机器人账号")
-            bot_user_info = UserInfo(
-                user_id=bot_user_id,
-                user_nickname=global_config.bot.nickname,
+            sent = await send_api.text_to_stream(
+                text=content,
+                stream_id=chat_stream.session_id,
+                set_reply=reply_to_message is not None,
+                reply_message=reply_to_message,
+                storage_message=True,
             )
-
-            # 用当前时间作为message_id，和之前那套sender一样
-            message_id = f"dm{round(time.time(), 2)}"
-
-            # 构建发送者信息（私聊时为接收者）
-            sender_info = None
-            if reply_to_message and reply_to_message.message_info and reply_to_message.message_info.user_info:
-                sender_info = reply_to_message.message_info.user_info
-
-            # 构建消息对象
-            message = MessageSending(
-                message_id=message_id,
-                session=chat_stream,
-                bot_user_info=bot_user_info,
-                sender_info=sender_info,
-                message_segment=segments,
-                reply=reply_to_message,
-                is_head=True,
-                is_emoji=False,
-                thinking_start_time=time.time(),
-            )
-
-            # 发送消息
-            message_sender = UniversalMessageSender()
-            sent = await message_sender.send_message(message, typing=False, set_reply=False, storage_message=True)
 
             if sent:
                 logger.info(f"[私聊][{self.private_name}]PFC消息已发送: {content}")
-            else:
-                logger.error(f"[私聊][{self.private_name}]PFC消息发送失败")
-                raise RuntimeError("消息发送失败")
+                return
 
-        except Exception as e:
-            logger.error(f"[私聊][{self.private_name}]PFC消息发送失败: {str(e)}")
+            logger.error(f"[私聊][{self.private_name}]PFC消息发送失败")
+            raise RuntimeError("消息发送失败")
+        except Exception as exc:
+            logger.error(f"[私聊][{self.private_name}]PFC消息发送失败: {exc}")
             raise

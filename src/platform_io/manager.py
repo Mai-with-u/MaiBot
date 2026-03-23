@@ -36,6 +36,7 @@ class PlatformIOManager:
         self._driver_registry = DriverRegistry()
         self._send_route_table = RouteTable()
         self._receive_route_table = RouteTable()
+        self._legacy_send_drivers: Dict[str, PlatformIODriver] = {}
         self._deduplicator = MessageDeduplicator()
         self._outbound_tracker = OutboundTracker()
         self._inbound_dispatcher: Optional[InboundDispatcher] = None
@@ -74,6 +75,16 @@ class PlatformIOManager:
             raise
 
         self._started = True
+
+    async def ensure_send_pipeline_ready(self) -> None:
+        """确保出站发送管线已准备就绪。
+
+        该方法会先同步 legacy fallback driver，再在需要时启动 Broker。
+        send service 应只调用这一层准备入口，而不是自行判断旧链或插件链。
+        """
+        await self._sync_legacy_send_drivers()
+        if not self._started:
+            await self.start()
 
     async def stop(self) -> None:
         """停止 Broker，并按逆序停止全部已注册驱动。
@@ -272,7 +283,59 @@ class PlatformIOManager:
         removed_driver.clear_inbound_handler()
         self._send_route_table.remove_bindings_by_driver(driver_id)
         self._receive_route_table.remove_bindings_by_driver(driver_id)
+        self._legacy_send_drivers = {
+            platform: driver
+            for platform, driver in self._legacy_send_drivers.items()
+            if driver.driver_id != driver_id
+        }
         return removed_driver
+
+    async def _sync_legacy_send_drivers(self) -> None:
+        """根据当前配置同步 legacy fallback driver。"""
+        from src.chat.utils.utils import get_all_bot_accounts
+        from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
+
+        desired_accounts = get_all_bot_accounts()
+        desired_platforms = set(desired_accounts.keys())
+        current_platforms = set(self._legacy_send_drivers.keys())
+
+        for platform in sorted(current_platforms - desired_platforms):
+            await self._remove_legacy_send_driver(platform)
+
+        for platform, account_id in desired_accounts.items():
+            existing_driver = self._legacy_send_drivers.get(platform)
+            if existing_driver is not None and existing_driver.descriptor.account_id == account_id:
+                continue
+
+            if existing_driver is not None:
+                await self._remove_legacy_send_driver(platform)
+
+            driver = LegacyPlatformDriver(
+                driver_id=f"legacy.send.{platform}",
+                platform=platform,
+                account_id=account_id,
+            )
+            if self._started:
+                await self.add_driver(driver)
+            else:
+                self.register_driver(driver)
+            self._legacy_send_drivers[platform] = driver
+
+    async def _remove_legacy_send_driver(self, platform: str) -> None:
+        """移除指定平台的 legacy fallback driver。
+
+        Args:
+            platform: 要移除的目标平台。
+        """
+        driver = self._legacy_send_drivers.get(platform)
+        if driver is None:
+            return
+
+        if self._started:
+            await self.remove_driver(driver.driver_id)
+        else:
+            self.unregister_driver(driver.driver_id)
+        self._legacy_send_drivers.pop(platform, None)
 
     def bind_send_route(self, binding: RouteBinding) -> None:
         """为某个路由键绑定发送驱动。
@@ -353,7 +416,19 @@ class PlatformIOManager:
             driver = self._driver_registry.get(binding.driver_id)
             if driver is not None:
                 drivers.append(driver)
-        return drivers
+        if drivers:
+            return drivers
+
+        fallback_driver = self._legacy_send_drivers.get(route_key.platform)
+        if fallback_driver is None:
+            return []
+
+        descriptor = fallback_driver.descriptor
+        if descriptor.account_id is not None and route_key.account_id not in (None, descriptor.account_id):
+            return []
+        if descriptor.scope is not None and route_key.scope not in (None, descriptor.scope):
+            return []
+        return [fallback_driver]
 
     def resolve_driver(self, route_key: RouteKey) -> Optional[PlatformIODriver]:
         """兼容旧接口，返回首个命中的发送驱动。"""
