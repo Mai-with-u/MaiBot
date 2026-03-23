@@ -399,6 +399,7 @@ class PluginRunnerSupervisor:
         plugin_id: str,
         config_data: Optional[Dict[str, Any]] = None,
         config_version: str = "",
+        config_scope: str = "self",
     ) -> bool:
         """向 Runner 推送插件配置更新。
 
@@ -406,12 +407,14 @@ class PluginRunnerSupervisor:
             plugin_id: 目标插件 ID。
             config_data: 配置内容。
             config_version: 配置版本号。
+            config_scope: 配置变更范围。
 
         Returns:
             bool: 请求是否成功送达并被 Runner 接受。
         """
         payload = ConfigUpdatedPayload(
             plugin_id=plugin_id,
+            config_scope=config_scope,
             config_version=config_version,
             config_data=config_data or {},
         )
@@ -427,6 +430,22 @@ class PluginRunnerSupervisor:
             return False
 
         return bool(response.payload.get("acknowledged", False))
+
+    def get_config_reload_subscribers(self, scope: str) -> List[str]:
+        """返回订阅指定全局配置广播的插件列表。
+
+        Args:
+            scope: 配置变更范围，仅支持 ``bot`` 或 ``model``。
+
+        Returns:
+            List[str]: 已声明订阅该范围的插件 ID 列表。
+        """
+
+        matched_plugins: List[str] = []
+        for plugin_id, registration in self._registered_plugins.items():
+            if scope in registration.config_reload_subscriptions:
+                matched_plugins.append(plugin_id)
+        return matched_plugins
 
     async def _wait_for_runner_connection(self, timeout_sec: float) -> None:
         """等待 Runner 建立 RPC 连接。

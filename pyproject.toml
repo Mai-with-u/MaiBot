@@ -54,6 +54,8 @@ dev = [
 [tool.uv]
 index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
+[tool.uv.sources]
+maibot-plugin-sdk = { path = "packages/maibot-plugin-sdk", editable = true }
 
 [tool.ruff]
 

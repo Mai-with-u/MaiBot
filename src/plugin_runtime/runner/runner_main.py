@@ -27,6 +27,7 @@ from src.plugin_runtime import ENV_HOST_VERSION, ENV_IPC_ADDRESS, ENV_PLUGIN_DIR
 from src.plugin_runtime.protocol.envelope import (
     BootstrapPluginPayload,
     ComponentDeclaration,
+    ConfigUpdatedPayload,
     Envelope,
     HealthPayload,
     InvokePayload,
@@ -342,6 +343,7 @@ class PluginRunner:
         """
         # 收集插件组件声明
         components: List[ComponentDeclaration] = []
+        config_reload_subscriptions: List[str] = []
         instance = meta.instance
 
         # 从插件实例获取组件声明（SDK 插件须实现 get_components 方法）
@@ -355,12 +357,15 @@ class PluginRunner:
                 )
                 for comp_info in instance.get_components()
             )
+        if hasattr(instance, "get_config_reload_subscriptions"):
+            config_reload_subscriptions = list(instance.get_config_reload_subscriptions())
 
         reg_payload = RegisterPluginPayload(
             plugin_id=meta.plugin_id,
             plugin_version=meta.version,
             components=components,
             capabilities_required=meta.capabilities_required,
+            config_reload_subscriptions=config_reload_subscriptions,
         )
 
         try:
@@ -911,18 +916,28 @@ class PluginRunner:
         return envelope.make_response(payload={"acknowledged": True})
 
     async def _handle_config_updated(self, envelope: Envelope) -> Envelope:
-        """处理配置更新事件"""
+        """处理配置更新事件。"""
+        try:
+            payload = ConfigUpdatedPayload.model_validate(envelope.payload)
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
         plugin_id = envelope.plugin_id
         if meta := self._loader.get_plugin(plugin_id):
             try:
-                config_data = envelope.payload.get("config_data", {})
-                config_version = envelope.payload.get("config_version", "")
-                self._apply_plugin_config(meta, config_data=config_data)
-                if hasattr(meta.instance, "on_config_update"):
-                    ret = meta.instance.on_config_update(config_data, config_version)
-                    # 兼容同步和异步的 on_config_update 实现
-                    if asyncio.iscoroutine(ret):
-                        await ret
+                config_scope = payload.config_scope.value
+                if config_scope == "self":
+                    self._apply_plugin_config(meta, config_data=payload.config_data)
+                if not hasattr(meta.instance, "on_config_update"):
+                    raise AttributeError("插件缺少 on_config_update() 实现")
+
+                ret = meta.instance.on_config_update(
+                    config_scope,
+                    payload.config_data,
+                    payload.config_version,
+                )
+                if asyncio.iscoroutine(ret):
+                    await ret
             except Exception as e:
                 logger.error(f"插件 {plugin_id} 配置更新失败: {e}")
                 return envelope.make_error_response(ErrorCode.E_UNKNOWN.value, str(e))

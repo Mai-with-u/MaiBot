@@ -16,7 +16,7 @@ import json
 import tomlkit
 
 from src.common.logger import get_logger
-from src.config.config import global_config
+from src.config.config import config_manager
 from src.config.file_watcher import FileChange, FileWatcher
 from src.platform_io import DeliveryBatch, InboundMessageEnvelope, get_platform_io_manager
 from src.plugin_runtime.capabilities import (
@@ -69,6 +69,8 @@ class PluginRuntimeManager(
         self._plugin_source_watcher_subscription_id: Optional[str] = None
         self._plugin_config_watcher_subscriptions: Dict[str, Tuple[Path, str]] = {}
         self._plugin_path_cache: Dict[str, Path] = {}
+        self._config_reload_callback: Callable[[Sequence[str]], Awaitable[None]] = self._handle_main_config_reload
+        self._config_reload_callback_registered: bool = False
 
     async def _dispatch_platform_inbound(self, envelope: InboundMessageEnvelope) -> None:
         """接收 Platform IO 审核后的入站消息并送入主消息链。
@@ -108,7 +110,7 @@ class PluginRuntimeManager(
             logger.warning("PluginRuntimeManager 已在运行中，跳过重复启动")
             return
 
-        _cfg = global_config.plugin_runtime
+        _cfg = config_manager.get_global_config().plugin_runtime
         if not _cfg.enabled:
             logger.info("插件运行时已在配置中禁用，跳过启动")
             return
@@ -166,11 +168,16 @@ class PluginRuntimeManager(
                 await self._third_party_supervisor.start()
                 started_supervisors.append(self._third_party_supervisor)
             await self._start_plugin_file_watcher()
+            config_manager.register_reload_callback(self._config_reload_callback)
+            self._config_reload_callback_registered = True
             self._started = True
             logger.info(f"插件运行时已启动 — 内置: {builtin_dirs or '无'}, 第三方: {third_party_dirs or '无'}")
         except Exception as e:
             logger.error(f"插件运行时启动失败: {e}", exc_info=True)
             await self._stop_plugin_file_watcher()
+            if self._config_reload_callback_registered:
+                config_manager.unregister_reload_callback(self._config_reload_callback)
+                self._config_reload_callback_registered = False
             await asyncio.gather(*(sv.stop() for sv in started_supervisors), return_exceptions=True)
             platform_io_manager.clear_inbound_dispatcher()
             try:
@@ -188,6 +195,9 @@ class PluginRuntimeManager(
 
         platform_io_manager = get_platform_io_manager()
         await self._stop_plugin_file_watcher()
+        if self._config_reload_callback_registered:
+            config_manager.unregister_reload_callback(self._config_reload_callback)
+            self._config_reload_callback_registered = False
 
         coroutines: List[Coroutine[Any, Any, None]] = []
         if self._builtin_supervisor:
@@ -233,6 +243,7 @@ class PluginRuntimeManager(
         plugin_id: str,
         config_data: Optional[Dict[str, Any]] = None,
         config_version: str = "",
+        config_scope: str = "self",
     ) -> bool:
         """向拥有该插件的 Supervisor 推送配置更新事件。
 
@@ -240,6 +251,7 @@ class PluginRuntimeManager(
             plugin_id: 插件 ID
             config_data: 可选的配置数据（如果为 None 则由 Supervisor 从磁盘加载）
             config_version: 可选的配置版本字符串，供 Supervisor 进行版本控制
+            config_scope: 配置变更范围。
         """
         if not self._started:
             return False
@@ -258,12 +270,67 @@ class PluginRuntimeManager(
             if config_data is not None
             else self._load_plugin_config_for_supervisor(sv, plugin_id)
         )
-        await sv.notify_plugin_config_updated(
+        return await sv.notify_plugin_config_updated(
             plugin_id=plugin_id,
             config_data=config_payload,
             config_version=config_version,
+            config_scope=config_scope,
         )
-        return True
+
+    @staticmethod
+    def _normalize_config_reload_scopes(changed_scopes: Sequence[str]) -> tuple[str, ...]:
+        """规范化配置热重载范围列表。
+
+        Args:
+            changed_scopes: 原始配置热重载范围列表。
+
+        Returns:
+            tuple[str, ...]: 去重后的有效配置范围元组。
+        """
+
+        normalized_scopes: list[str] = []
+        for scope in changed_scopes:
+            normalized_scope = str(scope or "").strip().lower()
+            if normalized_scope not in {"bot", "model"}:
+                continue
+            if normalized_scope not in normalized_scopes:
+                normalized_scopes.append(normalized_scope)
+        return tuple(normalized_scopes)
+
+    async def _broadcast_config_reload(self, scope: str, config_data: Dict[str, Any]) -> None:
+        """向订阅指定范围的插件广播配置热重载。
+
+        Args:
+            scope: 配置变更范围，仅支持 ``bot`` 或 ``model``。
+            config_data: 最新配置数据。
+        """
+
+        for supervisor in self.supervisors:
+            for plugin_id in supervisor.get_config_reload_subscribers(scope):
+                delivered = await supervisor.notify_plugin_config_updated(
+                    plugin_id=plugin_id,
+                    config_data=config_data,
+                    config_version="",
+                    config_scope=scope,
+                )
+                if not delivered:
+                    logger.warning(f"向插件 {plugin_id} 广播 {scope} 配置热重载失败")
+
+    async def _handle_main_config_reload(self, changed_scopes: Sequence[str]) -> None:
+        """处理 bot/model 主配置热重载广播。
+
+        Args:
+            changed_scopes: 本次热重载命中的配置范围列表。
+        """
+
+        if not self._started:
+            return
+
+        normalized_scopes = self._normalize_config_reload_scopes(changed_scopes)
+        if "bot" in normalized_scopes:
+            await self._broadcast_config_reload("bot", config_manager.get_global_config().model_dump())
+        if "model" in normalized_scopes:
+            await self._broadcast_config_reload("model", config_manager.get_model_config().model_dump())
 
     # ─── 事件桥接 ──────────────────────────────────────────────
 
@@ -612,16 +679,12 @@ class PluginRuntimeManager(
         return None if plugin_path is None else plugin_path / "config.toml"
 
     async def _handle_plugin_config_changes(self, plugin_id: str, changes: Sequence[FileChange]) -> None:
-        """处理单个插件配置文件变化，并精确重载目标插件。
+        """处理单个插件配置文件变化，并定向派发自配置热更新。
 
         Args:
             plugin_id: 发生配置变更的插件 ID。
             changes: 当前批次收集到的配置文件变更列表。
 
-        Notes:
-            这里选择“精确重载该插件”，而不是仅推送软性的配置更新通知。
-            这样可以保证没有实现 ``on_config_update()`` 的插件也能重新执行
-            ``on_load()``，让磁盘上的 ``config.toml`` 修改对插件运行态真正生效。
         """
         if not self._started or not changes:
             return
@@ -636,15 +699,15 @@ class PluginRuntimeManager(
             return
 
         try:
-            self._load_plugin_config_for_supervisor(supervisor, plugin_id)
-            reload_success = await supervisor.reload_plugin(
+            config_payload = self._load_plugin_config_for_supervisor(supervisor, plugin_id)
+            delivered = await supervisor.notify_plugin_config_updated(
                 plugin_id=plugin_id,
-                reason="config_file_changed",
+                config_data=config_payload,
+                config_version="",
+                config_scope="self",
             )
-            if reload_success:
-                self._refresh_plugin_config_watch_subscriptions()
-            else:
-                logger.warning(f"插件 {plugin_id} 配置文件变更后重载失败")
+            if not delivered:
+                logger.warning(f"插件 {plugin_id} 配置文件变更后通知失败")
         except Exception as exc:
             logger.warning(f"插件 {plugin_id} 配置文件变更处理失败: {exc}")
 
@@ -652,8 +715,8 @@ class PluginRuntimeManager(
         """处理插件源码相关变化。
 
         这里仅负责源码、清单等会影响插件装载状态的文件；配置文件的变化会由
-        单独的 per-plugin watcher 处理，并精确重载对应插件，避免放大成
-        不必要的跨插件 reload。
+        单独的 per-plugin watcher 处理，并定向派发给目标插件的
+        ``on_config_update()``，避免放大成不必要的跨插件 reload。
         """
         if not self._started or not changes:
             return

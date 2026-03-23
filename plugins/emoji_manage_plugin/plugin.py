@@ -3,16 +3,22 @@
 通过 /emoji 命令管理表情包的添加、列表和删除。
 """
 
+from maibot_sdk import Command, MaiBotPlugin
+
 import base64
 import datetime
 import hashlib
 import re
 
-from maibot_sdk import MaiBotPlugin, Command
-
 
 class EmojiManagePlugin(MaiBotPlugin):
     """表情包管理插件"""
+
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
 
     # ===== 工具方法 =====
 
@@ -208,6 +214,25 @@ class EmojiManagePlugin(MaiBotPlugin):
         await self.ctx.send.forward(messages, stream_id)
         return True, "已发送随机表情包", True
 
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
 
-def create_plugin():
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del scope
+        del config_data
+        del version
+
+
+def create_plugin() -> EmojiManagePlugin:
+    """创建表情包管理插件实例。
+
+    Returns:
+        EmojiManagePlugin: 新的表情包管理插件实例。
+    """
+
     return EmojiManagePlugin()

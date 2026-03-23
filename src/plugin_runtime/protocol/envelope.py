@@ -29,6 +29,14 @@ class MessageType(str, Enum):
     BROADCAST = "broadcast"
 
 
+class ConfigReloadScope(str, Enum):
+    """配置热重载范围。"""
+
+    SELF = "self"
+    BOT = "bot"
+    MODEL = "model"
+
+
 # ====== 请求 ID 生成器 ======
 class RequestIdGenerator:
     """单调递增 int64 请求 ID 生成器"""
@@ -158,6 +166,8 @@ class RegisterPluginPayload(BaseModel):
     """组件列表"""
     capabilities_required: List[str] = Field(default_factory=list, description="所需能力列表")
     """所需能力列表"""
+    config_reload_subscriptions: List[str] = Field(default_factory=list, description="订阅的全局配置热重载范围")
+    """订阅的全局配置热重载范围"""
 
 
 class BootstrapPluginPayload(BaseModel):
@@ -236,6 +246,8 @@ class ConfigUpdatedPayload(BaseModel):
 
     plugin_id: str = Field(description="插件 ID")
     """插件 ID"""
+    config_scope: ConfigReloadScope = Field(description="配置变更范围")
+    """配置变更范围"""
     config_version: str = Field(description="新配置版本")
     """新配置版本"""
     config_data: Dict[str, Any] = Field(default_factory=dict, description="配置内容")

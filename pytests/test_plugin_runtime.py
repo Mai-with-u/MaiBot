@@ -441,8 +441,8 @@ class TestSDK:
             def set_plugin_config(self, config):
                 self.configs.append(config)
 
-            async def on_config_update(self, config, version):
-                self.updates.append((config, version, list(self.configs)))
+            async def on_config_update(self, scope, config, version):
+                self.updates.append((scope, config, version, list(self.configs)))
 
         runner = PluginRunner(host_address="dummy", session_token="token", plugin_dirs=[])
         plugin = DummyPlugin()
@@ -453,14 +453,60 @@ class TestSDK:
             message_type=MessageType.REQUEST,
             method="plugin.config_updated",
             plugin_id="demo_plugin",
-            payload={"config_data": {"enabled": True}, "config_version": "v2"},
+            payload={
+                "plugin_id": "demo_plugin",
+                "config_scope": "self",
+                "config_data": {"enabled": True},
+                "config_version": "v2",
+            },
         )
 
         response = await runner._handle_config_updated(envelope)
 
         assert response.payload["acknowledged"] is True
         assert plugin.configs == [{"enabled": True}]
-        assert plugin.updates == [({"enabled": True}, "v2", [{"enabled": True}])]
+        assert plugin.updates == [("self", {"enabled": True}, "v2", [{"enabled": True}])]
+
+    @pytest.mark.asyncio
+    async def test_runner_global_config_update_does_not_override_plugin_config(self):
+        """bot/model 广播不应覆盖插件自身配置缓存。"""
+        from src.plugin_runtime.protocol.envelope import Envelope, MessageType
+        from src.plugin_runtime.runner.runner_main import PluginRunner
+
+        class DummyPlugin:
+            def __init__(self):
+                self.configs = []
+                self.updates = []
+
+            def set_plugin_config(self, config):
+                self.configs.append(config)
+
+            async def on_config_update(self, scope, config, version):
+                self.updates.append((scope, config, version, list(self.configs)))
+
+        runner = PluginRunner(host_address="dummy", session_token="token", plugin_dirs=[])
+        plugin = DummyPlugin()
+        runner._loader._loaded_plugins["demo_plugin"] = SimpleNamespace(instance=plugin)
+        plugin.set_plugin_config({"plugin_enabled": True})
+
+        envelope = Envelope(
+            request_id=1,
+            message_type=MessageType.REQUEST,
+            method="plugin.config_updated",
+            plugin_id="demo_plugin",
+            payload={
+                "plugin_id": "demo_plugin",
+                "config_scope": "model",
+                "config_data": {"models": []},
+                "config_version": "",
+            },
+        )
+
+        response = await runner._handle_config_updated(envelope)
+
+        assert response.payload["acknowledged"] is True
+        assert plugin.configs == [{"plugin_enabled": True}]
+        assert plugin.updates == [("model", {"models": []}, "", [{"plugin_enabled": True}])]
 
     @pytest.mark.asyncio
     async def test_runner_bootstraps_capabilities_before_on_load(self, monkeypatch):
@@ -910,6 +956,120 @@ class TestDependencyResolution:
         assert [meta.plugin_id for meta in loaded] == ["grok_search_plugin"]
         assert loader.failed_plugins == {}
         assert loaded[0].instance.answer() == 42
+
+    def test_loader_requires_sdk_plugin_to_override_on_config_update(self, tmp_path):
+        from src.plugin_runtime.runner.plugin_loader import PluginLoader
+
+        plugin_root = tmp_path / "plugins"
+        plugin_root.mkdir()
+        plugin_dir = plugin_root / "demo_plugin"
+        plugin_dir.mkdir()
+
+        (plugin_dir / "_manifest.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo_plugin",
+                    "version": "1.0.0",
+                    "description": "demo",
+                    "author": "tester",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "plugin.py").write_text(
+            "from maibot_sdk import MaiBotPlugin\n\n"
+            "class DemoPlugin(MaiBotPlugin):\n"
+            "    async def on_load(self):\n"
+            "        pass\n\n"
+            "    async def on_unload(self):\n"
+            "        pass\n\n"
+            "def create_plugin():\n"
+            "    return DemoPlugin()\n",
+            encoding="utf-8",
+        )
+
+        loader = PluginLoader()
+        loaded = loader.discover_and_load([str(plugin_root)])
+
+        assert loaded == []
+        assert "demo_plugin" in loader.failed_plugins
+        assert "on_config_update" in loader.failed_plugins["demo_plugin"]
+
+    def test_loader_requires_sdk_plugin_to_override_on_load(self, tmp_path):
+        from src.plugin_runtime.runner.plugin_loader import PluginLoader
+
+        plugin_root = tmp_path / "plugins"
+        plugin_root.mkdir()
+        plugin_dir = plugin_root / "demo_plugin"
+        plugin_dir.mkdir()
+
+        (plugin_dir / "_manifest.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo_plugin",
+                    "version": "1.0.0",
+                    "description": "demo",
+                    "author": "tester",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "plugin.py").write_text(
+            "from maibot_sdk import MaiBotPlugin\n\n"
+            "class DemoPlugin(MaiBotPlugin):\n"
+            "    async def on_unload(self):\n"
+            "        pass\n\n"
+            "    async def on_config_update(self, scope, config_data, version):\n"
+            "        pass\n\n"
+            "def create_plugin():\n"
+            "    return DemoPlugin()\n",
+            encoding="utf-8",
+        )
+
+        loader = PluginLoader()
+        loaded = loader.discover_and_load([str(plugin_root)])
+
+        assert loaded == []
+        assert "demo_plugin" in loader.failed_plugins
+        assert "on_load" in loader.failed_plugins["demo_plugin"]
+
+    def test_loader_requires_sdk_plugin_to_override_on_unload(self, tmp_path):
+        from src.plugin_runtime.runner.plugin_loader import PluginLoader
+
+        plugin_root = tmp_path / "plugins"
+        plugin_root.mkdir()
+        plugin_dir = plugin_root / "demo_plugin"
+        plugin_dir.mkdir()
+
+        (plugin_dir / "_manifest.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo_plugin",
+                    "version": "1.0.0",
+                    "description": "demo",
+                    "author": "tester",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plugin_dir / "plugin.py").write_text(
+            "from maibot_sdk import MaiBotPlugin\n\n"
+            "class DemoPlugin(MaiBotPlugin):\n"
+            "    async def on_load(self):\n"
+            "        pass\n\n"
+            "    async def on_config_update(self, scope, config_data, version):\n"
+            "        pass\n\n"
+            "def create_plugin():\n"
+            "    return DemoPlugin()\n",
+            encoding="utf-8",
+        )
+
+        loader = PluginLoader()
+        loaded = loader.discover_and_load([str(plugin_root)])
+
+        assert loaded == []
+        assert "demo_plugin" in loader.failed_plugins
+        assert "on_unload" in loader.failed_plugins["demo_plugin"]
 
     def test_isolate_sys_path_preserves_plugin_dirs(self):
         from src.plugin_runtime.runner import runner_main
@@ -2299,9 +2459,10 @@ class TestIntegration:
         assert refresh_calls == [True]
 
     @pytest.mark.asyncio
-    async def test_handle_plugin_config_changes_only_reload_target_plugin(self, monkeypatch, tmp_path):
+    async def test_handle_plugin_config_changes_only_notify_target_plugin(self, monkeypatch, tmp_path):
         from src.plugin_runtime import integration as integration_module
         from src.config.file_watcher import FileChange
+        import json
 
         builtin_root = tmp_path / "src" / "plugins" / "built_in"
         thirdparty_root = tmp_path / "plugins"
@@ -2311,6 +2472,10 @@ class TestIntegration:
         beta_dir.mkdir(parents=True)
         (alpha_dir / "config.toml").write_text("enabled = true\n", encoding="utf-8")
         (beta_dir / "config.toml").write_text("enabled = false\n", encoding="utf-8")
+        (alpha_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
+        (beta_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
+        (alpha_dir / "_manifest.json").write_text(json.dumps({"name": "alpha"}), encoding="utf-8")
+        (beta_dir / "_manifest.json").write_text(json.dumps({"name": "beta"}), encoding="utf-8")
 
         monkeypatch.chdir(tmp_path)
 
@@ -2318,31 +2483,95 @@ class TestIntegration:
             def __init__(self, plugin_dirs, plugins):
                 self._plugin_dirs = plugin_dirs
                 self._registered_plugins = {plugin_id: object() for plugin_id in plugins}
-                self.reload_calls = []
+                self.config_updates = []
 
-            async def reload_plugin(self, plugin_id, reason="manual"):
-                self.reload_calls.append((plugin_id, reason))
+            async def notify_plugin_config_updated(
+                self,
+                plugin_id,
+                config_data,
+                config_version="",
+                config_scope="self",
+            ):
+                self.config_updates.append((plugin_id, config_data, config_version, config_scope))
                 return True
 
         manager = integration_module.PluginRuntimeManager()
         manager._started = True
         manager._builtin_supervisor = FakeSupervisor([builtin_root], ["alpha"])
         manager._third_party_supervisor = FakeSupervisor([thirdparty_root], ["beta"])
-        refresh_calls = []
-
-        def fake_refresh() -> None:
-            refresh_calls.append(True)
-
-        manager._refresh_plugin_config_watch_subscriptions = fake_refresh
 
         await manager._handle_plugin_config_changes(
             "alpha",
             [FileChange(change_type=1, path=alpha_dir / "config.toml")],
         )
 
-        assert manager._builtin_supervisor.reload_calls == [("alpha", "config_file_changed")]
-        assert manager._third_party_supervisor.reload_calls == []
-        assert refresh_calls == [True]
+        assert manager._builtin_supervisor.config_updates == [("alpha", {"enabled": True}, "", "self")]
+        assert manager._third_party_supervisor.config_updates == []
+
+    @pytest.mark.asyncio
+    async def test_handle_main_config_reload_only_notifies_subscribers(self, monkeypatch):
+        from src.plugin_runtime import integration as integration_module
+
+        class FakeRegistration:
+            def __init__(self, subscriptions):
+                self.config_reload_subscriptions = subscriptions
+
+        class FakeSupervisor:
+            def __init__(self, registrations):
+                self._registered_plugins = registrations
+                self.config_updates = []
+
+            def get_config_reload_subscribers(self, scope):
+                matched_plugins = []
+                for plugin_id, registration in self._registered_plugins.items():
+                    if scope in registration.config_reload_subscriptions:
+                        matched_plugins.append(plugin_id)
+                return matched_plugins
+
+            async def notify_plugin_config_updated(
+                self,
+                plugin_id,
+                config_data,
+                config_version="",
+                config_scope="self",
+            ):
+                self.config_updates.append((plugin_id, config_data, config_version, config_scope))
+                return True
+
+        fake_global = SimpleNamespace(plugin_runtime=SimpleNamespace(enabled=True))
+        monkeypatch.setattr(
+            integration_module.config_manager,
+            "get_global_config",
+            lambda: SimpleNamespace(model_dump=lambda: {"bot": {"name": "MaiBot"}}, plugin_runtime=fake_global.plugin_runtime),
+        )
+        monkeypatch.setattr(
+            integration_module.config_manager,
+            "get_model_config",
+            lambda: SimpleNamespace(model_dump=lambda: {"models": [{"name": "demo"}]}),
+        )
+
+        manager = integration_module.PluginRuntimeManager()
+        manager._started = True
+        manager._builtin_supervisor = FakeSupervisor(
+            {
+                "alpha": FakeRegistration(["bot"]),
+                "beta": FakeRegistration([]),
+            }
+        )
+        manager._third_party_supervisor = FakeSupervisor(
+            {
+                "gamma": FakeRegistration(["model"]),
+            }
+        )
+
+        await manager._handle_main_config_reload(["bot", "model"])
+
+        assert manager._builtin_supervisor.config_updates == [
+            ("alpha", {"bot": {"name": "MaiBot"}}, "", "bot")
+        ]
+        assert manager._third_party_supervisor.config_updates == [
+            ("gamma", {"models": [{"name": "demo"}]}, "", "model")
+        ]
 
     def test_refresh_plugin_config_watch_subscriptions_registers_per_plugin(self, tmp_path):
         from src.plugin_runtime import integration as integration_module

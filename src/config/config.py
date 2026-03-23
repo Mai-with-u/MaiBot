@@ -4,6 +4,7 @@ from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 import asyncio
 import copy
+import inspect
 import sys
 
 import tomlkit
@@ -61,6 +62,7 @@ MODEL_CONFIG_VERSION: str = "1.12.0"
 logger = get_logger("config")
 
 T = TypeVar("T", bound="ConfigBase")
+ConfigReloadCallback = Callable[[Sequence[str]], object] | Callable[[], object]
 
 
 class Config(ConfigBase):
@@ -190,7 +192,7 @@ class ConfigManager:
         self.global_config: Config | None = None
         self.model_config: ModelConfig | None = None
         self._reload_lock: asyncio.Lock = asyncio.Lock()
-        self._reload_callbacks: list[Callable[[], object]] = []
+        self._reload_callbacks: list[ConfigReloadCallback] = []
         self._file_watcher: FileWatcher | None = None
         self._file_watcher_subscription_id: str | None = None
         self._hot_reload_min_interval_s: float = 1.0
@@ -226,16 +228,125 @@ class ConfigManager:
             raise RuntimeError(t("config.model_not_initialized"))
         return self.model_config
 
-    def register_reload_callback(self, callback: Callable[[], object]) -> None:
+    def register_reload_callback(self, callback: ConfigReloadCallback) -> None:
+        """注册配置热重载回调。
+
+        Args:
+            callback: 配置热重载回调。允许无参回调，也允许接收
+                ``Sequence[str]`` 类型的变更范围列表。
+        """
+
         self._reload_callbacks.append(callback)
 
-    def unregister_reload_callback(self, callback: Callable[[], object]) -> None:
+    def unregister_reload_callback(self, callback: ConfigReloadCallback) -> None:
+        """注销配置热重载回调。
+
+        Args:
+            callback: 先前注册过的回调对象。
+        """
+
         try:
             self._reload_callbacks.remove(callback)
         except ValueError:
             return
 
-    async def reload_config(self) -> bool:
+    @staticmethod
+    def _normalize_changed_scopes(changed_scopes: Sequence[str] | None) -> tuple[str, ...]:
+        """规范化配置变更范围列表。
+
+        Args:
+            changed_scopes: 原始配置变更范围。
+
+        Returns:
+            tuple[str, ...]: 去重后的配置变更范围元组。
+        """
+
+        if not changed_scopes:
+            return ("bot", "model")
+
+        normalized_scopes: list[str] = []
+        for scope in changed_scopes:
+            normalized_scope = str(scope or "").strip().lower()
+            if normalized_scope not in {"bot", "model"}:
+                continue
+            if normalized_scope not in normalized_scopes:
+                normalized_scopes.append(normalized_scope)
+        return tuple(normalized_scopes)
+
+    @staticmethod
+    def _resolve_changed_scopes(changes: Sequence[FileChange]) -> tuple[str, ...]:
+        """根据文件变更列表推断配置变更范围。
+
+        Args:
+            changes: 文件监听器返回的变更列表。
+
+        Returns:
+            tuple[str, ...]: 命中的配置变更范围元组。
+        """
+
+        changed_scopes: list[str] = []
+        for change in changes:
+            file_name = change.path.name
+            if file_name == "bot_config.toml" and "bot" not in changed_scopes:
+                changed_scopes.append("bot")
+            if file_name == "model_config.toml" and "model" not in changed_scopes:
+                changed_scopes.append("model")
+        return tuple(changed_scopes)
+
+    @staticmethod
+    def _callback_accepts_scopes(callback: ConfigReloadCallback) -> bool:
+        """判断回调是否接收配置变更范围参数。
+
+        Args:
+            callback: 待检测的回调对象。
+
+        Returns:
+            bool: 若回调可接收一个位置参数或可变位置参数，则返回 ``True``。
+        """
+
+        try:
+            parameters = inspect.signature(callback).parameters.values()
+        except (TypeError, ValueError):
+            return False
+
+        positional_params = {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }
+        for parameter in parameters:
+            if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+                return True
+            if parameter.kind in positional_params:
+                return True
+        return False
+
+    async def _invoke_reload_callback(
+        self,
+        callback: ConfigReloadCallback,
+        changed_scopes: Sequence[str],
+    ) -> None:
+        """执行单个配置热重载回调。
+
+        Args:
+            callback: 要执行的回调对象。
+            changed_scopes: 本次热重载命中的配置范围。
+        """
+
+        result = callback(changed_scopes) if self._callback_accepts_scopes(callback) else callback()
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def reload_config(self, changed_scopes: Sequence[str] | None = None) -> bool:
+        """重新加载主配置和模型配置。
+
+        Args:
+            changed_scopes: 本次触发热重载的配置范围。
+
+        Returns:
+            bool: 是否重载成功。
+        """
+
+        normalized_scopes = self._normalize_changed_scopes(changed_scopes)
         async with self._reload_lock:
             try:
                 global_config_new, global_updated = load_config_from_file(
@@ -265,9 +376,7 @@ class ConfigManager:
 
             for callback in list(self._reload_callbacks):
                 try:
-                    result = callback()
-                    if asyncio.iscoroutine(result):
-                        await result
+                    await self._invoke_reload_callback(callback, normalized_scopes)
                 except Exception as exc:
                     logger.warning(t("config.reload_callback_failed", error=exc))
             return True
@@ -312,6 +421,12 @@ class ConfigManager:
         self._file_watcher = None
 
     async def _handle_file_changes(self, changes: Sequence[FileChange]) -> None:
+        """处理主配置与模型配置文件变更。
+
+        Args:
+            changes: 当前批次收集到的文件变更列表。
+        """
+
         if not changes:
             return
         now_monotonic = asyncio.get_running_loop().time()
@@ -321,7 +436,11 @@ class ConfigManager:
         self._last_hot_reload_monotonic = now_monotonic
         logger.info(t("config.file_change_detected"))
         try:
-            await asyncio.wait_for(self.reload_config(), timeout=self._hot_reload_timeout_s)
+            changed_scopes = self._resolve_changed_scopes(changes)
+            await asyncio.wait_for(
+                self.reload_config(changed_scopes=changed_scopes),
+                timeout=self._hot_reload_timeout_s,
+            )
         except asyncio.TimeoutError:
             logger.error(t("config.reload_timeout", timeout_seconds=self._hot_reload_timeout_s))
 

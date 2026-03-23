@@ -3,10 +3,10 @@
 根据聊天上下文的情感，使用 LLM 选择并发送合适的表情包。
 """
 
-import random
-
-from maibot_sdk import MaiBotPlugin, Action
+from maibot_sdk import Action, MaiBotPlugin
 from maibot_sdk.types import ActivationType
+
+import random
 
 
 class EmojiPlugin(MaiBotPlugin):
@@ -95,10 +95,35 @@ class EmojiPlugin(MaiBotPlugin):
             return True, f"成功发送表情包:[表情包：{chosen_emotion}]"
         return False, "发送表情包失败"
 
-    async def on_load(self):
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
         # 从插件配置读取 emoji_chance 来覆盖默认概率
         await self.ctx.config.get("emoji.emoji_chance")
 
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
 
-def create_plugin():
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
+
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del config_data
+        del version
+        if scope == "self":
+            await self.ctx.config.get("emoji.emoji_chance")
+
+
+def create_plugin() -> EmojiPlugin:
+    """创建 Emoji 插件实例。
+
+    Returns:
+        EmojiPlugin: 新的 Emoji 插件实例。
+    """
+
     return EmojiPlugin()

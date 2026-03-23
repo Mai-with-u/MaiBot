@@ -3,7 +3,7 @@
 通过 /pm 命令管理插件和组件的生命周期。
 """
 
-from maibot_sdk import MaiBotPlugin, Command
+from maibot_sdk import Command, MaiBotPlugin
 
 
 _VALID_COMPONENT_TYPES = ("action", "command", "event_handler")
@@ -43,6 +43,12 @@ HELP_COMPONENT = (
 
 class PluginManagementPlugin(MaiBotPlugin):
     """插件和组件管理插件"""
+
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
 
     @Command(
         "management",
@@ -268,6 +274,25 @@ class PluginManagementPlugin(MaiBotPlugin):
             return components
         return []
 
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
 
-def create_plugin():
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del scope
+        del config_data
+        del version
+
+
+def create_plugin() -> PluginManagementPlugin:
+    """创建插件管理插件实例。
+
+    Returns:
+        PluginManagementPlugin: 新的插件管理插件实例。
+    """
+
     return PluginManagementPlugin()

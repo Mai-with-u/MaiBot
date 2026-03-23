@@ -3,11 +3,17 @@
 通过 /chat 命令设置和查看聊天频率。
 """
 
-from maibot_sdk import MaiBotPlugin, Command
+from maibot_sdk import Command, MaiBotPlugin
 
 
 class BetterFrequencyPlugin(MaiBotPlugin):
     """聊天频率控制插件"""
+
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
 
     @Command(
         "set_talk_frequency",
@@ -80,6 +86,25 @@ class BetterFrequencyPlugin(MaiBotPlugin):
         await self.ctx.send.text(status_msg, stream_id)
         return True, None, False
 
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
 
-def create_plugin():
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del scope
+        del config_data
+        del version
+
+
+def create_plugin() -> BetterFrequencyPlugin:
+    """创建聊天频率插件实例。
+
+    Returns:
+        BetterFrequencyPlugin: 新的聊天频率插件实例。
+    """
+
     return BetterFrequencyPlugin()

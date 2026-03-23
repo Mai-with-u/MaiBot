@@ -3,15 +3,21 @@
 你的第一个 MaiCore 插件，包含问候功能、时间查询等基础示例。
 """
 
+from maibot_sdk import Action, Command, EventHandler, MaiBotPlugin, Tool
+from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
+
 import datetime
 import random
-
-from maibot_sdk import MaiBotPlugin, Action, Command, Tool, EventHandler
-from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
 
 
 class HelloWorldPlugin(MaiBotPlugin):
     """Hello World 示例插件"""
+
+    async def on_load(self) -> None:
+        """处理插件加载。"""
+
+    async def on_unload(self) -> None:
+        """处理插件卸载。"""
 
     # ===== Tool 组件 =====
 
@@ -146,6 +152,25 @@ class HelloWorldPlugin(MaiBotPlugin):
 
         return True, True, None, None, None
 
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        """处理配置热重载事件。
 
-def create_plugin():
+        Args:
+            scope: 配置变更范围。
+            config_data: 最新配置数据。
+            version: 配置版本号。
+        """
+
+        del scope
+        del config_data
+        del version
+
+
+def create_plugin() -> HelloWorldPlugin:
+    """创建 Hello World 示例插件实例。
+
+    Returns:
+        HelloWorldPlugin: 新的示例插件实例。
+    """
+
     return HelloWorldPlugin()

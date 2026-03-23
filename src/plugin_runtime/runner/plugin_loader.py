@@ -403,6 +403,7 @@ class PluginLoader:
                 create_plugin = getattr(module, "create_plugin", None)
                 if create_plugin is not None:
                     instance = create_plugin()
+                    self._validate_sdk_plugin_contract(plugin_id, instance)
                     logger.info(f"插件 {plugin_id} v{manifest.get('version', '?')} 加载成功")
                     return PluginMeta(
                         plugin_id=plugin_id,
@@ -431,6 +432,35 @@ class PluginLoader:
 
         logger.error(f"插件 {plugin_id} 缺少 create_plugin 工厂函数且未检测到旧版 BasePlugin")
         return None
+
+    @staticmethod
+    def _validate_sdk_plugin_contract(plugin_id: str, instance: Any) -> None:
+        """校验 SDK 插件的基础契约。
+
+        Args:
+            plugin_id: 当前插件 ID。
+            instance: ``create_plugin()`` 返回的插件实例。
+
+        Raises:
+            TypeError: 当插件未覆盖必需生命周期方法或订阅声明不合法时抛出。
+        """
+
+        try:
+            from maibot_sdk.plugin import MaiBotPlugin
+        except ImportError:
+            return
+
+        if not isinstance(instance, MaiBotPlugin):
+            return
+
+        if type(instance).on_load is MaiBotPlugin.on_load:
+            raise TypeError(f"插件 {plugin_id} 必须实现 on_load()")
+        if type(instance).on_unload is MaiBotPlugin.on_unload:
+            raise TypeError(f"插件 {plugin_id} 必须实现 on_unload()")
+        if type(instance).on_config_update is MaiBotPlugin.on_config_update:
+            raise TypeError(f"插件 {plugin_id} 必须实现 on_config_update()")
+
+        instance.get_config_reload_subscriptions()
 
     @staticmethod
     @contextlib.contextmanager
