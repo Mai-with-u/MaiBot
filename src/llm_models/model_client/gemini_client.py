@@ -117,20 +117,27 @@ def _convert_messages(
             if isinstance(message.content, str):
                 system_instructions.append(message.content)
             else:
-                raise ValueError("你tm怎么往system里面塞图片base64？")
+                raise ValueError("system消息仅支持纯文本，不能包含图片")
         elif message.role == RoleType.Tool:
             if not message.tool_call_id:
                 raise ValueError("无法触及的代码：请使用MessageBuilder类构建消息对象")
+            logger.debug("跳过了一条tool消息，gemini不支持直接转换tool角色")
         else:
             temp_list.append(_convert_message_item(message))
-    if system_instructions:
-        # 如果有system消息，就把它加上去
-        ret: tuple = (temp_list, system_instructions)
-    else:
-        # 如果没有system消息，就直接返回
-        ret: tuple = (temp_list, None)
 
-    return ret
+    # 过滤掉parts为空的Content，不然gemini会报错
+    original_count = len(temp_list)
+    temp_list = [item for item in temp_list if not isinstance(item, Content) or item.parts]
+    if len(temp_list) < original_count:
+        logger.debug(f"过滤了 {original_count - len(temp_list)} 条空消息")
+
+    # contents不能为空，不然gemini接口会直接报错
+    if not temp_list:
+        raise ValueError("消息列表里没有有效的对话内容，至少需要一条user或assistant消息")
+
+    if system_instructions:
+        return (temp_list, system_instructions)
+    return (temp_list, None)
 
 
 def _convert_tool_options(tool_options: list[ToolOption]) -> list[FunctionDeclaration]:
