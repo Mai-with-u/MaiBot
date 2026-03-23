@@ -179,12 +179,6 @@ class PlatformIOManager:
         return self._receive_route_table
 
     @property
-    def route_table(self) -> RouteTable:
-        """兼容旧接口，返回发送路由表。"""
-
-        return self._send_route_table
-
-    @property
     def deduplicator(self) -> MessageDeduplicator:
         """返回管理器持有的入站去重器。
 
@@ -369,12 +363,6 @@ class PlatformIOManager:
         self._validate_binding_against_driver(binding, driver)
         self._receive_route_table.bind(binding)
 
-    def bind_route(self, binding: RouteBinding) -> None:
-        """兼容旧接口，默认同时绑定发送表和接收表。"""
-
-        self.bind_send_route(binding)
-        self.bind_receive_route(binding)
-
     def unbind_send_route(self, route_key: RouteKey, driver_id: Optional[str] = None) -> None:
         """移除发送路由绑定。
 
@@ -394,12 +382,6 @@ class PlatformIOManager:
         """
 
         self._receive_route_table.unbind(route_key, driver_id)
-
-    def unbind_route(self, route_key: RouteKey, driver_id: Optional[str] = None) -> None:
-        """兼容旧接口，默认同时从发送表和接收表解绑。"""
-
-        self.unbind_send_route(route_key, driver_id)
-        self.unbind_receive_route(route_key, driver_id)
 
     def resolve_drivers(self, route_key: RouteKey) -> List[PlatformIODriver]:
         """解析某个路由键当前命中的全部发送驱动。
@@ -429,12 +411,6 @@ class PlatformIOManager:
         if descriptor.scope is not None and route_key.scope not in (None, descriptor.scope):
             return []
         return [fallback_driver]
-
-    def resolve_driver(self, route_key: RouteKey) -> Optional[PlatformIODriver]:
-        """兼容旧接口，返回首个命中的发送驱动。"""
-
-        drivers = self.resolve_drivers(route_key)
-        return drivers[0] if drivers else None
 
     @staticmethod
     def build_route_key_from_message(message: "SessionMessage") -> RouteKey:

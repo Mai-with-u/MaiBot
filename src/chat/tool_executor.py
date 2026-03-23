@@ -1,22 +1,20 @@
-"""
-工具执行器
+"""工具执行器。
 
 独立的工具执行组件，可以直接输入聊天消息内容，
 自动判断并执行相应的工具，返回结构化的工具执行结果。
-
-从 src.plugin_system.core.tool_use 迁移，使用新的核心组件注册表。
 """
+
+from typing import Any, Dict, List, Optional, Tuple
 
 import hashlib
 import time
-from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
 from src.core.announcement_manager import global_announcement_manager
-from src.core.component_registry import component_registry
 from src.llm_models.payload_content import ToolCall
 from src.llm_models.utils_model import LLMRequest
+from src.plugin_runtime.component_query import component_query_service
 from src.prompt.prompt_manager import prompt_manager
 
 logger = get_logger("tool_use")
@@ -89,7 +87,7 @@ class ToolExecutor:
 
     def _get_tool_definitions(self) -> List[Dict[str, Any]]:
         """获取 LLM 可用的工具定义列表"""
-        all_tools = component_registry.get_llm_available_tools()
+        all_tools = component_query_service.get_llm_available_tools()
         user_disabled_tools = global_announcement_manager.get_disabled_chat_tools(self.chat_id)
         return [info.get_llm_definition() for name, info in all_tools.items() if name not in user_disabled_tools]
 
@@ -152,7 +150,7 @@ class ToolExecutor:
         function_args = tool_call.args or {}
         function_args["llm_called"] = True
 
-        executor = component_registry.get_tool_executor(function_name)
+        executor = component_query_service.get_tool_executor(function_name)
         if not executor:
             logger.warning(f"未知工具名称: {function_name}")
             return None

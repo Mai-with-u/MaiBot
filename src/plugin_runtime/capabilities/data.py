@@ -648,10 +648,10 @@ class RuntimeDataCapabilityMixin:
             return {"success": False, "error": str(e)}
 
     async def _cap_tool_get_definitions(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
-        from src.core.component_registry import component_registry as core_registry
+        from src.plugin_runtime.component_query import component_query_service
 
         try:
-            tools = core_registry.get_llm_available_tools()
+            tools = component_query_service.get_llm_available_tools()
             return {
                 "success": True,
                 "tools": [{"name": name, "definition": info.get_llm_definition()} for name, info in tools.items()],

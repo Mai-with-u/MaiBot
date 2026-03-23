@@ -238,14 +238,14 @@ class RuntimeCoreCapabilityMixin:
             return {"success": False, "value": None, "error": str(e)}
 
     async def _cap_config_get_plugin(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
-        from src.core.component_registry import component_registry as core_registry
+        from src.plugin_runtime.component_query import component_query_service
 
         plugin_name: str = args.get("plugin_name", plugin_id)
         key: str = args.get("key", "")
         default = args.get("default")
 
         try:
-            config = core_registry.get_plugin_config(plugin_name)
+            config = component_query_service.get_plugin_config(plugin_name)
             if config is None:
                 return {"success": False, "value": default, "error": f"未找到插件 {plugin_name} 的配置"}
 
@@ -258,11 +258,11 @@ class RuntimeCoreCapabilityMixin:
             return {"success": False, "value": default, "error": str(e)}
 
     async def _cap_config_get_all(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
-        from src.core.component_registry import component_registry as core_registry
+        from src.plugin_runtime.component_query import component_query_service
 
         plugin_name: str = args.get("plugin_name", plugin_id)
         try:
-            config = core_registry.get_plugin_config(plugin_name)
+            config = component_query_service.get_plugin_config(plugin_name)
             if config is None:
                 return {"success": True, "value": {}}
             return {"success": True, "value": config}

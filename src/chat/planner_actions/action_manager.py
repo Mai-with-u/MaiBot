@@ -3,8 +3,8 @@ from typing import Dict, Optional, Tuple
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
-from src.core.component_registry import component_registry, ActionExecutor
 from src.core.types import ActionInfo
+from src.plugin_runtime.component_query import ActionExecutor, component_query_service
 
 logger = get_logger("action_manager")
 
@@ -28,7 +28,7 @@ class ActionManager:
     """
     动作管理器，用于管理各种类型的动作
 
-    使用核心组件注册表的 executor-based 模式。
+    使用插件运行时统一查询服务的 executor-based 模式。
     """
 
     def __init__(self):
@@ -38,7 +38,7 @@ class ActionManager:
         self._using_actions: Dict[str, ActionInfo] = {}
 
         # 初始化时将默认动作加载到使用中的动作
-        self._using_actions = component_registry.get_default_actions()
+        self._using_actions = component_query_service.get_default_actions()
 
     # === 执行Action方法 ===
 
@@ -72,17 +72,17 @@ class ActionManager:
             Optional[ActionHandle]: 执行句柄，如果动作未注册则返回 None
         """
         try:
-            executor = component_registry.get_action_executor(action_name)
+            executor = component_query_service.get_action_executor(action_name)
             if not executor:
                 logger.warning(f"{log_prefix} 未找到Action组件: {action_name}")
                 return None
 
-            info = component_registry.get_action_info(action_name)
+            info = component_query_service.get_action_info(action_name)
             if not info:
                 logger.warning(f"{log_prefix} 未找到Action组件信息: {action_name}")
                 return None
 
-            plugin_config = component_registry.get_plugin_config(info.plugin_name) or {}
+            plugin_config = component_query_service.get_plugin_config(info.plugin_name) or {}
 
             handle = ActionHandle(
                 executor,
@@ -133,5 +133,5 @@ class ActionManager:
     def restore_actions(self) -> None:
         """恢复到默认动作集"""
         actions_to_restore = list(self._using_actions.keys())
-        self._using_actions = component_registry.get_default_actions()
+        self._using_actions = component_query_service.get_default_actions()
         logger.debug(f"恢复动作集: 从 {actions_to_restore} 恢复到默认动作集 {list(self._using_actions.keys())}")

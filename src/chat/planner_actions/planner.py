@@ -1,33 +1,36 @@
+from collections import OrderedDict
+from datetime import datetime
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
+
+import contextlib
 import json
-import time
-import traceback
 import random
 import re
-import contextlib
-from typing import Dict, Optional, Tuple, List, TYPE_CHECKING, Union
-from collections import OrderedDict
-from rich.traceback import install
-from datetime import datetime
+import time
+import traceback
+
 from json_repair import repair_json
-from src.llm_models.utils_model import LLMRequest
-from src.config.config import global_config, model_config
-from src.common.logger import get_logger
+from rich.traceback import install
+
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.chat.message_receive.message import SessionMessage
+from src.chat.planner_actions.action_manager import ActionManager
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.common.data_models.info_data_model import ActionPlannerInfo
+from src.common.logger import get_logger
+from src.config.config import global_config, model_config
+from src.core.types import ActionActivationType, ActionInfo, ComponentType
+from src.llm_models.utils_model import LLMRequest
+from src.person_info.person_info import Person
+from src.plugin_runtime.component_query import component_query_service
 from src.prompt.prompt_manager import prompt_manager
 from src.services.message_service import (
     build_readable_messages_with_id,
-    replace_user_references,
     get_messages_before_time_in_chat,
+    replace_user_references,
     translate_pid_to_description,
 )
-from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
-from src.chat.planner_actions.action_manager import ActionManager
-from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
-from src.chat.message_receive.message import SessionMessage
-from src.core.types import ActionActivationType, ActionInfo, ComponentType
-from src.core.component_registry import component_registry
-from src.person_info.person_info import Person
 
 if TYPE_CHECKING:
     from src.common.data_models.info_data_model import TargetPersonInfo
@@ -634,7 +637,7 @@ class ActionPlanner:
         current_available_actions_dict = self.action_manager.get_using_actions()
 
         # 获取完整的动作信息
-        all_registered_actions: Dict[str, ActionInfo] = component_registry.get_components_by_type(  # type: ignore
+        all_registered_actions: Dict[str, ActionInfo] = component_query_service.get_components_by_type(  # type: ignore
             ComponentType.ACTION
         )
         current_available_actions = {}

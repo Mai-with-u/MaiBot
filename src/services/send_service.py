@@ -8,9 +8,8 @@
 3. 具体走插件链还是 legacy 旧链，由 Platform IO 内部统一决策。
 """
 
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
-
-from maim_message import Seg
 
 import asyncio
 import base64
@@ -28,6 +27,7 @@ from src.common.data_models.message_component_data_model import (
     AtComponent,
     DictComponent,
     EmojiComponent,
+    ForwardNodeComponent,
     ImageComponent,
     MessageSequence,
     ReplyComponent,
@@ -72,88 +72,163 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
         if normalized_value:
             inherited_metadata[key] = value
 
-    if target_stream.group_id:
-        normalized_group_id = str(target_stream.group_id).strip()
-        if normalized_group_id:
-            inherited_metadata["platform_io_target_group_id"] = normalized_group_id
+    if target_stream.group_id and (normalized_group_id := str(target_stream.group_id).strip()):
+        inherited_metadata["platform_io_target_group_id"] = normalized_group_id
 
-    if target_stream.user_id:
-        normalized_user_id = str(target_stream.user_id).strip()
-        if normalized_user_id:
-            inherited_metadata["platform_io_target_user_id"] = normalized_user_id
+    if target_stream.user_id and (normalized_user_id := str(target_stream.user_id).strip()):
+        inherited_metadata["platform_io_target_user_id"] = normalized_user_id
 
     return inherited_metadata
 
 
-def _build_component_from_seg(message_segment: Seg) -> StandardMessageComponents:
-    """将单个消息段转换为内部消息组件。
+def _build_binary_component_from_base64(component_type: str, raw_data: str) -> StandardMessageComponents:
+    """根据 Base64 数据构造二进制消息组件。
 
     Args:
-        message_segment: 待转换的消息段。
+        component_type: 组件类型名称。
+        raw_data: Base64 编码后的二进制数据。
 
     Returns:
         StandardMessageComponents: 转换后的内部消息组件。
+
+    Raises:
+        ValueError: 当组件类型不受支持时抛出。
     """
-    segment_type = str(message_segment.type or "").strip().lower()
-    segment_data = message_segment.data
+    binary_data = base64.b64decode(raw_data)
+    binary_hash = hashlib.sha256(binary_data).hexdigest()
 
-    if segment_type == "text":
-        return TextComponent(text=str(segment_data or ""))
-
-    if segment_type == "image":
-        image_binary = base64.b64decode(str(segment_data or ""))
-        return ImageComponent(
-            binary_hash=hashlib.sha256(image_binary).hexdigest(),
-            binary_data=image_binary,
-        )
-
-    if segment_type == "emoji":
-        emoji_binary = base64.b64decode(str(segment_data or ""))
-        return EmojiComponent(
-            binary_hash=hashlib.sha256(emoji_binary).hexdigest(),
-            binary_data=emoji_binary,
-        )
-
-    if segment_type == "voice":
-        voice_binary = base64.b64decode(str(segment_data or ""))
-        return VoiceComponent(
-            binary_hash=hashlib.sha256(voice_binary).hexdigest(),
-            binary_data=voice_binary,
-        )
-
-    if segment_type == "at":
-        return AtComponent(target_user_id=str(segment_data or ""))
-
-    if segment_type == "reply":
-        return ReplyComponent(target_message_id=str(segment_data or ""))
-
-    if segment_type == "dict" and isinstance(segment_data, dict):
-        return DictComponent(data=segment_data)
-
-    return DictComponent(data={"type": segment_type, "data": segment_data})
+    if component_type == "image":
+        return ImageComponent(binary_hash=binary_hash, binary_data=binary_data)
+    if component_type == "emoji":
+        return EmojiComponent(binary_hash=binary_hash, binary_data=binary_data)
+    if component_type == "voice":
+        return VoiceComponent(binary_hash=binary_hash, binary_data=binary_data)
+    raise ValueError(f"不支持的二进制组件类型: {component_type}")
 
 
-def _build_message_sequence_from_seg(message_segment: Seg) -> MessageSequence:
-    """将消息段转换为内部消息组件序列。
+def _build_message_sequence_from_custom_message(
+    message_type: str,
+    content: str | Dict[str, Any],
+) -> MessageSequence:
+    """根据自定义消息类型构造内部消息组件序列。
 
     Args:
-        message_segment: 待转换的消息段。
+        message_type: 自定义消息类型。
+        content: 自定义消息内容。
 
     Returns:
         MessageSequence: 转换后的消息组件序列。
     """
-    if str(message_segment.type or "").strip().lower() == "seglist":
-        raw_segments = message_segment.data
-        if not isinstance(raw_segments, list):
-            raise ValueError("seglist 类型的消息段数据必须是列表")
-        components = [
-            _build_component_from_seg(item)
-            for item in raw_segments
-            if isinstance(item, Seg)
-        ]
-        return MessageSequence(components=components)
+    normalized_type = message_type.strip().lower()
 
-    return MessageSequence(components=[_build_component_from_seg(message_segment)])
+    if normalized_type == "text":
+        return MessageSequence(components=[TextComponent(text=str(content))])
+
+    if normalized_type in {"image", "emoji", "voice"}:
+        return MessageSequence(
+            components=[_build_binary_component_from_base64(normalized_type, str(content))]
+        )
+
+    if normalized_type == "at":
+        return MessageSequence(components=[AtComponent(target_user_id=str(content))])
+
+    if normalized_type == "reply":
+        return MessageSequence(components=[ReplyComponent(target_message_id=str(content))])
+
+    if normalized_type == "dict" and isinstance(content, dict):
+        return MessageSequence(components=[DictComponent(data=deepcopy(content))])
+
+    return MessageSequence(
+        components=[
+            DictComponent(
+                data={
+                    "type": normalized_type,
+                    "data": deepcopy(content),
+                }
+            )
+        ]
+    )
+
+
+def _clone_message_sequence(message_sequence: MessageSequence) -> MessageSequence:
+    """复制消息组件序列，避免原对象被发送流程修改。
+
+    Args:
+        message_sequence: 原始消息组件序列。
+
+    Returns:
+        MessageSequence: 深拷贝后的消息组件序列。
+    """
+    return deepcopy(message_sequence)
+
+
+def _detect_outbound_message_flags(message_sequence: MessageSequence) -> Dict[str, bool]:
+    """根据消息组件序列推断出站消息标记。
+
+    Args:
+        message_sequence: 待发送的消息组件序列。
+
+    Returns:
+        Dict[str, bool]: 包含 ``is_emoji``、``is_picture``、``is_command`` 的标记字典。
+    """
+    if len(message_sequence.components) != 1:
+        return {
+            "is_emoji": False,
+            "is_picture": False,
+            "is_command": False,
+        }
+
+    component = message_sequence.components[0]
+    is_command = False
+    if isinstance(component, DictComponent) and isinstance(component.data, dict):
+        is_command = str(component.data.get("type") or "").strip().lower() == "command"
+
+    return {
+        "is_emoji": isinstance(component, EmojiComponent),
+        "is_picture": isinstance(component, ImageComponent),
+        "is_command": is_command,
+    }
+
+
+def _describe_message_sequence(message_sequence: MessageSequence) -> str:
+    """生成消息组件序列的简短描述文本。
+
+    Args:
+        message_sequence: 待描述的消息组件序列。
+
+    Returns:
+        str: 适用于日志的简短类型描述。
+    """
+    if len(message_sequence.components) != 1:
+        return "message_sequence"
+
+    component = message_sequence.components[0]
+    if isinstance(component, DictComponent) and isinstance(component.data, dict):
+        custom_type = str(component.data.get("type") or "").strip()
+        return custom_type or "dict"
+
+    if isinstance(component, TextComponent):
+        return component.format_name
+
+    if isinstance(component, ImageComponent):
+        return component.format_name
+
+    if isinstance(component, EmojiComponent):
+        return component.format_name
+
+    if isinstance(component, VoiceComponent):
+        return component.format_name
+
+    if isinstance(component, AtComponent):
+        return component.format_name
+
+    if isinstance(component, ReplyComponent):
+        return component.format_name
+
+    if isinstance(component, ForwardNodeComponent):
+        return component.format_name
+
+    return "unknown"
 
 
 def _build_processed_plain_text(message: SessionMessage) -> str:
@@ -204,7 +279,7 @@ def _build_processed_plain_text(message: SessionMessage) -> str:
 
 
 def _build_outbound_session_message(
-    message_segment: Seg,
+    message_sequence: MessageSequence,
     stream_id: str,
     display_message: str = "",
     reply_message: Optional[MaiMessage] = None,
@@ -213,7 +288,7 @@ def _build_outbound_session_message(
     """根据目标会话构建待发送的内部消息对象。
 
     Args:
-        message_segment: 待发送的消息段。
+        message_sequence: 待发送的消息组件序列。
         stream_id: 目标会话 ID。
         display_message: 用于界面展示的文本内容。
         reply_message: 被回复的锚点消息。
@@ -268,13 +343,14 @@ def _build_outbound_session_message(
         group_info=group_info,
         additional_config=additional_config,
     )
-    outbound_message.raw_message = _build_message_sequence_from_seg(message_segment)
+    outbound_message.raw_message = _clone_message_sequence(message_sequence)
     outbound_message.session_id = target_stream.session_id
     outbound_message.display_message = display_message
     outbound_message.reply_to = anchor_message.message_id if anchor_message is not None else None
-    outbound_message.is_emoji = message_segment.type == "emoji"
-    outbound_message.is_picture = message_segment.type == "image"
-    outbound_message.is_command = message_segment.type == "command"
+    message_flags = _detect_outbound_message_flags(outbound_message.raw_message)
+    outbound_message.is_emoji = message_flags["is_emoji"]
+    outbound_message.is_picture = message_flags["is_picture"]
+    outbound_message.is_command = message_flags["is_command"]
     outbound_message.initialized = True
     return outbound_message
 
@@ -467,7 +543,7 @@ async def send_session_message(
 
 
 async def _send_to_target(
-    message_segment: Seg,
+    message_sequence: MessageSequence,
     stream_id: str,
     display_message: str = "",
     typing: bool = False,
@@ -480,7 +556,7 @@ async def _send_to_target(
     """向指定目标构建并发送消息。
 
     Args:
-        message_segment: 待发送的消息段。
+        message_sequence: 待发送的消息组件序列。
         stream_id: 目标会话 ID。
         display_message: 用于界面展示的文本内容。
         typing: 是否显示输入中状态。
@@ -499,10 +575,10 @@ async def _send_to_target(
             return False
 
         if show_log:
-            logger.debug(f"[SendService] 发送{message_segment.type}消息到 {stream_id}")
+            logger.debug(f"[SendService] 发送{_describe_message_sequence(message_sequence)}消息到 {stream_id}")
 
         outbound_message = _build_outbound_session_message(
-            message_segment=message_segment,
+            message_sequence=message_sequence,
             stream_id=stream_id,
             display_message=display_message,
             reply_message=reply_message,
@@ -555,7 +631,7 @@ async def text_to_stream(
         bool: 发送成功时返回 ``True``。
     """
     return await _send_to_target(
-        message_segment=Seg(type="text", data=text),
+        message_sequence=MessageSequence(components=[TextComponent(text=text)]),
         stream_id=stream_id,
         display_message="",
         typing=typing,
@@ -586,7 +662,7 @@ async def emoji_to_stream(
         bool: 发送成功时返回 ``True``。
     """
     return await _send_to_target(
-        message_segment=Seg(type="emoji", data=emoji_base64),
+        message_sequence=_build_message_sequence_from_custom_message("emoji", emoji_base64),
         stream_id=stream_id,
         display_message="",
         typing=False,
@@ -616,7 +692,7 @@ async def image_to_stream(
         bool: 发送成功时返回 ``True``。
     """
     return await _send_to_target(
-        message_segment=Seg(type="image", data=image_base64),
+        message_sequence=_build_message_sequence_from_custom_message("image", image_base64),
         stream_id=stream_id,
         display_message="",
         typing=False,
@@ -654,7 +730,7 @@ async def custom_to_stream(
         bool: 发送成功时返回 ``True``。
     """
     return await _send_to_target(
-        message_segment=Seg(type=message_type, data=content),  # type: ignore[arg-type]
+        message_sequence=_build_message_sequence_from_custom_message(message_type, content),
         stream_id=stream_id,
         display_message=display_message,
         typing=typing,
@@ -688,28 +764,15 @@ async def custom_reply_set_to_stream(
         show_log: 是否输出发送日志。
 
     Returns:
-        bool: 全部组件发送成功时返回 ``True``。
+        bool: 发送成功时返回 ``True``。
     """
-    success = True
-    for component in reply_set.components:
-        if isinstance(component, DictComponent):
-            message_seg = Seg(type="dict", data=component.data)  # type: ignore[arg-type]
-        else:
-            message_seg = await component.to_seg()
-
-        status = await _send_to_target(
-            message_segment=message_seg,
-            stream_id=stream_id,
-            display_message=display_message,
-            typing=typing,
-            reply_message=reply_message,
-            set_reply=set_reply,
-            storage_message=storage_message,
-            show_log=show_log,
-        )
-        if not status:
-            success = False
-            logger.error(f"[SendService] 发送消息组件失败，组件类型：{type(component).__name__}")
-        set_reply = False
-
-    return success
+    return await _send_to_target(
+        message_sequence=reply_set,
+        stream_id=stream_id,
+        display_message=display_message,
+        typing=typing,
+        reply_message=reply_message,
+        set_reply=set_reply,
+        storage_message=storage_message,
+        show_log=show_log,
+    )

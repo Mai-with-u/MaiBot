@@ -1,30 +1,32 @@
+from datetime import datetime
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
 import json
-import time
-import traceback
 import random
 import re
-from typing import Dict, Optional, Tuple, List, TYPE_CHECKING
-from rich.traceback import install
-from datetime import datetime
-from json_repair import repair_json
+import time
+import traceback
 
-from src.llm_models.utils_model import LLMRequest
-from src.config.config import global_config, model_config
-from src.common.logger import get_logger
+from json_repair import repair_json
+from rich.traceback import install
+
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
+from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.chat.planner_actions.action_manager import ActionManager
+from src.chat.utils.utils import get_chat_type_and_target_info
 from src.common.data_models.info_data_model import ActionPlannerInfo
+from src.common.logger import get_logger
 from src.common.utils.utils_action import ActionUtils
+from src.config.config import global_config, model_config
+from src.core.types import ActionActivationType, ActionInfo, ComponentType
+from src.llm_models.utils_model import LLMRequest
+from src.plugin_runtime.component_query import component_query_service
 from src.prompt.prompt_manager import prompt_manager
 from src.services.message_service import (
     build_readable_messages_with_id,
     get_actions_by_timestamp_with_chat,
     get_messages_before_time_in_chat,
 )
-from src.chat.utils.utils import get_chat_type_and_target_info
-from src.chat.planner_actions.action_manager import ActionManager
-from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
-from src.core.types import ActionActivationType, ActionInfo, ComponentType
-from src.core.component_registry import component_registry
 
 if TYPE_CHECKING:
     from src.common.data_models.info_data_model import TargetPersonInfo
@@ -320,7 +322,7 @@ class BrainPlanner:
         current_available_actions_dict = self.action_manager.get_using_actions()
 
         # 获取完整的动作信息
-        all_registered_actions: Dict[str, ActionInfo] = component_registry.get_components_by_type(  # type: ignore
+        all_registered_actions: Dict[str, ActionInfo] = component_query_service.get_components_by_type(  # type: ignore
             ComponentType.ACTION
         )
         current_available_actions = {}

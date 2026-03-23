@@ -31,12 +31,12 @@ class ComponentTypes(str, Enum):
 
 class StatusDict(TypedDict):
     total: int
-    ACTION: int
-    COMMAND: int
-    TOOL: int
-    EVENT_HANDLER: int
-    HOOK_HANDLER: int
-    MESSAGE_GATEWAY: int
+    action: int
+    command: int
+    tool: int
+    event_handler: int
+    hook_handler: int
+    message_gateway: int
     plugins: int
 
 
@@ -185,6 +185,23 @@ class ComponentRegistry:
         # 按插件索引
         self._by_plugin: Dict[str, List[ComponentEntry]] = {}
 
+    @staticmethod
+    def _normalize_component_type(component_type: str) -> ComponentTypes:
+        """规范化组件类型输入。
+
+        Args:
+            component_type: 原始组件类型字符串。
+
+        Returns:
+            ComponentTypes: 规范化后的组件类型枚举。
+
+        Raises:
+            ValueError: 当组件类型不受支持时抛出。
+        """
+
+        normalized_value = str(component_type or "").strip().upper()
+        return ComponentTypes(normalized_value)
+
     def clear(self) -> None:
         """清空全部组件注册状态。"""
         self._components.clear()
@@ -205,18 +222,19 @@ class ComponentRegistry:
             success (bool): 是否成功注册（失败原因通常是组件类型无效）
         """
         try:
-            if component_type == ComponentTypes.ACTION:
-                comp = ActionEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.COMMAND:
-                comp = CommandEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.TOOL:
-                comp = ToolEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.EVENT_HANDLER:
-                comp = EventHandlerEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.HOOK_HANDLER:
-                comp = HookHandlerEntry(name, component_type, plugin_id, metadata)
-            elif component_type == ComponentTypes.MESSAGE_GATEWAY:
-                comp = MessageGatewayEntry(name, component_type, plugin_id, metadata)
+            normalized_type = self._normalize_component_type(component_type)
+            if normalized_type == ComponentTypes.ACTION:
+                comp = ActionEntry(name, normalized_type.value, plugin_id, metadata)
+            elif normalized_type == ComponentTypes.COMMAND:
+                comp = CommandEntry(name, normalized_type.value, plugin_id, metadata)
+            elif normalized_type == ComponentTypes.TOOL:
+                comp = ToolEntry(name, normalized_type.value, plugin_id, metadata)
+            elif normalized_type == ComponentTypes.EVENT_HANDLER:
+                comp = EventHandlerEntry(name, normalized_type.value, plugin_id, metadata)
+            elif normalized_type == ComponentTypes.HOOK_HANDLER:
+                comp = HookHandlerEntry(name, normalized_type.value, plugin_id, metadata)
+            elif normalized_type == ComponentTypes.MESSAGE_GATEWAY:
+                comp = MessageGatewayEntry(name, normalized_type.value, plugin_id, metadata)
             else:
                 raise ValueError(f"组件类型 {component_type} 不存在")
         except ValueError:
@@ -304,6 +322,20 @@ class ComponentRegistry:
             comp.enabled = enabled
         return True
 
+    def set_component_enabled(self, full_name: str, enabled: bool, session_id: Optional[str] = None) -> bool:
+        """设置指定组件的启用状态。
+
+        Args:
+            full_name: 组件全名。
+            enabled: 目标启用状态。
+            session_id: 可选的会话 ID，仅对该会话生效。
+
+        Returns:
+            bool: 是否设置成功。
+        """
+
+        return self.toggle_component_status(full_name, enabled, session_id=session_id)
+
     def toggle_plugin_status(self, plugin_id: str, enabled: bool, session_id: Optional[str] = None) -> int:
         """批量启用或禁用某插件的所有组件。
 
@@ -348,7 +380,7 @@ class ComponentRegistry:
             components (List[ComponentEntry]): 组件条目列表
         """
         try:
-            comp_type = ComponentTypes(component_type)
+            comp_type = self._normalize_component_type(component_type)
         except ValueError:
             logger.error(f"组件类型 {component_type} 不存在")
             raise
@@ -536,6 +568,6 @@ class ComponentRegistry:
         """
         stats: StatusDict = {"total": len(self._components)}  # type: ignore
         for comp_type, type_dict in self._by_type.items():
-            stats[comp_type.value] = len(type_dict)
+            stats[comp_type.value.lower()] = len(type_dict)
         stats["plugins"] = len(self._by_plugin)
         return stats

@@ -9,8 +9,6 @@ import sys
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.core.component_registry import component_registry as core_component_registry
-from src.core.types import ActionActivationType, ActionInfo, ComponentType as CoreComponentType
 from src.platform_io import DriverKind, InboundMessageEnvelope, RouteBinding, RouteKey, get_platform_io_manager
 from src.platform_io.drivers import PluginPlatformDriver
 from src.platform_io.route_key_factory import RouteKeyFactory
@@ -107,7 +105,6 @@ class PluginRunnerSupervisor:
         self._runner_process: Optional[asyncio.subprocess.Process] = None
         self._registered_plugins: Dict[str, RegisterPluginPayload] = {}
         self._message_gateway_states: Dict[str, Dict[str, _MessageGatewayRuntimeState]] = {}
-        self._mirrored_core_actions: Dict[str, List[str]] = {}
         self._runner_ready_events: asyncio.Event = asyncio.Event()
         self._runner_ready_payloads: RunnerReadyPayload = RunnerReadyPayload()
         self._health_task: Optional[asyncio.Task[None]] = None
@@ -510,7 +507,6 @@ class PluginRunnerSupervisor:
         except Exception as exc:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
 
-        self._remove_core_action_mirrors(payload.plugin_id)
         self._component_registry.remove_components_by_plugin(payload.plugin_id)
         await self._unregister_all_message_gateway_drivers_for_plugin(payload.plugin_id)
 
@@ -520,7 +516,6 @@ class PluginRunnerSupervisor:
         )
         self._registered_plugins[payload.plugin_id] = payload
         self._message_gateway_states[payload.plugin_id] = {}
-        self._mirror_runtime_actions_to_core_registry(payload)
 
         return envelope.make_response(
             payload={
@@ -550,7 +545,6 @@ class PluginRunnerSupervisor:
         removed_components = self._component_registry.remove_components_by_plugin(payload.plugin_id)
         self._authorization.revoke_permission_token(payload.plugin_id)
         removed_registration = self._registered_plugins.pop(payload.plugin_id, None) is not None
-        self._remove_core_action_mirrors(payload.plugin_id)
         await self._unregister_all_message_gateway_drivers_for_plugin(payload.plugin_id)
         self._message_gateway_states.pop(payload.plugin_id, None)
 
@@ -563,236 +557,6 @@ class PluginRunnerSupervisor:
                 "removed_registration": removed_registration,
             }
         )
-
-    @staticmethod
-    def _coerce_action_activation_type(raw_value: Any) -> ActionActivationType:
-        """将运行时 Action 激活类型转换为旧核心枚举。
-
-        Args:
-            raw_value: 插件运行时声明中的激活类型值。
-
-        Returns:
-            ActionActivationType: 可供旧 Planner 使用的激活类型枚举。
-        """
-        normalized_value = str(raw_value or ActionActivationType.ALWAYS.value).strip().lower()
-        try:
-            return ActionActivationType(normalized_value)
-        except ValueError:
-            return ActionActivationType.ALWAYS
-
-    @staticmethod
-    def _coerce_float(value: Any, default: float = 0.0) -> float:
-        """将任意输入尽量转换为浮点数。
-
-        Args:
-            value: 待转换的值。
-            default: 转换失败时使用的默认值。
-
-        Returns:
-            float: 转换结果。
-        """
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _build_core_action_info(plugin_id: str, component_name: str, metadata: Dict[str, Any]) -> ActionInfo:
-        """将运行时 Action 元数据映射为旧核心 ActionInfo。
-
-        Args:
-            plugin_id: 插件 ID。
-            component_name: 组件名称。
-            metadata: 运行时组件元数据。
-
-        Returns:
-            ActionInfo: 兼容旧 Planner 的动作定义。
-        """
-        activation_keywords = [
-            str(item)
-            for item in (metadata.get("activation_keywords") or [])
-            if item is not None and str(item).strip()
-        ]
-        action_require = [
-            str(item)
-            for item in (metadata.get("action_require") or [])
-            if item is not None and str(item).strip()
-        ]
-        associated_types = [
-            str(item)
-            for item in (metadata.get("associated_types") or [])
-            if item is not None and str(item).strip()
-        ]
-        raw_action_parameters = metadata.get("action_parameters") or {}
-        action_parameters = {
-            str(param_name): str(param_description)
-            for param_name, param_description in raw_action_parameters.items()
-        } if isinstance(raw_action_parameters, dict) else {}
-
-        return ActionInfo(
-            name=component_name,
-            component_type=CoreComponentType.ACTION,
-            description=str(metadata.get("description", "") or ""),
-            enabled=bool(metadata.get("enabled", True)),
-            plugin_name=plugin_id,
-            metadata=dict(metadata),
-            action_parameters=action_parameters,
-            action_require=action_require,
-            associated_types=associated_types,
-            activation_type=PluginRunnerSupervisor._coerce_action_activation_type(metadata.get("activation_type")),
-            random_activation_probability=PluginRunnerSupervisor._coerce_float(
-                metadata.get("activation_probability"),
-                0.0,
-            ),
-            activation_keywords=activation_keywords,
-            parallel_action=bool(metadata.get("parallel_action", False)),
-        )
-
-    @staticmethod
-    def _extract_stream_id_from_action_kwargs(kwargs: Dict[str, Any]) -> str:
-        """从旧 ActionManager 传入参数中提取聊天流 ID。
-
-        Args:
-            kwargs: 旧动作执行器收到的关键字参数。
-
-        Returns:
-            str: 可用于新运行时 Action 的 ``stream_id``。
-        """
-        chat_stream = kwargs.get("chat_stream")
-        if chat_stream is not None:
-            try:
-                return str(chat_stream.session_id)
-            except AttributeError:
-                pass
-
-        raw_stream_id = kwargs.get("stream_id", "")
-        return str(raw_stream_id or "")
-
-    def _build_runtime_action_executor(
-        self,
-        plugin_id: str,
-        component_name: str,
-    ) -> Any:
-        """构造一个转发到 plugin runtime 的旧核心 Action 执行器。
-
-        Args:
-            plugin_id: 目标插件 ID。
-            component_name: 目标 Action 组件名称。
-
-        Returns:
-            Callable[..., Coroutine[Any, Any, tuple[bool, str]]]: 兼容旧 ActionManager 的执行器。
-        """
-
-        async def _executor(**kwargs: Any) -> tuple[bool, str]:
-            """将旧 Planner 的动作调用桥接到 plugin runtime。
-
-            Args:
-                **kwargs: 旧 ActionManager 传入的运行时上下文参数。
-
-            Returns:
-                tuple[bool, str]: ``(是否成功, 动作说明)``。
-            """
-            invoke_args: Dict[str, Any] = {}
-            action_data = kwargs.get("action_data")
-            if isinstance(action_data, dict):
-                invoke_args.update(action_data)
-
-            stream_id = self._extract_stream_id_from_action_kwargs(kwargs)
-            invoke_args["action_data"] = action_data if isinstance(action_data, dict) else {}
-            invoke_args["stream_id"] = stream_id
-            invoke_args["chat_id"] = stream_id
-            invoke_args["reasoning"] = str(kwargs.get("action_reasoning", "") or "")
-
-            thinking_id = kwargs.get("thinking_id")
-            if thinking_id is not None:
-                invoke_args["thinking_id"] = str(thinking_id)
-
-            cycle_timers = kwargs.get("cycle_timers")
-            if isinstance(cycle_timers, dict):
-                invoke_args["cycle_timers"] = cycle_timers
-
-            plugin_config = kwargs.get("plugin_config")
-            if isinstance(plugin_config, dict):
-                invoke_args["plugin_config"] = plugin_config
-
-            log_prefix = kwargs.get("log_prefix")
-            if isinstance(log_prefix, str):
-                invoke_args["log_prefix"] = log_prefix
-
-            shutting_down = kwargs.get("shutting_down")
-            if isinstance(shutting_down, bool):
-                invoke_args["shutting_down"] = shutting_down
-
-            try:
-                response = await self.invoke_plugin(
-                    method="plugin.invoke_action",
-                    plugin_id=plugin_id,
-                    component_name=component_name,
-                    args=invoke_args,
-                    timeout_ms=30000,
-                )
-            except Exception as exc:
-                logger.error(f"运行时 Action {plugin_id}.{component_name} 执行失败: {exc}", exc_info=True)
-                return False, str(exc)
-
-            payload = response.payload if isinstance(response.payload, dict) else {}
-            success = bool(payload.get("success", False))
-            result = payload.get("result")
-
-            if isinstance(result, (list, tuple)):
-                if len(result) >= 2:
-                    return bool(result[0]), "" if result[1] is None else str(result[1])
-                if len(result) == 1:
-                    return bool(result[0]), ""
-
-            if success:
-                return True, "" if result is None else str(result)
-            return False, "" if result is None else str(result)
-
-        return _executor
-
-    def _mirror_runtime_actions_to_core_registry(self, payload: RegisterPluginPayload) -> None:
-        """将 plugin runtime 中声明的 Action 镜像到旧核心注册表。
-
-        Args:
-            payload: 当前插件的注册载荷。
-        """
-        mirrored_action_names: List[str] = []
-
-        for component in payload.components:
-            if str(component.component_type).upper() != CoreComponentType.ACTION.name:
-                continue
-
-            action_info = self._build_core_action_info(
-                plugin_id=payload.plugin_id,
-                component_name=component.name,
-                metadata=component.metadata,
-            )
-            action_executor = self._build_runtime_action_executor(
-                plugin_id=payload.plugin_id,
-                component_name=component.name,
-            )
-            registered = core_component_registry.register_action(action_info, action_executor)
-            if not registered:
-                logger.warning(
-                    f"运行时 Action {payload.plugin_id}.{component.name} 无法镜像到旧核心注册表，"
-                    "可能与现有 Action 重名"
-                )
-                continue
-            mirrored_action_names.append(component.name)
-
-        if mirrored_action_names:
-            self._mirrored_core_actions[payload.plugin_id] = mirrored_action_names
-
-    def _remove_core_action_mirrors(self, plugin_id: str) -> None:
-        """移除某个插件镜像到旧核心注册表的所有 Action。
-
-        Args:
-            plugin_id: 目标插件 ID。
-        """
-        mirrored_action_names = self._mirrored_core_actions.pop(plugin_id, [])
-        for action_name in mirrored_action_names:
-            core_component_registry.remove_action(action_name)
 
     @staticmethod
     def _build_message_gateway_driver_id(plugin_id: str, gateway_name: str) -> str:
@@ -1407,8 +1171,6 @@ class PluginRunnerSupervisor:
 
     def _clear_runner_state(self) -> None:
         """清理当前 Runner 对应的 Host 侧注册状态。"""
-        for plugin_id in list(self._mirrored_core_actions.keys()):
-            self._remove_core_action_mirrors(plugin_id)
         self._authorization.clear()
         self._component_registry.clear()
         self._registered_plugins.clear()

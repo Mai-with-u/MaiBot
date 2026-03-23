@@ -72,10 +72,10 @@ class _StubPlatformIODriver(PlatformIODriver):
 
 
 def _build_manager() -> PlatformIOManager:
-    """构造带有最小 active owner 的 Broker 管理器。
+    """构造带有最小接收路由的 Broker 管理器。
 
     Returns:
-        PlatformIOManager: 已注册测试驱动并绑定活动路由的 Broker。
+        PlatformIOManager: 已注册测试驱动并绑定接收路由的 Broker。
     """
     manager = PlatformIOManager()
     driver = _StubPlatformIODriver(
@@ -88,7 +88,7 @@ def _build_manager() -> PlatformIOManager:
         )
     )
     manager.register_driver(driver)
-    manager.bind_route(
+    manager.bind_receive_route(
         RouteBinding(
             route_key=RouteKey(platform="qq", account_id="10001", scope="main"),
             driver_id=driver.driver_id,
