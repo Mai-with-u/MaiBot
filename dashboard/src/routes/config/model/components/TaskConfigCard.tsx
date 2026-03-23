@@ -143,10 +143,11 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
             <SelectContent>
               <SelectItem value="balance">负载均衡（balance）</SelectItem>
               <SelectItem value="random">随机选择（random）</SelectItem>
+              <SelectItem value="sequential">顺序优先（sequential）</SelectItem>
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            负载均衡：优先选择使用次数少的模型。随机选择：完全随机从模型列表中选择
+            负载均衡：优先选择使用次数少的模型。随机选择：完全随机选择。顺序优先：按列表顺序，前者不可用才用后者
           </p>
         </div>
       </div>
