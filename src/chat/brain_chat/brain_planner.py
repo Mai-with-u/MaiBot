@@ -20,7 +20,7 @@ from src.chat.utils.chat_message_builder import (
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
 )
-from src.chat.utils.utils import get_chat_type_and_target_info
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.chat.planner_actions.action_manager import ActionManager
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.plugin_system.base.component_types import ActionInfo, ComponentType, ActionActivationType
@@ -280,6 +280,8 @@ class BrainPlanner:
             show_actions=True,
         )
 
+        previous_obs_time_mark = self.last_obs_time_mark
+
         message_list_before_now_short = message_list_before_now[-int(global_config.chat.max_context_size * 0.3) :]
         chat_content_block_short, message_id_list_short = build_readable_messages_with_id(
             messages=message_list_before_now_short,
@@ -321,6 +323,23 @@ class BrainPlanner:
             available_actions=available_actions,
             loop_start_time=loop_start_time,
         )
+
+        has_new_user_message = any(
+            (msg.time or 0.0) > previous_obs_time_mark
+            and not is_bot_self(msg.user_info.platform or "", str(msg.user_info.user_id))
+            for msg in message_list_before_now
+        )
+        if not has_new_user_message:
+            actions, dropped_actions = self._restrict_actions_without_new_user_message(
+                actions=actions,
+                available_actions=available_actions,
+                message_id_list=message_id_list,
+            )
+            if dropped_actions:
+                logger.info(
+                    f"{self.log_prefix}检测到无新用户消息，仅保留 reply/wait/complete_talk，移除动作: {' '.join(dropped_actions)}"
+                )
+                reasoning = f"{reasoning}；检测到无新用户消息，仅保留 reply/wait/complete_talk"
 
         # 记录和展示计划日志
         logger.info(
@@ -517,9 +536,6 @@ class BrainPlanner:
             llm_duration_ms = (time.perf_counter() - llm_start) * 1000
             llm_reasoning = reasoning_content
 
-            logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
-            logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
-
             if global_config.debug.show_planner_prompt:
                 logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
                 logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
@@ -596,6 +612,44 @@ class BrainPlanner:
                 available_actions=available_actions,
             )
         ]
+
+    def _restrict_actions_without_new_user_message(
+        self,
+        actions: List[ActionPlannerInfo],
+        available_actions: Dict[str, ActionInfo],
+        message_id_list: List[Tuple[str, "DatabaseMessages"]],
+    ) -> Tuple[List[ActionPlannerInfo], List[str]]:
+        """无新用户消息时，仅保留 reply/wait/complete_talk。"""
+        allowed_actions: List[ActionPlannerInfo] = []
+        dropped_actions: List[str] = []
+
+        for action in actions:
+            if action.action_type in {"reply", "complete_talk"}:
+                allowed_actions.append(action)
+                continue
+
+            if action.action_type in {"wait", "listening", "wait_time"}:
+                action.action_type = "wait"
+                action.action_data = action.action_data or {}
+                action.action_data.setdefault("wait_seconds", 5)
+                allowed_actions.append(action)
+                continue
+
+            dropped_actions.append(action.action_type)
+
+        if allowed_actions:
+            return allowed_actions, dropped_actions
+
+        target_message = message_id_list[-1][1] if message_id_list else None
+        fallback_wait = ActionPlannerInfo(
+            action_type="wait",
+            reasoning="没有新的用户消息，进入等待",
+            action_data={"wait_seconds": 5},
+            action_message=target_message,
+            available_actions=available_actions,
+        )
+
+        return [fallback_wait], dropped_actions
 
     def add_plan_log(self, reasoning: str, actions: List[ActionPlannerInfo]):
         """添加计划日志"""

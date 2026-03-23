@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import traceback
 import random
@@ -101,6 +102,10 @@ class BrainChatting:
         # 最近一次是否成功进行了 reply，用于选择 BrainPlanner 的 Prompt
         self._last_successful_reply: bool = False
 
+        # side-effect 动作幂等缓存，避免同一触发消息在短时间内重复执行。
+        self._recent_side_effect_actions: Dict[str, float] = {}
+        self._side_effect_dedupe_window_sec = 10.0
+
     async def start(self):
         """检查是否需要启动主循环，如果未激活则启动。"""
 
@@ -161,8 +166,42 @@ class BrainChatting:
             + (f"\n详情: {'; '.join(timer_strings)}" if timer_strings else "")
         )
 
+    def _is_side_effect_action(self, action_type: str) -> bool:
+        non_side_effect_actions = {"reply", "wait", "wait_time", "listening", "complete_talk", "no_reply"}
+        return action_type not in non_side_effect_actions
+
+    def _build_side_effect_action_key(self, action_planner_info: ActionPlannerInfo) -> str:
+        action_data = dict(action_planner_info.action_data or {})
+        action_data.pop("loop_start_time", None)
+
+        target_message = action_planner_info.action_message
+        target_message_id = ""
+        if target_message is not None:
+            target_message_id = str(getattr(target_message, "message_id", "") or "")
+
+        payload = {
+            "action_type": action_planner_info.action_type,
+            "target_message_id": target_message_id,
+            "action_data": action_data,
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+    def _cleanup_recent_side_effect_actions(self, now: float) -> None:
+        dedupe_window_sec = self._side_effect_dedupe_window_sec
+        expired_keys = [
+            key
+            for key, ts in self._recent_side_effect_actions.items()
+            if now - ts > dedupe_window_sec
+        ]
+        for key in expired_keys:
+            del self._recent_side_effect_actions[key]
+
+    def _is_duplicate_side_effect_action(self, key: str, now: float) -> bool:
+        dedupe_window_sec = self._side_effect_dedupe_window_sec
+        last_ts = self._recent_side_effect_actions.get(key)
+        return last_ts is not None and now - last_ts <= dedupe_window_sec
+
     async def _loopbody(self):  # sourcery skip: hoist-if-from-if
-        # 获取最新消息（用于上下文，但不影响是否调用 observe）
         recent_messages_list = message_api.get_messages_by_time_in_chat(
             chat_id=self.stream_id,
             start_time=self.last_read_time,
@@ -174,20 +213,18 @@ class BrainChatting:
             filter_intercept_message_level=1,
         )
 
-        # 如果有新消息，更新 last_read_time 并触发事件以打断正在进行的 wait
-        if len(recent_messages_list) >= 1:
+        # 仅在有新消息时更新读取时间并触发事件。
+        # 无新消息时仍允许继续思考，具体动作由 Planner 限制为 reply/wait。
+        if recent_messages_list:
             self.last_read_time = time.time()
-            self._new_message_event.set()  # 触发新消息事件，打断 wait
+            self._new_message_event.set()  # 触发新消息事件，打断正在进行的 wait
 
-        # 总是执行一次思考迭代（不管有没有新消息）
-        # wait 动作会在其内部等待，不需要在这里处理
         should_continue = await self._observe(recent_messages_list=recent_messages_list)
 
         if not should_continue:
             # 选择了 complete_talk，返回 False 表示需要等待新消息
             return False
 
-        # 继续下一次迭代（除非选择了 complete_talk）
         # 短暂等待后再继续，避免过于频繁的循环
         await asyncio.sleep(0.1)
 
@@ -559,6 +596,22 @@ class BrainChatting:
         """执行单个动作的通用函数"""
         try:
             with Timer(f"动作{action_planner_info.action_type}", cycle_timers):
+                side_effect_action_key = ""
+                if self._is_side_effect_action(action_planner_info.action_type):
+                    side_effect_action_key = self._build_side_effect_action_key(action_planner_info)
+                    now = time.time()
+                    self._cleanup_recent_side_effect_actions(now)
+                    if self._is_duplicate_side_effect_action(side_effect_action_key, now):
+                        logger.info(
+                            f"{self.log_prefix} 跳过重复动作: {action_planner_info.action_type}"
+                        )
+                        return {
+                            "action_type": action_planner_info.action_type,
+                            "success": True,
+                            "reply_text": "",
+                            "command": "",
+                        }
+
                 if action_planner_info.action_type == "complete_talk":
                     # 直接处理complete_talk逻辑，不再通过动作系统
                     reason = action_planner_info.reasoning or "选择完成对话"
@@ -761,6 +814,9 @@ class BrainChatting:
                     # 非 reply 类动作执行成功时，清空最近成功回复标记，让下一轮回到 initial Prompt
                     if success and action_planner_info.action_type != "reply":
                         self._last_successful_reply = False
+
+                    if success and side_effect_action_key:
+                        self._recent_side_effect_actions[side_effect_action_key] = time.time()
 
                     return {
                         "action_type": action_planner_info.action_type,
