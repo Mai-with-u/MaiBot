@@ -133,6 +133,7 @@ MaiBot 不仅仅是一个机器人，她致力于成为一个活跃在 QQ 群聊
 ### ❤️ 特别致谢
 
 - **[略nd](https://space.bilibili.com/1344099355)**: 🎨 为麦麦绘制精美人设。
+（旧版MaiBot人设图可在[这里](depends-data/maimai.png)查看）
 - **[NapCat](https://github.com/NapNeko/NapCatQQ)**: 🚀 现代化的基于 NTQQ 的 Bot 协议实现。
 
 ---
