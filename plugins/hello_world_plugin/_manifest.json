@@ -1,88 +1,41 @@
 {
-  "manifest_version": 1,
-  "name": "Hello World 示例插件 (Hello World Plugin)",
+  "manifest_version": 2,
   "version": "2.0.0",
-  "description": "我的第一个MaiCore插件，包含问候功能和时间查询等基础示例",
+  "name": "Hello World 示例插件 (Hello World Plugin)",
+  "description": "我的第一个 MaiCore 插件，包含问候功能和时间查询等基础示例",
   "author": {
     "name": "MaiBot开发团队",
     "url": "https://github.com/MaiM-with-u"
   },
   "license": "GPL-v3.0-or-later",
-  "host_application": {
-    "min_version": "1.0.0"
+  "urls": {
+    "repository": "https://github.com/MaiM-with-u/maibot",
+    "homepage": "https://github.com/MaiM-with-u/maibot",
+    "documentation": "https://github.com/MaiM-with-u/maibot",
+    "issues": "https://github.com/MaiM-with-u/maibot/issues"
   },
-  "homepage_url": "https://github.com/MaiM-with-u/maibot",
-  "repository_url": "https://github.com/MaiM-with-u/maibot",
-  "keywords": [
-    "demo",
-    "example",
-    "hello",
-    "greeting",
-    "tutorial"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "send.text",
+    "send.forward",
+    "send.hybrid",
+    "emoji.get_random",
+    "config.get"
   ],
-  "categories": [
-    "Examples",
-    "Tutorial"
-  ],
-  "default_locale": "zh-CN",
-  "locales_path": "_locales",
-  "plugin_info": {
-    "is_built_in": false,
-    "plugin_type": "example",
-    "capabilities": [
-      "send.text",
-      "send.forward",
-      "send.hybrid",
-      "emoji.get_random",
-      "config.get"
-    ],
-    "components": [
-      {
-        "type": "tool",
-        "name": "compare_numbers",
-        "description": "比较两个数的大小"
-      },
-      {
-        "type": "action",
-        "name": "hello_greeting",
-        "description": "向用户发送问候消息"
-      },
-      {
-        "type": "action",
-        "name": "bye_greeting",
-        "description": "向用户发送告别消息",
-        "activation_modes": ["keyword"],
-        "keywords": ["再见", "bye", "88", "拜拜"]
-      },
-      {
-        "type": "command",
-        "name": "time",
-        "description": "查询当前时间",
-        "pattern": "/time"
-      },
-      {
-        "type": "command",
-        "name": "random_emojis",
-        "description": "发送多张随机表情包",
-        "pattern": "/random_emojis"
-      },
-      {
-        "type": "command",
-        "name": "test",
-        "description": "测试命令",
-        "pattern": "/test"
-      },
-      {
-        "type": "event_handler",
-        "name": "print_message_handler",
-        "description": "打印接收到的消息"
-      },
-      {
-        "type": "event_handler",
-        "name": "forward_messages_handler",
-        "description": "把接收到的消息转发到指定聊天ID"
-      }
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
     ]
   },
-  "id": "MaiBot开发团队.maibot"
+  "id": "maibot-team.hello-world-plugin"
 }

@@ -10,7 +10,7 @@
 """
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Set, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Protocol, Set, cast
 
 import asyncio
 import contextlib
@@ -47,7 +47,7 @@ from src.plugin_runtime.protocol.envelope import (
 )
 from src.plugin_runtime.protocol.errors import ErrorCode
 from src.plugin_runtime.runner.log_handler import RunnerIPCLogHandler
-from src.plugin_runtime.runner.plugin_loader import PluginLoader, PluginMeta
+from src.plugin_runtime.runner.plugin_loader import PluginCandidate, PluginLoader, PluginMeta
 from src.plugin_runtime.runner.rpc_client import RPCClient
 
 logger = get_logger("plugin_runtime.runner.main")
@@ -119,7 +119,7 @@ class PluginRunner:
         host_address: str,
         session_token: str,
         plugin_dirs: List[str],
-        external_available_plugin_ids: Optional[List[str]] = None,
+        external_available_plugins: Optional[Dict[str, str]] = None,
     ) -> None:
         """初始化 Runner。
 
@@ -127,15 +127,15 @@ class PluginRunner:
             host_address: Host 的 IPC 地址。
             session_token: 握手用会话令牌。
             plugin_dirs: 当前 Runner 负责扫描的插件目录列表。
-            external_available_plugin_ids: 视为已满足的外部依赖插件 ID 列表。
+            external_available_plugins: 视为已满足的外部依赖插件版本映射。
         """
         self._host_address: str = host_address
         self._session_token: str = session_token
         self._plugin_dirs: List[str] = plugin_dirs
-        self._external_available_plugin_ids: Set[str] = {
-            str(plugin_id or "").strip()
-            for plugin_id in (external_available_plugin_ids or [])
-            if str(plugin_id or "").strip()
+        self._external_available_plugins: Dict[str, str] = {
+            str(plugin_id or "").strip(): str(plugin_version or "").strip()
+            for plugin_id, plugin_version in (external_available_plugins or {}).items()
+            if str(plugin_id or "").strip() and str(plugin_version or "").strip()
         }
 
         self._rpc_client: RPCClient = RPCClient(host_address, session_token)
@@ -166,7 +166,7 @@ class PluginRunner:
         # 3. 加载插件
         plugins = self._loader.discover_and_load(
             self._plugin_dirs,
-            extra_available=self._external_available_plugin_ids,
+            extra_available=self._external_available_plugins,
         )
         logger.info(f"已加载 {len(plugins)} 个插件")
 
@@ -611,14 +611,14 @@ class PluginRunner:
         self,
         plugin_id: str,
         reason: str,
-        external_available_plugins: Optional[Set[str]] = None,
+        external_available_plugins: Optional[Dict[str, str]] = None,
     ) -> ReloadPluginResultPayload:
         """按插件 ID 在 Runner 进程内执行精确重载。
 
         Args:
             plugin_id: 目标插件 ID。
             reason: 重载原因。
-            external_available_plugins: 视为已满足的外部依赖插件 ID 集合。
+            external_available_plugins: 视为已满足的外部依赖插件版本映射。
 
         Returns:
             ReloadPluginResultPayload: 结构化重载结果。
@@ -626,9 +626,9 @@ class PluginRunner:
         candidates, duplicate_candidates = self._loader.discover_candidates(self._plugin_dirs)
         failed_plugins: Dict[str, str] = {}
         normalized_external_available = {
-            str(candidate_plugin_id or "").strip()
-            for candidate_plugin_id in (external_available_plugins or set())
-            if str(candidate_plugin_id or "").strip()
+            str(candidate_plugin_id or "").strip(): str(candidate_plugin_version or "").strip()
+            for candidate_plugin_id, candidate_plugin_version in (external_available_plugins or {}).items()
+            if str(candidate_plugin_id or "").strip() and str(candidate_plugin_version or "").strip()
         }
 
         if plugin_id in duplicate_candidates:
@@ -668,7 +668,7 @@ class PluginRunner:
             self._loader.purge_plugin_modules(unload_plugin_id, meta.plugin_dir)
             unloaded_plugins.append(unload_plugin_id)
 
-        reload_candidates: Dict[str, Tuple[Path, Dict[str, Any], Path]] = {}
+        reload_candidates: Dict[str, PluginCandidate] = {}
         for target_plugin_id in target_plugin_ids:
             candidate = candidates.get(target_plugin_id)
             if candidate is None:
@@ -678,11 +678,25 @@ class PluginRunner:
 
         load_order, dependency_failures = self._loader.resolve_dependencies(
             reload_candidates,
-            extra_available=retained_plugin_ids | normalized_external_available,
+            extra_available={
+                **normalized_external_available,
+                **{
+                    retained_plugin_id: retained_meta.version
+                    for retained_plugin_id in retained_plugin_ids
+                    if (retained_meta := self._loader.get_plugin(retained_plugin_id)) is not None
+                },
+            },
         )
         failed_plugins.update(dependency_failures)
 
-        available_plugins = set(retained_plugin_ids) | normalized_external_available
+        available_plugins = {
+            **normalized_external_available,
+            **{
+                retained_plugin_id: retained_meta.version
+                for retained_plugin_id in retained_plugin_ids
+                if (retained_meta := self._loader.get_plugin(retained_plugin_id)) is not None
+            },
+        }
         reloaded_plugins: List[str] = []
 
         for load_plugin_id in load_order:
@@ -694,10 +708,12 @@ class PluginRunner:
                 continue
 
             _, manifest, _ = candidate
-            dependencies = PluginMeta._extract_dependencies(manifest)
-            missing_dependencies = [dependency for dependency in dependencies if dependency not in available_plugins]
-            if missing_dependencies:
-                failed_plugins[load_plugin_id] = f"依赖未满足: {', '.join(missing_dependencies)}"
+            unsatisfied_dependencies = self._loader.manifest_validator.get_unsatisfied_plugin_dependencies(
+                manifest,
+                available_plugin_versions=available_plugins,
+            )
+            if unsatisfied_dependencies:
+                failed_plugins[load_plugin_id] = f"依赖未满足: {', '.join(unsatisfied_dependencies)}"
                 continue
 
             meta = self._loader.load_candidate(load_plugin_id, candidate)
@@ -710,7 +726,7 @@ class PluginRunner:
                 failed_plugins[load_plugin_id] = "插件初始化失败"
                 continue
 
-            available_plugins.add(load_plugin_id)
+            available_plugins[load_plugin_id] = meta.version
             reloaded_plugins.append(load_plugin_id)
 
         if failed_plugins:
@@ -1079,7 +1095,7 @@ class PluginRunner:
             result = await self._reload_plugin_by_id(
                 payload.plugin_id,
                 payload.reason,
-                external_available_plugins=set(payload.external_available_plugins),
+                external_available_plugins=dict(payload.external_available_plugins),
             )
             return envelope.make_response(payload=result.model_dump())
 
@@ -1185,13 +1201,13 @@ async def _async_main() -> None:
 
     plugin_dirs = [d for d in plugin_dirs_str.split(os.pathsep) if d]
     try:
-        external_plugin_ids = json.loads(external_plugin_ids_raw) if external_plugin_ids_raw else []
+        external_plugin_ids = json.loads(external_plugin_ids_raw) if external_plugin_ids_raw else {}
     except json.JSONDecodeError:
-        logger.warning("解析外部依赖插件列表失败，已回退为空列表")
-        external_plugin_ids = []
-    if not isinstance(external_plugin_ids, list):
-        logger.warning("外部依赖插件列表格式非法，已回退为空列表")
-        external_plugin_ids = []
+        logger.warning("解析外部依赖插件版本映射失败，已回退为空映射")
+        external_plugin_ids = {}
+    if not isinstance(external_plugin_ids, dict):
+        logger.warning("外部依赖插件版本映射格式非法，已回退为空映射")
+        external_plugin_ids = {}
 
     # sys.path 隔离: 只保留标准库、SDK 包、插件目录
     _isolate_sys_path(plugin_dirs)
@@ -1200,7 +1216,10 @@ async def _async_main() -> None:
         host_address,
         session_token,
         plugin_dirs,
-        external_available_plugin_ids=[str(plugin_id) for plugin_id in external_plugin_ids],
+        external_available_plugins={
+            str(plugin_id): str(plugin_version)
+            for plugin_id, plugin_version in external_plugin_ids.items()
+        },
     )
 
     # 注册信号处理

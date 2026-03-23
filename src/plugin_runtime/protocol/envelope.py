@@ -282,8 +282,11 @@ class ReloadPluginPayload(BaseModel):
     """目标插件 ID"""
     reason: str = Field(default="manual", description="重载原因")
     """重载原因"""
-    external_available_plugins: List[str] = Field(default_factory=list, description="可视为已满足的外部依赖插件 ID")
-    """可视为已满足的外部依赖插件 ID"""
+    external_available_plugins: Dict[str, str] = Field(
+        default_factory=dict,
+        description="可视为已满足的外部依赖插件版本映射",
+    )
+    """可视为已满足的外部依赖插件版本映射"""
 
 
 class ReloadPluginResultPayload(BaseModel):

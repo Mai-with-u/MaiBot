@@ -116,7 +116,7 @@ class PluginRunnerSupervisor:
         self._runner_process: Optional[asyncio.subprocess.Process] = None
         self._registered_plugins: Dict[str, RegisterPluginPayload] = {}
         self._message_gateway_states: Dict[str, Dict[str, _MessageGatewayRuntimeState]] = {}
-        self._external_available_plugin_ids: List[str] = []
+        self._external_available_plugins: Dict[str, str] = {}
         self._runner_ready_events: asyncio.Event = asyncio.Event()
         self._runner_ready_payloads: RunnerReadyPayload = RunnerReadyPayload()
         self._health_task: Optional[asyncio.Task[None]] = None
@@ -166,20 +166,33 @@ class PluginRunnerSupervisor:
         """返回底层 RPC 服务端。"""
         return self._rpc_server
 
-    def set_external_available_plugin_ids(self, plugin_ids: List[str]) -> None:
-        """设置当前 Runner 启动/重载时可视为已满足的外部依赖列表。"""
+    def set_external_available_plugins(self, plugin_versions: Dict[str, str]) -> None:
+        """设置当前 Runner 启动/重载时可视为已满足的外部依赖版本映射。
 
-        normalized_plugin_ids = {
-            str(plugin_id or "").strip()
-            for plugin_id in plugin_ids
-            if str(plugin_id or "").strip()
+        Args:
+            plugin_versions: 外部插件版本映射，键为插件 ID，值为插件版本。
+        """
+        self._external_available_plugins = {
+            str(plugin_id or "").strip(): str(plugin_version or "").strip()
+            for plugin_id, plugin_version in plugin_versions.items()
+            if str(plugin_id or "").strip() and str(plugin_version or "").strip()
         }
-        self._external_available_plugin_ids = sorted(normalized_plugin_ids)
 
     def get_loaded_plugin_ids(self) -> List[str]:
         """返回当前 Supervisor 已注册的插件 ID 列表。"""
 
         return sorted(self._registered_plugins.keys())
+
+    def get_loaded_plugin_versions(self) -> Dict[str, str]:
+        """返回当前 Supervisor 已注册插件的版本映射。
+
+        Returns:
+            Dict[str, str]: 已注册插件版本映射，键为插件 ID，值为插件版本。
+        """
+        return {
+            plugin_id: registration.plugin_version
+            for plugin_id, registration in self._registered_plugins.items()
+        }
 
     async def dispatch_event(
         self,
@@ -373,14 +386,14 @@ class PluginRunnerSupervisor:
         self,
         plugin_id: str,
         reason: str = "manual",
-        external_available_plugins: Optional[List[str]] = None,
+        external_available_plugins: Optional[Dict[str, str]] = None,
     ) -> bool:
         """按插件 ID 触发精确重载。
 
         Args:
             plugin_id: 目标插件 ID。
             reason: 重载原因。
-            external_available_plugins: 视为已满足的外部依赖插件 ID 列表。
+            external_available_plugins: 视为已满足的外部依赖插件版本映射。
 
         Returns:
             bool: 是否重载成功。
@@ -392,7 +405,7 @@ class PluginRunnerSupervisor:
                 payload={
                     "plugin_id": plugin_id,
                     "reason": reason,
-                    "external_available_plugins": external_available_plugins or self._external_available_plugin_ids,
+                    "external_available_plugins": external_available_plugins or self._external_available_plugins,
                 },
                 timeout_ms=max(int(self._runner_spawn_timeout * 1000), 10000),
             )
@@ -409,14 +422,14 @@ class PluginRunnerSupervisor:
         self,
         plugin_ids: Optional[List[str]] = None,
         reason: str = "manual",
-        external_available_plugins: Optional[List[str]] = None,
+        external_available_plugins: Optional[Dict[str, str]] = None,
     ) -> bool:
         """批量重载插件。
 
         Args:
             plugin_ids: 目标插件 ID 列表；为空时重载当前已注册的全部插件。
             reason: 重载原因。
-            external_available_plugins: 视为已满足的外部依赖插件 ID 列表。
+            external_available_plugins: 视为已满足的外部依赖插件版本映射。
 
         Returns:
             bool: 是否全部重载成功。
@@ -1136,7 +1149,7 @@ class PluginRunnerSupervisor:
         global_config_snapshot = config_manager.get_global_config().model_dump()
         global_config_snapshot["model"] = config_manager.get_model_config().model_dump()
         return {
-            ENV_EXTERNAL_PLUGIN_IDS: json.dumps(self._external_available_plugin_ids, ensure_ascii=False),
+            ENV_EXTERNAL_PLUGIN_IDS: json.dumps(self._external_available_plugins, ensure_ascii=False),
             ENV_GLOBAL_CONFIG_SNAPSHOT: json.dumps(global_config_snapshot, ensure_ascii=False),
             ENV_HOST_VERSION: PROTOCOL_VERSION,
             ENV_IPC_ADDRESS: self._transport.get_address(),

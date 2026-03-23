@@ -1,51 +1,46 @@
 {
-  "manifest_version": 1,
-  "name": "插件和组件管理 (Plugin and Component Management)",
+  "manifest_version": 2,
   "version": "2.0.0",
-  "description": "通过系统API管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。",
+  "name": "插件和组件管理 (Plugin and Component Management)",
+  "description": "通过系统 API 管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。",
   "author": {
     "name": "MaiBot团队",
     "url": "https://github.com/MaiM-with-u"
   },
   "license": "GPL-v3.0-or-later",
-  "host_application": {
-    "min_version": "1.0.0"
+  "urls": {
+    "repository": "https://github.com/MaiM-with-u/maibot",
+    "homepage": "https://github.com/MaiM-with-u/maibot",
+    "documentation": "https://github.com/MaiM-with-u/maibot",
+    "issues": "https://github.com/MaiM-with-u/maibot/issues"
   },
-  "homepage_url": "https://github.com/MaiM-with-u/maibot",
-  "repository_url": "https://github.com/MaiM-with-u/maibot",
-  "keywords": [
-    "plugins",
-    "components",
-    "management",
-    "built-in"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "component.get_all_plugins",
+    "component.list_loaded_plugins",
+    "component.list_registered_plugins",
+    "component.enable",
+    "component.disable",
+    "component.load_plugin",
+    "component.unload_plugin",
+    "component.reload_plugin",
+    "send.text",
+    "config.get"
   ],
-  "categories": [
-    "Core System",
-    "Plugin Management"
-  ],
-  "default_locale": "zh-CN",
-  "locales_path": "_locales",
-  "plugin_info": {
-    "is_built_in": true,
-    "plugin_type": "plugin_management",
-    "capabilities": [
-      "component.get_all_plugins",
-      "component.list_loaded_plugins",
-      "component.list_registered_plugins",
-      "component.enable",
-      "component.disable",
-      "component.load_plugin",
-      "component.unload_plugin",
-      "component.reload_plugin",
-      "send.text",
-      "config.get"
-    ],
-    "components": [
-      {
-        "type": "command",
-        "name": "management",
-        "description": "管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。"
-      }
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
     ]
-  }
+  },
+  "id": "builtin.plugin-management"
 }

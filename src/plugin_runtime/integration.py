@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import asyncio
-import json
 
 import tomlkit
 
@@ -26,6 +25,7 @@ from src.plugin_runtime.capabilities import (
 )
 from src.plugin_runtime.capabilities.registry import register_capability_impls
 from src.plugin_runtime.host.message_utils import MessageDict, PluginMessageUtils
+from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -69,6 +69,7 @@ class PluginRuntimeManager(
         self._plugin_source_watcher_subscription_id: Optional[str] = None
         self._plugin_config_watcher_subscriptions: Dict[str, Tuple[Path, str]] = {}
         self._plugin_path_cache: Dict[str, Path] = {}
+        self._manifest_validator: ManifestValidator = ManifestValidator()
         self._config_reload_callback: Callable[[Sequence[str]], Awaitable[None]] = self._handle_main_config_reload
         self._config_reload_callback_registered: bool = False
 
@@ -102,46 +103,11 @@ class PluginRuntimeManager(
         candidate = Path("plugins").resolve()
         return [candidate] if candidate.is_dir() else []
 
-    @staticmethod
-    def _extract_manifest_dependencies(manifest: Dict[str, Any]) -> List[str]:
-        """从插件 manifest 中提取规范化后的依赖插件 ID 列表。"""
-
-        dependencies: List[str] = []
-        for dependency in manifest.get("dependencies", []):
-            if isinstance(dependency, str):
-                normalized_dependency = dependency.strip()
-            elif isinstance(dependency, dict):
-                normalized_dependency = str(dependency.get("name", "") or "").strip()
-            else:
-                normalized_dependency = ""
-
-            if normalized_dependency:
-                dependencies.append(normalized_dependency)
-        return dependencies
-
     @classmethod
     def _discover_plugin_dependency_map(cls, plugin_dirs: Iterable[Path]) -> Dict[str, List[str]]:
         """扫描指定插件目录集合，返回 ``plugin_id -> dependencies`` 映射。"""
-
-        dependency_map: Dict[str, List[str]] = {}
-        for plugin_dir in cls._iter_candidate_plugin_paths(plugin_dirs):
-            manifest_path = plugin_dir / "_manifest.json"
-            entrypoint_path = plugin_dir / "plugin.py"
-            if not manifest_path.is_file() or not entrypoint_path.is_file():
-                continue
-
-            try:
-                with manifest_path.open("r", encoding="utf-8") as manifest_file:
-                    manifest = json.load(manifest_file)
-            except Exception:
-                continue
-
-            if not isinstance(manifest, dict):
-                continue
-
-            plugin_id = str(manifest.get("name", plugin_dir.name) or "").strip() or plugin_dir.name
-            dependency_map[plugin_id] = cls._extract_manifest_dependencies(manifest)
-        return dependency_map
+        validator = ManifestValidator()
+        return validator.build_plugin_dependency_map(plugin_dirs)
 
     @classmethod
     def _build_group_start_order(
@@ -243,12 +209,12 @@ class PluginRuntimeManager(
                 if supervisor is None:
                     continue
 
-                external_plugin_ids = [
-                    plugin_id
+                external_plugin_versions = {
+                    plugin_id: plugin_version
                     for started_supervisor in started_supervisors
-                    for plugin_id in started_supervisor.get_loaded_plugin_ids()
-                ]
-                supervisor.set_external_available_plugin_ids(external_plugin_ids)
+                    for plugin_id, plugin_version in started_supervisor.get_loaded_plugin_versions().items()
+                }
+                supervisor.set_external_available_plugins(external_plugin_versions)
                 await supervisor.start()
                 started_supervisors.append(supervisor)
 
@@ -366,23 +332,22 @@ class PluginRuntimeManager(
             for plugin_id in supervisor.get_loaded_plugin_ids()
         }
 
-    def _build_external_available_plugins_for_supervisor(self, target_supervisor: "PluginSupervisor") -> List[str]:
-        """收集某个 Supervisor 可用的外部插件 ID 列表。"""
+    def _build_external_available_plugins_for_supervisor(self, target_supervisor: "PluginSupervisor") -> Dict[str, str]:
+        """收集某个 Supervisor 可用的外部插件版本映射。"""
 
-        external_plugin_ids: Set[str] = set()
+        external_plugin_versions: Dict[str, str] = {}
         for supervisor in self.supervisors:
             if supervisor is target_supervisor:
                 continue
-            external_plugin_ids.update(supervisor.get_loaded_plugin_ids())
-        return sorted(external_plugin_ids)
+            external_plugin_versions.update(supervisor.get_loaded_plugin_versions())
+        return external_plugin_versions
 
     def _find_supervisor_by_plugin_directory(self, plugin_id: str) -> Optional["PluginSupervisor"]:
         """根据插件目录推断应负责该插件重载的 Supervisor。"""
 
         for supervisor in self.supervisors:
-            for plugin_dir in supervisor._plugin_dirs:
-                if (Path(plugin_dir) / plugin_id).is_dir():
-                    return supervisor
+            if self._get_plugin_path_for_supervisor(supervisor, plugin_id) is not None:
+                return supervisor
         return None
 
     def _warn_skipped_cross_supervisor_reload(
@@ -740,30 +705,13 @@ class PluginRuntimeManager(
             external_available_plugins=self._build_external_available_plugins_for_supervisor(supervisor),
         )
 
-    @staticmethod
-    def _find_duplicate_plugin_ids(plugin_dirs: List[Path]) -> Dict[str, List[Path]]:
+    @classmethod
+    def _find_duplicate_plugin_ids(cls, plugin_dirs: List[Path]) -> Dict[str, List[Path]]:
         """扫描插件目录，找出被多个目录重复声明的插件 ID。"""
         plugin_locations: Dict[str, List[Path]] = {}
-        for base_dir in plugin_dirs:
-            if not base_dir.is_dir():
-                continue
-            for entry in base_dir.iterdir():
-                if not entry.is_dir():
-                    continue
-                manifest_path = entry / "_manifest.json"
-                plugin_path = entry / "plugin.py"
-                if not manifest_path.exists() or not plugin_path.exists():
-                    continue
-
-                plugin_id = entry.name
-                try:
-                    with open(manifest_path, "r", encoding="utf-8") as manifest_file:
-                        manifest = json.load(manifest_file)
-                    plugin_id = str(manifest.get("name", entry.name)).strip() or entry.name
-                except Exception:
-                    continue
-
-                plugin_locations.setdefault(plugin_id, []).append(entry)
+        validator = ManifestValidator()
+        for plugin_path, manifest in validator.iter_plugin_manifests(plugin_dirs):
+            plugin_locations.setdefault(manifest.id, []).append(plugin_path)
 
         return {
             plugin_id: sorted(dict.fromkeys(paths), key=lambda p: str(p))
@@ -831,8 +779,7 @@ class PluginRuntimeManager(
                 if entry.is_dir():
                     yield entry.resolve()
 
-    @staticmethod
-    def _read_plugin_id_from_plugin_path(plugin_path: Path) -> Optional[str]:
+    def _read_plugin_id_from_plugin_path(self, plugin_path: Path) -> Optional[str]:
         """从单个插件目录中读取 manifest 声明的插件 ID。
 
         Args:
@@ -841,22 +788,7 @@ class PluginRuntimeManager(
         Returns:
             Optional[str]: 解析成功时返回插件 ID，否则返回 ``None``。
         """
-        manifest_path = plugin_path / "_manifest.json"
-        entrypoint_path = plugin_path / "plugin.py"
-        if not manifest_path.is_file() or not entrypoint_path.is_file():
-            return None
-
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as manifest_file:
-                manifest = json.load(manifest_file)
-        except Exception:
-            return None
-
-        if not isinstance(manifest, dict):
-            return None
-
-        plugin_id = str(manifest.get("name", plugin_path.name)).strip() or plugin_path.name
-        return plugin_id or None
+        return self._manifest_validator.read_plugin_id_from_plugin_path(plugin_path)
 
     def _iter_discovered_plugin_paths(self, plugin_dirs: Iterable[Path]) -> Iterable[Tuple[str, Path]]:
         """迭代目录中可解析到的插件 ID 与实际目录路径。

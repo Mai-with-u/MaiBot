@@ -191,7 +191,7 @@ class RuntimeComponentCapabilityMixin:
             return None, None, "缺少必要参数 api_name"
 
         if "." in normalized_api_name:
-            target_plugin_id, target_api_name = normalized_api_name.split(".", 1)
+            target_plugin_id, target_api_name = normalized_api_name.rsplit(".", 1)
             try:
                 supervisor = self._get_supervisor_for_plugin(target_plugin_id)
             except RuntimeError as exc:
@@ -282,7 +282,7 @@ class RuntimeComponentCapabilityMixin:
             return None, None, "缺少必要参数 name"
 
         if "." in normalized_name:
-            plugin_id, api_name = normalized_name.split(".", 1)
+            plugin_id, api_name = normalized_name.rsplit(".", 1)
             try:
                 supervisor = self._get_supervisor_for_plugin(plugin_id)
             except RuntimeError as exc:

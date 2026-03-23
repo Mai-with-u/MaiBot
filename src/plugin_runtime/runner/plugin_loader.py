@@ -13,16 +13,16 @@ from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 import contextlib
 import importlib
 import importlib.util
-import json
 import os
+import re
 import sys
 
 from src.common.logger import get_logger
-from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+from src.plugin_runtime.runner.manifest_validator import ManifestValidator, PluginManifest
 
 logger = get_logger("plugin_runtime.runner.plugin_loader")
 
-PluginCandidate = Tuple[Path, Dict[str, Any], Path]
+PluginCandidate = Tuple[Path, PluginManifest, Path]
 
 
 class PluginMeta:
@@ -34,7 +34,7 @@ class PluginMeta:
         plugin_dir: str,
         module_name: str,
         plugin_instance: Any,
-        manifest: Dict[str, Any],
+        manifest: PluginManifest,
     ) -> None:
         """初始化插件元数据。
 
@@ -43,36 +43,16 @@ class PluginMeta:
             plugin_dir: 插件目录绝对路径。
             module_name: 插件入口模块名。
             plugin_instance: 插件实例对象。
-            manifest: 解析后的 manifest 内容。
+            manifest: 解析后的强类型 Manifest。
         """
         self.plugin_id = plugin_id
         self.plugin_dir = plugin_dir
         self.module_name = module_name
         self.instance = plugin_instance
         self.manifest = manifest
-        self.version = manifest.get("version", "1.0.0")
-        self.capabilities_required = manifest.get("capabilities", [])
-        self.dependencies: List[str] = self._extract_dependencies(manifest)
-
-    @staticmethod
-    def _extract_dependencies(manifest: Dict[str, Any]) -> List[str]:
-        """从 manifest 中提取依赖列表。
-
-        Args:
-            manifest: 插件 manifest。
-
-        Returns:
-            List[str]: 规范化后的依赖插件 ID 列表。
-        """
-        raw = manifest.get("dependencies", [])
-        result: List[str] = []
-        for dep in raw:
-            if isinstance(dep, str):
-                result.append(dep.strip())
-            elif isinstance(dep, dict):
-                if name := str(dep.get("name", "")).strip():
-                    result.append(name)
-        return result
+        self.version = manifest.version
+        self.capabilities_required = list(manifest.capabilities)
+        self.dependencies: List[str] = list(manifest.plugin_dependency_ids)
 
 
 class PluginLoader:
@@ -98,13 +78,13 @@ class PluginLoader:
     def discover_and_load(
         self,
         plugin_dirs: List[str],
-        extra_available: Optional[Set[str]] = None,
+        extra_available: Optional[Dict[str, str]] = None,
     ) -> List[PluginMeta]:
         """扫描多个目录并加载所有插件。
 
         Args:
             plugin_dirs: 插件目录列表。
-            extra_available: 额外视为已满足的外部依赖插件 ID 集合。
+            extra_available: 额外视为已满足的外部依赖插件版本映射。
 
         Returns:
             List[PluginMeta]: 成功加载的插件元数据列表，按依赖顺序排列。
@@ -164,26 +144,17 @@ class PluginLoader:
 
     def _discover_single_candidate(self, plugin_dir: Path) -> Optional[Tuple[str, PluginCandidate]]:
         """发现并校验单个插件目录。"""
-        manifest_path = plugin_dir / "_manifest.json"
         plugin_path = plugin_dir / "plugin.py"
-
-        if not manifest_path.exists() or not plugin_path.exists():
+        if not plugin_path.exists():
             return None
 
-        try:
-            with manifest_path.open("r", encoding="utf-8") as manifest_file:
-                manifest: Dict[str, Any] = json.load(manifest_file)
-        except Exception as e:
-            self._failed_plugins[plugin_dir.name] = f"manifest 解析失败: {e}"
-            logger.error(f"插件 {plugin_dir.name} manifest 解析失败: {e}")
-            return None
-
-        if not self._manifest_validator.validate(manifest):
+        manifest = self._manifest_validator.load_from_plugin_path(plugin_dir)
+        if manifest is None:
             errors = "; ".join(self._manifest_validator.errors)
             self._failed_plugins[plugin_dir.name] = f"manifest 校验失败: {errors}"
             return None
 
-        plugin_id = str(manifest.get("name", plugin_dir.name)).strip() or plugin_dir.name
+        plugin_id = manifest.id
         return plugin_id, (plugin_dir, manifest, plugin_path)
 
     def _record_duplicate_candidates(self, duplicate_candidates: Dict[str, List[Path]]) -> None:
@@ -253,7 +224,7 @@ class PluginLoader:
         """
         removed_modules: List[str] = []
         plugin_path = Path(plugin_dir).resolve()
-        synthetic_module_name = f"_maibot_plugin_{plugin_id}"
+        synthetic_module_name = self._build_safe_module_name(plugin_id)
 
         for module_name, module in list(sys.modules.items()):
             if module_name == synthetic_module_name:
@@ -277,6 +248,21 @@ class PluginLoader:
         importlib.invalidate_caches()
         return removed_modules
 
+    @staticmethod
+    def _build_safe_module_name(plugin_id: str) -> str:
+        """将插件 ID 转换为可用于动态导入的安全模块名。
+
+        Args:
+            plugin_id: 原始插件 ID。
+
+        Returns:
+            str: 仅包含字母、数字和下划线的合成模块名。
+        """
+        normalized_plugin_id = re.sub(r"[^0-9A-Za-z_]", "_", str(plugin_id or "").strip())
+        if normalized_plugin_id and normalized_plugin_id[0].isdigit():
+            normalized_plugin_id = f"_{normalized_plugin_id}"
+        return f"_maibot_plugin_{normalized_plugin_id or 'plugin'}"
+
     def list_plugins(self) -> List[str]:
         """列出所有已加载的插件 ID"""
         return list(self._loaded_plugins.keys())
@@ -286,18 +272,27 @@ class PluginLoader:
         """返回当前记录的失败插件原因映射。"""
         return dict(self._failed_plugins)
 
+    @property
+    def manifest_validator(self) -> ManifestValidator:
+        """返回当前加载器持有的 Manifest 校验器。
+
+        Returns:
+            ManifestValidator: 当前使用的 Manifest 校验器实例。
+        """
+        return self._manifest_validator
+
     # ──── 依赖解析 ────────────────────────────────────────────
 
     def resolve_dependencies(
         self,
         candidates: Dict[str, PluginCandidate],
-        extra_available: Optional[Set[str]] = None,
+        extra_available: Optional[Dict[str, str]] = None,
     ) -> Tuple[List[str], Dict[str, str]]:
         """解析候选插件的依赖顺序。
 
         Args:
             candidates: 待加载的候选插件集合。
-            extra_available: 视为已满足的外部依赖插件 ID 集合。
+            extra_available: 视为已满足的外部依赖插件版本映射。
 
         Returns:
             Tuple[List[str], Dict[str, str]]: 可加载顺序和失败原因映射。
@@ -320,36 +315,71 @@ class PluginLoader:
     def _resolve_dependencies(
         self,
         candidates: Dict[str, PluginCandidate],
-        extra_available: Optional[Set[str]] = None,
+        extra_available: Optional[Dict[str, str]] = None,
     ) -> Tuple[List[str], Dict[str, str]]:
         """拓扑排序解析加载顺序，返回 (有序列表, 失败项 {id: reason})。"""
         available = set(candidates.keys())
-        satisfied_dependencies = set(extra_available or set())
+        satisfied_dependencies = {
+            str(plugin_id or "").strip(): str(plugin_version or "").strip()
+            for plugin_id, plugin_version in (extra_available or {}).items()
+            if str(plugin_id or "").strip() and str(plugin_version or "").strip()
+        }
         dep_graph: Dict[str, Set[str]] = {}
         failed: Dict[str, str] = {}
 
         for pid, (_, manifest, _) in candidates.items():
-            raw_deps = manifest.get("dependencies", [])
             resolved: Set[str] = set()
-            missing: List[str] = []
-            for dep in raw_deps:
-                dep_name = dep if isinstance(dep, str) else str(dep.get("name", ""))
-                dep_name = dep_name.strip()
-                if not dep_name or dep_name == pid:
+            missing_or_incompatible: List[str] = []
+
+            for dependency in manifest.plugin_dependencies:
+                dependency_id = dependency.id
+                if dependency_id in available:
+                    dependency_manifest = candidates[dependency_id][1]
+                    if not self._manifest_validator.is_plugin_dependency_satisfied(
+                        dependency,
+                        dependency_manifest.version,
+                    ):
+                        missing_or_incompatible.append(
+                            f"{dependency_id} (需要 {dependency.version_spec}，当前 {dependency_manifest.version})"
+                        )
+                        continue
+                    resolved.add(dependency_id)
                     continue
-                if dep_name in available:
-                    resolved.add(dep_name)
-                elif dep_name in satisfied_dependencies:
+
+                external_dependency_version = satisfied_dependencies.get(dependency_id)
+                if external_dependency_version is None:
+                    missing_or_incompatible.append(f"{dependency_id} (未找到依赖插件)")
                     continue
-                else:
-                    missing.append(dep_name)
-            if missing:
-                failed[pid] = f"缺少依赖: {', '.join(missing)}"
+
+                if not self._manifest_validator.is_plugin_dependency_satisfied(
+                    dependency,
+                    external_dependency_version,
+                ):
+                    missing_or_incompatible.append(
+                        f"{dependency_id} (需要 {dependency.version_spec}，当前 {external_dependency_version})"
+                    )
+
+            if missing_or_incompatible:
+                failed[pid] = f"依赖未满足: {', '.join(missing_or_incompatible)}"
             dep_graph[pid] = resolved
 
-        # 移除失败项
-        for pid in failed:
-            dep_graph.pop(pid, None)
+        # 迭代传播“依赖自身加载失败”到上游依赖方，避免误报为循环依赖
+        changed = True
+        while changed:
+            changed = False
+            failed_plugin_ids = set(failed)
+            for pid, dependencies in list(dep_graph.items()):
+                if pid in failed:
+                    dep_graph.pop(pid, None)
+                    continue
+
+                failed_dependencies = sorted(dependency for dependency in dependencies if dependency in failed_plugin_ids)
+                if not failed_dependencies:
+                    continue
+
+                failed[pid] = f"依赖未满足: {', '.join(f'{dependency} (依赖插件加载失败)' for dependency in failed_dependencies)}"
+                dep_graph.pop(pid, None)
+                changed = True
 
         # Kahn 拓扑排序
         indegree = {pid: len(deps) for pid, deps in dep_graph.items()}
@@ -382,7 +412,7 @@ class PluginLoader:
         self,
         plugin_id: str,
         plugin_dir: Path,
-        manifest: Dict[str, Any],
+        manifest: PluginManifest,
         plugin_path: Path,
     ) -> Optional[PluginMeta]:
         """加载单个插件"""
@@ -390,7 +420,7 @@ class PluginLoader:
         self._ensure_compat_hook()
 
         # 动态导入插件模块
-        module_name = f"_maibot_plugin_{plugin_id}"
+        module_name = self._build_safe_module_name(plugin_id)
         spec = importlib.util.spec_from_file_location(module_name, str(plugin_path))
         if spec is None or spec.loader is None:
             logger.error(f"无法创建模块 spec: {plugin_path}")
@@ -409,7 +439,7 @@ class PluginLoader:
                 if create_plugin is not None:
                     instance = create_plugin()
                     self._validate_sdk_plugin_contract(plugin_id, instance)
-                    logger.info(f"插件 {plugin_id} v{manifest.get('version', '?')} 加载成功")
+                    logger.info(f"插件 {plugin_id} v{manifest.version} 加载成功")
                     return PluginMeta(
                         plugin_id=plugin_id,
                         plugin_dir=str(plugin_dir),
@@ -422,7 +452,7 @@ class PluginLoader:
                 instance = self._try_load_legacy_plugin(module, plugin_id)
                 if instance is not None:
                     logger.info(
-                        f"插件 {plugin_id} v{manifest.get('version', '?')} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
+                        f"插件 {plugin_id} v{manifest.version} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
                     )
                     return PluginMeta(
                         plugin_id=plugin_id,

@@ -1,68 +1,44 @@
 {
-  "manifest_version": 1,
-  "name": "BetterEmoji",
+  "manifest_version": 2,
   "version": "2.0.0",
+  "name": "BetterEmoji",
   "description": "更好的表情包管理插件",
   "author": {
     "name": "SengokuCola",
     "url": "https://github.com/SengokuCola"
   },
   "license": "GPL-v3.0-or-later",
-  "host_application": {
-    "min_version": "1.0.0"
+  "urls": {
+    "repository": "https://github.com/SengokuCola/BetterEmoji",
+    "homepage": "https://github.com/SengokuCola/BetterEmoji",
+    "documentation": "https://github.com/SengokuCola/BetterEmoji",
+    "issues": "https://github.com/SengokuCola/BetterEmoji/issues"
   },
-  "homepage_url": "https://github.com/SengokuCola/BetterEmoji",
-  "repository_url": "https://github.com/SengokuCola/BetterEmoji",
-  "keywords": [
-    "emoji",
-    "manage",
-    "plugin"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "emoji.get_random",
+    "emoji.get_count",
+    "emoji.get_info",
+    "emoji.get_all",
+    "emoji.register_emoji",
+    "emoji.delete_emoji",
+    "send.text",
+    "send.forward"
   ],
-  "categories": [
-    "Emoji",
-    "Management"
-  ],
-  "default_locale": "zh-CN",
-  "locales_path": "_locales",
-  "plugin_info": {
-    "is_built_in": false,
-    "plugin_type": "emoji_manage",
-    "capabilities": [
-      "emoji.get_random",
-      "emoji.get_count",
-      "emoji.get_info",
-      "emoji.get_all",
-      "emoji.register_emoji",
-      "emoji.delete_emoji",
-      "send.text",
-      "send.forward"
-    ],
-    "components": [
-      {
-        "type": "command",
-        "name": "add_emoji",
-        "description": "添加表情包",
-        "pattern": "/emoji add"
-      },
-      {
-        "type": "command",
-        "name": "emoji_list",
-        "description": "列表表情包",
-        "pattern": "/emoji list"
-      },
-      {
-        "type": "command",
-        "name": "delete_emoji",
-        "description": "删除表情包",
-        "pattern": "/emoji delete"
-      },
-      {
-        "type": "command",
-        "name": "random_emojis",
-        "description": "发送多张随机表情包",
-        "pattern": "/random_emojis"
-      }
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
     ]
   },
-  "id": "SengokuCola.BetterEmoji"
+  "id": "sengokucola.betteremoji"
 }

@@ -1,58 +1,40 @@
 {
-  "manifest_version": 1,
-  "name": "发言频率控制插件|BetterFrequency Plugin",
+  "manifest_version": 2,
   "version": "2.0.0",
-  "description": "控制聊天频率，支持设置focus_value和talk_frequency调整值，提供命令",
+  "name": "发言频率控制插件|BetterFrequency Plugin",
+  "description": "控制聊天频率，支持设置 focus_value 和 talk_frequency 调整值，并提供命令入口。",
   "author": {
     "name": "SengokuCola",
     "url": "https://github.com/MaiM-with-u"
   },
   "license": "GPL-v3.0-or-later",
-  "host_application": {
-    "min_version": "1.0.0"
+  "urls": {
+    "repository": "https://github.com/SengokuCola/BetterFrequency",
+    "homepage": "https://github.com/SengokuCola/BetterFrequency",
+    "documentation": "https://github.com/SengokuCola/BetterFrequency",
+    "issues": "https://github.com/SengokuCola/BetterFrequency/issues"
   },
-  "homepage_url": "https://github.com/SengokuCola/BetterFrequency",
-  "repository_url": "https://github.com/SengokuCola/BetterFrequency",
-  "keywords": [
-    "frequency",
-    "control",
-    "talk_frequency",
-    "plugin",
-    "shortcut"
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "send.text",
+    "frequency.set_adjust",
+    "frequency.get_current_talk_value",
+    "frequency.get_adjust"
   ],
-  "categories": [
-    "Chat",
-    "Frequency",
-    "Control"
-  ],
-  "default_locale": "zh-CN",
-  "locales_path": "_locales",
-  "plugin_info": {
-    "is_built_in": false,
-    "plugin_type": "frequency",
-    "components": [
-      {
-        "type": "command",
-        "name": "set_talk_frequency",
-        "description": "设置当前聊天的talk_frequency调整值",
-        "pattern": "/chat talk_frequency <数字> 或 /chat t <数字>"
-      },
-      {
-        "type": "command",
-        "name": "show_frequency",
-        "description": "显示当前聊天的频率控制状态",
-        "pattern": "/chat show 或 /chat s"
-      }
-    ],
-    "features": [
-      "设置talk_frequency调整值",
-      "调整当前聊天的发言频率",
-      "显示当前频率控制状态",
-      "实时频率控制调整",
-      "命令执行反馈（不保存消息）",
-      "支持完整命令和简化命令",
-      "快速操作支持"
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
     ]
   },
-  "id": "SengokuCola.BetterFrequency"
+  "id": "sengokucola.betterfrequency"
 }

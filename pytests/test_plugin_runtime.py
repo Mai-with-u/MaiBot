@@ -19,6 +19,104 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "packages", "maibot-plugin-sdk"))
 
 
+def build_test_manifest(
+    plugin_id: str,
+    *,
+    version: str = "1.0.0",
+    name: str = "测试插件",
+    description: str = "测试插件描述",
+    dependencies: list[dict[str, str]] | None = None,
+    capabilities: list[str] | None = None,
+    host_min_version: str = "0.12.0",
+    host_max_version: str = "1.0.0",
+    sdk_min_version: str = "2.0.0",
+    sdk_max_version: str = "2.99.99",
+) -> dict[str, object]:
+    """构造一个合法的 Manifest v2 测试样例。
+
+    Args:
+        plugin_id: 插件 ID。
+        version: 插件版本。
+        name: 展示名称。
+        description: 插件描述。
+        dependencies: 依赖声明列表。
+        capabilities: 能力声明列表。
+        host_min_version: Host 最低支持版本。
+        host_max_version: Host 最高支持版本。
+        sdk_min_version: SDK 最低支持版本。
+        sdk_max_version: SDK 最高支持版本。
+
+    Returns:
+        dict[str, object]: 可直接序列化为 ``_manifest.json`` 的字典。
+    """
+    return {
+        "manifest_version": 2,
+        "version": version,
+        "name": name,
+        "description": description,
+        "author": {
+            "name": "tester",
+            "url": "https://example.com/tester",
+        },
+        "license": "MIT",
+        "urls": {
+            "repository": f"https://example.com/{plugin_id}",
+        },
+        "host_application": {
+            "min_version": host_min_version,
+            "max_version": host_max_version,
+        },
+        "sdk": {
+            "min_version": sdk_min_version,
+            "max_version": sdk_max_version,
+        },
+        "dependencies": dependencies or [],
+        "capabilities": capabilities or [],
+        "i18n": {
+            "default_locale": "zh-CN",
+            "supported_locales": ["zh-CN"],
+        },
+        "id": plugin_id,
+    }
+
+
+def build_test_manifest_model(
+    plugin_id: str,
+    *,
+    version: str = "1.0.0",
+    dependencies: list[dict[str, str]] | None = None,
+    capabilities: list[str] | None = None,
+    host_version: str = "1.0.0",
+    sdk_version: str = "2.0.1",
+) -> object:
+    """构造一个已经通过校验的强类型 Manifest 测试对象。
+
+    Args:
+        plugin_id: 插件 ID。
+        version: 插件版本。
+        dependencies: 依赖声明列表。
+        capabilities: 能力声明列表。
+        host_version: 当前测试使用的 Host 版本。
+        sdk_version: 当前测试使用的 SDK 版本。
+
+    Returns:
+        object: ``PluginManifest`` 实例。
+    """
+    from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+    validator = ManifestValidator(host_version=host_version, sdk_version=sdk_version)
+    manifest = validator.parse_manifest(
+        build_test_manifest(
+            plugin_id,
+            version=version,
+            dependencies=dependencies,
+            capabilities=capabilities,
+        )
+    )
+    assert manifest is not None
+    return manifest
+
+
 # ─── 协议层测试 ───────────────────────────────────────────
 
 
@@ -759,65 +857,77 @@ class TestManifestValidator:
     def test_valid_manifest(self):
         from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
-        validator = ManifestValidator()
-        manifest = {
-            "manifest_version": 1,
-            "name": "test_plugin",
-            "version": "1.0.0",
-            "description": "测试插件",
-            "author": "test",
-        }
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="2.0.1")
+        manifest = build_test_manifest("test.valid-plugin", capabilities=["send.text"])
         assert validator.validate(manifest) is True
         assert len(validator.errors) == 0
+        assert validator.warnings == []
 
     def test_missing_required_fields(self):
         from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
-        validator = ManifestValidator()
-        manifest = {"manifest_version": 1}
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="2.0.1")
+        manifest = {"manifest_version": 2}
         assert validator.validate(manifest) is False
-        assert len(validator.errors) >= 4  # name, version, description, author
+        assert len(validator.errors) >= 6
+        assert any("缺少必需字段" in error for error in validator.errors)
 
     def test_unsupported_manifest_version(self):
         from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
-        validator = ManifestValidator()
-        manifest = {
-            "manifest_version": 999,
-            "name": "test",
-            "version": "1.0",
-            "description": "d",
-            "author": "a",
-        }
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="2.0.1")
+        manifest = build_test_manifest("test.invalid-version")
+        manifest["manifest_version"] = 999
         assert validator.validate(manifest) is False
         assert any("manifest_version" in e for e in validator.errors)
 
     def test_host_version_compatibility(self):
         from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
-        validator = ManifestValidator(host_version="0.8.5")
-        manifest = {
-            "name": "test",
-            "version": "1.0",
-            "description": "d",
-            "author": "a",
-            "host_application": {"min_version": "0.9.0"},
-        }
+        validator = ManifestValidator(host_version="0.8.5", sdk_version="2.0.1")
+        manifest = build_test_manifest(
+            "test.host-check",
+            host_min_version="0.9.0",
+            host_max_version="1.0.0",
+        )
         assert validator.validate(manifest) is False
         assert any("Host 版本不兼容" in e for e in validator.errors)
 
-    def test_recommended_fields_warning(self):
+    def test_sdk_version_compatibility(self):
         from src.plugin_runtime.runner.manifest_validator import ManifestValidator
 
-        validator = ManifestValidator()
-        manifest = {
-            "name": "test",
-            "version": "1.0",
-            "description": "d",
-            "author": "a",
-        }
-        validator.validate(manifest)
-        assert len(validator.warnings) >= 3  # license, keywords, categories
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="1.9.9")
+        manifest = build_test_manifest("test.sdk-check")
+        assert validator.validate(manifest) is False
+        assert any("SDK 版本不兼容" in e for e in validator.errors)
+
+    def test_extra_fields_are_rejected(self):
+        from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="2.0.1")
+        manifest = build_test_manifest("test.extra-field")
+        manifest["unexpected"] = True
+
+        assert validator.validate(manifest) is False
+        assert any("存在未声明字段" in error for error in validator.errors)
+
+    def test_python_package_conflict_rejects_manifest(self):
+        from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+        validator = ManifestValidator(host_version="1.0.0", sdk_version="2.0.1")
+        manifest = build_test_manifest(
+            "test.numpy-conflict",
+            dependencies=[
+                {
+                    "type": "python_package",
+                    "name": "numpy",
+                    "version_spec": ">=999.0.0",
+                }
+            ],
+        )
+
+        assert validator.validate(manifest) is False
+        assert any("Python 包依赖冲突" in error for error in validator.errors)
 
 
 class TestVersionComparator:
@@ -859,59 +969,83 @@ class TestDependencyResolution:
 
         loader = PluginLoader()
         candidates = {
-            "core": ("dir_core", {"name": "core", "version": "1.0", "description": "d", "author": "a"}, "plugin.py"),
-            "auth": (
-                "dir_auth",
-                {"name": "auth", "version": "1.0", "description": "d", "author": "a", "dependencies": ["core"]},
+            "test.core": (
+                "dir_core",
+                build_test_manifest_model("test.core"),
                 "plugin.py",
             ),
-            "api": (
+            "test.auth": (
+                "dir_auth",
+                build_test_manifest_model(
+                    "test.auth",
+                    dependencies=[
+                        {"type": "plugin", "id": "test.core", "version_spec": ">=1.0.0,<2.0.0"},
+                    ],
+                ),
+                "plugin.py",
+            ),
+            "test.api": (
                 "dir_api",
-                {"name": "api", "version": "1.0", "description": "d", "author": "a", "dependencies": ["core", "auth"]},
+                build_test_manifest_model(
+                    "test.api",
+                    dependencies=[
+                        {"type": "plugin", "id": "test.core", "version_spec": ">=1.0.0,<2.0.0"},
+                        {"type": "plugin", "id": "test.auth", "version_spec": ">=1.0.0,<2.0.0"},
+                    ],
+                ),
                 "plugin.py",
             ),
         }
 
         order, failed = loader._resolve_dependencies(candidates)
         assert len(failed) == 0
-        assert order.index("core") < order.index("auth")
-        assert order.index("auth") < order.index("api")
+        assert order.index("test.core") < order.index("test.auth")
+        assert order.index("test.auth") < order.index("test.api")
 
     def test_missing_dependency(self):
         from src.plugin_runtime.runner.plugin_loader import PluginLoader
 
         loader = PluginLoader()
         candidates = {
-            "plugin_a": (
+            "test.plugin-a": (
                 "dir_a",
-                {
-                    "name": "plugin_a",
-                    "version": "1.0",
-                    "description": "d",
-                    "author": "a",
-                    "dependencies": ["nonexistent"],
-                },
+                build_test_manifest_model(
+                    "test.plugin-a",
+                    dependencies=[
+                        {"type": "plugin", "id": "test.nonexistent", "version_spec": ">=1.0.0,<2.0.0"},
+                    ],
+                ),
                 "plugin.py",
             ),
         }
 
         order, failed = loader._resolve_dependencies(candidates)
-        assert "plugin_a" in failed
-        assert "缺少依赖" in failed["plugin_a"]
+        assert "test.plugin-a" in failed
+        assert "依赖未满足" in failed["test.plugin-a"]
 
     def test_circular_dependency(self):
         from src.plugin_runtime.runner.plugin_loader import PluginLoader
 
         loader = PluginLoader()
         candidates = {
-            "a": (
+            "test.a": (
                 "dir_a",
-                {"name": "a", "version": "1.0", "description": "d", "author": "x", "dependencies": ["b"]},
+                build_test_manifest_model(
+                    "test.a",
+                    dependencies=[
+                        {"type": "plugin", "id": "test.b", "version_spec": ">=1.0.0,<2.0.0"},
+                    ],
+                ),
                 "p.py",
             ),
-            "b": (
+            "test.b": (
                 "dir_b",
-                {"name": "b", "version": "1.0", "description": "d", "author": "x", "dependencies": ["a"]},
+                build_test_manifest_model(
+                    "test.b",
+                    dependencies=[
+                        {"type": "plugin", "id": "test.a", "version_spec": ">=1.0.0,<2.0.0"},
+                    ],
+                ),
                 "p.py",
             ),
         }
@@ -929,12 +1063,11 @@ class TestDependencyResolution:
 
         (plugin_dir / "_manifest.json").write_text(
             json.dumps(
-                {
-                    "name": "grok_search_plugin",
-                    "version": "1.0.0",
-                    "description": "demo",
-                    "author": "tester",
-                }
+                build_test_manifest(
+                    "test.grok-search-plugin",
+                    name="grok_search_plugin",
+                    description="demo",
+                )
             ),
             encoding="utf-8",
         )
@@ -954,7 +1087,7 @@ class TestDependencyResolution:
         loader = PluginLoader()
         loaded = loader.discover_and_load([str(plugin_root)])
 
-        assert [meta.plugin_id for meta in loaded] == ["grok_search_plugin"]
+        assert [meta.plugin_id for meta in loaded] == ["test.grok-search-plugin"]
         assert loader.failed_plugins == {}
         assert loaded[0].instance.answer() == 42
 
@@ -968,12 +1101,11 @@ class TestDependencyResolution:
 
         (plugin_dir / "_manifest.json").write_text(
             json.dumps(
-                {
-                    "name": "demo_plugin",
-                    "version": "1.0.0",
-                    "description": "demo",
-                    "author": "tester",
-                }
+                build_test_manifest(
+                    "test.demo-plugin",
+                    name="demo_plugin",
+                    description="demo",
+                )
             ),
             encoding="utf-8",
         )
@@ -993,8 +1125,8 @@ class TestDependencyResolution:
         loaded = loader.discover_and_load([str(plugin_root)])
 
         assert loaded == []
-        assert "demo_plugin" in loader.failed_plugins
-        assert "on_config_update" in loader.failed_plugins["demo_plugin"]
+        assert "test.demo-plugin" in loader.failed_plugins
+        assert "on_config_update" in loader.failed_plugins["test.demo-plugin"]
 
     def test_loader_requires_sdk_plugin_to_override_on_load(self, tmp_path):
         from src.plugin_runtime.runner.plugin_loader import PluginLoader
@@ -1006,12 +1138,11 @@ class TestDependencyResolution:
 
         (plugin_dir / "_manifest.json").write_text(
             json.dumps(
-                {
-                    "name": "demo_plugin",
-                    "version": "1.0.0",
-                    "description": "demo",
-                    "author": "tester",
-                }
+                build_test_manifest(
+                    "test.demo-plugin",
+                    name="demo_plugin",
+                    description="demo",
+                )
             ),
             encoding="utf-8",
         )
@@ -1031,8 +1162,8 @@ class TestDependencyResolution:
         loaded = loader.discover_and_load([str(plugin_root)])
 
         assert loaded == []
-        assert "demo_plugin" in loader.failed_plugins
-        assert "on_load" in loader.failed_plugins["demo_plugin"]
+        assert "test.demo-plugin" in loader.failed_plugins
+        assert "on_load" in loader.failed_plugins["test.demo-plugin"]
 
     def test_loader_requires_sdk_plugin_to_override_on_unload(self, tmp_path):
         from src.plugin_runtime.runner.plugin_loader import PluginLoader
@@ -1044,12 +1175,11 @@ class TestDependencyResolution:
 
         (plugin_dir / "_manifest.json").write_text(
             json.dumps(
-                {
-                    "name": "demo_plugin",
-                    "version": "1.0.0",
-                    "description": "demo",
-                    "author": "tester",
-                }
+                build_test_manifest(
+                    "test.demo-plugin",
+                    name="demo_plugin",
+                    description="demo",
+                )
             ),
             encoding="utf-8",
         )
@@ -1069,8 +1199,8 @@ class TestDependencyResolution:
         loaded = loader.discover_and_load([str(plugin_root)])
 
         assert loaded == []
-        assert "demo_plugin" in loader.failed_plugins
-        assert "on_unload" in loader.failed_plugins["demo_plugin"]
+        assert "test.demo-plugin" in loader.failed_plugins
+        assert "on_unload" in loader.failed_plugins["test.demo-plugin"]
 
     def test_isolate_sys_path_preserves_plugin_dirs(self):
         from src.plugin_runtime.runner import runner_main
@@ -2374,15 +2504,18 @@ class TestIntegration:
             def __init__(self, plugin_dirs=None, socket_path=None):
                 self._plugin_dirs = plugin_dirs or []
                 self.capability_service = FakeCapabilityService()
-                self.external_plugin_ids = []
+                self.external_plugin_versions = {}
                 self.stopped = False
                 instances.append(self)
 
-            def set_external_available_plugin_ids(self, plugin_ids):
-                self.external_plugin_ids = list(plugin_ids)
+            def set_external_available_plugins(self, plugin_versions):
+                self.external_plugin_versions = dict(plugin_versions)
 
             def get_loaded_plugin_ids(self):
                 return []
+
+            def get_loaded_plugin_versions(self):
+                return {}
 
             async def start(self):
                 if len(instances) == 2 and self is instances[1]:
@@ -2425,8 +2558,8 @@ class TestIntegration:
         (beta_dir / "config.toml").write_text("enabled = false\n", encoding="utf-8")
         (alpha_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
         (beta_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
-        (alpha_dir / "_manifest.json").write_text(json.dumps({"name": "alpha"}), encoding="utf-8")
-        (beta_dir / "_manifest.json").write_text(json.dumps({"name": "beta"}), encoding="utf-8")
+        (alpha_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.alpha")), encoding="utf-8")
+        (beta_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.beta")), encoding="utf-8")
 
         monkeypatch.chdir(tmp_path)
 
@@ -2440,8 +2573,11 @@ class TestIntegration:
             def get_loaded_plugin_ids(self):
                 return sorted(self._registered_plugins.keys())
 
+            def get_loaded_plugin_versions(self):
+                return {plugin_id: "1.0.0" for plugin_id in self._registered_plugins}
+
             async def reload_plugins(self, plugin_ids=None, reason="manual", external_available_plugins=None):
-                self.reload_reasons.append((plugin_ids, reason, external_available_plugins or []))
+                self.reload_reasons.append((plugin_ids, reason, external_available_plugins or {}))
 
             async def notify_plugin_config_updated(self, plugin_id, config_data, config_version=""):
                 self.config_updates.append((plugin_id, config_data, config_version))
@@ -2449,8 +2585,8 @@ class TestIntegration:
 
         manager = integration_module.PluginRuntimeManager()
         manager._started = True
-        manager._builtin_supervisor = FakeSupervisor([builtin_root], {"alpha": object()})
-        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], {"beta": object()})
+        manager._builtin_supervisor = FakeSupervisor([builtin_root], {"test.alpha": object()})
+        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], {"test.beta": object()})
 
         changes = [
             FileChange(change_type=1, path=beta_dir / "plugin.py"),
@@ -2466,7 +2602,9 @@ class TestIntegration:
         await manager._handle_plugin_source_changes(changes)
 
         assert manager._builtin_supervisor.reload_reasons == []
-        assert manager._third_party_supervisor.reload_reasons == [(["beta"], "file_watcher", ["alpha"])]
+        assert manager._third_party_supervisor.reload_reasons == [
+            (["test.beta"], "file_watcher", {"test.alpha": "1.0.0"})
+        ]
         assert manager._builtin_supervisor.config_updates == []
         assert manager._third_party_supervisor.config_updates == []
         assert refresh_calls == [True]
@@ -2487,15 +2625,18 @@ class TestIntegration:
             def get_loaded_plugin_ids(self):
                 return sorted(self._registered_plugins.keys())
 
+            def get_loaded_plugin_versions(self):
+                return {plugin_id: "1.0.0" for plugin_id in self._registered_plugins}
+
             async def reload_plugins(self, plugin_ids=None, reason="manual", external_available_plugins=None):
-                self.reload_calls.append((plugin_ids, reason, sorted(external_available_plugins or [])))
+                self.reload_calls.append((plugin_ids, reason, dict(sorted((external_available_plugins or {}).items()))))
                 return True
 
-        builtin_supervisor = FakeSupervisor({"alpha": FakeRegistration([])})
+        builtin_supervisor = FakeSupervisor({"test.alpha": FakeRegistration([])})
         third_party_supervisor = FakeSupervisor(
             {
-                "beta": FakeRegistration(["alpha"]),
-                "gamma": FakeRegistration(["beta"]),
+                "test.beta": FakeRegistration(["test.alpha"]),
+                "test.gamma": FakeRegistration(["test.beta"]),
             }
         )
 
@@ -2510,13 +2651,15 @@ class TestIntegration:
             lambda message: warning_messages.append(message),
         )
 
-        reloaded = await manager.reload_plugins_globally(["alpha"], reason="manual")
+        reloaded = await manager.reload_plugins_globally(["test.alpha"], reason="manual")
 
         assert reloaded is True
-        assert builtin_supervisor.reload_calls == [(["alpha"], "manual", ["beta", "gamma"])]
+        assert builtin_supervisor.reload_calls == [
+            (["test.alpha"], "manual", {"test.beta": "1.0.0", "test.gamma": "1.0.0"})
+        ]
         assert third_party_supervisor.reload_calls == []
         assert len(warning_messages) == 1
-        assert "beta, gamma" in warning_messages[0]
+        assert "test.beta, test.gamma" in warning_messages[0]
         assert "跨 Supervisor API 调用仍然可用" in warning_messages[0]
 
     @pytest.mark.asyncio
@@ -2535,8 +2678,8 @@ class TestIntegration:
         (beta_dir / "config.toml").write_text("enabled = false\n", encoding="utf-8")
         (alpha_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
         (beta_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
-        (alpha_dir / "_manifest.json").write_text(json.dumps({"name": "alpha"}), encoding="utf-8")
-        (beta_dir / "_manifest.json").write_text(json.dumps({"name": "beta"}), encoding="utf-8")
+        (alpha_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.alpha")), encoding="utf-8")
+        (beta_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.beta")), encoding="utf-8")
 
         monkeypatch.chdir(tmp_path)
 
@@ -2558,15 +2701,15 @@ class TestIntegration:
 
         manager = integration_module.PluginRuntimeManager()
         manager._started = True
-        manager._builtin_supervisor = FakeSupervisor([builtin_root], ["alpha"])
-        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], ["beta"])
+        manager._builtin_supervisor = FakeSupervisor([builtin_root], ["test.alpha"])
+        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], ["test.beta"])
 
         await manager._handle_plugin_config_changes(
-            "alpha",
+            "test.alpha",
             [FileChange(change_type=1, path=alpha_dir / "config.toml")],
         )
 
-        assert manager._builtin_supervisor.config_updates == [("alpha", {"enabled": True}, "", "self")]
+        assert manager._builtin_supervisor.config_updates == [("test.alpha", {"enabled": True}, "", "self")]
         assert manager._third_party_supervisor.config_updates == []
 
     @pytest.mark.asyncio
@@ -2615,23 +2758,23 @@ class TestIntegration:
         manager._started = True
         manager._builtin_supervisor = FakeSupervisor(
             {
-                "alpha": FakeRegistration(["bot"]),
-                "beta": FakeRegistration([]),
+                "test.alpha": FakeRegistration(["bot"]),
+                "test.beta": FakeRegistration([]),
             }
         )
         manager._third_party_supervisor = FakeSupervisor(
             {
-                "gamma": FakeRegistration(["model"]),
+                "test.gamma": FakeRegistration(["model"]),
             }
         )
 
         await manager._handle_main_config_reload(["bot", "model"])
 
         assert manager._builtin_supervisor.config_updates == [
-            ("alpha", {"bot": {"name": "MaiBot"}}, "", "bot")
+            ("test.alpha", {"bot": {"name": "MaiBot"}}, "", "bot")
         ]
         assert manager._third_party_supervisor.config_updates == [
-            ("gamma", {"models": [{"name": "demo"}]}, "", "model")
+            ("test.gamma", {"models": [{"name": "demo"}]}, "", "model")
         ]
 
     def test_refresh_plugin_config_watch_subscriptions_registers_per_plugin(self, tmp_path):
@@ -2646,8 +2789,8 @@ class TestIntegration:
         beta_dir.mkdir(parents=True)
         (alpha_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
         (beta_dir / "plugin.py").write_text("def create_plugin():\n    return object()\n", encoding="utf-8")
-        (alpha_dir / "_manifest.json").write_text(json.dumps({"name": "alpha"}), encoding="utf-8")
-        (beta_dir / "_manifest.json").write_text(json.dumps({"name": "beta"}), encoding="utf-8")
+        (alpha_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.alpha")), encoding="utf-8")
+        (beta_dir / "_manifest.json").write_text(json.dumps(build_test_manifest("test.beta")), encoding="utf-8")
 
         class FakeWatcher:
             def __init__(self):
@@ -2670,12 +2813,12 @@ class TestIntegration:
 
         manager = integration_module.PluginRuntimeManager()
         manager._plugin_file_watcher = FakeWatcher()
-        manager._builtin_supervisor = FakeSupervisor([builtin_root], ["alpha"])
-        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], ["beta"])
+        manager._builtin_supervisor = FakeSupervisor([builtin_root], ["test.alpha"])
+        manager._third_party_supervisor = FakeSupervisor([thirdparty_root], ["test.beta"])
 
         manager._refresh_plugin_config_watch_subscriptions()
 
-        assert set(manager._plugin_config_watcher_subscriptions.keys()) == {"alpha", "beta"}
+        assert set(manager._plugin_config_watcher_subscriptions.keys()) == {"test.alpha", "test.beta"}
         assert {
             subscription["paths"][0] for subscription in manager._plugin_file_watcher.subscriptions
         } == {alpha_dir / "config.toml", beta_dir / "config.toml"}

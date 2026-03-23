@@ -18,7 +18,7 @@ ENV_HOST_VERSION = "MAIBOT_HOST_VERSION"
 """Runner 读取的 Host 应用版本号，用于 manifest 兼容性校验"""
 
 ENV_EXTERNAL_PLUGIN_IDS = "MAIBOT_EXTERNAL_PLUGIN_IDS"
-"""Runner 启动时可视为已满足的外部插件依赖列表（JSON 数组）"""
+"""Runner 启动时可视为已满足的外部插件依赖版本映射（JSON 对象）"""
 
 ENV_GLOBAL_CONFIG_SNAPSHOT = "MAIBOT_GLOBAL_CONFIG_SNAPSHOT"
 """Runner 启动时注入的全局配置快照（JSON 对象）"""
