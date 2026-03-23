@@ -71,7 +71,7 @@ class PlatformIOManager:
                 try:
                     await driver.stop()
                 except Exception:
-                    logger.exception("回滚驱动停止失败: driver_id=%s", driver.driver_id)
+                    logger.exception(f"回滚驱动停止失败: driver_id={driver.driver_id}")
             raise
 
         self._started = True
@@ -104,7 +104,7 @@ class PlatformIOManager:
                 await driver.stop()
             except Exception as exc:
                 stop_errors.append(f"{driver.driver_id}: {exc}")
-                logger.exception("驱动停止失败: driver_id=%s", driver.driver_id)
+                logger.exception(f"驱动停止失败: driver_id={driver.driver_id}")
 
         self._started = False
         self._deduplicator.clear()
@@ -448,9 +448,8 @@ class PlatformIOManager:
 
         if not self._receive_route_table.has_binding_for_driver(envelope.route_key, envelope.driver_id):
             logger.info(
-                "忽略未登记到接收路由表的入站消息: route=%s driver=%s",
-                envelope.route_key,
-                envelope.driver_id,
+                f"忽略未登记到接收路由表的入站消息: route={envelope.route_key} "
+                f"driver={envelope.driver_id}"
             )
             return False
 
@@ -461,7 +460,7 @@ class PlatformIOManager:
         dedupe_key = self._build_inbound_dedupe_key(envelope)
         if dedupe_key is not None:
             if not self._deduplicator.mark_seen(dedupe_key):
-                logger.info("忽略重复入站消息: dedupe_key=%s", dedupe_key)
+                logger.info(f"忽略重复入站消息: dedupe_key={dedupe_key}")
                 return False
 
         await self._inbound_dispatcher(envelope)
