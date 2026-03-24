@@ -73,6 +73,26 @@ def _update_toml_doc(target: Any, source: Any) -> None:
             target_value = target[key]
             if isinstance(value, dict) and isinstance(target_value, dict):
                 _update_toml_doc(target_value, value)
+            elif isinstance(value, list) and isinstance(target_value, Array) and value and isinstance(value[0], dict):
+                # 原值是内联 Array（如 key = [{...}, {...}]），新值是列表of字典
+                # 必须保留 Array 格式，不能让 tomlkit.item([dict]) 将其转换为 AoT（[[section]] 格式）
+                new_arr = tomlkit.array()
+                new_arr.multiline(target_value._multiline)
+                for item in value:
+                    if isinstance(item, dict):
+                        tbl = tomlkit.inline_table()
+                        for k, v in item.items():
+                            try:
+                                tbl.append(k, tomlkit.item(v))
+                            except (TypeError, ValueError):
+                                tbl.append(k, v)
+                        new_arr.append(tbl)
+                    else:
+                        try:
+                            new_arr.append(tomlkit.item(item))
+                        except (TypeError, ValueError):
+                            new_arr.append(item)
+                target[key] = new_arr
             else:
                 try:
                     target[key] = tomlkit.item(value)
