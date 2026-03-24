@@ -1237,11 +1237,14 @@ class PluginRunner:
 def _isolate_sys_path(plugin_dirs: List[str]) -> None:
     """清理 sys.path，限制 Runner 子进程只能访问标准库、SDK 和插件目录。
 
-    防止插件代码 import 主程序模块读取运行时数据。
+    同时移除插件可直接访问的主程序内部模块缓存，避免通过 ``sys.modules``
+    或常规导入绕过 SDK / capability 边界。
     """
+    import builtins
     import importlib.abc
     from importlib.machinery import ModuleSpec
     import sysconfig
+    from types import ModuleType
 
     # 保留: 标准库路径 + site-packages（含 SDK 和依赖）
     stdlib_paths = set()
@@ -1271,18 +1274,68 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
     for d in plugin_dir_paths:
         allowed.add(d)
 
-    # 添加项目根目录（使得 src.plugin_runtime / src.common 可导入）
-    runtime_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    allowed.add(runtime_root)
-
     preserved_paths = [p for p in sys.path if p in allowed]
-    for extra_path in [*plugin_dir_paths, runtime_root]:
+    for extra_path in plugin_dir_paths:
         if extra_path not in preserved_paths:
             preserved_paths.append(extra_path)
     sys.path[:] = preserved_paths
 
-    # 安装 import 钩子，阻止插件导入主程序核心模块
-    # 仅允许 src.plugin_runtime 和 src.common，拒绝其他 src.* 子包
+    # 仅为旧版插件兼容层保留极小的 src.* 可见面：
+    # - src.plugin_system.*: 通过 maibot_sdk.compat 导入钩子重定向
+    # - src.common.logger: 仓库内仍有少量旧插件沿用该日志入口
+    allowed_src_exact_modules = frozenset(
+        {
+            "src",
+            "src.common",
+            "src.common.logger",
+            "src.common.logger_color_and_mapping",
+        }
+    )
+    allowed_src_prefixes = ("src.plugin_system",)
+
+    def _is_allowed_src_module(fullname: str) -> bool:
+        """判断给定 src.* 模块是否在 Runner 允许列表中。"""
+        if fullname in allowed_src_exact_modules:
+            return True
+        return any(fullname == prefix or fullname.startswith(f"{prefix}.") for prefix in allowed_src_prefixes)
+
+    def _format_block_message(fullname: str) -> str:
+        """构造统一的拒绝导入错误信息。"""
+        return (
+            f"Runner 子进程不允许导入主程序模块: {fullname}。"
+            "请改用 maibot_sdk 或 src.plugin_system 兼容层提供的接口。"
+        )
+
+    def _detach_module_from_parent(fullname: str, module: ModuleType) -> None:
+        """从父模块上移除已清理模块的属性引用。"""
+        parent_name, _, child_name = fullname.rpartition(".")
+        if not parent_name or not child_name:
+            return
+
+        parent_module = sys.modules.get(parent_name)
+        if parent_module is None:
+            return
+        if getattr(parent_module, child_name, None) is module:
+            with contextlib.suppress(AttributeError):
+                delattr(parent_module, child_name)
+
+    # 清理主程序内部模块缓存，避免插件经由 sys.modules 直接拿到高权限对象。
+    existing_src_modules = sorted(
+        (
+            (module_name, module)
+            for module_name, module in list(sys.modules.items())
+            if module_name == "src" or module_name.startswith("src.")
+        ),
+        key=lambda item: item[0].count("."),
+        reverse=True,
+    )
+    for module_name, module in existing_src_modules:
+        if _is_allowed_src_module(module_name):
+            continue
+        _detach_module_from_parent(module_name, module)
+        sys.modules.pop(module_name, None)
+
+    # 安装 import 钩子，阻止再次导入被清理掉的主程序内部模块。
     class _BlockedSrcModuleLoader(importlib.abc.Loader):
         """阻止被 Runner 允许列表之外的主程序模块完成导入。"""
 
@@ -1295,16 +1348,11 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
 
         def exec_module(self, module: Any) -> None:
             del module
-            raise ImportError(f"Runner 子进程不允许导入主程序模块: {self._fullname}")
+            raise ImportError(_format_block_message(self._fullname))
 
     class _PluginImportBlocker(importlib.abc.MetaPathFinder):
-        """阻止 Runner 子进程导入主程序核心模块。
+        """阻止 Runner 子进程重新导入主程序内部 src.* 模块。"""
 
-        只放行 src.plugin_runtime 和 src.common，
-        拒绝 src.chat_module / src.services 等主程序内部包。
-        """
-
-        _ALLOWED_SRC_PREFIXES = ("src.plugin_runtime", "src.common")
         __maibot_runner_plugin_import_blocker__ = True
 
         def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> ModuleSpec | None:
@@ -1317,13 +1365,9 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
 
         def _should_block(self, fullname: str) -> bool:
             """判断给定模块名是否应被阻止导入。"""
-            # 放行非 src.* 的导入、以及 "src" 本身
-            if not fullname.startswith("src.") or fullname == "src":
+            if not fullname.startswith("src"):
                 return False
-            # 放行白名单前缀
-            return not any(
-                fullname == prefix or fullname.startswith(f"{prefix}.") for prefix in self._ALLOWED_SRC_PREFIXES
-            )
+            return not _is_allowed_src_module(fullname)
 
     sys.meta_path[:] = [
         finder
@@ -1332,15 +1376,28 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
     ]
     sys.meta_path.insert(0, _PluginImportBlocker())
 
+    # ``import`` 语句在模块已存在于 sys.modules 时不会再经过 finder，
+    # 因此还需要在入口处补一层兜底。
+    original_import = getattr(builtins, "__maibot_runner_original_import__", builtins.__import__)
+    builtins.__maibot_runner_original_import__ = original_import
+
+    def _guarded_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
+        if level == 0 and name.startswith("src") and not _is_allowed_src_module(name):
+            raise ImportError(_format_block_message(name))
+        return original_import(name, globals, locals, fromlist, level)
+
+    _guarded_import.__maibot_runner_plugin_import_guard__ = True
+    builtins.__import__ = _guarded_import
+
 
 # ─── 进程入口 ──────────────────────────────────────────────
 
 
 async def _async_main() -> None:
     """异步主入口"""
-    host_address = os.environ.get(ENV_IPC_ADDRESS, "")
+    host_address = os.environ.pop(ENV_IPC_ADDRESS, "")
     external_plugin_ids_raw = os.environ.get(ENV_EXTERNAL_PLUGIN_IDS, "")
-    session_token = os.environ.get(ENV_SESSION_TOKEN, "")
+    session_token = os.environ.pop(ENV_SESSION_TOKEN, "")
     plugin_dirs_str = os.environ.get(ENV_PLUGIN_DIRS, "")
 
     if not host_address or not session_token:

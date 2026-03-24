@@ -70,6 +70,7 @@ class RPCServer:
         self._running: bool = False
         self._tasks: List[asyncio.Task[None]] = []
         self._last_handshake_rejection_reason: str = ""
+        self._connection_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def session_token(self) -> str:
@@ -216,27 +217,33 @@ class RPCServer:
     async def _handle_connection(self, conn: Connection) -> None:
         """处理新的 Runner 连接"""
         logger.info("收到 Runner 连接")
-        self.clear_handshake_state()
-        # 第一条消息必须是 runner.hello 握手
         try:
-            success = await self._handle_handshake(conn)
-            if not success:
-                await conn.close()
-                return
+            async with self._connection_lock:
+                self.clear_handshake_state()
+                success = await self._handle_handshake(conn)
+                if not success:
+                    await conn.close()
+                    return
+                logger.info("Runner staged 握手成功")
+                self._connection = conn
         except Exception as e:
             logger.error(f"握手失败: {e}")
             await conn.close()
             return
-        logger.info("Runner staged 握手成功")
-        self._connection = conn
+
         # 启动消息接收循环
         try:
             await self._recv_loop(conn)
         except Exception as e:
             logger.error(f"连接异常断开: {e}")
         finally:
-            self._connection = None
-            self._fail_pending_requests(ErrorCode.E_PLUGIN_CRASHED, "Runner 连接已断开")
+            should_fail_pending_requests = False
+            async with self._connection_lock:
+                if self._connection is conn:
+                    self._connection = None
+                    should_fail_pending_requests = True
+            if should_fail_pending_requests:
+                self._fail_pending_requests(ErrorCode.E_PLUGIN_CRASHED, "Runner 连接已断开")
 
     async def _handle_handshake(self, conn: Connection) -> bool:
         """处理 runner.hello 握手"""
@@ -259,6 +266,15 @@ class RPCServer:
         if hello.session_token != self._session_token:
             logger.error("会话令牌不匹配")
             self._last_handshake_rejection_reason = "会话令牌无效"
+            resp_payload = HelloResponsePayload(accepted=False, reason=self._last_handshake_rejection_reason)
+            resp = envelope.make_response(payload=resp_payload.model_dump())
+            await conn.send_frame(self._codec.encode_envelope(resp))
+            return False
+
+        # 若已有活跃连接，直接拒绝新的握手，避免后来的连接抢占当前通道。
+        if self.is_connected:
+            logger.warning("拒绝新的 Runner 连接：已有活跃连接")
+            self._last_handshake_rejection_reason = "已有活跃 Runner 连接，拒绝新的握手"
             resp_payload = HelloResponsePayload(accepted=False, reason=self._last_handshake_rejection_reason)
             resp = envelope.make_response(payload=resp_payload.model_dump())
             await conn.send_frame(self._codec.encode_envelope(resp))
