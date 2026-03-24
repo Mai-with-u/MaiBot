@@ -1237,12 +1237,11 @@ class PluginRunner:
 def _isolate_sys_path(plugin_dirs: List[str]) -> None:
     """清理 sys.path，限制 Runner 子进程只能访问标准库、SDK 和插件目录。
 
-    同时移除插件可直接访问的主程序内部模块缓存，避免通过 ``sys.modules``
-    或常规导入绕过 SDK / capability 边界。
+    同时阻止插件代码直接导入主程序内部 ``src.*`` 模块，并清理可直接从
+    ``sys.modules`` 摸到的高权限叶子模块，避免绕过 SDK / capability 边界。
     """
     import builtins
-    import importlib.abc
-    from importlib.machinery import ModuleSpec
+    import importlib
     import sysconfig
     from types import ModuleType
 
@@ -1292,6 +1291,7 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
         }
     )
     allowed_src_prefixes = ("src.plugin_system",)
+    plugin_module_prefix = "_maibot_plugin_"
 
     def _is_allowed_src_module(fullname: str) -> bool:
         """判断给定 src.* 模块是否在 Runner 允许列表中。"""
@@ -1299,12 +1299,65 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
             return True
         return any(fullname == prefix or fullname.startswith(f"{prefix}.") for prefix in allowed_src_prefixes)
 
+    def _resolve_requester_name(import_globals: Any = None) -> str:
+        """解析当前导入请求的发起模块名。"""
+        if isinstance(import_globals, dict):
+            for key in ("__name__", "__package__"):
+                value = import_globals.get(key)
+                if isinstance(value, str) and value:
+                    return value
+
+        frame = inspect.currentframe()
+        try:
+            current = frame.f_back if frame is not None else None
+            while current is not None:
+                module_name = current.f_globals.get("__name__", "")
+                if not isinstance(module_name, str) or not module_name:
+                    current = current.f_back
+                    continue
+                if module_name == __name__ or module_name.startswith("importlib"):
+                    current = current.f_back
+                    continue
+                return module_name
+            return ""
+        finally:
+            del frame
+
+    def _is_plugin_import_request(import_globals: Any = None) -> bool:
+        """判断当前导入是否由插件模块直接发起。"""
+        requester_name = _resolve_requester_name(import_globals)
+        return requester_name.startswith(plugin_module_prefix)
+
     def _format_block_message(fullname: str) -> str:
         """构造统一的拒绝导入错误信息。"""
         return (
             f"Runner 子进程不允许导入主程序模块: {fullname}。"
             "请改用 maibot_sdk 或 src.plugin_system 兼容层提供的接口。"
         )
+
+    def _iter_requested_src_modules(name: str, fromlist: Any) -> List[str]:
+        """展开本次导入请求涉及的 src.* 模块名。"""
+        requested_modules = [name]
+        if not name.startswith("src") or not fromlist:
+            return requested_modules
+
+        for item in fromlist:
+            if not isinstance(item, str) or not item or item == "*":
+                continue
+            requested_modules.append(f"{name}.{item}")
+        return requested_modules
+
+    def _assert_plugin_import_allowed(name: str, import_globals: Any = None, fromlist: Any = ()) -> None:
+        """在插件发起导入时校验目标 src.* 模块是否允许访问。"""
+        if not _is_plugin_import_request(import_globals):
+            return
+
+        for requested_module in _iter_requested_src_modules(name, fromlist):
+            if not requested_module.startswith("src"):
+                continue
+            if _is_allowed_src_module(requested_module):
+                continue
+            raise ImportError(_format_block_message(requested_module))
 
     def _detach_module_from_parent(fullname: str, module: ModuleType) -> None:
         """从父模块上移除已清理模块的属性引用。"""
@@ -1319,7 +1372,7 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
             with contextlib.suppress(AttributeError):
                 delattr(parent_module, child_name)
 
-    # 清理主程序内部模块缓存，避免插件经由 sys.modules 直接拿到高权限对象。
+    # 仅清理已加载的叶子模块，保留包对象给 Runner 自己的延迟导入和相对导入使用。
     existing_src_modules = sorted(
         (
             (module_name, module)
@@ -1330,64 +1383,33 @@ def _isolate_sys_path(plugin_dirs: List[str]) -> None:
         reverse=True,
     )
     for module_name, module in existing_src_modules:
-        if _is_allowed_src_module(module_name):
+        if _is_allowed_src_module(module_name) or hasattr(module, "__path__"):
             continue
         _detach_module_from_parent(module_name, module)
         sys.modules.pop(module_name, None)
 
-    # 安装 import 钩子，阻止再次导入被清理掉的主程序内部模块。
-    class _BlockedSrcModuleLoader(importlib.abc.Loader):
-        """阻止被 Runner 允许列表之外的主程序模块完成导入。"""
-
-        def __init__(self, fullname: str) -> None:
-            self._fullname = fullname
-
-        def create_module(self, spec: ModuleSpec) -> None:
-            del spec
-            return None
-
-        def exec_module(self, module: Any) -> None:
-            del module
-            raise ImportError(_format_block_message(self._fullname))
-
-    class _PluginImportBlocker(importlib.abc.MetaPathFinder):
-        """阻止 Runner 子进程重新导入主程序内部 src.* 模块。"""
-
-        __maibot_runner_plugin_import_blocker__ = True
-
-        def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> ModuleSpec | None:
-            """决定是否拦截指定模块导入。"""
-            del path, target
-            if not self._should_block(fullname):
-                return None
-            # Python 3.13+/3.14 会优先走 find_spec，不再依赖 find_module。
-            return ModuleSpec(fullname, _BlockedSrcModuleLoader(fullname), is_package=True)
-
-        def _should_block(self, fullname: str) -> bool:
-            """判断给定模块名是否应被阻止导入。"""
-            if not fullname.startswith("src"):
-                return False
-            return not _is_allowed_src_module(fullname)
-
-    sys.meta_path[:] = [
-        finder
-        for finder in sys.meta_path
-        if not getattr(finder, "__maibot_runner_plugin_import_blocker__", False)
-    ]
-    sys.meta_path.insert(0, _PluginImportBlocker())
-
-    # ``import`` 语句在模块已存在于 sys.modules 时不会再经过 finder，
-    # 因此还需要在入口处补一层兜底。
+    # ``import`` 语句与 ``importlib.import_module`` 走的是不同入口，因此两边都需要兜底。
     original_import = getattr(builtins, "__maibot_runner_original_import__", builtins.__import__)
     builtins.__maibot_runner_original_import__ = original_import
 
     def _guarded_import(name: str, globals: Any = None, locals: Any = None, fromlist: Any = (), level: int = 0) -> Any:
-        if level == 0 and name.startswith("src") and not _is_allowed_src_module(name):
-            raise ImportError(_format_block_message(name))
+        if level == 0:
+            _assert_plugin_import_allowed(name, import_globals=globals, fromlist=fromlist)
         return original_import(name, globals, locals, fromlist, level)
 
     _guarded_import.__maibot_runner_plugin_import_guard__ = True
     builtins.__import__ = _guarded_import
+
+    original_import_module = getattr(importlib, "__maibot_runner_original_import_module__", importlib.import_module)
+    importlib.__maibot_runner_original_import_module__ = original_import_module
+
+    def _guarded_import_module(name: str, package: Optional[str] = None) -> Any:
+        resolved_name = importlib.util.resolve_name(name, package) if name.startswith(".") else name
+        _assert_plugin_import_allowed(resolved_name)
+        return original_import_module(name, package)
+
+    _guarded_import_module.__maibot_runner_plugin_import_guard__ = True
+    importlib.import_module = _guarded_import_module
 
 
 # ─── 进程入口 ──────────────────────────────────────────────

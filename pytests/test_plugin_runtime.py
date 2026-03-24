@@ -1299,11 +1299,13 @@ class TestDependencyResolution:
 
     def test_isolate_sys_path_preserves_plugin_dirs(self):
         import builtins
+        import importlib
 
         from src.plugin_runtime.runner import runner_main
 
         plugin_root = os.path.normpath("/tmp/maibot-plugin-root")
         original_import = builtins.__import__
+        original_import_module = importlib.import_module
         original_path = list(sys.path)
         original_meta_path = list(sys.meta_path)
 
@@ -1316,6 +1318,7 @@ class TestDependencyResolution:
             assert plugin_root in sys.path
         finally:
             builtins.__import__ = original_import
+            importlib.import_module = original_import_module
             sys.path[:] = original_path
             sys.meta_path[:] = original_meta_path
 
@@ -1326,17 +1329,24 @@ class TestDependencyResolution:
         from src.plugin_runtime.runner import runner_main
 
         original_import = builtins.__import__
+        original_import_module = importlib.import_module
         original_path = list(sys.path)
         original_meta_path = list(sys.meta_path)
         sys.modules.pop("src.forbidden_demo", None)
 
         try:
             runner_main._isolate_sys_path([])
+            plugin_globals = {
+                "__name__": "_maibot_plugin_demo",
+                "__package__": "_maibot_plugin_demo",
+                "importlib": importlib,
+            }
 
             with pytest.raises(ImportError, match="不允许导入主程序模块"):
-                importlib.import_module("src.forbidden_demo")
+                exec('importlib.import_module("src.forbidden_demo")', plugin_globals)
         finally:
             builtins.__import__ = original_import
+            importlib.import_module = original_import_module
             sys.path[:] = original_path
             sys.meta_path[:] = original_meta_path
             sys.modules.pop("src.forbidden_demo", None)
@@ -1348,16 +1358,23 @@ class TestDependencyResolution:
         from src.plugin_runtime.runner import runner_main
 
         original_import = builtins.__import__
+        original_import_module = importlib.import_module
         original_path = list(sys.path)
         original_meta_path = list(sys.meta_path)
 
         try:
             runner_main._isolate_sys_path([])
+            plugin_globals = {
+                "__name__": "_maibot_plugin_demo",
+                "__package__": "_maibot_plugin_demo",
+                "importlib": importlib,
+            }
 
             with pytest.raises(ImportError, match="rpc_client"):
-                importlib.import_module("src.plugin_runtime.runner.rpc_client")
+                exec('importlib.import_module("src.plugin_runtime.runner.rpc_client")', plugin_globals)
         finally:
             builtins.__import__ = original_import
+            importlib.import_module = original_import_module
             sys.path[:] = original_path
             sys.meta_path[:] = original_meta_path
 
@@ -1368,16 +1385,46 @@ class TestDependencyResolution:
         from src.plugin_runtime.runner import runner_main
 
         original_import = builtins.__import__
+        original_import_module = importlib.import_module
+        original_path = list(sys.path)
+        original_meta_path = list(sys.meta_path)
+
+        try:
+            runner_main._isolate_sys_path([])
+            plugin_globals = {
+                "__name__": "_maibot_plugin_demo",
+                "__package__": "_maibot_plugin_demo",
+                "importlib": importlib,
+            }
+
+            exec('logger_module = importlib.import_module("src.common.logger")', plugin_globals)
+            logger_module = plugin_globals["logger_module"]
+            assert callable(logger_module.get_logger)
+        finally:
+            builtins.__import__ = original_import
+            importlib.import_module = original_import_module
+            sys.path[:] = original_path
+            sys.meta_path[:] = original_meta_path
+
+    def test_isolate_sys_path_keeps_runtime_imports_working(self):
+        import builtins
+        import importlib
+
+        from src.plugin_runtime.runner import runner_main
+
+        original_import = builtins.__import__
+        original_import_module = importlib.import_module
         original_path = list(sys.path)
         original_meta_path = list(sys.meta_path)
 
         try:
             runner_main._isolate_sys_path([])
 
-            logger_module = importlib.import_module("src.common.logger")
-            assert callable(logger_module.get_logger)
+            uds_module = importlib.import_module("src.plugin_runtime.transport.uds")
+            assert hasattr(uds_module, "UDSTransportClient")
         finally:
             builtins.__import__ = original_import
+            importlib.import_module = original_import_module
             sys.path[:] = original_path
             sys.meta_path[:] = original_meta_path
 
