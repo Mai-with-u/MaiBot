@@ -77,9 +77,12 @@ import fnmatch
 import hashlib
 import json
 import re
+import socket
+import ipaddress
 import time
 import uuid
 from collections import OrderedDict, deque
+from urllib.parse import urlparse
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -908,18 +911,69 @@ class MCPReadResourceTool(BaseTool):
     name = "mcp_read_resource"
     description = "读取 MCP 服务器提供的资源内容（如文件、数据库记录等）。使用前请先用 mcp_status 查看可用资源。"
     parameters = [
-        ("uri", ToolParamType.STRING, "资源 URI（如 file:///path/to/file 或自定义 URI）", True, None),
+        ("uri", ToolParamType.STRING, "资源 URI", True, None),
         ("server_name", ToolParamType.STRING, "指定服务器名称（可选，不指定则自动查找）", False, None),
     ]
     available_for_llm = True
-    
+
+    # Schemes that are checked via DNS resolution (must not resolve to internal IPs)
+    _DNS_CHECKED_SCHEMES = {"http", "https"}
+    # Schemes explicitly blocked (dangerous protocols)
+    _BLOCKED_SCHEMES = {"file", "ftp", "gopher", "dict", "ldap", "tftp", "netdoc", "jar", "data"}
+
+    @classmethod
+    async def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
+        """Check whether *uri* is safe to pass to an MCP server (SSRF prevention).
+
+        1. ``file://`` and other known-dangerous schemes are blocked outright.
+        2. ``http(s)://`` targets are DNS-resolved; private / loopback / link-local
+           addresses are rejected.
+        3. Unknown but non-dangerous custom schemes (e.g. ``mydb://``) are allowed
+           through so that MCP servers can handle their own resource protocols.
+        """
+        try:
+            parsed = urlparse(uri)
+        except Exception:
+            return False, "URI 格式无效"
+
+        scheme = (parsed.scheme or "").lower()
+
+        # Block known-dangerous schemes
+        if scheme in cls._BLOCKED_SCHEMES:
+            return False, f"不允许使用 {scheme}:// 协议"
+
+        # For http/https, resolve hostname and reject internal addresses
+        if scheme in cls._DNS_CHECKED_SCHEMES:
+            hostname = parsed.hostname or ""
+            if not hostname:
+                return False, "缺少主机名"
+            try:
+                loop = asyncio.get_event_loop()
+                addrinfos = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+                for _family, _type, _proto, _canonname, sockaddr in addrinfos:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                        return False, f"目标地址 {ip} 属于内网/保留地址段，已拦截"
+            except socket.gaierror:
+                return False, f"无法解析主机名: {hostname}"
+            except Exception as e:
+                return False, f"地址检查失败: {e}"
+
+        return True, ""
+
     async def execute(self, function_args: Dict[str, Any]) -> Dict[str, Any]:
         uri = function_args.get("uri", "")
         server_name = function_args.get("server_name")
         
         if not uri:
             return {"name": self.name, "content": "❌ 请提供资源 URI"}
-        
+
+        # SSRF 防护：校验 URI 安全性
+        is_safe, reason = await self._is_uri_safe(uri)
+        if not is_safe:
+            logger.warning(f"MCPReadResourceTool SSRF 拦截: uri={uri}, reason={reason}")
+            return {"name": self.name, "content": f"❌ 资源 URI 被拦截: {reason}"}
+
         result = await mcp_manager.read_resource(uri, server_name)
         
         if result.success:
