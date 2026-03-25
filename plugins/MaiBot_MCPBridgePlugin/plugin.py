@@ -925,6 +925,13 @@ class MCPReadResourceTool(BaseTool):
     async def _is_uri_safe(cls, uri: str) -> Tuple[bool, str]:
         """Check whether *uri* is safe to pass to an MCP server (SSRF prevention).
 
+        Note: the MCP SDK's ClientSession.read_resource() sends the URI as a
+        JSON-RPC parameter over the existing transport (stdio/SSE/HTTP stream)
+        — it does NOT make a separate HTTP request to the resource URI.  Therefore
+        DNS-rebinding/TOCTOU attacks against this check are not applicable in
+        the current architecture.  If a future MCP SDK version adds client-side
+        HTTP fetching for resource URIs, this assumption should be revisited.
+
         1. ``file://`` and other known-dangerous schemes are blocked outright.
         2. ``http(s)://`` targets are DNS-resolved; private / loopback / link-local
            addresses are rejected.
