@@ -917,7 +917,7 @@ class MCPReadResourceTool(BaseTool):
     available_for_llm = True
 
     # Schemes that are checked via DNS resolution (must not resolve to internal IPs)
-    _DNS_CHECKED_SCHEMES = {"http", "https"}
+    _DNS_CHECKED_SCHEMES = {"http", "https", "ws", "wss"}
     # Schemes explicitly blocked (dangerous protocols)
     _BLOCKED_SCHEMES = {"file", "ftp", "gopher", "dict", "ldap", "tftp", "netdoc", "jar", "data"}
 
@@ -948,7 +948,7 @@ class MCPReadResourceTool(BaseTool):
             if not hostname:
                 return False, "缺少主机名"
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 addrinfos = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
                 for _family, _type, _proto, _canonname, sockaddr in addrinfos:
                     ip = ipaddress.ip_address(sockaddr[0])

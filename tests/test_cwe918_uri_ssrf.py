@@ -25,7 +25,7 @@ import pytest
 # without importing the full plugin (which requires nonebot/src.* deps).
 # ---------------------------------------------------------------------------
 
-_DNS_CHECKED_SCHEMES = {"http", "https"}
+_DNS_CHECKED_SCHEMES = {"http", "https", "ws", "wss"}
 _BLOCKED_SCHEMES = {"file", "ftp", "gopher", "dict", "ldap", "tftp", "netdoc", "jar", "data"}
 
 
@@ -45,7 +45,7 @@ async def _is_uri_safe(uri: str) -> Tuple[bool, str]:
         if not hostname:
             return False, "缺少主机名"
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             addrinfos = await loop.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
             for _family, _type, _proto, _canonname, sockaddr in addrinfos:
                 ip = ipaddress.ip_address(sockaddr[0])
@@ -140,7 +140,7 @@ class TestHttpInternalBlocked:
         async def mock_getaddrinfo(*args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('169.254.169.254', 0))]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         original = loop.getaddrinfo
         loop.getaddrinfo = mock_getaddrinfo
         try:
@@ -153,7 +153,7 @@ class TestHttpInternalBlocked:
         async def mock_getaddrinfo(*args, **kwargs):
             return [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('::1', 0, 0, 0))]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         original = loop.getaddrinfo
         loop.getaddrinfo = mock_getaddrinfo
         try:
@@ -167,11 +167,26 @@ class TestHttpInternalBlocked:
         async def mock_getaddrinfo(*args, **kwargs):
             return [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('::ffff:127.0.0.1', 0, 0, 0))]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         original = loop.getaddrinfo
         loop.getaddrinfo = mock_getaddrinfo
         try:
             safe, _ = await _is_uri_safe("http://[::ffff:127.0.0.1]/")
+            assert not safe
+        finally:
+            loop.getaddrinfo = original
+
+
+    async def test_ipv6_link_local_blocked(self):
+        """IPv6 link-local (fe80::) must be blocked."""
+        async def mock_getaddrinfo(*args, **kwargs):
+            return [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('fe80::1', 0, 0, 0))]
+
+        loop = asyncio.get_running_loop()
+        original = loop.getaddrinfo
+        loop.getaddrinfo = mock_getaddrinfo
+        try:
+            safe, _ = await _is_uri_safe("http://link-local.example/")
             assert not safe
         finally:
             loop.getaddrinfo = original
@@ -186,7 +201,7 @@ class TestHttpInternalBlocked:
         async def mock_getaddrinfo(*args, **kwargs):
             raise socket.gaierror("DNS resolution failed")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         original = loop.getaddrinfo
         loop.getaddrinfo = mock_getaddrinfo
         try:
@@ -209,7 +224,7 @@ class TestAllowedUris:
         async def mock_getaddrinfo(*args, **kwargs):
             return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', ('8.8.8.8', 0))]
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         original = loop.getaddrinfo
         loop.getaddrinfo = mock_getaddrinfo
         try:
@@ -224,6 +239,7 @@ class TestAllowedUris:
         assert safe, f"Custom MCP scheme should be allowed, got: {reason}"
 
     async def test_postgres_scheme_allowed(self):
+        """postgres:// is allowed - security for custom protocols is delegated to MCP servers."""
         safe, reason = await _is_uri_safe("postgres://localhost/mydb")
         assert safe, f"postgres:// MCP resource should be allowed, got: {reason}"
 
