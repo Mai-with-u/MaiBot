@@ -4,7 +4,7 @@ import time
 from src.common.logger import get_module_logger
 from .chat_observer import ChatObserver
 from .chat_states import NotificationHandler, NotificationType, Notification
-from src.plugins.utils.chat_message_builder import build_readable_messages
+from src.chat.utils.chat_message_builder import build_readable_messages
 import traceback  # 导入 traceback 用于调试
 
 logger = get_module_logger("observation_info")

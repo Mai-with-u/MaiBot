@@ -215,11 +215,12 @@ async def generate_dream_summary(
                                     f"platform={platform!r}, user_id={user_id!r}"
                                 )
                             else:
+                                dream_visible = global_config.dream.dream_visible
                                 ok = await send_api.text_to_stream(
                                     dream_content,
                                     stream_id=stream_id,
                                     typing=False,
-                                    storage_message=True,
+                                    storage_message=dream_visible,
                                 )
                                 if ok:
                                     logger.info(

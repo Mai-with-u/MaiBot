@@ -1,4 +1,5 @@
 import time
+import asyncio
 import urllib3
 
 from abc import abstractmethod
@@ -19,6 +20,9 @@ logger = get_logger("chat_message")
 
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# VLM 处理并发限制（避免同时处理太多图片导致卡死）
+_vlm_semaphore = asyncio.Semaphore(3)
 
 # 这个类是消息数据类，用于存储和管理消息数据。
 # 它定义了消息的属性，包括群组ID、用户ID、消息ID、原始消息内容、纯文本内容和时间戳。
@@ -73,20 +77,35 @@ class Message(MessageBase):
             str: 处理后的文本
         """
         if segment.type == "seglist":
-            # 处理消息段列表
+            # 处理消息段列表 - 使用并行处理提升性能
+            tasks = [self._process_message_segments(seg) for seg in segment.data]  # type: ignore
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             segments_text = []
-            for seg in segment.data:
-                processed = await self._process_message_segments(seg)  # type: ignore
-                if processed:
-                    segments_text.append(processed)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"处理消息段时出错: {result}")
+                    continue
+                if result:
+                    segments_text.append(result)
             return " ".join(segments_text)
         elif segment.type == "forward":
-            segments_text = []
-            for node_dict in segment.data:
+            # 处理转发消息 - 使用并行处理
+            async def process_forward_node(node_dict):
                 message = MessageBase.from_dict(node_dict)  # type: ignore
                 processed_text = await self._process_message_segments(message.message_segment)
                 if processed_text:
-                    segments_text.append(f"{global_config.bot.nickname}: {processed_text}")
+                    return f"{global_config.bot.nickname}: {processed_text}"
+                return None
+            
+            tasks = [process_forward_node(node_dict) for node_dict in segment.data]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            segments_text = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"处理转发节点时出错: {result}")
+                    continue
+                if result:
+                    segments_text.append(result)
             return "[合并消息]: " + "\n--  ".join(segments_text)
         else:
             # 处理单个消息段
@@ -173,8 +192,9 @@ class MessageRecv(Message):
                     self.is_picid = True
                     self.is_emoji = False
                     image_manager = get_image_manager()
-                    # print(f"segment.data: {segment.data}")
-                    _, processed_text = await image_manager.process_image(segment.data)
+                    # 使用 semaphore 限制 VLM 并发，避免同时处理太多图片
+                    async with _vlm_semaphore:
+                        _, processed_text = await image_manager.process_image(segment.data)
                     return processed_text
                 return "[发了一张图片，网卡了加载不出来]"
             elif segment.type == "emoji":
@@ -183,7 +203,9 @@ class MessageRecv(Message):
                 self.is_picid = False
                 self.is_voice = False
                 if isinstance(segment.data, str):
-                    return await get_image_manager().get_emoji_description(segment.data)
+                    # 使用 semaphore 限制 VLM 并发
+                    async with _vlm_semaphore:
+                        return await get_image_manager().get_emoji_description(segment.data)
                 return "[发了一个表情包，网卡了加载不出来]"
             elif segment.type == "voice":
                 self.is_picid = False

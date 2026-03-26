@@ -3,22 +3,22 @@ import asyncio
 import datetime
 
 # from .message_storage import MongoDBMessageStorage
-from src.plugins.utils.chat_message_builder import build_readable_messages, get_raw_msg_before_timestamp_with_chat
+from src.chat.utils.chat_message_builder import build_readable_messages, get_raw_msg_before_timestamp_with_chat
 
-# from ...config.config import global_config
+# from src.config.config import global_config
 from typing import Dict, Any, Optional
-from ..chat.message import Message
+from src.chat.message_receive.message import Message
 from .pfc_types import ConversationState
 from .pfc import ChatObserver, GoalAnalyzer
 from .message_sender import DirectMessageSender
-from src.common.logger_manager import get_logger
+from src.common.logger import get_logger
 from .action_planner import ActionPlanner
 from .observation_info import ObservationInfo
 from .conversation_info import ConversationInfo  # 确保导入 ConversationInfo
 from .reply_generator import ReplyGenerator
-from ..chat.chat_stream import ChatStream
+from src.chat.message_receive.chat_stream import ChatStream
 from maim_message import UserInfo
-from src.plugins.chat.chat_stream import chat_manager
+from src.chat.message_receive.chat_stream import get_chat_manager
 from .pfc_KnowledgeFetcher import KnowledgeFetcher
 from .waiter import Waiter
 
@@ -60,7 +60,7 @@ class Conversation:
             self.direct_sender = DirectMessageSender(self.private_name)
 
             # 获取聊天流信息
-            self.chat_stream = chat_manager.get_stream(self.stream_id)
+            self.chat_stream = get_chat_manager().get_stream(self.stream_id)
 
             self.stop_action_planner = False
         except Exception as e:
@@ -248,14 +248,14 @@ class Conversation:
     def _convert_to_message(self, msg_dict: Dict[str, Any]) -> Message:
         """将消息字典转换为Message对象"""
         try:
-            # 尝试从 msg_dict 直接获取 chat_stream，如果失败则从全局 chat_manager 获取
+            # 尝试从 msg_dict 直接获取 chat_stream，如果失败则从全局 get_chat_manager 获取
             chat_info = msg_dict.get("chat_info")
             if chat_info and isinstance(chat_info, dict):
                 chat_stream = ChatStream.from_dict(chat_info)
             elif self.chat_stream:  # 使用实例变量中的 chat_stream
                 chat_stream = self.chat_stream
             else:  # Fallback: 尝试从 manager 获取 (可能需要 stream_id)
-                chat_stream = chat_manager.get_stream(self.stream_id)
+                chat_stream = get_chat_manager().get_stream(self.stream_id)
                 if not chat_stream:
                     raise ValueError(f"无法确定 ChatStream for stream_id {self.stream_id}")
 

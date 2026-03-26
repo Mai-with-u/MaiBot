@@ -1,13 +1,13 @@
 from typing import List, Tuple, TYPE_CHECKING
 from src.common.logger import get_module_logger
-from ..models.utils_model import LLMRequest
-from ...config.config import global_config
+from src.llm_models.utils_model import LLMRequest
+from src.config.config import global_config
+import random
 from .chat_observer import ChatObserver
 from .pfc_utils import get_items_from_json
-from src.individuality.individuality import Individuality
 from .conversation_info import ConversationInfo
 from .observation_info import ObservationInfo
-from src.plugins.utils.chat_message_builder import build_readable_messages
+from src.chat.utils.chat_message_builder import build_readable_messages
 from rich.traceback import install
 
 install(extra_lines=3)
@@ -46,7 +46,7 @@ class GoalAnalyzer:
             model=global_config.llm_normal, temperature=0.7, max_tokens=1000, request_type="conversation_goal"
         )
 
-        self.personality_info = Individuality.get_instance().get_prompt(x_person=2, level=3)
+        self.personality_info = self._get_personality_prompt()
         self.name = global_config.BOT_NICKNAME
         self.nick_name = global_config.BOT_ALIAS_NAMES
         self.private_name = private_name
@@ -56,6 +56,21 @@ class GoalAnalyzer:
         self.goals = []  # 存储多个目标
         self.max_goals = 3  # 同时保持的最大目标数量
         self.current_goal_and_reason = None
+
+    def _get_personality_prompt(self) -> str:
+        """获取个性提示信息"""
+        prompt_personality = global_config.personality.personality
+        
+        # 检查是否需要随机替换为状态
+        if (
+            global_config.personality.states
+            and global_config.personality.state_probability > 0
+            and random.random() < global_config.personality.state_probability
+        ):
+            prompt_personality = random.choice(global_config.personality.states)
+        
+        bot_name = global_config.bot.nickname
+        return f"你的名字是{bot_name},你{prompt_personality};"
 
     async def analyze_goal(self, conversation_info: ConversationInfo, observation_info: ObservationInfo):
         """分析对话历史并设定目标

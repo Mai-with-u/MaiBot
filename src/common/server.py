@@ -50,7 +50,15 @@ class Server:
     async def run(self):
         """启动服务器"""
         # 禁用 uvicorn 默认日志和访问日志
-        config = Config(app=self.app, host=self._host, port=self._port, log_config=None, access_log=False)
+        # 设置 ws_max_size 为 100MB，支持大消息（如包含多张图片的转发消息）
+        config = Config(
+            app=self.app,
+            host=self._host,
+            port=self._port,
+            log_config=None,
+            access_log=False,
+            ws_max_size=104_857_600,  # 100MB
+        )
         self._server = UvicornServer(config=config)
         try:
             await self._server.serve()

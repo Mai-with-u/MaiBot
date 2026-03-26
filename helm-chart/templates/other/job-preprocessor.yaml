@@ -15,7 +15,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: preprocessor
-          image: {{ .Values.pre_processor.image.repository | default "reg.mikumikumi.xyz/maibot/preprocessor" }}:{{ .Values.pre_processor.image.tag | default "0.12.1" }}
+          image: {{ .Values.pre_processor.image.repository | default "reg.mikumikumi.xyz/maibot/preprocessor" }}:{{ .Values.pre_processor.image.tag | default "0.12.2" }}
           imagePullPolicy: {{ .Values.pre_processor.image.pullPolicy }}
           env:
             - name: RELEASE_NAME
