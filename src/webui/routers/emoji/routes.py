@@ -98,6 +98,7 @@ async def get_emoji_list(
 
         with get_db_session() as session:
             emojis = session.exec(statement).all()
+            emoji_responses = [emoji_to_response(emoji) for emoji in emojis]
 
             count_statement = select(func.count()).select_from(Images).where(col(Images.image_type) == ImageType.EMOJI)
             if search:
@@ -115,7 +116,7 @@ async def get_emoji_list(
             total=total,
             page=page,
             page_size=page_size,
-            data=[emoji_to_response(emoji) for emoji in emojis],
+            data=emoji_responses,
         )
     except HTTPException:
         raise

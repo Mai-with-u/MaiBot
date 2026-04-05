@@ -58,7 +58,7 @@ def test_app(test_session):
             test_session.rollback()
             raise
 
-    with patch("src.webui.routers.emoji.get_db_session", override_get_db_session):
+    with patch("src.webui.routers.emoji.routes.get_db_session", override_get_db_session):
         yield app
 
 
@@ -135,7 +135,7 @@ def sample_emojis(test_session) -> list[Images]:
 @pytest.fixture(scope="function")
 def mock_token_verify():
     """Mock token verification to always succeed"""
-    with patch("src.webui.routers.emoji.verify_auth_token", return_value=True):
+    with patch("src.webui.routers.emoji.routes.verify_auth_token", return_value=True):
         yield
 
 
@@ -159,8 +159,10 @@ def test_list_emojis_basic(client, sample_emojis, mock_token_verify):
     emoji = data["data"][0]
     assert "id" in emoji
     assert "full_path" in emoji
+    assert "format" in emoji
     assert "emoji_hash" in emoji
     assert "description" in emoji
+    assert "usage_count" in emoji
     assert "query_count" in emoji
     assert "is_registered" in emoji
     assert "is_banned" in emoji
@@ -168,6 +170,35 @@ def test_list_emojis_basic(client, sample_emojis, mock_token_verify):
     assert "record_time" in emoji
     assert "register_time" in emoji
     assert "last_used_time" in emoji
+    assert emoji["format"] == "webp"
+    assert emoji["usage_count"] == 20
+
+
+def test_list_emojis_with_closed_session_still_returns_data(test_engine, sample_emojis, mock_token_verify):
+    app = FastAPI()
+    app.include_router(router)
+
+    @contextmanager
+    def override_get_db_session(auto_commit=True):
+        with Session(test_engine) as session:
+            try:
+                yield session
+                if auto_commit:
+                    session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    with patch("src.webui.routers.emoji.routes.get_db_session", override_get_db_session):
+        client = TestClient(app)
+        response = client.get("/emoji/list?page=1&page_size=10")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["success"] is True
+    assert data["total"] == 3
+    assert len(data["data"]) == 3
 
 
 def test_list_emojis_pagination(client, sample_emojis, mock_token_verify):
@@ -386,7 +417,7 @@ def test_batch_delete_empty_list(client, mock_token_verify):
 def test_auth_required_list(client):
     """测试未认证访问列表端点（401）"""
     # Without mock_token_verify fixture
-    with patch("src.webui.routers.emoji.verify_auth_token", return_value=False):
+    with patch("src.webui.routers.emoji.routes.verify_auth_token", return_value=False):
         client.get("/emoji/list")
         # verify_auth_token 返回 False 会触发 HTTPException
         # 但具体状态码取决于 verify_auth_token_from_cookie_or_header 的实现
@@ -395,7 +426,7 @@ def test_auth_required_list(client):
 
 def test_auth_required_update(client, sample_emojis):
     """测试未认证访问更新端点（401）"""
-    with patch("src.webui.routers.emoji.verify_auth_token", return_value=False):
+    with patch("src.webui.routers.emoji.routes.verify_auth_token", return_value=False):
         emoji_id = sample_emojis[0].id
         client.patch(f"/emoji/{emoji_id}", json={"description": "test"})
         # Should be unauthorized
@@ -403,7 +434,7 @@ def test_auth_required_update(client, sample_emojis):
 
 def test_emoji_to_response_field_mapping(sample_emojis):
     """测试 emoji_to_response 字段映射（image_hash -> emoji_hash）"""
-    from src.webui.routers.emoji import emoji_to_response
+    from src.webui.routers.emoji.schemas import emoji_to_response
 
     emoji = sample_emojis[0]
     response = emoji_to_response(emoji)
@@ -411,6 +442,8 @@ def test_emoji_to_response_field_mapping(sample_emojis):
     # 验证 API 字段名称
     assert hasattr(response, "emoji_hash")
     assert response.emoji_hash == emoji.image_hash
+    assert response.format == "png"
+    assert response.usage_count == emoji.query_count
 
     # 验证时间戳转换
     assert isinstance(response.record_time, float)
