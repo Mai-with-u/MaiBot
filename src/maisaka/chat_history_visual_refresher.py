@@ -14,6 +14,10 @@ from .context_messages import LLMContextMessage, SessionBackedMessage
 
 logger = get_logger("maisaka_chat_history_visual_refresher")
 
+
+_UNRESOLVED_IMAGE_PLACEHOLDERS = {"", "[image]", "[图片]"}
+_UNRESOLVED_EMOJI_PLACEHOLDERS = {"", "[emoji]", "[表情包]"}
+
 BuildHistoryMessage = Callable[[SessionMessage, str], Awaitable[Optional[LLMContextMessage]]]
 BuildVisibleText = Callable[[SessionMessage], str]
 
@@ -90,13 +94,13 @@ def _refresh_pending_visual_components(components: list[object]) -> bool:
 def _should_refresh_image_component(component: ImageComponent) -> bool:
     """判断图片组件当前是否仍处于待补全文本的占位状态。"""
 
-    return not component.content or component.content == "[图片]"
+    return (component.content or "").strip().lower() in _UNRESOLVED_IMAGE_PLACEHOLDERS
 
 
 def _should_refresh_emoji_component(component: EmojiComponent) -> bool:
     """判断表情组件当前是否仍处于待补全文本的占位状态。"""
 
-    return not component.content or component.content == "[表情包]"
+    return (component.content or "").strip().lower() in _UNRESOLVED_EMOJI_PLACEHOLDERS
 
 
 def _lookup_cached_image_description(image_hash: str) -> str:
