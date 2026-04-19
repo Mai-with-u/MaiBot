@@ -26,6 +26,30 @@ install(extra_lines=3)
 logger = get_logger("chat_message")
 
 
+_UNRESOLVED_IMAGE_PLACEHOLDERS = {"[image]", "[图片]"}
+_UNRESOLVED_EMOJI_PLACEHOLDERS = {"[emoji]", "[表情包]"}
+
+
+def _normalize_placeholder_text(content: str | None) -> str:
+    """归一化消息组件中的占位文本，便于判断是否仍需补全。"""
+
+    return (content or "").strip().lower()
+
+
+def _is_unresolved_image_placeholder(content: str | None) -> bool:
+    """判断图片组件内容是否仍是适配器注入的占位文本。"""
+
+    normalized = _normalize_placeholder_text(content)
+    return not normalized or normalized in _UNRESOLVED_IMAGE_PLACEHOLDERS
+
+
+def _is_unresolved_emoji_placeholder(content: str | None) -> bool:
+    """判断表情组件内容是否仍是适配器注入的占位文本。"""
+
+    normalized = _normalize_placeholder_text(content)
+    return not normalized or normalized in _UNRESOLVED_EMOJI_PLACEHOLDERS
+
+
 class MsgIDMapping:
     """回复消息内容缓存。"""
 
@@ -230,7 +254,7 @@ class SessionMessage(MaiMessage):
         Returns:
             str: 图片组件对应的文本表示。
         """
-        if component.content:  # 先检查是否处理过
+        if component.content and not _is_unresolved_image_placeholder(component.content):
             return component.content
         from src.chat.image_system.image_manager import image_manager
 
@@ -263,7 +287,7 @@ class SessionMessage(MaiMessage):
         Returns:
             str: 表情包组件对应的文本表示。
         """
-        if component.content:  # 先检查是否处理过
+        if component.content and not _is_unresolved_emoji_placeholder(component.content):
             return component.content
         from src.emoji_system.emoji_manager import emoji_manager
 
