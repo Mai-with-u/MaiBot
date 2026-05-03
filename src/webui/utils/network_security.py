@@ -31,19 +31,19 @@ def _is_forbidden_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Addr
             address.is_loopback,
             address.is_link_local,
             address.is_multicast,
-            address.is_private,
             address.is_reserved,
             address.is_unspecified,
-            getattr(address, "is_site_local", False),
         )
     )
 
 
-def validate_public_url(url: str, allowed_schemes: Iterable[str] = ("https",)) -> str:
+def validate_public_url(url: str, allowed_schemes: Iterable[str] = ("http", "https")) -> str:
     normalized_url = url.strip()
     if not normalized_url:
         raise ValueError("URL 不能为空")
 
+    if "://" not in normalized_url:
+        normalized_url = "http://" + normalized_url
     parsed = urlparse(normalized_url)
     allowed_scheme_set = {scheme.lower() for scheme in allowed_schemes}
     if parsed.scheme.lower() not in allowed_scheme_set:

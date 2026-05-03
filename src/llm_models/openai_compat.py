@@ -26,12 +26,17 @@ class OpenAICompatibleRequestOverrides:
 def normalize_openai_base_url(base_url: str) -> str:
     """规范化 OpenAI 兼容接口的基础地址。
 
+    去掉尾部斜杠，且如果缺少协议前缀则自动补全 http://。
+
     Args:
         base_url: 原始基础地址。
 
     Returns:
-        str: 去掉尾部斜杠后的地址。
+        str: 规范化后的地址。
     """
+    base_url = base_url.strip()
+    if base_url and "://" not in base_url:
+        base_url = "http://" + base_url
     return base_url.rstrip("/")
 
 

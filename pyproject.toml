@@ -15,7 +15,7 @@ dependencies = [
     "faiss-cpu>=1.11.0",
     "fastapi>=0.116.0",
     "google-genai>=1.39.1",
-    "httpx",
+    "httpx[socks]",
     "jieba>=0.42.1",
     "json-repair>=0.47.6",
     "maim-message>=0.6.2",
