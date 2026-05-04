@@ -95,6 +95,9 @@ class ExpressionAutoCheckTask(AsyncTask):
                     expr.rejected = not suitable
                     expr.modified_by = ModifiedBy.AI
                     session.add(expr)
+                else:
+                    logger.warning(f'表达方式记录已被并发删除或移除，无法写入评估结果 [ID: {expression.id}]')
+                    return False
 
             status = "通过" if suitable else "不通过"
             # 保留这段注释，方便后续需要时恢复更详细的审核日志。
