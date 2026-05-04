@@ -108,9 +108,9 @@ def expression_to_response(expression: Expression) -> ExpressionResponse:
         last_active_time=last_active_time,
         chat_id=expression.session_id or "",
         create_date=create_date,
-        checked=False,
-        rejected=False,
-        modified_by=None,
+        checked=expression.checked,
+        rejected=expression.rejected,
+        modified_by=expression.modified_by.value if expression.modified_by else None,
     )
 
 
