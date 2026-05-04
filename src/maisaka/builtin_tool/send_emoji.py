@@ -281,21 +281,8 @@ def _build_send_emoji_monitor_metadata(
 
 
 def _resolve_emoji_selector_model_task_name() -> str:
-    """根据 planner 模型视觉能力选择表情选择子代理的模型任务。"""
-
-    model_config = config_manager.get_model_config()
-    planner_models = [
-        model_name
-        for model_name in model_config.model_task_config.planner.model_list
-        if str(model_name).strip()
-    ]
-    models_by_name = {model.name: model for model in model_config.models}
-    if planner_models and all(
-        model_name in models_by_name and models_by_name[model_name].visual
-        for model_name in planner_models
-    ):
-        return "planner"
-    return "vlm"
+    """返回表情选择子代理的模型任务名，始终使用组件模型（utils）。"""
+    return "utils"
 
 
 async def _select_emoji_with_sub_agent(
