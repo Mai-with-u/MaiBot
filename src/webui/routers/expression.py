@@ -96,10 +96,7 @@ def get_chat_name_from_latest_message(chat_id: str, db_session: Any) -> Optional
     """从最近消息中解析聊天显示名称。"""
 
     statement = (
-        select(Messages)
-        .where(col(Messages.session_id) == chat_id)
-        .order_by(col(Messages.timestamp).desc())
-        .limit(1)
+        select(Messages).where(col(Messages.session_id) == chat_id).order_by(col(Messages.timestamp).desc()).limit(1)
     )
     message = db_session.exec(statement).first()
     if not message:
@@ -236,9 +233,7 @@ async def get_chat_list() -> ChatListResponse:
                     is_group=bool(chat_session.group_id),
                 )
 
-            expression_chat_ids = {
-                chat_id for chat_id in session.exec(select(Expression.session_id)).all() if chat_id
-            }
+            expression_chat_ids = {chat_id for chat_id in session.exec(select(Expression.session_id)).all() if chat_id}
             for session_id in expression_chat_ids:
                 if session_id in chat_by_id:
                     continue

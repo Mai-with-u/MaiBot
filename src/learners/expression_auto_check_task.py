@@ -17,9 +17,9 @@ from sqlmodel import select
 
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Expression
+from src.common.database.database_model import ModifiedBy
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.learners.expression_review_store import get_review_state, set_review_state
 from src.learners.expression_utils import check_expression_suitability
 from src.manager.async_task_manager import AsyncTask
 
@@ -53,7 +53,7 @@ class ExpressionAutoCheckTask(AsyncTask):
                 statement = select(Expression)
                 all_expressions = session.exec(statement).all()
 
-            unevaluated_expressions = [expr for expr in all_expressions if not get_review_state(expr.id)["checked"]]
+            unevaluated_expressions = [expr for expr in all_expressions if not expr.checked]
 
             if not unevaluated_expressions:
                 logger.info("没有未检查的表达方式")
@@ -62,9 +62,7 @@ class ExpressionAutoCheckTask(AsyncTask):
             selected_count = min(count, len(unevaluated_expressions))
             selected = random.sample(unevaluated_expressions, selected_count)
 
-            logger.info(
-                f"从 {len(unevaluated_expressions)} 条未检查表达方式中随机选择了 {selected_count} 条"
-            )
+            logger.info(f"从 {len(unevaluated_expressions)} 条未检查表达方式中随机选择了 {selected_count} 条")
             return selected
 
         except Exception as e:
@@ -86,8 +84,18 @@ class ExpressionAutoCheckTask(AsyncTask):
             expression.style,
         )
 
+        if error:
+            logger.warning(f"表达方式评估时出现错误 [ID: {expression.id}]: {error}")
+            return False
+
         try:
-            set_review_state(expression.id, True, not suitable, "ai")
+            with get_db_session() as session:
+                expr = session.exec(select(Expression).where(Expression.id == expression.id)).first()
+                if expr:
+                    expr.checked = True
+                    expr.rejected = not suitable
+                    expr.modified_by = ModifiedBy.AI
+                    session.add(expr)
 
             status = "通过" if suitable else "不通过"
             # 保留这段注释，方便后续需要时恢复更详细的审核日志。
@@ -97,9 +105,6 @@ class ExpressionAutoCheckTask(AsyncTask):
             #     f"Style: {expression.style}... | "
             #     f"Reason: {reason[:50]}..."
             # )
-
-            if error:
-                logger.warning(f"表达方式评估时出现错误 [ID: {expression.id}]: {error}")
 
             logger.debug(f"表达方式 [ID: {expression.id}] 评估完成: {status}, reason={reason}")
             return suitable
