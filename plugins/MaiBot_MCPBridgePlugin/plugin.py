@@ -185,13 +185,49 @@ class ToolCallTracer:
         """清空记录"""
         self._records.clear()
     
+    # v1.4.x (CWE-532): Patterns of argument keys whose values may contain
+    # credentials or other sensitive data. Matched case-insensitively against
+    # any substring of the key name.
+    _SENSITIVE_KEY_PATTERNS = (
+        "password", "passwd", "secret", "token", "api_key", "apikey",
+        "access_key", "accesskey", "auth", "authorization", "credential",
+        "private_key", "privatekey", "session", "cookie",
+    )
+    _REDACTED_PLACEHOLDER = "[REDACTED]"
+
+    @classmethod
+    def _redact_sensitive(cls, value: Any) -> Any:
+        """递归脱敏: 将常见敏感字段（密码/令牌/密钥等）的值替换为占位符。
+
+        防止在追踪日志(trace.jsonl)中明文落盘 API Key、密码等凭据 (CWE-532)。
+        非敏感字段保持原样，便于排障。
+        """
+        if isinstance(value, dict):
+            redacted: Dict[Any, Any] = {}
+            for k, v in value.items():
+                key_str = str(k).lower()
+                if any(pat in key_str for pat in cls._SENSITIVE_KEY_PATTERNS):
+                    redacted[k] = cls._REDACTED_PLACEHOLDER
+                else:
+                    redacted[k] = cls._redact_sensitive(v)
+            return redacted
+        if isinstance(value, list):
+            return [cls._redact_sensitive(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(cls._redact_sensitive(v) for v in value)
+        return value
+
     def _write_to_log(self, record: ToolCallRecord) -> None:
         """写入 JSONL 日志文件"""
         try:
             if self._log_path:
                 self._log_path.parent.mkdir(parents=True, exist_ok=True)
+                # v1.4.x (CWE-532): 在落盘前脱敏 arguments 中的敏感字段
+                payload = asdict(record)
+                if isinstance(payload.get("arguments"), dict):
+                    payload["arguments"] = self._redact_sensitive(payload["arguments"])
                 with open(self._log_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.warning(f"写入追踪日志失败: {e}")
     
