@@ -536,10 +536,7 @@ async def _select_emoji_with_visual_sub_agent(
 def _get_emoji_selection_mode() -> str:
     """读取表情包选择模式配置。"""
 
-    mode = str(getattr(global_config.emoji, "emoji_selection_mode", "visual") or "").strip().lower()
-    if mode not in ("visual", "text"):
-        return "visual"
-    return mode
+    return global_config.emoji.emoji_selection_mode
 
 
 async def _select_emoji(
