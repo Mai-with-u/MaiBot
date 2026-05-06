@@ -224,7 +224,8 @@ class ToolCallTracer:
                 self._log_path.parent.mkdir(parents=True, exist_ok=True)
                 # v1.4.x (CWE-532): 在落盘前脱敏 arguments 中的敏感字段
                 payload = asdict(record)
-                if isinstance(payload.get("arguments"), dict):
+                # 无条件脱敏 arguments（dict/list/tuple 均递归处理），避免非字典形态绕过脱敏
+                if "arguments" in payload:
                     payload["arguments"] = self._redact_sensitive(payload["arguments"])
                 with open(self._log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(payload, ensure_ascii=False) + "\n")
