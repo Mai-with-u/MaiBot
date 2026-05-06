@@ -296,6 +296,7 @@ async def get_models_by_url(
 async def test_provider_connection(
     base_url: str = Query(..., description="提供商的基础 URL"),
     api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
+    client_type: str = Query("openai", description="客户端类型 (openai | gemini)"),
 ):
     """
     测试提供商连接状态
@@ -359,13 +360,19 @@ async def test_provider_connection(
         try:
             start_time = time.time()
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                }
+                headers = {"Content-Type": "application/json"}
+                params = {}
+
+                if client_type == "gemini":
+                    # Gemini 使用 URL 参数传递 API Key
+                    params["key"] = api_key
+                else:
+                    # OpenAI 兼容格式使用 Authorization 头
+                    headers["Authorization"] = f"Bearer {api_key}"
+
                 # 尝试获取模型列表
                 models_url = f"{base_url}/models"
-                response = await client.get(models_url, headers=headers)
+                response = await client.get(models_url, headers=headers, params=params)
 
                 if response.status_code == 200:
                     result["api_key_valid"] = True
@@ -408,9 +415,14 @@ async def test_provider_connection_by_name(
 
     base_url = provider.get("base_url", "")
     api_key = provider.get("api_key", "")
+    client_type = provider.get("client_type", "openai")
 
     if not base_url:
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
 
     # 调用测试接口
-    return await test_provider_connection(base_url=base_url, api_key=api_key or None)
+    return await test_provider_connection(
+        base_url=base_url,
+        api_key=api_key if api_key else None,
+        client_type=client_type,
+    )
