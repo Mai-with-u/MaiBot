@@ -76,7 +76,7 @@ async def test_send_emoji_for_maisaka_can_be_aborted_by_hook(monkeypatch: pytest
     )
     monkeypatch.setattr(maisaka_tool, "_get_runtime_manager", lambda: fake_manager)
 
-    result = await maisaka_tool.send_emoji_for_maisaka(stream_id="stream-1", requested_emotion="开心")
+    result = await maisaka_tool.send_emoji_for_maisaka(stream_id="stream-1", requested_emotion="开心", emoji_selector=lambda *a, **kw: (None, ""))
 
     assert result.success is False
     assert result.message == "插件阻止了表情发送。"

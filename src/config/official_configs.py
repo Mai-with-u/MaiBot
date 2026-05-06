@@ -15,6 +15,12 @@ VISUAL_MODE_OPTION_DESCRIPTIONS = {
     "multimodal": "多模态模式，会向模型发送视觉输入",
 }
 
+
+EMOJI_SELECTION_MODE_OPTION_DESCRIPTIONS = {
+    "visual": "视觉选择 (VLM) - 使用视觉模型看图选择表情包",
+    "text": "文本选择 (描述匹配) - 使用纯文本模型根据描述选择表情包",
+}
+
 """
 须知：
 1. 本文件中记录了所有的配置项
@@ -1301,6 +1307,16 @@ class EmojiConfig(ConfigBase):
         },
     )
     """是否启用表情包过滤，只有符合该要求的表情包才会被保存"""
+
+    emoji_selection_mode: Literal["visual", "text"] = Field(
+        default="visual",
+        json_schema_extra={
+            "x-widget": "select",
+            "x-icon": "eye",
+            "x-option-descriptions": EMOJI_SELECTION_MODE_OPTION_DESCRIPTIONS,
+        },
+    )
+    """表情包选择模式：visual 使用视觉模型看图选择，text 使用纯文本模型根据描述选择"""
 
 
 class KeywordRuleConfig(ConfigBase):

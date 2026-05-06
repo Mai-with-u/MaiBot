@@ -220,10 +220,6 @@ async def test_reply_tool_puts_monitor_detail_into_metadata(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_send_emoji_tool_puts_monitor_detail_into_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_build_emoji_candidate_message(emojis: list[Any]) -> object:
-        assert emojis
-        return SimpleNamespace()
-
     async def _fake_send_emoji_for_maisaka(**kwargs: Any) -> Any:
         selected_emoji, matched_emotion = await kwargs["emoji_selector"](
             kwargs["requested_emotion"],
@@ -242,8 +238,8 @@ async def test_send_emoji_tool_puts_monitor_detail_into_metadata(monkeypatch: py
             sent_message=None,
         )
 
-    monkeypatch.setattr(send_emoji_tool_module, "_build_emoji_candidate_message", _fake_build_emoji_candidate_message)
     monkeypatch.setattr(send_emoji_tool_module, "send_emoji_for_maisaka", _fake_send_emoji_for_maisaka)
+    monkeypatch.setattr(send_emoji_tool_module, "_get_emoji_selection_mode", lambda: "text")
     monkeypatch.setattr(
         send_emoji_tool_module.emoji_manager,
         "emojis",

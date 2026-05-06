@@ -306,7 +306,123 @@ def _is_missing_visual_model_error(exc: Exception) -> bool:
     return _EMOJI_VLM_NOT_CONFIGURED_MESSAGE in error_text or "未找到名为 '' 的模型" in error_text
 
 
-async def _select_emoji_with_sub_agent(
+
+
+async def _select_emoji_with_text_sub_agent(
+    tool_ctx: BuiltinToolRuntimeContext,
+    requested_emotion: str,
+    reasoning: str,
+    context_texts: list[str],
+    sample_size: int,
+    selection_metadata: Optional[Dict[str, Any]] = None,
+) -> tuple[MaiEmoji | None, str]:
+    """通过纯文本子代理从候选表情包描述中选出一个结果。"""
+
+    del reasoning, context_texts, sample_size
+
+    available_emojis = list(emoji_manager.emojis)
+    if not available_emojis:
+        return None, ""
+
+    total_candidate_count = min(len(available_emojis), _get_emoji_candidate_count())
+    sampled_emojis = sample(available_emojis, total_candidate_count)
+
+    # 构建候选表情包的文本描述列表
+    candidate_descriptions: list[str] = []
+    for i, emoji in enumerate(sampled_emojis, start=1):
+        desc = emoji.description.strip() if emoji.description else "（无描述）"
+        candidate_descriptions.append(f"{i}. {desc}")
+
+    candidates_text = "\n".join(candidate_descriptions)
+
+    system_prompt = (
+        "你是 Maisaka 的临时表情包选择子代理。\n"
+        "你会收到一些候选表情包的文本描述，以及当前的对话上下文。\n"
+        f"一共有 {len(sampled_emojis)} 个候选表情包。\n"
+        "你的任务是根据上下文和当前语气，从这些候选表情包中选出最合适的一个。\n"
+        "你必须返回一个 JSON 对象，不要输出任何 JSON 之外的内容。\n"
+        '返回格式固定为：{"emoji_index":1,"reason":"简短理由"}'
+    )
+
+    emotion_hint = ""
+    if requested_emotion:
+        emotion_hint = f"\n期望表达的情绪：{requested_emotion}"
+
+    prompt_message = ReferenceMessage(
+        content=(
+            f"[选择任务]\n"
+            f"候选总数: {len(sampled_emojis)}\n"
+            f"{emotion_hint}\n"
+            f"候选表情包描述：\n{candidates_text}\n\n"
+            "请只输出 JSON。"
+        ),
+        timestamp=datetime.now(),
+        reference_type=ReferenceMessageType.TOOL_HINT,
+        remaining_uses_value=1,
+        display_prefix="[表情包选择任务]",
+    )
+
+    request_messages = [
+        MessageBuilder().set_role(RoleType.System).add_text_content(system_prompt).build(),
+    ]
+    prompt_llm_message = prompt_message.to_llm_message()
+    if prompt_llm_message is not None:
+        request_messages.append(prompt_llm_message)
+    serialized_request_messages = serialize_prompt_messages(request_messages)
+
+    selection_started_at = datetime.now()
+    response = await tool_ctx.runtime.run_sub_agent(
+        context_message_limit=_EMOJI_SUB_AGENT_CONTEXT_LIMIT,
+        system_prompt=system_prompt,
+        extra_messages=[prompt_message],
+        max_tokens=_EMOJI_SUB_AGENT_MAX_TOKENS,
+        model_task_name="utils",
+    )
+    selection_duration_ms = round((datetime.now() - selection_started_at).total_seconds() * 1000, 2)
+
+    selection_metrics: Dict[str, Any] = {
+        "prompt_tokens": response.prompt_tokens,
+        "completion_tokens": response.completion_tokens,
+        "total_tokens": response.total_tokens,
+        "overall_ms": selection_duration_ms,
+    }
+
+    try:
+        selection = EmojiSelectionResult.model_validate_json(response.content or "")
+    except Exception as exc:
+        logger.warning(f"{tool_ctx.runtime.log_prefix} 表情包子代理结果解析失败，将回退到候选首项: {exc}")
+        if selection_metadata is not None:
+            selection_metadata["monitor_detail"] = _build_send_emoji_monitor_detail(
+                request_messages=serialized_request_messages,
+                output_text=response.content or "",
+                metrics=selection_metrics,
+                extra_sections=[{
+                    "title": "解析异常",
+                    "content": str(exc),
+                }],
+            )
+        fallback_emoji = sampled_emojis[0] if sampled_emojis else None
+        return fallback_emoji, ""
+
+    if selection_metadata is not None:
+        selection_metadata["reason"] = selection.reason.strip()
+        selection_metadata["monitor_detail"] = _build_send_emoji_monitor_detail(
+            request_messages=serialized_request_messages,
+            reasoning_text=selection.reason,
+            output_text=response.content or "",
+            metrics=selection_metrics,
+        )
+
+    emoji_index = int(selection.emoji_index)
+    if emoji_index < 1 or emoji_index > len(sampled_emojis):
+        logger.warning(
+            f"{tool_ctx.runtime.log_prefix} 表情包子代理返回了无效序号: {emoji_index!r}，将回退到第 1 张"
+        )
+        emoji_index = 1
+
+    return sampled_emojis[emoji_index - 1], ""
+
+async def _select_emoji_with_visual_sub_agent(
     tool_ctx: BuiltinToolRuntimeContext,
     reasoning: str,
     context_texts: list[str],
@@ -416,6 +532,36 @@ async def _select_emoji_with_sub_agent(
     return sampled_emojis[emoji_index - 1], ""
 
 
+
+def _get_emoji_selection_mode() -> str:
+    """读取表情包选择模式配置。"""
+
+    mode = str(getattr(global_config.emoji, "emoji_selection_mode", "visual") or "").strip().lower()
+    if mode not in ("visual", "text"):
+        return "visual"
+    return mode
+
+
+async def _select_emoji(
+    tool_ctx: BuiltinToolRuntimeContext,
+    requested_emotion: str,
+    reasoning: str,
+    context_texts: list[str],
+    sample_size: int,
+    selection_metadata: Optional[Dict[str, Any]] = None,
+) -> tuple[MaiEmoji | None, str]:
+    """根据配置选择表情包选择模式。"""
+
+    mode = _get_emoji_selection_mode()
+    if mode == "text":
+        return await _select_emoji_with_text_sub_agent(
+            tool_ctx, requested_emotion, reasoning, context_texts, sample_size, selection_metadata
+        )
+    return await _select_emoji_with_visual_sub_agent(
+        tool_ctx, reasoning, context_texts, sample_size, selection_metadata
+    )
+
+
 async def handle_tool(
     tool_ctx: BuiltinToolRuntimeContext,
     invocation: ToolInvocation,
@@ -450,8 +596,9 @@ async def handle_tool(
             requested_emotion=requested_emotion,
             reasoning=tool_ctx.engine.last_reasoning_content,
             context_texts=context_texts,
-            emoji_selector=lambda _requested_emotion, reasoning, context_texts, sample_size: _select_emoji_with_sub_agent(
+            emoji_selector=lambda _requested_emotion, reasoning, context_texts, sample_size: _select_emoji(
                 tool_ctx,
+                _requested_emotion,
                 reasoning,
                 list(context_texts or []),
                 sample_size,
