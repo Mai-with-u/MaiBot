@@ -442,7 +442,7 @@ class MaisakaReasoningEngine:
                         )
                     await self._ingest_messages(cached_messages)
                     anchor_message = cached_messages[-1]
-                else:
+                elif timeout_triggered:
                     anchor_message = self._get_timeout_anchor_message()
                     if anchor_message is None:
                         logger.warning(f"{self._runtime.log_prefix} wait 超时后没有可复用的锚点消息，跳过本轮")
@@ -452,6 +452,9 @@ class MaisakaReasoningEngine:
                         self._runtime._chat_history.append(
                             self._build_wait_completed_message(has_new_messages=False)
                         )
+                else:
+                    logger.debug(f"{self._runtime.log_prefix} 无待处理消息，跳过本轮")
+                    continue
 
                 try:
                     timing_gate_required = True

@@ -511,6 +511,7 @@ class MaisakaHeartFlowChatting:
 
     async def _schedule_deferred_message_turn(self, delay_seconds: float) -> None:
         """在预计满足空窗补偿条件时再次检查是否应触发循环。"""
+        current_task = asyncio.current_task()
         try:
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
@@ -520,7 +521,8 @@ class MaisakaHeartFlowChatting:
         except asyncio.CancelledError:
             return
         finally:
-            self._deferred_message_turn_task = None
+            if self._deferred_message_turn_task is current_task:
+                self._deferred_message_turn_task = None
 
     def _update_message_trigger_state(self, message: SessionMessage) -> None:
         """补齐消息中的 @/提及 标记，并在命中时启用强制 continue。"""
