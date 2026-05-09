@@ -285,39 +285,21 @@ class ChatConfigUtils:
         if session_id:
             for rule in global_config.chat.talk_value_rules:
                 if not rule.platform and not rule.item_id:
-                    continue  # 一起留空表示全局
+                    continue
                 if not ChatConfigUtils.target_matches_session(rule, session_id, is_group_chat):
-                    continue  # 不匹配的会话 ID，跳过
-                parsed_range = ChatConfigUtils.parse_range(rule.time)
-                if not parsed_range:
-                    continue  # 无法解析的时间范围，跳过
-                start_min, end_min = parsed_range
-                in_range: bool = False
-                if start_min <= end_min:
-                    in_range = start_min <= now_min <= end_min
-                else:  # 跨天的时间范围
-                    in_range = now_min >= start_min or now_min <= end_min
-                if in_range:
-                    return rule.value or 0.0  # 如果规则生效但没有设置值，返回 0.0
+                    continue
+                if ChatConfigUtils._is_time_in_range(rule.time, now_min):
+                    return rule.value or 0.0
 
         # 没有匹配到会话相关的规则，继续匹配全局规则
         for rule in global_config.chat.talk_value_rules:
             if rule.platform or rule.item_id:
-                continue  # 只匹配全局规则
+                continue
             if is_group_chat is not None and (rule.rule_type == "group") != is_group_chat:
                 continue
-            parsed_range = ChatConfigUtils.parse_range(rule.time)
-            if not parsed_range:
-                continue  # 无法解析的时间范围，跳过
-            start_min, end_min = parsed_range
-            in_range: bool = False
-            if start_min <= end_min:
-                in_range = start_min <= now_min <= end_min
-            else:  # 跨天的时间范围
-                in_range = now_min >= start_min or now_min <= end_min
-            if in_range:
-                return rule.value or 0.0  # 如果规则生效但没有设置值，返回 0.0
-        return result  # 如果没有任何规则生效，返回默认值
+            if ChatConfigUtils._is_time_in_range(rule.time, now_min):
+                return rule.value or 0.0
+        return result
 
     @staticmethod
     def parse_range(range_str: str) -> Optional[tuple[int, int]]:
@@ -329,3 +311,16 @@ class ChatConfigUtils:
             return sh * 60 + sm, eh * 60 + em
         except Exception:
             return None
+
+    @staticmethod
+    def _is_time_in_range(time_str: str, now_min: int) -> bool:
+        """time 为空表示全时段生效；否则检查 now_min 是否在 HH:MM-HH:MM 范围内。"""
+        if not (time_str or "").strip():
+            return True
+        parsed = ChatConfigUtils.parse_range(time_str)
+        if not parsed:
+            return False
+        start_min, end_min = parsed
+        if start_min <= end_min:
+            return start_min <= now_min <= end_min
+        return now_min >= start_min or now_min <= end_min

@@ -58,6 +58,7 @@ logger = get_logger("maisaka_runtime")
 
 MAX_INTERNAL_ROUNDS = 10
 MAX_RETAINED_MESSAGE_CACHE_SIZE = 200
+_EFFECTIVELY_INFINITE_THRESHOLD = 10**9
 
 
 class MaisakaHeartFlowChatting:
@@ -241,7 +242,7 @@ class MaisakaHeartFlowChatting:
 
     def adjust_talk_frequency(self, frequency: float) -> None:
         """调整当前会话的回复频率倍率。"""
-        self._talk_frequency_adjust = max(0.01, float(frequency))
+        self._talk_frequency_adjust = float(frequency)
         self._schedule_message_turn()
 
     def append_sent_message_to_chat_history(
@@ -357,17 +358,14 @@ class MaisakaHeartFlowChatting:
             self._schedule_message_turn()
 
     def _get_effective_reply_frequency(self) -> float:
-        """返回当前会话生效的回复频率。"""
-        talk_value = max(
-            0.01,
-            float(
-                ChatConfigUtils.get_talk_value(
-                    self.session_id,
-                    is_group_chat=self.chat_stream.is_group_session,
-                )
-            ),
+        """返回当前会话生效的回复频率（允许为 0 表示完全静默）。"""
+        talk_value = float(
+            ChatConfigUtils.get_talk_value(
+                self.session_id,
+                is_group_chat=self.chat_stream.is_group_session,
+            )
         )
-        return max(0.01, talk_value * self._talk_frequency_adjust)
+        return talk_value * self._talk_frequency_adjust
 
     async def track_reply_effect(
         self,
@@ -449,8 +447,10 @@ class MaisakaHeartFlowChatting:
         return snapshot
 
     def _get_message_trigger_threshold(self) -> int:
-        """根据回复频率折算出触发一轮循环所需的消息数。"""
+        """根据回复频率折算出触发一轮循环所需的消息数（频率为 0 时视为无限大）。"""
         effective_frequency = min(1.0, self._get_effective_reply_frequency())
+        if effective_frequency <= 0:
+            return _EFFECTIVELY_INFINITE_THRESHOLD
         return max(1, int(ceil(1.0 / effective_frequency)))
 
     def _get_pending_message_count(self) -> int:
@@ -1008,6 +1008,12 @@ class MaisakaHeartFlowChatting:
             self._internal_turn_queue.put_nowait("message")
             return
 
+        if self._get_effective_reply_frequency() <= 0:
+            if self._is_expression_learning_due():
+                self._message_turn_scheduled = True
+                self._internal_turn_queue.put_nowait("message")
+            return
+
         trigger_threshold = self._get_message_trigger_threshold()
         if pending_count >= trigger_threshold or self._should_trigger_message_turn_by_idle_compensation(
             pending_count=pending_count,
@@ -1080,6 +1086,13 @@ class MaisakaHeartFlowChatting:
         self._agent_state = self._STATE_STOP
         self._pending_wait_tool_call_id = None
         self._cancel_wait_timeout_task()
+
+    def _transition_to_idle(self) -> None:
+        """将 agent 重置为待机状态并更新阶段信息，幂等。"""
+        if self._agent_state == self._STATE_RUNNING:
+            self._agent_state = self._STATE_STOP
+        if self._running:
+            self._update_stage_status("等待消息", "本轮处理结束")
 
     def _enter_wait_state(self, seconds: Optional[float] = None, tool_call_id: Optional[str] = None) -> None:
         """切换到等待状态。"""
@@ -1170,18 +1183,25 @@ class MaisakaHeartFlowChatting:
 
         return True
 
-    async def _trigger_expression_learning(self, messages: list[SessionMessage]) -> None:
-        """触发表达方式学习"""
+    def _is_expression_learning_due(self) -> bool:
+        """检查表达学习是否满足触发条件。"""
+        if not self._enable_expression_learning:
+            return False
         pending_count = self._expression_learner.get_pending_count(self.message_cache)
-        if not self._should_trigger_learning(
+        return self._should_trigger_learning(
             enabled=self._enable_expression_learning,
             feature_name="表达学习",
             last_extraction_time=self._last_expression_extraction_time,
             pending_count=pending_count,
             min_messages_for_extraction=self._expression_learner.min_messages_for_extraction,
-        ):
+        )
+
+    async def _trigger_expression_learning(self, messages: list[SessionMessage]) -> None:
+        """触发表达方式学习"""
+        if not self._is_expression_learning_due():
             return
 
+        pending_count = self._expression_learner.get_pending_count(self.message_cache)
         self._last_expression_extraction_time = time.time()
         logger.info(
             f"{self.log_prefix} 触发表达方式学习: "
