@@ -2830,6 +2830,124 @@ class DebugConfig(ConfigBase):
     )
     """是否记录 LLM prompt cache 调试统计，默认关闭"""
 
+    enable_memory_diagnostics: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-widget": "switch",
+            "x-icon": "memory-stick",
+            "advanced": True,
+        },
+    )
+    """是否启用长时间运行内存诊断，默认关闭"""
+
+    memory_diagnostics_interval_seconds: int = Field(
+        default=300,
+        ge=10,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "timer",
+            "advanced": True,
+        },
+    )
+    """内存诊断采样间隔，单位秒"""
+
+    memory_diagnostics_top_sessions: int = Field(
+        default=20,
+        ge=1,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "list-ordered",
+            "advanced": True,
+        },
+    )
+    """内存诊断输出的高占用会话数量"""
+
+    memory_diagnostics_jsonl_path: str = Field(
+        default="logs/memory_diagnostics/memory_diagnostics.jsonl",
+        json_schema_extra={
+            "x-widget": "input",
+            "x-icon": "file-json",
+            "advanced": True,
+        },
+    )
+    """内存诊断 JSONL 输出路径"""
+
+    memory_diagnostics_enable_tracemalloc: bool = Field(
+        default=False,
+        json_schema_extra={
+            "x-widget": "switch",
+            "x-icon": "search-code",
+            "advanced": True,
+        },
+    )
+    """是否启用 tracemalloc Python 分配快照诊断"""
+
+    memory_diagnostics_snapshot_growth_mb: int = Field(
+        default=100,
+        ge=1,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "trending-up",
+            "advanced": True,
+        },
+    )
+    """RSS 增长超过该阈值时输出 tracemalloc 差异，单位 MB"""
+
+    memory_diagnostics_binary_scan_message_limit: int = Field(
+        default=5000,
+        ge=0,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "scan-search",
+            "advanced": True,
+        },
+    )
+    """每轮最多扫描多少条缓存消息来估算二进制滞留；此为全量 session 共享预算，非单 session 上限，0 表示不扫描"""
+
+    memory_diagnostics_jsonl_max_total_size_mb: int = Field(
+        default=50,
+        ge=1,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "hard-drive",
+            "advanced": True,
+        },
+    )
+    """内存诊断 JSONL 文件最大大小，超过后轮转为带时间戳的历史文件，单位 MB"""
+
+    memory_diagnostics_warn_runtime_count: int = Field(
+        default=0,
+        ge=0,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "message-circle-warning",
+            "advanced": True,
+        },
+    )
+    """runtime 数量超过该阈值时输出 WARNING，0 表示不告警"""
+
+    memory_diagnostics_warn_message_cache_count: int = Field(
+        default=0,
+        ge=0,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "message-circle-warning",
+            "advanced": True,
+        },
+    )
+    """message_cache 总量超过该阈值时输出 WARNING，0 表示不告警"""
+
+    memory_diagnostics_warn_voice_binary_mb: int = Field(
+        default=0,
+        ge=0,
+        json_schema_extra={
+            "x-widget": "number",
+            "x-icon": "message-circle-warning",
+            "advanced": True,
+        },
+    )
+    """语音二进制估算超过该阈值时输出 WARNING，单位 MB，0 表示不告警"""
+
 
 class ExtraPromptItem(ConfigBase):
     platform: str = Field(
