@@ -113,13 +113,13 @@ JSONL 是“一行一个 JSON 快照”。每一行都是一次采样结果。
 在 Windows PowerShell 中查看最后 20 行：
 
 ```powershell
-Get-Content logs\memory_diagnostics.jsonl -Tail 20
+Get-Content logs\memory_diagnostics\memory_diagnostics.jsonl -Tail 20
 ```
 
-如果文件超过配置的大小，会轮转成带时间戳的历史文件，例如：
+如果当前文件和历史文件总大小超过配置的上限，会轮转成带时间戳的历史文件，并自动删除最旧的轮转文件，例如：
 
 ```text
-logs/memory_diagnostics.20260509-153000.jsonl
+logs/memory_diagnostics/memory_diagnostics.20260509-153000.jsonl
 ```
 
 ## 快速判断流程
@@ -293,7 +293,27 @@ media_tasks.emoji.estimated_binary_mb
 - VLM 服务不可用。
 - 短时间收到大量图片或表情。
 
-### 第八步：看 A_Memorix 是否是正常增长
+### 第八步：看 memory_automation 队列是否积压
+
+重点字段：
+
+```text
+memory_automation.started
+memory_automation.fact_writeback_queue
+memory_automation.fact_writeback_worker_active
+memory_automation.chat_summary_queue
+memory_automation.chat_summary_worker_active
+memory_automation.chat_summary_states
+```
+
+判断：
+
+- `fact_writeback_queue` 持续增长：事实写回任务可能积压。
+- `chat_summary_queue` 持续增长：聊天总结写回任务可能积压。
+- 队列增长但对应 `*_worker_active=false`：优先排查 worker 是否未启动、异常退出或被阻塞。
+- `chat_summary_states` 长期很高：可能有较多总结状态对象被保留，需要结合日志看是否有长时间未完成的总结。
+
+### 第九步：看 A_Memorix 是否是正常增长
 
 重点字段：
 
@@ -317,7 +337,7 @@ a_memorix.metadata
 - `embedding.*cache` 增长很快：可能是 embedding 缓存占用。
 - RSS 增长和 `a_memorix.vector_store.*` 同步：更像向量库/native 内存增长，不一定是泄漏。
 
-### 第九步：必要时看 tracemalloc
+### 第十步：必要时看 tracemalloc
 
 开启 `memory_diagnostics_enable_tracemalloc = true` 后，重点看：
 
@@ -435,7 +455,7 @@ memory_diagnostics_warn_voice_binary_mb = 500
 PowerShell 导出最后 50 行：
 
 ```powershell
-Get-Content logs\memory_diagnostics.jsonl -Tail 50 > memory_diagnostics_tail.txt
+Get-Content logs\memory_diagnostics\memory_diagnostics.jsonl -Tail 50 > memory_diagnostics_tail.txt
 ```
 
 建议同时提供问题发生前和发生后的日志片段。只有最后一行通常不够判断趋势。
