@@ -59,7 +59,7 @@ MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute(
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
 MMC_VERSION: str = "1.0.0-pre.20"
-CONFIG_VERSION: str = "8.12.5"
+CONFIG_VERSION: str = "8.12.6"
 MODEL_CONFIG_VERSION: str = "1.17.0"
 
 logger = get_logger("config")
@@ -645,7 +645,8 @@ def write_config_to_file(
 
     if isinstance(config, Config):
         try:
-            a_memorix_web = full_config_data["a_memorix"]["web"]
+            a_memorix_table = cast(Any, full_config_data["a_memorix"])
+            a_memorix_web = cast(Any, a_memorix_table["web"])
             if "import_config" in a_memorix_web and "import" not in a_memorix_web:
                 a_memorix_web["import"] = a_memorix_web.pop("import_config")
         except Exception:
