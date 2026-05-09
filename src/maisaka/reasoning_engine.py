@@ -454,13 +454,14 @@ class MaisakaReasoningEngine:
                         )
 
                 if (
-                    cached_messages
-                    and self._runtime._get_effective_reply_frequency() <= 0
+                    self._runtime._get_effective_reply_frequency() <= 0
                     and not self._runtime._has_forced_timing_trigger()
                 ):
-                    logger.debug(
-                        f"{self._runtime.log_prefix} talk_value=0，已完成学习，跳过 Timing Gate 和 Planner"
-                    )
+                    if cached_messages:
+                        logger.debug(
+                            f"{self._runtime.log_prefix} talk_value=0，已完成学习，跳过 Timing Gate 和 Planner"
+                        )
+                    self._runtime._transition_to_idle()
                     continue
 
                 try:
@@ -769,10 +770,7 @@ class MaisakaReasoningEngine:
                             if not planner_interrupted:
                                 round_index += 1
                 finally:
-                    if self._runtime._agent_state == self._runtime._STATE_RUNNING:
-                        self._runtime._agent_state = self._runtime._STATE_STOP
-                    if self._runtime._running:
-                        self._runtime._update_stage_status("等待消息", "本轮处理结束")
+                    self._runtime._transition_to_idle()
         except asyncio.CancelledError:
             self._runtime._log_internal_loop_cancelled()
             raise

@@ -1039,6 +1039,13 @@ class MaisakaHeartFlowChatting:
         self._pending_wait_tool_call_id = None
         self._cancel_wait_timeout_task()
 
+    def _transition_to_idle(self) -> None:
+        """将 agent 重置为待机状态并更新阶段信息，幂等。"""
+        if self._agent_state == self._STATE_RUNNING:
+            self._agent_state = self._STATE_STOP
+        if self._running:
+            self._update_stage_status("等待消息", "本轮处理结束")
+
     def _enter_wait_state(self, seconds: Optional[float] = None, tool_call_id: Optional[str] = None) -> None:
         """切换到等待状态。"""
         self._agent_state = self._STATE_WAIT
