@@ -453,6 +453,16 @@ class MaisakaReasoningEngine:
                             self._build_wait_completed_message(has_new_messages=False)
                         )
 
+                if (
+                    cached_messages
+                    and self._runtime._get_effective_reply_frequency() <= 0
+                    and not self._runtime._has_forced_timing_trigger()
+                ):
+                    logger.debug(
+                        f"{self._runtime.log_prefix} talk_value=0，已完成学习，跳过 Timing Gate 和 Planner"
+                    )
+                    continue
+
                 try:
                     timing_gate_required = True
                     round_index = 0
