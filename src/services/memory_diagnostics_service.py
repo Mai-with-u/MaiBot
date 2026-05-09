@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - psutil 是可选诊断依赖的兜底
     psutil = None  # type: ignore[assignment]
 
 from src.common.logger import get_logger
-from src.config.config import PROJECT_ROOT, global_config
+from src.config import config as config_module
 from src.manager.async_task_manager import AsyncTask
 
 logger = get_logger("memory_diagnostics")
@@ -27,7 +27,6 @@ BYTES_PER_MB = 1024 * 1024
 DEFAULT_TOP_ALLOCATIONS = 20
 DEFAULT_HISTORY_LOOP_SAMPLE_SIZE = 50
 DEFAULT_FORWARD_COMPONENT_MAX_DEPTH = 5
-DEFAULT_JSONL_ROTATED_FILE_KEEP = 5
 DEFAULT_TOP_CHILD_PROCESSES = 10
 DEFAULT_TASK_AWAIT_CHAIN_LIMIT = 10
 DEFAULT_TASK_LOCAL_LIMIT = 64
@@ -35,10 +34,14 @@ DEFAULT_TASK_VALUE_MAX_DEPTH = 3
 DEFAULT_TASK_VALUE_MAX_ITEMS = 64
 
 
+def _debug_config() -> Any:
+    return config_module.global_config.debug
+
+
 def is_memory_diagnostics_enabled() -> bool:
     """判断是否启用内存诊断任务。"""
 
-    return global_config.debug.enable_memory_diagnostics
+    return _debug_config().enable_memory_diagnostics
 
 
 class MemoryDiagnosticsTask(AsyncTask):
@@ -47,7 +50,7 @@ class MemoryDiagnosticsTask(AsyncTask):
     def __init__(self) -> None:
         interval_seconds = max(
             10,
-            int(global_config.debug.memory_diagnostics_interval_seconds),
+            int(_debug_config().memory_diagnostics_interval_seconds),
         )
         super().__init__(
             task_name="MemoryDiagnosticsTask",
@@ -139,7 +142,8 @@ class MemoryDiagnosticsTask(AsyncTask):
                 payload["handle_count"] = process.num_handles()
             except Exception:
                 try:
-                    payload["fd_count"] = process.num_fds() if hasattr(process, "num_fds") else 0
+                    num_fds = getattr(process, "num_fds", None)
+                    payload["fd_count"] = _safe_process_int(process, "num_fds") if callable(num_fds) else 0
                 except Exception:
                     payload["fd_count_error"] = True
 
@@ -164,7 +168,7 @@ class MemoryDiagnosticsTask(AsyncTask):
 
     def _collect_python_metrics(self, errors: list[str]) -> dict[str, Any]:
         try:
-            payload = {
+            payload: dict[str, Any] = {
                 "gc_count": list(gc.get_count()),
                 "gc_threshold": list(gc.get_threshold()),
             }
@@ -530,7 +534,7 @@ class MemoryDiagnosticsTask(AsyncTask):
             current_rss_mb = float(process_metrics.get("rss_mb") or 0.0)
             threshold_mb = max(
                 1.0,
-                float(global_config.debug.memory_diagnostics_snapshot_growth_mb),
+                float(_debug_config().memory_diagnostics_snapshot_growth_mb),
             )
             payload: dict[str, Any] = {
                 "current_mb": _bytes_to_mb(sum(stat.size for stat in current_snapshot.statistics("filename"))),
@@ -582,24 +586,26 @@ class MemoryDiagnosticsTask(AsyncTask):
         self._baseline_rss_mb = rss_mb
 
     def _write_snapshot(self, payload: dict[str, Any]) -> None:
-        raw_path = global_config.debug.memory_diagnostics_jsonl_path.strip()
+        raw_path = _debug_config().memory_diagnostics_jsonl_path.strip()
         output_path = Path(raw_path or "logs/memory_diagnostics/memory_diagnostics.jsonl")
         if not output_path.is_absolute():
-            output_path = PROJECT_ROOT / output_path
+            output_path = config_module.PROJECT_ROOT / output_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._rotate_snapshot_file_if_needed(output_path)
+        line = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
+        self._rotate_snapshot_file_if_needed(output_path, incoming_size_bytes=len(line.encode("utf-8")))
         with output_path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+            file.write(line)
+        _cleanup_snapshot_files_to_total_limit(output_path)
 
     @staticmethod
-    def _rotate_snapshot_file_if_needed(output_path: Path) -> None:
-        max_total_size_mb = max(1, int(global_config.debug.memory_diagnostics_jsonl_max_total_size_mb))
+    def _rotate_snapshot_file_if_needed(output_path: Path, *, incoming_size_bytes: int = 0) -> None:
+        max_total_size_mb = max(1, int(_debug_config().memory_diagnostics_jsonl_max_total_size_mb))
         max_total_size_bytes = max_total_size_mb * BYTES_PER_MB
         try:
-            if output_path.exists() and output_path.stat().st_size >= max_total_size_bytes:
+            if output_path.exists() and output_path.stat().st_size + incoming_size_bytes > max_total_size_bytes:
                 rotated_path = _build_rotated_snapshot_path(output_path)
                 output_path.replace(rotated_path)
-                _cleanup_rotated_snapshot_files(output_path, keep=DEFAULT_JSONL_ROTATED_FILE_KEEP)
+                _cleanup_snapshot_files_to_total_limit(output_path)
                 logger.warning(f"内存诊断 JSONL 超过 {max_total_size_mb}MB，已轮转到 {rotated_path}")
         except Exception as exc:
             logger.warning(f"内存诊断 JSONL 轮转失败: {exc}")
@@ -631,15 +637,15 @@ class MemoryDiagnosticsTask(AsyncTask):
 
     @staticmethod
     def _tracemalloc_enabled() -> bool:
-        return global_config.debug.memory_diagnostics_enable_tracemalloc
+        return _debug_config().memory_diagnostics_enable_tracemalloc
 
     @staticmethod
     def _top_session_limit() -> int:
-        return max(1, int(global_config.debug.memory_diagnostics_top_sessions))
+        return max(1, int(_debug_config().memory_diagnostics_top_sessions))
 
     @staticmethod
     def _binary_scan_limit() -> int:
-        return max(0, int(global_config.debug.memory_diagnostics_binary_scan_message_limit))
+        return max(0, int(_debug_config().memory_diagnostics_binary_scan_message_limit))
 
 
 def _estimate_messages_binary(messages: Iterable[Any]) -> dict[str, Any]:
@@ -1062,10 +1068,8 @@ def _build_rotated_snapshot_path(output_path: Path) -> Path:
     return candidate
 
 
-def _cleanup_rotated_snapshot_files(output_path: Path, *, keep: int) -> None:
-    if keep <= 0:
-        return
-
+def _cleanup_snapshot_files_to_total_limit(output_path: Path) -> None:
+    max_total_size_bytes = max(1, int(_debug_config().memory_diagnostics_jsonl_max_total_size_mb)) * BYTES_PER_MB
     rotated_paths: list[Path] = []
     rotated_prefix = f"{output_path.stem}."
     for candidate in output_path.parent.iterdir():
@@ -1074,9 +1078,24 @@ def _cleanup_rotated_snapshot_files(output_path: Path, *, keep: int) -> None:
         if candidate.name.startswith(rotated_prefix) and candidate.suffix == output_path.suffix:
             rotated_paths.append(candidate)
 
-    rotated_paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    for stale_path in rotated_paths[keep:]:
-        stale_path.unlink()
+    rotated_paths.sort(key=lambda path: path.stat().st_mtime)
+    total_size = _safe_file_size(output_path) + sum(_safe_file_size(path) for path in rotated_paths)
+    for stale_path in rotated_paths:
+        if total_size <= max_total_size_bytes:
+            break
+        file_size = _safe_file_size(stale_path)
+        try:
+            stale_path.unlink()
+            total_size -= file_size
+        except OSError:
+            logger.warning(f"内存诊断 JSONL 历史文件清理失败: {stale_path}")
+
+
+def _safe_file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size if path.exists() else 0
+    except OSError:
+        return 0
 
 
 def _binary_size(value: Any) -> int:
@@ -1123,9 +1142,9 @@ def _log_threshold_warnings(heartflow: dict[str, Any], totals: dict[str, Any]) -
     message_cache = int(totals.get("message_cache", 0) or 0)
     voice_binary_mb = float(totals.get("voice_binary_mb", 0) or 0)
 
-    runtime_limit = int(global_config.debug.memory_diagnostics_warn_runtime_count)
-    message_cache_limit = int(global_config.debug.memory_diagnostics_warn_message_cache_count)
-    voice_binary_limit = float(global_config.debug.memory_diagnostics_warn_voice_binary_mb)
+    runtime_limit = int(_debug_config().memory_diagnostics_warn_runtime_count)
+    message_cache_limit = int(_debug_config().memory_diagnostics_warn_message_cache_count)
+    voice_binary_limit = float(_debug_config().memory_diagnostics_warn_voice_binary_mb)
 
     if runtime_limit > 0 and runtime_count > runtime_limit:
         warnings.append(f"runtime 数 {runtime_count} 超过阈值 {runtime_limit}")

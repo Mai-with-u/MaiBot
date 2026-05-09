@@ -39,7 +39,7 @@ def _message(*components: Any) -> SimpleNamespace:
 
 def _set_debug_config(monkeypatch: pytest.MonkeyPatch, **values: Any) -> None:
     for name, value in values.items():
-        monkeypatch.setattr(diagnostics.global_config.debug, name, value)
+        monkeypatch.setattr(diagnostics._debug_config(), name, value)
 
 
 def test_debug_config_exposes_safe_memory_diagnostics_defaults() -> None:
@@ -50,6 +50,15 @@ def test_debug_config_exposes_safe_memory_diagnostics_defaults() -> None:
     assert config.memory_diagnostics_binary_scan_message_limit == 5000
     assert config.memory_diagnostics_enable_tracemalloc is False
     assert config.memory_diagnostics_jsonl_max_total_size_mb == 50
+
+
+def test_debug_config_reads_reloaded_global_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    debug_config = DebugConfig()
+    debug_config.enable_memory_diagnostics = True
+    reloaded_config = SimpleNamespace(debug=debug_config)
+    monkeypatch.setattr(diagnostics.config_module, "global_config", reloaded_config)
+
+    assert diagnostics.is_memory_diagnostics_enabled() is True
 
 
 def test_estimate_messages_binary_counts_direct_nested_and_cyclic_components() -> None:
@@ -260,18 +269,30 @@ async def test_run_isolates_collect_and_write_failures(monkeypatch: pytest.Monke
     await task.run()
 
 
-def test_rotate_snapshot_file_keeps_latest_rotated_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_rotate_snapshot_file_prunes_rotated_files_to_total_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(diagnostics, "BYTES_PER_MB", 100)
     _set_debug_config(monkeypatch, memory_diagnostics_jsonl_max_total_size_mb=1)
     output_path = tmp_path / "memory_diagnostics.jsonl"
-    output_path.write_bytes(b"x" * (diagnostics.BYTES_PER_MB + 1))
-    for index in range(7):
+    output_path.write_bytes(b"x" * 80)
+    for index in range(2):
         rotated_path = tmp_path / f"memory_diagnostics.20260509-15000{index}.jsonl"
-        rotated_path.write_text(str(index), encoding="utf-8")
+        rotated_path.write_bytes(bytes([index]) * 80)
         os.utime(rotated_path, (index, index))
 
-    diagnostics.MemoryDiagnosticsTask._rotate_snapshot_file_if_needed(output_path)
+    diagnostics.MemoryDiagnosticsTask._rotate_snapshot_file_if_needed(output_path, incoming_size_bytes=30)
 
     rotated_paths = sorted(tmp_path.glob("memory_diagnostics.*.jsonl"))
     assert not output_path.exists()
-    assert len(rotated_paths) == diagnostics.DEFAULT_JSONL_ROTATED_FILE_KEEP
-    assert all(path.is_file() for path in rotated_paths)
+    assert len(rotated_paths) == 1
+    assert sum(path.stat().st_size for path in rotated_paths) <= 100
+
+
+def test_safe_process_cmdline_keeps_raw_arguments_with_limit() -> None:
+    process = SimpleNamespace(cmdline=lambda: ["python.exe", "--token=secret-value", "D:\\private\\script.py"])
+
+    cmdline = diagnostics._safe_process_cmdline(process)
+
+    assert cmdline == ["python.exe", "--token=secret-value", "D:\\private\\script.py"]

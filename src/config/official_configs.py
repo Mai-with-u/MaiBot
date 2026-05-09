@@ -2913,7 +2913,7 @@ class DebugConfig(ConfigBase):
             "advanced": True,
         },
     )
-    """内存诊断 JSONL 文件最大大小，超过后轮转为带时间戳的历史文件，单位 MB"""
+    """内存诊断 JSONL 当前文件和历史轮转文件的总大小上限，单位 MB"""
 
     memory_diagnostics_warn_runtime_count: int = Field(
         default=0,
