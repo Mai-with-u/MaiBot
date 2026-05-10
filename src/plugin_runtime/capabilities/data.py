@@ -110,7 +110,7 @@ class RuntimeDataCapabilityMixin:
                 result = await database_service.db_count(model_class=model_class, filters=args.get("filters"))
             else:
                 return {"success": False, "error": f"不支持的 query_type: {query_type}"}
-            return {"success": True, "result": result}
+            return result
         except Exception as e:
             logger.error(f"[cap.database.query] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -136,7 +136,7 @@ class RuntimeDataCapabilityMixin:
                 key_field=args.get("key_field"),
                 key_value=args.get("key_value"),
             )
-            return {"success": True, "result": result}
+            return result
         except Exception as e:
             logger.error(f"[cap.database.save] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -162,7 +162,7 @@ class RuntimeDataCapabilityMixin:
                 order_by=args.get("order_by"),
                 single_result=args.get("single_result", False),
             )
-            return {"success": True, "result": result}
+            return result
         except Exception as e:
             logger.error(f"[cap.database.get] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -185,7 +185,7 @@ class RuntimeDataCapabilityMixin:
                 return {"success": False, "error": f"未找到数据模型: {model_name}"}
 
             result = await database_service.db_delete(model_class=model_class, filters=filters)
-            return {"success": True, "result": result}
+            return result
         except Exception as e:
             logger.error(f"[cap.database.delete] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
@@ -205,7 +205,7 @@ class RuntimeDataCapabilityMixin:
                 return {"success": False, "error": f"未找到数据模型: {model_name}"}
 
             result = await database_service.db_count(model_class=model_class, filters=args.get("filters"))
-            return {"success": True, "count": result}
+            return result
         except Exception as e:
             logger.error(f"[cap.database.count] 执行失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}

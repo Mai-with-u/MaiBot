@@ -47,6 +47,15 @@ class VersionComparator:
             return "0.0.0"
 
         normalized = re.sub(r"-snapshot\.\d+", "", str(version).strip())
+        try:
+            parsed_version = Version(normalized)
+            parts = [str(part) for part in parsed_version.release[:3]]
+            while len(parts) < 3:
+                parts.append("0")
+            return ".".join(parts)
+        except InvalidVersion:
+            pass
+
         if not re.match(r"^\d+(\.\d+){0,2}$", normalized):
             return "0.0.0"
 
@@ -131,6 +140,17 @@ class VersionComparator:
             bool: 是否满足 ``X.Y.Z`` 格式。
         """
         return bool(_SEMVER_PATTERN.fullmatch(str(version or "").strip()))
+
+    @staticmethod
+    def is_valid_project_version(version: str) -> bool:
+        """判断主程序或 SDK 的项目版本号是否可被解析。
+
+        ``pyproject.toml`` 遵循 Python 包版本规范，允许 ``1.0.0rc16`` 或
+        ``1.0.0-pre.16`` 这类预发布版本；兼容性比较时只取其 release 部分。
+        """
+
+        normalized = VersionComparator.normalize_version(version)
+        return normalized != "0.0.0" or str(version or "").strip() == "0.0.0"
 
 
 class _StrictManifestModel(BaseModel):
@@ -1030,7 +1050,7 @@ class ManifestValidator:
             return ""
 
         raw_version = str(project_data.get("version", "") or "").strip()
-        if VersionComparator.is_valid_semver(raw_version):
+        if VersionComparator.is_valid_project_version(raw_version):
             return raw_version
         return ""
 
@@ -1047,7 +1067,7 @@ class ManifestValidator:
         """
         try:
             raw_version = importlib_metadata.version("maibot-plugin-sdk")
-            if VersionComparator.is_valid_semver(raw_version):
+            if VersionComparator.is_valid_project_version(raw_version):
                 return raw_version
         except importlib_metadata.PackageNotFoundError:
             pass
@@ -1064,7 +1084,7 @@ class ManifestValidator:
             return ""
 
         raw_version = str(project_data.get("version", "") or "").strip()
-        if VersionComparator.is_valid_semver(raw_version):
+        if VersionComparator.is_valid_project_version(raw_version):
             return raw_version
         return ""
 

@@ -97,6 +97,13 @@ try:
         normalize_paragraph_import_item,
         normalize_relation_import_item,
     )
+    from A_memorix.core.utils.model_routing import (
+        ResolvedLLMModel,
+        generate_with_resolved_model,
+        get_text_generation_model_tasks,
+        pick_text_generation_task,
+        resolve_text_generation_model_selector,
+    )
     from A_memorix.core.utils.time_parser import normalize_time_meta
     from A_memorix.core.strategies.base import BaseStrategy, ProcessedChunk, KnowledgeType as StratKnowledgeType
     from A_memorix.core.strategies.narrative import NarrativeStrategy
@@ -284,7 +291,8 @@ class AutoImporter:
     async def _extract_chat_time_meta_with_llm(
         self,
         text: str,
-        model_config: Any,
+        *,
+        resolved_model: Any,
     ) -> Optional[Dict[str, Any]]:
         """
         使用 LLM 从聊天文本语义中抽取时间信息。
@@ -326,7 +334,7 @@ Chat paragraph:
 \"\"\"{text}\"\"\"
 """
         try:
-            result = await self._llm_call(prompt, model_config)
+            result = await self._llm_call(prompt, resolved_model)
         except Exception as e:
             logger.warning(f"chat_log 时间语义抽取失败: {e}")
             return None
@@ -433,7 +441,7 @@ Chat paragraph:
                 processed_data = {"paragraphs": [], "entities": [], "relations": []}
                 
                 # 3. Extract Loop
-                model_config = await self._select_model()
+                resolved_model = await self._select_model()
                 
                 for i, chunk in enumerate(initial_chunks):
                     current_strategy = strategy
@@ -453,7 +461,10 @@ Chat paragraph:
                     
                     # Extraction
                     if chunk.flags.requires_llm:
-                        result_chunk = await current_strategy.extract(chunk, lambda p: self._llm_call(p, model_config))
+                        result_chunk = await current_strategy.extract(
+                            chunk,
+                            lambda p: self._llm_call(p, resolved_model),
+                        )
                     else:
                          # For quotes, extract might be just pass through or regex
                         result_chunk = await current_strategy.extract(chunk)
@@ -462,7 +473,7 @@ Chat paragraph:
                     if self.chat_log:
                         time_meta = await self._extract_chat_time_meta_with_llm(
                             result_chunk.chunk.text,
-                            model_config,
+                            resolved_model=resolved_model,
                         )
 
                     # Normalize Data
@@ -565,17 +576,14 @@ Chat paragraph:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         before_sleep=_log_before_retry
     )
-    async def _llm_call(self, prompt: str, model_config: Any) -> Dict:
+    async def _llm_call(self, prompt: str, resolved_model: Any) -> Dict:
         """Generic LLM Caller"""
-        task_name = llm_api.resolve_task_name_from_model_config(model_config)
-        result = await llm_api.generate(
-            llm_api.LLMServiceRequest(
-                task_name=task_name,
-                request_type="Script.ProcessKnowledge",
-                prompt=prompt,
-                temperature=getattr(model_config, "temperature", None),
-                max_tokens=getattr(model_config, "max_tokens", None),
-            )
+        result = await generate_with_resolved_model(
+            resolved_model,
+            request_type="Script.ProcessKnowledge",
+            prompt=prompt,
+            temperature=getattr(resolved_model.task_config, "temperature", None),
+            max_tokens=getattr(resolved_model.task_config, "max_tokens", None),
         )
         success = bool(result.success)
         response = str(result.completion.response or "")
@@ -595,18 +603,28 @@ Chat paragraph:
         else:
             raise LLMGenerationError("LLM generation failed")
 
-    async def _select_model(self) -> Any:
-        models = llm_api.get_available_models()
+    async def _select_model(self) -> "ResolvedLLMModel":
+        models = get_text_generation_model_tasks(llm_api)
         if not models: raise ValueError("No LLM models")
         
-        config_model = self.plugin_config.get("advanced", {}).get("extraction_model", "auto")
-        if config_model != "auto" and config_model in models:
-            return models[config_model]
+        config_model = str(self.plugin_config.get("advanced", {}).get("extraction_model", "auto") or "auto").strip()
+        if config_model != "auto":
+            task_name, task_config, selected_model_name = resolve_text_generation_model_selector(models, config_model)
+            if task_name and task_config:
+                return ResolvedLLMModel(
+                    task_name=task_name,
+                    task_config=task_config,
+                    selected_model_name=selected_model_name,
+                )
+            logger.warning(f"advanced.extraction_model={config_model!r} 不可用于文本生成，已回退自动选择")
             
-        for task_key in ["lpmm_entity_extract", "lpmm_rdf_build", "embedding"]:
-            if task_key in models: return models[task_key]
-            
-        return models[list(models.keys())[0]]
+        task_name, task_config = pick_text_generation_task(
+            models,
+            preferred=("memory", "utils", "lpmm_entity_extract", "lpmm_rdf_build", "replyer", "planner"),
+        )
+        if task_name and task_config:
+            return ResolvedLLMModel(task_name=task_name, task_config=task_config)
+        raise ValueError("No LLM models")
 
     # Re-use existing methods
     async def _add_entity_with_vector(self, name: str, source_paragraph: Optional[str] = None) -> str:

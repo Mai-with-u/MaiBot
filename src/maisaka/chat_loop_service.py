@@ -10,7 +10,7 @@ from rich.console import RenderableType
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.i18n import get_locale
 from src.common.logger import get_logger
-from src.common.prompt_i18n import get_prompt_cache_revision, load_prompt
+from src.common.prompt_i18n import load_prompt
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
 from src.core.tooling import ToolAvailabilityContext, ToolRegistry
@@ -218,21 +218,15 @@ class MaisakaChatLoopService:
         self._extra_tools: List[ToolOption] = []
         self._interrupt_flag: asyncio.Event | None = None
         self._tool_registry: ToolRegistry | None = None
-        self._prompts_loaded = chat_system_prompt is not None
-        self._prompt_cache_revision = get_prompt_cache_revision()
+        self._custom_chat_system_prompt = chat_system_prompt
         self._prompt_load_lock = asyncio.Lock()
-        self._personality_prompt = self._build_personality_prompt()
-        if chat_system_prompt is None:
-            self._chat_system_prompt = f"{self._personality_prompt}\n\nYou are a helpful AI assistant."
-        else:
-            self._chat_system_prompt = chat_system_prompt
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
 
     @property
     def personality_prompt(self) -> str:
         """返回当前人格提示词。"""
 
-        return self._personality_prompt
+        return self._build_personality_prompt()
 
     @staticmethod
     def _resolve_llm_request_type(request_kind: str) -> str:
@@ -349,13 +343,15 @@ class MaisakaChatLoopService:
             tools_section: 额外注入到提示词中的工具说明片段。
         """
         async with self._prompt_load_lock:
-            try:
-                self._chat_system_prompt = load_prompt("maisaka_chat", **self.build_prompt_template_context(tools_section))
-            except Exception:
-                self._chat_system_prompt = f"{self._personality_prompt}\n\nYou are a helpful AI assistant."
+            self._build_chat_system_prompt(tools_section)
 
-            self._prompts_loaded = True
-            self._prompt_cache_revision = get_prompt_cache_revision()
+    def _build_chat_system_prompt(self, tools_section: str = "") -> str:
+        """基于当前配置实时构造主聊天系统提示词。"""
+
+        try:
+            return load_prompt("maisaka_chat", **self.build_prompt_template_context(tools_section))
+        except Exception:
+            return f"{self.personality_prompt}\n\nYou are a helpful AI assistant."
 
     def build_prompt_template_context(self, tools_section: str = "") -> dict[str, str]:
         """构造 Maisaka prompt 模板的公共渲染参数。"""
@@ -364,16 +360,11 @@ class MaisakaChatLoopService:
             "bot_name": global_config.bot.nickname,
             "file_tools_section": tools_section,
             "group_chat_attention_block": self._build_group_chat_attention_block(),
-            "identity": self._personality_prompt,
+            "identity": self.personality_prompt,
             "timing_gate_wait_rule": self._build_timing_gate_wait_rule(),
-            "time_block": self._build_time_block(),
         }
 
-    @staticmethod
-    def _build_time_block() -> str:
-        """构建静态时间提示块。"""
 
-        return "当前时间会在每次请求末尾以用户消息形式提供。"
 
     @staticmethod
     def _build_current_time_user_message() -> str:
@@ -471,7 +462,13 @@ class MaisakaChatLoopService:
 
         messages: List[Message] = []
         system_msg = MessageBuilder().set_role(RoleType.System)
-        system_msg.add_text_content(system_prompt if system_prompt is not None else self._chat_system_prompt)
+        if system_prompt is not None:
+            resolved_system_prompt = system_prompt
+        elif self._custom_chat_system_prompt is not None:
+            resolved_system_prompt = self._custom_chat_system_prompt
+        else:
+            resolved_system_prompt = self._build_chat_system_prompt()
+        system_msg.add_text_content(resolved_system_prompt)
         messages.append(system_msg.build())
 
         for msg in selected_history:
@@ -521,8 +518,6 @@ class MaisakaChatLoopService:
             ChatResponse: 本轮规划器返回结果。
         """
 
-        if not self._prompts_loaded or self._prompt_cache_revision != get_prompt_cache_revision():
-            await self.ensure_chat_prompt_loaded()
         enable_visual_message = self._resolve_enable_visual_message(request_kind)
         selected_history, selection_reason = self.select_llm_context_messages(
             chat_history,

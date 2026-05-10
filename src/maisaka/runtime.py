@@ -29,6 +29,7 @@ from src.learners.jargon_miner import JargonMiner
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 from src.mcp_module import MCPManager
+from src.mcp_module.config import build_mcp_server_runtime_configs
 from src.mcp_module.host_llm_bridge import MCPHostLLMBridge
 from src.mcp_module.provider import MCPToolProvider
 from src.plugin_runtime.tool_provider import PluginToolProvider
@@ -105,12 +106,6 @@ class MaisakaHeartFlowChatting:
         self._recent_reply_latencies: deque[tuple[float, float]] = deque()
         self._wait_timeout_task: Optional[asyncio.Task[None]] = None
         self._max_internal_rounds = MAX_INTERNAL_ROUNDS
-        configured_context_size = (
-            global_config.chat.max_context_size
-            if self.chat_stream.is_group_session
-            else global_config.chat.max_private_context_size
-        )
-        self._max_context_size = max(1, int(configured_context_size))
         self._agent_state: Literal["running", "wait", "stop"] = self._STATE_STOP
         self._pending_wait_tool_call_id: Optional[str] = None
         self._force_next_timing_continue = False
@@ -151,6 +146,17 @@ class MaisakaHeartFlowChatting:
         )
         self._register_tool_providers()
         self._emit_monitor_session_start()
+
+    @property
+    def _max_context_size(self) -> int:
+        """返回当前会话实时生效的上下文窗口大小。"""
+
+        configured_context_size = (
+            global_config.chat.max_context_size
+            if self.chat_stream.is_group_session
+            else global_config.chat.max_private_context_size
+        )
+        return max(1, int(configured_context_size))
 
     def _emit_monitor_session_start(self) -> None:
         """向 WebUI 监控面板同步当前会话的展示标识。"""
@@ -677,6 +683,7 @@ class MaisakaHeartFlowChatting:
             return
 
         if self._internal_loop_task is None or self._internal_loop_task.done():
+            is_restart = self._internal_loop_task is not None
             if self._internal_loop_task is not None and not self._internal_loop_task.cancelled():
                 try:
                     exc = self._internal_loop_task.exception()
@@ -685,7 +692,10 @@ class MaisakaHeartFlowChatting:
                 if exc is not None:
                     logger.error(f"{self.log_prefix} 内部循环任务异常退出: {exc}")
             self._internal_loop_task = asyncio.create_task(self._reasoning_engine.run_loop())
-            logger.warning(f"{self.log_prefix} 已重新拉起 Maisaka 内部循环任务")
+            if is_restart:
+                logger.warning(f"{self.log_prefix} 已重新拉起 Maisaka 内部循环任务")
+            else:
+                logger.debug(f"{self.log_prefix} 已启动 Maisaka 内部循环任务")
 
     def _register_tool_providers(self) -> None:
         """注册 Maisaka 运行时默认启用的工具 Provider。"""
@@ -1192,6 +1202,10 @@ class MaisakaHeartFlowChatting:
 
     async def _init_mcp(self) -> None:
         """初始化 MCP 工具并注册到统一工具层。"""
+        if not build_mcp_server_runtime_configs(global_config.mcp):
+            logger.debug(f"{self.log_prefix} 未配置可用的 MCP 服务，跳过 Maisaka MCP 初始化")
+            return
+
         self._mcp_host_bridge = MCPHostLLMBridge(
             sampling_task_name=global_config.mcp.client.sampling.task_name,
         )
@@ -1200,7 +1214,7 @@ class MaisakaHeartFlowChatting:
             host_callbacks=self._mcp_host_bridge.build_callbacks(),
         )
         if self._mcp_manager is None:
-            logger.info(f"{self.log_prefix} Maisaka MCP 管理器不可用")
+            logger.warning(f"{self.log_prefix} Maisaka MCP 管理器初始化失败，MCP 工具不会注册")
             return
 
         mcp_tool_specs = self._mcp_manager.get_tool_specs()

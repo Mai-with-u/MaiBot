@@ -1169,6 +1169,8 @@ class TestVersionComparator:
 
         assert VersionComparator.normalize_version("0.8.0-snapshot.1") == "0.8.0"
         assert VersionComparator.normalize_version("1.2") == "1.2.0"
+        assert VersionComparator.normalize_version("1.0.0rc16") == "1.0.0"
+        assert VersionComparator.normalize_version("1.0.0-pre.16") == "1.0.0"
         assert VersionComparator.normalize_version("") == "0.0.0"
 
     def test_compare(self):
@@ -2890,21 +2892,104 @@ class TestIntegration:
         monkeypatch.setattr(real_database_service, "db_get", fake_db_get)
         monkeypatch.setattr(real_db_models, "DemoTable", DummyModel, raising=False)
 
-        result = await integration_module.PluginRuntimeManager._cap_database_get(
+        manager = object.__new__(integration_module.PluginRuntimeManager)
+        result = await manager._cap_database_get(
             "plugin_a",
             "database.get",
             {
-                "table": "DemoTable",
+                "model_name": "DemoTable",
                 "filters": {"status": "active"},
                 "limit": 5,
             },
         )
 
-        assert result == {"success": True, "result": [{"id": 1}]}
+        assert result == [{"id": 1}]
         assert captured["model_class"] is DummyModel
         assert captured["filters"] == {"status": "active"}
         assert captured["limit"] == 5
         assert captured["single_result"] is False
+
+    @pytest.mark.asyncio
+    async def test_cap_database_get_response_is_not_double_wrapped(self, monkeypatch):
+        from src.plugin_runtime import integration as integration_module
+        import src.common.database.database_model as real_db_models
+        from src.plugin_runtime.host.capability_service import CapabilityService
+        from src.plugin_runtime.protocol.envelope import CapabilityRequestPayload, Envelope, MessageType
+        from src.services import database_service as real_database_service
+
+        class AllowAllAuthorization:
+            def check_capability(self, plugin_id, capability):
+                return True, ""
+
+        class DummyModel:
+            pass
+
+        async def fake_db_get(model_class, filters=None, limit=None, order_by=None, single_result=False):
+            return {"id": 1, "full_path": "E:\\test.png"}
+
+        monkeypatch.setattr(real_database_service, "db_get", fake_db_get)
+        monkeypatch.setattr(real_db_models, "DemoTable", DummyModel, raising=False)
+
+        manager = object.__new__(integration_module.PluginRuntimeManager)
+        service = CapabilityService(AllowAllAuthorization())
+        service.register_capability("database.get", manager._cap_database_get)
+
+        request = Envelope(
+            request_id=1,
+            message_type=MessageType.REQUEST,
+            method="cap.call",
+            plugin_id="plugin_a",
+            payload=CapabilityRequestPayload(
+                capability="database.get",
+                args={"model_name": "DemoTable", "single_result": True},
+            ).model_dump(),
+        )
+
+        response = await service.handle_capability_request(request)
+
+        assert response.payload == {
+            "success": True,
+            "result": {"id": 1, "full_path": "E:\\test.png"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_cap_database_success_handlers_return_raw_results(self, monkeypatch):
+        from src.plugin_runtime import integration as integration_module
+        import src.common.database.database_model as real_db_models
+        from src.services import database_service as real_database_service
+
+        class DummyModel:
+            pass
+
+        async def fake_db_get(**kwargs):
+            return [{"id": 1}]
+
+        async def fake_db_save(**kwargs):
+            return {"id": 2}
+
+        async def fake_db_delete(**kwargs):
+            return 3
+
+        async def fake_db_count(**kwargs):
+            return 4
+
+        monkeypatch.setattr(real_database_service, "db_get", fake_db_get)
+        monkeypatch.setattr(real_database_service, "db_save", fake_db_save)
+        monkeypatch.setattr(real_database_service, "db_delete", fake_db_delete)
+        monkeypatch.setattr(real_database_service, "db_count", fake_db_count)
+        monkeypatch.setattr(real_db_models, "DemoTable", DummyModel, raising=False)
+
+        manager = object.__new__(integration_module.PluginRuntimeManager)
+        base_args = {"model_name": "DemoTable"}
+
+        assert await manager._cap_database_query("plugin_a", "database.query", base_args) == [{"id": 1}]
+        assert await manager._cap_database_save(
+            "plugin_a", "database.save", {**base_args, "data": {"name": "demo"}}
+        ) == {"id": 2}
+        assert await manager._cap_database_delete(
+            "plugin_a", "database.delete", {**base_args, "filters": {"id": 2}}
+        ) == 3
+        assert await manager._cap_database_count("plugin_a", "database.count", base_args) == 4
 
     @pytest.mark.asyncio
     async def test_component_enable_rejects_ambiguous_short_name(self, monkeypatch):

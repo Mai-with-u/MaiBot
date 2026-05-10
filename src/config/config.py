@@ -234,6 +234,7 @@ class ConfigManager:
         self._hot_reload_min_interval_s: float = 1.0
         self._hot_reload_timeout_s: float = 20.0
         self._last_hot_reload_monotonic: float = 0.0
+        self.reload_revision: int = 0
 
     def initialize(self):
         logger.info(t("config.current_version", version=MMC_VERSION))
@@ -424,9 +425,7 @@ class ConfigManager:
 
             self.global_config = global_config_new
             self.model_config = model_config_new
-            global global_config, model_config
-            global_config = global_config_new
-            model_config = model_config_new
+            self.reload_revision += 1
             logger.info(t("config.hot_reload_completed"))
 
             for callback in list(self._reload_callbacks):
@@ -658,8 +657,30 @@ def write_config_to_file(
         tomlkit.dump(full_config_data, f)
 
 
+class _ConfigProxy:
+    """稳定配置代理，确保热重载后旧导入也能读取最新配置。"""
+
+    def __init__(self, getter: Callable[[], ConfigBase]) -> None:
+        self._getter = getter
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._getter(), name)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._getter()[key]
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_getter":
+            object.__setattr__(self, name, value)
+            return
+        setattr(self._getter(), name, value)
+
+    def __repr__(self) -> str:
+        return repr(self._getter())
+
+
 # generate_new_config_file(Config, BOT_CONFIG_PATH, CONFIG_VERSION)
 config_manager = ConfigManager()
 config_manager.initialize()
-global_config = config_manager.get_global_config()
-model_config = config_manager.get_model_config()
+global_config: Config = cast(Config, _ConfigProxy(config_manager.get_global_config))
+model_config: ModelConfig = cast(ModelConfig, _ConfigProxy(config_manager.get_model_config))

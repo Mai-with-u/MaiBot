@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, inspect, text
 from sqlmodel import col, select
 
+import asyncio
 import os
 import time
 
@@ -40,6 +41,8 @@ _EMOJI_THUMBNAIL_DIR = _DATA_DIR / "emoji_thumbnails"
 _LOG_DIR = _PROJECT_ROOT / "logs"
 _DATABASE_FILE = _DATA_DIR / "MaiBot.db"
 _DATABASE_AUXILIARY_SUFFIXES = ("-wal", "-shm")
+_RESTART_EXIT_CODE = 42
+_restart_task: asyncio.Task[None] | None = None
 
 
 class RestartResponse(BaseModel):
@@ -274,6 +277,39 @@ def _delete_log_records(table_names: list[str]) -> int:
     return removed_records
 
 
+async def _stop_runtime_before_restart() -> None:
+    """WebUI 重启前主动停止插件运行时，避免遗留 runner 子进程。"""
+    try:
+        from src.core.event_bus import event_bus
+        from src.core.types import EventType
+
+        await event_bus.emit(event_type=EventType.ON_STOP)
+    except Exception as exc:
+        logger.warning(f"WebUI 重启前触发 ON_STOP 事件失败: {exc}")
+
+    try:
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        await get_plugin_runtime_manager().stop()
+    except Exception as exc:
+        logger.error(f"WebUI 重启前停止插件运行时失败: {exc}", exc_info=True)
+
+    try:
+        from src.manager.async_task_manager import async_task_manager
+
+        await async_task_manager.stop_and_wait_all_tasks()
+    except Exception as exc:
+        logger.warning(f"WebUI 重启前停止异步任务失败: {exc}")
+
+
+async def _delayed_restart() -> None:
+    await asyncio.sleep(0.5)  # 延迟 0.5 秒，确保响应已发送
+    logger.info("WebUI 请求重启，正在停止插件运行时")
+    await _stop_runtime_before_restart()
+    logger.info(f"WebUI 请求重启，退出代码 {_RESTART_EXIT_CODE}")
+    os._exit(_RESTART_EXIT_CODE)
+
+
 @router.post("/restart", response_model=RestartResponse)
 async def restart_maibot():
     """
@@ -282,22 +318,15 @@ async def restart_maibot():
     请求重启当前进程，配置更改将在重启后生效。
     注意：此操作会使麦麦暂时离线。
     """
-    import asyncio
-
     try:
+        global _restart_task
+
         # 记录重启操作
         logger.info("WebUI 触发重启操作")
 
-        # 定义延迟重启的异步任务
-        async def delayed_restart():
-            await asyncio.sleep(0.5)  # 延迟0.5秒，确保响应已发送
-            # 使用 os._exit(42) 退出当前进程，配合外部 runner 脚本进行重启
-            # 42 是约定的重启状态码
-            logger.info("WebUI 请求重启，退出代码 42")
-            os._exit(42)
-
-        # 创建后台任务执行重启
-        asyncio.create_task(delayed_restart())
+        # 创建后台任务执行重启；退出码 42 是外部 runner 约定的重启状态码。
+        if _restart_task is None or _restart_task.done():
+            _restart_task = asyncio.create_task(_delayed_restart())
 
         # 立即返回成功响应
         return RestartResponse(success=True, message="麦麦正在重启中...")

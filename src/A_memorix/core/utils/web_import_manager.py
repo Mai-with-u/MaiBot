@@ -45,6 +45,13 @@ from ..utils.import_payloads import (
     normalize_paragraph_import_item,
     normalize_relation_import_item,
 )
+from ..utils.model_routing import (
+    ResolvedLLMModel,
+    generate_with_resolved_model,
+    get_text_generation_model_tasks,
+    pick_text_generation_task,
+    resolve_text_generation_model_selector,
+)
 from ..utils.runtime_self_check import ensure_runtime_self_check
 from ..utils.time_parser import normalize_time_meta
 
@@ -2692,9 +2699,9 @@ class ImportTaskManager:
         await self._register_chunks(task_id, file_record.file_id, selected_chunks)
 
         await self._set_file_state(task_id, file_record.file_id, "extracting", "extracting")
-        model_cfg = None
+        resolved_model = None
         if task.params["llm_enabled"]:
-            model_cfg = await self._select_model()
+            resolved_model = await self._select_model()
 
         jobs = []
         for chunk in selected_chunks:
@@ -2706,7 +2713,7 @@ class ImportTaskManager:
                         chunk=chunk,
                         strategy=strategy,
                         llm_enabled=task.params["llm_enabled"],
-                        model_cfg=model_cfg,
+                        resolved_model=resolved_model,
                         chunk_semaphore=chunk_semaphore,
                         chat_log=bool(task.params.get("chat_log")),
                         chat_reference_time=str(task.params.get("chat_reference_time") or "").strip() or None,
@@ -2752,7 +2759,7 @@ class ImportTaskManager:
         chunk: ProcessedChunk,
         strategy: Any,
         llm_enabled: bool,
-        model_cfg: Any,
+        resolved_model: Optional[ResolvedLLMModel],
         chunk_semaphore: asyncio.Semaphore,
         chat_log: bool = False,
         chat_reference_time: Optional[str] = None,
@@ -2775,9 +2782,11 @@ class ImportTaskManager:
                 current_strategy = rescue_strategy
             try:
                 if llm_enabled and chunk.flags.requires_llm:
+                    if resolved_model is None:
+                        raise RuntimeError("没有可用 LLM 模型")
                     processed = await current_strategy.extract(
                         chunk,
-                        lambda prompt: self._llm_call(prompt, model_cfg),
+                        lambda prompt: self._llm_call(prompt, resolved_model),
                     )
                 elif chunk.type == StrategyKnowledgeType.QUOTE:
                     processed = await current_strategy.extract(chunk)
@@ -2792,10 +2801,10 @@ class ImportTaskManager:
             await self._set_chunk_state(task_id, file_record.file_id, chunk_id, "writing", "writing", 0.7)
             try:
                 time_meta = None
-                if chat_log and llm_enabled and model_cfg is not None:
+                if chat_log and llm_enabled and resolved_model is not None:
                     time_meta = await self._extract_chat_time_meta_with_llm(
                         processed.chunk.text,
-                        model_cfg,
+                        resolved_model,
                         reference_time=chat_reference_time,
                     )
                 async with self._storage_lock:
@@ -3277,43 +3286,50 @@ class ImportTaskManager:
         except Exception:
             pass
         return rel_hash
-    async def _select_model(self) -> Any:
-        models = llm_api.get_available_models()
+    async def _select_model(self) -> ResolvedLLMModel:
+        models = get_text_generation_model_tasks(llm_api)
         if not models:
             raise RuntimeError("没有可用 LLM 模型")
 
         config_model = str(self._cfg("advanced.extraction_model", "auto") or "auto").strip()
-        if config_model.lower() != "auto" and config_model in models:
-            return models[config_model]
+        if config_model.lower() != "auto":
+            task_name, task_config, selected_model_name = resolve_text_generation_model_selector(models, config_model)
+            if task_name and task_config:
+                return ResolvedLLMModel(
+                    task_name=task_name,
+                    task_config=task_config,
+                    selected_model_name=selected_model_name,
+                )
+            logger.warning(f"advanced.extraction_model={config_model!r} 不可用于文本生成，已回退自动选择")
 
-        for task_name in [
-            "lpmm_entity_extract",
-            "lpmm_rdf_build",
-            "replyer",
-            "utils",
-            "planner",
-            "tool_use",
-        ]:
-            if task_name in models:
-                return models[task_name]
+        task_name, task_config = pick_text_generation_task(
+            models,
+            preferred=(
+                "memory",
+                "utils",
+                "lpmm_entity_extract",
+                "lpmm_rdf_build",
+                "replyer",
+                "planner",
+                "tool_use",
+            ),
+        )
+        if task_name and task_config:
+            return ResolvedLLMModel(task_name=task_name, task_config=task_config)
+        raise RuntimeError("没有可用 LLM 模型")
 
-        return models[next(iter(models))]
-
-    async def _llm_call(self, prompt: str, model_config: Any) -> Dict[str, Any]:
+    async def _llm_call(self, prompt: str, resolved_model: ResolvedLLMModel) -> Dict[str, Any]:
         cfg = self._llm_retry_config()
         retries = int(cfg["retries"])
-        task_name = llm_api.resolve_task_name_from_model_config(model_config)
         last_error: Optional[Exception] = None
         for attempt in range(retries + 1):
             try:
-                result = await llm_api.generate(
-                    llm_api.LLMServiceRequest(
-                        task_name=task_name,
-                        request_type="A_Memorix.WebImport",
-                        prompt=prompt,
-                        temperature=getattr(model_config, "temperature", None),
-                        max_tokens=getattr(model_config, "max_tokens", None),
-                    )
+                result = await generate_with_resolved_model(
+                    resolved_model,
+                    request_type="A_Memorix.WebImport",
+                    prompt=prompt,
+                    temperature=getattr(resolved_model.task_config, "temperature", None),
+                    max_tokens=getattr(resolved_model.task_config, "max_tokens", None),
                 )
                 success = bool(result.success)
                 response = str(result.completion.response or "")
@@ -3364,7 +3380,7 @@ class ImportTaskManager:
     async def _extract_chat_time_meta_with_llm(
         self,
         text: str,
-        model_config: Any,
+        resolved_model: ResolvedLLMModel,
         *,
         reference_time: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -3398,7 +3414,7 @@ JSON schema:
 }}
 """
         try:
-            result = await self._llm_call(prompt, model_config)
+            result = await self._llm_call(prompt, resolved_model)
         except Exception as e:
             logger.warning(f"chat_log 时间语义抽取失败: {e}")
             return None

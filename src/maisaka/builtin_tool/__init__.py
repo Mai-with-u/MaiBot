@@ -22,6 +22,8 @@ from .query_memory import get_tool_spec as get_query_memory_tool_spec
 from .query_memory import handle_tool as handle_query_memory_tool
 from .query_person_info import get_tool_spec as get_query_person_info_tool_spec
 from .query_person_info import handle_tool as handle_query_person_info_tool
+from .query_person_profile import get_tool_spec as get_query_person_profile_tool_spec
+from .query_person_profile import handle_tool as handle_query_person_profile_tool
 from .reply import get_tool_spec as get_reply_tool_spec
 from .reply import handle_tool as handle_reply_tool
 from .send_emoji import get_tool_spec as get_send_emoji_tool_spec
@@ -69,6 +71,14 @@ def _get_query_memory_tool_spec() -> ToolSpec:
     return get_query_memory_tool_spec(enabled=bool(global_config.a_memorix.integration.enable_memory_query_tool))
 
 
+def _get_query_person_profile_tool_spec() -> ToolSpec:
+    """根据配置生成 query_person_profile 工具声明。"""
+
+    return get_query_person_profile_tool_spec(
+        enabled=bool(global_config.a_memorix.integration.enable_person_profile_query_tool)
+    )
+
+
 BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     BuiltinToolEntry("no_reply", get_no_reply_tool_spec, handle_no_reply_tool, stage="timing"),
     BuiltinToolEntry("continue", get_continue_tool_spec, handle_continue_tool, stage="timing"),
@@ -83,6 +93,12 @@ BUILTIN_TOOL_ENTRIES: List[BuiltinToolEntry] = [
     ),
     BuiltinToolEntry("query_jargon", get_query_jargon_tool_spec, handle_query_jargon_tool, stage="action"),
     BuiltinToolEntry("query_memory", _get_query_memory_tool_spec, handle_query_memory_tool, stage="action"),
+    BuiltinToolEntry(
+        "query_person_profile",
+        _get_query_person_profile_tool_spec,
+        handle_query_person_profile_tool,
+        stage="action",
+    ),
     BuiltinToolEntry(
         "query_person_info",
         get_query_person_info_tool_spec,

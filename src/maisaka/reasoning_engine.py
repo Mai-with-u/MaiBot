@@ -44,6 +44,7 @@ from .monitor_events import (
     emit_planner_finalized,
     emit_timing_gate_result,
 )
+from .person_profile_injector import build_person_profile_injection_messages
 from .planner_message_utils import build_planner_user_prefix_from_session_message
 from .visual_mode_utils import resolve_enable_visual_planner
 
@@ -188,6 +189,30 @@ class MaisakaReasoningEngine:
             [tool_spec.to_llm_definition() for tool_spec in visible_tool_specs],
             self._runtime.build_deferred_tools_reminder(),
         )
+
+    async def _build_planner_injected_user_messages(
+        self,
+        *,
+        anchor_message: SessionMessage,
+        source_messages: list[SessionMessage],
+        deferred_tools_reminder: str,
+    ) -> list[str]:
+        """构造本轮 planner 的一次性注入消息。"""
+
+        injected_messages: list[str] = []
+        if deferred_tools_reminder:
+            injected_messages.append(deferred_tools_reminder)
+
+        try:
+            profile_messages = await build_person_profile_injection_messages(
+                anchor_message=anchor_message,
+                pending_messages=source_messages,
+            )
+        except Exception as exc:
+            logger.debug(f"{self._runtime.log_prefix} 人物画像自动注入失败，已跳过: {exc}")
+            profile_messages = []
+        injected_messages.extend(profile_messages)
+        return injected_messages
 
     async def _invoke_tool_call(
         self,
@@ -544,6 +569,11 @@ class MaisakaReasoningEngine:
                             current_stage_started_at = planner_started_at
                             self._runtime._update_stage_status("Planner", "组织上下文并请求模型", round_text=round_text)
                             action_tool_definitions, deferred_tools_reminder = await self._build_action_tool_definitions()
+                            injected_user_messages = await self._build_planner_injected_user_messages(
+                                anchor_message=anchor_message,
+                                source_messages=cached_messages or [anchor_message],
+                                deferred_tools_reminder=deferred_tools_reminder,
+                            )
                             logger.info(
                                 f"{self._runtime.log_prefix} 规划器开始执行: "
                                 f"回合={round_index + 1} "
@@ -551,7 +581,7 @@ class MaisakaReasoningEngine:
                                 f"开始时间={planner_started_at:.3f}"
                             )
                             response = await self._run_interruptible_planner(
-                                injected_user_messages=[deferred_tools_reminder] if deferred_tools_reminder else None,
+                                injected_user_messages=injected_user_messages or None,
                                 tool_definitions=action_tool_definitions,
                             )
                             planner_duration_ms = (time.time() - planner_started_at) * 1000
@@ -662,6 +692,7 @@ class MaisakaReasoningEngine:
 
                             asyncio.create_task(self._runtime._trigger_batch_learning(interrupted_messages))
                             await self._ingest_messages(interrupted_messages)
+                            cached_messages = interrupted_messages
                             anchor_message = interrupted_messages[-1]
                             logger.info(
                                 f"{self._runtime.log_prefix} 淇濇寔娲昏穬鐘舵€侊紝璺宠繃 Timing Gate 鐩存帴閲嶈瘯 Planner: "

@@ -27,6 +27,11 @@ from ..storage import (
     resolve_stored_knowledge_type,
 )
 from ..embedding import EmbeddingAPIAdapter
+from .model_routing import (
+    find_text_generation_task_for_model,
+    get_text_generation_model_tasks,
+    pick_text_generation_task,
+)
 from .relation_write_service import RelationWriteService
 from .runtime_self_check import ensure_runtime_self_check, run_embedding_runtime_self_check
 
@@ -169,24 +174,13 @@ class SummaryImporter:
 
     def _pick_default_summary_task(self, available_tasks: Dict[str, TaskConfig]) -> Tuple[Optional[str], Optional[TaskConfig]]:
         """
-        选择总结默认任务，避免错误落到 embedding 任务。
-        优先级：replyer > utils > planner > tool_use > 其他非 embedding。
+        选择总结默认任务，避免错误落到 embedding/voice/vlm 等非文本生成任务。
+        优先级：memory > utils > planner > tool_use > replyer > 其他文本生成任务。
         """
-        preferred = ("replyer", "utils", "planner", "tool_use")
-        for name in preferred:
-            cfg = available_tasks.get(name)
-            if cfg and cfg.model_list:
-                return name, cfg
-
-        for name, cfg in available_tasks.items():
-            if name != "embedding" and cfg.model_list:
-                return name, cfg
-
-        for name, cfg in available_tasks.items():
-            if cfg.model_list:
-                return name, cfg
-
-        return None, None
+        return pick_text_generation_task(
+            available_tasks,
+            preferred=("memory", "utils", "planner", "tool_use", "replyer"),
+        )
 
     @staticmethod
     def _current_model_dict() -> Dict[str, Any]:
@@ -205,7 +199,7 @@ class SummaryImporter:
         - "some-model-name"（具体模型名）
         - ["utils:model1", "utils:model2", "replyer"]（数组混合语法）
         """
-        available_tasks = llm_api.get_available_models()
+        available_tasks = get_text_generation_model_tasks(llm_api)
         if not available_tasks:
             return None
 
@@ -220,11 +214,7 @@ class SummaryImporter:
         model_dict = self._current_model_dict()
 
         def _find_task_for_model(model_name: str) -> Tuple[Optional[str], Optional[TaskConfig]]:
-            for task_name, task_cfg in available_tasks.items():
-                task_models = [str(item).strip() for item in (getattr(task_cfg, "model_list", []) or []) if str(item).strip()]
-                if model_name in task_models:
-                    return task_name, task_cfg
-            return None, None
+            return find_text_generation_task_for_model(available_tasks, model_name)
 
         for raw_selector in selectors:
             selector = raw_selector.strip()

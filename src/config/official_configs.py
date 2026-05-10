@@ -648,6 +648,50 @@ class AMemorixIntegrationConfig(ConfigBase):
     )
     """Maisaka 内置长期记忆检索工具 query_memory 的默认返回条数"""
 
+    enable_person_profile_query_tool: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用画像查询",
+                "en_US": "Enable profile query",
+                "ja_JP": "人物プロファイル検索を有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "user-round-search",
+        },
+    )
+    """是否启用 Maisaka 内置人物画像查询工具 query_person_profile"""
+
+    enable_person_profile_injection: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "自动注入人物画像",
+                "en_US": "Inject person profiles",
+                "ja_JP": "人物プロファイルを自動注入",
+            },
+            "x-widget": "switch",
+            "x-icon": "user-round-check",
+        },
+    )
+    """是否在 Maisaka Planner 调用前自动注入当前对象相关的人物画像"""
+
+    person_profile_injection_max_profiles: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "注入画像上限",
+                "en_US": "Injected profile limit",
+                "ja_JP": "注入プロファイル上限",
+            },
+            "x-widget": "input",
+            "x-icon": "users",
+        },
+    )
+    """每轮自动注入的人物画像数量上限"""
+
     person_fact_writeback_enabled: bool = Field(
         default=True,
         json_schema_extra={

@@ -86,7 +86,6 @@ class BaseMaisakaReplyGenerator:
             request_type=request_type,
             session_id=getattr(chat_stream, "session_id", "") if chat_stream is not None else "",
         )
-        self._personality_prompt = self._build_personality_prompt()
 
     def _build_personality_prompt(self) -> str:
         """构建 replyer 使用的人设提示。"""
@@ -272,7 +271,7 @@ class BaseMaisakaReplyGenerator:
                 bot_name=global_config.bot.nickname,
                 group_chat_attention_block=self._build_group_chat_attention_block(session_id),
                 replyer_at_block=self._build_replyer_at_block(),
-                identity=self._personality_prompt,
+                identity=self._build_personality_prompt(),
                 reply_style=self._select_reply_style(),
             )
         except Exception:
