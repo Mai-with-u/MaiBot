@@ -165,7 +165,7 @@ def expression_to_response(expression: Expression, db_session: Optional[Any] = N
         create_date=create_date,
         checked=expression.checked,
         rejected=expression.rejected,
-        modified_by=expression.modified_by.value if expression.modified_by else None,
+        modified_by=expression.modified_by.value.lower() if expression.modified_by else None,
     )
 
 
