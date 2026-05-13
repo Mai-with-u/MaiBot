@@ -24,6 +24,7 @@ def _get_builtin_hook_spec_registrars() -> List[HookSpecRegistrar]:
     from src.learners.expression_learner import register_expression_hook_specs
     from src.learners.jargon_miner import register_jargon_hook_specs
     from src.maisaka.chat_loop_service import register_maisaka_hook_specs
+    from src.services.memory_flow_service import register_memory_automation_hook_specs
     from src.services.send_service import register_send_service_hook_specs
 
     return [
@@ -31,6 +32,7 @@ def _get_builtin_hook_spec_registrars() -> List[HookSpecRegistrar]:
         register_emoji_hook_specs,
         register_jargon_hook_specs,
         register_expression_hook_specs,
+        register_memory_automation_hook_specs,
         register_send_service_hook_specs,
         register_maisaka_hook_specs,
     ]

@@ -11,16 +11,98 @@ import time
 
 from json_repair import repair_json
 
-from src.services import memory_service as memory_service_module
 from src.chat.utils.utils import is_bot_self
 from src.common.logger import get_logger
 from src.common.message_repository import count_messages, find_messages
 from src.config.config import global_config
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
-from src.services.memory_service import memory_service
+from src.plugin_runtime.hook_payloads import serialize_session_message
+from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
+from src.services import memory_service as memory_service_module
 from src.services.llm_service import LLMServiceClient
+from src.services.memory_service import memory_service
 
 logger = get_logger("memory_flow_service")
+
+
+def register_memory_automation_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
+    """注册长期记忆自动化内置 Hook 规格"""
+
+    return registry.register_hook_specs(
+        [
+            HookSpec(
+                name="memory.automation.before_enqueue",
+                description="在自动记忆写回任务入队前触发，可中止本次人物事实或聊天摘要写回",
+                parameters_schema=build_object_schema(
+                    {
+                        "message": {
+                            "type": "object",
+                            "description": "触发写回的序列化 SessionMessage",
+                        },
+                        "service_name": {
+                            "type": "string",
+                            "description": "任务名称：person_fact_writeback 或 chat_summary_writeback",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "当前会话 ID",
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "当前私聊用户 ID",
+                        },
+                        "group_id": {
+                            "type": "string",
+                            "description": "当前群号",
+                        },
+                    },
+                    required=["message", "service_name", "session_id", "user_id", "group_id"],
+                ),
+                default_timeout_ms=5000,
+                allow_abort=True,
+                allow_kwargs_mutation=False,
+            ),
+        ]
+    )
+
+
+def _resolve_message_session_id(message: Any) -> str:
+    return str(
+        getattr(message, "session_id", "")
+        or getattr(getattr(message, "session", None), "session_id", "")
+        or ""
+    ).strip()
+
+
+def _extract_message_user_id(message: Any) -> str:
+    return str(
+        getattr(getattr(message, "session", None), "user_id", "")
+        or getattr(message, "user_id", "")
+        or ""
+    ).strip()
+
+
+def _extract_message_group_id(message: Any) -> str:
+    return str(
+        getattr(getattr(message, "session", None), "group_id", "")
+        or getattr(message, "group_id", "")
+        or ""
+    ).strip()
+
+
+def _serialize_message_for_hook(message: Any) -> dict[str, Any]:
+    try:
+        return serialize_session_message(message)
+    except Exception as exc:
+        logger.debug(f"自动记忆写回 Hook 消息序列化失败，使用最小载荷: {exc}")
+        return {
+            "message_id": str(getattr(message, "message_id", "") or "").strip(),
+            "session_id": _resolve_message_session_id(message),
+            "processed_plain_text": str(getattr(message, "processed_plain_text", "") or ""),
+            "user_id": _extract_message_user_id(message),
+            "group_id": _extract_message_group_id(message),
+        }
 
 
 class PersonFactWritebackService:
@@ -589,8 +671,44 @@ class MemoryAutomationService:
     async def on_message_sent(self, message: Any) -> None:
         if not self._started:
             await self.start()
-        await self.fact_writeback.enqueue(message)
-        await self.chat_summary_writeback.enqueue(message)
+        if await self._can_enqueue("person_fact_writeback", message):
+            await self.fact_writeback.enqueue(message)
+        if await self._can_enqueue("chat_summary_writeback", message):
+            await self.chat_summary_writeback.enqueue(message)
+
+    async def _can_enqueue(self, service_name: str, message: Any) -> bool:
+        """在写回任务入队前触发 Hook，允许插件暂停新任务。"""
+
+        session_id = _resolve_message_session_id(message)
+        user_id = _extract_message_user_id(message)
+        group_id = _extract_message_group_id(message)
+        try:
+            hook_result = await self._get_runtime_manager().invoke_hook(
+                "memory.automation.before_enqueue",
+                message=_serialize_message_for_hook(message),
+                service_name=service_name,
+                session_id=session_id,
+                user_id=user_id,
+                group_id=group_id,
+            )
+        except Exception as exc:
+            logger.warning(f"自动记忆写回入队 Hook 调用失败，继续入队: service={service_name} error={exc}")
+            return True
+
+        if not hook_result.aborted:
+            return True
+
+        logger.info(
+            f"自动记忆写回入队被 Hook 中止: service={service_name} session_id={session_id or 'unknown'} "
+            f"group_id={group_id or 'private/global'}"
+        )
+        return False
+
+    @staticmethod
+    def _get_runtime_manager() -> Any:
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        return get_plugin_runtime_manager()
 
 
 memory_automation_service = MemoryAutomationService()
