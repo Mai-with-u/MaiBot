@@ -23,9 +23,6 @@ from src.webui.dependencies import require_auth
 
 logger = get_logger("webui.expression")
 EXCLUDE_IDS_QUERY = Query(None, description="需要排除的表达方式 ID")
-CHAT_IDS_QUERY = Query(None, description="multiple chat ids")
-INCLUDE_LEGACY_QUERY = Query(False, description="是否显示旧格式/非当前账号的表达方式")
-LEGACY_IMPORT_PREVIEW_FILE_FIELD = File(...)
 
 # 创建路由器
 router = APIRouter(prefix="/expression", tags=["Expression"], dependencies=[Depends(require_auth)])
@@ -880,7 +877,7 @@ async def get_expression_list(
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     chat_id: Optional[str] = Query(None, description="聊天ID筛选"),
-    chat_ids: Optional[List[str]] = CHAT_IDS_QUERY,
+    chat_ids: Optional[List[str]] = Query(None, description="multiple chat ids"),
     include_legacy: bool = Query(False, description="是否显示旧格式/非当前账号的表达方式"),
 ) -> ExpressionListResponse:
     """获取表达方式列表。
@@ -1107,7 +1104,7 @@ async def preview_legacy_expression_import(
 
 @router.post("/legacy-import/preview-file", response_model=LegacyExpressionImportPreviewResponse)
 async def preview_legacy_expression_import_file(
-    file: UploadFile = LEGACY_IMPORT_PREVIEW_FILE_FIELD,
+    file: UploadFile = File(...),
 ) -> LegacyExpressionImportPreviewResponse:
     """上传旧版数据库文件并预览表达方式导入分组。"""
 
@@ -1445,7 +1442,7 @@ async def batch_delete_expressions(
 
 @router.get("/stats/summary")
 async def get_expression_stats(
-    include_legacy: bool = INCLUDE_LEGACY_QUERY,
+    include_legacy: bool = Query(False, description="是否显示旧格式/非当前账号的表达方式"),
 ) -> Dict[str, Any]:
     """获取表达方式统计数据。
 

@@ -22,8 +22,6 @@ from src.webui.dependencies import require_auth
 router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(require_auth)])
 compat_router = APIRouter(prefix="/api", tags=["memory-compat"], dependencies=[Depends(require_auth)])
 STAGING_ROOT = Path(__file__).resolve().parents[3] / "data" / "memory_upload_staging"
-EMPTY_DICT_BODY = Body(default_factory=dict)
-UPLOAD_FILES_FIELD = File(...)
 
 
 class NodeRequest(BaseModel):
@@ -1251,13 +1249,13 @@ async def get_memory_import_guide():
 
 
 @router.post("/import/resolve-path")
-async def resolve_memory_import_path(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def resolve_memory_import_path(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_resolve_path(payload)
 
 
 @router.post("/import/upload")
 async def create_memory_import_upload(
-    files: list[UploadFile] = UPLOAD_FILES_FIELD,
+    files: list[UploadFile] = File(...),
     payload_json: str = Form("{}"),
 ):
     staging_dir, staged_files = await _stage_upload_files(files)
@@ -1275,32 +1273,32 @@ async def create_memory_import_upload(
 
 
 @router.post("/import/paste")
-async def create_memory_import_paste(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_paste(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_paste", payload)
 
 
 @router.post("/import/raw-scan")
-async def create_memory_import_raw_scan(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_raw_scan(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_raw_scan", payload)
 
 
 @router.post("/import/lpmm-openie")
-async def create_memory_import_lpmm_openie(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_lpmm_openie(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_openie", payload)
 
 
 @router.post("/import/lpmm-convert")
-async def create_memory_import_lpmm_convert(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_lpmm_convert(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_convert", payload)
 
 
 @router.post("/import/temporal-backfill")
-async def create_memory_import_temporal_backfill(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_temporal_backfill(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_temporal_backfill", payload)
 
 
 @router.post("/import/maibot-migration")
-async def create_memory_import_maibot_migration(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_import_maibot_migration(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_maibot_migration", payload)
 
 
@@ -1330,7 +1328,7 @@ async def cancel_memory_import_task(task_id: str):
 
 
 @router.post("/import/tasks/{task_id}/retry")
-async def retry_memory_import_task(task_id: str, payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def retry_memory_import_task(task_id: str, payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_retry(task_id, payload)
 
 
@@ -1360,7 +1358,7 @@ async def export_memory_tuning_profile():
 
 
 @router.post("/retrieval_tuning/tasks")
-async def create_memory_tuning_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def create_memory_tuning_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _tuning_create_task(payload)
 
 
@@ -1637,13 +1635,13 @@ async def compat_import_guide():
 
 
 @compat_router.post("/import/resolve_path")
-async def compat_import_resolve_path(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_resolve_path(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_resolve_path(payload)
 
 
 @compat_router.post("/import/upload")
 async def compat_import_upload(
-    files: list[UploadFile] = UPLOAD_FILES_FIELD,
+    files: list[UploadFile] = File(...),
     payload_json: str = Form("{}"),
 ):
     return await create_memory_import_upload(files=files, payload_json=payload_json)
@@ -1651,69 +1649,69 @@ async def compat_import_upload(
 
 @compat_router.post("/import/tasks/upload")
 async def compat_import_upload_task(
-    files: list[UploadFile] = UPLOAD_FILES_FIELD,
+    files: list[UploadFile] = File(...),
     payload_json: str = Form("{}"),
 ):
     return await create_memory_import_upload(files=files, payload_json=payload_json)
 
 
 @compat_router.post("/import/paste")
-async def compat_import_paste(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_paste(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_paste", payload)
 
 
 @compat_router.post("/import/tasks/paste")
-async def compat_import_paste_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_paste_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_paste", payload)
 
 
 @compat_router.post("/import/raw_scan")
-async def compat_import_raw_scan(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_raw_scan(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_raw_scan", payload)
 
 
 @compat_router.post("/import/tasks/raw_scan")
-async def compat_import_raw_scan_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_raw_scan_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_raw_scan", payload)
 
 
 @compat_router.post("/import/lpmm_openie")
-async def compat_import_lpmm_openie(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_lpmm_openie(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_openie", payload)
 
 
 @compat_router.post("/import/tasks/lpmm_openie")
-async def compat_import_lpmm_openie_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_lpmm_openie_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_openie", payload)
 
 
 @compat_router.post("/import/lpmm_convert")
-async def compat_import_lpmm_convert(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_lpmm_convert(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_convert", payload)
 
 
 @compat_router.post("/import/tasks/lpmm_convert")
-async def compat_import_lpmm_convert_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_lpmm_convert_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_lpmm_convert", payload)
 
 
 @compat_router.post("/import/temporal_backfill")
-async def compat_import_temporal_backfill(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_temporal_backfill(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_temporal_backfill", payload)
 
 
 @compat_router.post("/import/tasks/temporal_backfill")
-async def compat_import_temporal_backfill_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_temporal_backfill_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_temporal_backfill", payload)
 
 
 @compat_router.post("/import/maibot_migration")
-async def compat_import_maibot_migration(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_maibot_migration(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_maibot_migration", payload)
 
 
 @compat_router.post("/import/tasks/maibot_migration")
-async def compat_import_maibot_migration_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_maibot_migration_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_create("create_maibot_migration", payload)
 
 
@@ -1753,12 +1751,12 @@ async def compat_import_cancel(task_id: str):
 
 
 @compat_router.post("/import/tasks/{task_id}/retry")
-async def compat_import_retry(task_id: str, payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_retry(task_id: str, payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_retry(task_id, payload)
 
 
 @compat_router.post("/import/tasks/{task_id}/retry_failed")
-async def compat_import_retry_failed(task_id: str, payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_import_retry_failed(task_id: str, payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_retry(task_id, payload)
 
 
@@ -1793,7 +1791,7 @@ async def compat_export_tuning_profile_toml():
 
 
 @compat_router.post("/retrieval_tuning/tasks")
-async def compat_create_tuning_task(payload: dict[str, Any] = EMPTY_DICT_BODY):
+async def compat_create_tuning_task(payload: dict[str, Any] = Body(default_factory=dict)):
     return await _tuning_create_task(payload)
 
 
