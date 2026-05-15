@@ -85,7 +85,9 @@ class Message:
         Raises:
             ValueError: 当消息内容或工具调用信息不完整时抛出。
         """
-        if not self.parts and not (self.role == RoleType.Assistant and self.tool_calls):
+        if not self.parts and not (
+            self.role == RoleType.Assistant and (self.tool_calls or self.reasoning_content)
+        ):
             raise ValueError("消息内容不能为空")
         if self.role == RoleType.Tool and not self.tool_call_id:
             raise ValueError("Tool 角色的工具调用 ID 不能为空")

@@ -442,7 +442,7 @@ def _sanitize_messages_for_toolless_request(messages: List[Message]) -> List[Mes
             continue
 
         if message.role == RoleType.Assistant and message.tool_calls:
-            if not message.parts:
+            if not message.parts and not message.reasoning_content:
                 continue
             assistant_message = Message(
                 role=message.role,

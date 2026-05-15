@@ -79,6 +79,34 @@ def test_sanitize_messages_for_toolless_request_drops_assistant_tool_call_withou
     assert sanitized_messages[0].role == RoleType.User
 
 
+def test_sanitize_messages_for_toolless_request_keeps_reasoning_only_assistant_turn() -> None:
+    messages = [
+        Message(
+            role=RoleType.Assistant,
+            tool_calls=[
+                ToolCall(
+                    call_id="call_1",
+                    func_name="reply",
+                    args={},
+                )
+            ],
+            reasoning_content="只有推理，没有正文",
+        ),
+        Message(
+            role=RoleType.User,
+            parts=[TextMessagePart(text="继续")],
+        ),
+    ]
+
+    sanitized_messages = _sanitize_messages_for_toolless_request(messages)
+
+    assert len(sanitized_messages) == 2
+    assert sanitized_messages[0].role == RoleType.Assistant
+    assert sanitized_messages[0].tool_calls is None
+    assert sanitized_messages[0].reasoning_content == "只有推理，没有正文"
+    assert sanitized_messages[0].parts == []
+
+
 def test_sanitize_messages_for_toolless_request_keeps_assistant_reasoning_content() -> None:
     messages = [
         Message(
