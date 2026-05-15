@@ -562,6 +562,10 @@ def _build_message_from_dict(raw_message: PromptMessage) -> Message:
     if tool_calls is not None:
         message_builder.set_tool_calls(tool_calls)
 
+    reasoning_content = raw_message.get("reasoning_content")
+    if role == RoleType.Assistant and isinstance(reasoning_content, str) and reasoning_content.strip():
+        message_builder.set_reasoning_content(reasoning_content)
+
     tool_call_id = raw_message.get("tool_call_id")
     if isinstance(tool_call_id, str) and role == RoleType.Tool:
         message_builder.set_tool_call_id(tool_call_id)

@@ -233,11 +233,14 @@ def _build_message_from_sequence(
     tool_call_id: Optional[str] = None,
     tool_name: Optional[str] = None,
     tool_calls: Optional[list[ToolCall]] = None,
+    reasoning_content: Optional[str] = None,
 ) -> Optional[Message]:
     """根据消息片段构造统一 LLM 消息。"""
     builder = MessageBuilder().set_role(role)
     if role == RoleType.Assistant and tool_calls:
         builder.set_tool_calls(tool_calls)
+    if role == RoleType.Assistant and reasoning_content:
+        builder.set_reasoning_content(reasoning_content)
     if role == RoleType.Tool and tool_call_id:
         builder.add_tool_call(tool_call_id)
     if role == RoleType.Tool and tool_name:
@@ -477,6 +480,7 @@ class AssistantMessage(LLMContextMessage):
     timestamp: datetime
     tool_calls: list[ToolCall] = field(default_factory=list)
     source_kind: str = "assistant"
+    reasoning_content: str = ""
 
     @property
     def role(self) -> str:
@@ -504,6 +508,7 @@ class AssistantMessage(LLMContextMessage):
             message_sequence,
             self.content,
             tool_calls=self.tool_calls or None,
+            reasoning_content=self.reasoning_content,
         )
 
 

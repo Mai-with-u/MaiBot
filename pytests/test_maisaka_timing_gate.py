@@ -230,6 +230,41 @@ def test_timing_gate_invalid_tool_hint_only_visible_to_timing_gate() -> None:
     assert planner_history == []
 
 
+def test_assistant_message_keeps_reasoning_content_for_llm_history() -> None:
+    assistant_message = AssistantMessage(
+        content="正式回复",
+        timestamp=datetime.now(),
+        reasoning_content="上一轮推理内容",
+    )
+
+    llm_message = assistant_message.to_llm_message()
+
+    assert llm_message is not None
+    assert llm_message.reasoning_content == "上一轮推理内容"
+
+
+def test_timing_gate_filter_preserves_reasoning_content_when_trimming_tool_calls() -> None:
+    timing_call = ToolCall(call_id="timing-call", func_name="continue", args={})
+    planner_call = ToolCall(call_id="planner-call", func_name="reply", args={})
+    assistant_message = AssistantMessage(
+        content="正式回复",
+        timestamp=datetime.now(),
+        tool_calls=[timing_call, planner_call],
+        reasoning_content="上一轮推理内容",
+    )
+
+    planner_history = MaisakaChatLoopService._filter_history_for_request_kind(
+        [assistant_message],
+        request_kind="planner",
+    )
+
+    assert len(planner_history) == 1
+    filtered_message = planner_history[0]
+    assert isinstance(filtered_message, AssistantMessage)
+    assert filtered_message.reasoning_content == "上一轮推理内容"
+    assert [tool_call.func_name for tool_call in filtered_message.tool_calls] == ["reply"]
+
+
 def test_forced_timing_trigger_bypasses_message_frequency_threshold() -> None:
     runtime = SimpleNamespace(
         _STATE_WAIT="wait",

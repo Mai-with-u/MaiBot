@@ -596,7 +596,7 @@ class MaisakaReasoningEngine:
                             #     f"回合={round_index + 1} "
                             #     f"耗时={cycle_detail.time_records['planner']:.3f} 秒"
                             # )
-                            reasoning_content = response.content or ""
+                            reasoning_content = response.reasoning_content or response.content or ""
                             if self._should_replace_reasoning(reasoning_content):
                                 response.content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
                                 response.raw_message.content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
@@ -1632,6 +1632,7 @@ class MaisakaReasoningEngine:
                 timestamp=response.raw_message.timestamp,
                 tool_calls=[tool_call],
                 source_kind="timing_gate",
+                reasoning_content=response.reasoning_content or response.raw_message.reasoning_content,
             )
         )
         if tool_call.func_name == "wait":

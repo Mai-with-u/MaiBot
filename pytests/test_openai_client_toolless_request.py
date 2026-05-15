@@ -6,6 +6,7 @@ from src.config.model_configs import APIProvider, ReasoningParseMode, ToolArgume
 from src.llm_models.model_client.openai_client import (
     _OpenAIStreamAccumulator,
     _build_reasoning_key,
+    _convert_messages,
     _default_normal_response_parser,
     _parse_tool_arguments,
     _sanitize_messages_for_toolless_request,
@@ -76,6 +77,29 @@ def test_sanitize_messages_for_toolless_request_drops_assistant_tool_call_withou
 
     assert len(sanitized_messages) == 1
     assert sanitized_messages[0].role == RoleType.User
+
+
+def test_sanitize_messages_for_toolless_request_keeps_assistant_reasoning_content() -> None:
+    messages = [
+        Message(
+            role=RoleType.Assistant,
+            parts=[TextMessagePart(text="正式回复")],
+            tool_calls=[
+                ToolCall(
+                    call_id="call_1",
+                    func_name="reply",
+                    args={},
+                )
+            ],
+            reasoning_content="上一轮推理内容",
+        )
+    ]
+
+    sanitized_messages = _sanitize_messages_for_toolless_request(messages)
+
+    assert len(sanitized_messages) == 1
+    assert sanitized_messages[0].tool_calls is None
+    assert sanitized_messages[0].reasoning_content == "上一轮推理内容"
 
 
 def test_normal_response_parser_ignores_reasoning_field_for_non_openrouter_provider() -> None:
@@ -162,3 +186,43 @@ def test_stream_accumulator_reads_openrouter_reasoning_delta_field() -> None:
 
     assert api_response.content == "正式回复"
     assert api_response.reasoning_content == "流式推理"
+
+
+def test_convert_messages_passes_back_assistant_reasoning_content() -> None:
+    messages = [
+        Message(
+            role=RoleType.Assistant,
+            parts=[TextMessagePart(text="正式回复")],
+            reasoning_content="上一轮推理内容",
+        )
+    ]
+
+    payload = _convert_messages(messages, reasoning_key="reasoning_content")
+
+    assert payload == [
+        {
+            "role": "assistant",
+            "content": "正式回复",
+            "reasoning_content": "上一轮推理内容",
+        }
+    ]
+
+
+def test_convert_messages_uses_provider_reasoning_key_when_passing_back_reasoning() -> None:
+    messages = [
+        Message(
+            role=RoleType.Assistant,
+            parts=[TextMessagePart(text="正式回复")],
+            reasoning_content="上一轮推理内容",
+        )
+    ]
+
+    payload = _convert_messages(messages, reasoning_key="reasoning")
+
+    assert payload == [
+        {
+            "role": "assistant",
+            "content": "正式回复",
+            "reasoning": "上一轮推理内容",
+        }
+    ]

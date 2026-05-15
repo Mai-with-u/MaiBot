@@ -77,6 +77,7 @@ class ChatResponse:
     model_name: str = ""
     prompt_section: Optional[RenderableType] = None
     prompt_html_uri: Optional[str] = None
+    reasoning_content: str = ""
 
 
 logger = get_logger("maisaka_chat_loop")
@@ -609,19 +610,6 @@ class MaisakaChatLoopService:
             injected_user_messages=injected_user_messages,
         )
 
-        def message_factory(_client: BaseClient) -> List[Message]:
-            """返回当前轮次已经构建好的请求消息。
-
-            Args:
-                _client: 当前模型客户端；此处不依赖客户端能力。
-
-            Returns:
-                List[Message]: 已经构建好的消息列表。
-            """
-
-            del _client
-            return built_messages
-
         all_tools: List[ToolDefinitionInput]
         if tool_definitions is not None:
             all_tools = list(tool_definitions)
@@ -653,6 +641,13 @@ class MaisakaChatLoopService:
                 built_messages = deserialize_prompt_messages(raw_messages)
             except Exception as exc:
                 logger.warning(f"Hook maisaka.planner.before_request 返回的 messages 无法反序列化，已忽略: {exc}")
+
+        def message_factory(_client: BaseClient) -> List[Message]:
+            """返回当前轮次已经构建好的请求消息。"""
+
+            del _client
+            return built_messages
+
         raw_tool_definitions = before_request_kwargs.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
             all_tools = [item for item in raw_tool_definitions if isinstance(item, dict)]
@@ -774,6 +769,7 @@ class MaisakaChatLoopService:
             content=final_response,
             timestamp=datetime.now(),
             tool_calls=final_tool_calls,
+            reasoning_content=generation_result.reasoning or "",
         )
         return ChatResponse(
             content=final_response or None,
@@ -789,6 +785,7 @@ class MaisakaChatLoopService:
             model_name=display_model_name,
             prompt_section=prompt_section,
             prompt_html_uri=prompt_html_uri,
+            reasoning_content=generation_result.reasoning or "",
         )
 
     @staticmethod
@@ -906,6 +903,7 @@ class MaisakaChatLoopService:
                             timestamp=message.timestamp,
                             tool_calls=kept_tool_calls,
                             source_kind=message.source_kind,
+                            reasoning_content=message.reasoning_content,
                         )
                     )
                     continue

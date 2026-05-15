@@ -173,12 +173,14 @@ def _build_reasoning_key(api_provider: APIProvider) -> str:
     return PROVIDER_REASONING_KEYS_BY_DOMAIN.get(provider_hostname, "reasoning_content")
 
 
-def _extract_reasoning_content(message_part: Any, reasoning_key: str) -> str | None:
+def _extract_reasoning_content(message_part: Any, reasoning_key: str | None) -> str | None:
     """从 OpenAI 兼容响应对象中读取原生推理内容。
 
     不同兼容服务商对推理字段命名并不完全一致。这里集中处理字段访问，
     避免解析路径里散落 provider 特判；具体字段名由 provider 决定。
     """
+    if not reasoning_key:
+        return None
     native_reasoning = getattr(message_part, reasoning_key, None)
     if isinstance(native_reasoning, str) and native_reasoning:
         return native_reasoning
@@ -448,6 +450,7 @@ def _sanitize_messages_for_toolless_request(messages: List[Message]) -> List[Mes
                 tool_call_id=message.tool_call_id,
                 tool_name=message.tool_name,
                 tool_calls=None,
+                reasoning_content=message.reasoning_content,
             )
             sanitized_messages.append(assistant_message)
             continue
@@ -457,11 +460,12 @@ def _sanitize_messages_for_toolless_request(messages: List[Message]) -> List[Mes
     return sanitized_messages
 
 
-def _convert_messages(messages: List[Message]) -> List[ChatCompletionMessageParam]:
+def _convert_messages(messages: List[Message], reasoning_key: str = "reasoning_content") -> List[ChatCompletionMessageParam]:
     """将内部消息列表转换为 OpenAI 兼容消息列表。
 
     Args:
         messages: 内部统一消息列表。
+        reasoning_key: OpenAI 兼容服务商要求的推理内容字段名。
 
     Returns:
         List[ChatCompletionMessageParam]: OpenAI SDK 所需的消息结构列表。
@@ -491,6 +495,8 @@ def _convert_messages(messages: List[Message]) -> List[ChatCompletionMessagePara
             }
             if message.tool_calls:
                 assistant_payload["tool_calls"] = _convert_assistant_tool_calls(message.tool_calls)
+            if message.reasoning_content and reasoning_key:
+                cast(Dict[str, Any], assistant_payload)[reasoning_key] = message.reasoning_content
             converted_messages.append(assistant_payload)
             continue
 
@@ -1200,7 +1206,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 if request.tool_options
                 else _sanitize_messages_for_toolless_request(request.message_list)
             )
-            messages_payload: List[ChatCompletionMessageParam] = _convert_messages(request_messages)
+            messages_payload: List[ChatCompletionMessageParam] = _convert_messages(request_messages, self.reasoning_key)
             tools_payload: List[ChatCompletionToolParam] | None = (
                 _convert_tool_options(request.tool_options) if request.tool_options else None
             )

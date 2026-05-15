@@ -135,6 +135,8 @@ def serialize_prompt_messages(messages: Sequence[Message]) -> List[PromptMessage
             serialized_message["tool_call_id"] = message.tool_call_id
         if message.tool_calls:
             serialized_message["tool_calls"] = serialize_tool_calls(message.tool_calls)
+        if message.reasoning_content:
+            serialized_message["reasoning_content"] = message.reasoning_content
         serialized_messages.append(serialized_message)
     return serialized_messages
 
