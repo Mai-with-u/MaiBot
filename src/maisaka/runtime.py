@@ -970,7 +970,7 @@ class MaisakaHeartFlowChatting:
             normalized_line = raw_line.strip()
             if not normalized_line.startswith("- "):
                 continue
-            normalized_name = normalized_line[2:].strip()
+            normalized_name = normalized_line[2:].split("（", 1)[0].strip()
             if normalized_name in self.deferred_tool_specs_by_name:
                 discovered_tool_names.add(normalized_name)
 
