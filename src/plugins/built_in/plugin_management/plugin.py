@@ -3,10 +3,36 @@
 通过 /pm 命令管理插件和组件的生命周期。
 """
 
-from maibot_sdk import Command, MaiBotPlugin
+from typing import Any, ClassVar, Dict, List
+
+import json
+import shlex
+
+from maibot_sdk import Command, Field, MaiBotPlugin, PluginConfigBase
 
 
 _VALID_COMPONENT_TYPES = ("tool", "command", "event_handler")
+
+
+_COMMAND_ALIAS_TARGETS: dict[str, str] = {
+    "help": "/pm help",
+    "plugin": "/pm plugin",
+    "plugin.help": "/pm plugin help",
+    "plugin.list": "/pm plugin list",
+    "plugin.list_enabled": "/pm plugin list_enabled",
+    "plugin.load": "/pm plugin load",
+    "plugin.unload": "/pm plugin unload",
+    "plugin.reload": "/pm plugin reload",
+    "component": "/pm component",
+    "component.help": "/pm component help",
+    "component.list": "/pm component list",
+    "component.enable": "/pm component enable",
+    "component.disable": "/pm component disable",
+    "config": "/pm config",
+    "config.help": "/pm config help",
+    "config.get": "/pm config get",
+    "config.set": "/pm config set",
+}
 
 
 def _build_scoped_user_id(platform: str, user_id: str) -> str:
@@ -33,7 +59,7 @@ HELP_ALL = (
     "/pm help 管理命令提示\n"
     "/pm plugin 插件管理命令\n"
     "/pm component 组件管理命令\n"
-    "使用 /pm plugin help 或 /pm component help 获取具体帮助"
+    "使用 /pm plugin help、/pm component help 或 /pm config help 获取具体帮助"
 )
 HELP_PLUGIN = (
     "插件管理命令帮助\n"
@@ -43,6 +69,14 @@ HELP_PLUGIN = (
     "/pm plugin load <plugin_name> 加载指定插件\n"
     "/pm plugin unload <plugin_name> 卸载指定插件\n"
     "/pm plugin reload <plugin_name> 重新加载指定插件\n"
+)
+HELP_CONFIG = (
+    "插件配置命令帮助\n"
+    "/pm config help 插件配置命令提示\n"
+    "/pm config get <plugin_name> [key] 读取指定插件配置或点分隔配置项\n"
+    "/pm config set <plugin_name> <key> <value_json> 修改指定插件配置项\n"
+    "  - <key> 使用点分隔路径，例如 plugin.enabled；命令别名可用 aliases.command_aliases.plugin.list\n"
+    "  - <value_json> 优先按 JSON 解析，例如 true、123、[\"/别名\"]；解析失败时按字符串保存"
 )
 HELP_COMPONENT = (
     "组件管理命令帮助\n"
@@ -61,8 +95,36 @@ HELP_COMPONENT = (
 )
 
 
+class PluginSectionConfig(PluginConfigBase):
+    """插件自身配置。"""
+
+    __ui_label__: ClassVar[str] = "基础设置"
+    config_version: str = Field(default="1.1.0", description="配置版本号")
+    enabled: bool = Field(default=True, description="是否启用插件管理内置插件")
+
+
+class AliasConfig(PluginConfigBase):
+    """插件管理命令别名配置。"""
+
+    __ui_label__: ClassVar[str] = "指令别名"
+    management_prefixes: List[str] = Field(default_factory=lambda: ["/插件管理"], description="/pm 主命令前缀别名")
+    command_aliases: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="子命令别名映射，键名可用 plugin.list、plugin.reload、config.set 等",
+    )
+
+
+class PluginManagementConfig(PluginConfigBase):
+    """插件管理插件配置模型。"""
+
+    plugin: PluginSectionConfig = Field(default_factory=PluginSectionConfig, description="插件基础配置")
+    aliases: AliasConfig = Field(default_factory=AliasConfig, description="指令别名配置")
+
+
 class PluginManagementPlugin(MaiBotPlugin):
     """插件和组件管理插件"""
+
+    config_model = PluginManagementConfig
 
     async def on_load(self) -> None:
         """处理插件加载。"""
@@ -73,7 +135,7 @@ class PluginManagementPlugin(MaiBotPlugin):
     @Command(
         "management",
         description="管理插件和组件的生命周期",
-        pattern=r"(?P<manage_command>^/pm(?:\s+\S+)*\s*$)",
+        pattern=r"(?P<manage_command>^/pm(?:\s+.+)?\s*$)",
     )
     async def handle_management(
         self, stream_id: str = "", platform: str = "", user_id: str = "", matched_groups: dict | None = None, **kwargs
@@ -90,8 +152,10 @@ class PluginManagementPlugin(MaiBotPlugin):
         if not stream_id:
             return False, "无法获取聊天流信息", True
 
+        raw_text = str(kwargs.get("text", "") or "").strip()
         raw_command = (matched_groups or {}).get("manage_command", "").strip()
-        parts = raw_command.split() if raw_command else ["/pm"]
+        raw_command = self._resolve_alias_command(raw_command or raw_text)
+        parts = self._split_command(raw_command) if raw_command else ["/pm"]
         n = len(parts)
 
         # /pm
@@ -106,6 +170,8 @@ class PluginManagementPlugin(MaiBotPlugin):
                 await self.ctx.send.text(HELP_PLUGIN, stream_id)
             elif sub == "component":
                 await self.ctx.send.text(HELP_COMPONENT, stream_id)
+            elif sub == "config":
+                await self.ctx.send.text(HELP_CONFIG, stream_id)
             elif sub == "help":
                 await self.ctx.send.text(HELP_ALL, stream_id)
             else:
@@ -117,6 +183,12 @@ class PluginManagementPlugin(MaiBotPlugin):
         if n == 3:
             if parts[1] == "plugin":
                 await self._handle_plugin_3(parts[2], stream_id)
+            elif parts[1] == "config":
+                if parts[2] == "help":
+                    await self.ctx.send.text(HELP_CONFIG, stream_id)
+                else:
+                    await self.ctx.send.text("插件管理命令不合法", stream_id)
+                    return False, "命令不合法", True
             elif parts[1] == "component":
                 if parts[2] == "list":
                     await self._list_all_components(stream_id)
@@ -133,6 +205,8 @@ class PluginManagementPlugin(MaiBotPlugin):
         if n == 4:
             if parts[1] == "plugin":
                 await self._handle_plugin_4(parts[2], parts[3], stream_id)
+            elif parts[1] == "config":
+                await self._handle_config_get(parts[2], parts[3], "", stream_id)
             elif parts[1] == "component":
                 if parts[2] == "list":
                     await self._handle_component_list_4(parts[3], stream_id)
@@ -145,18 +219,24 @@ class PluginManagementPlugin(MaiBotPlugin):
             return True, "命令执行完成", True
 
         if n == 5:
-            if parts[1] != "component" or parts[2] != "list":
-                await self.ctx.send.text("插件管理命令不合法", stream_id)
-                return False, "命令不合法", True
-            await self._handle_component_list_5(parts[3], parts[4], stream_id)
-            return True, "命令执行完成", True
+            if parts[1] == "component" and parts[2] == "list":
+                await self._handle_component_list_5(parts[3], parts[4], stream_id)
+                return True, "命令执行完成", True
+            if parts[1] == "config" and parts[2] == "get":
+                await self._handle_config_get(parts[2], parts[3], parts[4], stream_id)
+                return True, "命令执行完成", True
+            await self.ctx.send.text("插件管理命令不合法", stream_id)
+            return False, "命令不合法", True
 
-        if n == 6:
-            if parts[1] != "component":
-                await self.ctx.send.text("插件管理命令不合法", stream_id)
-                return False, "命令不合法", True
-            await self._handle_component_toggle(parts[2], parts[3], parts[4], parts[5], stream_id)
-            return True, "命令执行完成", True
+        if n >= 6:
+            if parts[1] == "component" and n == 6:
+                await self._handle_component_toggle(parts[2], parts[3], parts[4], parts[5], stream_id)
+                return True, "命令执行完成", True
+            if parts[1] == "config" and parts[2] == "set" and n >= 6:
+                await self._handle_config_set(parts[3], parts[4], " ".join(parts[5:]), stream_id)
+                return True, "命令执行完成", True
+            await self.ctx.send.text("插件管理命令不合法", stream_id)
+            return False, "命令不合法", True
 
         await self.ctx.send.text("插件管理命令不合法", stream_id)
         return False, "命令不合法", True
@@ -197,6 +277,39 @@ class PluginManagementPlugin(MaiBotPlugin):
                 await self.ctx.send.text(msg, stream_id)
             case _:
                 await self.ctx.send.text("插件管理命令不合法", stream_id)
+
+    # ------ config 子命令 ------
+
+    async def _handle_config_get(self, action: str, plugin_name: str, key: str, stream_id: str):
+        if action != "get":
+            await self.ctx.send.text("插件管理命令不合法", stream_id)
+            return
+        config = await self.ctx.config.get_plugin(plugin_name)
+        if not config:
+            await self.ctx.send.text(f"未读取到插件配置: {plugin_name}", stream_id)
+            return
+        value = self._get_nested_value(config, key) if key else config
+        display_key = f".{key}" if key else ""
+        value_text = json.dumps(value, ensure_ascii=False)
+        await self.ctx.send.text(f"{plugin_name}{display_key} = {value_text}", stream_id)
+
+    async def _handle_config_set(self, plugin_name: str, key: str, raw_value: str, stream_id: str):
+        if not key.strip():
+            await self.ctx.send.text("配置键不能为空", stream_id)
+            return
+        value = self._parse_config_value(raw_value)
+        result = await self.ctx.call_capability(
+            "component.update_plugin_config",
+            plugin_name=plugin_name,
+            key=key,
+            value=value,
+        )
+        ok = result.get("success", False) if isinstance(result, dict) else bool(result)
+        if ok:
+            await self.ctx.send.text(f"插件配置已更新: {plugin_name}.{key}", stream_id)
+            return
+        error = result.get("error", "未知错误") if isinstance(result, dict) else "未知错误"
+        await self.ctx.send.text(f"插件配置更新失败: {error}", stream_id)
 
     # ------ component 子命令 ------
 
@@ -294,6 +407,117 @@ class PluginManagementPlugin(MaiBotPlugin):
                     components.extend(plugin_info.get("components", []))
             return components
         return []
+
+    def get_components(self) -> list[dict[str, Any]]:
+        """收集组件声明，并把配置中的命令别名写入管理命令。"""
+
+        components = super().get_components()
+        aliases = self._collect_configured_aliases()
+        for component in components:
+            if component.get("name") != "management":
+                continue
+            metadata = component.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            existing_aliases = [str(alias).strip() for alias in metadata.get("aliases", []) if str(alias).strip()]
+            metadata["aliases"] = list(dict.fromkeys([*existing_aliases, *aliases]))
+        return components
+
+    def _collect_configured_aliases(self) -> list[str]:
+        config = self.get_plugin_config_data()
+        aliases_config = config.get("aliases") if isinstance(config, dict) else None
+        if not isinstance(aliases_config, dict):
+            return []
+
+        aliases: list[str] = []
+        prefixes = aliases_config.get("management_prefixes", [])
+        if isinstance(prefixes, list):
+            aliases.extend(str(alias).strip() for alias in prefixes if str(alias).strip())
+
+        command_aliases = aliases_config.get("command_aliases", {})
+        if isinstance(command_aliases, dict):
+            for alias_list in command_aliases.values():
+                if isinstance(alias_list, list):
+                    aliases.extend(str(alias).strip() for alias in alias_list if str(alias).strip())
+        return list(dict.fromkeys(aliases))
+
+    def _resolve_alias_command(self, raw_command: str) -> str:
+        normalized_command = raw_command.strip()
+        if not normalized_command or normalized_command.startswith("/pm"):
+            return normalized_command
+
+        alias_mapping = self._build_alias_mapping()
+        for alias, target in sorted(alias_mapping.items(), key=lambda item: len(item[0]), reverse=True):
+            if not self._command_startswith_alias(normalized_command, alias):
+                continue
+            suffix = normalized_command[len(alias) :].strip()
+            return f"{target} {suffix}".strip()
+        return normalized_command
+
+    def _build_alias_mapping(self) -> dict[str, str]:
+        config = self.get_plugin_config_data()
+        aliases_config = config.get("aliases") if isinstance(config, dict) else None
+        if not isinstance(aliases_config, dict):
+            return {}
+
+        mapping: dict[str, str] = {}
+        prefixes = aliases_config.get("management_prefixes", [])
+        if isinstance(prefixes, list):
+            for alias in prefixes:
+                normalized_alias = str(alias).strip()
+                if normalized_alias:
+                    mapping[normalized_alias] = "/pm"
+
+        command_aliases = aliases_config.get("command_aliases", {})
+        if isinstance(command_aliases, dict):
+            for command_key, alias_list in command_aliases.items():
+                target = _COMMAND_ALIAS_TARGETS.get(str(command_key).strip())
+                if not target or not isinstance(alias_list, list):
+                    continue
+                for alias in alias_list:
+                    normalized_alias = str(alias).strip()
+                    if normalized_alias:
+                        mapping[normalized_alias] = target
+        return mapping
+
+    @staticmethod
+    def _command_startswith_alias(command: str, alias: str) -> bool:
+        if not command.startswith(alias):
+            return False
+        return len(command) == len(alias) or command[len(alias)].isspace()
+
+    @staticmethod
+    def _split_command(raw_command: str) -> list[str]:
+        try:
+            return shlex.split(raw_command)
+        except ValueError:
+            return raw_command.split()
+
+    @staticmethod
+    def _parse_config_value(raw_value: str) -> object:
+        value_text = raw_value.strip()
+        try:
+            return json.loads(value_text)
+        except json.JSONDecodeError:
+            return value_text
+
+    @staticmethod
+    def _get_nested_value(config: dict[str, object], key: str) -> object:
+        if key.startswith("aliases.command_aliases."):
+            aliases = config.get("aliases")
+            if not isinstance(aliases, dict):
+                return None
+            command_aliases = aliases.get("command_aliases")
+            if not isinstance(command_aliases, dict):
+                return None
+            return command_aliases.get(key.removeprefix("aliases.command_aliases."))
+
+        current: object = config
+        for part in key.split("."):
+            if not isinstance(current, dict) or part not in current:
+                return None
+            current = current[part]
+        return current
 
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
         """处理配置热重载事件。

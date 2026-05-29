@@ -1,8 +1,11 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
+import tomlkit
+
 from src.common.logger import get_logger
 from src.plugin_runtime.host.component_timeout import resolve_component_rpc_timeout_ms
+from src.webui.utils.toml_utils import save_toml_with_format
 
 logger = get_logger("plugin_runtime.integration")
 
@@ -69,6 +72,22 @@ class _RuntimeComponentManagerProtocol(Protocol):
     async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool: ...
 
     async def reload_plugins_globally(self, plugin_ids: Sequence[str], reason: str = "manual") -> bool: ...
+
+    def _get_plugin_path_for_supervisor(self, supervisor: Any, plugin_id: str) -> Optional[Path]: ...
+
+    def _find_supervisor_by_plugin_directory(self, plugin_id: str) -> Optional["PluginSupervisor"]: ...
+
+    def _resolve_plugin_config_path(self, plugin_id: str, plugin_path: Path) -> Path: ...
+
+    async def validate_plugin_config(self, plugin_id: str, config_data: Dict[str, Any]) -> Dict[str, Any] | None: ...
+
+    async def notify_plugin_config_updated(
+        self,
+        plugin_id: str,
+        config_data: Optional[Dict[str, Any]] = None,
+        config_version: str = "",
+        config_scope: str = "self",
+    ) -> bool: ...
 
 
 class RuntimeComponentCapabilityMixin:
@@ -524,6 +543,100 @@ class RuntimeComponentCapabilityMixin:
             "schema": registration.config_schema,
             "default_config": registration.default_config,
         }
+
+    async def _cap_component_update_plugin_config(
+        self: _RuntimeComponentManagerProtocol, plugin_id: str, capability: str, args: Dict[str, Any]
+    ) -> Any:
+        """更新指定插件的结构化配置项。
+
+        该能力仅授予插件管理内置插件使用：调用方通过权限校验后，可按点分隔路径
+        修改目标插件的 ``config.toml``，并通知运行时进行自配置热更新。
+        """
+
+        del capability
+        if plugin_id != "builtin.plugin-management":
+            return {"success": False, "error": "仅插件管理内置插件可以修改插件配置"}
+
+        target_plugin_id = str(args.get("plugin_name", "") or "").strip()
+        key = str(args.get("key", "") or "").strip()
+        if not target_plugin_id or not key:
+            return {"success": False, "error": "缺少必要参数 plugin_name 或 key"}
+
+        supervisor = self._get_supervisor_for_plugin(target_plugin_id) or self._find_supervisor_by_plugin_directory(
+            target_plugin_id
+        )
+        if supervisor is None:
+            return {"success": False, "error": f"未找到插件: {target_plugin_id}"}
+
+        plugin_path = self._get_plugin_path_for_supervisor(supervisor, target_plugin_id)
+        if plugin_path is None:
+            return {"success": False, "error": f"未找到插件目录: {target_plugin_id}"}
+
+        config_path = self._resolve_plugin_config_path(target_plugin_id, plugin_path)
+        config_data = self._load_component_plugin_config(config_path)
+        try:
+            self._set_nested_plugin_config_value(config_data, key, args.get("value"))
+            validated_config = await self.validate_plugin_config(target_plugin_id, config_data)
+            if isinstance(validated_config, dict):
+                config_data = validated_config
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        except Exception as exc:
+            logger.error(f"插件 {target_plugin_id} 配置更新失败: {exc}", exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            save_toml_with_format(config_data, str(config_path))
+        except Exception as exc:
+            logger.error(f"插件 {target_plugin_id} 配置写入失败: {exc}", exc_info=True)
+            return {"success": False, "error": f"配置写入失败: {exc}"}
+
+        delivered = await self.notify_plugin_config_updated(target_plugin_id, config_data=config_data)
+        return {
+            "success": True,
+            "plugin_name": target_plugin_id,
+            "key": key,
+            "hot_updated": delivered,
+        }
+
+    @staticmethod
+    def _load_component_plugin_config(config_path: Path) -> Dict[str, Any]:
+        if not config_path.exists():
+            return {}
+        with open(config_path, "r", encoding="utf-8") as file_obj:
+            loaded_config = tomlkit.load(file_obj).unwrap()
+        return loaded_config if isinstance(loaded_config, dict) else {}
+
+    @staticmethod
+    def _set_nested_plugin_config_value(config_data: Dict[str, Any], key: str, value: Any) -> None:
+        if key.startswith("aliases.command_aliases."):
+            command_key = key.removeprefix("aliases.command_aliases.").strip()
+            if not command_key:
+                raise ValueError("别名目标命令不能为空")
+            aliases_config = config_data.setdefault("aliases", {})
+            if not isinstance(aliases_config, dict):
+                raise ValueError("配置路径 aliases 已存在且不是配置节")
+            command_aliases = aliases_config.setdefault("command_aliases", {})
+            if not isinstance(command_aliases, dict):
+                raise ValueError("配置路径 aliases.command_aliases 已存在且不是配置节")
+            command_aliases[command_key] = value
+            return
+
+        parts = [part.strip() for part in key.split(".") if part.strip()]
+        if not parts:
+            raise ValueError("配置键不能为空")
+
+        current = config_data
+        for part in parts[:-1]:
+            next_value = current.get(part)
+            if next_value is None:
+                next_value = {}
+                current[part] = next_value
+            if not isinstance(next_value, dict):
+                raise ValueError(f"配置路径 {part} 已存在且不是配置节")
+            current = next_value
+        current[parts[-1]] = value
 
     async def _cap_component_list_loaded_plugins(
         self: _RuntimeComponentManagerProtocol, plugin_id: str, capability: str, args: Dict[str, Any]

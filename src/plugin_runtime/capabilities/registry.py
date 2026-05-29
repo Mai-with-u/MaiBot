@@ -90,6 +90,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: Plugi
     _register("component.get_all_plugins", manager._cap_component_get_all_plugins)
     _register("component.get_plugin_info", manager._cap_component_get_plugin_info)
     _register("component.get_plugin_config_schema", manager._cap_component_get_plugin_config_schema)
+    _register("component.update_plugin_config", manager._cap_component_update_plugin_config)
     _register("component.list_loaded_plugins", manager._cap_component_list_loaded_plugins)
     _register("component.list_registered_plugins", manager._cap_component_list_registered_plugins)
     _register("component.enable", manager._cap_component_enable)

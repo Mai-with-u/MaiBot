@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "name": "插件和组件管理 (Plugin and Component Management)",
   "description": "通过系统 API 管理插件和组件的生命周期，包括加载、卸载、启用和禁用等操作。",
   "author": {
@@ -32,8 +32,10 @@
     "component.load_plugin",
     "component.unload_plugin",
     "component.reload_plugin",
+    "component.update_plugin_config",
     "send.text",
-    "config.get"
+    "config.get",
+    "config.get_plugin"
   ],
   "i18n": {
     "default_locale": "zh-CN",
