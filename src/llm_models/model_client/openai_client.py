@@ -221,6 +221,17 @@ def _normalize_tool_argument_parse_mode(parse_mode: str | ToolArgumentParseMode)
         return ToolArgumentParseMode.AUTO
 
 
+def _normalize_openai_text_content(text: str, *, fallback_text: str = "[空白消息]") -> str:
+    """规范化 OpenAI 兼容文本，避免向严格 Provider 发送空文本块。
+
+    部分 OpenAI 兼容路由在转发 Anthropic Claude 时会拒绝空白 text block；
+    因此只在文本全为空白时替换为稳定占位符，非空文本保持原样。
+    """
+    if text.strip():
+        return text
+    return fallback_text
+
+
 def _build_text_content_part(text: str) -> ChatCompletionContentPartTextParam:
     """构建文本内容片段。
 
@@ -232,7 +243,7 @@ def _build_text_content_part(text: str) -> ChatCompletionContentPartTextParam:
     """
     return {
         "type": "text",
-        "text": text,
+        "text": _normalize_openai_text_content(text),
     }
 
 
@@ -362,13 +373,17 @@ def _convert_text_only_message_content(
     if not message.parts:
         return ""
     if len(message.parts) == 1 and isinstance(message.parts[0], TextMessagePart):
-        return message.parts[0].text
+        return _normalize_openai_text_content(message.parts[0].text)
 
     content: List[ChatCompletionContentPartTextParam] = []
     for part in message.parts:
         if not isinstance(part, TextMessagePart):
             raise ValueError(f"{message.role.value} 消息仅支持文本片段")
+        if not part.text.strip():
+            continue
         content.append(_build_text_content_part(part.text))
+    if not content:
+        return _normalize_openai_text_content("")
     return content
 
 
@@ -382,12 +397,13 @@ def _convert_user_message_content(message: Message) -> str | List[ChatCompletion
         str | List[ChatCompletionContentPartParam]: 用户消息内容结构。
     """
     if len(message.parts) == 1 and isinstance(message.parts[0], TextMessagePart):
-        return message.parts[0].text
+        return _normalize_openai_text_content(message.parts[0].text)
 
     content: List[ChatCompletionContentPartParam] = []
     for part in message.parts:
         if isinstance(part, TextMessagePart):
-            content.append(_build_text_content_part(part.text))
+            if part.text.strip():
+                content.append(_build_text_content_part(part.text))
             continue
 
         normalized_image = _normalize_image_part_for_openai(part)
@@ -404,6 +420,8 @@ def _convert_user_message_content(message: Message) -> str | List[ChatCompletion
                 },
             }
         )
+    if not content:
+        return _normalize_openai_text_content("")
     return content
 
 
