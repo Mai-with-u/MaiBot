@@ -13,6 +13,8 @@ services:
       - PRIVACY_AGREE=91e5db7659c560bc3545e63859b6ebc0
       - MAIBOT_LEGACY_0X_UPGRADE_CONFIRMED=1 # Docker 无法交互确认旧版升级迁移，默认跳过确认提示
       - MAIBOT_STATISTICS_REPORT_PATH=/MaiMBot/data/maibot_statistics.html # 统计数据输出到共享目录，首次运行可自动创建文件
+      - WEBUI_HOST=0.0.0.0
+      - WEBUI_PORT=8001
 #      - EULA_AGREE=8e6e7d647f7f82d6ea98456b73908656 # 同意EULA
 #      - PRIVACY_AGREE=91e5db7659c560bc3545e63859b6ebc0 # 同意隐私条款
     ports:

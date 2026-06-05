@@ -22,6 +22,6 @@ COPY . .
 RUN git clone --depth 1 --branch main https://github.com/Mai-with-u/MaiBot-Napcat-Adapter.git plugin-templates/MaiBot-Napcat-Adapter
 RUN chmod +x docker-entrypoint.sh
 
-EXPOSE 8000
+EXPOSE 8000 8001
 
 ENTRYPOINT [ "./docker-entrypoint.sh" ]
