@@ -460,17 +460,25 @@ class BuiltinToolRuntimeContext:
 
         return self.engine._get_runtime_manager()
 
+    def _should_include_planner_chat_id(self) -> bool:
+        """当前上下文写入规划器历史时是否需要保留聊天流 ID。"""
+
+        return self.runtime._is_focus_mode_active_for_current_chat()
+
     def append_guided_reply_to_chat_history(self, reply_text: str) -> None:
         """将引导回复写回 Maisaka 历史。"""
 
         bot_name = global_config.bot.nickname.strip() or "MaiSaka"
         reply_timestamp = datetime.now()
+        include_chat_id = self._should_include_planner_chat_id()
         history_message = build_session_backed_text_message(
             speaker_name=bot_name,
             text=reply_text,
             timestamp=reply_timestamp,
             source_kind="guided_reply",
-            chat_id=getattr(self.runtime, "session_id", ""),
+            chat_id=self.runtime.session_id,
+            include_chat_id=include_chat_id,
+            is_self_message=global_config.chat.self_message_special_mark,
         )
         self.runtime._chat_history.append(history_message)
 
@@ -485,6 +493,7 @@ class BuiltinToolRuntimeContext:
         from src.maisaka.context.history import build_prefixed_message_sequence, build_session_message_visible_text
         user_info = message.message_info.user_info
         speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+        include_chat_id = self._should_include_planner_chat_id()
         planner_prefix = build_planner_prefix(
             timestamp=message.timestamp,
             user_name=speaker_name,
@@ -493,6 +502,8 @@ class BuiltinToolRuntimeContext:
             chat_id=message.session_id,
             quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
             include_message_id=not message.is_notify and bool(message.message_id),
+            include_chat_id=include_chat_id,
+            is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
         )
         history_message = SessionBackedMessage.from_session_message(
             message,
@@ -516,10 +527,13 @@ class BuiltinToolRuntimeContext:
 
         bot_name = global_config.bot.nickname.strip() or "MaiSaka"
         reply_timestamp = datetime.now()
+        include_chat_id = self._should_include_planner_chat_id()
         planner_prefix = build_planner_prefix(
             timestamp=reply_timestamp,
             user_name=bot_name,
-            chat_id=getattr(self.runtime, "session_id", ""),
+            chat_id=self.runtime.session_id,
+            include_chat_id=include_chat_id,
+            is_self_message=global_config.chat.self_message_special_mark,
         )
         history_message = SessionBackedMessage(
             raw_message=MessageSequence(

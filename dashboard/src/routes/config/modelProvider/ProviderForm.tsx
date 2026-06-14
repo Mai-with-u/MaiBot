@@ -50,8 +50,8 @@ export function ProviderForm({
     let cancelled = false
     fetchModelClientTypes()
       .then((result) => {
-        if (!cancelled && result.success) {
-          setClientTypes(result.data || [])
+        if (!cancelled) {
+          setClientTypes(result || [])
         }
       })
       .catch(() => {

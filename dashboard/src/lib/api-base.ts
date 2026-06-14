@@ -60,20 +60,6 @@ export async function getWsBaseUrl(): Promise<string> {
 }
 
 /**
- * Get synchronous API base URL for axios baseURL configuration
- * Note: axios instance baseURL is set at module initialization time (synchronous).
- * Since window.electronAPI.getActiveBackendUrl() is async, this function returns
- * empty string. The actual Electron backend URL will be injected via axios request
- * interceptor (Task 7) to support dynamic backend switching at runtime.
- */
-export function getAxiosBaseUrl(): string {
-  // Always return empty string:
-  // - Browser: Vite proxy / same-origin handles paths
-  // - Electron: axios interceptor injects dynamic baseURL
-  return ''
-}
-
-/**
  * Resolve full API path by prepending base URL if needed
  * - Electron: Prepends configured backend URL
  * - Browser: Path remains unchanged (proxy/same-origin handling)

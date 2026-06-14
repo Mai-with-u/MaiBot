@@ -1,17 +1,20 @@
 /**
  * 黑话（俚语）管理 API
+ *
+ * 请求样板（认证、解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint 与业务错误文案。请求失败时抛出 ApiError（throw 契约）。
  */
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { backendApi } from '@/lib/http'
 import type {
-  JargonListResponse,
-  JargonDetailResponse,
+  JargonChatListResponse,
   JargonCreateRequest,
   JargonCreateResponse,
+  JargonDeleteResponse,
+  JargonDetailResponse,
+  JargonListResponse,
+  JargonStatsResponse,
   JargonUpdateRequest,
   JargonUpdateResponse,
-  JargonDeleteResponse,
-  JargonStatsResponse,
-  JargonChatListResponse,
 } from '@/types/jargon'
 
 const API_BASE = '/api/webui/jargon'
@@ -20,19 +23,10 @@ const API_BASE = '/api/webui/jargon'
  * 获取聊天列表（有黑话记录的聊天）
  */
 export async function getJargonChatList(params: { include_empty?: boolean } = {}): Promise<JargonChatListResponse> {
-  const queryParams = new URLSearchParams()
-  if (params.include_empty !== undefined) {
-    queryParams.append('include_empty', params.include_empty.toString())
-  }
-  const queryString = queryParams.toString()
-  const response = await fetchWithAuth(`${API_BASE}/chats${queryString ? `?${queryString}` : ''}`, {})
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '获取聊天列表失败')
-  }
-  
-  return response.json()
+  return backendApi.get<JargonChatListResponse>(`${API_BASE}/chats`, {
+    query: { include_empty: params.include_empty },
+    errorMessage: '获取聊天列表失败',
+  })
 }
 
 /**
@@ -46,41 +40,26 @@ export async function getJargonList(params: {
   is_jargon?: boolean | null
   is_global?: boolean
 }): Promise<JargonListResponse> {
-  const queryParams = new URLSearchParams()
-  
-  if (params.page) queryParams.append('page', params.page.toString())
-  if (params.page_size) queryParams.append('page_size', params.page_size.toString())
-  if (params.search) queryParams.append('search', params.search)
-  if (params.session_id) queryParams.append('session_id', params.session_id)
-  if (params.is_jargon !== undefined && params.is_jargon !== null) {
-    queryParams.append('is_jargon', params.is_jargon.toString())
-  }
-  if (params.is_global !== undefined) {
-    queryParams.append('is_global', params.is_global.toString())
-  }
-  
-  const response = await fetchWithAuth(`${API_BASE}/list?${queryParams}`, {})
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '获取黑话列表失败')
-  }
-  
-  return response.json()
+  return backendApi.get<JargonListResponse>(`${API_BASE}/list`, {
+    query: {
+      page: params.page || undefined,
+      page_size: params.page_size || undefined,
+      search: params.search || undefined,
+      session_id: params.session_id || undefined,
+      is_jargon: params.is_jargon,
+      is_global: params.is_global,
+    },
+    errorMessage: '获取黑话列表失败',
+  })
 }
 
 /**
  * 获取黑话详细信息
  */
 export async function getJargonDetail(jargonId: number): Promise<JargonDetailResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${jargonId}`, {})
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '获取黑话详情失败')
-  }
-  
-  return response.json()
+  return backendApi.get<JargonDetailResponse>(`${API_BASE}/${jargonId}`, {
+    errorMessage: '获取黑话详情失败',
+  })
 }
 
 /**
@@ -89,17 +68,10 @@ export async function getJargonDetail(jargonId: number): Promise<JargonDetailRes
 export async function createJargon(
   data: JargonCreateRequest
 ): Promise<JargonCreateResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/`, {
-    method: 'POST',
-    body: JSON.stringify(data),
+  return backendApi.post<JargonCreateResponse>(`${API_BASE}/`, {
+    body: data,
+    errorMessage: '创建黑话失败',
   })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '创建黑话失败')
-  }
-  
-  return response.json()
 }
 
 /**
@@ -109,64 +81,38 @@ export async function updateJargon(
   jargonId: number,
   data: JargonUpdateRequest
 ): Promise<JargonUpdateResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${jargonId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
+  return backendApi.patch<JargonUpdateResponse>(`${API_BASE}/${jargonId}`, {
+    body: data,
+    errorMessage: '更新黑话失败',
   })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '更新黑话失败')
-  }
-  
-  return response.json()
 }
 
 /**
  * 删除黑话
  */
 export async function deleteJargon(jargonId: number): Promise<JargonDeleteResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${jargonId}`, {
-    method: 'DELETE',
+  return backendApi.delete<JargonDeleteResponse>(`${API_BASE}/${jargonId}`, {
+    errorMessage: '删除黑话失败',
   })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '删除黑话失败')
-  }
-  
-  return response.json()
 }
 
 /**
  * 批量删除黑话
  */
 export async function batchDeleteJargons(jargonIds: number[]): Promise<JargonDeleteResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/batch/delete`, {
-    method: 'POST',
-    body: JSON.stringify({ ids: jargonIds }),
+  return backendApi.post<JargonDeleteResponse>(`${API_BASE}/batch/delete`, {
+    body: { ids: jargonIds },
+    errorMessage: '批量删除黑话失败',
   })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '批量删除黑话失败')
-  }
-  
-  return response.json()
 }
 
 /**
  * 获取黑话统计数据
  */
 export async function getJargonStats(): Promise<JargonStatsResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/stats/summary`, {})
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '获取黑话统计失败')
-  }
-  
-  return response.json()
+  return backendApi.get<JargonStatsResponse>(`${API_BASE}/stats/summary`, {
+    errorMessage: '获取黑话统计失败',
+  })
 }
 
 /**
@@ -176,18 +122,8 @@ export async function batchSetJargonStatus(
   jargonIds: number[],
   isJargon: boolean
 ): Promise<JargonUpdateResponse> {
-  const queryParams = new URLSearchParams()
-  jargonIds.forEach(id => queryParams.append('ids', id.toString()))
-  queryParams.append('is_jargon', isJargon.toString())
-  
-  const response = await fetchWithAuth(`${API_BASE}/batch/set-jargon?${queryParams}`, {
-    method: 'POST',
+  return backendApi.post<JargonUpdateResponse>(`${API_BASE}/batch/set-jargon`, {
+    query: { ids: jargonIds, is_jargon: isJargon },
+    errorMessage: '批量设置黑话状态失败',
   })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '批量设置黑话状态失败')
-  }
-  
-  return response.json()
 }

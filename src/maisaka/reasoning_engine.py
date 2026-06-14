@@ -1434,7 +1434,12 @@ class MaisakaReasoningEngine:
 
         source_sequence = message.raw_message
         visible_text = self._build_legacy_visible_text(message, source_sequence, source_kind=source_kind)
-        planner_prefix = build_planner_user_prefix_from_session_message(message)
+        include_chat_id = self._runtime._is_focus_mode_active_for_current_chat()
+        planner_prefix = build_planner_user_prefix_from_session_message(
+            message,
+            include_chat_id=include_chat_id,
+            is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
+        )
         if contains_complex_message(source_sequence):
             return ComplexSessionMessage.from_session_message(
                 message,

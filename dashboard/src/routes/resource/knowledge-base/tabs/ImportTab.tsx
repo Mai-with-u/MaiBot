@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
 
 import { Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search, SlidersHorizontal, Upload } from 'lucide-react'
 
@@ -21,17 +20,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { cn } from '@/lib/utils'
 import type {
-  MemoryImportChunkPayload,
   MemoryImportChatTargetPayload,
-  MemoryImportFilePayload,
-  MemoryImportInputMode,
-  MemoryImportRetrySummary,
-  MemoryImportSettings,
   MemoryImportTaskKind,
-  MemoryImportTaskPayload,
 } from '@/lib/memory-api'
 
 import { IMPORT_CHUNK_PAGE_SIZE, IMPORT_KIND_OPTIONS, RUNNING_IMPORT_STATUS } from '../constants'
+import type { UseImportFormResult } from '../hooks/useImportForm'
+import type { UseImportQueueResult } from '../hooks/useImportQueue'
 import {
   formatImportTime,
   formatProgressPercent,
@@ -120,172 +115,44 @@ function filterChatTargets(
 }
 
 export interface ImportTabProps {
-  importCreateMode: MemoryImportTaskKind
-  setImportCreateMode: Dispatch<SetStateAction<MemoryImportTaskKind>>
-  importSettings: MemoryImportSettings
-  importCommonFileConcurrency: string
-  setImportCommonFileConcurrency: Dispatch<SetStateAction<string>>
-  importCommonChunkConcurrency: string
-  setImportCommonChunkConcurrency: Dispatch<SetStateAction<string>>
-  importCommonNarrativeWindowSize: string
-  setImportCommonNarrativeWindowSize: Dispatch<SetStateAction<string>>
-  importCommonNarrativeOverlap: string
-  setImportCommonNarrativeOverlap: Dispatch<SetStateAction<string>>
-  importCommonFactualTargetSize: string
-  setImportCommonFactualTargetSize: Dispatch<SetStateAction<string>>
-  importCommonLlmEnabled: boolean
-  setImportCommonLlmEnabled: Dispatch<SetStateAction<boolean>>
-  importCommonChatLog: boolean
-  setImportCommonChatLog: Dispatch<SetStateAction<boolean>>
-  importCommonChatId: string
-  setImportCommonChatId: Dispatch<SetStateAction<string>>
-  importChatTargets: MemoryImportChatTargetPayload[]
-  importCommonStrategyOverride: string
-  setImportCommonStrategyOverride: Dispatch<SetStateAction<string>>
-  importCommonDedupePolicy: string
-  setImportCommonDedupePolicy: Dispatch<SetStateAction<string>>
-  importCommonChatReferenceTime: string
-  setImportCommonChatReferenceTime: Dispatch<SetStateAction<string>>
-  importCommonForce: boolean
-  setImportCommonForce: Dispatch<SetStateAction<boolean>>
-  importCommonClearManifest: boolean
-  setImportCommonClearManifest: Dispatch<SetStateAction<boolean>>
-
-  uploadInputMode: MemoryImportInputMode
-  setUploadInputMode: Dispatch<SetStateAction<MemoryImportInputMode>>
-  uploadFiles: File[]
-  setUploadFiles: Dispatch<SetStateAction<File[]>>
-
-  pasteName: string
-  setPasteName: Dispatch<SetStateAction<string>>
-  pasteMode: MemoryImportInputMode
-  setPasteMode: Dispatch<SetStateAction<MemoryImportInputMode>>
-  pasteContent: string
-  setPasteContent: Dispatch<SetStateAction<string>>
-
-  rawAlias: string
-  setRawAlias: Dispatch<SetStateAction<string>>
-  rawInputMode: MemoryImportInputMode
-  setRawInputMode: Dispatch<SetStateAction<MemoryImportInputMode>>
-  rawRelativePath: string
-  setRawRelativePath: Dispatch<SetStateAction<string>>
-  rawGlob: string
-  setRawGlob: Dispatch<SetStateAction<string>>
-  rawRecursive: boolean
-  setRawRecursive: Dispatch<SetStateAction<boolean>>
-
-  openieAlias: string
-  setOpenieAlias: Dispatch<SetStateAction<string>>
-  openieRelativePath: string
-  setOpenieRelativePath: Dispatch<SetStateAction<string>>
-  openieIncludeAllJson: boolean
-  setOpenieIncludeAllJson: Dispatch<SetStateAction<boolean>>
-
-  convertAlias: string
-  setConvertAlias: Dispatch<SetStateAction<string>>
-  convertTargetAlias: string
-  setConvertTargetAlias: Dispatch<SetStateAction<string>>
-  convertRelativePath: string
-  setConvertRelativePath: Dispatch<SetStateAction<string>>
-  convertTargetRelativePath: string
-  setConvertTargetRelativePath: Dispatch<SetStateAction<string>>
-  convertDimension: string
-  setConvertDimension: Dispatch<SetStateAction<string>>
-  convertBatchSize: string
-  setConvertBatchSize: Dispatch<SetStateAction<string>>
-
-  backfillAlias: string
-  setBackfillAlias: Dispatch<SetStateAction<string>>
-  backfillLimit: string
-  setBackfillLimit: Dispatch<SetStateAction<string>>
-  backfillRelativePath: string
-  setBackfillRelativePath: Dispatch<SetStateAction<string>>
-  backfillDryRun: boolean
-  setBackfillDryRun: Dispatch<SetStateAction<boolean>>
-  backfillNoCreatedFallback: boolean
-  setBackfillNoCreatedFallback: Dispatch<SetStateAction<boolean>>
-
-  maibotSourceDb: string
-  setMaibotSourceDb: Dispatch<SetStateAction<string>>
-  maibotTimeFrom: string
-  setMaibotTimeFrom: Dispatch<SetStateAction<string>>
-  maibotTimeTo: string
-  setMaibotTimeTo: Dispatch<SetStateAction<string>>
-  maibotStartId: string
-  setMaibotStartId: Dispatch<SetStateAction<string>>
-  maibotEndId: string
-  setMaibotEndId: Dispatch<SetStateAction<string>>
-  maibotStreamIds: string
-  setMaibotStreamIds: Dispatch<SetStateAction<string>>
-  maibotGroupIds: string
-  setMaibotGroupIds: Dispatch<SetStateAction<string>>
-  maibotUserIds: string
-  setMaibotUserIds: Dispatch<SetStateAction<string>>
-  maibotReadBatchSize: string
-  setMaibotReadBatchSize: Dispatch<SetStateAction<string>>
-  maibotCommitWindowRows: string
-  setMaibotCommitWindowRows: Dispatch<SetStateAction<string>>
-  maibotEmbedWorkers: string
-  setMaibotEmbedWorkers: Dispatch<SetStateAction<string>>
-  maibotNoResume: boolean
-  setMaibotNoResume: Dispatch<SetStateAction<boolean>>
-  maibotResetState: boolean
-  setMaibotResetState: Dispatch<SetStateAction<boolean>>
-  maibotDryRun: boolean
-  setMaibotDryRun: Dispatch<SetStateAction<boolean>>
-  maibotVerifyOnly: boolean
-  setMaibotVerifyOnly: Dispatch<SetStateAction<boolean>>
-
-  submitImportByMode: () => Promise<void>
-  creatingImport: boolean
-
-  pathResolveAlias: string
-  setPathResolveAlias: Dispatch<SetStateAction<string>>
-  importAliasKeys: string[]
-  pathResolveRelativePath: string
-  setPathResolveRelativePath: Dispatch<SetStateAction<string>>
-  pathResolveMustExist: boolean
-  setPathResolveMustExist: Dispatch<SetStateAction<boolean>>
-  resolveImportPath: () => Promise<void>
-  resolvingPath: boolean
-  pathResolveOutput: string
-
-  refreshImportQueue: () => Promise<void>
-  runningImportTasks: MemoryImportTaskPayload[]
-  queuedImportTasks: MemoryImportTaskPayload[]
-  recentImportTasks: MemoryImportTaskPayload[]
-  selectedImportTaskId: string
-  selectImportTask: (taskId: string) => Promise<void>
-  importAutoPolling: boolean
-  setImportAutoPolling: Dispatch<SetStateAction<boolean>>
-  importPollInterval: number
-  importErrorText: string
-
-  cancelSelectedImportTask: () => Promise<void>
-  retrySelectedImportTask: () => Promise<void>
-  selectedImportTaskLoading: boolean
-  selectedImportTaskResolved: MemoryImportTaskPayload | null | undefined
-  selectedImportRetrySummary: MemoryImportRetrySummary | null | undefined
-  selectedImportTaskErrorText: string
-
-  selectedImportFiles: MemoryImportFilePayload[]
-  selectedImportFileId: string
-  selectImportFile: (fileId: string) => Promise<void>
-
-  importChunkTotal: number
-  importChunkOffset: number
-  moveImportChunkPage: (direction: -1 | 1) => Promise<void>
-  canImportChunkPrev: boolean
-  canImportChunkNext: boolean
-  importChunksLoading: boolean
-  selectedImportChunks: MemoryImportChunkPayload[]
+  queue: UseImportQueueResult
+  form: UseImportFormResult
 }
 
-export function ImportTab(props: ImportTabProps) {
+export function ImportTab({ queue, form }: ImportTabProps) {
+  const {
+    refreshImportQueue,
+    runningImportTasks,
+    queuedImportTasks,
+    recentImportTasks,
+    selectedImportTaskId,
+    selectImportTask,
+    importAutoPolling,
+    setImportAutoPolling,
+    importPollInterval,
+    importErrorText,
+    cancelSelectedImportTask,
+    retrySelectedImportTask,
+    selectedImportTaskLoading,
+    selectedImportTaskResolved,
+    selectedImportRetrySummary,
+    selectedImportTaskErrorText,
+    selectedImportFiles,
+    selectedImportFileId,
+    selectImportFile,
+    importChunkTotal,
+    importChunkOffset,
+    moveImportChunkPage,
+    canImportChunkPrev,
+    canImportChunkNext,
+    importChunksLoading,
+    selectedImportChunks,
+  } = queue
   const {
     importCreateMode,
     setImportCreateMode,
     importSettings,
+    importChatTargets,
     importCommonFileConcurrency,
     setImportCommonFileConcurrency,
     importCommonChunkConcurrency,
@@ -298,15 +165,14 @@ export function ImportTab(props: ImportTabProps) {
     setImportCommonFactualTargetSize,
     importCommonLlmEnabled,
     setImportCommonLlmEnabled,
-    importCommonChatLog,
-    setImportCommonChatLog,
-    importCommonChatId,
-    setImportCommonChatId,
-    importChatTargets,
     importCommonStrategyOverride,
     setImportCommonStrategyOverride,
     importCommonDedupePolicy,
     setImportCommonDedupePolicy,
+    importCommonChatLog,
+    setImportCommonChatLog,
+    importCommonChatId,
+    setImportCommonChatId,
     importCommonChatReferenceTime,
     setImportCommonChatReferenceTime,
     importCommonForce,
@@ -403,33 +269,7 @@ export function ImportTab(props: ImportTabProps) {
     resolveImportPath,
     resolvingPath,
     pathResolveOutput,
-    refreshImportQueue,
-    runningImportTasks,
-    queuedImportTasks,
-    recentImportTasks,
-    selectedImportTaskId,
-    selectImportTask,
-    importAutoPolling,
-    setImportAutoPolling,
-    importPollInterval,
-    importErrorText,
-    cancelSelectedImportTask,
-    retrySelectedImportTask,
-    selectedImportTaskLoading,
-    selectedImportTaskResolved,
-    selectedImportRetrySummary,
-    selectedImportTaskErrorText,
-    selectedImportFiles,
-    selectedImportFileId,
-    selectImportFile,
-    importChunkTotal,
-    importChunkOffset,
-    moveImportChunkPage,
-    canImportChunkPrev,
-    canImportChunkNext,
-    importChunksLoading,
-    selectedImportChunks,
-  } = props
+  } = form
   const [chatTargetQuery, setChatTargetQuery] = useState('')
   const selectedImportChatTarget = useMemo(
     () => importChatTargets.find((chat) => chat.chat_id === importCommonChatId.trim()),

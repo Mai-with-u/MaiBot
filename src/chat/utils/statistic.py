@@ -366,10 +366,15 @@ class StatisticOutputTask(AsyncTask):
     """统计输出任务"""
 
     SEP_LINE = "-" * 84
+    RUN_INTERVAL_SECONDS = 15 * 60
 
     def __init__(self, record_file_path: str | None = None):
-        # 延迟300秒启动，运行间隔300秒
-        super().__init__(task_name="Statistics Data Output Task", wait_before_start=0, run_interval=300)
+        # 启动后立即运行，之后每15分钟输出一次统计数据
+        super().__init__(
+            task_name="Statistics Data Output Task",
+            wait_before_start=0,
+            run_interval=self.RUN_INTERVAL_SECONDS,
+        )
 
         self.name_mapping: dict[str, tuple[str, float]] = {}
         """
@@ -2676,8 +2681,12 @@ class AsyncStatisticOutputTask(AsyncTask):
     """完全异步的统计输出任务 - 更高性能版本"""
 
     def __init__(self, record_file_path: str | None = None):
-        # 延迟0秒启动，运行间隔300秒
-        super().__init__(task_name="Async Statistics Data Output Task", wait_before_start=0, run_interval=300)
+        # 启动后立即运行，之后每15分钟输出一次统计数据
+        super().__init__(
+            task_name="Async Statistics Data Output Task",
+            wait_before_start=0,
+            run_interval=StatisticOutputTask.RUN_INTERVAL_SECONDS,
+        )
 
         # 直接复用 StatisticOutputTask 的初始化逻辑
         temp_stat_task = StatisticOutputTask(record_file_path)

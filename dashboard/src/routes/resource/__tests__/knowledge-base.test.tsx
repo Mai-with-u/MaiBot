@@ -1,9 +1,21 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { KnowledgeBasePage } from '../knowledge-base'
 import * as memoryApi from '@/lib/memory-api'
+
+// 页面现已依赖 TanStack Query（导入队列/表单 hook），渲染需提供 QueryClient（与 main.tsx 一致）。
+// 每次渲染用全新 client，避免测试间缓存泄漏。
+function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <KnowledgeBasePage />
+    </QueryClientProvider>,
+  )
+}
 
 const navigateMock = vi.fn()
 const toastMock = vi.fn()
@@ -713,7 +725,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('loads import settings/guide/tasks on first render', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -727,7 +739,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('rebuilds all vectors from overview controls', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('button', { name: '重建向量' }))
@@ -746,7 +758,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('creates import tasks for all 7 modes and calls correct endpoints', async () => {
     const user = userEvent.setup()
-    const { container } = render(<KnowledgeBasePage />)
+    const { container } = renderPage()
 
     const openImportTab = async () => {
       await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -815,7 +827,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('formats MaiBot migration datetime-local values and numeric options', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -850,7 +862,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('blocks invalid MaiBot migration input before creating a task', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -898,7 +910,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('loads task detail and supports chunk pagination', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -927,7 +939,7 @@ describe('KnowledgeBasePage import workflow', () => {
       task: mockImportCompletedWithErrorsDetail('import-run-1'),
     })
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -938,7 +950,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('supports cancel and retry actions for selected task', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -973,7 +985,7 @@ describe('KnowledgeBasePage import workflow', () => {
       },
     })
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
@@ -991,7 +1003,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('creates tuning task and applies best profile (tuning module)', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '调优' }))
@@ -1013,7 +1025,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('previews executes and restores source delete (delete module)', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '删除' }))
@@ -1062,7 +1074,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('shows feedback correction history and supports rollback', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '纠错历史' }))
@@ -1085,7 +1097,7 @@ describe('KnowledgeBasePage import workflow', () => {
 
   it('renders audit timeline and jumps to an episode target', async () => {
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '审计时间线' }))
@@ -1154,7 +1166,7 @@ describe('KnowledgeBasePage import workflow', () => {
     })
 
     const user = userEvent.setup()
-    render(<KnowledgeBasePage />)
+    renderPage()
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '审计时间线' }))

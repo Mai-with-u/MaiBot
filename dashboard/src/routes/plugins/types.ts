@@ -48,6 +48,27 @@ export function getPluginTypeLabel(plugin: { manifest?: { plugin_type?: PluginTy
   return PLUGIN_TYPE_LABELS[getPluginType(plugin)]
 }
 
+export function getPluginProgressDetail(progress: PluginLoadProgress): string | null {
+  const parts: string[] = []
+  const hasMirrorProgress = progress.mirror_index && progress.total_mirrors
+
+  if (progress.mirror_name) {
+    parts.push(
+      hasMirrorProgress
+        ? `镜像源 ${progress.mirror_index}/${progress.total_mirrors}：${progress.mirror_name}`
+        : `镜像源：${progress.mirror_name}`
+    )
+  } else if (hasMirrorProgress) {
+    parts.push(`镜像源 ${progress.mirror_index}/${progress.total_mirrors}`)
+  }
+
+  if (progress.attempt && progress.max_attempts) {
+    parts.push(`尝试 ${progress.attempt}/${progress.max_attempts}`)
+  }
+
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 // 导出类型
 export type MarketplaceSortKey = 'default' | 'downloads' | 'likes' | 'rating' | 'latest'
 

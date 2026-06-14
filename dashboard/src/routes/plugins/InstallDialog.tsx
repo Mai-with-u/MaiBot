@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertCircle, CheckCircle2, Download, Loader2 } from 'lucide-react'
 
 import type { PluginInfo, PluginLoadProgress } from './types'
+import { getPluginProgressDetail } from './types'
 
 interface InstallDialogProps {
   open: boolean
@@ -29,21 +30,27 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
   const displayedProgress = installProgress ?? lastInstallProgress
   const isInstalling = displayedProgress?.stage === 'loading'
   const installFinished = displayedProgress?.stage === 'success' || displayedProgress?.stage === 'error'
+  const progressDetail = displayedProgress ? getPluginProgressDetail(displayedProgress) : null
 
   useEffect(() => {
-    if (installProgress) {
-      setLastInstallProgress(installProgress)
+    if (!installProgress) {
+      return
     }
+    const timer = window.setTimeout(() => setLastInstallProgress(installProgress), 0)
+    return () => window.clearTimeout(timer)
   }, [installProgress])
 
   useEffect(() => {
-    if (!open) {
-      setLastInstallProgress(null)
+    if (open) {
+      return
     }
+    const timer = window.setTimeout(() => setLastInstallProgress(null), 0)
+    return () => window.clearTimeout(timer)
   }, [open])
 
   useEffect(() => {
-    setLastInstallProgress(null)
+    const timer = window.setTimeout(() => setLastInstallProgress(null), 0)
+    return () => window.clearTimeout(timer)
   }, [plugin?.id])
 
   const handleInstall = () => {
@@ -215,6 +222,11 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
                 <div>插件 ID：{displayedProgress.plugin_id || plugin?.id}</div>
                 <div>分支：{branchInputMode === 'custom' ? customBranch : selectedBranch}</div>
               </div>
+              {progressDetail && (
+                <div className="break-words text-xs text-muted-foreground">
+                  {progressDetail}
+                </div>
+              )}
             </div>
           )}
         </div>

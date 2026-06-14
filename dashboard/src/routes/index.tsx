@@ -1,4 +1,3 @@
-import type { TFunction } from 'i18next'
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
@@ -6,7 +5,6 @@ import {
   AlertCircle,
   BarChart3,
   CheckCircle2,
-  ClipboardCheck,
   Clock,
   Database,
   DollarSign,
@@ -17,16 +15,12 @@ import {
   MessageSquare,
   Plus,
   Power,
-  Puzzle,
   RefreshCw,
-  RotateCcw,
-  Settings,
   Smile,
   TrendingUp,
   Zap,
-  type LucideIcon,
 } from 'lucide-react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bar,
@@ -40,7 +34,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import axios from 'axios'
 
 import { ExpressionReviewer } from '@/components/expression-reviewer'
 import { RestartOverlay } from '@/components/restart-overlay'
@@ -72,21 +65,19 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { ZoomableChart } from '@/components/ui/zoomable-chart'
-import { getBotConfigCached, getModelConfigCached } from '@/lib/config-api'
-import { getReviewStats } from '@/lib/expression-api'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
-import {
-  getInstalledPlugins,
-  getPluginConfigSchema,
-  type InstalledPlugin,
-  type PluginConfigSchema,
-} from '@/lib/plugin-api'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
-import { getLocalCacheStats, type LocalCacheStats } from '@/lib/system-api'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import type { DashboardStyle } from '@/lib/theme/tokens'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
+
+import { useBotStatus } from './home/hooks/useBotStatus'
+import { useDashboardData } from './home/hooks/useDashboardData'
+import { useFeatureStatus } from './home/hooks/useFeatureStatus'
+import { useLocalCacheMetrics } from './home/hooks/useLocalCacheMetrics'
+import { useMaibotVersion } from './home/hooks/useMaibotVersion'
+import { useQuickShortcuts } from './home/hooks/useQuickShortcuts'
+import { useReviewStats } from './home/hooks/useReviewStats'
 
 // 主导出组件：包装 RestartProvider
 export function IndexPage() {
@@ -95,272 +86,6 @@ export function IndexPage() {
       <IndexPageContent />
     </RestartProvider>
   )
-}
-
-// 机器人状态接口
-interface BotStatus {
-  running: boolean
-  uptime: number
-  version: string
-  start_time: string
-}
-
-interface ReleaseStatus {
-  version: string
-  url: string
-}
-
-interface StatisticsSummary {
-  total_requests: number
-  total_cost: number
-  total_tokens: number
-  online_time: number
-  total_messages: number
-  total_replies: number
-  avg_response_time: number
-  cost_per_hour: number
-  tokens_per_hour: number
-}
-
-interface ModelStatistics {
-  model_name: string
-  request_count: number
-  total_cost: number
-  total_tokens: number
-  avg_response_time: number
-}
-
-interface TimeSeriesData {
-  timestamp: string
-  requests: number
-  cost: number
-  tokens: number
-}
-
-interface RecentActivity {
-  timestamp: string
-  model: string
-  request_type: string
-  tokens: number
-  cost: number
-  time_cost: number
-  status: string
-}
-
-interface DashboardData {
-  summary: StatisticsSummary
-  model_stats: ModelStatistics[]
-  hourly_data: TimeSeriesData[]
-  daily_data: TimeSeriesData[]
-  recent_activity: RecentActivity[]
-}
-
-interface FeatureStatus {
-  memoryEnabled: boolean
-  visualEnabled: boolean
-}
-
-type QuickShortcutCategory = 'system' | 'config' | 'resource' | 'plugin' | 'monitor' | 'external'
-
-interface QuickShortcutDefinition {
-  id: string
-  category: QuickShortcutCategory
-  label: string
-  description: string
-  icon: LucideIcon
-  href?: string
-  action?: () => void | Promise<void>
-  disabled?: boolean
-  badge?: string
-  external?: boolean
-}
-
-const DEFAULT_TIME_RANGE = 24
-const DASHBOARD_DATA_CACHE_TTL = 5 * 60_000
-const BOT_STATUS_CACHE_TTL = 30_000
-const LOCAL_CACHE_STATS_CACHE_TTL = 15 * 60_000
-const QUICK_SHORTCUT_STORAGE_KEY = 'maibot-home-quick-shortcuts'
-const DEFAULT_QUICK_SHORTCUT_IDS = [
-  'action:restart',
-  'action:expression-review',
-  'route:logs',
-  'route:plugin-market',
-  'route:settings',
-  'external:statistics',
-]
-const dashboardDataCache = new Map<number, { timestamp: number; data: DashboardData }>()
-let botStatusCache: { timestamp: number; data: BotStatus } | null = null
-let localCacheStatsCache: { timestamp: number; data: LocalCacheStats } | null = null
-
-function loadQuickShortcutIds(): string[] {
-  const fallback = [...DEFAULT_QUICK_SHORTCUT_IDS]
-  if (typeof window === 'undefined') {
-    return fallback
-  }
-
-  const stored = localStorage.getItem(QUICK_SHORTCUT_STORAGE_KEY)
-  if (!stored) {
-    return fallback
-  }
-
-  try {
-    const parsed = JSON.parse(stored)
-    if (Array.isArray(parsed)) {
-      const ids = parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
-      return ids.length > 0 ? Array.from(new Set(ids)) : fallback
-    }
-  } catch {
-    return fallback
-  }
-
-  return fallback
-}
-
-function saveQuickShortcutIds(ids: string[]): void {
-  localStorage.setItem(QUICK_SHORTCUT_STORAGE_KEY, JSON.stringify(Array.from(new Set(ids))))
-}
-
-function getPluginShortcutId(pluginId: string, tabId?: string): string {
-  const encodedPluginId = encodeURIComponent(pluginId)
-  if (!tabId) {
-    return `plugin-config:${encodedPluginId}`
-  }
-  return `plugin-config:${encodedPluginId}:tab:${encodeURIComponent(tabId)}`
-}
-
-function parsePluginShortcutId(id: string): { pluginId: string; tabId?: string } | null {
-  if (!id.startsWith('plugin-config:')) {
-    return null
-  }
-
-  const [, encodedPluginId, marker, encodedTabId] = id.split(':')
-  if (!encodedPluginId) {
-    return null
-  }
-
-  return {
-    pluginId: decodeURIComponent(encodedPluginId),
-    tabId: marker === 'tab' && encodedTabId ? decodeURIComponent(encodedTabId) : undefined,
-  }
-}
-
-function getPluginConfigHref(pluginId: string, tabId?: string): string {
-  const params = new URLSearchParams({ plugin: pluginId })
-  if (tabId) {
-    params.set('tab', tabId)
-  }
-  return `/plugin-config?${params.toString()}`
-}
-
-function buildBasePluginShortcut(plugin: InstalledPlugin, t: TFunction): QuickShortcutDefinition {
-  const pluginName = plugin.manifest.name || plugin.id
-  return {
-    id: getPluginShortcutId(plugin.id),
-    category: 'plugin',
-    label: t('home.pluginShortcuts.baseLabel', { plugin: pluginName }),
-    description: t('home.pluginShortcuts.baseDescription', { plugin: pluginName }),
-    icon: Puzzle,
-    href: getPluginConfigHref(plugin.id),
-  }
-}
-
-async function loadPluginTabShortcuts(
-  plugin: InstalledPlugin,
-  t: TFunction,
-  selectedTabIds?: Set<string>
-): Promise<QuickShortcutDefinition[]> {
-  const schemaResult = await getPluginConfigSchema(plugin.id)
-  if (!schemaResult.success || !schemaResult.data) {
-    return []
-  }
-
-  const pluginName = plugin.manifest.name || plugin.id
-  const schema = schemaResult.data as PluginConfigSchema
-  const schemaTabs = schema.layout.type === 'tabs' ? schema.layout.tabs : []
-  const tabs = selectedTabIds ? schemaTabs.filter((tab) => selectedTabIds.has(tab.id)) : schemaTabs
-  return tabs.map((tab) => ({
-    id: getPluginShortcutId(plugin.id, tab.id),
-    category: 'plugin' as const,
-    label: `${pluginName} / ${tab.title || tab.id}`,
-    description: t('home.pluginShortcuts.tabDescription', {
-      plugin: pluginName,
-      tab: tab.title || tab.id,
-    }),
-    icon: Puzzle,
-    href: getPluginConfigHref(plugin.id, tab.id),
-  }))
-}
-
-function getSelectedPluginTabIds(ids: string[]): Map<string, Set<string>> {
-  const selectedTabs = new Map<string, Set<string>>()
-  for (const id of ids) {
-    const parsed = parsePluginShortcutId(id)
-    if (!parsed?.tabId) {
-      continue
-    }
-
-    const pluginTabs = selectedTabs.get(parsed.pluginId) ?? new Set<string>()
-    pluginTabs.add(parsed.tabId)
-    selectedTabs.set(parsed.pluginId, pluginTabs)
-  }
-  return selectedTabs
-}
-
-function getSelectedPluginIds(ids: string[]): Set<string> {
-  const selectedPluginIds = new Set<string>()
-  for (const id of ids) {
-    const parsed = parsePluginShortcutId(id)
-    if (parsed) {
-      selectedPluginIds.add(parsed.pluginId)
-    }
-  }
-  return selectedPluginIds
-}
-
-function getFallbackPluginShortcut(id: string, t: TFunction): QuickShortcutDefinition | null {
-  const parsed = parsePluginShortcutId(id)
-  if (!parsed) {
-    return null
-  }
-
-  return {
-    id,
-    category: 'plugin',
-    label: parsed.tabId
-      ? t('home.pluginShortcuts.fallbackTabLabel', { plugin: parsed.pluginId, tab: parsed.tabId })
-      : t('home.pluginShortcuts.fallbackLabel', { plugin: parsed.pluginId }),
-    description: parsed.tabId
-      ? t('home.pluginShortcuts.fallbackTabDescription')
-      : t('home.pluginShortcuts.fallbackDescription'),
-    icon: Puzzle,
-    href: getPluginConfigHref(parsed.pluginId, parsed.tabId),
-  }
-}
-
-function getCachedDashboardData(hours: number): DashboardData | null {
-  const cached = dashboardDataCache.get(hours)
-  if (!cached || Date.now() - cached.timestamp > DASHBOARD_DATA_CACHE_TTL) {
-    return null
-  }
-  return cached.data
-}
-
-function getStaleDashboardData(hours: number): DashboardData | null {
-  return dashboardDataCache.get(hours)?.data ?? null
-}
-
-function getCachedBotStatus(): BotStatus | null {
-  if (!botStatusCache || Date.now() - botStatusCache.timestamp > BOT_STATUS_CACHE_TTL) {
-    return null
-  }
-  return botStatusCache.data
-}
-
-function getCachedLocalCacheStats(): LocalCacheStats | null {
-  if (!localCacheStatsCache || Date.now() - localCacheStatsCache.timestamp > LOCAL_CACHE_STATS_CACHE_TTL) {
-    return null
-  }
-  return localCacheStatsCache.data
 }
 
 const FUTURE_RETRO_PIE_COLORS = [
@@ -474,544 +199,38 @@ function IndexPageContent() {
   const { t, i18n } = useTranslation()
   const { themeConfig } = useContext(ThemeProviderContext)
   const currentLocale = i18n.resolvedLanguage || i18n.language || 'zh-CN'
-  const initialDashboardData = getCachedDashboardData(DEFAULT_TIME_RANGE) ?? getStaleDashboardData(DEFAULT_TIME_RANGE)
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(initialDashboardData)
-  const [loading, setLoading] = useState(!initialDashboardData)
-  const [loadingProgress, setLoadingProgress] = useState(0)
-  const [timeRange, setTimeRange] = useState(DEFAULT_TIME_RANGE) // 默认24小时
-  const [hitokoto, setHitokoto] = useState<{ hitokoto: string; from: string } | null>(null)
-  const [hitokotoLoading, setHitokotoLoading] = useState(true)
-  const [botStatus, setBotStatus] = useState<BotStatus | null>(botStatusCache?.data ?? null)
-  const [isBotStatusLoading, setIsBotStatusLoading] = useState(!botStatusCache)
-  const [maibotStableRelease, setMaibotStableRelease] = useState<ReleaseStatus | null>(null)
-  const [maibotTestRelease, setMaibotTestRelease] = useState<ReleaseStatus | null>(null)
-  const [featureStatus, setFeatureStatus] = useState<FeatureStatus>({
-    memoryEnabled: false,
-    visualEnabled: false,
-  })
-  const [localCacheStats, setLocalCacheStats] = useState<LocalCacheStats | null>(localCacheStatsCache?.data ?? null)
-  const [isLocalCacheStatsLoading, setIsLocalCacheStatsLoading] = useState(!localCacheStatsCache)
-  const [isReviewerOpen, setIsReviewerOpen] = useState(false)
-  const [uncheckedCount, setUncheckedCount] = useState(0)
-  const [quickShortcutIds, setQuickShortcutIds] = useState<string[]>(loadQuickShortcutIds)
-  const [quickShortcutDialogOpen, setQuickShortcutDialogOpen] = useState(false)
-  const [quickShortcutSearch, setQuickShortcutSearch] = useState('')
-  const [pluginShortcuts, setPluginShortcuts] = useState<QuickShortcutDefinition[]>([])
-  const [isPluginShortcutsLoading, setIsPluginShortcutsLoading] = useState(false)
   const { triggerRestart, isRestarting } = useRestart()
-  
-  // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
-  const isMountedRef = useRef(true)
 
-  // 组件卸载时清理
-  useEffect(() => {
-    isMountedRef.current = true
-    return () => {
-      isMountedRef.current = false
-    }
-  }, [])
+  // 各数据源领域 hook（页面逻辑下沉，主文件退化为薄渲染层）
+  const { dashboardData, loading, loadingProgress, timeRange, setTimeRange, fetchDashboardData } = useDashboardData()
+  const { botStatus, isBotStatusLoading, fetchBotStatus } = useBotStatus()
+  const { featureStatus, fetchFeatureStatus } = useFeatureStatus()
+  const { localCacheStats, isLocalCacheStatsLoading, fetchLocalCacheStats } = useLocalCacheMetrics()
+  const { uncheckedCount, fetchReviewStats } = useReviewStats()
+  const { hitokoto, hitokotoLoading, maibotStableRelease, fetchHitokoto } = useMaibotVersion()
 
-  useEffect(() => {
-    let mounted = true
-
-    const loadLatestVersions = async () => {
-      try {
-        const response = await fetch('https://api.github.com/repos/Mai-with-u/MaiBot/releases?per_page=20', {
-          headers: { Accept: 'application/vnd.github+json' },
-        })
-        if (!response.ok) {
-          throw new Error(`GitHub release status ${response.status}`)
-        }
-        const releases = await response.json() as Array<{
-          draft?: boolean
-          prerelease?: boolean
-          tag_name?: string
-          html_url?: string
-        }>
-        const visibleReleases = releases.filter((release) => !release.draft)
-        const stableRelease = visibleReleases.find((release) => !release.prerelease)
-        const testRelease = visibleReleases[0]
-        if (mounted) {
-          if (stableRelease?.tag_name) {
-            setMaibotStableRelease({
-              version: String(stableRelease.tag_name).replace(/^v/i, '').trim(),
-              url: stableRelease.html_url || 'https://github.com/Mai-with-u/MaiBot/releases',
-            })
-          }
-          if (testRelease?.tag_name) {
-            setMaibotTestRelease({
-              version: String(testRelease.tag_name).replace(/^v/i, '').trim(),
-              url: testRelease.html_url || 'https://github.com/Mai-with-u/MaiBot/releases',
-            })
-          }
-        }
-      } catch (error) {
-        console.debug('检查 MaiBot 最新版本失败:', error)
-      }
-
-    }
-
-    void loadLatestVersions()
-
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  // 获取审核统计
-  const fetchReviewStats = useCallback(async () => {
-    try {
-      const result = await getReviewStats()
-      if (result.success && isMountedRef.current) {
-        setUncheckedCount(result.data.unchecked)
-      }
-    } catch (error) {
-      console.error('获取审核统计失败:', error)
-    }
-  }, [])
-
-  // 获取一言
-  const fetchHitokoto = useCallback(async () => {
-    try {
-      setHitokotoLoading(true)
-      const response = await axios.get('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k')
-      if (isMountedRef.current) {
-        setHitokoto({
-          hitokoto: response.data.hitokoto,
-          from: response.data.from || response.data.from_who || t('home.unknownSource')
-        })
-      }
-    } catch (error) {
-      console.error('获取一言失败:', error)
-      if (isMountedRef.current) {
-        setHitokoto({
-          hitokoto: t('home.hitokotoFallback'),
-          from: t('home.hitokotoFallbackFrom')
-        })
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setHitokotoLoading(false)
-      }
-    }
-  }, [t])
-
-  // 获取机器人状态
-  const fetchBotStatus = useCallback(async (force = false) => {
-    const cachedStatus = force ? null : getCachedBotStatus()
-    if (cachedStatus) {
-      setBotStatus(cachedStatus)
-      setIsBotStatusLoading(false)
-      return
-    }
-
-    setIsBotStatusLoading(true)
-    try {
-      const response = await fetchWithAuth('/api/webui/system/status')
-      if (!isMountedRef.current) return
-      if (response.ok) {
-        const data = await response.json()
-        botStatusCache = { timestamp: Date.now(), data }
-        setBotStatus(data)
-      } else if (!botStatusCache) {
-        setBotStatus(null)
-      }
-    } catch (error) {
-      console.error('获取机器人状态失败:', error)
-      if (isMountedRef.current && !botStatusCache) {
-        setBotStatus(null)
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsBotStatusLoading(false)
-      }
-    }
-  }, [])
-
-  // 重启机器人
-  const fetchFeatureStatus = useCallback(async () => {
-    try {
-      const [botConfigResult, modelConfigResult] = await Promise.all([
-        getBotConfigCached(),
-        getModelConfigCached(),
-      ])
-
-      if (!isMountedRef.current || !botConfigResult.success) return
-
-      const botPayload = botConfigResult.data as { config?: Record<string, unknown> } & Record<string, unknown>
-      const botConfig = (botPayload.config ?? botPayload) as Record<string, unknown>
-      const memorixConfig = (botConfig.a_memorix ?? {}) as Record<string, unknown>
-      const memorixPlugin = (memorixConfig.plugin ?? {}) as Record<string, unknown>
-
-      const modelPayload = modelConfigResult.success
-        ? (modelConfigResult.data as { config?: Record<string, unknown> } & Record<string, unknown>)
-        : {}
-      const modelConfig = (modelPayload.config ?? modelPayload) as Record<string, unknown>
-      const taskConfig = (modelConfig.model_task_config ?? {}) as Record<string, unknown>
-      const vlmTask = (taskConfig.vlm ?? {}) as Record<string, unknown>
-      const vlmModelList = Array.isArray(vlmTask.model_list) ? vlmTask.model_list : []
-      const hasVlmModel = vlmModelList.some((modelName) => String(modelName ?? '').trim().length > 0)
-
-      setFeatureStatus({
-        memoryEnabled: memorixPlugin.enabled === true,
-        visualEnabled: hasVlmModel,
-      })
-    } catch (error) {
-      console.error('获取功能启用状态失败:', error)
-      if (isMountedRef.current) {
-        setFeatureStatus({
-          memoryEnabled: false,
-          visualEnabled: false,
-        })
-      }
-    }
-  }, [])
-
-  const fetchLocalCacheStats = useCallback(async () => {
-    const cachedStats = getCachedLocalCacheStats()
-    if (cachedStats) {
-      setLocalCacheStats(cachedStats)
-      setIsLocalCacheStatsLoading(false)
-      return
-    }
-
-    setIsLocalCacheStatsLoading(true)
-    try {
-      const stats = await getLocalCacheStats()
-      if (isMountedRef.current) {
-        localCacheStatsCache = { timestamp: Date.now(), data: stats }
-        setLocalCacheStats(stats)
-      }
-    } catch (error) {
-      console.error('获取本地存储占用失败:', error)
-      if (isMountedRef.current && !localCacheStatsCache) {
-        setLocalCacheStats(null)
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLocalCacheStatsLoading(false)
-      }
-    }
-  }, [])
+  const [isReviewerOpen, setIsReviewerOpen] = useState(false)
 
   const handleRestart = useCallback(async () => {
     await triggerRestart()
   }, [triggerRestart])
 
-  useEffect(() => {
-    let cancelled = false
+  const openReviewer = useCallback(() => setIsReviewerOpen(true), [])
 
-    const loadPluginShortcuts = async () => {
-      const selectedPluginIds = getSelectedPluginIds(quickShortcutIds)
-      const selectedPluginTabIds = getSelectedPluginTabIds(quickShortcutIds)
-      if (!quickShortcutDialogOpen && selectedPluginIds.size === 0) {
-        setPluginShortcuts([])
-        setIsPluginShortcutsLoading(false)
-        return
-      }
+  const {
+    quickShortcutIds,
+    quickShortcutDialogOpen,
+    setQuickShortcutDialogOpen,
+    quickShortcutSearch,
+    setQuickShortcutSearch,
+    isPluginShortcutsLoading,
+    selectedQuickShortcuts,
+    filteredQuickShortcutOptions,
+    toggleQuickShortcut,
+    resetQuickShortcuts,
+  } = useQuickShortcuts({ isRestarting, handleRestart, uncheckedCount, onOpenReviewer: openReviewer })
 
-      setIsPluginShortcutsLoading(true)
-      try {
-        const installedResult = await getInstalledPlugins()
-        if (!installedResult.success || cancelled) {
-          return
-        }
-
-        const enabledPlugins = installedResult.data
-          .filter((plugin) => plugin.disabled !== true && plugin.enabled !== false)
-          .filter((plugin, index, all) => index === all.findIndex((item) => item.id === plugin.id))
-
-        const visiblePlugins = quickShortcutDialogOpen
-          ? enabledPlugins
-          : enabledPlugins.filter((plugin) => selectedPluginIds.has(plugin.id))
-        const baseShortcuts = visiblePlugins.map((plugin) => buildBasePluginShortcut(plugin, t))
-        if (!cancelled) {
-          setPluginShortcuts(baseShortcuts)
-        }
-
-        if (selectedPluginTabIds.size === 0) {
-          return
-        }
-
-        const enabledPluginMap = new Map(enabledPlugins.map((plugin) => [plugin.id, plugin]))
-        const tabShortcuts = (
-          await Promise.all(
-            Array.from(selectedPluginTabIds.entries()).map(async ([pluginId, selectedTabIds]) => {
-              const plugin = enabledPluginMap.get(pluginId)
-              if (!plugin) {
-                return []
-              }
-
-              try {
-                return await loadPluginTabShortcuts(plugin, t, selectedTabIds)
-              } catch (error) {
-                console.warn(`加载插件 ${plugin.id} 已选配置页签快捷入口失败:`, error)
-                return []
-              }
-            })
-          )
-        ).flat()
-
-        if (!cancelled) {
-          setPluginShortcuts([...baseShortcuts, ...tabShortcuts])
-        }
-      } catch (error) {
-        console.error('加载插件快捷入口失败:', error)
-      } finally {
-        if (!cancelled) {
-          setIsPluginShortcutsLoading(false)
-        }
-      }
-    }
-
-    void loadPluginShortcuts()
-
-    return () => {
-      cancelled = true
-    }
-  }, [quickShortcutDialogOpen, quickShortcutIds, t])
-
-  const quickShortcutOptions = useMemo<QuickShortcutDefinition[]>(
-    () => [
-      {
-        id: 'action:restart',
-        category: 'system',
-        label: isRestarting ? t('home.quickActions.restarting') : t('home.quickActions.restart'),
-        description: t('home.quickActions.descriptions.restart'),
-        icon: RotateCcw,
-        action: handleRestart,
-        disabled: isRestarting,
-      },
-      {
-        id: 'action:expression-review',
-        category: 'resource',
-        label: t('home.quickActions.expressionReview'),
-        description: t('home.quickActions.descriptions.expressionReview'),
-        icon: ClipboardCheck,
-        action: () => setIsReviewerOpen(true),
-        badge: uncheckedCount > 0 ? (uncheckedCount > 99 ? '99+' : String(uncheckedCount)) : undefined,
-      },
-      {
-        id: 'route:logs',
-        category: 'monitor',
-        label: t('home.quickActions.viewLogs'),
-        description: t('home.quickActions.descriptions.viewLogs'),
-        icon: FileText,
-        href: '/logs',
-      },
-      {
-        id: 'route:plugin-market',
-        category: 'plugin',
-        label: t('home.quickActions.pluginManage'),
-        description: t('home.quickActions.descriptions.pluginManage'),
-        icon: Puzzle,
-        href: '/plugins',
-      },
-      {
-        id: 'route:plugin-config',
-        category: 'plugin',
-        label: t('home.quickActions.pluginConfig'),
-        description: t('home.quickActions.descriptions.pluginConfig'),
-        icon: Settings,
-        href: '/plugin-config',
-      },
-      {
-        id: 'route:settings',
-        category: 'system',
-        label: t('home.quickActions.systemSettings'),
-        description: t('home.quickActions.descriptions.systemSettings'),
-        icon: Settings,
-        href: '/settings',
-      },
-      {
-        id: 'route:settings-appearance',
-        category: 'system',
-        label: t('home.quickActions.appearanceSettings'),
-        description: t('home.quickActions.descriptions.appearanceSettings'),
-        icon: Settings,
-        href: '/settings?tab=appearance',
-      },
-      {
-        id: 'route:settings-local-cache',
-        category: 'system',
-        label: t('home.quickActions.localCache'),
-        description: t('home.quickActions.descriptions.localCache'),
-        icon: HardDrive,
-        href: '/settings?tab=local-cache',
-      },
-      {
-        id: 'route:model-providers',
-        category: 'config',
-        label: t('home.quickActions.modelProviders'),
-        description: t('home.quickActions.descriptions.modelProviders'),
-        icon: Settings,
-        href: '/config/model?tab=providers',
-      },
-      {
-        id: 'route:model-list',
-        category: 'config',
-        label: t('home.quickActions.modelList'),
-        description: t('home.quickActions.descriptions.modelList'),
-        icon: Settings,
-        href: '/config/model?tab=models',
-      },
-      {
-        id: 'route:model-tasks',
-        category: 'config',
-        label: t('home.quickActions.modelTasks'),
-        description: t('home.quickActions.descriptions.modelTasks'),
-        icon: Settings,
-        href: '/config/model?tab=tasks',
-      },
-      {
-        id: 'route:bot-config',
-        category: 'config',
-        label: t('home.quickActions.botConfig'),
-        description: t('home.quickActions.descriptions.botConfig'),
-        icon: Settings,
-        href: '/config/bot',
-      },
-      {
-        id: 'route:emoji',
-        category: 'resource',
-        label: t('home.quickActions.emojiManagement'),
-        description: t('home.quickActions.descriptions.emojiManagement'),
-        icon: MessageSquare,
-        href: '/resource/emoji',
-      },
-      {
-        id: 'route:expression',
-        category: 'resource',
-        label: t('home.quickActions.expressionManagement'),
-        description: t('home.quickActions.descriptions.expressionManagement'),
-        icon: MessageSquare,
-        href: '/resource/expression',
-      },
-      {
-        id: 'external:statistics',
-        category: 'external',
-        label: t('home.quickActions.statistics'),
-        description: t('home.quickActions.descriptions.statistics'),
-        icon: BarChart3,
-        href: '/maibot_statistics.html',
-        external: true,
-      },
-      ...pluginShortcuts,
-    ],
-    [handleRestart, isRestarting, pluginShortcuts, t, uncheckedCount]
-  )
-
-  const quickShortcutMap = useMemo(
-    () => new Map(quickShortcutOptions.map((shortcut) => [shortcut.id, shortcut])),
-    [quickShortcutOptions]
-  )
-
-  const selectedQuickShortcuts = useMemo(
-    () =>
-      quickShortcutIds
-        .map((id) => quickShortcutMap.get(id) ?? getFallbackPluginShortcut(id, t))
-        .filter((shortcut): shortcut is QuickShortcutDefinition => Boolean(shortcut)),
-    [quickShortcutIds, quickShortcutMap, t]
-  )
-
-  const filteredQuickShortcutOptions = useMemo(() => {
-    const query = quickShortcutSearch.trim().toLowerCase()
-    if (!query) {
-      return quickShortcutOptions
-    }
-
-    return quickShortcutOptions.filter((shortcut) =>
-      `${shortcut.label} ${shortcut.description}`.toLowerCase().includes(query)
-    )
-  }, [quickShortcutOptions, quickShortcutSearch])
-
-  const updateQuickShortcutIds = useCallback((nextIds: string[]) => {
-    const normalizedIds = Array.from(new Set(nextIds))
-    setQuickShortcutIds(normalizedIds)
-    saveQuickShortcutIds(normalizedIds)
-  }, [])
-
-  const toggleQuickShortcut = useCallback(
-    (id: string, checked: boolean) => {
-      updateQuickShortcutIds(
-        checked ? [...quickShortcutIds, id] : quickShortcutIds.filter((shortcutId) => shortcutId !== id)
-      )
-    },
-    [quickShortcutIds, updateQuickShortcutIds]
-  )
-
-  const resetQuickShortcuts = useCallback(() => {
-    updateQuickShortcutIds([...DEFAULT_QUICK_SHORTCUT_IDS])
-  }, [updateQuickShortcutIds])
-
-  const fetchDashboardData = useCallback(async (force = false) => {
-    try {
-      const cachedData = force ? null : getCachedDashboardData(timeRange)
-      if (cachedData) {
-        setDashboardData(cachedData)
-        setLoading(false)
-        setLoadingProgress(100)
-        return
-      }
-
-      const staleData = getStaleDashboardData(timeRange)
-      if (staleData) {
-        setDashboardData(staleData)
-        setLoading(false)
-        setLoadingProgress(100)
-      } else {
-        setLoading(true)
-      }
-      const response = await fetchWithAuth(`/api/webui/statistics/dashboard?hours=${timeRange}`)
-      if (!isMountedRef.current) return
-      if (response.ok) {
-        const data = await response.json()
-        dashboardDataCache.set(timeRange, { timestamp: Date.now(), data })
-        setDashboardData(data)
-      }
-      setLoading(false)
-      setLoadingProgress(100)
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error)
-      if (isMountedRef.current) {
-        setLoading(false)
-        setLoadingProgress(100)
-      }
-    }
-  }, [timeRange])
-
-  // 伪加载进度条效果
-  useEffect(() => {
-    if (!loading) return
-
-    setLoadingProgress(0)
-    
-    // 快速到15%
-    const timer1 = setTimeout(() => setLoadingProgress(15), 200)
-    // 到30%
-    const timer2 = setTimeout(() => setLoadingProgress(30), 800)
-    // 到45%
-    const timer3 = setTimeout(() => setLoadingProgress(45), 2000)
-    // 到60%
-    const timer4 = setTimeout(() => setLoadingProgress(60), 4000)
-    // 到75%
-    const timer5 = setTimeout(() => setLoadingProgress(75), 6500)
-    // 到85%
-    const timer6 = setTimeout(() => setLoadingProgress(85), 9000)
-    // 到92%
-    const timer7 = setTimeout(() => setLoadingProgress(92), 11000)
-
-    return () => {
-      clearTimeout(timer1)
-      clearTimeout(timer2)
-      clearTimeout(timer3)
-      clearTimeout(timer4)
-      clearTimeout(timer5)
-      clearTimeout(timer6)
-      clearTimeout(timer7)
-    }
-  }, [loading])
-
+  // 初始加载各数据源
   useEffect(() => {
     fetchDashboardData()
     fetchHitokoto()
@@ -1020,30 +239,6 @@ function IndexPageContent() {
     fetchLocalCacheStats()
     fetchReviewStats()
   }, [fetchDashboardData, fetchHitokoto, fetchBotStatus, fetchFeatureStatus, fetchLocalCacheStats, fetchReviewStats])
-
-  useEffect(() => {
-    const refreshBotStatus = () => {
-      if (isMountedRef.current) {
-        fetchBotStatus(true)
-      }
-    }
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        refreshBotStatus()
-      }
-    }
-
-    const intervalId = setInterval(refreshBotStatus, 30000)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', refreshBotStatus)
-
-    return () => {
-      clearInterval(intervalId)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('focus', refreshBotStatus)
-    }
-  }, [fetchBotStatus])
 
   if (loading || !dashboardData) {
     return (
@@ -1243,7 +438,10 @@ function IndexPageContent() {
       </div>
 
       {/* 机器人状态和快速操作 */}
-      <div className="grid gap-4 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div
+        data-home-summary-cards="true"
+        className="grid items-stretch gap-4 grid-cols-1 lg:grid-cols-[minmax(14rem,0.8fr)_minmax(16rem,1fr)_minmax(0,1.6fr)]"
+      >
         {/* 机器人状态卡片 */}
         <Card className="lg:col-span-1">
           <CardHeader className="pb-3">
@@ -1256,27 +454,23 @@ function IndexPageContent() {
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-muted-foreground">{t('home.versionCard.mainVersion')}</span>
-                <Badge variant="secondary" className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary">
+                <Badge
+                  variant="secondary"
+                  data-dashboard-version-value="true"
+                  className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary"
+                >
                   {botStatus?.version ? `v${botStatus.version}` : t('home.versionCard.unknown')}
                 </Badge>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-muted-foreground">{t('home.versionCard.webuiVersion')}</span>
-                <Badge variant="secondary" className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary">
+                <Badge
+                  variant="secondary"
+                  data-dashboard-version-value="true"
+                  className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary"
+                >
                   v{APP_VERSION}
                 </Badge>
-              </div>
-              <div className="hidden">
-                <a
-                  href={maibotTestRelease?.url || 'https://github.com/Mai-with-u/MaiBot/releases'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 transition-colors hover:text-muted-foreground"
-                >
-                  {t('home.versionCard.latestVersion')}{' '}
-                  {maibotTestRelease ? `v${maibotTestRelease.version}` : t('home.versionCard.githubReleases')}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
               </div>
               <div className="space-y-1 border-t border-border/50 pt-2 text-xs text-muted-foreground/60">
                 <a
@@ -1291,19 +485,6 @@ function IndexPageContent() {
                     <ExternalLink className="h-3 w-3" />
                   </span>
                 </a>
-                <a
-                  href={maibotTestRelease?.url || 'https://github.com/Mai-with-u/MaiBot/releases'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between gap-2 transition-colors hover:text-muted-foreground"
-                >
-                  <span>{t('home.versionCard.testLatest')}</span>
-                  <span className="inline-flex items-center gap-1">
-                    {maibotTestRelease ? `v${maibotTestRelease.version}` : t('home.versionCard.githubReleases')}
-                    <ExternalLink className="h-3 w-3" />
-                  </span>
-                </a>
-
               </div>
             </div>
           </CardContent>
@@ -1447,6 +628,7 @@ function IndexPageContent() {
               size="icon"
               onClick={() => setQuickShortcutDialogOpen(true)}
               aria-label={t('home.quickActions.customize')}
+              className="h-8 w-8"
             >
               <Plus className="h-4 w-4" />
             </Button>

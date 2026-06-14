@@ -80,6 +80,12 @@ export interface PluginLoadProgress {
   plugin_id?: string
   total_plugins: number
   loaded_plugins: number
+  mirror_id?: string
+  mirror_name?: string
+  mirror_index?: number
+  total_mirrors?: number
+  attempt?: number
+  max_attempts?: number
 }
 
 /**

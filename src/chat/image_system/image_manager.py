@@ -1,18 +1,17 @@
-﻿from datetime import datetime
+﻿import asyncio
+import base64
+import hashlib
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
 from rich.traceback import install
 from sqlmodel import select
 
-import asyncio
-import base64
-import hashlib
-
-from src.common.logger import get_logger
+from src.common.data_models.image_data_model import MaiImage
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
-from src.common.data_models.image_data_model import MaiImage
+from src.common.logger import get_logger
 from src.common.utils.image_path import resolve_stored_image_path, serialize_stored_image_path
 from src.config.config import config_manager
 from src.prompt.prompt_manager import prompt_manager
@@ -159,7 +158,9 @@ class ImageManager:
         if image_hash in self._pending_description_tasks:
             return
 
-        task = asyncio.create_task(self._build_description_in_background(image_hash, image_bytes, saved_image=saved_image))
+        task = asyncio.create_task(
+            self._build_description_in_background(image_hash, image_bytes, saved_image=saved_image)
+        )
         self._pending_description_tasks[image_hash] = task
         task.add_done_callback(lambda finished_task: self._finalize_description_build(image_hash, finished_task))
 
@@ -178,9 +179,9 @@ class ImageManager:
             saved_image: 已保存的图片对象，避免重复查询和更新访问计数。
         """
         try:
-            logger.info(f"图片描述后台构建已开始，哈希值: {image_hash}")
+            logger.debug(f"图片描述后台构建已开始，哈希值: {image_hash}")
             await self.build_image_description(image_bytes, saved_image=saved_image)
-            logger.info(f"图片描述后台构建完成，哈希值: {image_hash}")
+            logger.debug(f"图片描述后台构建完成，哈希值: {image_hash}")
         except Exception as exc:
             logger.warning(f"图片描述后台构建失败，哈希值: {image_hash}，错误: {exc}")
 
@@ -331,7 +332,7 @@ class ImageManager:
             logger.error(f"查询图片记录时发生错误: {e}")
             raise e
 
-        logger.info(f"图片不存在或文件缺失，准备保存图片文件，哈希值: {hash_str}")
+        logger.debug(f"图片不存在或文件缺失，准备保存图片文件，哈希值: {hash_str}")
         tmp_file_path = IMAGE_DIR / f"{hash_str}.tmp"
         with tmp_file_path.open("wb") as f:
             f.write(image_bytes)

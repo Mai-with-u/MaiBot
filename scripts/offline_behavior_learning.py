@@ -593,8 +593,14 @@ async def run_learning(args: Namespace) -> None:
         learner = BehaviorLearner(learning_window.session_id)
         learner.min_messages_for_extraction = min(args.window_size, max(1, args.min_messages_for_extraction))
 
-        def resolve_learning_session_id(self, pending_messages: list[SessionMessage]) -> Optional[str]:
-            return learning_window.session_id
+        active_session_id = learning_window.session_id
+
+        def resolve_learning_session_id(
+            self,
+            pending_messages: list[SessionMessage],
+            bound_session_id: str = active_session_id,
+        ) -> Optional[str]:
+            return bound_session_id
 
         learner._resolve_learning_session_id = types.MethodType(  # type: ignore[method-assign]
             resolve_learning_session_id,

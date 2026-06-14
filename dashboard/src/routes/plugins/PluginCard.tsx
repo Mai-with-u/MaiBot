@@ -8,7 +8,7 @@ import { Progress } from '@/components/ui/progress'
 
 import { PluginIcon } from './PluginIcon'
 import type { GitStatus, MaimaiVersion, PluginInfo, PluginLoadProgress, PluginStatsData } from './types'
-import { getPluginTypeLabel } from './types'
+import { getPluginProgressDetail, getPluginTypeLabel } from './types'
 
 interface PluginCardProps {
   plugin: PluginInfo
@@ -50,7 +50,11 @@ export function PluginCard({
   const likeCount = stats?.likes ?? 0
   const isLiked = stats?.liked === true
   const isLiking = likingPluginIds.has(plugin.manifest?.id || plugin.id)
-  const isInstalling = loadProgress?.operation === 'install' && loadProgress?.plugin_id === plugin.id
+  const isInstalling = loadProgress?.operation === 'install'
+    && loadProgress.stage === 'loading'
+    && loadProgress?.plugin_id === plugin.id
+  const isAnyPluginInstalling = loadProgress?.operation === 'install' && loadProgress.stage === 'loading'
+  const progressDetail = loadProgress ? getPluginProgressDetail(loadProgress) : null
 
   return (
     <Card
@@ -193,7 +197,7 @@ export function PluginCard({
               className="w-full px-0 sm:w-8"
               disabled={
                 !gitStatus?.installed || 
-                loadProgress?.operation === 'install' ||
+                isAnyPluginInstalling ||
                 (maimaiVersion !== null && !checkPluginCompatibility(plugin))
               }
               title={
@@ -282,6 +286,11 @@ export function PluginCard({
             }`}>
               {loadProgress.stage === 'error' ? (loadProgress.error || loadProgress.message || '操作失败') : loadProgress.message}
             </div>
+            {progressDetail && (
+              <div className="truncate text-xs text-muted-foreground">
+                {progressDetail}
+              </div>
+            )}
           </div>
         </div>
       )}

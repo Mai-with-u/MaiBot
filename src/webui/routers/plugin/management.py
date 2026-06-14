@@ -192,6 +192,7 @@ async def _clone_plugin_repository_for_update(
             mirror_id=request.mirror_id,
             depth=1,
             operation="update",
+            plugin_id=request.plugin_id,
         )
 
     return await service.clone_repository(
@@ -202,6 +203,7 @@ async def _clone_plugin_repository_for_update(
         custom_url=repo_url,
         depth=1,
         operation="update",
+        plugin_id=request.plugin_id,
     )
 
 
@@ -347,10 +349,17 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
                 branch=request.branch,
                 mirror_id=request.mirror_id,
                 depth=1,
+                plugin_id=plugin_id,
             )
         else:
             result = await service.clone_repository(
-                owner=owner, repo=repo, target_path=target_path, branch=request.branch, custom_url=repo_url, depth=1
+                owner=owner,
+                repo=repo,
+                target_path=target_path,
+                branch=request.branch,
+                custom_url=repo_url,
+                depth=1,
+                plugin_id=plugin_id,
             )
 
         if not result.get("success"):

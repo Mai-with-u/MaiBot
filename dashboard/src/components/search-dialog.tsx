@@ -157,7 +157,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     let cancelled = false
 
     const loadConfigSearchItems = async () => {
-      const [botSchemaResult, modelSchemaResult] = await Promise.all([
+      // 用 allSettled：任一 schema 失败仍以另一 schema 建立搜索索引（保留原 best-effort 行为）
+      const [botSchemaResult, modelSchemaResult] = await Promise.allSettled([
         getBotConfigSchema(),
         getModelConfigSchema(),
       ])
@@ -167,8 +168,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
       }
 
       const nextItems: SearchItem[] = []
-      if (botSchemaResult.success) {
-        const botSchema = unwrapConfigSchema(botSchemaResult.data)
+      if (botSchemaResult.status === 'fulfilled') {
+        const botSchema = unwrapConfigSchema(botSchemaResult.value)
         if (botSchema) {
           nextItems.push(...collectConfigFields(
             botSchema,
@@ -179,8 +180,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
           ))
         }
       }
-      if (modelSchemaResult.success) {
-        const modelSchema = unwrapConfigSchema(modelSchemaResult.data)
+      if (modelSchemaResult.status === 'fulfilled') {
+        const modelSchema = unwrapConfigSchema(modelSchemaResult.value)
         if (modelSchema) {
           nextItems.push(...collectConfigFields(
             modelSchema,

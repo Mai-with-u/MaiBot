@@ -59,7 +59,6 @@
     "logs": "麦麦 로그"
   },
   "chat": {
-    "defaultTab": "WebUI",
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
     "userNameFallback": "WebUI 사용자",
@@ -105,7 +104,6 @@
       "offline": "오프라인",
       "subtitle": "대화 {{count}}개",
       "title": "채팅",
-      "webuiBadge": "WebUI",
       "virtualBadge": "가상",
       "profileTitle": "내 신분",
       "editName": "닉네임 편집",
@@ -336,6 +334,9 @@
       "securityTip6": "최고의 보안을 위해 시스템 생성 토큰을 권장합니다"
     },
     "other": {
+      "display": "표시 설정",
+      "enableAvatarFetch": "사용자 아바타 가져오기 및 표시",
+      "enableAvatarFetchDesc": "끄면 채팅과 추론 과정 화면에서 아바타 이미지를 요청하지 않고 기본 아바타를 표시합니다.",
       "performance": "성능 & 저장소",
       "localStorage": "로컬 저장소 사용량",
       "logCache": "로그 캐시 크기",
@@ -634,11 +635,11 @@
         "multipleReplyStyle": {
           "label": "대체 답변 스타일",
           "placeholder": "한 줄에 하나씩 대체 답변 스타일을 입력하세요",
-          "description": "목록이 비어 있지 않으면 MaiBot 이 아래 확률에 따라 기본 답변 스타일을 무작위로 대체합니다"
+          "description": "목록이 비어 있지 않으면 MaiBot 이 아래 확률에 따라 대체 스타일을 일회성 답변 힌트로 주입합니다"
         },
         "multipleProbability": {
-          "label": "대체 스타일 적용 확률",
-          "description": "답변을 만들 때마다 기본 답변 스타일을 대체 스타일로 무작위 교체할 확률입니다"
+          "label": "임시 스타일 주입 확률",
+          "description": "답변을 만들 때마다 일회성 대체 스타일 힌트를 주입할 확률입니다"
         }
       },
       "emoji": {

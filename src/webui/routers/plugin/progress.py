@@ -62,6 +62,12 @@ async def update_progress(
     plugin_id: Optional[str] = None,
     total_plugins: int = 0,
     loaded_plugins: int = 0,
+    mirror_id: Optional[str] = None,
+    mirror_name: Optional[str] = None,
+    mirror_index: Optional[int] = None,
+    total_mirrors: Optional[int] = None,
+    attempt: Optional[int] = None,
+    max_attempts: Optional[int] = None,
 ) -> None:
     """更新当前插件进度并广播。
 
@@ -74,6 +80,12 @@ async def update_progress(
         plugin_id: 当前处理的插件 ID。
         total_plugins: 总插件数量。
         loaded_plugins: 已处理插件数量。
+        mirror_id: 当前尝试的镜像源 ID。
+        mirror_name: 当前尝试的镜像源名称。
+        mirror_index: 当前镜像源序号（从 1 开始）。
+        total_mirrors: 本次操作将尝试的镜像源总数。
+        attempt: 当前镜像源下的尝试次数（从 1 开始）。
+        max_attempts: 当前镜像源最大尝试次数。
     """
     progress_data = {
         "operation": operation,
@@ -86,6 +98,15 @@ async def update_progress(
         "loaded_plugins": loaded_plugins,
         "timestamp": asyncio.get_event_loop().time(),
     }
+    optional_fields = {
+        "mirror_id": mirror_id,
+        "mirror_name": mirror_name,
+        "mirror_index": mirror_index,
+        "total_mirrors": total_mirrors,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+    }
+    progress_data.update({key: value for key, value in optional_fields.items() if value is not None})
 
     await broadcast_progress(progress_data)
     logger.debug(f"进度更新: [{operation}] {stage} - {progress}% - {message}")

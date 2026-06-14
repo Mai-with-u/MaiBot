@@ -12,8 +12,9 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import { useRef, useState } from 'react'
+
+import { useQuery } from '@tanstack/react-query'
 
 import { Button } from '@/components/ui/button'
 import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
@@ -30,22 +31,22 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs } from '@/components/ui/tabs'
+import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
 
 import {
   batchDeleteExpressions,
-  clearExpressions,
   deleteExpression,
-  exportExpressions,
   getChatList,
   getExpressionDetail,
   getExpressionGroups,
   getExpressionList,
   getExpressionStats,
   getReviewStats,
-  importExpressions,
-  updateExpressionReviewStatus,
 } from '@/lib/expression-api'
+
+import { useExpressionImportExport } from './hooks/useExpressionImportExport'
+import { useExpressionReview } from './hooks/useExpressionReview'
 
 import {
   BatchDeleteConfirmDialog,
@@ -62,13 +63,13 @@ import { ExpressionReviewLogPanel } from './ExpressionReviewLogPanel'
 import type {
   ChatInfo,
   Expression,
-  ExpressionExportItem,
   ExpressionGroupInfo,
 } from '@/types/expression'
 import type { StatsData } from './types'
 
 type IndicatorStatus = 'on' | 'off' | 'mixed'
 type ExpressionReviewFilter = 'all' | 'user_checked' | 'unchecked'
+type BrowseMode = 'chat' | 'group' | 'all'
 
 interface ExpressionLearningScopeStatus {
   label: string
@@ -76,198 +77,168 @@ interface ExpressionLearningScopeStatus {
   enableLearning: IndicatorStatus
 }
 
+/** useDataList 的筛选袋：浏览维度 + 旧格式开关 + 审核筛选 */
+interface ExpressionFilters {
+  browseMode: BrowseMode
+  selectedChatId: string
+  selectedGroupIndex: number | null
+  showLegacyExpressions: boolean
+  reviewFilter: ExpressionReviewFilter
+}
+
+const INITIAL_FILTERS: ExpressionFilters = {
+  browseMode: 'chat',
+  selectedChatId: '',
+  selectedGroupIndex: null,
+  showLegacyExpressions: false,
+  reviewFilter: 'all',
+}
+
+const DEFAULT_STATS: StatsData = {
+  total: 0,
+  recent_7days: 0,
+  chat_count: 0,
+  top_chats: {},
+}
+
 /**
  * 表达方式管理主页面
  */
 export function ExpressionManagementPage() {
-  const [expressions, setExpressions] = useState<Expression[]>([])
-  const [loading, setLoading] = useState(true)
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
-  const [search, setSearch] = useState('')
-  const [browseMode, setBrowseMode] = useState<'chat' | 'group' | 'all'>('chat')
+  const { toast } = useToast()
+  const importInputRef = useRef<HTMLInputElement>(null)
+
+  // 浏览面板与对话框等纯 UI 局部态
   const [browserPanelCollapsed, setBrowserPanelCollapsed] = useState(false)
-  const [showLegacyExpressions, setShowLegacyExpressions] = useState(false)
-  const [reviewFilter, setReviewFilter] = useState<ExpressionReviewFilter>('all')
-  const [selectedChatId, setSelectedChatId] = useState('')
-  const [selectedGroupIndex, setSelectedGroupIndex] = useState<number | null>(null)
   const [selectedExpression, setSelectedExpression] = useState<Expression | null>(null)
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isLegacyImportOpen, setIsLegacyImportOpen] = useState(false)
   const [deleteConfirmExpression, setDeleteConfirmExpression] = useState<Expression | null>(null)
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false)
-  const [stats, setStats] = useState<StatsData>({
-    total: 0,
-    recent_7days: 0,
-    chat_count: 0,
-    top_chats: {},
-  })
-  const [chatList, setChatList] = useState<ChatInfo[]>([])
-  const [expressionGroups, setExpressionGroups] = useState<ExpressionGroupInfo[]>([])
-  const [chatNameMap, setChatNameMap] = useState<Map<string, string>>(new Map())
   const [activeView, setActiveView] = useState<'list' | 'logs' | 'quick'>('list')
-  const [uncheckedCount, setUncheckedCount] = useState(0)
-  const { toast } = useToast()
-  const importInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (browseMode !== 'chat') return
-    if (!selectedChatId && chatList.length > 0) {
-      setSelectedChatId(chatList[0].chat_id)
-    }
-    if (
-      selectedChatId &&
-      chatList.length > 0 &&
-      !chatList.some((chat) => chat.chat_id === selectedChatId)
-    ) {
-      setSelectedChatId(chatList[0].chat_id)
-    }
-  }, [browseMode, chatList, selectedChatId])
+  // 兄弟读：聊天流 / 互通组 / 统计 / 审核统计统一以 'expression' 前缀分层，
+  // list.invalidate() 失效 ['expression'] 前缀时一并刷新（读失败局部呈现，不弹全局 toast）
 
-  // 加载表达方式列表
-  const loadExpressions = async () => {
-    try {
-      setLoading(true)
+  // 列表：分页/搜索/筛选/多选统一由 useDataList 承载，翻页/改参自动重置页码并清空选中
+  const list = useDataList<Expression, ExpressionFilters, number>({
+    domain: 'expression',
+    getId: (expression) => expression.id,
+    initialFilters: INITIAL_FILTERS,
+    searchDebounceMs: 0,
+    queryFn: async ({ page, pageSize, search, filters }) => {
+      // 按互通组浏览时取该组的 chat_ids（全局组传 undefined，让后端返回全部）
       const selectedGroup =
-        browseMode === 'group'
-          ? expressionGroups.find((group) => group.index === selectedGroupIndex)
+        filters.browseMode === 'group'
+          ? groups.find((group) => group.index === filters.selectedGroupIndex)
           : undefined
+      // 已选中的非全局组但无任何聊天：直接返回空，避免无意义请求
       if (selectedGroup && !selectedGroup.is_global && selectedGroup.chat_ids.length === 0) {
-        setExpressions([])
-        setTotal(0)
-        return
+        return { items: [], total: 0 }
       }
-      const result = await getExpressionList({
+      const response = await getExpressionList({
         page,
         page_size: pageSize,
         search: search || undefined,
-        chat_id: browseMode === 'chat' ? selectedChatId || undefined : undefined,
-        chat_ids: selectedGroup && !selectedGroup.is_global ? selectedGroup.chat_ids : undefined,
-        include_legacy: showLegacyExpressions,
-        review_filter: reviewFilter,
+        chat_id:
+          filters.browseMode === 'chat' ? filters.selectedChatId || undefined : undefined,
+        chat_ids:
+          selectedGroup && !selectedGroup.is_global ? selectedGroup.chat_ids : undefined,
+        include_legacy: filters.showLegacyExpressions,
+        review_filter: filters.reviewFilter,
       })
-      if (result.success) {
-        setExpressions(result.data.data)
-        setTotal(result.data.total)
-      } else {
-        toast({
-          title: '加载失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
-    } catch (error) {
-      toast({
-        title: '加载失败',
-        description: error instanceof Error ? error.message : '无法加载表达方式',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
-    }
+      return { items: response.data, total: response.total }
+    },
+  })
+
+  const filters = list.filters
+  const { browseMode, selectedChatId, selectedGroupIndex, showLegacyExpressions, reviewFilter } =
+    filters
+
+  // 统计：失败时保持占位数值，不打断页面；与列表同领域，list.invalidate() 会一并失效
+  const statsQuery = useQuery({
+    queryKey: ['expression', 'stats', { include_legacy: showLegacyExpressions }],
+    queryFn: () =>
+      getExpressionStats({ include_legacy: showLegacyExpressions }),
+  })
+  const stats: StatsData = statsQuery.data ?? DEFAULT_STATS
+
+  // 审核统计：uncheckedCount 由此派生
+  const reviewStatsQuery = useQuery({
+    queryKey: ['expression', 'review-stats'],
+    queryFn: () => getReviewStats(),
+  })
+  const uncheckedCount = reviewStatsQuery.data?.unchecked ?? 0
+
+  // 聊天流列表（随「显示旧格式」开关刷新，保持原页面 loadChatList 的 include_legacy 行为）
+  const chatListQuery = useQuery({
+    queryKey: ['expression', 'chats', { include_legacy: showLegacyExpressions }],
+    queryFn: () =>
+      getChatList({ include_legacy: showLegacyExpressions }),
+  })
+  const chatList: ChatInfo[] = chatListQuery.data ?? []
+  const chatNameMap = new Map<string, string>()
+  chatList.forEach((chat) => chatNameMap.set(chat.chat_id, chat.chat_name))
+
+  // 表达互通组（随「显示旧格式」开关刷新）
+  const groupsQuery = useQuery({
+    queryKey: ['expression', 'groups', { include_legacy: showLegacyExpressions }],
+    queryFn: () =>
+      getExpressionGroups({ include_legacy: showLegacyExpressions }),
+  })
+  const groups: ExpressionGroupInfo[] = groupsQuery.data ?? []
+
+  // 按聊天浏览时若未选中或选中项已失效，自动选第一个聊天。
+  // 用「渲染期版本标记」模式（React 官方推荐）替代 effect 内 setState，避免级联渲染告警。
+  const needsAutoSelectChat =
+    browseMode === 'chat' &&
+    chatList.length > 0 &&
+    (!selectedChatId || !chatList.some((chat) => chat.chat_id === selectedChatId))
+  if (needsAutoSelectChat) {
+    list.setFilter('selectedChatId', chatList[0].chat_id)
   }
 
-  // 加载统计数据
-  const loadStats = async () => {
-    try {
-      const result = await getExpressionStats({ include_legacy: showLegacyExpressions })
-      if (result.success) {
-        setStats(result.data)
-      } else {
-        console.error('加载统计数据失败:', result.error)
-      }
-    } catch (error) {
-      console.error('加载统计数据失败:', error)
-    }
-  }
+  // 列表写成功后失效 ['expression'] 前缀：刷新列表 + 统计 + 审核统计
+  const refreshAll = list.invalidate
 
-  // 加载审核统计
-  const loadReviewStats = async () => {
-    try {
-      const result = await getReviewStats()
-      if (result.success) {
-        setUncheckedCount(result.data.unchecked)
-      }
-    } catch (error) {
-      console.error('加载审核统计失败:', error)
-    }
-  }
+  // 审核（单条 / 批量）：写成功后 invalidate 重新拉取（服务端为准）
+  const { toggleReviewStatus, batchReviewStatus } = useExpressionReview({ onChanged: refreshAll })
 
-  // 加载聚天列表
+  // 当前选中的具体聊天（用于导入导出清除与作用域指示）
+  const currentChat =
+    browseMode === 'chat' && selectedChatId
+      ? chatList.find((chat) => chat.chat_id === selectedChatId) ?? null
+      : null
+
+  // 导入 / 导出 / 清除：写成功后 invalidate 刷新
+  const { exportExpressionsToFile, handleImportFileChange, clearCurrentChat } =
+    useExpressionImportExport({
+      currentChat,
+      selectedIds: list.selectedIds,
+      onChanged: refreshAll,
+      onClearSelection: list.clearSelection,
+      onCloseClearConfirm: () => setIsClearConfirmOpen(false),
+    })
+
+  // 顶部视图切换（表达 / 快速审核 / AI审核记录）
   const handleActiveViewChange = (view: 'list' | 'logs' | 'quick') => {
     setActiveView(view)
     if (view === 'list') {
-      loadExpressions()
-      loadStats()
+      list.refetch()
+      statsQuery.refetch()
     }
-    loadReviewStats()
+    reviewStatsQuery.refetch()
   }
 
-  const loadChatList = async () => {
-    try {
-      const result = await getChatList({ include_legacy: showLegacyExpressions })
-      if (result.success) {
-        setChatList(result.data)
-        const nameMap = new Map<string, string>()
-        result.data.forEach((chat: ChatInfo) => {
-          nameMap.set(chat.chat_id, chat.chat_name)
-        })
-        setChatNameMap(nameMap)
-      }
-    } catch (error) {
-      console.error('加载聚天列表失败:', error)
-    }
-  }
-
-  // 初始加载
-  const loadExpressionGroups = async () => {
-    try {
-      const result = await getExpressionGroups({ include_legacy: showLegacyExpressions })
-      if (result.success) {
-        setExpressionGroups(result.data)
-      }
-    } catch (error) {
-      console.error('鍔犺浇琛ㄨ揪浜掗€氱粍澶辫触:', error)
-    }
-  }
-
-  useEffect(() => {
-    loadExpressions()
-    loadReviewStats()
-    loadStats()
-    loadChatList()
-    loadExpressionGroups()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    page,
-    pageSize,
-    search,
-    browseMode,
-    selectedChatId,
-    selectedGroupIndex,
-    showLegacyExpressions,
-    reviewFilter,
-  ])
-
-  // 查看详情
+  // 查看详情（事件驱动的读取，失败用 toast 反馈用户动作）
   const handleViewDetail = async (expression: Expression) => {
     try {
       const result = await getExpressionDetail(expression.id)
-      if (result.success) {
-        setSelectedExpression(result.data)
-        setIsDetailDialogOpen(true)
-      } else {
-        toast({
-          title: '加载详情失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      setSelectedExpression(result)
+      setIsDetailDialogOpen(true)
     } catch (error) {
       toast({
         title: '加载详情失败',
@@ -283,81 +254,17 @@ export function ExpressionManagementPage() {
     setIsEditDialogOpen(true)
   }
 
-  const expressionMatchesReviewFilter = (expression: Expression) => {
-    if (reviewFilter === 'all') {
-      return true
-    }
-    if (reviewFilter === 'user_checked') {
-      return expression.checked && expression.modified_by === 'user'
-    }
-    return !expression.checked
-  }
-
-  // 删除表达方式
-  const applyReviewStatusUpdates = (
-    updatedExpressions: Expression[],
-    clearUpdatedSelection = false
-  ) => {
-    const updatedExpressionMap = new Map(
-      updatedExpressions.map((expression) => [expression.id, expression])
-    )
-    const removedIds = new Set(
-      expressions
-        .filter((expression) => {
-          const updatedExpression = updatedExpressionMap.get(expression.id)
-          return updatedExpression && !expressionMatchesReviewFilter(updatedExpression)
-        })
-        .map((expression) => expression.id)
-    )
-
-    setExpressions((currentExpressions) =>
-      currentExpressions.flatMap((expression) => {
-        const updatedExpression = updatedExpressionMap.get(expression.id)
-        if (!updatedExpression) {
-          return [expression]
-        }
-        if (!expressionMatchesReviewFilter(updatedExpression)) {
-          return []
-        }
-        return [updatedExpression]
-      })
-    )
-
-    if (removedIds.size > 0) {
-      setTotal((currentTotal) => Math.max(currentTotal - removedIds.size, 0))
-    }
-    if (clearUpdatedSelection || removedIds.size > 0) {
-      setSelectedIds((currentSelectedIds) => {
-        const nextSelectedIds = new Set(currentSelectedIds)
-        updatedExpressions.forEach((expression) => {
-          if (clearUpdatedSelection || removedIds.has(expression.id)) {
-            nextSelectedIds.delete(expression.id)
-          }
-        })
-        return nextSelectedIds
-      })
-    }
-  }
-
+  // 删除表达方式（成功后 invalidate 刷新列表 + 统计）
   const handleDelete = async () => {
     if (!deleteConfirmExpression) return
     try {
-      const result = await deleteExpression(deleteConfirmExpression.id)
-      if (result.success) {
-        toast({
-          title: '删除成功',
-          description: `已删除表达方式: ${deleteConfirmExpression.situation}`,
-        })
-        setDeleteConfirmExpression(null)
-        loadExpressions()
-        loadStats()
-      } else {
-        toast({
-          title: '删除失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      await deleteExpression(deleteConfirmExpression.id)
+      toast({
+        title: '删除成功',
+        description: `已删除表达方式: ${deleteConfirmExpression.situation}`,
+      })
+      setDeleteConfirmExpression(null)
+      refreshAll()
     } catch (error) {
       toast({
         title: '删除失败',
@@ -367,75 +274,17 @@ export function ExpressionManagementPage() {
     }
   }
 
-  // 切换单个选择
-  const handleToggleReviewStatus = async (expression: Expression) => {
-    const isUserApproved = expression.checked && expression.modified_by === 'user'
-    const nextApproved = !isUserApproved
-
-    try {
-      const result = await updateExpressionReviewStatus(expression.id, nextApproved)
-      if (result.success) {
-        applyReviewStatusUpdates([result.data])
-        toast({
-          title: nextApproved ? '已通过' : '已拒绝',
-          description: nextApproved ? '已设为人工通过' : '已取消人工通过',
-        })
-        loadReviewStats()
-        return
-      }
-      toast({
-        title: '更新审核状态失败',
-        description: result.error,
-        variant: 'destructive',
-      })
-    } catch (error) {
-      toast({
-        title: '更新审核状态失败',
-        description: error instanceof Error ? error.message : '无法更新表达方式审核状态',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const toggleSelect = (id: number) => {
-    const newSelected = new Set(selectedIds)
-    if (newSelected.has(id)) {
-      newSelected.delete(id)
-    } else {
-      newSelected.add(id)
-    }
-    setSelectedIds(newSelected)
-  }
-
-  // 全选/取消全选
-  const toggleSelectAll = () => {
-    if (selectedIds.size === expressions.length && expressions.length > 0) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(expressions.map((e) => e.id)))
-    }
-  }
-
-  // 批量删除
+  // 批量删除（成功后清空选中并 invalidate 刷新）
   const handleBatchDelete = async () => {
     try {
-      const result = await batchDeleteExpressions(Array.from(selectedIds))
-      if (result.success) {
-        toast({
-          title: '批量删除成功',
-          description: `已删除 ${selectedIds.size} 个表达方式`,
-        })
-        setSelectedIds(new Set())
-        setIsBatchDeleteDialogOpen(false)
-        loadExpressions()
-        loadStats()
-      } else {
-        toast({
-          title: '批量删除失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      await batchDeleteExpressions(Array.from(list.selectedIds))
+      toast({
+        title: '批量删除成功',
+        description: `已删除 ${list.selectedCount} 个表达方式`,
+      })
+      list.clearSelection()
+      setIsBatchDeleteDialogOpen(false)
+      refreshAll()
     } catch (error) {
       toast({
         title: '批量删除失败',
@@ -446,87 +295,42 @@ export function ExpressionManagementPage() {
   }
 
   // 页面跳转
-  const handleBatchReviewStatus = async (approved: boolean) => {
-    const expressionIds = Array.from(selectedIds)
-    if (expressionIds.length === 0) {
-      return
-    }
-
-    try {
-      const results = await Promise.all(
-        expressionIds.map((expressionId) => updateExpressionReviewStatus(expressionId, approved))
-      )
-      const updatedExpressions = results
-        .filter((result) => result.success)
-        .map((result) => result.data)
-      const failedCount = results.length - updatedExpressions.length
-
-      if (updatedExpressions.length > 0) {
-        applyReviewStatusUpdates(updatedExpressions, true)
-        loadReviewStats()
-      }
-
-      toast({
-        title: approved ? '批量设为通过完成' : '批量设为不通过完成',
-        description:
-          failedCount > 0
-            ? `成功 ${updatedExpressions.length} 个，失败 ${failedCount} 个`
-            : `已更新 ${updatedExpressions.length} 个表达方式`,
-        variant: failedCount > 0 ? 'destructive' : undefined,
-      })
-    } catch (error) {
-      toast({
-        title: '批量更新审核状态失败',
-        description: error instanceof Error ? error.message : '无法批量更新表达方式审核状态',
-        variant: 'destructive',
-      })
+  const handleJumpToPage = (jumpToPage: string) => {
+    const targetPage = parseInt(jumpToPage)
+    if (targetPage >= 1 && targetPage <= list.totalPages) {
+      list.goToPage(targetPage)
     }
   }
 
-  const handleJumpToPage = (jumpToPage: string) => {
-    const targetPage = parseInt(jumpToPage)
-    const totalPages = Math.ceil(total / pageSize)
-    if (targetPage >= 1 && targetPage <= totalPages) {
-      setPage(targetPage)
+  // 浏览维度切换：按聊天 / 按互通组 / 全部（变更后 setFilter 自动重置页码并清空选中）
+  const handleBrowseModeChange = (mode: BrowseMode) => {
+    list.setFilter('browseMode', mode)
+    if (mode === 'chat' && !selectedChatId && chatList.length > 0) {
+      list.setFilter('selectedChatId', chatList[0].chat_id)
+    }
+    if (mode !== 'chat') {
+      list.setFilter('selectedChatId', '')
+    }
+    if (mode === 'group' && selectedGroupIndex === null && groups.length > 0) {
+      list.setFilter('selectedGroupIndex', groups[0].index)
+    }
+    if (mode !== 'group') {
+      list.setFilter('selectedGroupIndex', null)
     }
   }
 
   const handleChatChange = (chatId: string) => {
-    setSelectedChatId(chatId)
-    setPage(1)
-    setSelectedIds(new Set())
-  }
-
-  const handleBrowseModeChange = (mode: 'chat' | 'group' | 'all') => {
-    setBrowseMode(mode)
-    if (mode === 'chat' && !selectedChatId && chatList.length > 0) {
-      setSelectedChatId(chatList[0].chat_id)
-    }
-    if (mode !== 'chat') {
-      setSelectedChatId('')
-    }
-    if (mode === 'group' && selectedGroupIndex === null && expressionGroups.length > 0) {
-      setSelectedGroupIndex(expressionGroups[0].index)
-    }
-    if (mode !== 'group') {
-      setSelectedGroupIndex(null)
-    }
-    setPage(1)
-    setSelectedIds(new Set())
+    list.setFilter('selectedChatId', chatId)
   }
 
   const handleGroupChange = (groupIndex: number | null) => {
-    setSelectedGroupIndex(groupIndex)
-    setPage(1)
-    setSelectedIds(new Set())
+    list.setFilter('selectedGroupIndex', groupIndex)
   }
 
   const handleLegacyExpressionsChange = (checked: boolean) => {
-    setShowLegacyExpressions(checked)
-    setSelectedChatId('')
-    setSelectedGroupIndex(null)
-    setPage(1)
-    setSelectedIds(new Set())
+    list.setFilter('showLegacyExpressions', checked)
+    list.setFilter('selectedChatId', '')
+    list.setFilter('selectedGroupIndex', null)
   }
 
   const summarizeStatus = (values: boolean[]): IndicatorStatus => {
@@ -553,7 +357,7 @@ export function ExpressionManagementPage() {
     }
 
     if (browseMode === 'group' && selectedGroupIndex !== null) {
-      const selectedGroup = expressionGroups.find((group) => group.index === selectedGroupIndex)
+      const selectedGroup = groups.find((group) => group.index === selectedGroupIndex)
       if (!selectedGroup || selectedGroup.members.length === 0) {
         return null
       }
@@ -589,160 +393,6 @@ export function ExpressionManagementPage() {
         <span className="font-medium">{statusText}</span>
       </div>
     )
-  }
-
-  const currentChat =
-    browseMode === 'chat' && selectedChatId
-      ? chatList.find((chat) => chat.chat_id === selectedChatId)
-      : null
-
-  const getImportExportChatId = (): string | null => {
-    if (!currentChat) {
-      toast({
-        title: '请选择聊天',
-        description: '表达方式导入导出需要先在左侧选择一个具体聊天',
-        variant: 'destructive',
-      })
-      return null
-    }
-    return currentChat.chat_id
-  }
-
-  const downloadJson = (filename: string, data: unknown) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json;charset=utf-8',
-    })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  const sanitizeFilename = (name: string) => {
-    return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'chat'
-  }
-
-  const handleExportExpressions = async (onlySelected: boolean) => {
-    const chatId = getImportExportChatId()
-    if (!chatId || !currentChat) return
-    if (onlySelected && selectedIds.size === 0) {
-      toast({
-        title: '没有选中项目',
-        description: '请先选择要导出的表达方式',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    const result = await exportExpressions({
-      chat_id: chatId,
-      ids: onlySelected ? Array.from(selectedIds) : undefined,
-    })
-    if (!result.success) {
-      toast({
-        title: '导出失败',
-        description: result.error,
-        variant: 'destructive',
-      })
-      return
-    }
-
-    const filename = `expressions-${sanitizeFilename(currentChat.chat_name)}-${onlySelected ? 'selected' : 'all'}.json`
-    downloadJson(filename, result.data)
-    toast({
-      title: '导出成功',
-      description: `已导出 ${result.data.count} 个表达方式`,
-    })
-  }
-
-  const normalizeImportItems = (payload: unknown): ExpressionExportItem[] => {
-    if (Array.isArray(payload)) {
-      return payload as ExpressionExportItem[]
-    }
-    if (
-      payload &&
-      typeof payload === 'object' &&
-      Array.isArray((payload as { expressions?: unknown }).expressions)
-    ) {
-      return (payload as { expressions: ExpressionExportItem[] }).expressions
-    }
-    return []
-  }
-
-  const handleImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const chatId = getImportExportChatId()
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!chatId || !file) return
-
-    try {
-      const payload = JSON.parse(await file.text()) as unknown
-      const expressionsToImport = normalizeImportItems(payload)
-      if (expressionsToImport.length === 0) {
-        toast({
-          title: '导入失败',
-          description: 'JSON 中没有可导入的表达方式',
-          variant: 'destructive',
-        })
-        return
-      }
-
-      const result = await importExpressions({
-        chat_id: chatId,
-        expressions: expressionsToImport,
-      })
-      if (!result.success) {
-        toast({
-          title: '导入失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
-      toast({
-        title: '导入成功',
-        description: `成功 ${result.data.imported_count} 个，跳过 ${result.data.skipped_count} 个，失败 ${result.data.failed_count} 个`,
-      })
-      loadExpressions()
-      loadStats()
-      loadReviewStats()
-    } catch (error) {
-      toast({
-        title: '导入失败',
-        description: error instanceof Error ? error.message : '无法解析 JSON 文件',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleClearCurrentChat = async () => {
-    const chatId = getImportExportChatId()
-    if (!chatId) return
-
-    const result = await clearExpressions({ chat_id: chatId })
-    if (!result.success) {
-      toast({
-        title: '清除失败',
-        description: result.error,
-        variant: 'destructive',
-      })
-      return
-    }
-
-    toast({
-      title: '清除成功',
-      description: result.data.message,
-    })
-    setSelectedIds(new Set())
-    setIsClearConfirmOpen(false)
-    loadExpressions()
-    loadStats()
-    loadReviewStats()
   }
 
   return (
@@ -810,7 +460,7 @@ export function ExpressionManagementPage() {
         <div className="space-y-5 pr-3 pb-2 sm:space-y-6 sm:pr-4">
           {/* 搜索和批量操作 */}
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-            <div className="grid h-10 w-full grid-cols-3 overflow-hidden border-2 bg-transparent sm:h-8 lg:w-[24rem] lg:flex-none">
+            <div className="grid h-10 w-full grid-cols-2 overflow-hidden border-2 bg-transparent sm:h-8 lg:w-[18rem] lg:flex-none">
               <div className="flex min-w-0 flex-col items-center justify-center gap-1 px-2 text-center sm:flex-row sm:justify-between sm:gap-2 sm:px-3 sm:text-left">
                 <div className="text-muted-foreground text-[11px] sm:text-xs">总数量</div>
                 <div className="text-sm leading-none font-semibold sm:text-base">{stats.total}</div>
@@ -819,12 +469,6 @@ export function ExpressionManagementPage() {
                 <div className="text-muted-foreground text-[11px] sm:text-xs">近7天新增</div>
                 <div className="text-sm leading-none font-semibold text-green-600 sm:text-base">
                   {stats.recent_7days}
-                </div>
-              </div>
-              <div className="flex min-w-0 flex-col items-center justify-center gap-1 border-l px-2 text-center sm:flex-row sm:justify-between sm:gap-2 sm:px-3 sm:text-left">
-                <div className="text-muted-foreground text-[11px] sm:text-xs">关联聊天数</div>
-                <div className="text-sm leading-none font-semibold text-blue-600 sm:text-base">
-                  {stats.chat_count}
                 </div>
               </div>
             </div>
@@ -838,8 +482,8 @@ export function ExpressionManagementPage() {
                       id="search"
                       aria-label="搜索"
                       placeholder="搜索情境、风格或上下文..."
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      value={list.searchInput}
+                      onChange={(e) => list.setSearchInput(e.target.value)}
                       className="h-10 pl-10 sm:h-8 sm:pl-9"
                     />
                   </div>
@@ -849,12 +493,8 @@ export function ExpressionManagementPage() {
                     每页显示
                   </Label>
                   <Select
-                    value={pageSize.toString()}
-                    onValueChange={(value) => {
-                      setPageSize(parseInt(value))
-                      setPage(1)
-                      setSelectedIds(new Set())
-                    }}
+                    value={list.pageSize.toString()}
+                    onValueChange={(value) => list.setPageSize(parseInt(value))}
                   >
                     <SelectTrigger id="page-size" className="h-9 w-20 sm:h-8">
                       <SelectValue />
@@ -871,22 +511,22 @@ export function ExpressionManagementPage() {
 
               {/* 批量操作工具栏 */}
               <div
-                className={`${selectedIds.size > 0 ? 'flex' : 'hidden'} mt-4 flex-col items-start justify-between gap-3 border-t pt-4 sm:mt-3 sm:flex-row sm:items-center sm:pt-3`}
+                className={`${list.selectedCount > 0 ? 'flex' : 'hidden'} mt-4 flex-col items-start justify-between gap-3 border-t pt-4 sm:mt-3 sm:flex-row sm:items-center sm:pt-3`}
               >
                 <div className="text-muted-foreground flex items-center gap-2 text-sm">
-                  {selectedIds.size > 0 && <span>已选择 {selectedIds.size} 个表达方式</span>}
+                  {list.selectedCount > 0 && <span>已选择 {list.selectedCount} 个表达方式</span>}
                 </div>
                 <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
-                  {selectedIds.size > 0 && (
+                  {list.selectedCount > 0 && (
                     <>
-                      <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>
+                      <Button variant="outline" size="sm" onClick={() => list.clearSelection()}>
                         取消选择
                       </Button>
                       <Button
                         variant="default"
                         size="sm"
                         className="gap-1"
-                        onClick={() => handleBatchReviewStatus(true)}
+                        onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
                       >
                         <Check className="h-4 w-4" />
                         批量通过
@@ -895,7 +535,7 @@ export function ExpressionManagementPage() {
                         variant="outline"
                         size="sm"
                         className="gap-1"
-                        onClick={() => handleBatchReviewStatus(false)}
+                        onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
                       >
                         <X className="h-4 w-4" />
                         批量不通过
@@ -998,7 +638,7 @@ export function ExpressionManagementPage() {
                   </>
                 ) : browseMode === 'group' ? (
                   <>
-                    {expressionGroups.map((group) => (
+                    {groups.map((group) => (
                       <button
                         key={group.index}
                         type="button"
@@ -1027,7 +667,7 @@ export function ExpressionManagementPage() {
                         </span>
                       </button>
                     ))}
-                    {expressionGroups.length === 0 && (
+                    {groups.length === 0 && (
                       <div className="text-muted-foreground px-2 py-6 text-center text-sm">
                         暂无互通组
                       </div>
@@ -1065,7 +705,7 @@ export function ExpressionManagementPage() {
                         variant="outline"
                         size="sm"
                         className="h-9 justify-center gap-1 sm:h-8"
-                        onClick={() => handleExportExpressions(false)}
+                        onClick={() => exportExpressionsToFile(false)}
                       >
                         <Download className="h-4 w-4" />
                         导出全部
@@ -1074,8 +714,8 @@ export function ExpressionManagementPage() {
                         variant="outline"
                         size="sm"
                         className="h-9 justify-center gap-1 sm:h-8"
-                        onClick={() => handleExportExpressions(true)}
-                        disabled={selectedIds.size === 0}
+                        onClick={() => exportExpressionsToFile(true)}
+                        disabled={list.selectedCount === 0}
                       >
                         <Download className="h-4 w-4" />
                         导出所选
@@ -1111,29 +751,26 @@ export function ExpressionManagementPage() {
 
               <ExpressionList
                 className="lg:min-h-0 lg:flex-1"
-                expressions={expressions}
-                loading={loading}
-                total={total}
-                page={page}
-                pageSize={pageSize}
-                selectedIds={selectedIds}
+                expressions={list.items}
+                loading={list.isPending}
+                total={list.total}
+                page={list.page}
+                pageSize={list.pageSize}
+                selectedIds={list.selectedIds}
                 chatNameMap={chatNameMap}
                 hideChatColumn={
                   (browseMode === 'chat' && selectedChatId !== '') ||
                   (browseMode === 'group' && selectedGroupIndex !== null)
                 }
                 reviewFilter={reviewFilter}
-                onReviewFilterChange={(filter) => {
-                  setReviewFilter(filter)
-                  setPage(1)
-                }}
+                onReviewFilterChange={(filter) => list.setFilter('reviewFilter', filter)}
                 onEdit={handleEdit}
                 onViewDetail={handleViewDetail}
                 onDelete={(expression) => setDeleteConfirmExpression(expression)}
-                onToggleReviewStatus={handleToggleReviewStatus}
-                onToggleSelect={toggleSelect}
-                onToggleSelectAll={toggleSelectAll}
-                onPageChange={setPage}
+                onToggleReviewStatus={toggleReviewStatus}
+                onToggleSelect={list.toggle}
+                onToggleSelectAll={list.toggleAll}
+                onPageChange={list.goToPage}
                 onJumpToPage={handleJumpToPage}
               />
             </div>
@@ -1143,13 +780,7 @@ export function ExpressionManagementPage() {
 
       {activeView === 'logs' && (
         <div className="min-h-[38rem] flex-1 pr-4">
-          <ExpressionReviewLogPanel
-            onRescued={() => {
-              loadExpressions()
-              loadStats()
-              loadReviewStats()
-            }}
-          />
+          <ExpressionReviewLogPanel onRescued={refreshAll} />
         </div>
       )}
 
@@ -1160,11 +791,7 @@ export function ExpressionManagementPage() {
             open
             mode="quick"
             className="h-full"
-            onReviewed={() => {
-              loadExpressions()
-              loadStats()
-              loadReviewStats()
-            }}
+            onReviewed={refreshAll}
           />
         </div>
       )}
@@ -1183,8 +810,7 @@ export function ExpressionManagementPage() {
         onOpenChange={setIsCreateDialogOpen}
         chatList={chatList}
         onSuccess={() => {
-          loadExpressions()
-          loadStats()
+          refreshAll()
           setIsCreateDialogOpen(false)
         }}
       />
@@ -1196,8 +822,7 @@ export function ExpressionManagementPage() {
         onOpenChange={setIsEditDialogOpen}
         chatList={chatList}
         onSuccess={() => {
-          loadExpressions()
-          loadStats()
+          refreshAll()
           setIsEditDialogOpen(false)
         }}
       />
@@ -1206,13 +831,7 @@ export function ExpressionManagementPage() {
         open={isLegacyImportOpen}
         onOpenChange={setIsLegacyImportOpen}
         chatList={chatList}
-        onSuccess={() => {
-          loadExpressions()
-          loadStats()
-          loadReviewStats()
-          loadChatList()
-          loadExpressionGroups()
-        }}
+        onSuccess={refreshAll}
       />
 
       {/* 删除确认对话框 */}
@@ -1228,14 +847,14 @@ export function ExpressionManagementPage() {
         open={isBatchDeleteDialogOpen}
         onOpenChange={setIsBatchDeleteDialogOpen}
         onConfirm={handleBatchDelete}
-        count={selectedIds.size}
+        count={list.selectedCount}
       />
 
       <ClearChatExpressionsConfirmDialog
         open={isClearConfirmOpen}
         onOpenChange={setIsClearConfirmOpen}
         chatName={currentChat?.chat_name || ''}
-        onConfirm={handleClearCurrentChat}
+        onConfirm={clearCurrentChat}
       />
     </div>
   )

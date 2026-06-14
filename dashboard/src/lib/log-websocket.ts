@@ -3,7 +3,7 @@
  * 确保整个应用只通过统一连接层订阅日志流
  */
 
-import { checkAuthStatus } from './fetch-with-auth'
+import { checkAuthStatus } from './auth'
 import { getSetting } from './settings-manager'
 import { unifiedWsClient } from './unified-ws'
 

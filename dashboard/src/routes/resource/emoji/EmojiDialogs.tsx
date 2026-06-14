@@ -36,7 +36,7 @@ import {
   getEmojiUploadUrl,
   updateEmoji,
 } from '@/lib/emoji-api'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { backendApi } from '@/lib/http'
 import type { Emoji, EmojiStatus } from '@/types/emoji'
 
 import type { UploadedFileInfo, UploadStep } from './types'
@@ -599,16 +599,13 @@ export function EmojiUploadDialog({
         formData.append('description', getFileEmotion(fileInfo))
 
         try {
-          const response = await fetchWithAuth(getEmojiUploadUrl(), {
-            method: 'POST',
+          // 仅以 HTTP 成功与否计数，无需解析响应体
+          await backendApi.post(getEmojiUploadUrl(), {
             body: formData,
+            parse: 'response',
+            errorMessage: '上传表情包失败',
           })
-
-          if (response.ok) {
-            successCount++
-          } else {
-            failedCount++
-          }
+          successCount++
         } catch {
           failedCount++
         }

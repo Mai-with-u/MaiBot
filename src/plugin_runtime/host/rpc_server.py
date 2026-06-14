@@ -7,7 +7,7 @@
 4. 请求-响应关联与超时管理
 """
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Coroutine
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 import asyncio
 import contextlib
@@ -16,14 +16,14 @@ import secrets
 import time
 
 from src.common.logger import get_logger
+from src.plugin_runtime import detect_host_application_version
 from src.plugin_runtime.protocol.codec import Codec, MsgPackCodec
 from src.plugin_runtime.protocol.envelope import (
-    PROTOCOL_VERSION,
-    MIN_SDK_VERSION,
-    MAX_SDK_VERSION,
     Envelope,
     HelloPayload,
     HelloResponsePayload,
+    MAX_SDK_VERSION,
+    MIN_SDK_VERSION,
     MessageType,
     RequestIdGenerator,
 )
@@ -48,11 +48,13 @@ class RPCServer:
         session_token: Optional[str] = None,
         codec: Optional[Codec] = None,
         send_queue_size: int = 128,
+        host_version: str = "",
     ):
         self._transport = transport
         self._session_token = session_token or secrets.token_hex(32)
         self._codec = codec or MsgPackCodec()
         self._send_queue_size = send_queue_size
+        self._host_version = host_version or detect_host_application_version()
 
         self._id_gen = RequestIdGenerator()
         self._connection: Optional[Connection] = None  # 当前活跃的 Runner 连接
@@ -351,7 +353,7 @@ class RPCServer:
 
         # 发送响应
         self.clear_handshake_state()
-        resp_payload = HelloResponsePayload(accepted=True, host_version=PROTOCOL_VERSION)
+        resp_payload = HelloResponsePayload(accepted=True, host_version=self._host_version)
         resp = envelope.make_response(payload=resp_payload.model_dump())
         await conn.send_frame(self._codec.encode_envelope(resp))
         return True

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArrowLeft,
+  ChevronDown,
   Clock,
   Code2,
   Copy,
@@ -10,14 +11,15 @@ import {
   FileJson,
   FileText,
   Layers,
-  MessageSquare,
   RefreshCw,
   Search,
   Timer,
 } from 'lucide-react'
 
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
@@ -30,12 +32,15 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
+import { resolveApiPath } from '@/lib/api-base'
+import { useAvatarFetchEnabled } from '@/lib/avatar-url'
 import {
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
   listReasoningPromptFiles,
   listReasoningPromptStages,
   type ReasoningPromptFile,
+  type ReasoningPromptMessageAvatar,
   type ReasoningPromptSessionInfo,
   type ReasoningPromptStageInfo,
 } from '@/lib/reasoning-process-api'
@@ -43,7 +48,12 @@ import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 50
 const AUTO_SESSION = 'auto'
+const ALL_GROUP_SESSIONS = '__all_group_chats__'
 const PRIMARY_STAGE_NAMES = ['timing_gate', 'planner', 'replyer']
+const NATURAL_LANGUAGE_TEXT_STYLE: CSSProperties = {
+  fontFamily:
+    "'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif",
+}
 const STAGE_LABELS: Record<string, string> = {
   emotion: '情绪分析',
   expression_learner: '表达学习',
@@ -82,6 +92,38 @@ type StructuredPromptPayload = {
   tool_definitions?: unknown[]
   text_dump?: string
 }
+
+type ParsedMessageTagBlock = {
+  type: 'message'
+  attrs: Record<string, string>
+  body: string
+}
+
+type ParsedTextBlock = {
+  type: 'text'
+  text: string
+}
+
+type ParsedNaturalTextBlock = ParsedMessageTagBlock | ParsedTextBlock
+
+type ToolParameterView = {
+  name: string
+  type: string
+  description: string
+  required: boolean
+  enumValues: string[]
+  defaultValue: string
+}
+
+type ToolDefinitionView = {
+  name: string
+  type: string
+  description: string
+  parameters: ToolParameterView[]
+  raw: unknown
+}
+
+type ReasoningPromptMessageAvatarMap = Record<string, ReasoningPromptMessageAvatar>
 
 function formatStageName(stage: string): string {
   return STAGE_LABELS[stage] ?? stage
@@ -122,12 +164,20 @@ function getReasoningMetadataText(item: ReasoningPromptFile): string {
   return parts.join(' · ')
 }
 
-function getStructuredPromptMessageRoleStyle(role?: string): {
+function getStructuredPromptMessageRoleStyle(role?: string, isBotSelf = false): {
   label: string
   containerClassName: string
   badgeClassName: string
 } {
   const normalizedRole = String(role || '').trim().toLowerCase()
+  if (isBotSelf) {
+    return {
+      label: role || 'user',
+      containerClassName: 'border-orange-300/70 bg-orange-50/75 dark:border-orange-700/60 dark:bg-orange-950/25',
+      badgeClassName:
+        'border-orange-400/70 bg-orange-100/85 text-orange-900 dark:border-orange-700 dark:bg-orange-950 dark:text-orange-100',
+    }
+  }
   if (normalizedRole === 'system') {
     return {
       label: 'system',
@@ -184,6 +234,102 @@ function parseStructuredPrompt(content: string): StructuredPromptPayload | null 
   return null
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function formatSchemaType(schema: Record<string, unknown>): string {
+  const rawType = schema.type
+  if (Array.isArray(rawType)) return rawType.map(String).join(' | ')
+  if (typeof rawType === 'string') return rawType
+  if (isRecord(schema.items)) return `${formatSchemaType(schema.items)}[]`
+  if (schema.enum) return 'enum'
+  return 'unknown'
+}
+
+function formatSchemaValue(value: unknown): string {
+  if (value === undefined) return ''
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => String(item))
+}
+
+function normalizeToolDefinition(toolDefinition: unknown): ToolDefinitionView {
+  const toolRecord = isRecord(toolDefinition) ? toolDefinition : {}
+  const functionRecord = isRecord(toolRecord.function) ? toolRecord.function : toolRecord
+  const parametersRecord = isRecord(functionRecord.parameters) ? functionRecord.parameters : {}
+  const propertiesRecord = isRecord(parametersRecord.properties) ? parametersRecord.properties : {}
+  const requiredNames = new Set(toStringList(parametersRecord.required))
+
+  const parameters = Object.entries(propertiesRecord).map(([name, rawSchema]) => {
+    const schema = isRecord(rawSchema) ? rawSchema : {}
+    return {
+      name,
+      type: formatSchemaType(schema),
+      description: typeof schema.description === 'string' ? schema.description : '',
+      required: requiredNames.has(name),
+      enumValues: toStringList(schema.enum),
+      defaultValue: formatSchemaValue(schema.default),
+    }
+  })
+
+  return {
+    name: typeof functionRecord.name === 'string' ? functionRecord.name : '未命名工具',
+    type: typeof toolRecord.type === 'string' ? toolRecord.type : 'function',
+    description: typeof functionRecord.description === 'string' ? functionRecord.description : '',
+    parameters,
+    raw: toolDefinition,
+  }
+}
+
+function normalizeDisplayName(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+function extractBotSelfNames(prompt: StructuredPromptPayload | null): Set<string> {
+  const names = new Set<string>(['麦麦'])
+
+  for (const message of prompt?.messages ?? []) {
+    if (String(message.role || '').toLowerCase() !== 'system') continue
+    const content = message.content_text || stringifyStructuredValue(message.content)
+    const focusMatch = content.match(/你需要关注\s+(.+?)\s+与用户/)
+    const nameMatch = content.match(/你的名字是([^，。,.\n]+)/)
+    const aliasMatch = content.match(/也有人叫你([^。\n]+)/)
+
+    for (const match of [focusMatch, nameMatch]) {
+      const name = match?.[1]?.trim()
+      if (name) names.add(name)
+    }
+
+    if (aliasMatch?.[1]) {
+      aliasMatch[1]
+        .split(/[、,，]/)
+        .map((alias) => alias.trim())
+        .filter(Boolean)
+        .forEach((alias) => names.add(alias))
+    }
+  }
+
+  return new Set(Array.from(names).map(normalizeDisplayName).filter(Boolean))
+}
+
+function getFirstMessageTagAttrs(text: string): Record<string, string> {
+  const match = text.match(/<message\b([^>]*)>/i)
+  return match ? parseMessageTagAttributes(match[1] ?? '') : {}
+}
+
+function isBotSelfStructuredMessage(message: StructuredPromptMessage, botSelfNames: Set<string>): boolean {
+  if (String(message.role || '').toLowerCase() !== 'user') return false
+
+  const text = message.content_text || stringifyStructuredValue(message.content)
+  const user = getFirstMessageTagAttrs(text).user
+  return Boolean(user && botSelfNames.has(normalizeDisplayName(user)))
+}
+
 function formatSessionType(chatType: string): string {
   if (chatType === 'group') return '群聊'
   if (chatType === 'private') return '私聊'
@@ -215,6 +361,279 @@ function getSessionSubtitle(sessionInfo?: ReasoningPromptSessionInfo): string {
   return parts.join(' · ')
 }
 
+function getReasoningRecordTitle(
+  item: ReasoningPromptFile,
+  sessionInfo?: ReasoningPromptSessionInfo
+): string {
+  const platform = item.platform || sessionInfo?.platform || ''
+  const chatType = item.chat_type || sessionInfo?.chat_type || ''
+  const targetId = item.target_id || sessionInfo?.target_id || ''
+  const parts = [
+    formatStageName(item.stage),
+    getSessionDisplayName(item.session_id, sessionInfo, item.session_display_name),
+    item.stem,
+  ]
+
+  if (platform && chatType && targetId) {
+    parts.push(platform, formatSessionType(chatType), targetId)
+  }
+
+  return parts.join('/')
+}
+
+function formatPromptPreviewText(previewText: string): string {
+  return previewText.replace(/^动作[：:]\s*/, '')
+}
+
+function buildAvatarFallbackText(displayName: string, userId: string): string {
+  const normalizedName = displayName.trim()
+  if (normalizedName) return normalizedName.slice(0, 1).toUpperCase()
+  const normalizedUserId = userId.trim()
+  return normalizedUserId ? normalizedUserId.slice(-2) : '用'
+}
+
+function decodeSimpleHtmlEntity(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+function parseMessageTagAttributes(rawAttributes: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  const attributePattern = /([A-Za-z_][\w:-]*)\s*=\s*"([^"]*)"/g
+  for (const match of rawAttributes.matchAll(attributePattern)) {
+    attrs[match[1]] = decodeSimpleHtmlEntity(match[2])
+  }
+  return attrs
+}
+
+function parseNaturalTextBlocks(text: string): ParsedNaturalTextBlock[] {
+  const messageTagPattern = /<message\b([^>]*)>/gi
+  const matches = Array.from(text.matchAll(messageTagPattern))
+  if (matches.length === 0) {
+    return [{ type: 'text', text }]
+  }
+
+  const blocks: ParsedNaturalTextBlock[] = []
+  let cursor = 0
+  matches.forEach((match, index) => {
+    const start = match.index ?? 0
+    if (start > cursor) {
+      blocks.push({ type: 'text', text: text.slice(cursor, start) })
+    }
+
+    const bodyStart = start + match[0].length
+    const nextStart = matches[index + 1]?.index ?? text.length
+    const body = text.slice(bodyStart, nextStart).replace(/<\/message>\s*$/i, '').trim()
+    blocks.push({
+      type: 'message',
+      attrs: parseMessageTagAttributes(match[1] ?? ''),
+      body,
+    })
+    cursor = nextStart
+  })
+
+  if (cursor < text.length) {
+    blocks.push({ type: 'text', text: text.slice(cursor) })
+  }
+
+  return blocks.filter((block) => (block.type === 'message' ? block.body || Object.keys(block.attrs).length > 0 : block.text.trim()))
+}
+
+function renderMessageTagMeta(attrs: Record<string, string>, avatarMap: ReasoningPromptMessageAvatarMap) {
+  const user = attrs.user || ''
+  const time = attrs.time || ''
+  const msgId = attrs.msg_id || ''
+  const chatId = attrs.chat_id || ''
+  const avatar = msgId ? avatarMap[msgId] : undefined
+  const avatarLabel = avatar?.display_name || user || avatar?.user_id || '用户'
+
+  return (
+    <div className="text-muted-foreground mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      {avatar && (
+        <Avatar className="h-6 w-6 shrink-0 border bg-background">
+          {avatar.avatar_url && <AvatarImage src={avatar.avatar_url} alt={`${avatarLabel} 的头像`} />}
+          <AvatarFallback className="text-[10px]">
+            {buildAvatarFallbackText(avatarLabel, avatar.user_id)}
+          </AvatarFallback>
+        </Avatar>
+      )}
+      {user && (
+        <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
+          {user}
+        </Badge>
+      )}
+      {time && <span>{time}</span>}
+      {msgId && (
+        <span className="max-w-full truncate" title={msgId}>
+          msg {msgId}
+        </span>
+      )}
+      {chatId && (
+        <span className="max-w-full truncate" title={chatId}>
+          chat {chatId}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function NaturalLanguageText({
+  text,
+  avatarMap = {},
+}: {
+  text: string
+  avatarMap?: ReasoningPromptMessageAvatarMap
+}) {
+  const blocks = parseNaturalTextBlocks(text)
+  const baseClassName = 'text-foreground text-sm leading-6 whitespace-pre-wrap'
+  if (blocks.length === 1 && blocks[0].type === 'text') {
+    return (
+      <pre className={baseClassName} style={NATURAL_LANGUAGE_TEXT_STYLE}>
+        {blocks[0].text}
+      </pre>
+    )
+  }
+
+  return (
+    <div className="space-y-2" style={NATURAL_LANGUAGE_TEXT_STYLE}>
+      {blocks.map((block, index) => {
+        if (block.type === 'text') {
+          return (
+            <pre key={`text-${index}`} className={baseClassName}>
+              {block.text.trim()}
+            </pre>
+          )
+        }
+
+        return (
+          <div key={`message-${index}`} className="border-primary/60 pl-2 border-l-2">
+            {renderMessageTagMeta(block.attrs, avatarMap)}
+            <pre className={baseClassName}>{block.body || '空消息'}</pre>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ToolCallsCollapsible({ toolCalls }: { toolCalls: unknown[] }) {
+  return (
+    <Collapsible className="bg-background/60 mt-2 rounded-md border sm:mt-3">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors sm:px-3 [&[data-state=open]>svg]:rotate-180"
+        >
+          <span className="font-medium">工具调用 · {toolCalls.length} 个</span>
+          <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t">
+        <pre className="p-2.5 font-mono text-base leading-7 font-semibold whitespace-pre-wrap sm:p-3">
+          {JSON.stringify(toolCalls, null, 2)}
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function ToolDefinitionsCollapsible({ toolDefinitions }: { toolDefinitions: unknown[] }) {
+  const tools = toolDefinitions.map(normalizeToolDefinition)
+
+  return (
+    <Collapsible className="rounded-md border">
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors sm:px-3 [&[data-state=open]>svg]:rotate-180"
+        >
+          <span className="font-medium">工具定义 · {tools.length} 个</span>
+          <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t">
+        <div className="space-y-2 p-2 sm:p-3">
+          {tools.map((tool, index) => (
+            <div key={`${tool.name}-${index}`} className="bg-background/60 rounded-md border p-2.5 sm:p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="font-mono">
+                  {tool.name}
+                </Badge>
+                <span className="text-muted-foreground text-xs">{tool.type}</span>
+              </div>
+              {tool.description && (
+                <p className="text-foreground mt-2 text-sm leading-6">{tool.description}</p>
+              )}
+
+              {tool.parameters.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-muted-foreground text-xs font-medium">参数</div>
+                  <div className="space-y-1.5">
+                    {tool.parameters.map((parameter) => (
+                      <div key={parameter.name} className="rounded-md border px-2.5 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold">{parameter.name}</span>
+                          <Badge variant="outline" className="px-1.5 py-0 font-mono text-[11px]">
+                            {parameter.type}
+                          </Badge>
+                          {parameter.required && (
+                            <Badge
+                              variant="outline"
+                              className="border-destructive/50 px-1.5 py-0 text-[11px] text-destructive"
+                            >
+                              必填
+                            </Badge>
+                          )}
+                        </div>
+                        {parameter.description && (
+                          <p className="text-muted-foreground mt-1 text-xs leading-5">
+                            {parameter.description}
+                          </p>
+                        )}
+                        {(parameter.enumValues.length > 0 || parameter.defaultValue) && (
+                          <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                            {parameter.enumValues.length > 0 && (
+                              <span>可选值：{parameter.enumValues.join('、')}</span>
+                            )}
+                            {parameter.defaultValue && <span>默认：{parameter.defaultValue}</span>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-muted-foreground mt-3 text-xs">无参数</div>
+              )}
+
+              <Collapsible className="mt-3 rounded-md border">
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors [&[data-state=open]>svg]:rotate-180"
+                  >
+                    <span>原始定义</span>
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t">
+                  <pre className="p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+                    {JSON.stringify(tool.raw, null, 2)}
+                  </pre>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 interface ReasoningProcessPageProps {
   embedded?: boolean
   toolbarContainerId?: string
@@ -234,6 +653,7 @@ export function ReasoningProcessPage({
   const [sessionInfos, setSessionInfos] = useState<ReasoningPromptSessionInfo[]>([])
   const [stage, setStage] = useState('planner')
   const [session, setSession] = useState(AUTO_SESSION)
+  const [actionFilter, setActionFilter] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -241,6 +661,7 @@ export function ReasoningProcessPage({
   const [selected, setSelected] = useState<ReasoningPromptFile | null>(null)
   const [textContent, setTextContent] = useState('')
   const [jsonContent, setJsonContent] = useState('')
+  const [messageAvatarMap, setMessageAvatarMap] = useState<ReasoningPromptMessageAvatarMap>({})
   const [activePreview, setActivePreview] = useState<'structured' | 'text' | 'html'>('structured')
   const [htmlPreviewUrl, setHtmlPreviewUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -268,6 +689,7 @@ export function ReasoningProcessPage({
     return new Map(sessionInfos.map((item) => [item.name, item]))
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
+  const avatarFetchEnabled = useAvatarFetchEnabled()
 
   useEffect(() => {
     setToolbarRoot(toolbarContainerId ? document.getElementById(toolbarContainerId) : null)
@@ -311,6 +733,7 @@ export function ReasoningProcessPage({
         const data = await listReasoningPromptFiles({
           stage,
           session,
+          action: actionFilter,
           search,
           page,
           pageSize: PAGE_SIZE,
@@ -350,12 +773,13 @@ export function ReasoningProcessPage({
     return () => {
       ignore = true
     }
-  }, [browsingStage, page, refreshKey, search, session, stage])
+  }, [actionFilter, browsingStage, page, refreshKey, search, session, stage])
 
   useEffect(() => {
     let ignore = false
 
     async function loadContent() {
+      setMessageAvatarMap({})
       if (!selected?.text_path) {
         setTextContent('')
       } else {
@@ -374,17 +798,34 @@ export function ReasoningProcessPage({
 
       if (!selected?.json_path) {
         setJsonContent('')
+        setMessageAvatarMap({})
         return
       }
 
       setJsonContent('')
+      setMessageAvatarMap({})
       setContentLoading(true)
       try {
         const data = await getReasoningPromptFile(selected.json_path)
-        if (!ignore) setJsonContent(data.content)
+        const avatarEntries = avatarFetchEnabled
+          ? await Promise.all(
+              Object.entries(data.message_avatars ?? {}).map(async ([messageId, avatar]) => [
+                messageId,
+                {
+                  ...avatar,
+                  avatar_url: avatar.avatar_url ? await resolveApiPath(avatar.avatar_url) : null,
+                },
+              ] as const)
+            )
+          : []
+        if (!ignore) {
+          setJsonContent(data.content)
+          setMessageAvatarMap(Object.fromEntries(avatarEntries))
+        }
       } catch (err) {
         if (!ignore) {
           setJsonContent('')
+          setMessageAvatarMap({})
           setTextContent((current) => current || (err instanceof Error ? err.message : '读取结构化内容失败'))
         }
       } finally {
@@ -413,7 +854,7 @@ export function ReasoningProcessPage({
     return () => {
       ignore = true
     }
-  }, [selected])
+  }, [avatarFetchEnabled, selected])
 
   function resetToFirstPage(nextAction: () => void) {
     nextAction()
@@ -424,6 +865,7 @@ export function ReasoningProcessPage({
     resetToFirstPage(() => {
       setStage(nextStage)
       setSession(AUTO_SESSION)
+      setActionFilter('')
       setSearch('')
       setItems([])
       setSessions([])
@@ -449,13 +891,7 @@ export function ReasoningProcessPage({
       await navigator.clipboard.writeText(copyContent)
       toast({
         title: '已复制完整 Prompt',
-        description: selected
-          ? `${formatStageName(selected.stage)}/${getSessionDisplayName(
-              selected.session_id,
-              selectedSessionInfo,
-              selected.session_display_name
-            )}/${selected.stem}`
-          : undefined,
+        description: selected ? getReasoningRecordTitle(selected, selectedSessionInfo) : undefined,
       })
     } catch (err) {
       toast({
@@ -467,22 +903,19 @@ export function ReasoningProcessPage({
   }
 
   const selectedSessionInfo = selected ? sessionInfoByName.get(selected.session_id) : undefined
-  const selectedStructuredPrompt = selected?.json_path ? structuredPrompt : null
-  const selectedModelName = selected?.model_name || selectedStructuredPrompt?.metadata?.model_name || ''
-  const selectedDurationText = formatDurationMs(
-    selected?.duration_ms ?? selectedStructuredPrompt?.metadata?.duration_ms ?? null
-  )
-  const selectedMessageCount = selectedStructuredPrompt ? (selectedStructuredPrompt.messages?.length ?? 0) : null
+  const selectedTitle = selected ? getReasoningRecordTitle(selected, selectedSessionInfo) : '未选择记录'
+  const botSelfNames = useMemo(() => extractBotSelfNames(structuredPrompt), [structuredPrompt])
   const renderRefreshButton = () => (
     <Button
       variant="outline"
       size="sm"
+      aria-label="刷新"
+      title="刷新"
       onClick={() => setRefreshKey((current) => current + 1)}
       disabled={loading}
-      className="h-9 shrink-0 justify-start sm:h-10"
+      className="h-9 w-9 shrink-0 p-0 sm:h-10 sm:w-10"
     >
       <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-      刷新
     </Button>
   )
   const renderBrowsingControls = (inToolbar = false) => (
@@ -509,6 +942,7 @@ export function ReasoningProcessPage({
           {session === AUTO_SESSION && (
             <SelectItem value={AUTO_SESSION}>自动选择最近会话</SelectItem>
           )}
+          <SelectItem value={ALL_GROUP_SESSIONS}>全部群聊</SelectItem>
           {sessions.map((item) => {
             const sessionInfo = sessionInfoByName.get(item)
             return (
@@ -527,10 +961,19 @@ export function ReasoningProcessPage({
         </SelectContent>
       </Select>
 
+      <div className={cn('relative', inToolbar ? 'w-full sm:w-[140px]' : undefined)}>
+        <Input
+          value={actionFilter}
+          onChange={(event) => resetToFirstPage(() => setActionFilter(event.target.value))}
+          className="h-9 sm:h-10"
+          placeholder="动作过滤"
+        />
+      </div>
+
       <div
         className={cn(
           'relative',
-          inToolbar ? 'min-w-0 flex-[1_1_220px] sm:min-w-[300px] sm:max-w-[520px]' : undefined
+          inToolbar ? 'min-w-0 flex-[1_1_220px] sm:min-w-[260px] sm:max-w-[520px]' : undefined
         )}
       >
         <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
@@ -545,10 +988,12 @@ export function ReasoningProcessPage({
   )
   const toolbarContent = (
     <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:justify-end">
+      {browsingStage && renderBrowsingControls(true)}
       {renderRefreshButton()}
     </div>
   )
   const toolbarPortal = embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
+  const showBrowsingControlsInline = browsingStage && (!embedded || !toolbarVisible || !toolbarRoot)
   const renderStageCard = (item: ReasoningPromptStageInfo, compact = false) => (
     <button
       key={item.name}
@@ -561,9 +1006,14 @@ export function ReasoningProcessPage({
       )}
     >
       <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
-        <Badge variant="secondary" className="w-fit">
+        <div
+          className={cn(
+            'text-primary font-extrabold tracking-normal uppercase',
+            compact ? 'text-sm sm:text-base' : 'text-base sm:text-lg'
+          )}
+        >
           {item.name}
-        </Badge>
+        </div>
         <div className={cn('text-foreground font-semibold', compact ? 'text-sm' : 'text-base')}>
           {formatStageName(item.name)}
         </div>
@@ -589,7 +1039,7 @@ export function ReasoningProcessPage({
         </div>
       )}
 
-      {browsingStage && (
+      {showBrowsingControlsInline && (
         <div className="grid flex-shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 [&>div:last-child]:col-span-2 sm:grid-cols-[auto_minmax(220px,320px)_1fr] sm:[&>div:last-child]:col-span-1">
           {renderBrowsingControls()}
         </div>
@@ -602,7 +1052,7 @@ export function ReasoningProcessPage({
       )}
 
       {!browsingStage ? (
-        <div className="bg-background flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+        <div className="bg-background flex min-h-0 flex-1 flex-col overflow-hidden rounded-md">
           <div className="flex h-10 flex-shrink-0 items-center gap-2 border-b px-3 sm:h-12 sm:px-4">
             <Layers className="text-muted-foreground h-4 w-4" />
             <div className="text-sm font-medium">选择推理类型</div>
@@ -610,8 +1060,8 @@ export function ReasoningProcessPage({
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-3 p-2 sm:space-y-4 sm:p-3">
               {primaryStageCards.length > 0 && (
-                <div className="grid gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3">
-                  {primaryStageCards.map((item) => renderStageCard(item))}
+                <div className="grid grid-cols-3 gap-1.5 sm:gap-2 lg:gap-3">
+                  {primaryStageCards.map((item) => renderStageCard(item, true))}
                 </div>
               )}
               {secondaryStageCards.length > 0 && (
@@ -630,7 +1080,7 @@ export function ReasoningProcessPage({
           </ScrollArea>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-[360px_1fr] lg:gap-3">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-[280px_1fr] lg:gap-3">
           <div className="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border lg:h-auto lg:min-h-0">
             <div className="text-muted-foreground flex h-10 flex-shrink-0 items-center justify-between border-b px-3 text-sm lg:h-11">
               <span>{total} 条记录</span>
@@ -647,8 +1097,9 @@ export function ReasoningProcessPage({
                     selected?.stem === item.stem
                   const durationText = formatDurationMs(item.duration_ms)
                   const metadataText = getReasoningMetadataText(item)
-                  const previewText =
+                  const rawPreviewText =
                     item.stage === 'replyer' ? item.output_preview : item.action_preview
+                  const previewText = rawPreviewText ? formatPromptPreviewText(rawPreviewText) : ''
                   return (
                     <button
                       key={`${item.stage}/${item.session_id}/${item.stem}`}
@@ -663,12 +1114,23 @@ export function ReasoningProcessPage({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
-                          {previewText && (
-                            <div
-                              className="text-foreground line-clamp-2 text-sm font-medium"
-                              title={previewText}
-                            >
-                              {previewText}
+                          {(item.has_behavior_choice_insert || previewText) && (
+                            <div className="flex min-w-0 items-start gap-1.5">
+                              {item.has_behavior_choice_insert && (
+                                <span
+                                  className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-500"
+                                  title="包含行为表现参考"
+                                  aria-label="包含行为表现参考"
+                                />
+                              )}
+                              {previewText && (
+                                <div
+                                  className="text-foreground line-clamp-2 min-w-0 text-sm font-medium"
+                                  title={previewText}
+                                >
+                                  {previewText}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -694,11 +1156,9 @@ export function ReasoningProcessPage({
                               {durationText}
                             </span>
                           )}
+                          <span className="shrink-0">{formatSize(item.size)}</span>
                         </div>
                       )}
-                      <div className="text-muted-foreground flex items-center justify-end text-xs">
-                        <span className="shrink-0">{formatSize(item.size)}</span>
-                      </div>
                     </button>
                   )
                 })}
@@ -740,46 +1200,11 @@ export function ReasoningProcessPage({
                   <div className="flex min-h-12 flex-col gap-2 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
-                        {selected
-                          ? `${formatStageName(selected.stage)}/${getSessionDisplayName(
-                              selected.session_id,
-                              selectedSessionInfo,
-                              selected.session_display_name
-                            )}/${selected.stem}`
-                          : '未选择记录'}
+                        {selectedTitle}
                       </div>
-                      <div className="text-muted-foreground truncate text-xs">
-                        {selected
-                          ? `${formatSize(selected.size)} · ${formatTime(selected.timestamp, selected.modified_at)}`
-                          : '从左侧列表选择一条记录'}
-                      </div>
-                      {(selectedModelName ||
-                        selectedDurationText ||
-                        selectedMessageCount !== null) && (
-                        <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                          {selectedModelName && (
-                            <span className="inline-flex min-w-0 items-center gap-1">
-                              <Cpu className="h-3.5 w-3.5 shrink-0" />
-                              <span className="truncate">{selectedModelName}</span>
-                            </span>
-                          )}
-                          {selectedDurationText && (
-                            <span className="inline-flex items-center gap-1">
-                              <Timer className="h-3.5 w-3.5 shrink-0" />
-                              {selectedDurationText}
-                            </span>
-                          )}
-                          {selectedMessageCount !== null && (
-                            <span className="inline-flex items-center gap-1">
-                              <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                              {selectedMessageCount} 条消息
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {selected && selectedSessionInfo && (
-                        <div className="text-muted-foreground mt-1 truncate text-xs">
-                          {getSessionSubtitle(selectedSessionInfo)}
+                      {!selected && (
+                        <div className="text-muted-foreground truncate text-xs">
+                          从左侧列表选择一条记录
                         </div>
                       )}
                     </div>
@@ -856,10 +1281,10 @@ export function ReasoningProcessPage({
                       <div className="space-y-2 p-2 sm:space-y-3 sm:p-3">
                         {structuredPrompt.request?.selection_reason && (
                           <div className="rounded-md border p-2.5 sm:p-3">
-                            <div className="text-muted-foreground text-xs">选择原因</div>
-                            <pre className="text-foreground mt-2 text-sm break-words whitespace-pre-wrap">
-                              {structuredPrompt.request.selection_reason}
-                            </pre>
+                            <NaturalLanguageText
+                              text={structuredPrompt.request.selection_reason}
+                              avatarMap={messageAvatarMap}
+                            />
                           </div>
                         )}
 
@@ -868,31 +1293,41 @@ export function ReasoningProcessPage({
                             <Badge variant="secondary" className="mb-2">
                               {structuredPrompt.output.title || '输出结果'}
                             </Badge>
-                            <pre className="text-foreground font-mono text-xs leading-5 whitespace-pre-wrap">
-                              {structuredPrompt.output.content_text ||
+                            <NaturalLanguageText
+                              text={
+                                structuredPrompt.output.content_text ||
                                 stringifyStructuredValue(structuredPrompt.output.content) ||
-                                '空输出'}
-                            </pre>
+                                '空输出'
+                              }
+                              avatarMap={messageAvatarMap}
+                            />
                             {structuredPrompt.output.tool_calls &&
                               structuredPrompt.output.tool_calls.length > 0 && (
-                                <pre className="bg-background/60 mt-2 rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap sm:mt-3 sm:p-3">
-                                  {JSON.stringify(structuredPrompt.output.tool_calls, null, 2)}
-                                </pre>
+                                <ToolCallsCollapsible toolCalls={structuredPrompt.output.tool_calls} />
                               )}
                           </div>
                         )}
 
                         <div className="space-y-2">
                           {(structuredPrompt.messages ?? []).map((message, index) => {
-                            const roleStyle = getStructuredPromptMessageRoleStyle(message.role)
+                            const isBotSelfMessage = isBotSelfStructuredMessage(message, botSelfNames)
+                            const roleStyle = getStructuredPromptMessageRoleStyle(
+                              message.role,
+                              isBotSelfMessage
+                            )
                             return (
                               <div
                                 key={`${message.index ?? index}-${message.role ?? 'unknown'}`}
-                                className={cn('rounded-md border p-2.5 sm:p-3', roleStyle.containerClassName)}
+                                className={cn('relative rounded-md border px-2.5 pt-9 pb-2.5 sm:px-3 sm:pt-10 sm:pb-3', roleStyle.containerClassName)}
                               >
-                                <div className="mb-2 flex flex-wrap items-center gap-2">
-                                  <Badge variant="outline">#{message.index ?? index + 1}</Badge>
-                                  <Badge variant="outline" className={roleStyle.badgeClassName}>
+                                <div className="absolute top-1.5 left-1.5 flex flex-wrap items-center gap-1.5 sm:top-2 sm:left-2">
+                                  <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
+                                    #{message.index ?? index + 1}
+                                  </Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={cn('px-1.5 py-0 text-[11px]', roleStyle.badgeClassName)}
+                                  >
                                     {roleStyle.label}
                                   </Badge>
                                   {message.tool_call_id && (
@@ -901,15 +1336,16 @@ export function ReasoningProcessPage({
                                     </span>
                                   )}
                                 </div>
-                                <pre className="text-foreground font-mono text-xs leading-5 whitespace-pre-wrap">
-                                  {message.content_text ||
+                                <NaturalLanguageText
+                                  text={
+                                    message.content_text ||
                                     stringifyStructuredValue(message.content) ||
-                                    '空内容'}
-                                </pre>
+                                    '空内容'
+                                  }
+                                  avatarMap={messageAvatarMap}
+                                />
                                 {message.tool_calls && message.tool_calls.length > 0 && (
-                                  <pre className="bg-background/60 mt-2 rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap sm:mt-3 sm:p-3">
-                                    {JSON.stringify(message.tool_calls, null, 2)}
-                                  </pre>
+                                  <ToolCallsCollapsible toolCalls={message.tool_calls} />
                                 )}
                               </div>
                             )
@@ -918,14 +1354,9 @@ export function ReasoningProcessPage({
 
                         {structuredPrompt.tool_definitions &&
                           structuredPrompt.tool_definitions.length > 0 && (
-                            <div className="rounded-md border p-2.5 sm:p-3">
-                              <Badge variant="secondary" className="mb-2">
-                                工具定义
-                              </Badge>
-                              <pre className="text-foreground font-mono text-xs leading-5 whitespace-pre-wrap">
-                                {JSON.stringify(structuredPrompt.tool_definitions, null, 2)}
-                              </pre>
-                            </div>
+                            <ToolDefinitionsCollapsible
+                              toolDefinitions={structuredPrompt.tool_definitions}
+                            />
                           )}
                       </div>
                     ) : (

@@ -815,7 +815,7 @@ wheels = [
 
 [[package]]
 name = "maibot"
-version = "1.0.0"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "ahocorasick-rs" },
@@ -876,8 +876,8 @@ requires-dist = [
     { name = "httpx", extras = ["socks"] },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "json-repair", specifier = ">=0.47.6" },
-    { name = "maibot-dashboard", specifier = "==1.4.0.dev20260608205" },
-    { name = "maibot-plugin-sdk", specifier = ">=2.5.3" },
+    { name = "maibot-dashboard", specifier = "==1.4.0" },
+    { name = "maibot-plugin-sdk", specifier = ">=2.5.4" },
     { name = "maim-message", specifier = "==0.6.8" },
     { name = "mcp" },
     { name = "msgpack", specifier = ">=1.1.2" },
@@ -912,24 +912,24 @@ dev = [
 
 [[package]]
 name = "maibot-dashboard"
-version = "1.4.0.dev20260608205"
+version = "1.4.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fc/6b/1d23eea2546a5860028b9af486d481fded39aef84a878e1bde04bc939b3e/maibot_dashboard-1.4.0.dev20260608205.tar.gz", hash = "sha256:ddd1ad1c8972bb400653cb93fc0c77711dc348fd1903c3225828e247150f9659", size = 2543132, upload-time = "2026-06-08T17:46:18.58Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e1/21/fc860e2751d784ed2967acbc924a2ac9e121e60e1b477cb5fbb89000584a/maibot_dashboard-1.4.0.tar.gz", hash = "sha256:e5e765be208dae850be87f3535eb365294ef71519e120938124e578df3ed1603", size = 2552102, upload-time = "2026-06-12T08:49:47.01Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/19/46/eea37f4383dca7b400a26fc6a91064a9ec62a253a7e81fc32f624ef47e36/maibot_dashboard-1.4.0.dev20260608205-py3-none-any.whl", hash = "sha256:7fcf5a1a822fd2ed25ef1a05c88c7e0f1d06a77f9a83ee2f93bceb313fbe024c", size = 2610751, upload-time = "2026-06-08T17:46:17.071Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/87/ba/c510c4b0e6d028c1b502170f30d9b692bf9d3fa274b1203b6317980be8fb/maibot_dashboard-1.4.0-py3-none-any.whl", hash = "sha256:18d978eaaab16fb3fe70fe8b2842f70d9b289bcd68e1ccc6276740ec7f474025", size = 2618899, upload-time = "2026-06-12T08:49:45.498Z" },
 ]
 
 [[package]]
 name = "maibot-plugin-sdk"
-version = "2.5.3"
+version = "2.5.4"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "msgpack" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2a/96/0611960903ec89b2594768bef6d6817d7dee8bf2f8f885b174070b0a0897/maibot_plugin_sdk-2.5.3.tar.gz", hash = "sha256:30c9d5677a840030129242f3b24e200114f38a0219323124e2a7942e76fb0501", size = 85143, upload-time = "2026-06-07T04:58:36.782Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/70/e1/56a213db818b0d1a08f13647f2a2469eb2e5c620e562cd341798afebd3cf/maibot_plugin_sdk-2.5.4.tar.gz", hash = "sha256:43f953c5510755839dd95e2811a9dbcf6825b9e342f113f860c06d8dea88549a", size = 85683, upload-time = "2026-06-08T10:58:41.532Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/07/89/56315b1914e02fd85f6c9e5626b276833642ab36569baa5ef19e1c000d90/maibot_plugin_sdk-2.5.3-py3-none-any.whl", hash = "sha256:db5e2c6d1ea5cd02ebe0632cf0210edf0baf2016fa19440e174af12ee36b99bf", size = 104696, upload-time = "2026-06-07T04:58:35.249Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c2/26/84546aef9f9f30c46d6d75d02c66a8dd551f4cb703fa625b4dcb093b7213/maibot_plugin_sdk-2.5.4-py3-none-any.whl", hash = "sha256:715565ace6f9a634920d44c5eff29044b5a79e794582de3ddc84aeb6e78c4ee0", size = 105019, upload-time = "2026-06-08T10:58:40.034Z" },
 ]
 
 [[package]]

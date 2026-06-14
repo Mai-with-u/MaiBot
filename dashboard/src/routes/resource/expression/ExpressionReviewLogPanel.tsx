@@ -84,15 +84,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
         passed: filter === 'all' ? undefined : filter === 'passed',
         chat_id: chatFilter === ALL_CHATS_VALUE ? undefined : chatFilter,
       })
-      if (result.success) {
-        setEntries(result.data.data)
-      } else {
-        toast({
-          title: '加载失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      setEntries(result.data)
     } catch (error) {
       toast({
         title: '加载失败',
@@ -106,18 +98,19 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
 
   const loadChatList = useCallback(async () => {
     try {
-      const [targetResult, logResult] = await Promise.all([
+      // 用 allSettled：任一数据源失败仍以另一数据源构建聊天流映射（保留原 best-effort 行为）
+      const [targetResult, logResult] = await Promise.allSettled([
         getExpressionChatTargets(),
         getExpressionReviewLogs({ limit: 200 }),
       ])
       const chatMap = new Map<string, ChatInfo>()
-      if (targetResult.success) {
-        targetResult.data.forEach((chat) => {
+      if (targetResult.status === 'fulfilled') {
+        targetResult.value.forEach((chat) => {
           chatMap.set(chat.chat_id, chat)
         })
       }
-      if (logResult.success) {
-        logResult.data.data.forEach((entry) => {
+      if (logResult.status === 'fulfilled') {
+        logResult.value.data.forEach((entry) => {
           if (!entry.session_id || chatMap.has(entry.session_id)) return
           chatMap.set(entry.session_id, {
             chat_id: entry.session_id,
@@ -139,18 +132,9 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
     try {
       setProcessingId(entry.id)
       const result = await approveExpressionReviewLog(entry.id)
-      if (!result.success) {
-        toast({
-          title: '恢复失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
       toast({
         title: '已人工通过',
-        description: result.data.message,
+        description: result.message,
       })
       await loadLogs()
       onRescued?.()

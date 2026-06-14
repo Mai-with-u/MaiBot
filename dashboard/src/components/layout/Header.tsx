@@ -37,7 +37,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toggleThemeWithTransition } from '@/components/use-theme'
 import { useBackground } from '@/hooks/use-background'
-import { logout } from '@/lib/fetch-with-auth'
+import { logout } from '@/lib/auth'
 import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import type { WorkspaceMode } from './types'

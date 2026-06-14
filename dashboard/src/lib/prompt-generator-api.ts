@@ -1,24 +1,17 @@
-import { parseResponse } from '@/lib/api-helpers'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
-import type { ApiResponse } from '@/types/api'
+import { ApiError, backendApi } from '@/lib/http'
 
 const PROMPT_GENERATOR_METHOD_NOT_ALLOWED_MESSAGE =
   '生成失败：可能是模型不支持或前后端版本不匹配，请换用文本聊天模型，或刷新并重启 WebUI 后再试。'
 
-function normalizePromptGeneratorError<T>(result: ApiResponse<T>): ApiResponse<T> {
-  if (result.success) {
-    return result
-  }
-
-  const normalizedError = result.error.toLowerCase()
-  if (normalizedError.includes('method not allowed') || normalizedError.includes('405')) {
-    return {
-      success: false,
-      error: PROMPT_GENERATOR_METHOD_NOT_ALLOWED_MESSAGE,
+// 把 405/method not allowed 这类底层错误归一化为对用户更友好的提示后重新抛出
+function normalizePromptGeneratorError(error: unknown): never {
+  if (error instanceof ApiError) {
+    const normalizedError = error.message.toLowerCase()
+    if (normalizedError.includes('method not allowed') || normalizedError.includes('405')) {
+      throw new ApiError(PROMPT_GENERATOR_METHOD_NOT_ALLOWED_MESSAGE)
     }
   }
-
-  return result
+  throw error
 }
 
 export interface PromptGeneratorChatPrompt {
@@ -73,12 +66,15 @@ export interface PromptGeneratorResponse {
 
 export async function generatePromptPersona(
   payload: PromptGeneratorRequest
-): Promise<ApiResponse<PromptGeneratorResponse>> {
-  const response = await fetchWithAuth('/api/webui/config/prompt-generator/generate', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-  return normalizePromptGeneratorError(await parseResponse<PromptGeneratorResponse>(response))
+): Promise<PromptGeneratorResponse> {
+  try {
+    return await backendApi.post<PromptGeneratorResponse>('/api/webui/config/prompt-generator/generate', {
+      body: payload,
+      errorMessage: '生成人设 Prompt 失败',
+    })
+  } catch (error) {
+    normalizePromptGeneratorError(error)
+  }
 }
 
 export interface PromptGeneratorApplyResponse {
@@ -90,10 +86,9 @@ export interface PromptGeneratorApplyResponse {
 
 export async function applyPromptGeneratorBlocks(
   blocks: PromptGeneratorConfigBlock[]
-): Promise<ApiResponse<PromptGeneratorApplyResponse>> {
-  const response = await fetchWithAuth('/api/webui/config/prompt-generator/apply', {
-    method: 'POST',
-    body: JSON.stringify({ blocks }),
+): Promise<PromptGeneratorApplyResponse> {
+  return backendApi.post<PromptGeneratorApplyResponse>('/api/webui/config/prompt-generator/apply', {
+    body: { blocks },
+    errorMessage: '应用生成结果失败',
   })
-  return parseResponse<PromptGeneratorApplyResponse>(response)
 }

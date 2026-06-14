@@ -1,4 +1,6 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react'
+import { type ReactNode, useMemo, useState } from 'react'
+
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Bot, Copy, Download, FileText, Loader2, RefreshCw, Sparkles, Upload, Wand2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -128,55 +130,74 @@ function ConfigBlockView({
 
 export function PromptGeneratorPage() {
   const { toast } = useToast()
-  const [models, setModels] = useState<PromptGeneratorModel[]>([])
-  const [modelName, setModelName] = useState('')
+  const [selectedModelName, setSelectedModelName] = useState('')
   const [sourceText, setSourceText] = useState('')
   const [targetScene, setTargetScene] = useState<TargetScene>('group')
   const [language, setLanguage] = useState('简体中文')
   const [extraRequirements, setExtraRequirements] = useState('')
   const [temperature, setTemperature] = useState('0.3')
   const [maxTokens, setMaxTokens] = useState('1800')
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [generating, setGenerating] = useState(false)
-  const [applyingAll, setApplyingAll] = useState(false)
   const [applyingBlockId, setApplyingBlockId] = useState<string | null>(null)
   const [outputTab, setOutputTab] = useState<OutputTab>('blocks')
   const [generated, setGenerated] = useState<PromptGeneratorResponse | null>(null)
 
+  // 模型列表：读取失败用局部呈现（不弹 toast），「刷新模型」按钮调 refetch
+  const modelsQuery = useQuery({
+    queryKey: ['promptGenerator', 'models'],
+    queryFn: () => getModelConfig(),
+  })
+  const loadingModels = modelsQuery.isFetching
+  const models = useMemo(() => normalizeModels(modelsQuery.data), [modelsQuery.data])
+
+  // 当前选中项：用户已选且仍有效则沿用，否则回落到首个模型（渲染期派生，避免与列表加载同步的副作用）
+  const modelName = models.some((model) => model.name === selectedModelName)
+    ? selectedModelName
+    : models[0]?.name ?? ''
   const selectedModel = models.find((model) => model.name === modelName)
-  const applying = applyingAll || applyingBlockId !== null
 
-  const loadModels = useCallback(async () => {
-    try {
-      setLoadingModels(true)
-      const result = await getModelConfig()
-      if (!result.success) {
-        toast({ title: '加载模型失败', description: result.error, variant: 'destructive' })
-        return
-      }
-
-      const nextModels = normalizeModels(result.data)
-      setModels(nextModels)
-      setModelName((current) => {
-        if (nextModels.some((model) => model.name === current)) {
-          return current
-        }
-        return nextModels[0]?.name ?? ''
-      })
-    } catch (error) {
+  // 注入配置块（失败由全局 mutation 错误 toast 呈现）
+  const applyMutation = useMutation({
+    mutationFn: async (vars: { blocks: PromptGeneratorConfigBlock[]; label: string; blockId?: string }) =>
+      applyPromptGeneratorBlocks(vars.blocks),
+    meta: { errorTitle: '注入失败' },
+    onMutate: (vars) => {
+      setApplyingBlockId(vars.blockId ?? null)
+    },
+    onSuccess: (data, vars) => {
       toast({
-        title: '加载模型失败',
-        description: (error as Error).message,
-        variant: 'destructive',
+        title: `${vars.label}已注入配置`,
+        description: data.sections.length > 0 ? `已更新 ${data.sections.join('、')}` : undefined,
       })
-    } finally {
-      setLoadingModels(false)
-    }
-  }, [toast])
+    },
+    onSettled: () => {
+      setApplyingBlockId(null)
+    },
+  })
+  const applyingAll = applyMutation.isPending && applyingBlockId === null
+  const applying = applyMutation.isPending
 
-  useEffect(() => {
-    void loadModels()
-  }, [loadModels])
+  // 生成人设（失败由全局 mutation 错误 toast 呈现）
+  const generateMutation = useMutation({
+    mutationFn: async (vars: {
+      model_name: string
+      source_text: string
+      target_scene: TargetScene
+      language: string
+      extra_requirements: string
+      temperature: number
+      max_tokens: number
+    }) => generatePromptPersona(vars),
+    meta: { errorTitle: '生成失败' },
+    onSuccess: (data) => {
+      setGenerated(data)
+      setOutputTab('blocks')
+      toast({
+        title: '人设解析完成',
+        description: `${data.model_name} · ${data.total_tokens || 0} tokens`,
+      })
+    },
+  })
+  const generating = generateMutation.isPending
 
   const handleCopy = async (content: string, label: string) => {
     try {
@@ -204,41 +225,15 @@ export function PromptGeneratorPage() {
     toast({ title: '已生成下载文件', description: filename })
   }
 
-  const handleApplyBlocks = async (blocks: PromptGeneratorConfigBlock[], label: string, blockId?: string) => {
+  const handleApplyBlocks = (blocks: PromptGeneratorConfigBlock[], label: string, blockId?: string) => {
     if (blocks.length === 0) {
       toast({ title: '没有可注入的配置块', variant: 'destructive' })
       return
     }
-
-    try {
-      if (blockId) {
-        setApplyingBlockId(blockId)
-      } else {
-        setApplyingAll(true)
-      }
-      const result = await applyPromptGeneratorBlocks(blocks)
-      if (!result.success) {
-        toast({ title: '注入失败', description: result.error, variant: 'destructive' })
-        return
-      }
-
-      toast({
-        title: `${label}已注入配置`,
-        description: result.data.sections.length > 0 ? `已更新 ${result.data.sections.join('、')}` : undefined,
-      })
-    } catch (error) {
-      toast({
-        title: '注入失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setApplyingAll(false)
-      setApplyingBlockId(null)
-    }
+    applyMutation.mutate({ blocks, label, blockId })
   }
 
-  const handleGenerate = async () => {
+  const handleGenerate = () => {
     const normalizedSourceText = sourceText.trim()
     if (!modelName) {
       toast({ title: '请选择生成模型', variant: 'destructive' })
@@ -260,37 +255,15 @@ export function PromptGeneratorPage() {
       return
     }
 
-    try {
-      setGenerating(true)
-      const result = await generatePromptPersona({
-        model_name: modelName,
-        source_text: normalizedSourceText,
-        target_scene: targetScene,
-        language,
-        extra_requirements: extraRequirements.trim(),
-        temperature: parsedTemperature,
-        max_tokens: parsedMaxTokens,
-      })
-      if (!result.success) {
-        toast({ title: '生成失败', description: result.error, variant: 'destructive' })
-        return
-      }
-
-      setGenerated(result.data)
-      setOutputTab('blocks')
-      toast({
-        title: '人设解析完成',
-        description: `${result.data.model_name} · ${result.data.total_tokens || 0} tokens`,
-      })
-    } catch (error) {
-      toast({
-        title: '生成失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setGenerating(false)
-    }
+    generateMutation.mutate({
+      model_name: modelName,
+      source_text: normalizedSourceText,
+      target_scene: targetScene,
+      language,
+      extra_requirements: extraRequirements.trim(),
+      temperature: parsedTemperature,
+      max_tokens: parsedMaxTokens,
+    })
   }
 
   return (
@@ -307,7 +280,7 @@ export function PromptGeneratorPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => void loadModels()} disabled={loadingModels}>
+            <Button variant="outline" size="sm" onClick={() => void modelsQuery.refetch()} disabled={loadingModels}>
               <RefreshCw className={cn('h-4 w-4', loadingModels && 'animate-spin')} />
               刷新模型
             </Button>
@@ -330,7 +303,7 @@ export function PromptGeneratorPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <FieldBlock label="生成模型" description="来自模型管理中定义的 models。">
-                  <Select value={modelName} onValueChange={setModelName} disabled={loadingModels || models.length === 0}>
+                  <Select value={modelName} onValueChange={setSelectedModelName} disabled={loadingModels || models.length === 0}>
                     <SelectTrigger>
                       <SelectValue placeholder={loadingModels ? '加载模型中...' : '选择模型'} />
                     </SelectTrigger>

@@ -206,10 +206,10 @@ export function LegacyExpressionImportDialog({
     if (!open) return
 
     const loadTargets = async () => {
-      const result = await getExpressionChatTargets()
-      if (result.success) {
-        setTargetChatList(result.data)
-      } else {
+      try {
+        const targets = await getExpressionChatTargets()
+        setTargetChatList(targets)
+      } catch {
         setTargetChatList(chatList)
       }
     }
@@ -229,18 +229,10 @@ export function LegacyExpressionImportDialog({
       const result = localPath
         ? await previewLegacyExpressionImport({ db_path: localPath })
         : await previewLegacyExpressionImportFile(file)
-      if (!result.success) {
-        toast({
-          title: '预览失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
 
       const initialMap: Record<string, string> = {}
       const initialEnabledMap: Record<string, boolean> = {}
-      result.data.groups.forEach((group) => {
+      result.groups.forEach((group) => {
         if (group.matched_sessions.length > 1) {
           initialMap[group.old_chat_id] = '__all_matched__'
         } else if (group.matched_session_id) {
@@ -248,10 +240,16 @@ export function LegacyExpressionImportDialog({
         }
         initialEnabledMap[group.old_chat_id] = group.matched_sessions.length > 0 || Boolean(group.matched_session_id)
       })
-      setPreview(result.data)
-      setDbPath(localPath || result.data.db_path)
+      setPreview(result)
+      setDbPath(localPath || result.db_path)
       setTargetMap(initialMap)
       setEnabledMap(initialEnabledMap)
+    } catch (error) {
+      toast({
+        title: '预览失败',
+        description: error instanceof Error ? error.message : '预览旧版导入失败',
+        variant: 'destructive',
+      })
     } finally {
       setLoadingPreview(false)
     }
@@ -280,21 +278,18 @@ export function LegacyExpressionImportDialog({
         db_path: preview.db_path,
         mappings,
       })
-      if (!result.success) {
-        toast({
-          title: '导入失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
       toast({
         title: '导入完成',
-        description: result.data.message,
+        description: result.message,
       })
       onSuccess()
       onOpenChange(false)
+    } catch (error) {
+      toast({
+        title: '导入失败',
+        description: error instanceof Error ? error.message : '旧版导入失败',
+        variant: 'destructive',
+      })
     } finally {
       setImporting(false)
     }
@@ -504,25 +499,17 @@ export function ExpressionCreateDialog({
 
     try {
       setSaving(true)
-      const result = await createExpression(formData)
-      if (result.success) {
-        toast({
-          title: '创建成功',
-          description: '表达方式已创建',
-        })
-        setFormData({
-          situation: '',
-          style: '',
-          chat_id: '',
-        })
-        onSuccess()
-      } else {
-        toast({
-          title: '创建失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      await createExpression(formData)
+      toast({
+        title: '创建成功',
+        description: '表达方式已创建',
+      })
+      setFormData({
+        situation: '',
+        style: '',
+        chat_id: '',
+      })
+      onSuccess()
     } catch (error) {
       toast({
         title: '创建失败',
@@ -645,20 +632,12 @@ export function ExpressionEditDialog({
 
     try {
       setSaving(true)
-      const result = await updateExpression(expression.id, formData)
-      if (result.success) {
-        toast({
-          title: '保存成功',
-          description: '表达方式已更新',
-        })
-        onSuccess()
-      } else {
-        toast({
-          title: '保存失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      await updateExpression(expression.id, formData)
+      toast({
+        title: '保存成功',
+        description: '表达方式已更新',
+      })
+      onSuccess()
     } catch (error) {
       toast({
         title: '保存失败',

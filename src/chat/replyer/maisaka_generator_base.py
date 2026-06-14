@@ -1,12 +1,11 @@
-﻿from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
-
-import json
+﻿import json
 import random
 import re
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
 
 from rich.console import Group, RenderableType
 from rich.panel import Panel
@@ -38,6 +37,7 @@ from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.core.types import ActionInfo
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.context.messages import (
     AssistantMessage,
     LLMContextMessage,
@@ -46,9 +46,9 @@ from src.maisaka.context.messages import (
     ToolResultMessage,
     build_llm_message_from_context,
 )
-from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
-from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
+from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
+from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 from src.plugin_runtime.hook_payloads import deserialize_prompt_messages, serialize_prompt_messages
 
@@ -112,19 +112,23 @@ class BaseMaisakaReplyGenerator:
 
     @staticmethod
     def _select_reply_style() -> str:
-        """按配置概率选择本次 replyer 使用的表达风格。"""
+        """返回 replyer 使用的基础表达风格。"""
+        return global_config.personality.reply_style
+
+    @staticmethod
+    def _select_temporary_reply_style() -> str:
+        """按配置概率选择本次回复的一次性备用表达风格。"""
         personality_config = global_config.personality
-        reply_style = personality_config.reply_style
         candidate_styles = [style.strip() for style in personality_config.multiple_reply_style if style.strip()]
 
         if not candidate_styles:
-            return reply_style
+            return ""
 
         probability = personality_config.multiple_probability
         if probability <= 0:
-            return reply_style
+            return ""
         if random.random() > probability:
-            return reply_style
+            return ""
 
         return random.choice(candidate_styles)
 
@@ -158,25 +162,37 @@ class BaseMaisakaReplyGenerator:
         user_info = reply_message.message_info.user_info
         sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
         target_message_id = reply_message.message_id.strip() if reply_message.message_id else "未知"
-        target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        # target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         quote_ids = extract_quote_ids_from_message_sequence(reply_message.raw_message)
         target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
         if not target_content:
             target_content = "[无可见文本内容]"
 
+        # target_lines = [
+        #     "【本次回复目标】",
+        #     f"- msg_id：{target_message_id}",
+        # ]
+        # if quote_ids:
+        #     target_lines.append(f"- quote={','.join(quote_ids)}")
+        # target_lines.extend(
+        #     [
+        #         f"- 时间：{target_time}",
+        #         f"- 用户名：{sender_name}",
+        #         f"- 发言内容：{target_content}",
+        #         "",
+        #         "你这次要回复的就是这条目标消息，请结合整段上下文理解，但不要把其他历史消息当成当前回复对象。",
+        #     ]
+        # )
+        # return "\n".join(target_lines)
+
         target_lines = [
-            "【本次回复目标】",
-            f"- msg_id：{target_message_id}",
+            f"你想要回复的消息是 {sender_name} 发送的 msg_id为 {target_message_id} 的消息，你这次要回复的就是这条目标消息，不要把其他历史消息当成当前回复对象。",
         ]
         if quote_ids:
             target_lines.append(f"- quote={','.join(quote_ids)}")
         target_lines.extend(
             [
-                f"- 时间：{target_time}",
-                f"- 用户名：{sender_name}",
                 f"- 发言内容：{target_content}",
-                "",
-                "你这次要回复的就是这条目标消息，请结合整段上下文理解，但不要把其他历史消息当成当前回复对象。",
             ]
         )
         return "\n".join(target_lines)
@@ -277,46 +293,43 @@ class BaseMaisakaReplyGenerator:
                     "余計な内容（不要な前置きや後置き、コロン、括弧、スタンプ、通常の at や @ など）は出力せず、"
                     "発言内容だけを出力してください。"
                 )
-            return (
-                "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，"
-                "只输出发言内容就好。"
-            )
+            return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
 
         if locale.startswith("en"):
             return (
                 "Only output the message fragments to send. Do not output explanations, Markdown, or code fences. "
                 "Use `<text>text</text>` for normal text; "
-                "to mention someone, use `<at msg_id=\"message id\">display name</at>`; "
+                'to mention someone, use `<at msg_id="message id">display name</at>`; '
                 "use `<emoji>emotion or sticker description</emoji>` when you want to send a sticker. "
                 "To resend an existing image from context, use "
-                "`<image msg_id=\"message id\" index=\"0\">optional description</image>`; "
-                "for tool-result media, use `media_index=\"tool_result:call_x:0\"` instead of `msg_id`. "
+                '`<image msg_id="message id" index="0">optional description</image>`; '
+                'for tool-result media, use `media_index="tool_result:call_x:0"` instead of `msg_id`. '
                 "You may combine fragments in send order, for example: "
-                "`<text>fine</text><image msg_id=\"123\" index=\"0\">that image</image>`."
+                '`<text>fine</text><image msg_id="123" index="0">that image</image>`.'
             )
 
         if locale.startswith("ja"):
             return (
                 "送信するメッセージフラグメントだけを出力してください。説明、Markdown、コードブロックは出力しないでください。"
                 "通常の文字は `<text>文字</text>` を使います；"
-                "`<at msg_id=\"メッセージID\">表示名</at>` で at できます；"
+                '`<at msg_id="メッセージID">表示名</at>` で at できます；'
                 "スタンプを送りたいときは `<emoji>感情またはスタンプ説明</emoji>` を使います。"
                 "文脈中の既存画像を送りたいときは "
-                "`<image msg_id=\"メッセージID\" index=\"0\">任意の説明</image>` を使います。"
-                "ツール結果のメディアは `msg_id` の代わりに `media_index=\"tool_result:call_x:0\"` を使います。"
+                '`<image msg_id="メッセージID" index="0">任意の説明</image>` を使います。'
+                'ツール結果のメディアは `msg_id` の代わりに `media_index="tool_result:call_x:0"` を使います。'
                 "送信順に複数のフラグメントを組み合わせてもかまいません。例："
-                "`<text>まあいいか</text><image msg_id=\"123\" index=\"0\">その画像</image>`。"
+                '`<text>まあいいか</text><image msg_id="123" index="0">その画像</image>`。'
             )
 
         return (
             "请只输出要发送的消息片段，不要输出解释、Markdown 或代码块。"
             "普通文字使用 `<text>文字</text>`；"
-            "需要 at 某人时，使用 `<at msg_id=\"消息编号\">显示名</at>`；"
+            '需要 at 某人时，使用 `<at msg_id="消息编号">显示名</at>`；'
             "想发送表情包时，使用 `<emoji>情绪或表情描述</emoji>`。"
-            "想转发上下文里已有图片时，使用 `<image msg_id=\"消息编号\" index=\"0\">可选描述</image>`。"
-            "工具返回媒体用 `media_index=\"tool_result:call_x:0\"` 代替 `msg_id`。"
+            '想转发上下文里已有图片时，使用 `<image msg_id="消息编号" index="0">可选描述</image>`。'
+            '工具返回媒体用 `media_index="tool_result:call_x:0"` 代替 `msg_id`。'
             "可以按发送顺序组合多个片段，例如："
-            "`<text>行吧</text><image msg_id=\"123\" index=\"0\">那张图</image>`。"
+            '`<text>行吧</text><image msg_id="123" index="0">那张图</image>`。'
         )
 
     @staticmethod
@@ -409,10 +422,7 @@ class BaseMaisakaReplyGenerator:
             return ""
 
         reaction_lines = "\n".join(f"- {reaction}" for reaction in matched_reactions)
-        return (
-            "【关键词反应】\n"
-            f"最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n{reaction_lines}\n"
-        )
+        return f"【关键词反应】\n最新消息命中了预设反应规则，请在回复时优先参考以下要求：\n{reaction_lines}\n"
 
     def _build_system_prompt(
         self,
@@ -449,14 +459,11 @@ class BaseMaisakaReplyGenerator:
         self,
         reply_message: Optional[SessionMessage],
         reply_reason: str,
-        expression_habits: str = "",
         reply_requirements: str = "",
         keywords_reaction_prompt: str = "",
     ) -> str:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sections: List[str] = [f"当前时间：{current_time}"]
-        if expression_habits.strip():
-            sections.append(expression_habits.strip())
         target_message_block = self._build_target_message_block(reply_message)
         if target_message_block:
             sections.append(target_message_block)
@@ -471,6 +478,13 @@ class BaseMaisakaReplyGenerator:
             sections.append(keywords_reaction_prompt.strip())
         sections.append(self._build_reply_instruction())
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _build_temporary_reply_style_message(reply_style: str) -> str:
+        normalized_reply_style = reply_style.strip()
+        if not normalized_reply_style:
+            return ""
+        return f"你的说话风格可以尝试：\n{normalized_reply_style}"
 
     def _build_history_messages(
         self,
@@ -532,13 +546,21 @@ class BaseMaisakaReplyGenerator:
         final_user_message = self._build_final_user_message(
             reply_message=reply_message,
             reply_reason=reply_reason,
-            expression_habits=expression_habits,
             reply_requirements=reply_requirements,
             keywords_reaction_prompt=keywords_reaction_prompt,
         )
+        temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
 
         messages.append(MessageBuilder().set_role(RoleType.System).add_text_content(system_prompt).build())
         messages.extend(self._build_history_messages(chat_history, enable_visual_message))
+        if expression_habits.strip():
+            messages.append(
+                MessageBuilder().set_role(RoleType.User).add_text_content(expression_habits.strip()).build()
+            )
+        if temporary_reply_style_message:
+            messages.append(
+                MessageBuilder().set_role(RoleType.User).add_text_content(temporary_reply_style_message).build()
+            )
         messages.append(MessageBuilder().set_role(RoleType.User).add_text_content(final_user_message).build())
         if enable_visual_message:
             return limit_latest_images_in_messages(
@@ -601,7 +623,9 @@ class BaseMaisakaReplyGenerator:
             return self._enable_visual_message
         if self._replyer_mode == "multimodal":
             if model_info is not None and not model_info.visual:
-                raise ValueError(f"replyer_mode=multimodal，但模型 '{model_info.name}' 未开启 visual，无法使用多模态 replyer")
+                raise ValueError(
+                    f"replyer_mode=multimodal，但模型 '{model_info.name}' 未开启 visual，无法使用多模态 replyer"
+                )
             return True
         if self._replyer_mode == "text":
             return False
@@ -728,6 +752,14 @@ class BaseMaisakaReplyGenerator:
             selected_expressions=selection_result.selected_expressions,
         )
 
+    @staticmethod
+    def _should_keep_replyer_history_message(message: LLMContextMessage) -> bool:
+        """replyer 只接收真实聊天上下文，不接收参考、工具结果和中期摘要。"""
+
+        if isinstance(message, (ReferenceMessage, ToolResultMessage)):
+            return False
+        return not is_mid_term_memory_message(message)
+
     async def generate_reply_with_context(
         self,
         extra_info: str = "",
@@ -772,11 +804,7 @@ class BaseMaisakaReplyGenerator:
         #     f"历史条数={len(chat_history)} 目标ID={reply_message.message_id if reply_message else None}"
         # )
 
-        filtered_history = [
-            message
-            for message in chat_history
-            if not isinstance(message, (ReferenceMessage, ToolResultMessage))
-        ]
+        filtered_history = [message for message in chat_history if self._should_keep_replyer_history_message(message)]
 
         if self.express_model is None:
             logger.error("回复模型未初始化")
@@ -811,9 +839,7 @@ class BaseMaisakaReplyGenerator:
             else list(reply_context.selected_expression_ids)
         )
         result.selected_expression_details = (
-            list(selected_expressions)
-            if selected_expressions is not None
-            else list(reply_context.selected_expressions)
+            list(selected_expressions) if selected_expressions is not None else list(reply_context.selected_expressions)
         )
 
         # logger.info(
@@ -1119,9 +1145,7 @@ class BaseMaisakaReplyGenerator:
             prompt_cache_miss_tokens = max(generation_result.prompt_tokens - prompt_cache_hit_tokens, 0)
         prompt_cache_total_tokens = prompt_cache_hit_tokens + prompt_cache_miss_tokens
         prompt_cache_hit_rate = (
-            prompt_cache_hit_tokens / prompt_cache_total_tokens * 100
-            if prompt_cache_total_tokens > 0
-            else 0
+            prompt_cache_hit_tokens / prompt_cache_total_tokens * 100 if prompt_cache_total_tokens > 0 else 0
         )
         result.metrics.extra["prompt_cache_hit_tokens"] = prompt_cache_hit_tokens
         result.metrics.extra["prompt_cache_miss_tokens"] = prompt_cache_miss_tokens

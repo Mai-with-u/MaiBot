@@ -158,17 +158,7 @@ function ModelProviderConfigPageContent() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const result = await getModelConfigCached()
-      if (!result.success) {
-        toast({
-          title: '加载失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        setLoading(false)
-        return
-      }
-      const config = unwrapModelConfig(result.data)
+      const config = unwrapModelConfig(await getModelConfigCached())
       const providerList = Array.isArray(config.api_providers) ? config.api_providers as APIProvider[] : []
       setProviders(providerList)
       providersSnapshotRef.current = JSON.stringify(providerList.map(cleanProviderData))
@@ -176,6 +166,11 @@ function ModelProviderConfigPageContent() {
       initialLoadRef.current = false
     } catch (error) {
       console.error('加载配置失败:', error)
+      toast({
+        title: '加载失败',
+        description: error instanceof Error ? error.message : '加载模型配置失败',
+        variant: 'destructive',
+      })
     } finally {
       setLoading(false)
     }
@@ -210,17 +205,7 @@ function ModelProviderConfigPageContent() {
         return
       }
 
-      const resultGet = await getModelConfig()
-      if (!resultGet.success) {
-        toast({
-          title: '保存失败',
-          description: resultGet.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
-      const config = unwrapModelConfig(resultGet.data)
+      const config = unwrapModelConfig(await getModelConfig())
 
       const validProviderNames = new Set(cleanedProviders.map(p => p.name))
       const originalModels = Array.isArray(config.models) ? config.models : []
@@ -231,16 +216,7 @@ function ModelProviderConfigPageContent() {
       config.api_providers = cleanedProviders
       config.models = filteredModels
 
-      const resultUpdate = await updateModelConfig(config)
-      if (!resultUpdate.success) {
-        toast({
-          title: '保存失败',
-          description: resultUpdate.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
+      await updateModelConfig(config)
       providersSnapshotRef.current = JSON.stringify(cleanedProviders)
       setHasUnsavedChanges(false)
       toast({
@@ -264,12 +240,7 @@ function ModelProviderConfigPageContent() {
     context: 'auto' | 'manual' | 'restart' = 'auto'
   ) => {
     try {
-      const result = await getModelConfig()
-      if (!result.success) {
-        console.error('加载配置失败:', result.error)
-        return { shouldProceed: true, providers: newProviders }
-      }
-      const config = unwrapModelConfig(result.data)
+      const config = unwrapModelConfig(await getModelConfig())
       const oldProviderNames = new Set(providers.map(p => p.name))
       const newProviderNames = new Set(newProviders.map(p => p.name))
 
@@ -313,17 +284,7 @@ function ModelProviderConfigPageContent() {
 
       setDeleteConfirmState(prev => ({ ...prev, isOpen: false }))
 
-      const resultGet = await getModelConfig()
-      if (!resultGet.success) {
-        toast({
-          title: '加载失败',
-          description: resultGet.error,
-          variant: 'destructive',
-        })
-        savingFlag(false)
-        return
-      }
-      const config = unwrapModelConfig(resultGet.data)
+      const config = unwrapModelConfig(await getModelConfig())
 
       const cleanedProviders = deleteConfirmState.pendingProviders.map(cleanProviderData)
       const validProviderNames = new Set(cleanedProviders.map(p => p.name))
@@ -355,16 +316,7 @@ function ModelProviderConfigPageContent() {
       config.models = filteredModels
       config.model_task_config = modelTaskConfig
 
-      const resultUpdate = await updateModelConfig(config)
-      if (!resultUpdate.success) {
-        toast({
-          title: '保存失败',
-          description: resultUpdate.error,
-          variant: 'destructive',
-        })
-        savingFlag(false)
-        return
-      }
+      await updateModelConfig(config)
 
       setProviders(deleteConfirmState.pendingProviders)
       providersSnapshotRef.current = JSON.stringify(cleanedProviders)
@@ -432,17 +384,7 @@ function ModelProviderConfigPageContent() {
     try {
       setAutoSaving(true)
       const cleanedProviders = newProviders.map(cleanProviderData)
-      const result = await updateModelConfigSection('api_providers', cleanedProviders)
-      if (!result.success) {
-        console.error('自动保存失败:', result.error)
-        toast({
-          title: '自动保存失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        setHasUnsavedChanges(true)
-        return
-      }
+      await updateModelConfigSection('api_providers', cleanedProviders)
       providersSnapshotRef.current = JSON.stringify(cleanedProviders)
       setHasUnsavedChanges(false)
     } catch (error) {
@@ -501,17 +443,7 @@ function ModelProviderConfigPageContent() {
         return
       }
 
-      const resultGet = await getModelConfig()
-      if (!resultGet.success) {
-        toast({
-          title: '保存失败',
-          description: resultGet.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
-      const config = unwrapModelConfig(resultGet.data)
+      const config = unwrapModelConfig(await getModelConfig())
 
       const validProviderNames = new Set(cleanedProviders.map(p => p.name))
       const originalModels = Array.isArray(config.models) ? config.models : []
@@ -537,16 +469,7 @@ function ModelProviderConfigPageContent() {
       config.api_providers = cleanedProviders
       config.models = filteredModels
 
-      const resultUpdate = await updateModelConfig(config)
-      if (!resultUpdate.success) {
-        toast({
-          title: '保存失败',
-          description: resultUpdate.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
+      await updateModelConfig(config)
       providersSnapshotRef.current = JSON.stringify(cleanedProviders)
       setHasUnsavedChanges(false)
       toast({
@@ -674,16 +597,7 @@ function ModelProviderConfigPageContent() {
     setTestingProviders(prev => new Set(prev).add(providerName))
 
     try {
-      const result = await testProviderConnection(providerName)
-      if (!result.success) {
-        toast({
-          title: '测试失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-      const testResult = result.data
+      const testResult = await testProviderConnection(providerName)
       setTestResults(prev => new Map(prev).set(providerName, testResult))
 
       if (testResult.network_ok) {

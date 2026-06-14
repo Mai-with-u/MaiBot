@@ -1,5 +1,3 @@
-import type { Dispatch, SetStateAction } from 'react'
-
 import { RotateCcw } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -12,13 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TabsContent } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { cn } from '@/lib/utils'
-import type {
-  MemoryFeedbackActionLogPayload,
-  MemoryFeedbackCorrectionDetailTaskPayload,
-  MemoryFeedbackCorrectionSummaryPayload,
-} from '@/lib/memory-api'
+import type { MemoryFeedbackActionLogPayload } from '@/lib/memory-api'
 
 import { FEEDBACK_ACTION_LOG_PAGE_SIZE, FEEDBACK_CORRECTION_PAGE_SIZE } from '../constants'
+import type { UseMemoryFeedbackResult } from '../hooks/useMemoryFeedback'
 import {
   buildFeedbackImpactSummary,
   describeFeedbackActionLog,
@@ -33,37 +28,10 @@ import {
 } from '../utils'
 
 export interface FeedbackTabProps {
-  feedbackSearch: string
-  setFeedbackSearch: Dispatch<SetStateAction<string>>
-  feedbackStatusFilter: string
-  setFeedbackStatusFilter: Dispatch<SetStateAction<string>>
-  feedbackRollbackFilter: string
-  setFeedbackRollbackFilter: Dispatch<SetStateAction<string>>
-  filteredFeedbackCorrections: MemoryFeedbackCorrectionSummaryPayload[]
-  feedbackCorrections: MemoryFeedbackCorrectionSummaryPayload[]
-  pagedFeedbackCorrections: MemoryFeedbackCorrectionSummaryPayload[]
-  feedbackPage: number
-  setFeedbackPage: Dispatch<SetStateAction<number>>
-  feedbackPageCount: number
-  selectedFeedbackCorrection: MemoryFeedbackCorrectionSummaryPayload | null
-  setSelectedFeedbackTaskId: Dispatch<SetStateAction<number>>
-  selectedFeedbackResolved: MemoryFeedbackCorrectionDetailTaskPayload | null
-  selectedFeedbackPreview: ReturnType<typeof getFeedbackCorrectionPreview>
-  selectedFeedbackImpactSummary: string[]
-  openFeedbackRollbackDialog: () => void
-  feedbackRollingBack: boolean
-  selectedFeedbackTaskLoading: boolean
-  selectedFeedbackTaskError: string | null
-  feedbackActionLogPage: number
-  setFeedbackActionLogPage: Dispatch<SetStateAction<number>>
-  feedbackActionLogPageCount: number
-  feedbackActionLogSearch: string
-  setFeedbackActionLogSearch: Dispatch<SetStateAction<string>>
-  pagedFeedbackActionLogs: MemoryFeedbackActionLogPayload[]
-  selectedFeedbackActionLogs: MemoryFeedbackActionLogPayload[]
+  feedback: UseMemoryFeedbackResult
 }
 
-export function FeedbackTab(props: FeedbackTabProps) {
+export function FeedbackTab({ feedback }: FeedbackTabProps) {
   const {
     feedbackSearch,
     setFeedbackSearch,
@@ -93,7 +61,7 @@ export function FeedbackTab(props: FeedbackTabProps) {
     setFeedbackActionLogSearch,
     pagedFeedbackActionLogs,
     selectedFeedbackActionLogs,
-  } = props
+  } = feedback
 
   return (
     <TabsContent value="feedback" className="space-y-4">

@@ -26,6 +26,11 @@ interface ProviderListProps {
   onToggleSelectAll: () => void
 }
 
+const providerTableHeadClass = 'h-10 whitespace-nowrap px-3 text-xs font-semibold'
+const providerTableCellClass = 'px-3 py-2.5'
+const providerNumericHeadClass = `${providerTableHeadClass} w-20 text-right`
+const providerNumericCellClass = `${providerTableCellClass} text-right tabular-nums`
+
 export function ProviderList({
   providers,
   testingProviders,
@@ -177,25 +182,30 @@ export function ProviderList({
       </div>
 
       {/* 桌面端表格视图 */}
-      <div className="hidden md:block rounded-lg border bg-card overflow-hidden">
+      <div className="hidden md:block overflow-hidden border bg-card">
         <div className="overflow-x-auto">
-          <Table aria-label="AI 模型提供商列表">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={selectedProviders.size === filteredProviders.length && filteredProviders.length > 0}
-                    onCheckedChange={onToggleSelectAll}
-                  />
+          <Table aria-label="AI 模型提供商列表" className="min-w-[960px]">
+            <TableHeader className="bg-muted/30">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className={`${providerTableHeadClass} w-[5.5rem]`}>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedProviders.size === filteredProviders.length && filteredProviders.length > 0}
+                      onCheckedChange={onToggleSelectAll}
+                      aria-label="选择全部厂商用于批量删除"
+                      title="选择全部厂商用于批量删除"
+                    />
+                    <span>选择</span>
+                  </div>
                 </TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>名称</TableHead>
-                <TableHead>基础URL</TableHead>
-                <TableHead>客户端类型</TableHead>
-                <TableHead className="text-right">最大重试</TableHead>
-                <TableHead className="text-right">超时(秒)</TableHead>
-                <TableHead className="text-right">重试间隔(秒)</TableHead>
-                <TableHead className="text-right">操作</TableHead>
+                <TableHead className={`${providerTableHeadClass} w-24`}>状态</TableHead>
+                <TableHead className={`${providerTableHeadClass} w-32`}>名称</TableHead>
+                <TableHead className={providerTableHeadClass}>基础URL</TableHead>
+                <TableHead className={`${providerTableHeadClass} w-24`}>客户端</TableHead>
+                <TableHead className={providerNumericHeadClass}>最大重试</TableHead>
+                <TableHead className={providerNumericHeadClass}>超时(秒)</TableHead>
+                <TableHead className={providerNumericHeadClass}>间隔(秒)</TableHead>
+                <TableHead className={`${providerTableHeadClass} w-48 text-right`}>操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -209,25 +219,27 @@ export function ProviderList({
                 paginatedProviders.map((provider, displayIndex) => {
                   const actualIndex = providers.findIndex(p => p === provider)
                   return (
-                    <TableRow key={displayIndex}>
-                      <TableCell>
+                    <TableRow key={displayIndex} data-state={selectedProviders.has(actualIndex) ? 'selected' : undefined}>
+                      <TableCell className={providerTableCellClass}>
                         <Checkbox
                           checked={selectedProviders.has(actualIndex)}
                           onCheckedChange={() => onToggleSelect(actualIndex)}
+                          aria-label={`选择厂商 ${provider.name} 用于批量删除`}
+                          title="选择后可批量删除厂商"
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={providerTableCellClass}>
                         {renderTestStatus(provider.name)}
                       </TableCell>
-                      <TableCell className="font-medium">{provider.name}</TableCell>
-                      <TableCell className="max-w-xs truncate" title={provider.base_url}>
+                      <TableCell className={`${providerTableCellClass} font-medium whitespace-nowrap`}>{provider.name}</TableCell>
+                      <TableCell className={`${providerTableCellClass} max-w-[22rem] truncate font-mono text-xs`} title={provider.base_url}>
                         {provider.base_url}
                       </TableCell>
-                      <TableCell>{provider.client_type}</TableCell>
-                      <TableCell className="text-right">{provider.max_retry}</TableCell>
-                      <TableCell className="text-right">{provider.timeout}</TableCell>
-                      <TableCell className="text-right">{provider.retry_interval}</TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className={`${providerTableCellClass} whitespace-nowrap`}>{provider.client_type}</TableCell>
+                      <TableCell className={providerNumericCellClass}>{provider.max_retry}</TableCell>
+                      <TableCell className={providerNumericCellClass}>{provider.timeout}</TableCell>
+                      <TableCell className={providerNumericCellClass}>{provider.retry_interval}</TableCell>
+                      <TableCell className={`${providerTableCellClass} text-right`}>
                         <div className="flex justify-end gap-2">
                           <Button
                             variant="outline"

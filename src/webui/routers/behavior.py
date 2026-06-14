@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import col, func, select
 
+from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.database.database import get_db_session
 from src.common.database.database_model import (
     BehaviorAction,
@@ -20,15 +21,23 @@ from src.common.database.database_model import (
     BehaviorSceneTagCluster,
     ChatSession,
 )
-from src.learners.behavior_scenario import BehaviorScenarioProfile, parse_behavior_scenario_response
+from src.learners.behavior_scenario import (
+    BehaviorScenarioProfile,
+    BehaviorScenarioTagCluster,
+    behavior_scenario_analyzer,
+    parse_behavior_scenario_response,
+)
 from src.learners.behavior_scene_cluster_store import (
     _load_cluster_distribution,
     debug_retrieve_behavior_scores_from_scene_clusters,
     format_scene_cluster_distribution,
 )
+from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.services.llm_service import LLMServiceClient
 from src.webui.dependencies import require_auth
 
 router = APIRouter(prefix="/behavior", tags=["Behavior"], dependencies=[Depends(require_auth)])
+behavior_scene_debug_model = LLMServiceClient(task_name="learner", request_type="behavior.scene_analyzer")
 
 
 class BehaviorChatInfo(BaseModel):
@@ -53,7 +62,6 @@ class BehaviorSceneClusterPayload(BaseModel):
     name: str = ""
     tags: list[BehaviorClusterTag] = Field(default_factory=list)
     source_count: int = 0
-    score: float = 0.0
     update_time: Optional[str] = None
 
 
@@ -61,12 +69,10 @@ class BehaviorPathItem(BaseModel):
     id: int
     session_id: Optional[str] = None
     chat_name: str = ""
-    trigger: str = ""
     scene_cluster_id: Optional[int] = None
     scene_cluster_name: str = ""
     scene_cluster_tags: list[BehaviorClusterTag] = Field(default_factory=list)
     scene_cluster_source_count: int = 0
-    scene_cluster_score: float = 0.0
     actor_type: str = "other_user"
     learning_type: str = "observed_behavior"
     action: str = ""
@@ -142,6 +148,7 @@ class BehaviorScenarioDebugRequest(BaseModel):
     session_id: Optional[str] = Field(default=None)
     include_global: bool = Field(default=True)
     retrieval_mode: str = Field(default="tag_cluster_spread_1")
+    scene_text: str = Field(default="")
     summary: str = Field(default="")
     tag_clusters: list[dict[str, Any]] = Field(default_factory=list)
     need: dict[str, Any] = Field(default_factory=dict)
@@ -213,9 +220,84 @@ def _cluster_payload(
         or format_scene_cluster_distribution(_load_cluster_distribution(cluster.tag_distribution)),
         tags=tags,
         source_count=int(cluster.source_count or 0),
-        score=float(cluster.score or 0.0),
         update_time=_isoformat(cluster.update_time),
     )
+
+
+async def _analyze_debug_scene_text(scene_text: str) -> BehaviorScenarioProfile:
+    """使用主程序行为场景概括提示，把一句话调试输入转换为场景 tag 簇。"""
+
+    normalized_scene_text = " ".join(scene_text.split()).strip()
+    if not normalized_scene_text:
+        return BehaviorScenarioProfile()
+
+    async def run_scene_prompt(system_prompt: str) -> str:
+        scene_messages = _build_debug_scene_messages(normalized_scene_text, system_prompt)
+        generation_result = await behavior_scene_debug_model.generate_response_with_messages(
+            lambda _client: scene_messages,
+            options=LLMGenerationOptions(temperature=0.2),
+        )
+        return generation_result.response or ""
+
+    profile = await behavior_scenario_analyzer.analyze(
+        context_text=normalized_scene_text,
+        sub_agent_runner=run_scene_prompt,
+    )
+    if not profile.summary:
+        profile = BehaviorScenarioProfile(
+            summary=normalized_scene_text,
+            tag_clusters=profile.tag_clusters,
+            confidence=profile.confidence,
+        )
+    return profile
+
+
+def _build_debug_scene_messages(scene_text: str, system_prompt: str) -> list[Message]:
+    """把 WebUI 调试输入包装成场景概括模型熟悉的多消息格式。"""
+
+    return [
+        MessageBuilder()
+        .set_role(RoleType.System)
+        .add_text_content(
+            f"{system_prompt}\n\n"
+            "注意：聊天场景会在后续 user message 中给出。该消息是 WebUI 调试输入的一句话场景描述，"
+            "不是数据库中的真实聊天记录；请仍按主程序行为学习场景概括的 JSON 结构输出 tag 簇。"
+        )
+        .build(),
+        MessageBuilder()
+        .set_role(RoleType.User)
+        .add_text_content(
+            "\n".join(
+                [
+                    "[source_id:webui-debug-1]",
+                    "[speaker:USER]",
+                    "[name:WebUI 调试输入]",
+                    "[content]",
+                    scene_text,
+                ]
+            )
+        )
+        .build(),
+        MessageBuilder()
+        .set_role(RoleType.User)
+        .add_text_content("请根据以上聊天场景描述输出场景片段 JSON。")
+        .build(),
+    ]
+
+
+def _profile_debug_payload(profile: BehaviorScenarioProfile) -> dict[str, Any]:
+    return {
+        "summary": profile.summary,
+        "confidence": profile.confidence,
+        "tag_clusters": [_tag_cluster_debug_payload(cluster) for cluster in profile.tag_clusters],
+    }
+
+
+def _tag_cluster_debug_payload(cluster: BehaviorScenarioTagCluster) -> dict[str, Any]:
+    return {
+        "kind": cluster.kind,
+        "tags": cluster.all_values(),
+    }
 
 
 def _split_tag_ref(tag_ref: str) -> tuple[str, str]:
@@ -358,7 +440,6 @@ def _build_behavior_graph_data(session: Any, session_id: Optional[str]) -> dict[
                 "short_label": label.split("｜", 1)[1] if "｜" in label else label,
                 "session_id": cluster.session_id or "__global__",
                 "source_count": int(cluster.source_count or 0),
-                "score": float(cluster.score or 0.0),
                 "path_count": len(cluster_paths),
                 "activation_count": sum(int(path.activation_count or 0) for path in cluster_paths),
                 "success_count": sum(int(path.success_count or 0) for path in cluster_paths),
@@ -565,7 +646,7 @@ async def list_behavior_paths(
                 for item in path_items
                 if normalized_search
                 in (
-                    f"{item.scene_cluster_name}\n{item.trigger}\n{item.action}\n{item.outcome}\n"
+                    f"{item.scene_cluster_name}\n{item.action}\n{item.outcome}\n"
                     f"{item.actor_type}\n{item.learning_type}\n{item.chat_name}\n"
                     + "\n".join(f"{tag.tag}\n{tag.display}" for tag in item.scene_cluster_tags)
                 ).lower()
@@ -581,6 +662,8 @@ async def list_behavior_paths(
 async def list_behavior_clusters(
     session_id: Annotated[Optional[str], Query()] = None,
     search: Annotated[str, Query()] = "",
+    sort_by: Annotated[str, Query()] = "update_time",
+    sort_order: Annotated[str, Query()] = "desc",
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=5000)] = 20,
 ) -> BehaviorClusterListResponse:
@@ -607,6 +690,7 @@ async def list_behavior_clusters(
                     + "\n".join(f"{tag.tag}\n{tag.display}" for tag in item.tags)
                 ).lower()
             ]
+        cluster_items = _sort_behavior_cluster_items(cluster_items, sort_by=sort_by, sort_order=sort_order)
         total = len(cluster_items)
         start = (page - 1) * page_size
         data = cluster_items[start : start + page_size]
@@ -657,20 +741,28 @@ async def get_behavior_path_detail(path_id: int) -> BehaviorPathDetailResponse:
 async def debug_behavior_retrieval(request: BehaviorScenarioDebugRequest) -> dict[str, Any]:
     """按输入场景模拟一次本地场景簇检索。"""
 
-    profile = BehaviorScenarioProfile(
-        summary=" ".join(request.summary.split()).strip(),
-        tag_clusters=parse_behavior_scenario_response(
-            json.dumps(
-                {
-                    "tag_clusters": request.tag_clusters,
-                    "need": request.need,
-                    "other_traits": request.other_traits,
-                },
-                ensure_ascii=False,
-            )
-        ).tag_clusters,
-        confidence=1.0 if request.tag_clusters or request.need or request.other_traits else 0.0,
-    )
+    scene_text = " ".join(request.scene_text.split()).strip()
+    if scene_text:
+        profile = await _analyze_debug_scene_text(scene_text)
+        input_mode = "llm_scene_text"
+        error = "" if profile.has_signal else "LLM 没有生成有效场景 tag 簇，请调整一句话场景描述后重试。"
+    else:
+        profile = BehaviorScenarioProfile(
+            summary=" ".join(request.summary.split()).strip(),
+            tag_clusters=parse_behavior_scenario_response(
+                json.dumps(
+                    {
+                        "tag_clusters": request.tag_clusters,
+                        "need": request.need,
+                        "other_traits": request.other_traits,
+                    },
+                    ensure_ascii=False,
+                )
+            ).tag_clusters,
+            confidence=1.0 if request.tag_clusters or request.need or request.other_traits else 0.0,
+        )
+        input_mode = "manual_tags"
+        error = ""
     debug_payload = debug_retrieve_behavior_scores_from_scene_clusters(
         session_ids=_session_scope(request.session_id),
         include_global=request.include_global,
@@ -689,6 +781,9 @@ async def debug_behavior_retrieval(request: BehaviorScenarioDebugRequest) -> dic
         "success": True,
         "data": {
             **debug_payload,
+            "input_mode": input_mode,
+            "scenario_profile": _profile_debug_payload(profile),
+            "error": error or debug_payload.get("error", ""),
             "matched_clusters": matched_clusters,
             "candidates": [
                 {
@@ -718,9 +813,37 @@ def _sort_behavior_path_items(
         "activation_count",
         "count",
         "failure_count",
-        "scene_cluster_score",
         "scene_cluster_source_count",
         "score",
+        "success_count",
+    }
+    allowed_fields = text_fields | time_fields | number_fields
+    if normalized_sort_by not in allowed_fields:
+        normalized_sort_by = "update_time"
+
+    if normalized_sort_by in text_fields | time_fields:
+        return sorted(items, key=lambda item: str(getattr(item, normalized_sort_by) or ""), reverse=reverse)
+    return sorted(items, key=lambda item: float(getattr(item, normalized_sort_by) or 0), reverse=reverse)
+
+
+def _sort_behavior_cluster_items(
+    items: list[BehaviorClusterItem],
+    *,
+    sort_by: str,
+    sort_order: str,
+) -> list[BehaviorClusterItem]:
+    normalized_sort_by = str(sort_by or "").strip()
+    reverse = str(sort_order or "").strip().lower() != "asc"
+    text_fields = {"chat_name", "name", "session_id"}
+    time_fields = {"last_active_time", "update_time"}
+    number_fields = {
+        "activation_count",
+        "enabled_path_count",
+        "failure_count",
+        "observed_path_count",
+        "path_count",
+        "self_reflection_path_count",
+        "source_count",
         "success_count",
     }
     allowed_fields = text_fields | time_fields | number_fields
@@ -761,12 +884,10 @@ def _build_path_items(session: Any, paths: list[BehaviorExperiencePath]) -> list
                 id=path.id or 0,
                 session_id=path.session_id,
                 chat_name=_chat_display_name(chat_sessions.get(path.session_id), path.session_id),
-                trigger=cluster_name,
                 scene_cluster_id=cluster_payload.id,
                 scene_cluster_name=cluster_name,
                 scene_cluster_tags=cluster_payload.tags,
                 scene_cluster_source_count=cluster_payload.source_count,
-                scene_cluster_score=cluster_payload.score,
                 actor_type=str(path.actor_type or "other_user"),
                 learning_type=str(path.learning_type or "observed_behavior"),
                 action=action_nodes[path.action_id].action if path.action_id in action_nodes else "",
@@ -808,7 +929,6 @@ def _enrich_debug_clusters(session: Any, matched_clusters: Any) -> list[dict[str
                 "name": cluster_payload.name or str(item.get("name") or ""),
                 "tags": [tag.model_dump() for tag in cluster_payload.tags],
                 "source_count": cluster_payload.source_count,
-                "cluster_score": cluster_payload.score,
             }
         )
     return enriched_clusters

@@ -4,7 +4,7 @@
  */
 
 // 闁板秶鐤嗙紒鐔活吀閺堝秴濮?API 閸︽澘娼冮敍鍫熷閺堝鏁ら幋宄板彙娴滎偆娈戞禍鎴狀伂缂佺喕顓搁張宥呭閿?
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { ApiError, backendApi } from '@/lib/http'
 
 const STATS_API_BASE_URL = '/api/webui/plugins/stats-proxy'
 const PLUGIN_STATS_SUMMARY_CACHE_TTL = 5 * 60 * 1000
@@ -122,6 +122,12 @@ function getReadableError(data: unknown, fallback: string): string {
   return /[�閹缂鐠]/.test(error) ? fallback : error
 }
 
+/** 从 ApiError 携带的后端原始错误体中提取 error 字段 */
+function getDetailError(error: ApiError): string | undefined {
+  const detailError = (error.detail as { error?: unknown } | null | undefined)?.error
+  return typeof detailError === 'string' ? detailError : undefined
+}
+
 function readPluginStatsSummaryStorageCache(): PluginStatsSummaryStorageCache | null {
   if (typeof localStorage === 'undefined') {
     return null
@@ -213,14 +219,10 @@ export function getCachedPluginStatsSummary(): Record<string, PluginStatsData> |
  */
 export async function getPluginStats(pluginId: string): Promise<PluginStatsData | null> {
   try {
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/${encodeURIComponent(pluginId)}`)
-    
-    if (!response.ok) {
-      console.error('Failed to fetch plugin stats:', response.statusText)
-      return null
-    }
-    
-    return normalizePluginStatsResponse(await response.json(), pluginId)
+    const data = await backendApi.get<unknown>(
+      `${STATS_API_BASE_URL}/stats/${encodeURIComponent(pluginId)}`
+    )
+    return normalizePluginStatsResponse(data, pluginId)
   } catch (error) {
     console.error('Error fetching plugin stats:', error)
     return null
@@ -231,14 +233,7 @@ export async function getPluginStats(pluginId: string): Promise<PluginStatsData 
  * 閼惧嘲褰囬幓鎺嶆鐢倸婧€閻ㄥ嫯浜ら柌蹇曠埠鐠佲剝鎲崇憰渚婄礄娑撳秴瀵橀崥顐ョ槑鐠佺尨绱氶妴? */
 async function fetchPluginStatsSummaryUncached(): Promise<Record<string, PluginStatsData>> {
   try {
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/summary`)
-
-    if (!response.ok) {
-      console.error('Failed to fetch plugin stats summary:', response.statusText)
-      return {}
-    }
-
-    const data = await response.json() as PluginStatsSummaryResponse
+    const data = await backendApi.get<PluginStatsSummaryResponse>(`${STATS_API_BASE_URL}/stats/summary`)
     if (!data.success || !data.stats || typeof data.stats !== 'object') {
       return {}
     }
@@ -260,18 +255,12 @@ export async function getPluginUserState(
   userId: string = getUserId()
 ): Promise<PluginUserState | null> {
   try {
-    const queryParams = new URLSearchParams({
-      plugin_id: pluginId,
-      user_id: userId,
-    })
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/user-state?${queryParams}`)
-
-    if (!response.ok) {
-      console.error('Failed to fetch plugin user state:', response.statusText)
-      return null
-    }
-
-    const data = await response.json() as Partial<PluginUserState> & { success?: boolean }
+    const data = await backendApi.get<Partial<PluginUserState> & { success?: boolean }>(
+      `${STATS_API_BASE_URL}/stats/user-state`,
+      {
+        query: { plugin_id: pluginId, user_id: userId },
+      }
+    )
     if (data.success === false) {
       return null
     }
@@ -329,25 +318,11 @@ export async function getPluginStatsSummary(
 export async function likePlugin(pluginId: string, userId?: string): Promise<VoteStatsResponse> {
   try {
     const finalUserId = userId || getUserId()
-    
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/like`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ plugin_id: pluginId, user_id: finalUserId }),
+
+    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/like`, {
+      body: { plugin_id: pluginId, user_id: finalUserId },
     })
-    
-    const data = await response.json()
-    
-    if (response.status === 429) {
-      return { success: false, error: '点赞过于频繁，请稍后再试' }
-    }
-    
-    if (!response.ok) {
-      return { success: false, error: getReadableError(data, '点赞失败') }
-    }
-    
+
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
       likes: Number(result.likes ?? 0),
@@ -355,6 +330,14 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
     })
     return result
   } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 429) {
+        return { success: false, error: '点赞过于频繁，请稍后再试' }
+      }
+      if (error.status !== undefined) {
+        return { success: false, error: getReadableError(error.detail, '点赞失败') }
+      }
+    }
     console.error('Error liking plugin:', error)
     return { success: false, error: '网络请求失败' }
   }
@@ -366,25 +349,11 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
 export async function dislikePlugin(pluginId: string, userId?: string): Promise<VoteStatsResponse> {
   try {
     const finalUserId = userId || getUserId()
-    
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/dislike`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ plugin_id: pluginId, user_id: finalUserId }),
+
+    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/dislike`, {
+      body: { plugin_id: pluginId, user_id: finalUserId },
     })
-    
-    const data = await response.json()
-    
-    if (response.status === 429) {
-      return { success: false, error: '操作过于频繁，请稍后再试' }
-    }
-    
-    if (!response.ok) {
-      return { success: false, error: getReadableError(data, '点踩失败') }
-    }
-    
+
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
       likes: Number(result.likes ?? 0),
@@ -392,6 +361,14 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
     })
     return result
   } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 429) {
+        return { success: false, error: '操作过于频繁，请稍后再试' }
+      }
+      if (error.status !== undefined) {
+        return { success: false, error: getReadableError(error.detail, '点踩失败') }
+      }
+    }
     console.error('Error disliking plugin:', error)
     return { success: false, error: '网络请求失败' }
   }
@@ -416,7 +393,7 @@ export async function ratePlugin(
   if (hasRating && (rating < 1 || rating > 5)) {
     return { success: false, error: '评分必须在 1-5 之间' }
   }
-  
+
   try {
     const finalUserId = userId || getUserId()
     const payload: {
@@ -432,25 +409,11 @@ export async function ratePlugin(
     if (hasComment) {
       payload.comment = comment
     }
-    
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/rate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
+
+    const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/rate`, {
+      body: payload,
     })
-    
-    const data = await response.json()
-    
-    if (response.status === 429) {
-      return { success: false, error: '每天最多评分 3 次' }
-    }
-    
-    if (!response.ok) {
-      return { success: false, error: data.error || '鐠囧嫬鍨庢径杈Е' }
-    }
-    
+
     const result: RatingStatsResponse = { success: true, ...data }
     const updatedStats: Partial<PluginStatsData> = {}
     if (result.rating !== undefined) {
@@ -462,6 +425,14 @@ export async function ratePlugin(
     updateCachedPluginStats(pluginId, updatedStats)
     return result
   } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 429) {
+        return { success: false, error: '每天最多评分 3 次' }
+      }
+      if (error.status !== undefined) {
+        return { success: false, error: getDetailError(error) || '鐠囧嫬鍨庢径杈Е' }
+      }
+    }
     console.error('Error rating plugin:', error)
     return { success: false, error: '缂冩垹绮堕柨娆掝嚖' }
   }
@@ -474,33 +445,28 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
   try {
     const userId = getUserId()
     const fingerprint = generateUserFingerprint()
-    const response = await fetchWithAuth(`${STATS_API_BASE_URL}/stats/download`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ plugin_id: pluginId, user_id: userId, fingerprint }),
+    const data = await backendApi.post<Omit<DownloadStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/download`, {
+      body: { plugin_id: pluginId, user_id: userId, fingerprint },
     })
-    
-    const data = await response.json()
-    
-    if (response.status === 429) {
-      // 娑撳娴囩紒鐔活吀鐞氼偊妾哄ù浣规闂堟瑩绮径杈Е閿涘奔绗夎ぐ鍗炴惙閻劍鍩涙担鎾荤崣
-      console.warn('Download recording rate limited')
-      return { success: true }
-    }
-    
-    if (!response.ok) {
-      console.error('Failed to record download:', data.error)
-      return { success: false, error: data.error }
-    }
-    
+
     const result: DownloadStatsResponse = { success: true, ...data }
     if (typeof result.downloads === 'number') {
       updateCachedPluginStats(pluginId, { downloads: result.downloads })
     }
     return result
   } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 429) {
+        // 娑撳娴囩紒鐔活吀鐞氼偊妾哄ù浣规闂堟瑩绮径杈Е閿涘奔绗夎ぐ鍗炴惙閻劍鍩涙担鎾荤崣
+        console.warn('Download recording rate limited')
+        return { success: true }
+      }
+      if (error.status !== undefined) {
+        const detailError = getDetailError(error)
+        console.error('Failed to record download:', detailError)
+        return { success: false, error: detailError }
+      }
+    }
     console.error('Error recording download:', error)
     return { success: false, error: '缂冩垹绮堕柨娆掝嚖' }
   }

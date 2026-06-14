@@ -1,9 +1,10 @@
 import { Bot, Loader2, RefreshCw, UserCircle2, Users, Wifi, WifiOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
 
 import type { ChatTab } from './types'
@@ -31,6 +32,7 @@ export function ChatHeaderBar({
   const isVirtual = activeTab?.type === 'virtual'
   const virtualConfig = activeTab?.virtualConfig
   const connected = activeTab?.isConnected ?? false
+  const botAvatarUrl = useResolvedAvatarUrl('qq', activeTab?.sessionInfo.bot_qq)
 
   return (
     <header className="bg-card/85 supports-backdrop-filter:bg-card/65 relative z-1 shrink-0 border-b backdrop-blur">
@@ -39,6 +41,7 @@ export function ChatHeaderBar({
           {/* 头像 + 在线状态指示点 */}
           <div className="relative shrink-0">
             <Avatar className="h-10 w-10 ring-1 ring-border/60 sm:h-11 sm:w-11">
+              {botAvatarUrl && <AvatarImage src={botAvatarUrl} alt={`${botDisplayName} 的头像`} className="object-cover" />}
               <AvatarFallback className="bg-primary-gradient text-primary-foreground">
                 <Bot className="h-5 w-5" />
               </AvatarFallback>

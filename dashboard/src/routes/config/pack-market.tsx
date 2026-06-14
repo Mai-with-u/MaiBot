@@ -4,7 +4,7 @@
  * 浏览、搜索、应用模型配置 Pack
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { 
   Package, 
@@ -41,6 +41,7 @@ import {
   PaginationPrevious,
 } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useDataList } from '@/hooks/useDataList'
 import { toast } from '@/hooks/use-toast'
 import { 
   listPacks, 
@@ -62,60 +63,55 @@ type SortBy = typeof SORT_OPTIONS[number]['value']
 
 export default function PackMarketPage() {
   const navigate = useNavigate()
-  const [packs, setPacks] = useState<PackListItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState<SortBy>('downloads')
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [total, setTotal] = useState(0)
   const [likedPacks, setLikedPacks] = useState<Set<string>>(new Set())
   const [likingPacks, setLikingPacks] = useState<Set<string>>(new Set())
-  
+
   const userId = getPackUserId()
-  
-  // 加载 Pack 列表
-  const loadPacks = useCallback(async () => {
-    setLoading(true)
-    try {
+
+  // Pack 列表：分页/搜索/排序统一由 useDataList 承载（固定每页 12，无多选）
+  const list = useDataList<PackListItem, { sortBy: SortBy }, string>({
+    domain: 'pack-market',
+    getId: (pack) => pack.id,
+    initialFilters: { sortBy: 'downloads' },
+    initialPageSize: 12,
+    searchDebounceMs: 300,
+    queryFn: async ({ page, pageSize, search, filters }) => {
       const response: ListPacksResponse = await listPacks({
         status: 'approved',
         page,
-        page_size: 12,
-        search: searchQuery || undefined,
-        sort_by: sortBy,
+        page_size: pageSize,
+        search: search || undefined,
+        sort_by: filters.sortBy,
         sort_order: 'desc',
       })
-      setPacks(response.packs)
-      setTotalPages(response.total_pages)
-      setTotal(response.total)
-      
-      // 检查点赞状态
+      return { items: response.packs, total: response.total }
+    },
+  })
+  const packs = list.items
+  const total = list.total
+  const loading = list.isPending
+
+  // 点赞状态：随当前页 Pack 旁路加载，以 id 列表为键，避免列表重取但 id 不变时重复检查
+  const packIdsKey = packs.map((pack) => pack.id).join(',')
+  useEffect(() => {
+    let cancelled = false
+    async function loadLikes() {
       const likedSet = new Set<string>()
-      for (const pack of response.packs) {
+      for (const pack of packs) {
         const liked = await checkPackLike(pack.id, userId)
         if (liked) likedSet.add(pack.id)
       }
-      setLikedPacks(likedSet)
-    } catch (error) {
-      console.error('加载 Pack 列表失败:', error)
-      toast({ title: '加载 Pack 列表失败', variant: 'destructive' })
-    } finally {
-      setLoading(false)
+      if (!cancelled) {
+        setLikedPacks(likedSet)
+      }
     }
-  }, [page, searchQuery, sortBy, userId])
-  
-  useEffect(() => {
-    loadPacks()
-  }, [loadPacks])
-  
-  // 搜索
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    setPage(1)
-    loadPacks()
-  }
-  
+    loadLikes()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packIdsKey, userId])
+
   // 点赞
   const handleLike = async (packId: string) => {
     if (likingPacks.has(packId)) return
@@ -135,10 +131,8 @@ export default function PackMarketPage() {
         return newSet
       })
       
-      // 更新点赞数
-      setPacks(prev => prev.map(p => 
-        p.id === packId ? { ...p, likes: result.likes } : p
-      ))
+      // 刷新点赞数（从服务端同步）
+      list.invalidate()
     } catch (error) {
       console.error('点赞失败:', error)
       toast({ title: '点赞失败', variant: 'destructive' })
@@ -157,7 +151,7 @@ export default function PackMarketPage() {
   }
   
   // 获取当前排序选项
-  const currentSort = SORT_OPTIONS.find(o => o.value === sortBy) || SORT_OPTIONS[0]
+  const currentSort = SORT_OPTIONS.find(o => o.value === list.filters.sortBy) || SORT_OPTIONS[0]
   
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col p-4 sm:p-6">
@@ -173,8 +167,8 @@ export default function PackMarketPage() {
               浏览和应用社区分享的模型配置模板，快速配置你的 MaiBot
             </p>
           </div>
-          <Button variant="outline" onClick={loadPacks} disabled={loading} className="gap-2">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          <Button variant="outline" onClick={() => list.refetch()} disabled={list.isFetching} className="gap-2">
+            <RefreshCw className={`h-4 w-4 ${list.isFetching ? 'animate-spin' : ''}`} />
             刷新
           </Button>
         </div>
@@ -184,13 +178,13 @@ export default function PackMarketPage() {
         <div className="space-y-4">
           {/* 搜索和筛选 */}
           <div className="flex gap-4 flex-wrap">
-            <form onSubmit={handleSearch} className="flex-1 min-w-[200px] max-w-md">
+            <form onSubmit={(e) => e.preventDefault()} className="flex-1 min-w-[200px] max-w-md">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="搜索模板名称、描述..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
+                  value={list.searchInput}
+                  onChange={e => list.setSearchInput(e.target.value)}
                   className="pl-10"
                 />
               </div>
@@ -206,12 +200,9 @@ export default function PackMarketPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {SORT_OPTIONS.map(option => (
-                  <DropdownMenuItem 
+                  <DropdownMenuItem
                     key={option.value}
-                    onClick={() => {
-                      setSortBy(option.value)
-                      setPage(1)
-                    }}
+                    onClick={() => list.setFilter('sortBy', option.value)}
                   >
                     <option.icon className="w-4 h-4 mr-2" />
                     {option.label}
@@ -244,6 +235,14 @@ export default function PackMarketPage() {
                 </Card>
               ))}
             </div>
+          ) : list.isError ? (
+            <Card className="py-12">
+              <CardContent className="text-center text-muted-foreground space-y-3">
+                <Package className="w-12 h-12 mx-auto opacity-50" />
+                <p className="text-destructive">{list.error?.message ?? '加载 Pack 列表失败'}</p>
+                <Button variant="outline" size="sm" onClick={() => list.refetch()}>重试</Button>
+              </CardContent>
+            </Card>
           ) : packs.length === 0 ? (
             <Card className="py-12">
               <CardContent className="text-center text-muted-foreground">
@@ -268,25 +267,25 @@ export default function PackMarketPage() {
           )}
           
           {/* 分页 */}
-          {totalPages > 1 && (
+          {list.totalPages > 1 && (
             <Pagination>
               <PaginationContent>
                 <PaginationItem>
-                  <PaginationPrevious 
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    className={page === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                  <PaginationPrevious
+                    onClick={() => list.goToPage(list.page - 1)}
+                    className={list.page === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                   />
                 </PaginationItem>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                {Array.from({ length: list.totalPages }, (_, i) => i + 1)
+                  .filter(p => p === 1 || p === list.totalPages || Math.abs(p - list.page) <= 1)
                   .map((p, i, arr) => {
                     const showEllipsis = i > 0 && p - arr[i - 1] > 1
                     return (
                       <PaginationItem key={p}>
                         {showEllipsis && <span className="px-2">...</span>}
                         <PaginationLink
-                          onClick={() => setPage(p)}
-                          isActive={p === page}
+                          onClick={() => list.goToPage(p)}
+                          isActive={p === list.page}
                           className="cursor-pointer"
                         >
                           {p}
@@ -295,9 +294,9 @@ export default function PackMarketPage() {
                     )
                   })}
                 <PaginationItem>
-                  <PaginationNext 
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    className={page === totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                  <PaginationNext
+                    onClick={() => list.goToPage(list.page + 1)}
+                    className={list.page === list.totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                   />
                 </PaginationItem>
               </PaginationContent>

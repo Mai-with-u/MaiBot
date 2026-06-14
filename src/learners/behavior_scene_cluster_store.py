@@ -1,5 +1,7 @@
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from math import exp, log
 from typing import Any, Literal, Optional, Sequence
 
 from sqlmodel import Session, select
@@ -334,6 +336,23 @@ def build_profile_tag_distribution(
     return _tag_weights_to_distribution(tag_weights)
 
 
+def build_profile_tag_mapping(profile: BehaviorScenarioProfile) -> dict[str, float]:
+    """构建带现有 tag 簇映射的完整画像分布，用于行为路径细粒度调制。"""
+
+    if not profile.has_signal:
+        return {}
+    try:
+        with get_db_session(auto_commit=False) as session:
+            tag_lookup = _load_tag_cluster_lookup(session)
+            return _distribution_to_mapping(
+                build_profile_tag_distribution(profile, tag_lookup=tag_lookup),
+                tag_lookup=tag_lookup,
+            )
+    except Exception as exc:
+        logger.debug(f"构建行为画像 tag 映射失败: error={exc}")
+        return {}
+
+
 def _tag_weights_to_distribution(tag_weights: dict[str, float]) -> list[dict[str, float | str]]:
     total_weight = sum(tag_weights.values())
     if total_weight <= 0:
@@ -437,6 +456,59 @@ def _cluster_distribution_overlap(
         return 0.0
     shared_tags = set(left_probs) & set(right_probs)
     return round(sum(min(left_probs[tag], right_probs[tag]) for tag in shared_tags), 4)
+
+
+def _build_frequency_weight_by_tag(
+    clusters: Sequence[BehaviorSceneCluster],
+    *,
+    tag_lookup: dict[tuple[str, str], str] | None = None,
+) -> dict[str, float]:
+    df_by_tag: Counter[str] = Counter()
+    for cluster in clusters:
+        cluster_tags = _distribution_to_mapping(
+            _load_cluster_distribution(cluster.tag_distribution),
+            tag_lookup=tag_lookup,
+        )
+        df_by_tag.update(cluster_tags.keys())
+    if not df_by_tag:
+        return {}
+
+    cluster_count = max(len(clusters), 1)
+    raw_weights: dict[str, float] = {}
+    for tag, count in df_by_tag.items():
+        df_ratio = float(count) / float(cluster_count)
+        idf = 1.0 + log((float(cluster_count) + 1.0) / (float(count) + 1.0))
+        idf_soft = 1.0 + log(idf)
+        rare_reliability = 1.0 - exp(-float(count) / 2.0)
+        common_gate = 1.0 / (1.0 + (df_ratio / 0.08) ** 1.8)
+        raw_weights[tag] = max(0.05, idf_soft * rare_reliability * common_gate)
+
+    average_weight = sum(raw_weights.values()) / float(len(raw_weights))
+    if average_weight <= 0:
+        return {tag: 1.0 for tag in raw_weights}
+    return {tag: weight / average_weight for tag, weight in raw_weights.items()}
+
+
+def _weighted_distribution_overlap(
+    query_tags: dict[str, float],
+    cluster_tags: dict[str, float],
+    *,
+    frequency_weight_by_tag: dict[str, float],
+) -> float:
+    shared_tags = set(query_tags) & set(cluster_tags)
+    if not shared_tags:
+        return 0.0
+
+    query_weight = sum(
+        probability * frequency_weight_by_tag.get(tag, 1.0) for tag, probability in query_tags.items()
+    )
+    if query_weight <= 0:
+        return 0.0
+
+    hit_weight = sum(
+        min(query_tags[tag], cluster_tags[tag]) * frequency_weight_by_tag.get(tag, 1.0) for tag in shared_tags
+    )
+    return _clamp(hit_weight / query_weight, 0.0, 1.0)
 
 
 def _scene_cluster_session_ids(raw_session_id: str | None) -> set[str]:
@@ -757,10 +829,11 @@ def apply_behavior_scene_feedback(
     score_delta: float,
     status: str,
 ) -> None:
-    """反馈行为效果时，同步强化或削弱行为所属场景簇。"""
+    """反馈行为效果时，仅刷新行为所属场景簇的更新时间。"""
 
     if experience_path_id <= 0:
         return
+    del score_delta
     del status
     now = datetime.now()
 
@@ -772,7 +845,6 @@ def apply_behavior_scene_feedback(
             cluster = session.get(BehaviorSceneCluster, path.scene_cluster_id)
             if cluster is None:
                 return
-            cluster.score = _clamp(float(cluster.score or 0.0) + float(score_delta) * 0.08, -4.0, 6.0)
             cluster.update_time = now
             session.add(cluster)
 
@@ -935,11 +1007,15 @@ def _score_scene_clusters_by_direct_domain_overlap(
         return {}, {"direct_tag_count": 0, "cluster_count": 0}
 
     statement = select(BehaviorSceneCluster)
+    clusters = [
+        cluster
+        for cluster in session.exec(statement).all()
+        if include_global or _scene_cluster_matches_sessions(cluster.session_id, session_ids)
+    ]
+    frequency_weight_by_tag = _build_frequency_weight_by_tag(clusters, tag_lookup=tag_lookup)
 
     cluster_scores: dict[int, float] = {}
-    for cluster in session.exec(statement).all():
-        if not include_global and not _scene_cluster_matches_sessions(cluster.session_id, session_ids):
-            continue
+    for cluster in clusters:
         if cluster.id is None:
             continue
         cluster_tags = _distribution_to_mapping(
@@ -948,11 +1024,11 @@ def _score_scene_clusters_by_direct_domain_overlap(
         )
         if not cluster_tags:
             continue
-        direct_shared_tags = set(direct_tags) & set(cluster_tags)
-        if not direct_shared_tags:
-            continue
-        direct_overlap = sum(min(direct_tags[tag], cluster_tags[tag]) for tag in direct_shared_tags)
-        score = direct_overlap
+        score = _weighted_distribution_overlap(
+            direct_tags,
+            cluster_tags,
+            frequency_weight_by_tag=frequency_weight_by_tag,
+        )
         if score < DIRECT_DOMAIN_OVERLAP_THRESHOLD:
             continue
         cluster_scores[int(cluster.id)] = round(score * 2.0, 4)
@@ -963,6 +1039,7 @@ def _score_scene_clusters_by_direct_domain_overlap(
     debug_payload = {
         "direct_tag_count": len(direct_tags),
         "cluster_count": len(sorted_cluster_scores),
+        "frequency_weight_enabled": True,
     }
     return sorted_cluster_scores, debug_payload
 
@@ -1057,14 +1134,18 @@ def _score_scene_clusters_by_tag_cluster_spread(
         if include_global or _scene_cluster_matches_sessions(cluster.session_id, session_ids)
     ]
     adjacency = _build_tag_cluster_adjacency(clusters, tag_lookup=tag_lookup)
+    frequency_weight_by_tag = _build_frequency_weight_by_tag(clusters, tag_lookup=tag_lookup)
     query_tag_weights, debug_payload = _expand_tag_cluster_weights(
         direct_tags,
         adjacency,
         max_depth=max_depth,
     )
-    total_query_weight = sum(query_tag_weights.values())
+    total_query_weight = sum(
+        query_weight * frequency_weight_by_tag.get(tag, 1.0) for tag, query_weight in query_tag_weights.items()
+    )
     if total_query_weight <= 0:
         debug_payload["cluster_count"] = 0
+        debug_payload["frequency_weight_enabled"] = True
         return {}, debug_payload
 
     cluster_scores: dict[int, float] = {}
@@ -1080,7 +1161,7 @@ def _score_scene_clusters_by_tag_cluster_spread(
         shared_tags = set(query_tag_weights) & set(cluster_tags)
         if not shared_tags:
             continue
-        hit_weight = sum(query_tag_weights[tag] for tag in shared_tags)
+        hit_weight = sum(query_tag_weights[tag] * frequency_weight_by_tag.get(tag, 1.0) for tag in shared_tags)
         hit_ratio = hit_weight / total_query_weight
         cluster_scores[int(cluster.id)] = round(hit_ratio * 2.0, 4)
 
@@ -1088,6 +1169,7 @@ def _score_scene_clusters_by_tag_cluster_spread(
         sorted(cluster_scores.items(), key=lambda item: item[1], reverse=True)[:TAG_CLUSTER_SPREAD_TOPK]
     )
     debug_payload["cluster_count"] = len(sorted_cluster_scores)
+    debug_payload["frequency_weight_enabled"] = True
     return sorted_cluster_scores, debug_payload
 
 

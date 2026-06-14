@@ -1,16 +1,18 @@
 /**
  * 表情包管理 API 客户端
+ *
+ * 请求样板（认证、解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint 与业务错误文案。请求失败时抛出 ApiError（throw 契约）。
  */
-
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { backendApi } from '@/lib/http'
 import type {
-  EmojiListResponse,
+  EmojiDeleteResponse,
   EmojiDetailResponse,
+  EmojiListResponse,
+  EmojiStatsResponse,
+  EmojiStatus,
   EmojiUpdateRequest,
   EmojiUpdateResponse,
-  EmojiDeleteResponse,
-  EmojiStatus,
-  EmojiStatsResponse,
 } from '@/types/emoji'
 
 const API_BASE = '/api/webui/emoji'
@@ -29,39 +31,29 @@ export async function getEmojiList(params: {
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }): Promise<EmojiListResponse> {
-  const query = new URLSearchParams()
-  if (params.page) query.append('page', params.page.toString())
-  if (params.page_size) query.append('page_size', params.page_size.toString())
-  if (params.search) query.append('search', params.search)
-  if (params.is_registered !== undefined) query.append('is_registered', params.is_registered.toString())
-  if (params.is_banned !== undefined) query.append('is_banned', params.is_banned.toString())
-  if (params.status) query.append('status', params.status)
-  if (params.format) query.append('format', params.format)
-  if (params.sort_by) query.append('sort_by', params.sort_by)
-  if (params.sort_order) query.append('sort_order', params.sort_order)
-
-  const response = await fetchWithAuth(`${API_BASE}/list?${query}`, {
+  return backendApi.get<EmojiListResponse>(`${API_BASE}/list`, {
+    query: {
+      page: params.page || undefined,
+      page_size: params.page_size || undefined,
+      search: params.search || undefined,
+      is_registered: params.is_registered,
+      is_banned: params.is_banned,
+      status: params.status || undefined,
+      format: params.format || undefined,
+      sort_by: params.sort_by || undefined,
+      sort_order: params.sort_order || undefined,
+    },
+    errorMessage: '获取表情包列表失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`获取表情包列表失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 获取表情包详情
  */
 export async function getEmojiDetail(id: number): Promise<EmojiDetailResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${id}`, {
+  return backendApi.get<EmojiDetailResponse>(`${API_BASE}/${id}`, {
+    errorMessage: '获取表情包详情失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`获取表情包详情失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
@@ -71,76 +63,46 @@ export async function updateEmoji(
   id: number,
   data: EmojiUpdateRequest
 ): Promise<EmojiUpdateResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
+  return backendApi.patch<EmojiUpdateResponse>(`${API_BASE}/${id}`, {
+    body: data,
+    errorMessage: '更新表情包失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`更新表情包失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 删除表情包
  */
 export async function deleteEmoji(id: number): Promise<EmojiDeleteResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${id}`, {
-    method: 'DELETE',
+  return backendApi.delete<EmojiDeleteResponse>(`${API_BASE}/${id}`, {
+    errorMessage: '删除表情包失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`删除表情包失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 获取表情包统计数据
  */
 export async function getEmojiStats(): Promise<EmojiStatsResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/stats/summary`, {
+  return backendApi.get<EmojiStatsResponse>(`${API_BASE}/stats/summary`, {
+    errorMessage: '获取统计数据失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`获取统计数据失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 注册表情包
  */
 export async function registerEmoji(id: number): Promise<EmojiUpdateResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${id}/register`, {
-    method: 'POST',
+  return backendApi.post<EmojiUpdateResponse>(`${API_BASE}/${id}/register`, {
+    errorMessage: '注册表情包失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`注册表情包失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 封禁表情包
  */
 export async function banEmoji(id: number): Promise<EmojiUpdateResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/${id}/ban`, {
-    method: 'POST',
-    
+  return backendApi.post<EmojiUpdateResponse>(`${API_BASE}/${id}/ban`, {
+    errorMessage: '封禁表情包失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`封禁表情包失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
@@ -173,18 +135,10 @@ export async function batchDeleteEmojis(emojiIds: number[]): Promise<{
   failed_count: number
   failed_ids: number[]
 }> {
-  const response = await fetchWithAuth(`${API_BASE}/batch/delete`, {
-    method: 'POST',
-    
-    body: JSON.stringify({ emoji_ids: emojiIds }),
+  return backendApi.post(`${API_BASE}/batch/delete`, {
+    body: { emoji_ids: emojiIds },
+    errorMessage: '批量删除失败',
   })
-
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.detail || '批量删除失败')
-  }
-
-  return response.json()
 }
 
 /**
@@ -231,28 +185,18 @@ export interface ThumbnailPreheatResponse {
  * 获取缩略图缓存统计信息
  */
 export async function getThumbnailCacheStats(): Promise<ThumbnailCacheStatsResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/thumbnail-cache/stats`, {})
-
-  if (!response.ok) {
-    throw new Error(`获取缩略图缓存统计失败: ${response.statusText}`)
-  }
-
-  return response.json()
+  return backendApi.get<ThumbnailCacheStatsResponse>(`${API_BASE}/thumbnail-cache/stats`, {
+    errorMessage: '获取缩略图缓存统计失败',
+  })
 }
 
 /**
  * 清理孤立的缩略图缓存
  */
 export async function cleanupThumbnailCache(): Promise<ThumbnailCleanupResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/thumbnail-cache/cleanup`, {
-    method: 'POST',
+  return backendApi.post<ThumbnailCleanupResponse>(`${API_BASE}/thumbnail-cache/cleanup`, {
+    errorMessage: '清理缩略图缓存失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`清理缩略图缓存失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
@@ -260,28 +204,17 @@ export async function cleanupThumbnailCache(): Promise<ThumbnailCleanupResponse>
  * @param limit 最多预热数量 (1-1000)
  */
 export async function preheatThumbnailCache(limit: number = 100): Promise<ThumbnailPreheatResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/thumbnail-cache/preheat?limit=${limit}`, {
-    method: 'POST',
+  return backendApi.post<ThumbnailPreheatResponse>(`${API_BASE}/thumbnail-cache/preheat`, {
+    query: { limit },
+    errorMessage: '预热缩略图缓存失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`预热缩略图缓存失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**
  * 清空所有缩略图缓存
  */
 export async function clearAllThumbnailCache(): Promise<ThumbnailCleanupResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/thumbnail-cache/clear`, {
-    method: 'DELETE',
+  return backendApi.delete<ThumbnailCleanupResponse>(`${API_BASE}/thumbnail-cache/clear`, {
+    errorMessage: '清空缩略图缓存失败',
   })
-
-  if (!response.ok) {
-    throw new Error(`清空缩略图缓存失败: ${response.statusText}`)
-  }
-
-  return response.json()
 }

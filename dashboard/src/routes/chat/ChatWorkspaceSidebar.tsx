@@ -2,14 +2,16 @@ import { Bot, Check, Edit2, Plus, UserCircle2, X } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
 
 import type { ChatMessage, ChatTab } from './types'
+import { getChatTabDisplayName } from './utils'
 
 interface ChatWorkspaceSidebarProps {
   className?: string
@@ -46,7 +48,15 @@ function ConversationItem({
     lastMessage,
     t('chat.sidebar.emptyPreview')
   )
+  const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
   const Icon = isVirtual ? UserCircle2 : Bot
+  const avatarUrl = useResolvedAvatarUrl(
+    isVirtual ? tab.virtualConfig?.platform : 'qq',
+    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
+  )
+  const avatarAlt = isVirtual
+    ? `${tab.virtualConfig?.userName || tab.label} 的头像`
+    : `${displayName} 的头像`
 
   return (
     <div
@@ -67,6 +77,7 @@ function ConversationItem({
       >
         <div className="relative shrink-0">
           <Avatar className="h-11 w-11 ring-1 ring-border/60">
+            {avatarUrl && <AvatarImage src={avatarUrl} alt={avatarAlt} className="object-cover" />}
             <AvatarFallback
               className={cn(
                 'text-xs',
@@ -88,17 +99,12 @@ function ConversationItem({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center justify-between gap-2">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{tab.label}</span>
-            <span
-              className={cn(
-                'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide',
-                isVirtual
-                  ? 'bg-secondary text-secondary-foreground'
-                  : 'bg-primary/15 text-primary'
-              )}
-            >
-              {isVirtual ? t('chat.sidebar.virtualBadge') : t('chat.sidebar.webuiBadge')}
-            </span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{displayName}</span>
+            {isVirtual && (
+              <span className="bg-secondary text-secondary-foreground shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
+                {t('chat.sidebar.virtualBadge')}
+              </span>
+            )}
           </div>
           <p className="text-muted-foreground mt-0.5 truncate text-xs">{preview}</p>
         </div>
@@ -107,7 +113,7 @@ function ConversationItem({
       {tab.id !== 'webui-default' && (
         <button
           type="button"
-          aria-label={t('chat.sidebar.closeConversation', { label: tab.label })}
+          aria-label={t('chat.sidebar.closeConversation', { label: displayName })}
           className="text-muted-foreground hover:bg-background hover:text-foreground rounded-md p-1 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
           onClick={(e) => onClose(tab.id, e)}
         >

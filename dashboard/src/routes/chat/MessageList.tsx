@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
 
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
@@ -14,7 +15,7 @@ interface MessageListProps {
   messages: ChatMessage[]
   isLoadingHistory: boolean
   botDisplayName: string
-  /** 机器人 QQ 号；存在时会从 QQ 头像公开接口拉取头像作为 bot 头像。 */
+  /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
   userName: string
   language: string
@@ -141,10 +142,7 @@ export function MessageList({
     })
   }
 
-  // 优先使用 q1.qlogo.cn s=640（高清），QQ 公开头像接口。
-  const botAvatarUrl = botQq && /^\d+$/.test(botQq)
-    ? `https://q1.qlogo.cn/g?b=qq&nk=${botQq}&s=640`
-    : undefined
+  const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
 
   if (messages.length === 0 && !isLoadingHistory) {
     return (

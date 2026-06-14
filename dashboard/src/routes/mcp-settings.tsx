@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +27,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { DynamicConfigForm } from '@/components/dynamic-form'
 import { RestartOverlay } from '@/components/restart-overlay'
+import { useConfigForm } from '@/hooks/useConfigForm'
 import { useToast } from '@/hooks/use-toast'
 import { getBotConfig, getBotConfigSchema, updateBotConfigSection } from '@/lib/config-api'
 import { fieldHooks } from '@/lib/field-hooks'
@@ -441,16 +444,12 @@ export function MCPSettingsPage() {
 }
 
 function MCPSettingsPageContent() {
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [mcpConfig, setMcpConfig] = useState<ConfigSectionData>({})
-  const [mcpSchema, setMcpSchema] = useState<ConfigSchema | null>(null)
   const [restartNoticeVisible, setRestartNoticeVisible] = useState(
     () => localStorage.getItem('mcp-settings-restart-notice-dismissed') !== 'true',
   )
   const { toast } = useToast()
   const { triggerRestart, isRestarting } = useRestart()
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     const hookEntries = [
@@ -468,56 +467,33 @@ function MCPSettingsPageContent() {
     }
   }, [])
 
-  const loadConfig = useCallback(async () => {
-    try {
-      setLoading(true)
-      const [configResult, schemaResult] = await Promise.all([getBotConfig(), getBotConfigSchema()])
-
-      if (!configResult.success) {
-        toast({
-          title: '加载失败',
-          description: configResult.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
-      if (!schemaResult.success) {
-        toast({
-          title: '加载失败',
-          description: schemaResult.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
-      const configPayload = configResult.data as { config?: Record<string, unknown> } & Record<string, unknown>
+  // 配置表单编排：config + schema 并行加载、渲染期 seed 草稿、脏跟踪统一由 useConfigForm 承载。
+  // 草稿仅取 mcp 节；mcpSchema 为展示派生数据（非草稿），从 schema 另行派生。
+  const form = useConfigForm<ConfigSectionData, Record<string, unknown>, ConfigSchema>({
+    queryKey: ['mcp-settings'],
+    loadConfig: () => getBotConfig(),
+    loadSchema: () => getBotConfigSchema(),
+    seed: (config) => {
+      const configPayload = config as { config?: Record<string, unknown> } & Record<string, unknown>
       const fullConfig = (configPayload.config ?? configPayload) as Record<string, unknown>
-      const schemaPayload = schemaResult.data as { schema?: ConfigSchema } & ConfigSchema
-      const fullSchema = (schemaPayload.schema ?? schemaPayload) as ConfigSchema
+      return (fullConfig.mcp ?? {}) as ConfigSectionData
+    },
+  })
+  const mcpConfig = form.draft ?? {}
+  const hasUnsavedChanges = form.isDirty
+  const loading = form.isLoading
+  const loadError = form.error
 
-      setMcpConfig((fullConfig.mcp ?? {}) as ConfigSectionData)
-      setMcpSchema(fullSchema.nested?.mcp ?? null)
-      setHasUnsavedChanges(false)
-    } catch (error) {
-      console.error('加载 MCP 设置失败:', error)
-      toast({
-        title: '加载失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
-    }
-  }, [toast])
+  const mcpSchema = useMemo<ConfigSchema | null>(() => {
+    if (!form.schema) return null
+    const schemaPayload = form.schema as { schema?: ConfigSchema } & ConfigSchema
+    const fullSchema = (schemaPayload.schema ?? schemaPayload) as ConfigSchema
+    return fullSchema.nested?.mcp ?? null
+  }, [form.schema])
 
-  useEffect(() => {
-    void loadConfig()
-  }, [loadConfig])
-
-  const saveConfig = useCallback(async (): Promise<boolean> => {
-    try {
-      setSaving(true)
+  // 保存：失败由全局 mutation 错误 toast 呈现（meta.errorTitle 定制标题）
+  const saveMutation = useMutation({
+    mutationFn: () => {
       const configToSave = { ...mcpConfig }
       if (Array.isArray(configToSave.servers)) {
         configToSave.servers = configToSave.servers.map((server: MCPServerConfig) => {
@@ -526,35 +502,29 @@ function MCPSettingsPageContent() {
           return rest
         })
       }
-      const result = await updateBotConfigSection('mcp', configToSave)
-
-      if (!result.success) {
-        toast({
-          title: '保存失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return false
-      }
-
-      setHasUnsavedChanges(false)
+      return updateBotConfigSection('mcp', configToSave)
+    },
+    meta: { errorTitle: '保存失败' },
+    onSuccess: () => {
       toast({
         title: '保存成功',
         description: 'MCP 设置已保存，重启后生效。',
       })
+      // 失效 ['mcp-settings'] 前缀（含 config/schema 子查询）→ config 重拉 → 渲染期重新 seed → isDirty 归零
+      void queryClient.invalidateQueries({ queryKey: ['mcp-settings'] })
+    },
+  })
+  const saving = saveMutation.isPending
+
+  const saveConfig = useCallback(async (): Promise<boolean> => {
+    try {
+      await saveMutation.mutateAsync()
       return true
-    } catch (error) {
-      console.error('保存 MCP 设置失败:', error)
-      toast({
-        title: '保存失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
+    } catch {
+      // 失败已由全局 mutation 错误 toast 呈现
       return false
-    } finally {
-      setSaving(false)
     }
-  }, [mcpConfig, toast])
+  }, [saveMutation])
 
   const saveAndRestart = useCallback(async () => {
     const saved = await saveConfig()
@@ -640,20 +610,32 @@ function MCPSettingsPageContent() {
           </div>
         )}
 
-        {!loading && (
+        {!loading && Boolean(loadError) && (
+          <div className="flex h-64 flex-col items-center justify-center gap-2">
+            <p className="text-sm text-destructive">{loadError instanceof Error ? loadError.message : '加载配置失败'}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => form.reload()}
+            >
+              重试
+            </Button>
+          </div>
+        )}
+
+        {!loading && !loadError && (
           <MCPServersBlockEditor
             servers={mcpServers}
             onChange={(servers) => {
-              setMcpConfig((currentConfig) => ({
+              form.setDraft((currentConfig) => ({
                 ...currentConfig,
                 servers,
               }))
-              setHasUnsavedChanges(true)
             }}
           />
         )}
 
-        {!loading && formSchema && (
+        {!loading && !loadError && formSchema && (
           <DynamicConfigForm
             schema={formSchema}
             values={{ mcp: mcpConfig }}
@@ -663,14 +645,13 @@ function MCPSettingsPageContent() {
                 ? (value as ConfigSectionData)
                 : updateNestedValue(mcpConfig, restPath, value)
 
-              setMcpConfig(nextConfig)
-              setHasUnsavedChanges(true)
+              form.setDraft(nextConfig)
             }}
             hooks={fieldHooks}
           />
         )}
 
-        {!loading && !formSchema && (
+        {!loading && !loadError && !formSchema && (
           <Alert>
             <Info className="h-4 w-4" />
             <AlertDescription>当前配置 schema 中没有找到 MCP 设置。</AlertDescription>

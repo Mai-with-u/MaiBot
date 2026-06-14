@@ -21,6 +21,10 @@ Rules:
 - If the behavior is a group interaction formed by multiple users, actor_type must be "group_collective" and learning_type must be "observed_behavior".
 - Extract only patterns whose causal chain is visible in the conversation.
 - The action should describe a reusable executable behavior, and the outcome should describe the observed or strongly inferable result.
+- The action should be abstract enough to be usable again in a similar scenario. Keep the behavioral structure, but do not bind it to one-off objects, exact model names, temporary memes, screenshot contents, or specific proper nouns.
+- The outcome should describe an observable interaction change, such as "the other person provides key details", "tension softens", "the other person keeps asking", or "the topic shifts into light joking". Avoid only saying that the atmosphere was active.
+- If two candidates differ only in concrete objects while sharing the same behavior structure, prefer one more abstract behavior pattern.
+- If a message only contains facts, resources, configuration values, query results, or a one-off task, do not learn it as a behavior pattern. Extract it only when it shows a reusable interaction strategy.
 - Messages marked speaker=SELF may be used as evidence, but do not write SELF, specific nicknames, or user IDs in action/outcome. Put subject information only in actor_type.
 - Do not quote exact wording, store private details, or generalize a one-off task into a behavior pattern.
 - source_ids must reference the supporting source line numbers, one or more.

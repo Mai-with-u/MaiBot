@@ -1,6 +1,5 @@
-import { parseResponse, throwIfError } from '@/lib/api-helpers'
 import { resolveApiPath } from '@/lib/api-base'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { backendApi } from '@/lib/http'
 
 const API_BASE = '/api/webui/reasoning-process'
 
@@ -19,6 +18,7 @@ export type ReasoningPromptFile = {
   json_path: string | null
   output_preview: string | null
   action_preview: string | null
+  has_behavior_choice_insert: boolean
   model_name: string | null
   duration_ms: number | null
   size: number
@@ -66,11 +66,21 @@ export type ReasoningPromptContentResponse = {
   modified_at: number
   model_name: string | null
   duration_ms: number | null
+  message_avatars: Record<string, ReasoningPromptMessageAvatar>
+}
+
+export type ReasoningPromptMessageAvatar = {
+  message_id: string
+  platform: string
+  user_id: string
+  display_name: string
+  avatar_url: string | null
 }
 
 export type ReasoningPromptListParams = {
   stage?: string
   session?: string
+  action?: string
   search?: string
   page?: number
   pageSize?: number
@@ -79,29 +89,35 @@ export type ReasoningPromptListParams = {
 export async function listReasoningPromptFiles(
   params: ReasoningPromptListParams
 ): Promise<ReasoningPromptListResponse> {
-  const queryParams = new URLSearchParams()
-  queryParams.set('stage', params.stage ?? 'planner')
-  queryParams.set('session', params.session ?? 'auto')
-  queryParams.set('search', params.search ?? '')
-  queryParams.set('page', String(params.page ?? 1))
-  queryParams.set('page_size', String(params.pageSize ?? 50))
-
-  const response = await fetchWithAuth(`${API_BASE}/files?${queryParams}`, { cache: 'no-store' })
-  return throwIfError(await parseResponse<ReasoningPromptListResponse>(response))
+  return backendApi.get<ReasoningPromptListResponse>(`${API_BASE}/files`, {
+    query: {
+      stage: params.stage ?? 'planner',
+      session: params.session ?? 'auto',
+      action: params.action ?? '',
+      search: params.search ?? '',
+      page: params.page ?? 1,
+      page_size: params.pageSize ?? 50,
+    },
+    cache: 'no-store',
+    errorMessage: '加载推理过程失败',
+  })
 }
 
 export async function listReasoningPromptStages(): Promise<ReasoningPromptStagesResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/stages`, { cache: 'no-store' })
-  return throwIfError(await parseResponse<ReasoningPromptStagesResponse>(response))
+  return backendApi.get<ReasoningPromptStagesResponse>(`${API_BASE}/stages`, {
+    cache: 'no-store',
+    errorMessage: '加载推理过程类型失败',
+  })
 }
 
 export async function getReasoningPromptFile(
   path: string
 ): Promise<ReasoningPromptContentResponse> {
-  const response = await fetchWithAuth(`${API_BASE}/file?path=${encodeURIComponent(path)}`, {
+  return backendApi.get<ReasoningPromptContentResponse>(`${API_BASE}/file`, {
+    query: { path },
     cache: 'no-store',
+    errorMessage: '读取推理过程文件失败',
   })
-  return throwIfError(await parseResponse<ReasoningPromptContentResponse>(response))
 }
 
 export async function getReasoningPromptHtmlUrl(path: string): Promise<string> {

@@ -59,7 +59,6 @@
     "logs": "Mai Logs"
   },
   "chat": {
-    "defaultTab": "WebUI",
     "botNameFallback": "Mai",
     "userFallback": "User",
     "userNameFallback": "WebUI User",
@@ -107,7 +106,6 @@
       "offline": "Offline",
       "subtitle": "{{count}} conversations",
       "title": "Chats",
-      "webuiBadge": "WebUI",
       "virtualBadge": "Virtual",
       "profileTitle": "My identity",
       "editName": "Edit nickname",
@@ -344,6 +342,9 @@
       "securityTip6": "System-generated Tokens are recommended for maximum security"
     },
     "other": {
+      "display": "Display",
+      "enableAvatarFetch": "Fetch and show user avatars",
+      "enableAvatarFetchDesc": "When disabled, chat and reasoning views stop requesting avatar images and use default avatars.",
       "performance": "Performance & Storage",
       "localStorage": "Local Storage Usage",
       "logCache": "Log Cache Size",
@@ -642,11 +643,11 @@
         "multipleReplyStyle": {
           "label": "Alternate Reply Styles",
           "placeholder": "Enter one alternate reply style per line",
-          "description": "When this list is not empty, MaiBot may randomly replace the default reply style using the probability below"
+          "description": "When this list is not empty, MaiBot may randomly inject one of these styles as a one-time reply hint"
         },
         "multipleProbability": {
-          "label": "Alternate Style Probability",
-          "description": "The chance of randomly replacing the default reply style each time a reply is built"
+          "label": "Temporary Style Injection Probability",
+          "description": "The chance of injecting a one-time alternate style hint each time a reply is built"
         }
       },
       "emoji": {

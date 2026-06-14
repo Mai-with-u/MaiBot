@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 import type { ChatTab } from './types'
+import { getChatTabDisplayName } from './utils'
 
 interface ChatTabBarProps {
   tabs: ChatTab[]
@@ -25,6 +26,7 @@ export function ChatTabBar({ tabs, activeTabId, onSwitch, onClose, onAddVirtual 
         {tabs.map((tab) => {
           const active = activeTabId === tab.id
           const Icon = tab.type === 'virtual' ? UserCircle2 : Bot
+          const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
           return (
             <div
               key={tab.id}
@@ -41,7 +43,7 @@ export function ChatTabBar({ tabs, activeTabId, onSwitch, onClose, onAddVirtual 
                 onClick={() => onSwitch(tab.id)}
               >
                 <Icon className="h-3.5 w-3.5" />
-                <span className="max-w-32 truncate font-medium">{tab.label}</span>
+                <span className="max-w-32 truncate font-medium">{displayName}</span>
                 <span
                   aria-hidden
                   className={cn(
@@ -59,7 +61,7 @@ export function ChatTabBar({ tabs, activeTabId, onSwitch, onClose, onAddVirtual 
               {tab.id !== 'webui-default' && (
                 <button
                   type="button"
-                  aria-label={t('chat.sidebar.closeConversation', { label: tab.label })}
+                  aria-label={t('chat.sidebar.closeConversation', { label: displayName })}
                   className={cn(
                     'mr-1 rounded-full p-0.5 transition',
                     active ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted'

@@ -1,6 +1,4 @@
-import { parseResponse } from '@/lib/api-helpers'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
-import type { ApiResponse } from '@/types/api'
+import { backendApi } from '@/lib/http'
 
 const API_BASE = '/api/webui/config/prompts'
 
@@ -28,47 +26,58 @@ export interface PromptFileContent {
   customized: boolean
 }
 
-export async function getPromptCatalog(): Promise<ApiResponse<PromptCatalog>> {
-  const response = await fetchWithAuth(API_BASE)
-  return parseResponse<PromptCatalog>(response)
+export async function getPromptCatalog(): Promise<PromptCatalog> {
+  return backendApi.get<PromptCatalog>(API_BASE, {
+    errorMessage: '获取 Prompt 文件列表失败',
+  })
 }
 
 export async function getPromptFile(
   language: string,
   filename: string
-): Promise<ApiResponse<PromptFileContent>> {
-  const response = await fetchWithAuth(`${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`)
-  return parseResponse<PromptFileContent>(response)
+): Promise<PromptFileContent> {
+  return backendApi.get<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`,
+    {
+      errorMessage: '获取 Prompt 文件失败',
+    }
+  )
 }
 
 export async function getDefaultPromptFile(
   language: string,
   filename: string
-): Promise<ApiResponse<PromptFileContent>> {
-  const response = await fetchWithAuth(
-    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/default`
+): Promise<PromptFileContent> {
+  return backendApi.get<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/default`,
+    {
+      errorMessage: '获取默认 Prompt 文件失败',
+    }
   )
-  return parseResponse<PromptFileContent>(response)
 }
 
 export async function updatePromptFile(
   language: string,
   filename: string,
   content: string
-): Promise<ApiResponse<PromptFileContent>> {
-  const response = await fetchWithAuth(`${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  })
-  return parseResponse<PromptFileContent>(response)
+): Promise<PromptFileContent> {
+  return backendApi.put<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`,
+    {
+      body: { content },
+      errorMessage: '保存 Prompt 文件失败',
+    }
+  )
 }
 
 export async function resetPromptFile(
   language: string,
   filename: string
-): Promise<ApiResponse<PromptFileContent>> {
-  const response = await fetchWithAuth(`${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`, {
-    method: 'DELETE',
-  })
-  return parseResponse<PromptFileContent>(response)
+): Promise<PromptFileContent> {
+  return backendApi.delete<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}`,
+    {
+      errorMessage: '重置 Prompt 文件失败',
+    }
+  )
 }

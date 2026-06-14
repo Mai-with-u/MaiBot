@@ -50,7 +50,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { backendApi } from '@/lib/http'
 import {
   cleanupLocalCache,
   deleteLocalCacheDataEntry,
@@ -167,15 +167,8 @@ function CacheImagePreview({
     let cancelled = false
     let createdUrl: string | null = null
 
-    void fetchWithAuth(previewUrl, {
-      method: 'GET',
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('图片预览加载失败')
-        }
-        return response.blob()
-      })
+    void backendApi
+      .get<Blob>(previewUrl, { parse: 'blob', errorMessage: '图片预览加载失败' })
       .then((blob) => {
         if (cancelled) {
           return

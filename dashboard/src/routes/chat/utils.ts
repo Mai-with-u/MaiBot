@@ -1,5 +1,5 @@
 import { VIRTUAL_TABS_STORAGE_KEY } from './types'
-import type { SavedVirtualTab } from './types'
+import type { ChatTab, SavedVirtualTab } from './types'
 
 // 生成唯一用户 ID
 export function generateUserId(): string {
@@ -47,4 +47,12 @@ export function saveVirtualTabs(tabs: SavedVirtualTab[]): void {
   } catch (e) {
     console.error('[Chat] 保存虚拟标签页失败:', e)
   }
+}
+
+// 本地聊天会话对用户来说就是和 bot 对话，不展示内部 WebUI 占位名。
+export function getChatTabDisplayName(tab: ChatTab, botNameFallback: string): string {
+  if (tab.type === 'virtual') {
+    return tab.label
+  }
+  return tab.sessionInfo.bot_name?.trim() || botNameFallback
 }

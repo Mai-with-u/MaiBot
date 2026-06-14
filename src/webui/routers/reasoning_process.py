@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Messages
 from src.webui.dependencies import require_auth
+from src.webui.routers.avatar import build_webui_avatar_url
 
 router = APIRouter(prefix="/reasoning-process", tags=["reasoning-process"], dependencies=[Depends(require_auth)])
 
@@ -22,12 +23,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PROMPT_LOG_ROOT = (PROJECT_ROOT / "logs" / "maisaka_prompt").resolve()
 ALLOWED_SUFFIXES = {".txt", ".html", ".json"}
 SESSION_CHAT_TYPES = ("group", "private")
+ALL_GROUP_SESSIONS = "__all_group_chats__"
+BEHAVIOR_REFERENCE_MARKER = "[行为表现参考]"
 PROMPT_METADATA_MARKER = "[请求信息]"
 PROMPT_SEPARATOR = "=" * 80
 PROMPT_METADATA_SCRIPT_PATTERN = re.compile(
     r"<script[^>]*id=[\"']prompt-preview-metadata[\"'][^>]*>(?P<payload>.*?)</script>",
     re.IGNORECASE | re.DOTALL,
 )
+MESSAGE_TAG_PATTERN = re.compile(r"<message\b(?P<attrs>[^>]*)>", re.IGNORECASE)
+MESSAGE_TAG_ATTR_PATTERN = re.compile(r'([A-Za-z_][\w:-]*)\s*=\s*"([^"]*)"')
 
 
 class ReasoningPromptStageInfo(BaseModel):
@@ -68,6 +73,7 @@ class ReasoningPromptFile(BaseModel):
     json_path: str | None = None
     output_preview: str | None = None
     action_preview: str | None = None
+    has_behavior_choice_insert: bool = False
     model_name: str | None = None
     duration_ms: float | None = None
     size: int = 0
@@ -95,6 +101,16 @@ class ReasoningPromptStagesResponse(BaseModel):
     stage_infos: list[ReasoningPromptStageInfo] = Field(default_factory=list)
 
 
+class ReasoningPromptMessageAvatar(BaseModel):
+    """推理过程消息头像信息。"""
+
+    message_id: str
+    platform: str
+    user_id: str
+    display_name: str = ""
+    avatar_url: str | None = None
+
+
 class ReasoningPromptContentResponse(BaseModel):
     """推理过程文本内容响应。"""
 
@@ -104,6 +120,7 @@ class ReasoningPromptContentResponse(BaseModel):
     modified_at: float
     model_name: str | None = None
     duration_ms: float | None = None
+    message_avatars: dict[str, ReasoningPromptMessageAvatar] = Field(default_factory=dict)
 
 
 def _to_safe_relative_path(relative_path: str) -> Path:
@@ -196,6 +213,8 @@ def _list_session_names(stage: str) -> list[str]:
 
 def _resolve_session_name(session: str, sessions: list[str]) -> str:
     normalized_session = str(session or "").strip()
+    if normalized_session == ALL_GROUP_SESSIONS:
+        return ALL_GROUP_SESSIONS
     if not normalized_session or normalized_session in {"all", "auto"}:
         return sessions[0] if sessions else ""
     if not _is_safe_name(normalized_session):
@@ -485,6 +504,157 @@ def _load_prompt_json(file_path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _parse_message_tag_attrs(text: str) -> list[dict[str, str]]:
+    attrs_list: list[dict[str, str]] = []
+    for tag_match in MESSAGE_TAG_PATTERN.finditer(text):
+        attrs: dict[str, str] = {}
+        for attr_match in MESSAGE_TAG_ATTR_PATTERN.finditer(tag_match.group("attrs") or ""):
+            key = attr_match.group(1)
+            value = unescape(attr_match.group(2))
+            if key and value:
+                attrs[key] = value
+        if attrs:
+            attrs_list.append(attrs)
+    return attrs_list
+
+
+def _extract_message_ids_from_prompt_payload(payload: dict[str, Any]) -> list[str]:
+    message_ids: list[str] = []
+    seen: set[str] = set()
+
+    def append_from_text(value: Any) -> None:
+        if not isinstance(value, str) or "<message" not in value:
+            return
+        for attrs in _parse_message_tag_attrs(value):
+            message_id = str(attrs.get("msg_id") or "").strip()
+            if message_id and message_id not in seen:
+                seen.add(message_id)
+                message_ids.append(message_id)
+
+    for message in payload.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        append_from_text(message.get("content_text"))
+        content = message.get("content")
+        if isinstance(content, str):
+            append_from_text(content)
+
+    output = payload.get("output")
+    if isinstance(output, dict):
+        append_from_text(output.get("content_text"))
+        content = output.get("content")
+        if isinstance(content, str):
+            append_from_text(content)
+
+    request = payload.get("request")
+    if isinstance(request, dict):
+        append_from_text(request.get("selection_reason"))
+
+    return message_ids
+
+
+def _resolve_content_session_info(relative_path: str) -> ReasoningPromptSessionInfo | None:
+    try:
+        safe_path = _to_safe_relative_path(relative_path)
+    except HTTPException:
+        return None
+
+    parts = safe_path.parts
+    if len(parts) < 3:
+        return None
+
+    stage_name, session_name = parts[0], parts[1]
+    session_infos = _list_session_infos(stage_name, [session_name])
+    return session_infos[0] if session_infos else None
+
+
+def _message_avatar_from_db_record(message: Messages) -> ReasoningPromptMessageAvatar | None:
+    message_id = str(message.message_id or "").strip()
+    platform = str(message.platform or "").strip()
+    user_id = str(message.user_id or "").strip()
+    if not message_id or not platform or not user_id:
+        return None
+
+    display_name = str(message.user_cardname or message.user_nickname or "").strip()
+    return ReasoningPromptMessageAvatar(
+        message_id=message_id,
+        platform=platform,
+        user_id=user_id,
+        display_name=display_name,
+        avatar_url=build_webui_avatar_url(platform, user_id),
+    )
+
+
+def _load_message_avatar_map(
+    *,
+    message_ids: list[str],
+    session_info: ReasoningPromptSessionInfo | None,
+) -> dict[str, ReasoningPromptMessageAvatar]:
+    if not message_ids:
+        return {}
+
+    session_ids = {
+        value
+        for value in {
+            session_info.name if session_info else "",
+            session_info.resolved_session_id if session_info else "",
+        }
+        if value
+    }
+
+    with get_db_session(auto_commit=False) as db_session:
+        statement = select(Messages).where(col(Messages.message_id).in_(message_ids))
+        if session_ids:
+            statement = statement.where(col(Messages.session_id).in_(session_ids))
+        rows = db_session.exec(statement).all()
+
+    avatars: dict[str, ReasoningPromptMessageAvatar] = {}
+    for row in rows:
+        avatar = _message_avatar_from_db_record(row)
+        if avatar is None or avatar.message_id in avatars:
+            continue
+        avatars[avatar.message_id] = avatar
+    return avatars
+
+
+def _load_prompt_message_avatar_map(relative_path: str, content: str) -> dict[str, ReasoningPromptMessageAvatar]:
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    message_ids = _extract_message_ids_from_prompt_payload(payload)
+    if not message_ids:
+        return {}
+
+    return _load_message_avatar_map(
+        message_ids=message_ids,
+        session_info=_resolve_content_session_info(relative_path),
+    )
+
+
+def _json_payload_has_behavior_reference(payload: dict[str, Any]) -> bool:
+    serialized_payload = json.dumps(payload, ensure_ascii=False, default=str)
+    return BEHAVIOR_REFERENCE_MARKER in serialized_payload
+
+
+def _prompt_record_has_behavior_reference(
+    *,
+    stage_name: str,
+    json_payload: dict[str, Any] | None,
+    json_file_path: Path | None,
+) -> bool:
+    if stage_name != "planner":
+        return False
+
+    if json_payload is None and json_file_path is not None:
+        json_payload = _load_prompt_json(json_file_path)
+
+    return json_payload is not None and _json_payload_has_behavior_reference(json_payload)
+
+
 def _extract_prompt_metadata_from_json_payload(payload: dict[str, Any]) -> dict[str, object]:
     raw_metadata = payload.get("metadata")
     return _normalize_prompt_metadata(raw_metadata if isinstance(raw_metadata, dict) else {})
@@ -714,6 +884,21 @@ def _matches_prompt_file_search(item: ReasoningPromptFile, normalized_search: st
     return normalized_search in (output_text or "").casefold()
 
 
+def _matches_prompt_file_action(item: ReasoningPromptFile, normalized_action: str) -> bool:
+    """判断推理过程条目是否匹配动作过滤词。"""
+
+    action_preview = str(item.action_preview or "").strip()
+    if not action_preview:
+        return False
+
+    for prefix in ("动作：", "动作:"):
+        if action_preview.startswith(prefix):
+            action_preview = action_preview[len(prefix) :].strip()
+            break
+
+    return normalized_action in action_preview.casefold()
+
+
 def _resolve_reasoning_session_info(
     name: str,
     *,
@@ -776,7 +961,15 @@ def _list_session_infos(stage: str, session_names: list[str] | None = None) -> l
         ]
 
 
-def _collect_prompt_file_records(
+def _is_group_session_info(session_name: str, session_info: ReasoningPromptSessionInfo | None) -> bool:
+    if session_info is not None:
+        return session_info.chat_type == "group"
+
+    parsed = _parse_session_directory_name(session_name)
+    return parsed is not None and parsed[1] == "group"
+
+
+def _collect_prompt_file_records_for_session(
     stage: str,
     session: str,
     session_info_map: dict[str, ReasoningPromptSessionInfo],
@@ -860,6 +1053,30 @@ def _collect_prompt_file_records(
     return items
 
 
+def _collect_prompt_file_records(
+    stage: str,
+    session: str,
+    session_info_map: dict[str, ReasoningPromptSessionInfo],
+) -> list[dict[str, object]]:
+    if session != ALL_GROUP_SESSIONS:
+        return _collect_prompt_file_records_for_session(stage, session, session_info_map)
+
+    items: list[dict[str, object]] = []
+    for session_name, session_info in session_info_map.items():
+        if not _is_group_session_info(session_name, session_info):
+            continue
+        items.extend(_collect_prompt_file_records_for_session(stage, session_name, session_info_map))
+
+    items.sort(
+        key=lambda item: (
+            float(item["modified_at"]),
+            int(item["timestamp"]) if isinstance(item.get("timestamp"), int) else 0,
+        ),
+        reverse=True,
+    )
+    return items
+
+
 def _resolve_record_file_path(record: dict[str, object], field_name: str, suffixes: set[str]) -> Path | None:
     relative_path = record.get(field_name)
     if not isinstance(relative_path, str) or not relative_path:
@@ -876,17 +1093,20 @@ def _hydrate_prompt_file_record(
     *,
     include_previews: bool = True,
     include_action_preview: bool = False,
+    include_output_preview: bool = False,
 ) -> ReasoningPromptFile:
     hydrated_record = dict(record)
     stage_name = str(hydrated_record["stage"])
     should_extract_action_preview = include_action_preview and stage_name in {"planner", "timing_gate"}
+    should_extract_output_preview = include_output_preview and stage_name == "replyer"
+    json_payload: dict[str, Any] | None = None
 
     json_file_path = _resolve_record_file_path(hydrated_record, "json_path", {".json"})
     if json_file_path is not None:
-        if include_previews or should_extract_action_preview:
+        if include_previews or should_extract_action_preview or should_extract_output_preview:
             json_payload = _load_prompt_json(json_file_path)
             _merge_prompt_metadata(hydrated_record, _extract_prompt_metadata_from_json_payload(json_payload))
-            if stage_name == "replyer":
+            if stage_name == "replyer" and (include_previews or should_extract_output_preview):
                 hydrated_record["output_preview"] = _extract_output_preview_from_json_payload(json_payload)
             elif stage_name in {"planner", "timing_gate"}:
                 hydrated_record["action_preview"] = _extract_action_preview_from_json_payload(json_payload)
@@ -895,7 +1115,9 @@ def _hydrate_prompt_file_record(
 
     metadata_missing = not hydrated_record.get("model_name") or hydrated_record.get("duration_ms") is None
     preview_missing = (
-        (include_previews and stage_name == "replyer" and not hydrated_record.get("output_preview"))
+        (include_previews or should_extract_output_preview)
+        and stage_name == "replyer"
+        and not hydrated_record.get("output_preview")
     )
 
     text_file_path = _resolve_record_file_path(hydrated_record, "text_path", {".txt"})
@@ -906,6 +1128,11 @@ def _hydrate_prompt_file_record(
         metadata_missing = not hydrated_record.get("model_name") or hydrated_record.get("duration_ms") is None
 
     html_file_path = _resolve_record_file_path(hydrated_record, "html_path", {".html"})
+    hydrated_record["has_behavior_choice_insert"] = _prompt_record_has_behavior_reference(
+        stage_name=stage_name,
+        json_payload=json_payload,
+        json_file_path=json_file_path,
+    )
     if html_file_path is not None and metadata_missing:
         _merge_prompt_metadata(hydrated_record, _extract_prompt_metadata(html_file_path))
 
@@ -917,12 +1144,14 @@ def _hydrate_prompt_file_records(
     *,
     include_previews: bool = True,
     include_action_preview: bool = False,
+    include_output_preview: bool = False,
 ) -> list[ReasoningPromptFile]:
     return [
         _hydrate_prompt_file_record(
             record,
             include_previews=include_previews,
             include_action_preview=include_action_preview,
+            include_output_preview=include_output_preview,
         )
         for record in records
     ]
@@ -943,6 +1172,7 @@ async def list_reasoning_prompt_stages():
 async def list_reasoning_prompt_files(
     stage: str = Query("planner"),
     session: str = Query("auto"),
+    action: str = Query(""),
     search: str = Query(""),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=10, le=200),
@@ -954,15 +1184,19 @@ async def list_reasoning_prompt_files(
     selected_stage = _resolve_stage_name(stage)
     sessions = _list_session_names(selected_stage)
     selected_session = _resolve_session_name(session, sessions)
+    normalized_action = action.strip().casefold()
     normalized_search = search.strip().casefold()
     # 下拉菜单需要展示全部会话的真实名称，不能只解析当前选中项。
     session_infos = _list_session_infos(selected_stage, sessions)
     session_info_map = {item.name: item for item in session_infos}
     records = _collect_prompt_file_records(selected_stage, selected_session, session_info_map)
 
-    if normalized_search:
+    if normalized_action or normalized_search:
         items = _hydrate_prompt_file_records(records, include_previews=True)
-        items = [item for item in items if _matches_prompt_file_search(item, normalized_search)]
+        if normalized_action:
+            items = [item for item in items if _matches_prompt_file_action(item, normalized_action)]
+        if normalized_search:
+            items = [item for item in items if _matches_prompt_file_search(item, normalized_search)]
         total = len(items)
         start = (page - 1) * page_size
         end = start + page_size
@@ -975,6 +1209,7 @@ async def list_reasoning_prompt_files(
             records[start:end],
             include_previews=False,
             include_action_preview=True,
+            include_output_preview=True,
         )
 
     return ReasoningPromptListResponse(
@@ -997,14 +1232,17 @@ async def get_reasoning_prompt_file(path: str = Query(...)):
     file_path = _resolve_prompt_log_path(path, {".txt", ".json"})
     stat = file_path.stat()
     metadata = _extract_prompt_metadata(file_path)
+    content = file_path.read_text(encoding="utf-8", errors="replace")
+    message_avatars = _load_prompt_message_avatar_map(path, content) if file_path.suffix.lower() == ".json" else {}
 
     return ReasoningPromptContentResponse(
         path=_relative_posix_path(file_path),
-        content=file_path.read_text(encoding="utf-8", errors="replace"),
+        content=content,
         size=stat.st_size,
         modified_at=stat.st_mtime,
         model_name=metadata.get("model_name") if isinstance(metadata.get("model_name"), str) else None,
         duration_ms=metadata.get("duration_ms") if isinstance(metadata.get("duration_ms"), (int, float)) else None,
+        message_avatars=message_avatars,
     )
 
 

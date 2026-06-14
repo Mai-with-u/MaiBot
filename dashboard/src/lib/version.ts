@@ -1,10 +1,10 @@
 /**
  * MaiBot Dashboard 版本管理
- * 
+ *
  * 这不是唯一需要修改版本号的地方,packge.json也要改
  */
 
-export const APP_VERSION = '1.4.0'
+export const APP_VERSION = '1.4.3'
 export const APP_NAME = 'MaiBot Dashboard'
 export const APP_FULL_NAME = `${APP_NAME} ${APP_VERSION}`
 

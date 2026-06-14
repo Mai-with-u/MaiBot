@@ -99,7 +99,10 @@ class PluginRuntimeManager(
         self._plugin_source_watcher_subscription_id: Optional[str] = None
         self._plugin_config_watcher_subscriptions: Dict[str, Tuple[Path, str]] = {}
         self._plugin_path_cache: Dict[str, Path] = {}
-        self._manifest_validator: ManifestValidator = ManifestValidator(validate_python_package_dependencies=False)
+        self._manifest_validator: ManifestValidator = ManifestValidator(
+            validate_python_package_dependencies=False,
+            log_compat_warnings=False,
+        )
         self._plugin_dependency_pipeline: PluginDependencyPipeline = PluginDependencyPipeline()
         self._blocked_plugin_reasons: Dict[str, str] = {}
         self._config_reload_callback: Callable[[Sequence[str]], Awaitable[None]] = self._handle_main_config_reload
@@ -146,7 +149,7 @@ class PluginRuntimeManager(
     @classmethod
     def _discover_plugin_dependency_map(cls, plugin_dirs: Iterable[Path]) -> Dict[str, List[str]]:
         """扫描指定插件目录集合，返回 ``plugin_id -> dependencies`` 映射。"""
-        validator = ManifestValidator(validate_python_package_dependencies=False)
+        validator = ManifestValidator(validate_python_package_dependencies=False, log_compat_warnings=False)
         return validator.build_plugin_dependency_map(plugin_dirs)
 
     @classmethod
@@ -159,7 +162,7 @@ class PluginRuntimeManager(
         Returns:
             Dict[str, str]: 需要阻止加载的插件 ID 与原因映射。
         """
-        validator = ManifestValidator(validate_python_package_dependencies=False)
+        validator = ManifestValidator(validate_python_package_dependencies=False, log_compat_warnings=False)
         provider_owners: Dict[str, List[str]] = {}
         for _plugin_path, manifest in validator.iter_plugin_manifests(plugin_dirs, require_entrypoint=True):
             for client_type in manifest.llm_provider_client_types:
@@ -1232,7 +1235,7 @@ class PluginRuntimeManager(
     def _find_duplicate_plugin_ids(cls, plugin_dirs: List[Path]) -> Dict[str, List[Path]]:
         """扫描插件目录，找出被多个目录重复声明的插件 ID。"""
         plugin_locations: Dict[str, List[Path]] = {}
-        validator = ManifestValidator(validate_python_package_dependencies=False)
+        validator = ManifestValidator(validate_python_package_dependencies=False, log_compat_warnings=False)
         for plugin_path, manifest in validator.iter_plugin_manifests(plugin_dirs):
             plugin_locations.setdefault(manifest.id, []).append(plugin_path)
 

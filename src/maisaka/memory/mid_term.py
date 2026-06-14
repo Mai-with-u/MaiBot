@@ -1,5 +1,7 @@
 """Maisaka 聊天记录中期摘要消息。"""
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha1
@@ -8,9 +10,6 @@ from typing import Any, Sequence
 
 from json_repair import repair_json
 from pydantic import BaseModel
-
-import json
-import re
 
 from src.common.data_models.message_component_data_model import DictComponent, MessageSequence
 from src.common.logger import get_logger
@@ -23,7 +22,6 @@ from src.llm_models.payload_content.message import (
     RoleType,
     TextMessagePart,
 )
-
 from src.maisaka.context.messages import ComplexSessionMessage, LLMContextMessage, build_llm_message_from_context
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 
@@ -93,15 +91,15 @@ async def build_mid_term_memory_message(
         logger.debug(f"{log_prefix} 中期聊天记录摘要跳过: 摘要输入消息为空")
         return None
 
-    logger.info(
-        f"{log_prefix} 中期聊天记录概括完整 Prompt Messages: "
-        f"裁切消息数={len(summary_source_messages)} "
-        f"发送消息数={len(text_prompt_messages)} "
-        f"时间范围={time_range} "
-        f"参与人物={'、'.join(participants) if participants else '未知'} "
-        f"prompt_chars={_count_prompt_message_chars(text_prompt_messages)}\n"
-        f"{_render_summary_prompt_messages_for_log(text_prompt_messages)}"
-    )
+    # logger.info(
+    #     f"{log_prefix} 中期聊天记录概括完整 Prompt Messages: "
+    #     f"裁切消息数={len(summary_source_messages)} "
+    #     f"发送消息数={len(text_prompt_messages)} "
+    #     f"时间范围={time_range} "
+    #     f"参与人物={'、'.join(participants) if participants else '未知'} "
+    #     f"prompt_chars={_count_prompt_message_chars(text_prompt_messages)}\n"
+    #     f"{_render_summary_prompt_messages_for_log(text_prompt_messages)}"
+    # )
     from src.services.llm_service import LLMServiceClient
 
     llm_client = LLMServiceClient(
@@ -290,11 +288,7 @@ def _trim_mid_term_memory_messages(
     *,
     max_summary_count: int,
 ) -> None:
-    summary_indexes = [
-        index
-        for index, message in enumerate(history)
-        if is_mid_term_memory_message(message)
-    ]
+    summary_indexes = [index for index, message in enumerate(history) if is_mid_term_memory_message(message)]
     excess_count = len(summary_indexes) - max_summary_count
     if excess_count <= 0:
         return
@@ -322,12 +316,7 @@ def _build_summary_prompt_messages(
     instruction_prompt: str,
     enable_visual_message: bool = False,
 ) -> list[Message]:
-    prompt_messages = [
-        MessageBuilder()
-        .set_role(RoleType.System)
-        .add_text_content(instruction_prompt)
-        .build()
-    ]
+    prompt_messages = [MessageBuilder().set_role(RoleType.System).add_text_content(instruction_prompt).build()]
     total_source_chars = 0
     for source_message in source_messages:
         llm_message = build_llm_message_from_context(

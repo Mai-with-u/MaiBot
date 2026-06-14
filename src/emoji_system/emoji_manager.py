@@ -749,17 +749,17 @@ class EmojiManager:
 
     def get_emoji_by_hash(self, emoji_hash: str) -> Optional[MaiEmoji]:
         """
-        根据哈希值获取表情包对象
+        根据哈希值从已注册表情包内存列表获取表情包对象
 
         Args:
             emoji_hash (str): 表情包的哈希值
         Returns:
-            return (Optional[MaiEmoji]): 返回表情包对象，如果未找到则返回 None
+            return (Optional[MaiEmoji]): 返回已注册表情包对象，如果未找到则返回 None
         """
         for emoji in self.emojis:
             if emoji.file_hash == emoji_hash:
                 return emoji
-        logger.info(f"[获取表情包] 未找到哈希值为 {emoji_hash} 的表情包")
+        logger.debug(f"[获取表情包] 已注册表情包内存列表未命中，哈希值: {emoji_hash}")
         return None
 
     def get_emoji_by_hash_from_db(self, emoji_hash: str) -> Optional[MaiEmoji]:

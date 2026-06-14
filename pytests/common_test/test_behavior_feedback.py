@@ -13,6 +13,7 @@ from src.learners.behavior_learner import (
     BehaviorFeedbackContextItem,
     BehaviorLearner,
     BehaviorReferenceCandidate,
+    _validate_behavior_feedback_evidence,
     parse_behavior_feedback_response,
 )
 
@@ -45,7 +46,6 @@ def test_build_behavior_feedback_messages_uses_multi_message_context() -> None:
         references=[
             BehaviorReferenceCandidate(
                 behavior_id=12,
-                trigger="用户提到配置报错",
                 action="先追问关键配置路径",
                 outcome="用户补充路径后继续排查",
                 actor_type=pattern_store.ACTOR_MAIBOT_SELF,
@@ -152,6 +152,78 @@ def test_parse_behavior_feedback_response_accepts_observed_behavior_ids() -> Non
     assert feedback_items[0].source_ids == ["m2", "m3"]
 
 
+def test_parse_behavior_feedback_response_clamps_partial_success() -> None:
+    response = """
+    {
+      "feedback": [
+        {
+          "behavior_id": 22,
+          "adopted": true,
+          "status": "partial_success",
+          "score_delta": 0.8,
+          "reason": "麦麦只采用了部分调侃方式，后续互动轻微变好。",
+          "outcome": "群友继续接话，但核心动作没有完整发生。",
+          "source_ids": ["m2"]
+        },
+        {
+          "behavior_id": 23,
+          "adopted": true,
+          "status": "success",
+          "score_delta": 0.6,
+          "reason": "缺少证据引用。",
+          "outcome": "无",
+          "source_ids": []
+        }
+      ]
+    }
+    """
+
+    feedback_items = parse_behavior_feedback_response(response)
+
+    assert len(feedback_items) == 1
+    assert feedback_items[0].behavior_id == 22
+    assert feedback_items[0].status == "partial_success"
+    assert feedback_items[0].score_delta == 0.35
+
+
+def test_validate_behavior_feedback_evidence_requires_self_message() -> None:
+    feedback_items = parse_behavior_feedback_response(
+        """
+        {
+          "feedback": [
+            {
+              "behavior_id": 22,
+              "adopted": true,
+              "status": "success",
+              "score_delta": 0.6,
+              "reason": "用户自然延续了类似行为。",
+              "outcome": "群友继续接话。",
+              "source_ids": ["m1"]
+            }
+          ]
+        }
+        """
+    )
+    context = BehaviorFeedbackContext(
+        references=[],
+        timeline_items=[
+            BehaviorFeedbackContextItem(
+                item_id="m1",
+                item_type="chat_message",
+                text="用户：继续复读这句话。",
+                speaker="USER",
+                source="user",
+            )
+        ],
+    )
+
+    is_valid, reason, valid_source_ids = _validate_behavior_feedback_evidence(feedback_items[0], context)
+
+    assert not is_valid
+    assert reason == "missing_self_adoption_evidence"
+    assert valid_source_ids == ["m1"]
+
+
 def test_apply_behavior_feedback_accepts_observed_behavior_path(
     monkeypatch: pytest.MonkeyPatch,
     behavior_feedback_engine,
@@ -184,8 +256,11 @@ def test_apply_behavior_feedback_accepts_observed_behavior_path(
         reason="麦麦采用了观察路径中的行为，后续对话推进。",
         outcome="用户继续补充信息。",
         session_id="session-a",
+        source_ids=["m2", "m3"],
     )
 
     assert feedback_path is not None
     assert feedback_path.score == 0.7
     assert feedback_path.success_count == 1
+    feedback_items = pattern_store._load_json_list(feedback_path.feedback_list)
+    assert feedback_items[0]["source_ids"] == ["m2", "m3"]

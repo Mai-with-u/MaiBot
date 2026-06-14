@@ -1,16 +1,18 @@
+import asyncio
+import copy
+import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
 
-import asyncio
-import copy
-import inspect
-
 import tomlkit
 
+from src.common.i18n import t
+from src.common.logger import get_logger
+
 from .config_base import AttributeData, ConfigBase, Field
-from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .config_upgrade_hooks import apply_config_upgrade_hooks
+from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .default_model_config import create_default_model_config
 from .file_watcher import FileChange, FileWatcher
 from .legacy_migration import migrate_legacy_bind_env_to_bot_config_dict, try_migrate_legacy_bot_config_dict
@@ -41,8 +43,6 @@ from .official_configs import (
     VoiceConfig,
     WebUIConfig,
 )
-from src.common.i18n import t
-from src.common.logger import get_logger
 
 """
 如果你想要修改配置文件，请递增version的值
@@ -59,8 +59,8 @@ BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
-MMC_VERSION: str = "1.0.0"
-CONFIG_VERSION: str = "8.14.2"
+MMC_VERSION: str = "1.0.3"
+CONFIG_VERSION: str = "8.14.3"
 MODEL_CONFIG_VERSION: str = "1.17.3"
 
 logger = get_logger("config")
@@ -216,7 +216,9 @@ def _migrate_legacy_a_memorix_config(config_data: dict[str, Any]) -> tuple[dict[
 
     migrated_data = copy.deepcopy(config_data)
     migrated_data["a_memorix"] = _normalize_a_memorix_legacy_config(legacy_data)
-    logger.warning(f"检测到旧版 A_Memorix 配置，已迁移到 bot_config.toml 的 [a_memorix]: {A_MEMORIX_LEGACY_CONFIG_PATH}")
+    logger.warning(
+        f"检测到旧版 A_Memorix 配置，已迁移到 bot_config.toml 的 [a_memorix]: {A_MEMORIX_LEGACY_CONFIG_PATH}"
+    )
     return migrated_data, True
 
 
@@ -608,7 +610,12 @@ def load_config_from_file(
                     raise e
             else:
                 raise e
-        if compare_versions(old_ver, new_ver) or env_migration_applied or a_memorix_migration_applied or upgrade_hook_applied:
+        if (
+            compare_versions(old_ver, new_ver)
+            or env_migration_applied
+            or a_memorix_migration_applied
+            or upgrade_hook_applied
+        ):
             output_config_changes(attribute_data, logger, old_ver, new_ver, config_path.name)
             write_config_to_file(target_config, config_path, new_ver, override_repr)
             if env_migration_applied:

@@ -31,6 +31,7 @@ from .v22_to_v23 import migrate_v22_to_v23
 from .v23_to_v24 import migrate_v23_to_v24
 from .v24_to_v25 import migrate_v24_to_v25
 from .v25_to_v26 import migrate_v25_to_v26
+from .v26_to_v27 import migrate_v26_to_v27
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -60,7 +61,8 @@ V23_SCHEMA_VERSION = 23
 V24_SCHEMA_VERSION = 24
 V25_SCHEMA_VERSION = 25
 V26_SCHEMA_VERSION = 26
-LATEST_SCHEMA_VERSION = 26
+V27_SCHEMA_VERSION = 27
+LATEST_SCHEMA_VERSION = 27
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -595,9 +597,30 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
 
         if not _detect_v26_base_schema(snapshot):
             return None
+        if snapshot.has_column("behavior_scene_clusters", "score"):
+            return None
         if any(snapshot.has_table(table_name) for table_name in LEGACY_V1_CLEANUP_TABLES):
             return None
         return LATEST_SCHEMA_VERSION
+
+
+class V27SchemaVersionDetector(BaseSchemaVersionDetector):
+    """v27 schema 结构探测器。"""
+
+    @property
+    def name(self) -> str:
+        return "v27_schema_detector"
+
+    def detect_version(self, snapshot: DatabaseSchemaSnapshot) -> Optional[int]:
+        """检测数据库是否为 v27 结构。"""
+
+        if not _detect_v26_base_schema(snapshot):
+            return None
+        if snapshot.has_column("behavior_scene_clusters", "score"):
+            return None
+        if any(snapshot.has_table(table_name) for table_name in LEGACY_V1_CLEANUP_TABLES):
+            return None
+        return V27_SCHEMA_VERSION
 
 
 class V24SchemaVersionDetector(BaseSchemaVersionDetector):
@@ -1335,6 +1358,7 @@ def build_default_schema_version_detectors() -> List[BaseSchemaVersionDetector]:
 
     return [
         LatestSchemaVersionDetector(),
+        V27SchemaVersionDetector(),
         V26SchemaVersionDetector(),
         V25SchemaVersionDetector(),
         V24SchemaVersionDetector(),
@@ -1559,6 +1583,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v25_to_v26",
                 description="移除行为学习中不再显式存储的 scene node 图层。",
                 handler=migrate_v25_to_v26,
+            ),
+            MigrationStep(
+                version_from=V26_SCHEMA_VERSION,
+                version_to=V27_SCHEMA_VERSION,
+                name="v26_to_v27",
+                description="移除行为场景簇不再使用的 score 字段。",
+                handler=migrate_v26_to_v27,
             ),
         ]
     )

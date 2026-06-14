@@ -139,6 +139,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
         self._min_extraction_interval = 30
         self._last_expression_extraction_time = 0.0
+        self._trimmed_history_learning_task: Optional[asyncio.Task[None]] = None
         self._behavior_learner = BehaviorLearner(session_id)
         self._expression_learner = ExpressionLearner(session_id)
         self._jargon_miner = JargonMiner(session_id, session_name=session_name)
@@ -354,6 +355,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         self._cancel_deferred_message_turn_task()
         self._cancel_focus_cooldown_timer_task()
         self._cancel_wait_timeout_task()
+        await self._cancel_trimmed_history_learning_task()
         while not self._internal_turn_queue.empty():
             _ = self._internal_turn_queue.get_nowait()
 
@@ -396,6 +398,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
             user_info = message.message_info.user_info
             speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+            include_chat_id = self._is_focus_mode_active_for_current_chat()
             planner_prefix = build_planner_prefix(
                 timestamp=message.timestamp,
                 user_name=speaker_name,
@@ -404,6 +407,8 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 chat_id=message.session_id,
                 quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
                 include_message_id=not message.is_notify and bool(message.message_id),
+                include_chat_id=include_chat_id,
+                is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
             )
             history_message = SessionBackedMessage.from_session_message(
                 message,
@@ -1593,10 +1598,14 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 self._wait_timeout_task = None
 
     async def _trigger_trimmed_history_learning(self, context_messages: Sequence[LLMContextMessage]) -> None:
-        """对 Maisaka 裁切掉的真实聊天历史触发表达、行为、黑话与高频词学习。"""
+        """提交对 Maisaka 裁切历史的后台学习任务。"""
 
         if not context_messages:
             return
+        if self._trimmed_history_learning_task is not None and not self._trimmed_history_learning_task.done():
+            logger.info(f"{self.log_prefix} 裁切历史学习仍在后台运行，跳过新的学习批次")
+            return
+
         enable_expression_learning = self._enable_expression_learning
         enable_behavior_learning = self._enable_behavior_learning
         enable_jargon_learning = self._enable_jargon_learning
@@ -1630,13 +1639,35 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
         self._last_expression_extraction_time = time.time()
         logger.info(
-            f"{self.log_prefix} 触发裁切历史学习: "
+            f"{self.log_prefix} 提交裁切历史后台学习: "
             f"裁切上下文消息数量={pending_context_count} "
             f"是否启用表达学习={enable_expression_learning} "
             f"是否启用行为学习={enable_behavior_learning} "
             f"是否启用黑话学习={enable_jargon_learning} "
             f"是否启用高频词学习={enable_high_frequency_learning}"
         )
+
+        self._trimmed_history_learning_task = asyncio.create_task(
+            self._run_trimmed_history_learning(
+                list(context_messages),
+                enable_expression_learning=enable_expression_learning,
+                enable_behavior_learning=enable_behavior_learning,
+                enable_jargon_learning=enable_jargon_learning,
+                enable_high_frequency_learning=enable_high_frequency_learning,
+            )
+        )
+        self._trimmed_history_learning_task.add_done_callback(self._handle_trimmed_history_learning_done)
+
+    async def _run_trimmed_history_learning(
+        self,
+        context_messages: Sequence[LLMContextMessage],
+        *,
+        enable_expression_learning: bool,
+        enable_behavior_learning: bool,
+        enable_jargon_learning: bool,
+        enable_high_frequency_learning: bool,
+    ) -> None:
+        """在后台执行表达、行为、黑话与高频词学习。"""
 
         async def run_expression_and_jargon_learning() -> bool:
             jargon_miner = self._jargon_miner if enable_jargon_learning else None
@@ -1684,6 +1715,42 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             logger.info(f"{self.log_prefix} 裁切历史学习成功")
         else:
             logger.debug(f"{self.log_prefix} 裁切历史学习未产生结果")
+
+    def _handle_trimmed_history_learning_done(self, task: asyncio.Task[None]) -> None:
+        """清理裁切历史后台学习任务状态。"""
+
+        if self._trimmed_history_learning_task is task:
+            self._trimmed_history_learning_task = None
+        if task.cancelled():
+            logger.debug(f"{self.log_prefix} 裁切历史后台学习已取消")
+            return
+        try:
+            task.result()
+        except Exception as exc:
+            logger.error(f"{self.log_prefix} 裁切历史后台学习任务异常: {exc}")
+
+    async def _cancel_trimmed_history_learning_task(self) -> None:
+        """取消当前会话正在运行的裁切历史后台学习任务。"""
+
+        task = self._trimmed_history_learning_task
+        if task is None:
+            return
+        if task.done():
+            self._trimmed_history_learning_task = None
+            return
+
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=3.0)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            logger.warning(f"{self.log_prefix} 等待裁切历史后台学习取消超时，继续停止运行时")
+        except Exception as exc:
+            logger.error(f"{self.log_prefix} 裁切历史后台学习取消时异常: {exc}")
+        finally:
+            if self._trimmed_history_learning_task is task:
+                self._trimmed_history_learning_task = None
 
     def _should_trigger_learning(
         self,

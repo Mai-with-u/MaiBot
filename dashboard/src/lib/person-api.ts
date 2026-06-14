@@ -1,17 +1,20 @@
 /**
  * 人物信息管理 API
+ *
+ * 请求样板（认证、解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint、业务错误文案与响应体 success 标记的解包规则。
+ * 已切换为 throw 契约：成功直接返回数据，失败抛出 ApiError（配合 TanStack Query 使用）。
  */
-import { fetchWithAuth, getAuthHeaders } from '@/lib/fetch-with-auth'
-import type { ApiResponse } from '@/types/api'
+import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 import type {
-  PersonListResponse,
+  PersonDeleteResponse,
   PersonDetailResponse,
+  PersonInfo,
+  PersonListResponse,
+  PersonStats,
+  PersonStatsResponse,
   PersonUpdateRequest,
   PersonUpdateResponse,
-  PersonDeleteResponse,
-  PersonStatsResponse,
-  PersonInfo,
-  PersonStats,
 } from '@/types/person'
 
 const API_BASE = '/api/webui/person'
@@ -35,102 +38,34 @@ export async function getPersonList(params: {
   search?: string
   is_known?: boolean
   platform?: string
-}): Promise<ApiResponse<PersonListData>> {
-  const queryParams = new URLSearchParams()
-  
-  if (params.page) queryParams.append('page', params.page.toString())
-  if (params.page_size) queryParams.append('page_size', params.page_size.toString())
-  if (params.search) queryParams.append('search', params.search)
-  if (params.is_known !== undefined) queryParams.append('is_known', params.is_known.toString())
-  if (params.platform) queryParams.append('platform', params.platform)
-  
-  const response = await fetchWithAuth(`${API_BASE}/list?${queryParams}`, {
-    headers: getAuthHeaders(),
+}): Promise<PersonListData> {
+  const data = await backendApi.get<PersonListResponse>(`${API_BASE}/list`, {
+    query: {
+      page: params.page || undefined,
+      page_size: params.page_size || undefined,
+      search: params.search || undefined,
+      is_known: params.is_known,
+      platform: params.platform || undefined,
+    },
+    errorMessage: '获取人物列表失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '获取人物列表失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取人物列表失败',
-      }
-    }
-  }
-  
-  try {
-    const data: PersonListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: {
-          data: data.data,
-          total: data.total,
-          page: data.page,
-          page_size: data.page_size,
-        },
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取人物列表失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
+  const checked = requireSuccess(data, '获取人物列表失败')
+  return {
+    data: checked.data,
+    total: checked.total,
+    page: checked.page,
+    page_size: checked.page_size,
   }
 }
 
 /**
  * 获取人物详细信息
  */
-export async function getPersonDetail(personId: string): Promise<ApiResponse<PersonInfo>> {
-  const response = await fetchWithAuth(`${API_BASE}/${personId}`, {
-    headers: getAuthHeaders(),
+export async function getPersonDetail(personId: string): Promise<PersonInfo> {
+  const data = await backendApi.get<PersonDetailResponse>(`${API_BASE}/${personId}`, {
+    errorMessage: '获取人物详情失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '获取人物详情失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取人物详情失败',
-      }
-    }
-  }
-  
-  try {
-    const data: PersonDetailResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取人物详情失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
-  }
+  return requireSuccess(data, '获取人物详情失败').data
 }
 
 /**
@@ -139,192 +74,62 @@ export async function getPersonDetail(personId: string): Promise<ApiResponse<Per
 export async function updatePerson(
   personId: string,
   data: PersonUpdateRequest
-): Promise<ApiResponse<PersonInfo>> {
-  const response = await fetchWithAuth(`${API_BASE}/${personId}`, {
-    method: 'PATCH',
-    headers: getAuthHeaders(),
-    body: JSON.stringify(data),
+): Promise<PersonInfo> {
+  const responseData = await backendApi.patch<PersonUpdateResponse>(`${API_BASE}/${personId}`, {
+    body: data,
+    errorMessage: '更新人物信息失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '更新人物信息失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '更新人物信息失败',
-      }
-    }
+  const checked = requireSuccess(responseData, '更新人物信息失败')
+  if (!checked.data) {
+    throw new ApiError(checked.message || '更新人物信息失败', { detail: checked })
   }
-  
-  try {
-    const data: PersonUpdateResponse = await response.json()
-    if (data.success && data.data) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: data.message || '更新人物信息失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
-  }
+  return checked.data
 }
 
 /**
  * 删除人物信息
  */
-export async function deletePerson(personId: string): Promise<ApiResponse<void>> {
-  const response = await fetchWithAuth(`${API_BASE}/${personId}`, {
-    method: 'DELETE',
-    headers: getAuthHeaders(),
+export async function deletePerson(personId: string): Promise<void> {
+  const data = await backendApi.delete<PersonDeleteResponse>(`${API_BASE}/${personId}`, {
+    errorMessage: '删除人物信息失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '删除人物信息失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '删除人物信息失败',
-      }
-    }
-  }
-  
-  try {
-    const data: PersonDeleteResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: undefined as unknown as void,
-      }
-    } else {
-      return {
-        success: false,
-        error: data.message || '删除人物信息失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
-  }
+  requireSuccess(data, '删除人物信息失败')
 }
 
 /**
  * 获取人物统计数据
  */
-export async function getPersonStats(): Promise<ApiResponse<PersonStats>> {
-  const response = await fetchWithAuth(`${API_BASE}/stats/summary`, {
-    headers: getAuthHeaders(),
+export async function getPersonStats(): Promise<PersonStats> {
+  const data = await backendApi.get<PersonStatsResponse>(`${API_BASE}/stats/summary`, {
+    errorMessage: '获取统计数据失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '获取统计数据失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取统计数据失败',
-      }
-    }
-  }
-  
-  try {
-    const data: PersonStatsResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取统计数据失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
-  }
+  return requireSuccess(data, '获取统计数据失败').data
 }
 
 /**
  * 批量删除人物信息
  */
-export async function batchDeletePersons(
-  personIds: string[]
-): Promise<ApiResponse<{
+export async function batchDeletePersons(personIds: string[]): Promise<{
   message: string
   deleted_count: number
   failed_count: number
   failed_ids: string[]
-}>> {
-  const response = await fetchWithAuth(`${API_BASE}/batch/delete`, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ person_ids: personIds }),
+}> {
+  const data = await backendApi.post<{
+    success: boolean
+    message: string
+    deleted_count: number
+    failed_count: number
+    failed_ids: string[]
+  }>(`${API_BASE}/batch/delete`, {
+    body: { person_ids: personIds },
+    errorMessage: '批量删除失败',
   })
-  
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: errorData.detail || errorData.message || '批量删除失败',
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '批量删除失败',
-      }
-    }
-  }
-  
-  try {
-    const data = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: {
-          message: data.message,
-          deleted_count: data.deleted_count,
-          failed_count: data.failed_count,
-          failed_ids: data.failed_ids,
-        },
-      }
-    } else {
-      return {
-        success: false,
-        error: data.message || '批量删除失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: 'Failed to parse response',
-    }
+  const checked = requireSuccess(data, '批量删除失败')
+  return {
+    message: checked.message,
+    deleted_count: checked.deleted_count,
+    failed_count: checked.failed_count,
+    failed_ids: checked.failed_ids,
   }
 }

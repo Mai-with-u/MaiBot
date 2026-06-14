@@ -376,6 +376,10 @@
   --retro-recessed: rgb(73 48 22 / 0.055);
   --retro-recessed-strong: rgb(73 48 22 / 0.085);
   --retro-shadow: rgb(73 48 22 / 0.14);
+  --retro-paper-brightness-overlay: linear-gradient(
+    rgb(255 252 242 / 0.24),
+    rgb(255 252 242 / 0.24)
+  );
   --retro-paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.05' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .18 0 0 0 0 .11 0 0 0 0 .04 0 0 0 .22 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23noise)'/%3E%3Cg opacity='.12' fill='%23c24d24'%3E%3Ccircle cx='12' cy='21' r='.7'/%3E%3Ccircle cx='67' cy='43' r='.55'/%3E%3Ccircle cx='139' cy='16' r='.65'/%3E%3Ccircle cx='158' cy='107' r='.6'/%3E%3Ccircle cx='41' cy='151' r='.55'/%3E%3C/g%3E%3C/svg%3E");
   color-scheme: light;
 }
@@ -396,6 +400,10 @@
   --retro-recessed: rgb(210 192 169 / 0.04);
   --retro-recessed-strong: rgb(210 192 169 / 0.065);
   --retro-shadow: rgb(0 0 0 / 0.18);
+  --retro-paper-brightness-overlay: linear-gradient(
+    rgb(255 232 194 / 0.055),
+    rgb(255 232 194 / 0.055)
+  );
   --retro-paper-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.05' numOctaves='4' seed='11'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .66 0 0 0 0 .52 0 0 0 0 .36 0 0 0 .1 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23noise)'/%3E%3C/svg%3E");
   --color-primary: 19.2 44.7% 42.5%;
   --color-primary-foreground: 34 40% 86%;
@@ -434,8 +442,8 @@
 :root[data-dashboard-style='future-retro'],
 :root[data-dashboard-style='future-retro'] body {
   background-color: var(--retro-paper);
-  background-image: var(--retro-paper-texture);
-  background-size: 180px 180px;
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+  background-size: auto, 180px 180px;
   color: var(--retro-ink);
   font-family: var(--typography-font-family-base);
 }
@@ -450,8 +458,8 @@
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-shell='true'] {
   background-color: var(--retro-paper);
-  background-image: var(--retro-paper-texture);
-  background-size: 180px 180px;
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+  background-size: auto, 180px 180px;
   color: var(--retro-ink);
 }
 
@@ -501,8 +509,8 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-header='true'],
 :root[data-dashboard-style='future-retro'] [data-dashboard-sidebar='true'] {
   background-color: var(--retro-paper) !important;
-  background-image: var(--retro-paper-texture) !important;
-  background-size: 180px 180px !important;
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
+  background-size: auto, 180px 180px !important;
   border-color: var(--retro-line) !important;
   border-width: 0 var(--retro-stroke) 0 0 !important;
   box-shadow: none !important;
@@ -555,6 +563,11 @@
   font-size: clamp(3.35rem, 3vw, 4.15rem);
   line-height: 0.98;
   font-weight: 800;
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashboard-main='true'] [data-plugin-config-title] {
+  font-size: clamp(1.8rem, 2.1vw, 2.25rem) !important;
+  line-height: 1.08 !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-plugin-market-header='true'] {
@@ -626,6 +639,52 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-card='true'] > * {
   position: relative;
   z-index: 1;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-home-summary-cards='true']
+  [data-dashboard-card-header='true'] {
+  padding: 0.875rem 1rem 0.5rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-home-summary-cards='true']
+  [data-dashboard-card-content='true'] {
+  padding: 0 1rem 0.875rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-home-summary-cards='true']
+  [data-dashboard-card-header='true'].pb-3 {
+  padding-bottom: 0.5rem !important;
+}
+
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='input'],
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='select'] {
+  grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr) !important;
+  gap: 0.5rem !important;
+}
+
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='input']
+  > div:last-child,
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='select']
+  > div:last-child {
+  min-width: 0 !important;
+  width: 100% !important;
+  justify-self: stretch !important;
+}
+
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='input']
+  input,
+[data-config-row='visual-image-compression']
+  [data-dynamic-field-widget='select']
+  button {
+  width: 100% !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-button='true'],
@@ -792,8 +851,8 @@
   border: var(--retro-stroke) solid var(--retro-line) !important;
   border-radius: var(--visual-radius-lg) !important;
   background-color: var(--retro-paper) !important;
-  background-image: var(--retro-paper-texture) !important;
-  background-size: 165px 165px;
+  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
+  background-size: auto, 165px 165px;
   box-shadow: none !important;
   color: var(--retro-ink) !important;
 }
@@ -823,6 +882,13 @@
 
 :root[data-dashboard-style='future-retro'] [data-config-bot-tab-list='true'] {
   padding: 0.375rem 0.25rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-config-bot-mode-tabs='true']
+  [data-dashboard-tabs-trigger='true'] {
+  font-size: 0.875rem !important;
+  font-weight: 800;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-workspace-tabs='true'] {
@@ -992,6 +1058,17 @@
   background: var(--retro-gold) !important;
 }
 
+:root[data-dashboard-style='future-retro'] [data-dashboard-version-value='true'] {
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--retro-rust) !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
 :root[data-dashboard-style='future-retro'] [data-dashboard-switch='true'] {
   border: var(--retro-stroke) solid var(--retro-line) !important;
   border-radius: 2px !important;
@@ -1009,6 +1086,28 @@
   box-shadow: none !important;
 }
 
+[data-plugin-list-switch='true'] {
+  width: 1.25rem !important;
+  height: 2.25rem !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+}
+
+[data-plugin-list-switch='true'][data-state='checked'] [data-dashboard-switch-thumb='true'] {
+  --tw-translate-x: 0 !important;
+  --tw-translate-y: 1rem !important;
+  translate: 0 1rem !important;
+  transform: none !important;
+}
+
+[data-plugin-list-switch='true'][data-state='unchecked'] [data-dashboard-switch-thumb='true'] {
+  --tw-translate-x: 0 !important;
+  --tw-translate-y: 0 !important;
+  translate: 0 0 !important;
+  transform: none !important;
+}
+
 :root[data-dashboard-style='future-retro'] [data-dashboard-progress='true'] {
   height: 0.75rem;
   border: 1px solid var(--retro-line);
@@ -1022,6 +1121,47 @@
     var(--retro-rust) 0 10px,
     var(--retro-rust-dark) 10px 14px
   ) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-slider='config']
+  [data-dashboard-slider-track='true'] {
+  height: 0.75rem !important;
+  border: 1px solid var(--retro-line);
+  border-radius: 0 !important;
+  background: var(--retro-recessed) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-slider='config']
+  [data-dashboard-slider-range='true'] {
+  background: var(--retro-rust) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-slider='config']
+  [data-dashboard-slider-thumb='true'] {
+  display: inline-flex !important;
+  min-width: 2.5rem !important;
+  height: 2rem !important;
+  width: auto !important;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--retro-line) !important;
+  border-radius: 0 !important;
+  background: var(--retro-rust) !important;
+  color: var(--retro-paper) !important;
+  padding: 0 0.5rem;
+  box-shadow: none !important;
+  font-size: 1.125rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-slider='config']
+  [data-dashboard-slider-value='true'] {
+  display: inline !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-nav-item='true'] {

@@ -42,8 +42,8 @@ export function useMenuSections(): MenuSection[] {
     const refreshFeatureFlags = () => {
       getBotConfigCached()
         .then((result) => {
-          if (!cancelled && result.success) {
-            setFeatureFlags(resolveMenuFeatureFlags(result.data ?? null))
+          if (!cancelled) {
+            setFeatureFlags(resolveMenuFeatureFlags(result ?? null))
           }
         })
         .catch(() => {

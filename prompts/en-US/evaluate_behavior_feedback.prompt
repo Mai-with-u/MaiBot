@@ -8,12 +8,16 @@ Selected behavior references:
 Rules:
 - Evaluate only behavior_id values present in the selected behavior references above. Do not invent IDs.
 - Both observation-learning paths and self-reflection paths may receive feedback; the key question is whether {bot_name} actually adopted the path in a later real reply.
-- adopted means {bot_name}'s later real reply actually used the core behavior, not merely that the path was shown.
+- First judge adoption evidence, then judge result evidence.
+- adopted means {bot_name}'s later real reply actually used the core behavior, not merely that the path was shown. There must be a SELF chat message as evidence.
+- If the behavior reference contains multiple key steps, missing a core step cannot be success; use partial_success, or output nothing when evidence is insufficient.
+- For observation-learning paths, adopted is true only when {bot_name}'s later real reply borrowed and used the core behavior. Do not give feedback merely because users or the group naturally performed a similar behavior.
 - Output feedback only when the follow-up chat provides a reasonably clear result. If evidence is weak, output nothing.
-- status must be either "success" or "failed".
-- success means the adopted behavior moved the conversation forward, got useful details, softened tension, clarified the problem, or matched expected_outcome.
+- status must be "success", "partial_success", or "failed".
+- success means the core behavior was fully adopted and moved the conversation forward, got useful details, softened tension, clarified the problem, or matched expected_outcome.
+- partial_success means only part of the key behavior was adopted, or the observed result was only mildly positive / weakly matched expected_outcome.
 - failed means it clearly failed to move things forward, caused friction, missed the need, created confusion, or contradicted expected_outcome.
-- score_delta should usually be between -1.0 and 1.0. Use about 0.3 for weak signals and 0.6 to 1.0 for clear signals. Use negative values for failures.
+- score_delta is like a reward prediction error: use 0.5 to 1.0 for success, 0.1 to 0.35 for partial_success, and -0.4 to -1.0 for failed.
 - source_ids must refer to item_id values from the following timeline_item messages, preferably chat_message items. Do not cite nonexistent item_id values.
 - reason should briefly explain both adoption evidence and result evidence.
 - outcome should describe the actual observed result, not repeat expected_outcome.

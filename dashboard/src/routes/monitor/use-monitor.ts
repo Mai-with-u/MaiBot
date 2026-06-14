@@ -17,13 +17,11 @@ export function useChatNameMap() {
     try {
       setLoading(true)
       const result = await getChatList()
-      if (result.success) {
-        const nameMap = new Map<string, string>()
-        result.data.forEach((chat: ChatInfo) => {
-          nameMap.set(chat.chat_id, chat.chat_name)
-        })
-        setChatNameMap(nameMap)
-      }
+      const nameMap = new Map<string, string>()
+      result.forEach((chat: ChatInfo) => {
+        nameMap.set(chat.chat_id, chat.chat_name)
+      })
+      setChatNameMap(nameMap)
     } catch (error) {
       console.error('加载聚天列表失败:', error)
     } finally {

@@ -23,6 +23,7 @@ from src.plugin_runtime import (
     ENV_PLUGIN_DIRS,
     ENV_RUNNER_GROUP,
     ENV_SESSION_TOKEN,
+    detect_host_application_version,
 )
 from src.plugin_runtime.protocol.envelope import (
     BootstrapPluginPayload,
@@ -35,7 +36,6 @@ from src.plugin_runtime.protocol.envelope import (
     LLMProviderInvokePayload,
     MessageGatewayStateUpdatePayload,
     MessageGatewayStateUpdateResultPayload,
-    PROTOCOL_VERSION,
     ReceiveExternalMessageResultPayload,
     RegisterPluginPayload,
     ReloadPluginResultPayload,
@@ -114,6 +114,7 @@ class PluginRunnerSupervisor:
         runtime_config = global_config.plugin_runtime
         self._group_name: str = str(group_name or "third_party").strip() or "third_party"
         self._plugin_dirs: List[Path] = plugin_dirs or []
+        self._host_version: str = detect_host_application_version(_PROJECT_ROOT)
         self._health_interval: float = health_check_interval_sec or runtime_config.health_check_interval_sec or 30.0
         self._runner_spawn_timeout: float = runner_spawn_timeout_sec or runtime_config.runner_spawn_timeout_sec or 30.0
         self._max_restart_attempts: int = max_restart_attempts or runtime_config.max_restart_attempts or 3
@@ -132,7 +133,7 @@ class PluginRunnerSupervisor:
         self._log_bridge = RunnerLogBridge()
 
         codec = MsgPackCodec()
-        self._rpc_server = RPCServer(transport=self._transport, codec=codec)
+        self._rpc_server = RPCServer(transport=self._transport, codec=codec, host_version=self._host_version)
 
         self._runner_process: Optional[asyncio.subprocess.Process] = None
         self._registered_plugins: Dict[str, RegisterPluginPayload] = {}
@@ -1487,7 +1488,7 @@ class PluginRunnerSupervisor:
         return {
             ENV_BLOCKED_PLUGIN_REASONS: json.dumps(self._blocked_plugin_reasons, ensure_ascii=False),
             ENV_EXTERNAL_PLUGIN_IDS: json.dumps(self._external_available_plugins, ensure_ascii=False),
-            ENV_HOST_VERSION: PROTOCOL_VERSION,
+            ENV_HOST_VERSION: self._host_version,
             ENV_IPC_ADDRESS: self._transport.get_address(),
             ENV_PLUGIN_DIRS: os.pathsep.join(str(path) for path in self._plugin_dirs),
             ENV_RUNNER_GROUP: self._group_name,

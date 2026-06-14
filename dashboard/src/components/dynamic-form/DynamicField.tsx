@@ -31,6 +31,10 @@ const VISUAL_INLINE_FIELD_NAMES = new Set([
   'replyer_mode',
   'wait_image_recognize_max_time',
 ])
+const COMPACT_INLINE_INPUT_WIDTH_BY_FIELD = new Map([
+  ['max_image_size_mb', 'min(100%, 5.5rem)'],
+  ['oversized_image_handle_method', 'min(100%, 8.5rem)'],
+])
 
 export interface DynamicFieldProps {
   schema: FieldSchema
@@ -473,7 +477,11 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   const renderSwitch = () => {
     const checked = Boolean(value)
     return (
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1.5">
+      <div
+        data-dynamic-field={schema.name}
+        data-dynamic-field-widget="switch"
+        className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1.5"
+      >
         <div className="min-w-0">
           {renderFieldHeader()}
         </div>
@@ -752,9 +760,11 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
     ['string', 'number', 'integer', 'select'].includes(schema.type)
   const defaultInlineRightInputWidth = isNumericField ? '7.5rem' : '12rem'
   const schemaInputWidth = schema['x-input-width']
-  const inlineRightInputWidth = isNumericField && (!schemaInputWidth || schemaInputWidth === '12rem')
-    ? defaultInlineRightInputWidth
-    : schemaInputWidth ?? defaultInlineRightInputWidth
+  const compactInlineInputWidth = COMPACT_INLINE_INPUT_WIDTH_BY_FIELD.get(schema.name)
+  const inlineRightInputWidth = compactInlineInputWidth
+    ?? (isNumericField && (!schemaInputWidth || schemaInputWidth === '12rem')
+      ? defaultInlineRightInputWidth
+      : schemaInputWidth ?? defaultInlineRightInputWidth)
   const inlineRightInputStyle = supportsInlineRight ? { width: inlineRightInputWidth } : undefined
   const inlineRightInputClassName = supportsInlineRight ? '!w-[var(--field-input-width)]' : undefined
 
@@ -766,6 +776,8 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   if (supportsInlineRight) {
     return (
       <div
+        data-dynamic-field={schema.name}
+        data-dynamic-field-widget={schema['x-widget'] ?? schema.type}
         className="grid min-w-0 grid-cols-1 items-center gap-1.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3"
         style={{ '--field-input-width': inlineRightInputWidth } as React.CSSProperties}
       >
@@ -780,7 +792,11 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   }
 
   return (
-    <div className="min-w-0 space-y-1.5">
+    <div
+      data-dynamic-field={schema.name}
+      data-dynamic-field-widget={schema['x-widget'] ?? schema.type}
+      className="min-w-0 space-y-1.5"
+    >
       {renderFieldHeader()}
 
       {/* Input component */}

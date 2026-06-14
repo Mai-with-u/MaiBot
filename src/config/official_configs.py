@@ -174,7 +174,7 @@ class PersonalityConfig(ConfigBase):
             "x-icon": "list",
         },
     )
-    """可选的多种表达风格列表，当配置不为空时可按概率随机替换 reply_style"""
+    """可选的多种表达风格列表，当配置不为空时可按概率作为本次回复的一次性提示注入"""
 
     multiple_probability: float = Field(
         default=0,
@@ -182,9 +182,9 @@ class PersonalityConfig(ConfigBase):
         le=1,
         json_schema_extra={
             "label": {
-                "zh_CN": "风格替换概率",
-                "en_US": "Style replacement chance",
-                "ja_JP": "スタイル置換確率",
+                "zh_CN": "临时风格注入概率",
+                "en_US": "Temporary style injection chance",
+                "ja_JP": "一時スタイル注入確率",
             },
             "advanced": True,
             "x-widget": "slider",
@@ -192,7 +192,7 @@ class PersonalityConfig(ConfigBase):
             "step": 0.1,
         },
     )
-    """每次构建回复时，从 multiple_reply_style 中随机替换 reply_style 的概率（0.0-1.0）"""
+    """每次构建回复时，从 multiple_reply_style 中随机注入一次性表达风格提示的概率（0.0-1.0）"""
 
 
 class ImageCacheCleanupConfig(ConfigBase):
@@ -512,6 +512,21 @@ class ChatConfig(ConfigBase):
         },
     )
     """是否启用at必回复"""
+
+    self_message_special_mark: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "自身消息特殊标注",
+                "en_US": "Special mark for self messages",
+                "ja_JP": "自分のメッセージ特別マーク",
+            },
+            "x-widget": "switch",
+            "x-icon": "badge-check",
+            "x-row": "reply-switches",
+        },
+    )
+    """在原有基础上进一步强调哪些消息是自己发送的，减少bot认错的情况，不是高级设置"""
 
     max_context_size: int = Field(
         default=40,

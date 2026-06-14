@@ -3,10 +3,9 @@ import { useTranslation } from 'react-i18next'
 
 import { useToast } from '@/hooks/use-toast'
 import { chatWsClient } from '@/lib/chat-ws-client'
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
+import { ApiError, backendApi } from '@/lib/http'
 
 import { ChatComposer } from './ChatComposer'
-import { ChatHeaderBar } from './ChatHeaderBar'
 import { ChatTabBar } from './ChatTabBar'
 import { ChatWorkspaceSidebar } from './ChatWorkspaceSidebar'
 import { MessageList } from './MessageList'
@@ -90,11 +89,11 @@ function readImageFile(file: File, id: string): Promise<ChatImageAttachment> {
 export function ChatPage() {
   const { t, i18n } = useTranslation()
 
-  // 默认 WebUI 标签页
+  // 默认本地聊天标签页
   const defaultTab: ChatTab = {
     id: 'webui-default',
     type: 'webui',
-    label: t('chat.defaultTab'),
+    label: t('chat.botNameFallback'),
     messages: [],
     isConnected: false,
     isTyping: false,
@@ -134,7 +133,6 @@ export function ChatPage() {
   // 通用状态
   const [inputValue, setInputValue] = useState('')
   const [selectedImages, setSelectedImages] = useState<ChatImageAttachment[]>([])
-  const [isConnecting, setIsConnecting] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [userName, setUserName] = useState(getStoredUserName())
 
@@ -189,36 +187,33 @@ export function ChatPage() {
   const fetchPlatforms = useCallback(async () => {
     setIsLoadingPlatforms(true)
     try {
-      const response = await fetchWithAuth('/api/chat/platforms')
-      if (response.ok) {
-        const contentType = response.headers.get('content-type')
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json()
-          setPlatforms(data.platforms || [])
-        } else {
-          const text = await response.text()
-          console.error('[Chat] 获取平台列表失败: 非 JSON 响应:', text.substring(0, 200))
-          toast({
-            title: t('chat.toast.connectionFailed'),
-            description: t('chat.toast.backendUnavailable'),
-            variant: 'destructive',
-          })
-        }
-      } else {
-        console.error('[Chat] 获取平台列表失败: HTTP', response.status)
+      const data = await backendApi.get<{ platforms?: PlatformInfo[] }>('/api/chat/platforms')
+      setPlatforms(data.platforms || [])
+    } catch (e) {
+      if (e instanceof ApiError && e.status !== undefined && (e.status < 200 || e.status >= 300)) {
+        // HTTP 层失败
+        console.error('[Chat] 获取平台列表失败: HTTP', e.status)
         toast({
           title: t('chat.toast.platformFailed'),
-          description: t('chat.toast.serverError', { status: response.status }),
+          description: t('chat.toast.serverError', { status: e.status }),
+          variant: 'destructive',
+        })
+      } else if (e instanceof ApiError && e.status !== undefined) {
+        // HTTP 成功但响应不是合法 JSON（后端不可用，命中了前端页面等）
+        console.error('[Chat] 获取平台列表失败: 非 JSON 响应:', e.message)
+        toast({
+          title: t('chat.toast.connectionFailed'),
+          description: t('chat.toast.backendUnavailable'),
+          variant: 'destructive',
+        })
+      } else {
+        console.error('[Chat] 获取平台列表失败:', e)
+        toast({
+          title: t('chat.toast.networkError'),
+          description: t('chat.toast.backendUnavailableShort'),
           variant: 'destructive',
         })
       }
-    } catch (e) {
-      console.error('[Chat] 获取平台列表失败:', e)
-      toast({
-        title: t('chat.toast.networkError'),
-        description: t('chat.toast.backendUnavailableShort'),
-        variant: 'destructive',
-      })
     } finally {
       setIsLoadingPlatforms(false)
     }
@@ -228,21 +223,14 @@ export function ChatPage() {
   const fetchPersons = useCallback(async (platform: string, search?: string) => {
     setIsLoadingPersons(true)
     try {
-      const params = new URLSearchParams()
-      if (platform) params.append('platform', platform)
-      if (search) params.append('search', search)
-      params.append('limit', '50')
-
-      const response = await fetchWithAuth(`/api/chat/persons?${params.toString()}`)
-      if (response.ok) {
-        const contentType = response.headers.get('content-type')
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json()
-          setPersons(data.persons || [])
-        } else {
-          console.error('[Chat] 获取用户列表失败: 后端返回非 JSON 响应')
-        }
-      }
+      const data = await backendApi.get<{ persons?: PersonInfo[] }>('/api/chat/persons', {
+        query: {
+          platform: platform || undefined,
+          search: search || undefined,
+          limit: 50,
+        },
+      })
+      setPersons(data.persons || [])
     } catch (e) {
       console.error('[Chat] 获取用户列表失败:', e)
     } finally {
@@ -481,7 +469,7 @@ export function ChatPage() {
   // 用于追踪组件是否已卸载
   const isUnmountedRef = useRef(false)
 
-  // 初始化连接（默认 WebUI 标签页）
+  // 初始化连接（默认本地聊天标签页）
   useEffect(() => {
     isUnmountedRef.current = false
 
@@ -502,12 +490,6 @@ export function ChatPage() {
       )
     })
 
-    const unsubscribeStatus = chatWsClient.onStatusChange((status) => {
-      if (!isUnmountedRef.current) {
-        setIsConnecting(status === 'connecting')
-      }
-    })
-
     tabs.forEach((tab) => {
       processedMessagesMapRef.current.set(tab.id, new Set())
       void openSessionForTab(tab.id, tab.type, tab.virtualConfig)
@@ -516,7 +498,6 @@ export function ChatPage() {
     return () => {
       isUnmountedRef.current = true
       unsubscribeConnection()
-      unsubscribeStatus()
 
       sessionUnsubscribeMap.forEach((unsubscribe) => {
         unsubscribe()
@@ -666,11 +647,6 @@ export function ChatPage() {
     [activeTab?.isConnected, activeTabId, t]
   )
 
-  // 重新连接当前标签页
-  const handleReconnect = () => {
-    void chatWsClient.restart()
-  }
-
   // 打开虚拟身份配置对话框（新建标签页用）
   const openVirtualConfig = () => {
     setTempVirtualConfig({
@@ -754,7 +730,7 @@ export function ChatPage() {
   const closeTab = (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
     e?.stopPropagation()
 
-    // 不能关闭默认 WebUI 标签页
+    // 不能关闭默认本地聊天标签页
     if (tabId === 'webui-default') {
       return
     }
@@ -807,8 +783,6 @@ export function ChatPage() {
     }))
   }
 
-  const botDisplayName = activeTab?.sessionInfo.bot_name || t('chat.botNameFallback')
-
   return (
     <div className="bg-background flex h-full min-h-0">
       {/* 虚拟身份配置对话框 */}
@@ -852,18 +826,10 @@ export function ChatPage() {
           />
         </div>
 
-        <ChatHeaderBar
-          activeTab={activeTab}
-          botDisplayName={botDisplayName}
-          isConnecting={isConnecting}
-          isLoadingHistory={isLoadingHistory}
-          onReconnect={handleReconnect}
-        />
-
         <MessageList
           messages={activeTab?.messages ?? []}
           isLoadingHistory={isLoadingHistory}
-          botDisplayName={botDisplayName}
+          botDisplayName={activeTab?.sessionInfo.bot_name || t('chat.botNameFallback')}
           botQq={activeTab?.sessionInfo.bot_qq}
           userName={userName}
           language={i18n.language}

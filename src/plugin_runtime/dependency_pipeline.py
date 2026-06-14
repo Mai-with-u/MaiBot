@@ -79,6 +79,7 @@ class PluginDependencyPipeline:
         self._manifest_validator: ManifestValidator = ManifestValidator(
             project_root=self._project_root,
             validate_python_package_dependencies=False,
+            log_compat_warnings=False,
         )
 
     async def execute(self, plugin_dirs: Iterable[Path]) -> DependencyPipelineResult:

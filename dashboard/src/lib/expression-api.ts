@@ -1,8 +1,11 @@
 /**
  * 表达方式管理 API
+ *
+ * 请求样板（认证、解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint、业务错误文案与响应体 success 标记的解包规则。
+ * 公开函数遵循 throw 契约：成功返回数据，失败抛 ApiError。
  */
-import { fetchWithAuth } from '@/lib/fetch-with-auth'
-import { formatApiError } from '@/lib/api-error'
+import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 import type {
   BatchReviewItem,
   BatchReviewResponse,
@@ -29,7 +32,6 @@ import type {
   ReviewListResponse,
   ReviewStats,
 } from '@/types/expression'
-import type { ApiResponse } from '@/types/api'
 
 const API_BASE = '/api/webui/expression'
 
@@ -38,45 +40,12 @@ const API_BASE = '/api/webui/expression'
  */
 export async function getChatList(
   params: { include_legacy?: boolean } = {}
-): Promise<ApiResponse<ChatInfo[]>> {
-  const queryParams = new URLSearchParams()
-  if (params.include_legacy) queryParams.append('include_legacy', 'true')
-  const response = await fetchWithAuth(`${API_BASE}/chats?${queryParams}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取聊天列表失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取聊天列表失败',
-      }
-    }
-  }
-
-  try {
-    const data: ChatListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取聊天列表失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析聊天列表响应',
-    }
-  }
+): Promise<ChatInfo[]> {
+  const data = await backendApi.get<ChatListResponse>(`${API_BASE}/chats`, {
+    query: { include_legacy: params.include_legacy ? true : undefined },
+    errorMessage: '获取聊天列表失败',
+  })
+  return requireSuccess(data, '获取聊天列表失败').data
 }
 
 /**
@@ -84,44 +53,12 @@ export async function getChatList(
  */
 export async function getExpressionChatTargets(
   params: { include_legacy?: boolean } = {}
-): Promise<ApiResponse<ChatInfo[]>> {
-  const queryParams = new URLSearchParams()
-  if (params.include_legacy) queryParams.append('include_legacy', 'true')
-  const response = await fetchWithAuth(`${API_BASE}/chat-targets?${queryParams}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取导入目标聊天流失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取导入目标聊天流失败',
-      }
-    }
-  }
-
-  try {
-    const data: ChatListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    }
-    return {
-      success: false,
-      error: '获取导入目标聊天流失败',
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析导入目标聊天流响应',
-    }
-  }
+): Promise<ChatInfo[]> {
+  const data = await backendApi.get<ChatListResponse>(`${API_BASE}/chat-targets`, {
+    query: { include_legacy: params.include_legacy ? true : undefined },
+    errorMessage: '获取导入目标聊天流失败',
+  })
+  return requireSuccess(data, '获取导入目标聊天流失败').data
 }
 
 /**
@@ -129,44 +66,12 @@ export async function getExpressionChatTargets(
  */
 export async function getExpressionGroups(
   params: { include_legacy?: boolean } = {}
-): Promise<ApiResponse<ExpressionGroupListResponse['data']>> {
-  const queryParams = new URLSearchParams()
-  if (params.include_legacy) queryParams.append('include_legacy', 'true')
-  const response = await fetchWithAuth(`${API_BASE}/groups?${queryParams}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取表达互通组失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取表达互通组失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionGroupListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    }
-    return {
-      success: false,
-      error: '获取表达互通组失败',
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达互通组响应',
-    }
-  }
+): Promise<ExpressionGroupListResponse['data']> {
+  const data = await backendApi.get<ExpressionGroupListResponse>(`${API_BASE}/groups`, {
+    query: { include_legacy: params.include_legacy ? true : undefined },
+    errorMessage: '获取表达互通组失败',
+  })
+  return requireSuccess(data, '获取表达互通组失败').data
 }
 
 /**
@@ -181,54 +86,21 @@ export async function getExpressionList(params: {
   include_legacy?: boolean
   review_filter?: 'all' | 'user_checked' | 'unchecked'
   sort_by?: 'time'
-}): Promise<ApiResponse<ExpressionListResponse>> {
-  const queryParams = new URLSearchParams()
-
-  if (params.page) queryParams.append('page', params.page.toString())
-  if (params.page_size) queryParams.append('page_size', params.page_size.toString())
-  if (params.search) queryParams.append('search', params.search)
-  if (params.chat_id) queryParams.append('chat_id', params.chat_id)
-  if (params.include_legacy) queryParams.append('include_legacy', 'true')
-  if (params.review_filter) queryParams.append('review_filter', params.review_filter)
-  if (params.sort_by) queryParams.append('sort_by', params.sort_by)
-  params.chat_ids?.forEach((chatId) => queryParams.append('chat_ids', chatId))
-
-  const response = await fetchWithAuth(`${API_BASE}/list?${queryParams}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取表达方式列表失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取表达方式列表失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取表达方式列表失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式列表响应',
-    }
-  }
+}): Promise<ExpressionListResponse> {
+  const data = await backendApi.get<ExpressionListResponse>(`${API_BASE}/list`, {
+    query: {
+      page: params.page || undefined,
+      page_size: params.page_size || undefined,
+      search: params.search || undefined,
+      chat_id: params.chat_id || undefined,
+      include_legacy: params.include_legacy ? true : undefined,
+      review_filter: params.review_filter,
+      sort_by: params.sort_by,
+      chat_ids: params.chat_ids,
+    },
+    errorMessage: '获取表达方式列表失败',
+  })
+  return requireSuccess(data, '获取表达方式列表失败')
 }
 
 /**
@@ -237,39 +109,11 @@ export async function getExpressionList(params: {
 export async function exportExpressions(params: {
   chat_id: string
   ids?: number[]
-}): Promise<ApiResponse<ExpressionExportResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/export`, {
-    method: 'POST',
-    body: JSON.stringify(params),
+}): Promise<ExpressionExportResponse> {
+  return backendApi.post<ExpressionExportResponse>(`${API_BASE}/export`, {
+    body: params,
+    errorMessage: '导出表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '导出表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '导出表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionExportResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式导出响应',
-    }
-  }
 }
 
 /**
@@ -278,39 +122,11 @@ export async function exportExpressions(params: {
 export async function importExpressions(params: {
   chat_id: string
   expressions: ExpressionExportItem[]
-}): Promise<ApiResponse<ExpressionImportResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/import`, {
-    method: 'POST',
-    body: JSON.stringify(params),
+}): Promise<ExpressionImportResponse> {
+  return backendApi.post<ExpressionImportResponse>(`${API_BASE}/import`, {
+    body: params,
+    errorMessage: '导入表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '导入表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '导入表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionImportResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式导入响应',
-    }
-  }
 }
 
 /**
@@ -318,39 +134,11 @@ export async function importExpressions(params: {
  */
 export async function clearExpressions(params: {
   chat_id: string
-}): Promise<ApiResponse<ExpressionClearResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/clear`, {
-    method: 'POST',
-    body: JSON.stringify(params),
+}): Promise<ExpressionClearResponse> {
+  return backendApi.post<ExpressionClearResponse>(`${API_BASE}/clear`, {
+    body: params,
+    errorMessage: '清除表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '清除表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '清除表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionClearResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式清除响应',
-    }
-  }
 }
 
 /**
@@ -358,39 +146,11 @@ export async function clearExpressions(params: {
  */
 export async function previewLegacyExpressionImport(params: {
   db_path: string
-}): Promise<ApiResponse<LegacyExpressionImportPreviewResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/legacy-import/preview`, {
-    method: 'POST',
-    body: JSON.stringify(params),
+}): Promise<LegacyExpressionImportPreviewResponse> {
+  return backendApi.post<LegacyExpressionImportPreviewResponse>(`${API_BASE}/legacy-import/preview`, {
+    body: params,
+    errorMessage: '预览旧版导入失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '预览旧版导入失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '预览旧版导入失败',
-      }
-    }
-  }
-
-  try {
-    const data: LegacyExpressionImportPreviewResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析旧版导入预览响应',
-    }
-  }
 }
 
 /**
@@ -398,41 +158,16 @@ export async function previewLegacyExpressionImport(params: {
  */
 export async function previewLegacyExpressionImportFile(
   file: File
-): Promise<ApiResponse<LegacyExpressionImportPreviewResponse>> {
+): Promise<LegacyExpressionImportPreviewResponse> {
   const formData = new FormData()
   formData.append('file', file)
-  const response = await fetchWithAuth(`${API_BASE}/legacy-import/preview-file`, {
-    method: 'POST',
-    body: formData,
-  })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '预览旧版导入失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '预览旧版导入失败',
-      }
+  return backendApi.post<LegacyExpressionImportPreviewResponse>(
+    `${API_BASE}/legacy-import/preview-file`,
+    {
+      body: formData,
+      errorMessage: '预览旧版导入失败',
     }
-  }
-
-  try {
-    const data: LegacyExpressionImportPreviewResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析旧版导入预览响应',
-    }
-  }
+  )
 }
 
 /**
@@ -445,127 +180,32 @@ export async function importLegacyExpressions(params: {
     target_chat_id?: string | null
     target_chat_ids?: string[]
   }>
-}): Promise<ApiResponse<LegacyExpressionImportResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/legacy-import/import`, {
-    method: 'POST',
-    body: JSON.stringify(params),
+}): Promise<LegacyExpressionImportResponse> {
+  return backendApi.post<LegacyExpressionImportResponse>(`${API_BASE}/legacy-import/import`, {
+    body: params,
+    errorMessage: '旧版导入失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '旧版导入失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '旧版导入失败',
-      }
-    }
-  }
-
-  try {
-    const data: LegacyExpressionImportResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析旧版导入响应',
-    }
-  }
 }
 
 /**
  * 获取表达方式详细信息
  */
-export async function getExpressionDetail(expressionId: number): Promise<ApiResponse<any>> {
-  const response = await fetchWithAuth(`${API_BASE}/${expressionId}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取表达方式详情失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取表达方式详情失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionDetailResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取表达方式详情失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式详情响应',
-    }
-  }
+export async function getExpressionDetail(expressionId: number): Promise<any> {
+  const data = await backendApi.get<ExpressionDetailResponse>(`${API_BASE}/${expressionId}`, {
+    errorMessage: '获取表达方式详情失败',
+  })
+  return requireSuccess(data, '获取表达方式详情失败').data
 }
 
 /**
  * 创建表达方式
  */
-export async function createExpression(data: ExpressionCreateRequest): Promise<ApiResponse<any>> {
-  const response = await fetchWithAuth(`${API_BASE}/`, {
-    method: 'POST',
-
-    body: JSON.stringify(data),
+export async function createExpression(data: ExpressionCreateRequest): Promise<any> {
+  const responseData = await backendApi.post<ExpressionCreateResponse>(`${API_BASE}/`, {
+    body: data,
+    errorMessage: '创建表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '创建表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '创建表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const responseData: ExpressionCreateResponse = await response.json()
-    if (responseData.success) {
-      return {
-        success: true,
-        data: responseData.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: responseData.message || '创建表达方式失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析创建表达方式响应',
-    }
-  }
+  return requireSuccess(responseData, '创建表达方式失败').data
 }
 
 /**
@@ -574,181 +214,59 @@ export async function createExpression(data: ExpressionCreateRequest): Promise<A
 export async function updateExpression(
   expressionId: number,
   data: ExpressionUpdateRequest
-): Promise<ApiResponse<any>> {
-  const response = await fetchWithAuth(`${API_BASE}/${expressionId}`, {
-    method: 'PATCH',
-
-    body: JSON.stringify(data),
-  })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '更新表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '更新表达方式失败',
-      }
+): Promise<any> {
+  const responseData = await backendApi.patch<ExpressionUpdateResponse>(
+    `${API_BASE}/${expressionId}`,
+    {
+      body: data,
+      errorMessage: '更新表达方式失败',
     }
+  )
+  return requireSuccess(responseData, '更新表达方式失败').data || {}
+}
+
+/**
+ * 更新表达方式审核状态
+ */
+export async function updateExpressionReviewStatus(
+  expressionId: number,
+  approved: boolean
+): Promise<Expression> {
+  const responseData = await backendApi.patch<ExpressionUpdateResponse>(
+    `${API_BASE}/${expressionId}/review-status`,
+    {
+      body: { approved },
+      errorMessage: '更新表达方式审核状态失败',
+    }
+  )
+  const checked = requireSuccess(responseData, '更新表达方式审核状态失败')
+  if (!checked.data) {
+    throw new ApiError(checked.message || '更新表达方式审核状态失败', { detail: checked })
   }
-
-  try {
-    const responseData: ExpressionUpdateResponse = await response.json()
-    if (responseData.success) {
-      return {
-        success: true,
-        data: responseData.data || {},
-      }
-    } else {
-      return {
-        success: false,
-        error: responseData.message || '更新表达方式失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析更新表达方式响应',
-    }
-  }
+  return checked.data
 }
 
 /**
  * 删除表达方式
  */
-export async function updateExpressionReviewStatus(
-  expressionId: number,
-  approved: boolean
-): Promise<ApiResponse<Expression>> {
-  const response = await fetchWithAuth(`${API_BASE}/${expressionId}/review-status`, {
-    method: 'PATCH',
-    body: JSON.stringify({ approved }),
+export async function deleteExpression(expressionId: number): Promise<any> {
+  const data = await backendApi.delete<ExpressionDeleteResponse>(`${API_BASE}/${expressionId}`, {
+    errorMessage: '删除表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '更新表达方式审核状态失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '更新表达方式审核状态失败',
-      }
-    }
-  }
-
-  try {
-    const responseData: ExpressionUpdateResponse = await response.json()
-    if (responseData.success && responseData.data) {
-      return {
-        success: true,
-        data: responseData.data,
-      }
-    }
-    return {
-      success: false,
-      error: responseData.message || '更新表达方式审核状态失败',
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析表达方式审核状态响应',
-    }
-  }
-}
-
-export async function deleteExpression(expressionId: number): Promise<ApiResponse<any>> {
-  const response = await fetchWithAuth(`${API_BASE}/${expressionId}`, {
-    method: 'DELETE',
-  })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '删除表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '删除表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionDeleteResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: {},
-      }
-    } else {
-      return {
-        success: false,
-        error: data.message || '删除表达方式失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析删除表达方式响应',
-    }
-  }
+  requireSuccess(data, '删除表达方式失败')
+  return {}
 }
 
 /**
  * 批量删除表达方式
  */
-export async function batchDeleteExpressions(expressionIds: number[]): Promise<ApiResponse<any>> {
-  const response = await fetchWithAuth(`${API_BASE}/batch/delete`, {
-    method: 'POST',
-
-    body: JSON.stringify({ ids: expressionIds }),
+export async function batchDeleteExpressions(expressionIds: number[]): Promise<any> {
+  const data = await backendApi.post<ExpressionDeleteResponse>(`${API_BASE}/batch/delete`, {
+    body: { ids: expressionIds },
+    errorMessage: '批量删除表达方式失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '批量删除表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '批量删除表达方式失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionDeleteResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: {},
-      }
-    } else {
-      return {
-        success: false,
-        error: data.message || '批量删除表达方式失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析批量删除表达方式响应',
-    }
-  }
+  requireSuccess(data, '批量删除表达方式失败')
+  return {}
 }
 
 /**
@@ -756,45 +274,12 @@ export async function batchDeleteExpressions(expressionIds: number[]): Promise<A
  */
 export async function getExpressionStats(
   params: { include_legacy?: boolean } = {}
-): Promise<ApiResponse<any>> {
-  const queryParams = new URLSearchParams()
-  if (params.include_legacy) queryParams.append('include_legacy', 'true')
-  const response = await fetchWithAuth(`${API_BASE}/stats/summary?${queryParams}`, {})
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取统计数据失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取统计数据失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionStatsResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data.data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取统计数据失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析统计数据响应',
-    }
-  }
+): Promise<any> {
+  const data = await backendApi.get<ExpressionStatsResponse>(`${API_BASE}/stats/summary`, {
+    query: { include_legacy: params.include_legacy ? true : undefined },
+    errorMessage: '获取统计数据失败',
+  })
+  return requireSuccess(data, '获取统计数据失败').data
 }
 
 // ============ 审核相关 API ============
@@ -802,36 +287,10 @@ export async function getExpressionStats(
 /**
  * 获取审核统计数据
  */
-export async function getReviewStats(): Promise<ApiResponse<ReviewStats>> {
-  const response = await fetchWithAuth(`${API_BASE}/review/stats`)
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取审核统计失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取审核统计失败',
-      }
-    }
-  }
-
-  try {
-    const data = (await response.json()) as ReviewStats
-    return {
-      success: true,
-      data: data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析审核统计响应',
-    }
-  }
+export async function getReviewStats(): Promise<ReviewStats> {
+  return backendApi.get<ReviewStats>(`${API_BASE}/review/stats`, {
+    errorMessage: '获取审核统计失败',
+  })
 }
 
 /**
@@ -845,53 +304,20 @@ export async function getReviewList(params: {
   search?: string
   chat_id?: string
   exclude_ids?: number[]
-}): Promise<ApiResponse<ReviewListResponse>> {
-  const queryParams = new URLSearchParams()
-
-  if (params.page) queryParams.append('page', params.page.toString())
-  if (params.page_size) queryParams.append('page_size', params.page_size.toString())
-  if (params.filter_type) queryParams.append('filter_type', params.filter_type)
-  if (params.order) queryParams.append('order', params.order)
-  if (params.search) queryParams.append('search', params.search)
-  if (params.chat_id) queryParams.append('chat_id', params.chat_id)
-  params.exclude_ids?.forEach((id) => queryParams.append('exclude_ids', id.toString()))
-
-  const response = await fetchWithAuth(`${API_BASE}/review/list?${queryParams}`)
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取审核列表失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取审核列表失败',
-      }
-    }
-  }
-
-  try {
-    const data: ReviewListResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '获取审核列表失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析审核列表响应',
-    }
-  }
+}): Promise<ReviewListResponse> {
+  const data = await backendApi.get<ReviewListResponse>(`${API_BASE}/review/list`, {
+    query: {
+      page: params.page || undefined,
+      page_size: params.page_size || undefined,
+      filter_type: params.filter_type,
+      order: params.order,
+      search: params.search || undefined,
+      chat_id: params.chat_id || undefined,
+      exclude_ids: params.exclude_ids,
+    },
+    errorMessage: '获取审核列表失败',
+  })
+  return requireSuccess(data, '获取审核列表失败')
 }
 
 /**
@@ -899,123 +325,44 @@ export async function getReviewList(params: {
  */
 export async function batchReviewExpressions(
   items: BatchReviewItem[]
-): Promise<ApiResponse<BatchReviewResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/review/batch`, {
-    method: 'POST',
-    body: JSON.stringify({ items }),
+): Promise<BatchReviewResponse> {
+  const data = await backendApi.post<BatchReviewResponse>(`${API_BASE}/review/batch`, {
+    body: { items },
+    errorMessage: '批量审核失败',
   })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '批量审核失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '批量审核失败',
-      }
-    }
-  }
-
-  try {
-    const data: BatchReviewResponse = await response.json()
-    if (data.success) {
-      return {
-        success: true,
-        data: data,
-      }
-    } else {
-      return {
-        success: false,
-        error: '批量审核失败',
-      }
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析批量审核响应',
-    }
-  }
+  return requireSuccess(data, '批量审核失败')
 }
 
+/**
+ * 获取 AI 审核记录
+ */
 export async function getExpressionReviewLogs(
   params: {
     limit?: number
     passed?: boolean
     chat_id?: string
   } = {}
-): Promise<ApiResponse<ExpressionReviewLogListResponse>> {
-  const queryParams = new URLSearchParams()
-  if (params.limit) queryParams.append('limit', params.limit.toString())
-  if (params.passed !== undefined) queryParams.append('passed', params.passed ? 'true' : 'false')
-  if (params.chat_id) queryParams.append('chat_id', params.chat_id)
-
-  const response = await fetchWithAuth(`${API_BASE}/review/logs?${queryParams}`)
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '获取 AI 审核记录失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '获取 AI 审核记录失败',
-      }
-    }
-  }
-
-  try {
-    const data: ExpressionReviewLogListResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析 AI 审核记录响应',
-    }
-  }
+): Promise<ExpressionReviewLogListResponse> {
+  return backendApi.get<ExpressionReviewLogListResponse>(`${API_BASE}/review/logs`, {
+    query: {
+      limit: params.limit || undefined,
+      passed: params.passed,
+      chat_id: params.chat_id || undefined,
+    },
+    errorMessage: '获取 AI 审核记录失败',
+  })
 }
 
+/**
+ * 恢复被 AI 审核拒绝的表达方式
+ */
 export async function approveExpressionReviewLog(
   reviewLogId: string
-): Promise<ApiResponse<ExpressionReviewLogApproveResponse>> {
-  const response = await fetchWithAuth(`${API_BASE}/review/logs/${reviewLogId}/approve`, {
-    method: 'POST',
-  })
-
-  if (!response.ok) {
-    try {
-      const errorData = await response.json()
-      return {
-        success: false,
-        error: formatApiError(errorData, '恢复表达方式失败'),
-      }
-    } catch {
-      return {
-        success: false,
-        error: response.statusText || '恢复表达方式失败',
-      }
+): Promise<ExpressionReviewLogApproveResponse> {
+  return backendApi.post<ExpressionReviewLogApproveResponse>(
+    `${API_BASE}/review/logs/${reviewLogId}/approve`,
+    {
+      errorMessage: '恢复表达方式失败',
     }
-  }
-
-  try {
-    const data: ExpressionReviewLogApproveResponse = await response.json()
-    return {
-      success: true,
-      data,
-    }
-  } catch {
-    return {
-      success: false,
-      error: '无法解析恢复表达方式响应',
-    }
-  }
+  )
 }

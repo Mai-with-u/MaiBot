@@ -104,10 +104,7 @@ export function useModelAutoSave(
       onSavingChange?.(true)
       // 清理每个模型中的 null 值
       const cleanedModels = newModels.map(cleanModelForSave)
-      const result = await updateModelConfigSection('models', cleanedModels)
-      if (!result.success) {
-        throw new Error(result.error)
-      }
+      await updateModelConfigSection('models', cleanedModels)
       modelsSnapshotRef.current = JSON.stringify(cleanedModels)
       onUnsavedChange?.(false)
     } catch (error) {
@@ -122,10 +119,7 @@ export function useModelAutoSave(
   const autoSaveTaskConfig = useCallback(async (newTaskConfig: ModelTaskConfig) => {
     try {
       onSavingChange?.(true)
-      const result = await updateModelConfigSection('model_task_config', newTaskConfig)
-      if (!result.success) {
-        throw new Error(result.error)
-      }
+      await updateModelConfigSection('model_task_config', newTaskConfig)
       taskConfigSnapshotRef.current = JSON.stringify(newTaskConfig)
       onUnsavedChange?.(false)
     } catch (error) {

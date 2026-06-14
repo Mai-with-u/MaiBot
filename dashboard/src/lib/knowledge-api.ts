@@ -1,17 +1,13 @@
 /**
  * 知识库 API
+ *
+ * 请求经由主后端实例 backendApi：自动携带 Cookie 认证、处理 Electron 后端地址，
+ * 失败统一抛出 ApiError。
  */
 
-import { getApiBaseUrl } from './api-base'
-import { isElectron } from './runtime'
+import { backendApi } from '@/lib/http'
 
-async function getKnowledgeApiBase(): Promise<string> {
-  if (isElectron()) {
-    const base = await getApiBaseUrl()
-    return base ? `${base}/api/webui` : '/api/webui'
-  }
-  return import.meta.env.VITE_API_BASE_URL || '/api/webui'
-}
+const API_BASE = '/api/webui/knowledge'
 
 export interface KnowledgeNode {
   id: string
@@ -44,35 +40,27 @@ export interface KnowledgeStats {
  * 获取知识图谱数据
  */
 export async function getKnowledgeGraph(limit: number = 100, nodeType: 'all' | 'entity' | 'paragraph' = 'all'): Promise<KnowledgeGraph> {
-  const url = `${await getKnowledgeApiBase()}/knowledge/graph?limit=${limit}&node_type=${nodeType}`
-  
-  const response = await fetch(url)
-  
-  if (!response.ok) {
-    throw new Error(`获取知识图谱失败: ${response.status}`)
-  }
-  
-  return response.json()
+  return backendApi.get<KnowledgeGraph>(`${API_BASE}/graph`, {
+    query: { limit, node_type: nodeType },
+    errorMessage: '获取知识图谱失败',
+  })
 }
 
 /**
  * 获取知识图谱统计信息
  */
 export async function getKnowledgeStats(): Promise<KnowledgeStats> {
-  const response = await fetch(`${await getKnowledgeApiBase()}/knowledge/stats`)
-  if (!response.ok) {
-    throw new Error('获取知识图谱统计信息失败')
-  }
-  return response.json()
+  return backendApi.get<KnowledgeStats>(`${API_BASE}/stats`, {
+    errorMessage: '获取知识图谱统计信息失败',
+  })
 }
 
 /**
  * 搜索知识节点
  */
 export async function searchKnowledgeNode(query: string): Promise<KnowledgeNode[]> {
-  const response = await fetch(`${await getKnowledgeApiBase()}/knowledge/search?query=${encodeURIComponent(query)}`)
-  if (!response.ok) {
-    throw new Error('搜索知识节点失败')
-  }
-  return response.json()
+  return backendApi.get<KnowledgeNode[]>(`${API_BASE}/search`, {
+    query: { query },
+    errorMessage: '搜索知识节点失败',
+  })
 }

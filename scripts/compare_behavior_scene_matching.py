@@ -21,10 +21,10 @@ from src.common.database.database_model import (  # noqa: E402
 )
 from src.learners.behavior_scenario import BehaviorScenarioProfile, parse_behavior_scenario_response  # noqa: E402
 from src.learners.behavior_scene_cluster_store import (  # noqa: E402
+    DEFAULT_BEHAVIOR_SCENE_RETRIEVAL_MODE,
     _load_cluster_distribution,
-    _score_behavior_clusters,
-    _score_scene_clusters_by_direct_domain_overlap,
     build_scene_cluster_distribution,
+    debug_retrieve_behavior_scores_from_scene_clusters,
     format_scene_cluster_distribution,
 )
 
@@ -104,25 +104,28 @@ def compare_matching(args: Namespace) -> dict[str, Any]:
 
     session_ids = _session_ids(args)
     target_distribution = build_scene_cluster_distribution(profile)
+    retrieval_mode = str(getattr(args, "retrieval_mode", DEFAULT_BEHAVIOR_SCENE_RETRIEVAL_MODE) or "").strip()
+    if not retrieval_mode:
+        retrieval_mode = DEFAULT_BEHAVIOR_SCENE_RETRIEVAL_MODE
+    debug_result = debug_retrieve_behavior_scores_from_scene_clusters(
+        session_ids=session_ids,
+        include_global=args.include_global,
+        profile=profile,
+        max_count=args.max_count,
+        retrieval_mode=retrieval_mode,
+    )
 
     with get_db_session(auto_commit=False) as session:
-        cluster_scores, debug_payload = _score_scene_clusters_by_direct_domain_overlap(
-            session,
-            profile=profile,
-            session_ids=session_ids,
-            include_global=args.include_global,
-        )
-        behavior_scores = _score_behavior_clusters(
-            session,
-            cluster_scores=cluster_scores,
-            session_ids=session_ids,
-            include_global=args.include_global,
-        )
         matched_clusters = [
-            _cluster_payload(session, cluster_id, score)
-            for cluster_id, score in list(cluster_scores.items())[: args.max_count]
+            _cluster_payload(session, int(cluster["cluster_id"]), float(cluster["score"]))
+            for cluster in debug_result.get("matched_clusters", [])[: args.max_count]
+            if cluster.get("cluster_id") is not None
         ]
-        paths = [_path_payload(session, path_id, score) for path_id, score in list(behavior_scores.items())[: args.max_count]]
+        paths = [
+            _path_payload(session, int(candidate["behavior_id"]), float(candidate["score"]))
+            for candidate in debug_result.get("candidate_scores", [])[: args.max_count]
+            if candidate.get("behavior_id") is not None
+        ]
 
     return {
         "scope": {
@@ -140,7 +143,8 @@ def compare_matching(args: Namespace) -> dict[str, Any]:
         },
         "input_cluster_distribution": target_distribution,
         "scene_cluster": {
-            "debug": debug_payload,
+            "retrieval_mode": debug_result.get("retrieval_mode", retrieval_mode),
+            "debug": debug_result.get("retrieval_debug", {}),
             "matched_clusters": matched_clusters,
             "behavior_candidates": paths,
         },
@@ -150,6 +154,8 @@ def compare_matching(args: Namespace) -> dict[str, Any]:
 def print_report(result: dict[str, Any]) -> None:
     print("行为场景簇匹配")
     print(f"scope session_ids={result['scope']['session_ids']} include_global={result['scope']['include_global']}")
+    print(f"retrieval_mode={result['scene_cluster'].get('retrieval_mode')}")
+    print(f"debug={json.dumps(result['scene_cluster'].get('debug') or {}, ensure_ascii=False)}")
     print("\n输入场景簇分布:")
     for tag in result["input_cluster_distribution"]:
         print(f"  {tag['tag']} = {tag['probability']}")
@@ -188,6 +194,12 @@ def parse_args() -> Namespace:
     )
     parser.add_argument("--profile-json", required=True, help="直接传入包含 tag_clusters 的场景画像 JSON 对象。")
     parser.add_argument("--max-count", type=int, default=10, help="输出的最大数量。")
+    parser.add_argument(
+        "--retrieval-mode",
+        choices=["direct_domain_overlap", "tag_cluster_spread_1", "tag_cluster_spread_2"],
+        default=DEFAULT_BEHAVIOR_SCENE_RETRIEVAL_MODE,
+        help="场景检索模式，默认使用主线一次扩散。",
+    )
     parser.add_argument("--json", action="store_true", help="输出完整 JSON。")
     return parser.parse_args()
 

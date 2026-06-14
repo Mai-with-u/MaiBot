@@ -1,5 +1,3 @@
-import type { Dispatch, SetStateAction } from 'react'
-
 import { Sparkles } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -11,28 +9,15 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { TabsContent } from '@/components/ui/tabs'
-import type { MemoryTaskPayload } from '@/lib/memory-api'
 
+import type { UseMemoryTuningResult } from '../hooks/useMemoryTuning'
 import { getImportStatusVariant } from '../utils'
 
 export interface TuningTabProps {
-  tuningObjective: string
-  setTuningObjective: Dispatch<SetStateAction<string>>
-  tuningIntensity: string
-  setTuningIntensity: Dispatch<SetStateAction<string>>
-  tuningSampleSize: string
-  setTuningSampleSize: Dispatch<SetStateAction<string>>
-  tuningTopKEval: string
-  setTuningTopKEval: Dispatch<SetStateAction<string>>
-  submitTuningTask: () => Promise<void>
-  creatingTuning: boolean
-  tuningProfile: Record<string, unknown>
-  tuningProfileToml: string
-  tuningTasks: MemoryTaskPayload[]
-  applyBestTask: (taskId: string) => Promise<void>
+  tuning: UseMemoryTuningResult
 }
 
-export function TuningTab(props: TuningTabProps) {
+export function TuningTab({ tuning }: TuningTabProps) {
   const {
     tuningObjective,
     setTuningObjective,
@@ -48,7 +33,7 @@ export function TuningTab(props: TuningTabProps) {
     tuningProfileToml,
     tuningTasks,
     applyBestTask,
-  } = props
+  } = tuning
 
   return (
     <TabsContent value="tuning" className="space-y-4">

@@ -1,11 +1,14 @@
 from pathlib import Path
+from types import SimpleNamespace
 
+import asyncio
 import json
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.webui.services import git_mirror_service as mirror_service_module
 from src.webui.routers.plugin import icon_routes as icon_routes_module
 from src.webui.routers.plugin import management as management_module
 from src.webui.routers.plugin import support as support_module
@@ -222,6 +225,52 @@ def test_install_plugin_cleans_config_only_residue(client: TestClient, monkeypat
     assert response.status_code == 200
     assert (residue_path / "_manifest.json").exists()
     assert not (residue_path / "config.toml").exists()
+
+
+def test_clone_repository_reports_plugin_and_mirror_progress(tmp_path, monkeypatch):
+    events = []
+
+    class FakeMirrorConfig:
+        def get_enabled_mirrors(self):
+            return [
+                {
+                    "id": "test-mirror",
+                    "name": "测试镜像源",
+                    "clone_prefix": "https://example.com/https://github.com",
+                    "raw_prefix": "https://example.com/https://raw.githubusercontent.com",
+                    "enabled": True,
+                    "priority": 1,
+                }
+            ]
+
+    async def collect_progress(**kwargs):
+        events.append(kwargs)
+
+    def fake_run(cmd, capture_output, text, timeout):
+        assert cmd[:2] == ["git", "clone"]
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    service = mirror_service_module.GitMirrorService(max_retries=1, timeout=1, config=FakeMirrorConfig())
+    monkeypatch.setattr(mirror_service_module.subprocess, "run", fake_run)
+    mirror_service_module.set_update_progress_callback(collect_progress)
+
+    try:
+        result = asyncio.run(
+            service.clone_repository(
+                owner="owner",
+                repo="repo",
+                target_path=tmp_path / "repo",
+                depth=1,
+                plugin_id="market.plugin",
+            )
+        )
+    finally:
+        mirror_service_module.set_update_progress_callback(None)
+
+    assert result["success"] is True
+    assert any(event.get("plugin_id") == "market.plugin" for event in events)
+    assert any(event.get("mirror_name") == "测试镜像源" for event in events)
+    assert any(event.get("attempt") == 1 and event.get("max_attempts") == 1 for event in events)
 
 
 def test_uninstall_plugin_releases_runtime_before_delete(client: TestClient, monkeypatch):

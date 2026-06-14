@@ -346,7 +346,6 @@ class BehaviorSceneCluster(SQLModel, table=True):
     session_id: Optional[str] = Field(default=None, max_length=255, nullable=True)
     tag_distribution: str = Field(default="[]", sa_column=Column(Text, nullable=False))
     source_count: int = Field(default=0)
-    score: float = Field(default=0.0, sa_column=Column(Float, nullable=False, server_default="0"))
     update_time: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True))
 
 

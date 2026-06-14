@@ -12,6 +12,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { resolveLocalizedText } from '@/lib/config-label'
 import { fieldHooks, type FieldHookRegistry } from '@/lib/field-hooks'
+import { cn } from '@/lib/utils'
 import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 
 import { DynamicField } from './DynamicField'
@@ -453,20 +454,29 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
 
   const renderRows = (rows: FieldSchema[][]) => (
     <>
-      {rows.map((row) => (
-        row.length > 1 ? (
-          <div
-            key={row.map((field) => field.name).join('|')}
-            className="grid min-w-0 gap-3 py-0.5 md:grid-cols-[repeat(auto-fit,minmax(min(18rem,100%),1fr))]"
-          >
-            {row.map((field) => (
-              <div key={field.name} className="min-w-0">{renderField(field)}</div>
-            ))}
-          </div>
-        ) : (
-          <div key={row[0].name} className="min-w-0 py-0.5">{renderField(row[0])}</div>
-        )
-      ))}
+      {rows.map((row) => {
+        const rowKey = row[0]['x-row']
+        const isVisualImageCompressionRow = rowKey === 'visual-image-compression'
+
+        return row.length > 1 ? (
+            <div
+              key={row.map((field) => field.name).join('|')}
+              data-config-row={rowKey}
+              className={cn(
+                "grid min-w-0 gap-3 py-0.5",
+                isVisualImageCompressionRow
+                  ? "grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1.1fr)] items-center"
+                  : "md:grid-cols-[repeat(auto-fit,minmax(min(18rem,100%),1fr))]",
+              )}
+            >
+              {row.map((field) => (
+                <div key={field.name} className="min-w-0">{renderField(field)}</div>
+              ))}
+            </div>
+          ) : (
+            <div key={row[0].name} className="min-w-0 py-0.5">{renderField(row[0])}</div>
+          )
+      })}
     </>
   )
 

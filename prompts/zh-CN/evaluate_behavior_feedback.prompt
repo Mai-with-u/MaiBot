@@ -7,13 +7,16 @@
 {behavior_references}
 
 评估原则：
-- 你需要首先评估有没有按照行动参考执行。
-- adopted 表示 {bot_name} 的后续真实回复是否实际采用了该行为。
+- 你需要首先评估有没有按照行动参考执行。先判断“采用证据”，再判断“结果证据”。
+- adopted 表示 {bot_name} 的后续真实回复是否实际采用了该行为，必须有 SELF 聊天消息作为证据。
+- 如果行动参考包含多个关键步骤，核心步骤缺失时不能给 success；只能给 partial_success，或者证据不足时不输出。
+- observation-learning 路径也只有在 {bot_name} 后续真实回复借鉴并采用了其中的核心行为时才算 adopted；不要因为用户或群体自然出现了类似行为就给反馈。
 - 只有能从后续聊天中看出较明确结果时才输出反馈；证据不足时不要输出。
-- status 只能是 "success" 或 "failed"。
-- success 表示采用后对话推进、用户补充信息、情绪缓和、问题变清楚或结果符合 expected_outcome。
+- status 只能是 "success"、"partial_success" 或 "failed"。
+- success 表示核心行为被完整采用，并且采用后对话推进、用户补充信息、情绪缓和、问题变清楚或结果符合 expected_outcome。
+- partial_success 表示只采用了部分关键行为，或结果只是轻微变好/弱匹配 expected_outcome。
 - failed 表示采用后明显没有推进、引发反感、偏离需求、造成误解或结果与 expected_outcome 明显相反。
-- score_delta 建议范围为 -1.0 到 1.0；轻微信号用 0.3 左右，明确信号用 0.6 到 1.0。失败时使用负数。
+- score_delta 类似奖励预测误差：success 用 0.5 到 1.0；partial_success 用 0.1 到 0.35；failed 用 -0.4 到 -1.0。
 - source_ids 引用后续多条 timeline_item 消息中的 item_id，优先引用 chat_message 项，不要引用不存在的 item_id。
 - reason 要简短说明采用证据和结果证据。
 - outcome 写本次实际观察到的结果，不要复述 expected_outcome。

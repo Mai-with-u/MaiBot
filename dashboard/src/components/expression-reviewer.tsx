@@ -136,19 +136,11 @@ export function ExpressionReviewer({
   const loadStats = useCallback(async () => {
     try {
       const result = await getReviewStats()
-      if (result.success) {
-        setStats(result.data)
-      } else {
-        toast({
-          title: '错误',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      setStats(result)
     } catch (error) {
       console.error('加载统计失败:', error)
     }
-  }, [toast])
+  }, [])
 
   // 加载列表
   const loadList = useCallback(async () => {
@@ -160,16 +152,8 @@ export function ExpressionReviewer({
         filter_type: filterType,
         search: search || undefined,
       })
-      if (result.success) {
-        setExpressions(result.data.data)
-        setTotal(result.data.total)
-      } else {
-        toast({
-          title: '加载失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-      }
+      setExpressions(result.data)
+      setTotal(result.total)
     } catch (error) {
       toast({
         title: '加载失败',
@@ -185,13 +169,11 @@ export function ExpressionReviewer({
   const loadChatNames = useCallback(async () => {
     try {
       const result = await getChatList()
-      if (result.success) {
-        const nameMap = new Map<string, string>()
-        result.data.forEach((chat: ChatInfo) => {
-          nameMap.set(chat.chat_id, chat.chat_name)
-        })
-        setChatNameMap(nameMap)
-      }
+      const nameMap = new Map<string, string>()
+      result.forEach((chat: ChatInfo) => {
+        nameMap.set(chat.chat_id, chat.chat_name)
+      })
+      setChatNameMap(nameMap)
     } catch (error) {
       console.error('加载聚天名称失败:', error)
     }
@@ -214,34 +196,26 @@ export function ExpressionReviewer({
           exclude_ids: excludedIds.length > 0 ? excludedIds : undefined,
         })
 
-        if (result.success) {
-          if (append) {
-            const loadedCount = quickExpressionsRef.current.length
-            const existingIds = new Set(quickExpressionsRef.current.map((e) => e.id))
-            const newItems = result.data.data.filter((e: Expression) => !existingIds.has(e.id))
-            newItems.forEach((expr: Expression) => quickExcludedIdsRef.current.add(expr.id))
+        if (append) {
+          const loadedCount = quickExpressionsRef.current.length
+          const existingIds = new Set(quickExpressionsRef.current.map((e) => e.id))
+          const newItems = result.data.filter((e: Expression) => !existingIds.has(e.id))
+          newItems.forEach((expr: Expression) => quickExcludedIdsRef.current.add(expr.id))
 
-            setQuickExpressions((prev) => [...prev, ...newItems])
-            setQuickTotal(loadedCount + result.data.total)
-            setQuickHasMore(newItems.length > 0 && result.data.total > newItems.length)
-          } else {
-            quickExcludedIdsRef.current = new Set(
-              result.data.data.map((expr: Expression) => expr.id)
-            )
-            setQuickExpressions(result.data.data)
-            setQuickTotal(result.data.total)
-            setQuickHasMore(result.data.total > result.data.data.length)
-          }
-
-          if (resetIndex) {
-            setQuickCurrentIndex(0)
-          }
+          setQuickExpressions((prev) => [...prev, ...newItems])
+          setQuickTotal(loadedCount + result.total)
+          setQuickHasMore(newItems.length > 0 && result.total > newItems.length)
         } else {
-          toast({
-            title: '加载失败',
-            description: result.error,
-            variant: 'destructive',
-          })
+          quickExcludedIdsRef.current = new Set(
+            result.data.map((expr: Expression) => expr.id)
+          )
+          setQuickExpressions(result.data)
+          setQuickTotal(result.total)
+          setQuickHasMore(result.total > result.data.length)
+        }
+
+        if (resetIndex) {
+          setQuickCurrentIndex(0)
         }
       } catch (error) {
         toast({
@@ -324,16 +298,7 @@ export function ExpressionReviewer({
           },
         ])
 
-        if (!result.success) {
-          toast({
-            title: '操作失败',
-            description: result.error,
-            variant: 'destructive',
-          })
-          return
-        }
-
-        if (result.data.results[0]?.success) {
+        if (result.results[0]?.success) {
           toast({
             title: approved ? '已通过' : '已删除',
             description: `表达方式 #${currentExpr.id} ${approved ? '已通过' : '已删除'}`,
@@ -676,16 +641,7 @@ export function ExpressionReviewer({
         { id, approved, require_unchecked: filterType === 'unchecked' },
       ])
 
-      if (!result.success) {
-        toast({
-          title: '操作失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
-      if (result.data.results[0]?.success) {
+      if (result.results[0]?.success) {
         toast({
           title: approved ? '已通过' : '已删除',
           description: `表达方式 #${id} ${approved ? '已通过' : '已删除'}`,
@@ -697,7 +653,7 @@ export function ExpressionReviewer({
       } else {
         toast({
           title: '操作失败',
-          description: result.data.results[0]?.message || '未知错误',
+          description: result.results[0]?.message || '未知错误',
           variant: 'destructive',
         })
       }
@@ -738,19 +694,10 @@ export function ExpressionReviewer({
 
       const result = await batchReviewExpressions(items)
 
-      if (!result.success) {
-        toast({
-          title: '批量审核失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-
       toast({
         title: '批量审核完成',
-        description: `成功 ${result.data.succeeded} 条，失败 ${result.data.failed} 条`,
-        variant: result.data.failed > 0 ? 'destructive' : 'default',
+        description: `成功 ${result.succeeded} 条，失败 ${result.failed} 条`,
+        variant: result.failed > 0 ? 'destructive' : 'default',
       })
 
       // 清空选择并刷新

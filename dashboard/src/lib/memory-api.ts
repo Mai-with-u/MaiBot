@@ -1,109 +1,24 @@
 import type { PluginConfigSchema } from '@/lib/plugin-api'
 
-import { getApiBaseUrl } from './api-base'
-import { isElectron } from './runtime'
+import { backendApi } from '@/lib/http'
+import type { HttpMethod } from '@/lib/http'
 
-async function getMemoryApiBase(): Promise<string> {
-  if (isElectron()) {
-    const base = await getApiBaseUrl()
-    return normalizeMemoryApiBase(base)
-  }
-  return normalizeMemoryApiBase(import.meta.env.VITE_API_BASE_URL)
+const API_BASE = '/api/webui/memory'
+
+interface MemoryRequestOptions {
+  method?: HttpMethod
+  /** 请求体：对象走 JSON 序列化，FormData 原样发送 */
+  body?: unknown
 }
 
-function normalizeMemoryApiBase(rawBase?: string | null): string {
-  const base = String(rawBase ?? '').replace(/\/+$/, '')
-  if (!base) {
-    return '/api/webui/memory'
-  }
-  if (base.endsWith('/api/webui/memory')) {
-    return base
-  }
-  if (base.endsWith('/api/webui')) {
-    return `${base}/memory`
-  }
-  return `${base}/api/webui/memory`
-}
-
-function withMemoryRequestDefaults(init?: RequestInit): RequestInit {
-  return {
-    ...init,
-    credentials: init?.credentials ?? 'include',
-  }
-}
-
-function isHtmlResponse(rawText: string): boolean {
-  const normalizedText = rawText.trimStart().toLowerCase()
-  return normalizedText.startsWith('<!doctype') || normalizedText.startsWith('<html')
-}
-
-function formatRequestUrl(url: string): string {
-  if (typeof window === 'undefined') {
-    return url
-  }
-  try {
-    return new URL(url, window.location.href).toString()
-  } catch {
-    return url
-  }
-}
-
-function getLocalMemoryApiFallbackBases(primaryBase: string): string[] {
-  const fallbackBases: string[] = []
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      fallbackBases.push(`http://${hostname}:8001/api/webui/memory`)
-    }
-  }
-  fallbackBases.push('http://127.0.0.1:8001/api/webui/memory')
-  fallbackBases.push('http://localhost:8001/api/webui/memory')
-  return Array.from(new Set(fallbackBases)).filter((base) => base !== primaryBase)
-}
-
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const primaryBase = await getMemoryApiBase()
-  const urls = [
-    `${primaryBase}${path}`,
-    ...getLocalMemoryApiFallbackBases(primaryBase).map((base) => `${base}${path}`),
-  ]
-  const requestInit = withMemoryRequestDefaults(init)
-
-  for (let index = 0; index < urls.length; index += 1) {
-    const url = urls[index]
-    const response = await fetch(url, requestInit)
-    const rawText = await response.text()
-    const htmlResponse = isHtmlResponse(rawText)
-    const canRetry = index < urls.length - 1
-
-    if ((htmlResponse || response.status === 404) && canRetry) {
-      continue
-    }
-
-    if (!response.ok) {
-      let detail = `${response.status}`
-      try {
-        const payload = JSON.parse(rawText)
-        detail = String(payload?.detail ?? payload?.error ?? detail)
-      } catch {
-        if (htmlResponse) {
-          detail = `接口返回了前端页面，未命中后端 API 路由；当前请求：${formatRequestUrl(url)}`
-        }
-      }
-      throw new Error(detail)
-    }
-
-    try {
-      return JSON.parse(rawText) as T
-    } catch {
-      if (htmlResponse) {
-        throw new Error(`接口返回了前端页面，未命中后端 API 路由；当前请求：${formatRequestUrl(url)}`)
-      }
-      throw new Error(rawText ? '接口响应不是合法 JSON' : '接口返回了空响应')
-    }
-  }
-
-  throw new Error('接口请求失败')
+/**
+ * 记忆 API 统一入口：拼接记忆模块路径前缀，请求经由主后端实例 backendApi。
+ * 失败统一抛出 ApiError（含路由未命中诊断），不再静默重试本地兜底地址。
+ */
+function requestJson<T>(path: string, options: MemoryRequestOptions = {}): Promise<T> {
+  return backendApi.request<T>(options.method ?? 'GET', `${API_BASE}${path}`, {
+    body: options.body,
+  })
 }
 
 export interface MemoryGraphNodePayload {
@@ -959,8 +874,7 @@ export async function previewMemoryDelete(
 ): Promise<MemoryDeletePreviewPayload> {
   return requestJson<MemoryDeletePreviewPayload>('/delete/preview', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -969,8 +883,7 @@ export async function executeMemoryDelete(
 ): Promise<MemoryDeleteExecutePayload> {
   return requestJson<MemoryDeleteExecutePayload>('/delete/execute', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -983,8 +896,7 @@ export async function restoreMemoryDelete(payload: {
 }): Promise<Record<string, unknown>> {
   return requestJson('/delete/restore', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1043,8 +955,7 @@ export async function rollbackMemoryFeedbackCorrection(
 ): Promise<MemoryFeedbackCorrectionRollbackPayload> {
   return requestJson<MemoryFeedbackCorrectionRollbackPayload>(`/feedback-corrections/${taskId}/rollback`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1114,8 +1025,7 @@ export async function rebuildMemoryEpisodes(payload: {
 }): Promise<MemoryEpisodeActionPayload> {
   return requestJson<MemoryEpisodeActionPayload>('/episodes/rebuild', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1129,8 +1039,7 @@ export async function processMemoryEpisodePending(payload: {
 }): Promise<MemoryEpisodeActionPayload> {
   return requestJson<MemoryEpisodeActionPayload>('/episodes/process-pending', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1182,8 +1091,7 @@ export async function setMemoryProfileOverride(payload: {
 }): Promise<MemoryProfileOverridePayload> {
   return requestJson<MemoryProfileOverridePayload>('/profiles/override', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1216,15 +1124,14 @@ export async function correctMemoryProfileEvidence(payload: {
 }): Promise<MemoryProfileEvidenceCorrectPayload> {
   return requestJson<MemoryProfileEvidenceCorrectPayload>(`/profiles/${encodeURIComponent(payload.person_id)}/evidence/correct`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       evidence_type: payload.evidence_type,
       hash: payload.hash,
       requested_by: payload.requested_by ?? 'knowledge_base',
       reason: payload.reason ?? 'profile_evidence_correction',
       refresh: payload.refresh ?? true,
       limit: payload.limit ?? 12,
-    }),
+    },
   })
 }
 
@@ -1235,8 +1142,7 @@ export async function getMemoryRecycleBin(limit: number = 50): Promise<MemoryRec
 function maintainMemory(path: string, payload: { target: string; hours?: number }): Promise<MemoryMaintenanceActionPayload> {
   return requestJson<MemoryMaintenanceActionPayload>(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1273,8 +1179,7 @@ export async function rebuildMemoryRuntimeVectors(payload: {
 } = {}): Promise<MemoryVectorRebuildPayload> {
   return requestJson<MemoryVectorRebuildPayload>('/runtime/vectors/rebuild', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1289,8 +1194,7 @@ export async function getMemoryConfig(): Promise<MemoryConfigPayload> {
 export async function updateMemoryConfig(config: Record<string, unknown>): Promise<{ success: boolean; message?: string }> {
   return requestJson('/config', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config }),
+    body: { config },
   })
 }
 
@@ -1301,8 +1205,7 @@ export async function getMemoryConfigRaw(): Promise<MemoryRawConfigPayload> {
 export async function updateMemoryConfigRaw(config: string): Promise<{ success: boolean; message?: string }> {
   return requestJson('/config/raw', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ config }),
+    body: { config },
   })
 }
 
@@ -1329,8 +1232,7 @@ export async function resolveMemoryImportPath(payload: {
 }): Promise<MemoryImportResolvePathPayload> {
   return requestJson<MemoryImportResolvePathPayload>('/import/resolve-path', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1370,48 +1272,42 @@ export async function createMemoryUploadImport(files: File[], payload: Record<st
 export async function createMemoryPasteImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/paste', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
 export async function createMemoryRawScanImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/raw-scan', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
 export async function createMemoryLpmmOpenieImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/lpmm-openie', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
 export async function createMemoryLpmmConvertImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/lpmm-convert', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
 export async function createMemoryTemporalBackfillImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/temporal-backfill', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
 export async function createMemoryMaibotMigrationImport(payload: Record<string, unknown>): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>('/import/maibot-migration', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1429,8 +1325,7 @@ export async function retryMemoryImportTask(
 ): Promise<MemoryImportActionPayload> {
   return requestJson<MemoryImportActionPayload>(`/import/tasks/${encodeURIComponent(taskId)}/retry`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 
@@ -1445,8 +1340,7 @@ export async function getMemoryTuningTasks(limit: number = 20): Promise<MemoryTa
 export async function createMemoryTuningTask(payload: Record<string, unknown>): Promise<{ success: boolean; task?: MemoryTaskPayload }> {
   return requestJson('/retrieval_tuning/tasks', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload,
   })
 }
 

@@ -188,10 +188,7 @@ export function useAutoSave(
     async (sectionName: ConfigSectionName, sectionData: unknown) => {
       try {
         setAutoSaving(true)
-        const result = await updateBotConfigSection(sectionName, sectionData)
-        if (!result.success) {
-          throw new Error(result.error)
-        }
+        await updateBotConfigSection(sectionName, sectionData)
         setHasUnsavedChanges(false)
         onSaveSuccess?.()
       } catch (error) {

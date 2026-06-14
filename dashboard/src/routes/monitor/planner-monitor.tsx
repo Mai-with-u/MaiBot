@@ -10,18 +10,17 @@ import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useState, useEffect, useCallback } from 'react'
-import { 
-  getPlannerOverview, 
-  getChatLogs, 
-  getLogDetail, 
-  type PlannerOverview, 
-  type PlanLogDetail, 
-  type PaginatedChatLogs,
-  type ChatSummary 
+import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  getPlannerOverview,
+  getChatLogs,
+  getLogDetail,
+  type PlanLogDetail,
+  type ChatSummary
 } from '@/lib/planner-api'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useChatNameMap, formatTimestamp, formatRelativeTime, useAutoRefresh } from './use-monitor'
+import { useChatNameMap, formatTimestamp, formatRelativeTime } from './use-monitor'
 
 interface PlannerMonitorProps {
   autoRefresh: boolean
@@ -29,92 +28,59 @@ interface PlannerMonitorProps {
 }
 
 export function PlannerMonitor({ autoRefresh, refreshKey }: PlannerMonitorProps) {
+  const queryClient = useQueryClient()
+
   // 视图状态: 'overview' | 'chat-logs'
   const [view, setView] = useState<'overview' | 'chat-logs'>('overview')
   const [selectedChat, setSelectedChat] = useState<ChatSummary | null>(null)
-  
+
   // 聊天名称映射
   const { getChatName } = useChatNameMap()
-  
-  // 总览数据
-  const [overview, setOverview] = useState<PlannerOverview | null>(null)
-  const [overviewLoading, setOverviewLoading] = useState(true)
-  
-  // 聊天日志数据
-  const [chatLogs, setChatLogs] = useState<PaginatedChatLogs | null>(null)
-  const [chatLogsLoading, setChatLogsLoading] = useState(false)
+
+  // 聊天日志查询参数
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [jumpToPage, setJumpToPage] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchInput, setSearchInput] = useState('')
-  
+
   // 详情弹窗
   const [selectedLog, setSelectedLog] = useState<PlanLogDetail | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
 
-  // 加载总览数据
-  const loadOverview = useCallback(async () => {
-    try {
-      setOverviewLoading(true)
-      const data = await getPlannerOverview()
-      setOverview(data)
-    } catch (error) {
-      console.error('加载规划器总览失败:', error)
-    } finally {
-      setOverviewLoading(false)
-    }
-  }, [])
+  // 总览数据：仅在总览视图开启 10 秒轮询（与原 useAutoRefresh 行为一致）
+  const overviewQuery = useQuery({
+    queryKey: ['planner', 'overview'],
+    queryFn: getPlannerOverview,
+    refetchInterval: autoRefresh && view === 'overview' ? 10000 : false,
+  })
+  const overview = overviewQuery.data ?? null
+  const overviewLoading = overviewQuery.isPending
 
-  // 加载聊天日志
-  const loadChatLogs = useCallback(async () => {
-    if (!selectedChat) return
-    try {
-      setChatLogsLoading(true)
-      const data = await getChatLogs(selectedChat.chat_id, page, pageSize, searchQuery || undefined)
-      setChatLogs(data)
-    } catch (error) {
-      console.error('加载聊天日志失败:', error)
-    } finally {
-      setChatLogsLoading(false)
-    }
-  }, [selectedChat, page, pageSize, searchQuery])
+  // 聊天日志数据：查询参数即缓存键，翻页/搜索变化自动重新拉取；
+  // 仅在进入聊天日志视图且选中聊天时启用，并随轮询刷新
+  const chatLogsQuery = useQuery({
+    queryKey: ['planner', 'chat-logs', {
+      chatId: selectedChat?.chat_id,
+      page,
+      pageSize,
+      search: searchQuery,
+    }],
+    queryFn: () =>
+      getChatLogs(selectedChat!.chat_id, page, pageSize, searchQuery || undefined),
+    enabled: view === 'chat-logs' && !!selectedChat,
+    refetchInterval: autoRefresh && view === 'chat-logs' ? 10000 : false,
+  })
+  const chatLogs = chatLogsQuery.data ?? null
+  const chatLogsLoading = chatLogsQuery.isPending
 
-  // 初始加载
-  useEffect(() => {
-    loadOverview()
-  }, [loadOverview])
-
-  // 响应外部刷新
+  // 响应外部刷新信号：按 'planner' 前缀整体失效，触发当前视图重新拉取
   useEffect(() => {
     if (refreshKey > 0) {
-      if (view === 'overview') {
-        loadOverview()
-      } else {
-        loadChatLogs()
-      }
+      queryClient.invalidateQueries({ queryKey: ['planner'] })
     }
-  }, [refreshKey, view, loadOverview, loadChatLogs])
-
-  // 加载聊天日志
-  useEffect(() => {
-    if (view === 'chat-logs' && selectedChat) {
-      loadChatLogs()
-    }
-  }, [view, selectedChat, loadChatLogs])
-
-  // 自动刷新
-  useAutoRefresh(
-    autoRefresh,
-    useCallback(() => {
-      if (view === 'overview') {
-        loadOverview()
-      } else {
-        loadChatLogs()
-      }
-    }, [view, loadOverview, loadChatLogs])
-  )
+  }, [refreshKey, queryClient])
 
   const handleChatClick = (chat: ChatSummary) => {
     setSelectedChat(chat)
@@ -127,7 +93,6 @@ export function PlannerMonitor({ autoRefresh, refreshKey }: PlannerMonitorProps)
   const handleBackToOverview = () => {
     setView('overview')
     setSelectedChat(null)
-    setChatLogs(null)
     setSearchQuery('')
     setSearchInput('')
   }

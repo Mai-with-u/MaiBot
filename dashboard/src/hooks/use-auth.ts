@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { checkAuthStatus } from '@/lib/fetch-with-auth'
+
+import { checkAuthStatus } from '@/lib/auth'
+import { authApi } from '@/lib/http'
 
 export function useAuthGuard() {
   const navigate = useNavigate()
@@ -49,18 +51,8 @@ export async function checkAuth(): Promise<boolean> {
  */
 export async function checkFirstSetup(): Promise<boolean> {
   try {
-    const response = await fetch('/api/webui/setup/status', {
-      method: 'GET',
-      credentials: 'include',
-    })
-
-    const data = await response.json()
-
-    if (response.ok) {
-      return data.is_first_setup
-    }
-
-    return false
+    const data = await authApi.get<{ is_first_setup: boolean }>('/api/webui/setup/status')
+    return data.is_first_setup
   } catch (error) {
     console.error('检查首次配置状态失败:', error)
     return false

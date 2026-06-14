@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type MouseEvent } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -49,18 +49,7 @@ import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, Save, Search, Info, Check, ChevronsUpDown, RefreshCw, Loader2, GraduationCap, Share2, AlertTriangle, Settings, Zap } from 'lucide-react'
-import {
-  getModelConfig,
-  getModelConfigCached,
-  getModelConfigSchema,
-  testProviderConnection,
-  updateModelConfig,
-  updateModelConfigSection,
-} from '@/lib/config-api'
-import type { TestConnectionResult } from '@/lib/config-api'
 import { resolveFieldLabel } from '@/lib/config-label'
-import type { ConfigSchema } from '@/types/config-schema'
-import { useToast } from '@/hooks/use-toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { RestartOverlay } from '@/components/restart-overlay'
@@ -68,24 +57,14 @@ import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
 import { SharePackDialog } from '@/components/share-pack-dialog'
 import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
-import { useModelTour, useModelFetcher, useModelAutoSave } from './model/hooks'
+import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import { ProviderForm } from './modelProvider/ProviderForm'
 import { ProviderList } from './modelProvider/ProviderList'
-import type { APIProvider, DeleteConfirmState } from './modelProvider/types'
-import { cleanProviderData } from './modelProvider/utils'
+import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
-import type { ModelInfo, ProviderConfig, ModelTaskConfig, TaskConfig } from './model/types'
+import type { ModelInfo } from './model/types'
 
-/** Unwrap backend `{ success, config }` envelope to get the actual config */
-function unwrapModelConfig(data: unknown): Record<string, unknown> {
-  if (data && typeof data === 'object' && 'config' in data) {
-    return (data as { config: Record<string, unknown> }).config
-  }
-  return data as Record<string, unknown>
-}
-
-const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
 const MODEL_CONFIG_TABS = ['providers', 'models', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
 
@@ -96,14 +75,6 @@ function getInitialModelConfigTab(): ModelConfigTab {
 
   const tab = new URLSearchParams(window.location.search).get('tab')
   return MODEL_CONFIG_TABS.includes(tab as ModelConfigTab) ? (tab as ModelConfigTab) : 'providers'
-}
-
-function getRequiredTaskNames(schema: ConfigSchema | null): Set<string> {
-  return new Set(
-    (schema?.fields ?? [])
-      .filter((field) => field.type === 'object' && !field.advanced && !ADVANCED_MODEL_TASK_NAMES.has(field.name))
-      .map((field) => field.name)
-  )
 }
 
 // 主导出组件：包装 RestartProvider
@@ -118,184 +89,110 @@ export function ModelConfigPage() {
 // 内部实现组件
 function ModelConfigPageContent() {
   const { i18n } = useTranslation()
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [providers, setProviders] = useState<string[]>([])
-  const [providerConfigs, setProviderConfigs] = useState<ProviderConfig[]>([])
-  const [apiProviders, setApiProviders] = useState<APIProvider[]>([])
-  const [modelNames, setModelNames] = useState<string[]>([])
-  const [taskConfig, setTaskConfig] = useState<ModelTaskConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [autoSaving, setAutoSaving] = useState(false)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [editingModel, setEditingModel] = useState<ModelInfo | null>(null)
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
-  const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
-  const [providerDialogOpen, setProviderDialogOpen] = useState(false)
-  const [editingProvider, setEditingProvider] = useState<APIProvider | null>(null)
-  const [editingProviderIndex, setEditingProviderIndex] = useState<number | null>(null)
-  const [providerDeleteDialogOpen, setProviderDeleteDialogOpen] = useState(false)
-  const [deletingProviderIndex, setDeletingProviderIndex] = useState<number | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedModels, setSelectedModels] = useState<Set<number>>(new Set())
-  const [selectedProviders, setSelectedProviders] = useState<Set<number>>(new Set())
-  const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false)
-  const [providerBatchDeleteDialogOpen, setProviderBatchDeleteDialogOpen] = useState(false)
-  const [testingProviders, setTestingProviders] = useState<Set<string>>(new Set())
-  const [testResults, setTestResults] = useState<Map<string, TestConnectionResult>>(new Map())
-  const [deleteConfirmState, setDeleteConfirmState] = useState<DeleteConfirmState>({
-    isOpen: false,
-    providersToDelete: [],
-    affectedModels: [],
-    pendingProviders: [],
-    context: 'auto',
-    oldProviders: [],
-  })
-  const [taskConfigSchema, setTaskConfigSchema] = useState<ConfigSchema | null>(null)
-  const taskConfigSchemaRef = useRef<ConfigSchema | null>(null)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
-  const [jumpToPage, setJumpToPage] = useState('')
+  const { isRestarting } = useRestart()
+
+  // 核心领域 hook：models / apiProviders / model_task_config 三份草稿及其全部编排
+  const mc = useModelConfig()
+  const {
+    // 草稿态
+    models,
+    providers,
+    apiProviders,
+    modelNames,
+    taskConfig,
+    taskConfigSchema,
+    // 加载 / 保存
+    loading,
+    saving,
+    autoSaving,
+    hasUnsavedChanges,
+    saveConfig,
+    // 任务配置问题
+    invalidModelRefs,
+    emptyTasks,
+    handleRemoveInvalidRefs,
+    // 模型编辑
+    editDialogOpen,
+    setEditDialogOpen,
+    editingModel,
+    setEditingModel,
+    editingIndex,
+    formErrors,
+    setFormErrors,
+    handleSaveEdit,
+    handleEditDialogClose,
+    deleteDialogOpen,
+    setDeleteDialogOpen,
+    deletingIndex,
+    openDeleteDialog,
+    handleConfirmDelete,
+    // 提供商编辑
+    providerDialogOpen,
+    setProviderDialogOpen,
+    editingProvider,
+    editingProviderIndex,
+    openProviderDialog: openProviderDialogBase,
+    handleSaveProviderEdit,
+    providerDeleteDialogOpen,
+    setProviderDeleteDialogOpen,
+    deletingProviderIndex,
+    openProviderDeleteDialog,
+    handleConfirmProviderDelete,
+    // 级联删除确认
+    deleteConfirmState,
+    handleConfirmDeleteProviderImpact,
+    handleCancelDeleteProviderImpact,
+    // 连接测试
+    testingProviders,
+    testResults,
+    handleTestProviderConnection,
+    handleTestAllProviderConnections,
+    // 模型批量
+    selectedModels,
+    setSelectedModels,
+    toggleModelSelection,
+    toggleSelectAll,
+    batchDeleteDialogOpen,
+    setBatchDeleteDialogOpen,
+    openBatchDeleteDialog,
+    handleConfirmBatchDelete,
+    // 提供商批量
+    selectedProviders,
+    toggleProviderSelection,
+    toggleSelectAllProviders,
+    providerBatchDeleteDialogOpen,
+    setProviderBatchDeleteDialogOpen,
+    openProviderBatchDeleteDialog,
+    handleConfirmProviderBatchDelete,
+    // 任务配置
+    updateTaskConfig,
+    // 搜索 / 分页
+    searchQuery,
+    setSearchQuery,
+    filteredModels,
+    paginatedModels,
+    page,
+    setPage,
+    pageSize,
+    setPageSize,
+    jumpToPage,
+    setJumpToPage,
+    handleJumpToPage,
+    isModelUsed,
+    getProviderConfig,
+    // embedding 警告
+    embeddingWarning,
+  } = mc
+
+  // 纯 UI 态（不属于配置草稿，留在渲染层）
   const [activeTab, setActiveTab] = useState<ModelConfigTab>(getInitialModelConfigTab)
-  
   const [advancedModelSettingsVisible, setAdvancedModelSettingsVisible] = useState(false)
   const [advancedTaskSettingsVisible, setAdvancedTaskSettingsVisible] = useState(false)
+  const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
+  const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
   const [tourEntryVisible, setTourEntryVisible] = useState(
     () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
   )
-  
-  // 模型 Combobox 状态
-  const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
-  const providerAutoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const providersSnapshotRef = useRef<string | null>(null)
-  
-  // 嵌入模型警告相关状态
-  const [embeddingWarningOpen, setEmbeddingWarningOpen] = useState(false)
-  const previousEmbeddingModelsRef = useRef<string[]>([])
-  const pendingEmbeddingUpdateRef = useRef<{ field: keyof TaskConfig; value: string[] | number } | null>(null)
-  
-  // 任务配置问题检查状态
-  const [invalidModelRefs, setInvalidModelRefs] = useState<{ taskName: string; invalidModels: string[] }[]>([])
-  const [emptyTasks, setEmptyTasks] = useState<string[]>([])
-  
-  // 表单验证错误状态
-  const [formErrors, setFormErrors] = useState<{
-    name?: string
-    api_provider?: string
-    model_identifier?: string
-  }>({})
-  
-  const { toast } = useToast()
-  const { isRestarting } = useRestart()
-  
-  // 自动保存 (使用 hook 封装的逻辑)
-  const { clearTimers: clearAutoSaveTimers, initialLoadRef, resetSnapshots } = useModelAutoSave({
-    models,
-    taskConfig,
-    onSavingChange: setAutoSaving,
-    onUnsavedChange: setHasUnsavedChanges,
-  })
-
-  // 检查任务配置问题
-  const checkTaskConfigIssues = useCallback((
-    taskConf: ModelTaskConfig | null,
-    modelList: ModelInfo[],
-    schema?: ConfigSchema | null
-  ) => {
-    if (!taskConf) return
-    
-    const modelNameSet = new Set(modelList.map(m => m.name))
-    const requiredTaskNames = getRequiredTaskNames(schema ?? taskConfigSchemaRef.current)
-    const invalidRefs: { taskName: string; invalidModels: string[] }[] = []
-    const emptyTaskList: string[] = []
-    
-    for (const [key, task] of Object.entries(taskConf)) {
-      if (!task) continue
-      
-      // 检查是否有模型
-      if (!task.model_list || task.model_list.length === 0) {
-        if (requiredTaskNames.has(key)) {
-          emptyTaskList.push(key)
-        }
-        continue
-      }
-      
-      // 检查是否引用了不存在的模型
-      const invalid = task.model_list.filter(modelName => !modelNameSet.has(modelName))
-      if (invalid.length > 0) {
-        invalidRefs.push({ taskName: key, invalidModels: invalid })
-      }
-    }
-    
-    setInvalidModelRefs(invalidRefs)
-    setEmptyTasks(emptyTaskList)
-  }, [])
-  
-  // 加载配置
-  const loadConfig = useCallback(async () => {
-    try {
-      setLoading(true)
-      const [result, schemaResult] = await Promise.all([getModelConfigCached(), getModelConfigSchema()])
-      if (!result.success) {
-        toast({
-          title: '加载失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        setLoading(false)
-        return
-      }
-      const config = unwrapModelConfig(result.data)
-      const modelList = (config.models as ModelInfo[]) || []
-      setModels(modelList)
-      setModelNames(modelList.map((m) => m.name))
-      
-      const providerList = (config.api_providers as ProviderConfig[]) || []
-      setProviders(providerList.map((p) => p.name))
-      setProviderConfigs(providerList)
-      setApiProviders(providerList.map((provider) => cleanProviderData(provider as APIProvider)))
-      providersSnapshotRef.current = JSON.stringify(providerList.map((provider) => cleanProviderData(provider as APIProvider)))
-      
-      const taskConf = (config.model_task_config as ModelTaskConfig) || null
-      setTaskConfig(taskConf)
-      resetSnapshots(modelList, taskConf)
-      
-      // 解析 model_task_config 的 schema
-      let nextTaskConfigSchema: ConfigSchema | null = null
-      if (schemaResult.success && schemaResult.data) {
-        const schema = (schemaResult.data as unknown as Record<string, unknown>).schema as ConfigSchema
-        nextTaskConfigSchema = schema.nested?.model_task_config ?? null
-        taskConfigSchemaRef.current = nextTaskConfigSchema
-        setTaskConfigSchema(nextTaskConfigSchema)
-      }
-      
-      // 检查任务配置问题
-      checkTaskConfigIssues(taskConf, modelList, nextTaskConfigSchema)
-      
-      // 初始化上一次的 embedding 模型列表
-      const embeddingModels = taskConf?.embedding?.model_list || []
-      previousEmbeddingModelsRef.current = [...embeddingModels]
-      setHasUnsavedChanges(false)
-      initialLoadRef.current = false
-    } catch (error) {
-      console.error('加载配置失败:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [initialLoadRef, checkTaskConfigIssues, resetSnapshots])
-
-  // 初始加载
-  useEffect(() => {
-    loadConfig()
-  }, [loadConfig])
-
-  // 获取指定提供商的配置
-  const getProviderConfig = useCallback((providerName: string): ProviderConfig | undefined => {
-    return providerConfigs.find(p => p.name === providerName)
-  }, [providerConfigs])
 
   // 模型列表获取 (使用 hook 封装的逻辑)
   const {
@@ -306,6 +203,15 @@ function ModelConfigPageContent() {
     fetchModelsForProvider,
     clearModels,
   } = useModelFetcher({ getProviderConfig })
+
+  // 打开模型编辑对话框：重置高级设置可见性后委托核心 hook
+  const openEditDialog = (model: ModelInfo | null, index: number | null) => {
+    mc.openEditDialog(model, index, () => setAdvancedModelSettingsVisible(false))
+  }
+
+  const openProviderDialog = (provider: APIProvider | null, index: number | null) => {
+    openProviderDialogBase(provider, index)
+  }
 
   // 当选择的提供商变化时，获取模型列表
   useEffect(() => {
@@ -320,317 +226,14 @@ function ModelConfigPageContent() {
     setTourEntryVisible(false)
   }
 
-  const syncProviderState = useCallback((nextProviders: APIProvider[]) => {
-    const cleanedProviders = nextProviders.map(cleanProviderData)
-    setApiProviders(cleanedProviders)
-    setProviders(cleanedProviders.map((provider) => provider.name))
-    setProviderConfigs(cleanedProviders.map((provider) => ({
-      name: provider.name,
-      base_url: provider.base_url,
-      api_key: provider.api_key,
-      client_type: provider.client_type,
-      max_retry: provider.max_retry ?? 2,
-      timeout: provider.timeout ?? 30,
-      retry_interval: provider.retry_interval ?? 10,
-    })))
-  }, [])
-
-  const removeModelsForProviders = useCallback((
-    sourceModels: ModelInfo[],
-    sourceTaskConfig: ModelTaskConfig | null,
-    removedModels: unknown[],
-  ) => {
-    const removedModelNames = new Set(
-      removedModels
-        .map((model) => (typeof model === 'object' && model !== null && 'name' in model ? String((model as Record<string, unknown>).name) : ''))
-        .filter(Boolean)
-    )
-    if (removedModelNames.size === 0) {
-      return { models: sourceModels, taskConfig: sourceTaskConfig }
-    }
-
-    const nextModels = sourceModels.filter((model) => !removedModelNames.has(model.name))
-    if (!sourceTaskConfig) {
-      return { models: nextModels, taskConfig: sourceTaskConfig }
-    }
-
-    const nextTaskConfig: ModelTaskConfig = {}
-    for (const [taskName, task] of Object.entries(sourceTaskConfig)) {
-      nextTaskConfig[taskName] = {
-        ...task,
-        model_list: (task?.model_list || []).filter((modelName) => !removedModelNames.has(modelName)),
-      }
-    }
-    return { models: nextModels, taskConfig: nextTaskConfig }
-  }, [])
-
-  const checkDeleteProviderImpact = useCallback(async (
-    nextProviders: APIProvider[],
-    context: 'auto' | 'manual' = 'auto'
-  ) => {
-    const oldProviderNames = new Set(apiProviders.map((provider) => provider.name))
-    const nextProviderNames = new Set(nextProviders.map((provider) => provider.name))
-    const deletedProviders = Array.from(oldProviderNames).filter((name) => !nextProviderNames.has(name))
-
-    if (deletedProviders.length === 0) {
-      return { shouldProceed: true }
-    }
-
-    const affectedModels = models.filter((model) => deletedProviders.includes(model.api_provider))
-    if (affectedModels.length === 0) {
-      return { shouldProceed: true }
-    }
-
-    setDeleteConfirmState({
-      isOpen: true,
-      providersToDelete: deletedProviders,
-      affectedModels,
-      pendingProviders: nextProviders,
-      context,
-      oldProviders: [...apiProviders],
-    })
-    return { shouldProceed: false }
-  }, [apiProviders, models])
-
-  const saveProviders = useCallback(async (
-    nextProviders: APIProvider[],
-    context: 'auto' | 'manual' = 'auto',
-    affectedModels: unknown[] = []
-  ) => {
-    const cleanedProviders = nextProviders.map(cleanProviderData)
-    const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(models, taskConfig, affectedModels)
-
-    if (context === 'auto' && affectedModels.length === 0) {
-      const result = await updateModelConfigSection('api_providers', cleanedProviders)
-      if (!result.success) {
-        throw new Error(result.error || '保存提供商失败')
-      }
-    } else {
-      const resultGet = await getModelConfig()
-      if (!resultGet.success) {
-        throw new Error(resultGet.error || '加载模型配置失败')
-      }
-      const config = unwrapModelConfig(resultGet.data)
-      config.api_providers = cleanedProviders
-      config.models = nextModels.map(cleanModelForSave)
-      config.model_task_config = nextTaskConfig
-      const resultUpdate = await updateModelConfig(config)
-      if (!resultUpdate.success) {
-        throw new Error(resultUpdate.error || '保存模型配置失败')
-      }
-    }
-
-    syncProviderState(cleanedProviders)
-    setModels(nextModels)
-    setModelNames(nextModels.map((model) => model.name))
-    setTaskConfig(nextTaskConfig)
-    checkTaskConfigIssues(nextTaskConfig, nextModels)
-    providersSnapshotRef.current = JSON.stringify(cleanedProviders)
-    setHasUnsavedChanges(false)
-
-  }, [checkTaskConfigIssues, models, removeModelsForProviders, syncProviderState, taskConfig])
-
-  const autoSaveProviders = useCallback(async (nextProviders: APIProvider[]) => {
-    if (initialLoadRef.current) return
-    const { shouldProceed } = await checkDeleteProviderImpact(nextProviders, 'auto')
-    if (!shouldProceed) {
-      setHasUnsavedChanges(true)
-      return
-    }
-
-    try {
-      setAutoSaving(true)
-      await saveProviders(nextProviders, 'auto')
-    } catch (error) {
-      console.error('自动保存提供商失败:', error)
-      toast({
-        title: '自动保存失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-      setHasUnsavedChanges(true)
-    } finally {
-      setAutoSaving(false)
-    }
-  }, [checkDeleteProviderImpact, initialLoadRef, saveProviders, toast])
-
-  useEffect(() => {
-    if (initialLoadRef.current) return
-    const snapshot = JSON.stringify(apiProviders.map(cleanProviderData))
-    if (providersSnapshotRef.current === null) {
-      providersSnapshotRef.current = snapshot
-      return
-    }
-    if (snapshot === providersSnapshotRef.current) return
-
-    setHasUnsavedChanges(true)
-    if (providerAutoSaveTimerRef.current) {
-      clearTimeout(providerAutoSaveTimerRef.current)
-    }
-    providerAutoSaveTimerRef.current = setTimeout(() => {
-      autoSaveProviders(apiProviders)
-    }, 2000)
-
-    return () => {
-      if (providerAutoSaveTimerRef.current) {
-        clearTimeout(providerAutoSaveTimerRef.current)
-      }
-    }
-  }, [apiProviders, autoSaveProviders, initialLoadRef])
-  
-  // 一键删除所有无效模型引用
-  const handleRemoveInvalidRefs = useCallback(() => {
-    if (!taskConfig) return
-    
-    const modelNameSet = new Set(models.map(m => m.name))
-    const newTaskConfig: ModelTaskConfig = {}
-    
-    // 遍历所有任务，过滤掉无效的模型引用
-    for (const [key, task] of Object.entries(taskConfig)) {
-      if (task && task.model_list) {
-        newTaskConfig[key] = { ...task, model_list: task.model_list.filter(modelName => modelNameSet.has(modelName)) }
-      } else {
-        newTaskConfig[key] = task
-      }
-    }
-    
-    setTaskConfig(newTaskConfig)
-    setInvalidModelRefs([])
-    
-    toast({
-      title: '清理完成',
-      description: '已删除所有无效的模型引用',
-    })
-  }, [taskConfig, models, toast])
-
-  // 清理模型中的 null 值（TOML 不支持 null）
-  const cleanModelForSave = (model: ModelInfo): ModelInfo => {
-    const cleaned: ModelInfo = {
-      model_identifier: model.model_identifier,
-      name: model.name,
-      api_provider: model.api_provider,
-      price_in: model.price_in ?? 0,
-      price_out: model.price_out ?? 0,
-      cache: model.cache ?? false,
-      cache_price_in: model.cache_price_in ?? 0,
-      visual: model.visual ?? false,
-      force_stream_mode: model.force_stream_mode ?? false,
-      extra_params: model.extra_params ?? {},
-    }
-    // 只有在有值时才添加可选字段
-    if (model.temperature != null) {
-      cleaned.temperature = model.temperature
-    }
-    if (model.max_tokens != null) {
-      cleaned.max_tokens = model.max_tokens
-    }
-    return cleaned
-  }
-
-  // 保存配置（手动保存）
-  const saveConfig = async () => {
-    try {
-      setSaving(true)
-      
-      // 先取消自动保存定时器
-      clearAutoSaveTimers()
-      if (providerAutoSaveTimerRef.current) {
-        clearTimeout(providerAutoSaveTimerRef.current)
-      }
-
-      const resultGet = await getModelConfig()
-      if (!resultGet.success) {
-        toast({
-          title: '保存失败',
-          description: resultGet.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
-      const config = unwrapModelConfig(resultGet.data)
-      // 清理每个模型中的 null 值
-      config.api_providers = apiProviders.map(cleanProviderData)
-      config.models = models.map(cleanModelForSave)
-      config.model_task_config = taskConfig
-      const resultUpdate = await updateModelConfig(config)
-      if (!resultUpdate.success) {
-        toast({
-          title: '保存失败',
-          description: resultUpdate.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
-      resetSnapshots(config.models as ModelInfo[], taskConfig)
-      providersSnapshotRef.current = JSON.stringify(config.api_providers)
-      setHasUnsavedChanges(false)
-      toast({
-        title: '保存成功',
-        description: '模型配置已保存',
-      })
-      await loadConfig() // 重新加载以更新模型名称列表
-    } catch (error) {
-      console.error('保存配置失败:', error)
-      toast({
-        title: '保存失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // 打开编辑对话框
-  const openEditDialog = (model: ModelInfo | null, index: number | null) => {
-    // 清除表单验证错误
-    setFormErrors({})
-    
-    setEditingModel(
-      model || {
-        model_identifier: '',
-        name: '',
-        api_provider: providers[0] || '',
-        price_in: 0,
-        price_out: 0,
-        cache: false,
-        cache_price_in: 0,
-        temperature: null,
-        max_tokens: null,
-        visual: false,
-        force_stream_mode: false,
-        extra_params: {},
-      }
-    )
-    setAdvancedModelSettingsVisible(false)
-    setEditingIndex(index)
-    setEditDialogOpen(true)
-  }
-
-  const openProviderDialog = (provider: APIProvider | null, index: number | null) => {
-    setEditingProvider(provider || {
-      name: '',
-      base_url: '',
-      api_key: '',
-      client_type: 'openai',
-      max_retry: 2,
-      timeout: 30,
-      retry_interval: 10,
-    })
-    setEditingProviderIndex(index)
-    setProviderDialogOpen(true)
-  }
-
-  const handleActiveTabChange = useCallback((value: string) => {
+  const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
       ? (value as ModelConfigTab)
       : 'providers'
     setActiveTab(nextTab)
     const nextUrl = nextTab === 'providers' ? '/config/model' : `/config/model?tab=${nextTab}`
     window.history.replaceState(null, '', nextUrl)
-  }, [])
+  }
 
   // Tour 引导 (使用 hook 封装的逻辑)
   const { startTour: handleStartTour, isRunning: tourIsRunning } = useModelTour({
@@ -642,489 +245,6 @@ function ModelConfigPageContent() {
     onOpenModelsTab: () => handleActiveTabChange('models'),
     onOpenTasksTab: () => handleActiveTabChange('tasks'),
   })
-
-  const handleSaveProviderEdit = (provider: APIProvider, index: number | null) => {
-    const providerToSave = cleanProviderData(provider)
-    if (index !== null) {
-      const nextProviders = [...apiProviders]
-      nextProviders[index] = providerToSave
-      syncProviderState(nextProviders)
-    } else {
-      syncProviderState([...apiProviders, providerToSave])
-    }
-    setProviderDialogOpen(false)
-    setEditingProvider(null)
-    setEditingProviderIndex(null)
-    toast({
-      title: index !== null ? '提供商已更新' : '提供商已添加',
-      description: '配置将在 2 秒后自动保存，或点击右上角"保存配置"按钮立即保存',
-    })
-  }
-
-  // 保存编辑
-  const handleSaveEdit = () => {
-    if (!editingModel) return
-
-    // 验证必填项
-    const errors: { name?: string; api_provider?: string; model_identifier?: string } = {}
-    if (!editingModel.name?.trim()) {
-      errors.name = '请输入模型名称'
-    } else {
-      // 检查名称是否与现有模型重复
-      const isDuplicate = models.some((m, index) => {
-        // 编辑时排除自身
-        if (editingIndex !== null && index === editingIndex) {
-          return false
-        }
-        return m.name.trim().toLowerCase() === editingModel.name.trim().toLowerCase()
-      })
-      if (isDuplicate) {
-        errors.name = '模型名称已存在，请使用其他名称'
-      }
-    }
-    if (!editingModel.api_provider?.trim()) {
-      errors.api_provider = '请选择 API 提供商'
-    }
-    if (!editingModel.model_identifier?.trim()) {
-      errors.model_identifier = '请输入模型标识符'
-    }
-
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors)
-      return
-    }
-
-    // 清除错误状态
-    setFormErrors({})
-
-    // 填充空值的默认值，并移除 null 值的可选字段（TOML 不支持 null）
-    const modelToSave: ModelInfo = {
-      model_identifier: editingModel.model_identifier,
-      name: editingModel.name,
-      api_provider: editingModel.api_provider,
-      price_in: editingModel.price_in ?? 0,
-      price_out: editingModel.price_out ?? 0,
-      cache: editingModel.cache ?? false,
-      cache_price_in: editingModel.cache_price_in ?? 0,
-      visual: editingModel.visual ?? false,
-      force_stream_mode: editingModel.force_stream_mode ?? false,
-      extra_params: editingModel.extra_params ?? {},
-    }
-    
-    // 只有在有值时才添加可选字段
-    if (editingModel.temperature != null) {
-      modelToSave.temperature = editingModel.temperature
-    }
-    if (editingModel.max_tokens != null) {
-      modelToSave.max_tokens = editingModel.max_tokens
-    }
-
-    let newModels: ModelInfo[]
-    let oldModelName: string | null = null
-    
-    if (editingIndex !== null) {
-      // 记录旧的模型名称，用于更新任务配置
-      oldModelName = models[editingIndex].name
-      newModels = [...models]
-      newModels[editingIndex] = modelToSave
-    } else {
-      newModels = [...models, modelToSave]
-    }
-    
-    setModels(newModels)
-    setModelNames(newModels.map((m) => m.name))
-
-    // 如果模型名称发生变化，更新任务配置中对该模型的引用
-    if (oldModelName && oldModelName !== modelToSave.name && taskConfig) {
-      const updateModelList = (list: string[]): string[] => {
-        return list.map(name => name === oldModelName ? modelToSave.name : name)
-      }
-      
-      const newTaskConfig: ModelTaskConfig = {}
-      for (const [key, task] of Object.entries(taskConfig)) {
-        newTaskConfig[key] = { ...task, model_list: updateModelList(task?.model_list || []) }
-      }
-      setTaskConfig(newTaskConfig)
-    }
-
-    setEditDialogOpen(false)
-    setEditingModel(null)
-    setEditingIndex(null)
-    
-    // 提示用户配置将自动保存
-    toast({
-      title: editingIndex !== null ? '模型已更新' : '模型已添加',
-      description: '配置将在 2 秒后自动保存，或点击右上角"保存配置"按钮立即保存',
-    })
-  }
-
-  // 处理编辑对话框关闭
-  const handleEditDialogClose = (open: boolean) => {
-    if (!open && editingModel) {
-      // 关闭时填充默认值
-      const updatedModel = {
-        ...editingModel,
-        price_in: editingModel.price_in ?? 0,
-        price_out: editingModel.price_out ?? 0,
-      }
-      setEditingModel(updatedModel)
-    }
-    setEditDialogOpen(open)
-  }
-
-  // 打开删除确认对话框
-  const openDeleteDialog = (index: number) => {
-    setDeletingIndex(index)
-    setDeleteDialogOpen(true)
-  }
-
-  // 确认删除模型
-  const handleConfirmDelete = () => {
-    if (deletingIndex !== null) {
-      const newModels = models.filter((_, i) => i !== deletingIndex)
-      setModels(newModels)
-      setModelNames(newModels.map((m) => m.name))
-      // 重新检查任务配置问题
-      checkTaskConfigIssues(taskConfig, newModels)
-      toast({
-        title: '删除成功',
-        description: '配置将在 2 秒后自动保存，或点击右上角"保存配置"按钮立即保存',
-      })
-    }
-    setDeleteDialogOpen(false)
-    setDeletingIndex(null)
-  }
-
-  const openProviderDeleteDialog = (index: number) => {
-    setDeletingProviderIndex(index)
-    setProviderDeleteDialogOpen(true)
-  }
-
-  const handleConfirmProviderDelete = async () => {
-    if (deletingProviderIndex !== null) {
-      const nextProviders = apiProviders.filter((_, index) => index !== deletingProviderIndex)
-      const { shouldProceed } = await checkDeleteProviderImpact(nextProviders, 'manual')
-      if (shouldProceed) {
-        syncProviderState(nextProviders)
-        toast({
-          title: '删除成功',
-          description: '提供商已从列表中移除',
-        })
-      }
-    }
-    setProviderDeleteDialogOpen(false)
-    setDeletingProviderIndex(null)
-  }
-
-  const toggleProviderSelection = (index: number) => {
-    const nextSelected = new Set(selectedProviders)
-    if (nextSelected.has(index)) {
-      nextSelected.delete(index)
-    } else {
-      nextSelected.add(index)
-    }
-    setSelectedProviders(nextSelected)
-  }
-
-  const toggleSelectAllProviders = () => {
-    if (selectedProviders.size === apiProviders.length) {
-      setSelectedProviders(new Set())
-    } else {
-      setSelectedProviders(new Set(apiProviders.map((_, index) => index)))
-    }
-  }
-
-  const openProviderBatchDeleteDialog = () => {
-    if (selectedProviders.size === 0) {
-      toast({
-        title: '提示',
-        description: '请先选择要删除的提供商',
-        variant: 'default',
-      })
-      return
-    }
-    setProviderBatchDeleteDialogOpen(true)
-  }
-
-  const handleConfirmProviderBatchDelete = async () => {
-    const nextProviders = apiProviders.filter((_, index) => !selectedProviders.has(index))
-    const { shouldProceed } = await checkDeleteProviderImpact(nextProviders, 'manual')
-    if (shouldProceed) {
-      const deletedCount = selectedProviders.size
-      syncProviderState(nextProviders)
-      setSelectedProviders(new Set())
-      toast({
-        title: '批量删除成功',
-        description: `已删除 ${deletedCount} 个提供商`,
-      })
-    }
-    setProviderBatchDeleteDialogOpen(false)
-  }
-
-  const handleConfirmDeleteProviderImpact = async () => {
-    try {
-      const savingFlag = deleteConfirmState.context === 'auto' ? setAutoSaving : setSaving
-      const saveContext = deleteConfirmState.context === 'auto' ? 'auto' : 'manual'
-      savingFlag(true)
-      await saveProviders(
-        deleteConfirmState.pendingProviders,
-        saveContext,
-        deleteConfirmState.affectedModels
-      )
-      toast({
-        title: '删除成功',
-        description: `已删除 ${deleteConfirmState.providersToDelete.length} 个提供商和 ${deleteConfirmState.affectedModels.length} 个关联模型`,
-      })
-      setDeleteConfirmState({
-        isOpen: false,
-        providersToDelete: [],
-        affectedModels: [],
-        pendingProviders: [],
-        context: 'auto',
-        oldProviders: [],
-      })
-      setSelectedProviders(new Set())
-    } catch (error) {
-      toast({
-        title: '删除失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setSaving(false)
-      setAutoSaving(false)
-    }
-  }
-
-  const handleCancelDeleteProviderImpact = () => {
-    if (deleteConfirmState.oldProviders.length > 0) {
-      syncProviderState(deleteConfirmState.oldProviders)
-    }
-    setDeleteConfirmState({
-      isOpen: false,
-      providersToDelete: [],
-      affectedModels: [],
-      pendingProviders: [],
-      context: 'auto',
-      oldProviders: [],
-    })
-    setHasUnsavedChanges(false)
-  }
-
-  const handleTestProviderConnection = async (providerName: string) => {
-    setTestingProviders((prev) => new Set(prev).add(providerName))
-    try {
-      const result = await testProviderConnection(providerName)
-      if (!result.success) {
-        toast({
-          title: '测试失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        return
-      }
-      const testResult = result.data
-      setTestResults((prev) => new Map(prev).set(providerName, testResult))
-      if (testResult.network_ok && testResult.api_key_valid !== false) {
-        toast({
-          title: testResult.api_key_valid === true ? '连接正常' : '网络连接正常',
-          description: `${providerName} 可以访问 (${testResult.latency_ms}ms)`,
-        })
-      } else {
-        toast({
-          title: testResult.network_ok ? '连接正常但 Key 无效' : '连接失败',
-          description: testResult.error || `${providerName} API Key 无效或无法连接`,
-          variant: 'destructive',
-        })
-      }
-    } catch (error) {
-      toast({
-        title: '测试失败',
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    } finally {
-      setTestingProviders((prev) => {
-        const next = new Set(prev)
-        next.delete(providerName)
-        return next
-      })
-    }
-  }
-
-  const handleTestAllProviderConnections = async () => {
-    for (const provider of apiProviders) {
-      await handleTestProviderConnection(provider.name)
-    }
-  }
-
-  // 切换单个模型选择
-  const toggleModelSelection = (index: number) => {
-    const newSelected = new Set(selectedModels)
-    if (newSelected.has(index)) {
-      newSelected.delete(index)
-    } else {
-      newSelected.add(index)
-    }
-    setSelectedModels(newSelected)
-  }
-
-  // 全选/取消全选
-  const toggleSelectAll = () => {
-    if (selectedModels.size === filteredModels.length) {
-      setSelectedModels(new Set())
-    } else {
-      const allIndices = filteredModels.map((_, idx) => 
-        models.findIndex(m => m === filteredModels[idx])
-      )
-      setSelectedModels(new Set(allIndices))
-    }
-  }
-
-  // 打开批量删除确认对话框
-  const openBatchDeleteDialog = () => {
-    if (selectedModels.size === 0) {
-      toast({
-        title: '提示',
-        description: '请先选择要删除的模型',
-        variant: 'default',
-      })
-      return
-    }
-    setBatchDeleteDialogOpen(true)
-  }
-
-  // 确认批量删除
-  const handleConfirmBatchDelete = () => {
-    const deletedCount = selectedModels.size
-    const newModels = models.filter((_, index) => !selectedModels.has(index))
-    setModels(newModels)
-    setModelNames(newModels.map((m) => m.name))
-    // 重新检查任务配置问题
-    checkTaskConfigIssues(taskConfig, newModels)
-    setSelectedModels(new Set())
-    setBatchDeleteDialogOpen(false)
-    toast({
-      title: '批量删除成功',
-      description: `已删除 ${deletedCount} 个模型，配置将在 2 秒后自动保存`,
-    })
-  }
-
-  // 更新任务配置
-  const updateTaskConfig = (
-    taskName: string,
-    field: keyof TaskConfig,
-    value: string[] | number | string
-  ) => {
-    if (!taskConfig) return
-    
-    // 检测 embedding 模型列表变化
-    if (taskName === 'embedding' && field === 'model_list' && Array.isArray(value)) {
-      const previousModels = previousEmbeddingModelsRef.current
-      const newModels = value as string[]
-      
-      const hasChanges = 
-        previousModels.length !== newModels.length ||
-        previousModels.some(model => !newModels.includes(model)) ||
-        newModels.some(model => !previousModels.includes(model))
-      
-      if (hasChanges && previousModels.length > 0) {
-        pendingEmbeddingUpdateRef.current = { field, value }
-        setEmbeddingWarningOpen(true)
-        return
-      }
-    }
-    
-    // 正常更新配置
-    const newTaskConfig = {
-      ...taskConfig,
-      [taskName]: {
-        ...taskConfig[taskName],
-        [field]: value,
-      },
-    }
-    setTaskConfig(newTaskConfig)
-    
-    // 重新检查任务配置问题
-    checkTaskConfigIssues(newTaskConfig, models)
-    
-    // 如果是 embedding 模型列表，更新 ref
-    if (taskName === 'embedding' && field === 'model_list' && Array.isArray(value)) {
-      previousEmbeddingModelsRef.current = [...(value as string[])]
-    }
-  }
-  
-  // 确认更新嵌入模型
-  const handleConfirmEmbeddingChange = () => {
-    if (!taskConfig || !pendingEmbeddingUpdateRef.current) return
-    
-    const { field, value } = pendingEmbeddingUpdateRef.current
-    
-    const newTaskConfig = {
-      ...taskConfig,
-      embedding: {
-        ...taskConfig.embedding,
-        [field]: value,
-      },
-    }
-    setTaskConfig(newTaskConfig)
-    
-    // 重新检查任务配置问题
-    checkTaskConfigIssues(newTaskConfig, models)
-    
-    // 更新 ref
-    if (field === 'model_list' && Array.isArray(value)) {
-      previousEmbeddingModelsRef.current = [...(value as string[])]
-    }
-    
-    // 清理
-    pendingEmbeddingUpdateRef.current = null
-    setEmbeddingWarningOpen(false)
-    
-    toast({
-      title: '嵌入模型已更新',
-      description: '建议重新生成知识库向量以确保最佳匹配精度',
-    })
-  }
-  
-  // 取消更新嵌入模型
-  const handleCancelEmbeddingChange = () => {
-    pendingEmbeddingUpdateRef.current = null
-    setEmbeddingWarningOpen(false)
-  }
-
-  // 过滤模型列表
-  const filteredModels = models.filter((model) => {
-    if (!searchQuery) return true
-    const query = searchQuery.toLowerCase()
-    return (
-      model.name.toLowerCase().includes(query) ||
-      model.model_identifier.toLowerCase().includes(query) ||
-      model.api_provider.toLowerCase().includes(query)
-    )
-  })
-
-  // 分页逻辑
-  const totalPages = Math.ceil(filteredModels.length / pageSize)
-  const paginatedModels = filteredModels.slice(
-    (page - 1) * pageSize,
-    page * pageSize
-  )
-
-  // 页码跳转
-  const handleJumpToPage = () => {
-    const targetPage = parseInt(jumpToPage)
-    if (targetPage >= 1 && targetPage <= totalPages) {
-      setPage(targetPage)
-      setJumpToPage('')
-    }
-  }
-
-  // 检查模型是否被任务使用
-  const isModelUsed = (modelName: string): boolean => {
-    if (!taskConfig) return false
-    return Object.values(taskConfig).some(task => task?.model_list?.includes(modelName))
-  }
 
   if (loading) {
     return (
@@ -2163,7 +1283,7 @@ function ModelConfigPageContent() {
       </AlertDialog>
 
       {/* 嵌入模型更换警告对话框 */}
-      <AlertDialog open={embeddingWarningOpen} onOpenChange={setEmbeddingWarningOpen}>
+      <AlertDialog open={embeddingWarning.isOpen} onOpenChange={embeddingWarning.setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
@@ -2187,9 +1307,9 @@ function ModelConfigPageContent() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleCancelEmbeddingChange}>取消</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleConfirmEmbeddingChange}
+            <AlertDialogCancel onClick={embeddingWarning.cancel}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={embeddingWarning.confirm}
               className="bg-amber-600 hover:bg-amber-700"
             >
               确认更换

@@ -106,11 +106,7 @@ export function ThemeProvider({
 
     try {
       const result = await getBotConfig()
-      if (!result.success) {
-        return
-      }
-
-      const webuiConfig = result.data.webui as Record<string, unknown> | undefined
+      const webuiConfig = result.webui as Record<string, unknown> | undefined
       if (!webuiConfig || !('webui_style' in webuiConfig)) {
         return
       }
@@ -130,10 +126,7 @@ export function ThemeProvider({
     pendingWebUIStyleRef.current = webuiStyle
 
     try {
-      const result = await updateBotConfigSection('webui', { webui_style: webuiStyle })
-      if (!result.success) {
-        console.warn('保存 WebUI 风格配置失败:', result.error)
-      }
+      await updateBotConfigSection('webui', { webui_style: webuiStyle })
     } catch (error) {
       console.warn('保存 WebUI 风格配置失败:', error)
     } finally {

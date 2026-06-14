@@ -360,15 +360,7 @@ function BotConfigPageContent() {
   const loadSourceCode = useCallback(async () => {
     try {
       const result = await getBotConfigRaw()
-      if (!result.success) {
-        toast({
-          variant: 'destructive',
-          title: '加载失败',
-          description: result.error,
-        })
-        return
-      }
-      const raw = (result.data as unknown as Record<string, unknown>).content as string
+      const raw = (result as unknown as Record<string, unknown>).content as string
       // 将 TOML 基本字符串中的转义序列转换为实际字符以便在编辑器中正确显示
       // 使用正则表达式只处理双引号字符串内的转义序列，不影响单引号字符串
       const unescaped = raw.replace(/"([^"]*)"/g, (_match, content) => {
@@ -395,19 +387,20 @@ function BotConfigPageContent() {
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)
-      const [result, schemaResult] = await Promise.all([getBotConfigCached(), getBotConfigSchema()])
-      if (!result.success) {
+      // 用 allSettled：主配置为必需，schema 为可选，二者失败互不影响
+      const [result, schemaResult] = await Promise.allSettled([getBotConfigCached(), getBotConfigSchema()])
+      if (result.status !== 'fulfilled') {
         toast({
           title: '加载失败',
-          description: result.error,
+          description: result.reason instanceof Error ? result.reason.message : '加载配置失败',
           variant: 'destructive',
         })
         setLoading(false)
         return
       }
-      parseAndSetConfig(result.data)
-      if (schemaResult.success && schemaResult.data) {
-        setConfigSchema((schemaResult.data as unknown as Record<string, unknown>).schema as ConfigSchema)
+      parseAndSetConfig(result.value)
+      if (schemaResult.status === 'fulfilled' && schemaResult.value) {
+        setConfigSchema((schemaResult.value as unknown as Record<string, unknown>).schema as ConfigSchema)
       }
       setHasUnsavedChanges(false)
       initialLoadRef.current = false
@@ -532,18 +525,7 @@ function BotConfigPageContent() {
         return
       }
       
-      const result = await updateBotConfigRaw(escapedSourceCode)
-      if (!result.success) {
-        setHasTomlError(true)
-        const errorMsg = result.error
-        setTomlErrorMessage(errorMsg)
-        toast({
-          variant: 'destructive',
-          title: '保存失败',
-          description: errorMsg,
-        })
-        return
-      }
+      await updateBotConfigRaw(escapedSourceCode)
       setHasUnsavedChanges(false)
       setHasTomlError(false)
       setTomlErrorMessage('')
@@ -585,15 +567,7 @@ function BotConfigPageContent() {
       // 切换回可视化时,直接重新加载配置但不显示全局 loading
       try {
         const result = await getBotConfig()
-        if (!result.success) {
-          toast({
-            title: '加载失败',
-            description: result.error,
-            variant: 'destructive',
-          })
-          return
-        }
-        parseAndSetConfig(result.data)
+        parseAndSetConfig(result)
         setHasUnsavedChanges(false)
       } catch (error) {
         console.error('加载配置失败:', error)
@@ -613,16 +587,7 @@ function BotConfigPageContent() {
       // 取消待处理的自动保存
       cancelPendingAutoSave()
       
-      const result = await updateBotConfig(buildFullConfig())
-      if (!result.success) {
-        toast({
-          title: '保存失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
+      await updateBotConfig(buildFullConfig())
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -665,16 +630,7 @@ function BotConfigPageContent() {
       // 取消待处理的自动保存
       cancelPendingAutoSave()
       
-      const result = await updateBotConfig(buildFullConfig())
-      if (!result.success) {
-        toast({
-          title: '保存失败',
-          description: result.error,
-          variant: 'destructive',
-        })
-        setSaving(false)
-        return
-      }
+      await updateBotConfig(buildFullConfig())
       setHasUnsavedChanges(false)
       toast({
         title: '保存成功',
@@ -815,13 +771,13 @@ function BotConfigPageContent() {
                 onValueChange={(v) => handleModeChange(v as 'visual' | 'source')}
                 className="w-full min-w-0 sm:w-[14rem]"
               >
-                <TabsList className="grid h-9 w-full grid-cols-2">
-                  <TabsTrigger value="visual" className="px-2 text-xs">
-                    <Layout className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-2">
+                  <TabsTrigger value="visual" className="px-2 text-sm">
+                    <Layout className="mr-1 h-4 w-4" />
                     可视化
                   </TabsTrigger>
-                  <TabsTrigger value="source" className="px-2 text-xs">
-                    <Code2 className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                  <TabsTrigger value="source" className="px-2 text-sm">
+                    <Code2 className="mr-1 h-4 w-4" />
                     源代码
                   </TabsTrigger>
                 </TabsList>
@@ -831,10 +787,11 @@ function BotConfigPageContent() {
                 disabled={saving || autoSaving || isRestarting}
                 size="sm"
                 variant="outline"
-                className="h-9 min-w-0 flex-1 sm:w-24 sm:flex-none"
+                className="h-9 w-9 flex-none px-0"
+                aria-label="刷新"
+                title="刷新"
               >
-                <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
-                刷新
+                <RefreshCw className="h-4 w-4" />
               </Button>
               <Button
                 onClick={editMode === 'visual' ? saveConfig : saveSourceCode}

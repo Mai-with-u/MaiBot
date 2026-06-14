@@ -321,7 +321,6 @@ def _brief_candidate(candidate: dict[str, Any], *, query_session_id: str) -> dic
         "score": candidate.get("retrieval_score", candidate.get("score")),
         "session_id": candidate.get("session_id"),
         "same_chat": candidate_session_id == query_session_id,
-        "trigger": candidate.get("trigger"),
         "scene_tags": candidate.get("scene_tags"),
         "scene_cluster_id": candidate.get("scene_cluster_id"),
         "action": candidate.get("action"),
@@ -741,8 +740,7 @@ def _candidate_markdown_lines(candidate: dict[str, Any], rank: int) -> list[str]
             f"path_score={candidate.get('path_score')} session={candidate.get('session_id')} "
             f"({session_scope}) cluster=#{candidate.get('scene_cluster_id')}"
         ),
-        f"  - 场景标签：{candidate.get('scene_tags') or candidate.get('trigger') or ''}",
-        f"  - 触发：{candidate.get('trigger') or ''}",
+        f"  - 场景标签：{candidate.get('scene_tags') or ''}",
         f"  - 行为：{candidate.get('action') or ''}",
         f"  - 结果：{candidate.get('outcome') or ''}",
         (

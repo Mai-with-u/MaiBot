@@ -1,10 +1,12 @@
 /**
  * 模型配置 Pack API
- * 
- * 与 Cloudflare Workers Pack 服务交互
+ *
+ * 与 Cloudflare Workers Pack 服务（statsApi 实例，与统计服务同源）
+ * 和主后端模型配置接口（backendApi 实例）交互。
+ * 请求样板（认证、解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint、业务错误文案与 Pack 服务包络的解包规则。
  */
-
-import { fetchWithAuth } from './fetch-with-auth'
+import { ApiError, backendApi, statsApi } from '@/lib/http'
 
 // ============ 类型定义 ============
 
@@ -135,10 +137,30 @@ export interface ApplyPackConflicts {
   }>
 }
 
-// ============ API 配置 ============
+/**
+ * Pack 服务的业务包络：失败时以 error 字段（而非 message）给出原因，
+ * 因此不使用 requireSuccess，逐函数手动校验。
+ */
+interface PackEnvelope {
+  success: boolean
+  error?: string
+}
 
-// Pack 服务基础 URL（Cloudflare Workers）
-const PACK_SERVICE_URL = 'https://maibot-plugin-stats.maibot-webui.workers.dev'
+/** 本地模型配置中的提供商条目（本地配置含 api_key，分享 Pack 时会被剥离） */
+type LocalProviderConfig = PackProvider & { api_key?: string }
+
+/** /api/webui/config/model 返回的本地模型配置（仅声明本文件用到的字段） */
+interface LocalModelConfig {
+  api_providers: LocalProviderConfig[]
+  models: PackModel[]
+  model_task_config: Record<string, PackTaskConfig>
+}
+
+/** 模型配置接口响应体：{ success, config } 包络 */
+interface ModelConfigResponse {
+  success?: boolean
+  config?: LocalModelConfig
+}
 
 // ============ API 函数 ============
 
@@ -153,32 +175,28 @@ export async function listPacks(params?: {
   sort_by?: 'created_at' | 'downloads' | 'likes'
   sort_order?: 'asc' | 'desc'
 }): Promise<ListPacksResponse> {
-  const searchParams = new URLSearchParams()
-  if (params?.status) searchParams.set('status', params.status)
-  if (params?.page) searchParams.set('page', params.page.toString())
-  if (params?.page_size) searchParams.set('page_size', params.page_size.toString())
-  if (params?.search) searchParams.set('search', params.search)
-  if (params?.sort_by) searchParams.set('sort_by', params.sort_by)
-  if (params?.sort_order) searchParams.set('sort_order', params.sort_order)
-  
-  const response = await fetch(`${PACK_SERVICE_URL}/pack?${searchParams.toString()}`)
-  if (!response.ok) {
-    throw new Error(`获取 Pack 列表失败: ${response.status}`)
-  }
-  return response.json()
+  return statsApi.get<ListPacksResponse>('/pack', {
+    query: {
+      status: params?.status,
+      page: params?.page || undefined,
+      page_size: params?.page_size || undefined,
+      search: params?.search || undefined,
+      sort_by: params?.sort_by,
+      sort_order: params?.sort_order,
+    },
+    errorMessage: '获取 Pack 列表失败',
+  })
 }
 
 /**
  * 获取单个 Pack 详情
  */
 export async function getPack(packId: string): Promise<ModelPack> {
-  const response = await fetch(`${PACK_SERVICE_URL}/pack/${packId}`)
-  if (!response.ok) {
-    throw new Error(`获取 Pack 失败: ${response.status}`)
-  }
-  const data = await response.json()
+  const data = await statsApi.get<PackEnvelope & { pack: ModelPack }>(`/pack/${packId}`, {
+    errorMessage: '获取 Pack 失败',
+  })
   if (!data.success) {
-    throw new Error(data.error || '获取 Pack 失败')
+    throw new ApiError(data.error || '获取 Pack 失败', { detail: data })
   }
   return data.pack
 }
@@ -195,15 +213,12 @@ export async function createPack(pack: {
   models: PackModel[]
   task_config: PackTaskConfigs
 }): Promise<{ pack_id: string; message: string }> {
-  const response = await fetch(`${PACK_SERVICE_URL}/pack`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(pack),
+  const data = await statsApi.post<PackEnvelope & { pack_id: string; message: string }>('/pack', {
+    body: pack,
+    errorMessage: '创建 Pack 失败',
   })
-  
-  const data = await response.json()
   if (!data.success) {
-    throw new Error(data.error || '创建 Pack 失败')
+    throw new ApiError(data.error || '创建 Pack 失败', { detail: data })
   }
   return data
 }
@@ -212,26 +227,31 @@ export async function createPack(pack: {
  * 记录 Pack 下载
  */
 export async function recordPackDownload(packId: string, userId?: string): Promise<void> {
-  await fetch(`${PACK_SERVICE_URL}/pack/download`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pack_id: packId, user_id: userId }),
-  })
+  // 下载计数为尽力而为的统计：原实现不检查 response.ok 也不读取响应体，
+  // HTTP 层失败不影响调用方；网络层失败（status 为 undefined）保持抛出。
+  try {
+    await statsApi.post('/pack/download', {
+      body: { pack_id: packId, user_id: userId },
+      parse: 'response',
+      errorMessage: '记录 Pack 下载失败',
+    })
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status === undefined) {
+      throw error
+    }
+  }
 }
 
 /**
  * 点赞/取消点赞 Pack
  */
 export async function togglePackLike(packId: string, userId: string): Promise<{ likes: number; liked: boolean }> {
-  const response = await fetch(`${PACK_SERVICE_URL}/pack/like`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pack_id: packId, user_id: userId }),
+  const data = await statsApi.post<PackEnvelope & { likes: number; liked: boolean }>('/pack/like', {
+    body: { pack_id: packId, user_id: userId },
+    errorMessage: '点赞失败',
   })
-  
-  const data = await response.json()
   if (!data.success) {
-    throw new Error(data.error || '点赞失败')
+    throw new ApiError(data.error || '点赞失败', { detail: data })
   }
   return { likes: data.likes, liked: data.liked }
 }
@@ -240,10 +260,10 @@ export async function togglePackLike(packId: string, userId: string): Promise<{ 
  * 检查是否已点赞
  */
 export async function checkPackLike(packId: string, userId: string): Promise<boolean> {
-  const response = await fetch(
-    `${PACK_SERVICE_URL}/pack/like/check?pack_id=${packId}&user_id=${userId}`
-  )
-  const data = await response.json()
+  const data = await statsApi.get<{ liked?: boolean }>('/pack/like/check', {
+    query: { pack_id: packId, user_id: userId },
+    errorMessage: '查询 Pack 点赞状态失败',
+  })
   return data.liked || false
 }
 
@@ -256,19 +276,17 @@ export async function detectPackConflicts(
   pack: ModelPack
 ): Promise<ApplyPackConflicts> {
   // 获取当前配置
-  const response = await fetchWithAuth('/api/webui/config/model')
-  if (!response.ok) {
-    throw new Error('获取当前模型配置失败')
-  }
-  const responseData = await response.json()
-  const currentConfig = responseData.config || responseData
-  
+  const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
+    errorMessage: '获取当前模型配置失败',
+  })
+  const currentConfig = (responseData.config || responseData) as LocalModelConfig
+
   const conflicts: ApplyPackConflicts = {
     existing_providers: [],
     new_providers: [],
     conflicting_models: [],
   }
-  
+
   // 检测提供商冲突
   const localProviders = currentConfig.api_providers || []
   for (const packProvider of pack.providers) {
@@ -280,7 +298,7 @@ export async function detectPackConflicts(
         return localNormalized === packNormalized
       }
     )
-    
+
     if (matchedProviders.length > 0) {
       conflicts.existing_providers.push({
         pack_provider: packProvider,
@@ -293,7 +311,7 @@ export async function detectPackConflicts(
       conflicts.new_providers.push(packProvider)
     }
   }
-  
+
   // 检测模型名称冲突
   const localModels = currentConfig.models || []
   for (const packModel of pack.models) {
@@ -307,7 +325,7 @@ export async function detectPackConflicts(
       })
     }
   }
-  
+
   return conflicts
 }
 
@@ -321,42 +339,40 @@ export async function applyPack(
   newProviderApiKeys: Record<string, string>,  // provider_name -> api_key
 ): Promise<void> {
   // 获取当前配置
-  const response = await fetchWithAuth('/api/webui/config/model')
-  if (!response.ok) {
-    throw new Error('获取当前模型配置失败')
-  }
-  const responseData = await response.json()
-  const currentConfig = responseData.config || responseData
-  
+  const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
+    errorMessage: '获取当前模型配置失败',
+  })
+  const currentConfig = (responseData.config || responseData) as LocalModelConfig
+
   // 1. 处理提供商
   if (options.apply_providers) {
-    const providersToApply = options.selected_providers 
+    const providersToApply = options.selected_providers
       ? pack.providers.filter(p => options.selected_providers!.includes(p.name))
       : pack.providers
-    
+
     for (const packProvider of providersToApply) {
       // 检查是否映射到已有提供商
       if (providerMapping[packProvider.name]) {
         // 使用已有提供商，不需要添加
         continue
       }
-      
+
       // 添加新提供商
       const apiKey = newProviderApiKeys[packProvider.name]
       if (!apiKey) {
         throw new Error(`提供商 "${packProvider.name}" 缺少 API Key`)
       }
-      
+
       const newProvider = {
         ...packProvider,
         api_key: apiKey,
       }
-      
+
       // 检查是否已存在同名提供商
       const existingIndex = currentConfig.api_providers.findIndex(
         (p: { name: string }) => p.name === packProvider.name
       )
-      
+
       if (existingIndex >= 0) {
         // 覆盖
         currentConfig.api_providers[existingIndex] = newProvider
@@ -366,27 +382,27 @@ export async function applyPack(
       }
     }
   }
-  
+
   // 2. 处理模型
   if (options.apply_models) {
     const modelsToApply = options.selected_models
       ? pack.models.filter(m => options.selected_models!.includes(m.name))
       : pack.models
-    
+
     for (const packModel of modelsToApply) {
       // 映射提供商名称
       const actualProvider = providerMapping[packModel.api_provider] || packModel.api_provider
-      
+
       const newModel = {
         ...packModel,
         api_provider: actualProvider,
       }
-      
+
       // 检查是否已存在同名模型
       const existingIndex = currentConfig.models.findIndex(
         (m: { name: string }) => m.name === packModel.name
       )
-      
+
       if (existingIndex >= 0) {
         // 覆盖
         currentConfig.models[existingIndex] = newModel
@@ -396,15 +412,15 @@ export async function applyPack(
       }
     }
   }
-  
+
   // 3. 处理任务配置
   if (options.apply_task_config) {
     const taskKeys = options.selected_tasks || Object.keys(pack.task_config)
-    
+
     for (const taskKey of taskKeys) {
       const packTaskConfig = pack.task_config[taskKey as keyof PackTaskConfigs]
       if (!packTaskConfig) continue
-      
+
       // 映射模型名称（如果模型名称被跳过，则从任务列表中移除）
       const appliedModelNames = new Set(
         options.selected_models || pack.models.map(m => m.name)
@@ -412,14 +428,14 @@ export async function applyPack(
       const filteredModelList = packTaskConfig.model_list.filter(
         name => appliedModelNames.has(name)
       )
-      
+
       if (filteredModelList.length === 0) continue
-      
+
       const newTaskConfig = {
         ...packTaskConfig,
         model_list: filteredModelList,
       }
-      
+
       if (options.task_mode === 'replace') {
         // 替换模式
         currentConfig.model_task_config[taskKey] = newTaskConfig
@@ -442,17 +458,13 @@ export async function applyPack(
       }
     }
   }
-  
-  // 保存配置
-  const saveResponse = await fetchWithAuth('/api/webui/config/model', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(currentConfig),
+
+  // 保存配置（原实现不读取保存接口的响应体，保持 parse: 'response'）
+  await backendApi.post('/api/webui/config/model', {
+    body: currentConfig,
+    parse: 'response',
+    errorMessage: '保存配置失败',
   })
-  
-  if (!saveResponse.ok) {
-    throw new Error('保存配置失败')
-  }
 }
 
 /**
@@ -472,22 +484,20 @@ export async function exportCurrentConfigAsPack(params: {
   task_config: PackTaskConfigs
 }> {
   // 获取当前配置
-  const response = await fetchWithAuth('/api/webui/config/model')
-  if (!response.ok) {
-    throw new Error('获取当前模型配置失败')
-  }
-  const responseData = await response.json()
-  
+  const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
+    errorMessage: '获取当前模型配置失败',
+  })
+
   // API 返回的格式是 { success: true, config: {...} }
   if (!responseData.success || !responseData.config) {
-    throw new Error('获取配置失败')
+    throw new ApiError('获取配置失败', { detail: responseData })
   }
-  
+
   const currentConfig = responseData.config
-  
+
   // 过滤提供商（移除 api_key）
   let providers: PackProvider[] = (currentConfig.api_providers || []).map(
-    (p: { name: string; base_url: string; client_type: string; max_retry?: number; timeout?: number; retry_interval?: number }) => ({
+    (p) => ({
       name: p.name,
       base_url: p.base_url,
       client_type: p.client_type,
@@ -496,28 +506,28 @@ export async function exportCurrentConfigAsPack(params: {
       retry_interval: p.retry_interval,
     })
   )
-  
+
   if (params.selectedProviders) {
     providers = providers.filter(p => params.selectedProviders!.includes(p.name))
   }
-  
+
   // 过滤模型
   let models: PackModel[] = currentConfig.models || []
   if (params.selectedModels) {
     models = models.filter(m => params.selectedModels!.includes(m.name))
   }
-  
+
   // 过滤任务配置
   const task_config: PackTaskConfigs = {}
   const allTasks = currentConfig.model_task_config || {}
   const taskKeys = params.selectedTasks || Object.keys(allTasks)
-  
+
   for (const key of taskKeys) {
     if (allTasks[key]) {
       task_config[key as keyof PackTaskConfigs] = allTasks[key]
     }
   }
-  
+
   return { providers, models, task_config }
 }
 

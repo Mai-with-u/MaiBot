@@ -114,7 +114,6 @@ export default defineConfig({
             'clsx',
             'tailwind-merge',
             'class-variance-authority',
-            'axios',
           ],
           
           // 其他

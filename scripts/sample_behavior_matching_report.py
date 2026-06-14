@@ -182,6 +182,7 @@ def _namespace_for_compare(window: Sequence[MessageSample], profile: dict[str, o
         include_global=args.all_sessions or args.include_global,
         profile_json=json.dumps(profile, ensure_ascii=False),
         max_count=args.max_count,
+        retrieval_mode=args.retrieval_mode,
         json=False,
     )
 
@@ -240,6 +241,8 @@ async def build_report(args: Namespace) -> dict[str, object]:
                 "profile": compare_result["profile"],
                 "raw_llm_response": raw_llm_response,
                 "scene_cluster": {
+                    "retrieval_mode": compare_result["scene_cluster"]["retrieval_mode"],
+                    "debug": compare_result["scene_cluster"]["debug"],
                     "matched_clusters": compare_result["scene_cluster"]["matched_clusters"],
                     "candidates": _brief_candidates(compare_result["scene_cluster"]["behavior_candidates"]),
                 },
@@ -307,6 +310,10 @@ def write_markdown_report(report: dict[str, object], output_path: Path) -> None:
             lines.append("```")
         lines.append("")
         lines.append("### 检索情况")
+        lines.append(f"- 检索模式：`{sample['scene_cluster'].get('retrieval_mode')}`")
+        lines.append(
+            f"- 调试信息：`{json.dumps(sample['scene_cluster'].get('debug') or {}, ensure_ascii=False)}`"
+        )
         lines.append(f"- 场景簇命中数：{len(sample['scene_cluster']['matched_clusters'])}")
         lines.append("场景簇候选：")
         _append_candidate_lines(lines, sample["scene_cluster"]["candidates"])
@@ -334,6 +341,12 @@ def parse_args() -> Namespace:
     parser.add_argument("--max-gap-minutes", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260609)
     parser.add_argument("--max-count", type=int, default=5)
+    parser.add_argument(
+        "--retrieval-mode",
+        choices=["direct_domain_overlap", "tag_cluster_spread_1", "tag_cluster_spread_2"],
+        default="tag_cluster_spread_1",
+        help="行为场景检索模式，默认与主线一致：一次扩散。",
+    )
     parser.add_argument("--include-global", action="store_true")
     parser.add_argument("--all-sessions", action="store_true", help="匹配所有 session_id 的聊天簇/行为数据。")
     parser.add_argument("--output", default="data/analysis/behavior_matching_sample_report.md")
