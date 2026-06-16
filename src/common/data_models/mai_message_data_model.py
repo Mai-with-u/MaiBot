@@ -198,12 +198,18 @@ class MaiMessage(BaseDatabaseDataModel[Messages]):
                 user_info=receiver_user_info,
             )
 
+        # 私聊消息：适配器用 user_info.user_id 作为收件人 QQ
+        # 发件人信息在 sender_info 中，收件人在 receiver_info 中
+        effective_user_info = sender_user_info
+        if receiver_group_info is None and receiver_user_info is not None:
+            effective_user_info = receiver_user_info
+
         maim_msg_info = MaimBaseMessageInfo(
             platform=self.platform,
             message_id=self.message_id,
             time=self.timestamp.timestamp(),
             group_info=receiver_group_info,
-            user_info=sender_user_info,
+            user_info=effective_user_info,
             additional_config=self.message_info.additional_config,
             sender_info=sender_info,
             receiver_info=receiver_info,
