@@ -6,6 +6,7 @@ from .config_base import ConfigBase, Field
 RULE_TYPE_OPTION_DESCRIPTIONS = {
     "group": "群聊聊天流，item_id 填群号或群聊 ID",
     "private": "私聊聊天流，item_id 填用户 ID",
+    "*": "所有聊天类型（群聊 + 私聊）",
 }
 
 VISUAL_MODE_OPTION_DESCRIPTIONS = {
@@ -413,7 +414,7 @@ class TalkRulesItem(ConfigBase):
     )
     """规则作用的群号或用户 ID；留空表示不限定聊天，* 表示任意聊天。"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -3069,7 +3070,7 @@ class LearningItem(ConfigBase):
     )
     """要单独配置的群号或用户 ID；留空表示默认规则。"""
 
-    type: Literal["group", "private"] = Field(
+    type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -4142,7 +4143,7 @@ class ExtraPromptItem(ConfigBase):
     )
     """额外提示作用的群号或用户 ID。"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "x-widget": "select",
