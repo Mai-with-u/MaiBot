@@ -262,20 +262,27 @@ class ChatConfigUtils:
 
             if rule_type == "group":
                 config_is_group = True
-                target_attr = "group_id"
+                target_attrs = ("group_id",)
             elif rule_type == "private":
                 config_is_group = False
-                target_attr = "user_id"
+                target_attrs = ("user_id",)
+            elif rule_type == "*":
+                config_is_group = None
+                target_attrs = ("group_id", "user_id")
             else:
                 continue
 
-            if is_group_chat is not None and config_is_group != is_group_chat:
+            if is_group_chat is not None and config_is_group is not None and config_is_group != is_group_chat:
                 continue
 
             if chat_stream is not None:
                 chat_stream_platform = str(chat_stream.platform or "").strip()
-                chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-                if chat_stream_platform == platform and chat_stream_target_id == item_id:
+                target_ids = {
+                    str(getattr(chat_stream, attr) or "").strip()
+                    for attr in target_attrs
+                }
+                target_ids.discard("")
+                if chat_stream_platform == platform and item_id in target_ids:
                     yield prompt_content
                     continue
 
@@ -447,9 +454,13 @@ class ChatConfigUtils:
         if chat_stream is not None:
             chat_stream_platform = str(chat_stream.platform or "").strip()
             if rule_type == "*":
-                actual_target_id = str(getattr(chat_stream, "group_id", None) or getattr(chat_stream, "user_id", None) or "").strip()
-            else:
-                actual_target_id = str(getattr(chat_stream, target_attr) or "").strip()
+                target_ids = {
+                    str(getattr(chat_stream, "group_id", None) or "").strip(),
+                    str(getattr(chat_stream, "user_id", None) or "").strip(),
+                }
+                target_ids.discard("")
+                return chat_stream_platform == platform and item_id in target_ids
+            actual_target_id = str(getattr(chat_stream, target_attr) or "").strip()
             return chat_stream_platform == platform and actual_target_id == item_id
 
         return session_id in ChatConfigUtils.resolve_existing_session_ids(platform, item_id, rule_type)
@@ -491,14 +502,19 @@ class ChatConfigUtils:
 
         chat_stream_platform = str(chat_stream.platform or "").strip()
         if rule_type == "*":
-            chat_stream_target_id = str(getattr(chat_stream, "group_id", None) or getattr(chat_stream, "user_id", None) or "").strip()
+            target_ids = {
+                str(getattr(chat_stream, "group_id", None) or "").strip(),
+                str(getattr(chat_stream, "user_id", None) or "").strip(),
+            }
+            target_ids.discard("")
         else:
-            chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-        if not chat_stream_target_id:
+            target_ids = {str(getattr(chat_stream, target_attr) or "").strip()}
+            target_ids.discard("")
+        if not target_ids:
             return False
 
         platform_matches = platform == "*" or chat_stream_platform == platform
-        item_matches = item_id == "*" or chat_stream_target_id == item_id
+        item_matches = item_id == "*" or item_id in target_ids
         return platform_matches and item_matches
 
     @staticmethod
@@ -588,14 +604,19 @@ class ChatConfigUtils:
 
         chat_stream_platform = str(chat_stream.platform or "").strip()
         if rule_type == "*":
-            chat_stream_target_id = str(getattr(chat_stream, "group_id", None) or getattr(chat_stream, "user_id", None) or "").strip()
+            target_ids = {
+                str(getattr(chat_stream, "group_id", None) or "").strip(),
+                str(getattr(chat_stream, "user_id", None) or "").strip(),
+            }
+            target_ids.discard("")
         else:
-            chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-        if not chat_stream_target_id:
+            target_ids = {str(getattr(chat_stream, target_attr) or "").strip()}
+            target_ids.discard("")
+        if not target_ids:
             return None
 
         platform_matches = not platform or platform == "*" or chat_stream_platform == platform
-        item_matches = not item_id or item_id == "*" or chat_stream_target_id == item_id
+        item_matches = not item_id or item_id == "*" or item_id in target_ids
         if not platform_matches or not item_matches:
             return None
 
