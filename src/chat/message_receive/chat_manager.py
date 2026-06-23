@@ -338,27 +338,36 @@ class ChatManager:
             return []
 
         if normalized_chat_type == "group":
-            target_attr = "group_id"
+            target_attrs = ["group_id"]
         elif normalized_chat_type == "private":
-            target_attr = "user_id"
+            target_attrs = ["user_id"]
+        elif normalized_chat_type == "*":
+            target_attrs = ["group_id", "user_id"]
         else:
             return []
 
         matched_sessions: Dict[str, BotChatSession] = {}
         for session in self.sessions.values():
-            if self._session_matches_target(
-                session,
-                platform=normalized_platform,
-                target_attr=target_attr,
-                target_id=normalized_target_id,
-            ):
-                matched_sessions[session.session_id] = session
+            for attr in target_attrs:
+                if self._session_matches_target(
+                    session,
+                    platform=normalized_platform,
+                    target_attr=attr,
+                    target_id=normalized_target_id,
+                ):
+                    matched_sessions[session.session_id] = session
+                    break
 
         try:
             with get_db_session() as db_session:
                 statement = select(ChatSession).filter_by(platform=normalized_platform)
                 for db_instance in db_session.exec(statement).all():
-                    if str(getattr(db_instance, target_attr) or "").strip() != normalized_target_id:
+                    matched = False
+                    for attr in target_attrs:
+                        if str(getattr(db_instance, attr) or "").strip() == normalized_target_id:
+                            matched = True
+                            break
+                    if not matched:
                         continue
                     if db_instance.session_id in matched_sessions:
                         continue

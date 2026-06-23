@@ -1044,7 +1044,7 @@ class TargetItem(ConfigBase):
     )
     """用户/群ID，与平台一起留空表示全局"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -1057,7 +1057,7 @@ class TargetItem(ConfigBase):
             "x-option-descriptions": RULE_TYPE_OPTION_DESCRIPTIONS,
         },
     )
-    """聊天流类型，group（群聊）或private（私聊）"""
+    """聊天流类型，group（群聊）、private（私聊）或 *（全部）"""
 
 
 class AMemorixIntegrationConfig(ConfigBase):
