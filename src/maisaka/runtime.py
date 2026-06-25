@@ -12,6 +12,7 @@ from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import get_bot_account, is_bot_self, is_mentioned_bot_in_message
+from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.data_models.mai_message_data_model import GroupInfo, MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import (
     ForwardNodeComponent,
@@ -21,6 +22,7 @@ from src.common.data_models.message_component_data_model import (
 )
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
+from src.common.prompt_i18n import load_prompt
 from src.common.utils.utils_config import BehaviorConfigUtils, ChatConfigUtils, ExpressionConfigUtils, JargonConfigUtils
 from src.config.config import global_config
 from src.core.tooling import ToolRegistry, ToolSpec
@@ -51,6 +53,7 @@ from src.mcp_module.config import build_mcp_server_runtime_configs
 from src.mcp_module.host_llm_bridge import MCPHostLLMBridge
 from src.mcp_module.provider import MCPToolProvider
 from src.plugin_runtime.tool_provider import PluginToolProvider
+from src.services.llm_service import LLMServiceClient
 from src.services.message_word_frequency_service import update_high_frequency_terms_from_context_messages
 
 from .chat_loop_service import ChatResponse, MaisakaChatLoopService
@@ -142,6 +145,11 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         self._behavior_learner = BehaviorLearner(session_id)
         self._expression_learner = ExpressionLearner(session_id)
         self._jargon_miner = JargonMiner(session_id, session_name=session_name)
+        self._direct_followup_gate_client = LLMServiceClient(
+            task_name="planner",
+            request_type="direct_followup_gate",
+            session_id=session_id,
+        )
 
         self._reasoning_engine = MaisakaReasoningEngine(self)
         self._monitor_session_start_task: Optional[asyncio.Task[None]] = None
@@ -698,7 +706,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         received_at = time.time()
         self._last_message_received_at = received_at
         self._record_external_message_interval(message, received_at)
-        self._update_message_trigger_state(message)
+        await self._update_message_trigger_state(message)
         self.message_cache.append(message)
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
@@ -1033,7 +1041,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         finally:
             self._deferred_message_turn_task = None
 
-    def _update_message_trigger_state(self, message: SessionMessage) -> None:
+    async def _update_message_trigger_state(self, message: SessionMessage) -> None:
         """补齐消息中的 @/提及 标记，并在命中时启用强制 continue。"""
 
         detected_mentioned, detected_at, reply_probability_boost = is_mentioned_bot_in_message(message)
@@ -1042,18 +1050,115 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         if detected_mentioned:
             message.is_mentioned = True
 
-        should_force_reply = (
-            reply_probability_boost >= 1.0
-            or (message.is_at and global_config.chat.inevitable_at_reply)
-            or (message.is_mentioned and global_config.chat.mentioned_bot_reply)
+        force_reply_reason: str | None = None
+        if reply_probability_boost >= 1.0:
+            force_reply_reason = "@消息" if message.is_at else "提及消息" if message.is_mentioned else "强触发消息"
+        elif message.is_at and global_config.chat.inevitable_at_reply:
+            force_reply_reason = "@消息"
+        elif message.is_mentioned and global_config.chat.mentioned_bot_reply:
+            force_reply_reason = "提及消息"
+
+        if force_reply_reason:
+            self._arm_force_next_timing_continue(
+                message,
+                is_at=message.is_at,
+                is_mentioned=message.is_mentioned,
+                trigger_reason=force_reply_reason,
+            )
+            return
+
+        await self._maybe_arm_direct_followup_continue(message)
+
+    def _get_recent_direct_followup_context(self, message: SessionMessage) -> str | None:
+        """构造接话判定上下文；没有近期麦麦发言时返回 None。"""
+
+        current_text = str(message.processed_plain_text or "").strip()
+        if not current_text:
+            return None
+        user_info = message.message_info.user_info
+        if is_bot_self(message.platform, user_info.user_id):
+            return None
+
+        recent_messages: list[str] = []
+        has_recent_bot_message = False
+        for context_message in self._chat_history[-10:]:
+            text = str(context_message.processed_plain_text or "").strip()
+            if not text:
+                continue
+            source = str(context_message.source or "")
+            source_kind = source.split(":", 1)[0]
+            if source_kind not in {"user", "guided_reply", "outbound_send"}:
+                continue
+            is_bot_message = source_kind in {"guided_reply", "outbound_send"}
+            speaker = global_config.bot.nickname if is_bot_message else "用户"
+            if is_bot_message:
+                has_recent_bot_message = True
+            recent_messages.append(f"[{speaker}] {text}")
+
+        if not has_recent_bot_message:
+            return None
+
+        speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id or "当前用户"
+        recent_messages.append(f"[{speaker_name}] {current_text}")
+        return "\n".join(recent_messages[-8:])
+
+    @staticmethod
+    def _parse_direct_followup_gate_result(response_text: str) -> tuple[bool, str]:
+        """解析接话判定 LLM 输出。"""
+
+        normalized_text = response_text.strip()
+        if normalized_text.startswith("```"):
+            normalized_text = normalized_text.strip("`")
+            if normalized_text.lower().startswith("json"):
+                normalized_text = normalized_text[4:].strip()
+
+        try:
+            payload = json.loads(normalized_text)
+        except json.JSONDecodeError:
+            logger.warning(f"接话必回复判定结果不是有效 JSON，将按未命中处理: {response_text[:200]}")
+            return False, "invalid_json"
+
+        direct_followup = bool(payload.get("direct_followup"))
+        reason = str(payload.get("reason") or "").strip()
+        return direct_followup, reason
+
+    async def _maybe_arm_direct_followup_continue(self, message: SessionMessage) -> None:
+        """用 LLM 判断用户是否在接麦麦上一句话，命中时复用强制 continue 通道。"""
+
+        if not global_config.chat.enable_direct_followup_reply:
+            return
+
+        context_text = self._get_recent_direct_followup_context(message)
+        if not context_text:
+            return
+
+        prompt = load_prompt(
+            "maisaka_direct_followup_gate",
+            bot_name=global_config.bot.nickname,
+            chat_context=context_text,
         )
-        if not should_force_reply or (not message.is_at and not message.is_mentioned):
+        try:
+            result = await self._direct_followup_gate_client.generate_response(
+                prompt,
+                LLMGenerationOptions(temperature=0.0, max_tokens=180),
+            )
+        except Exception:
+            logger.exception(f"{self.log_prefix} 接话必回复 LLM 判定失败，按未命中处理")
+            return
+
+        direct_followup, reason = self._parse_direct_followup_gate_result(result.response or "")
+        logger.info(
+            f"{self.log_prefix} 接话必回复判定完成: direct_followup={direct_followup} "
+            f"message_id={message.message_id} reason={reason or '无'}"
+        )
+        if not direct_followup:
             return
 
         self._arm_force_next_timing_continue(
             message,
-            is_at=message.is_at,
-            is_mentioned=message.is_mentioned,
+            is_at=False,
+            is_mentioned=False,
+            trigger_reason="接话消息",
         )
 
     def _arm_force_next_timing_continue(
@@ -1062,10 +1167,11 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         *,
         is_at: bool,
         is_mentioned: bool,
+        trigger_reason: str | None = None,
     ) -> None:
         """在检测到 @ 或提及时，要求下一次 Timing Gate 直接 continue。"""
 
-        trigger_reason = "@消息" if is_at else "提及消息" if is_mentioned else "触发消息"
+        trigger_reason = trigger_reason or ("@消息" if is_at else "提及消息" if is_mentioned else "触发消息")
         was_armed = self._force_next_timing_continue
         self._force_next_timing_continue = True
         self._force_next_timing_message_id = message.message_id

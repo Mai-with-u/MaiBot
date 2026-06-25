@@ -98,6 +98,11 @@ display_name = "时机"
 advanced = true
 description = "Maisaka 节奏控制模板，负责在每轮主循环前判断当前应该等待、停止，还是继续进入思考与回复流程。"
 
+[maisaka_direct_followup_gate]
+display_name = "接话判定"
+advanced = true
+description = "用于判断用户新消息是否在直接承接麦麦上一句话；命中后会像 @ 或提及一样进入回复流程。"
+
 [mid_term_memory_summary]
 display_name = "中期聊天摘要"
 advanced = true
