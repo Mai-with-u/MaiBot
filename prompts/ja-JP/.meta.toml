@@ -98,6 +98,11 @@ display_name = "Timing Gate"
 advanced = false
 description = "Maisaka 节奏控制模板，负责在每轮主循环前判断当前应该等待、停止，还是继续进入思考与回复流程。"
 
+[maisaka_direct_followup_gate]
+display_name = "直接返答判定"
+advanced = true
+description = "新しいユーザー発言が麦麦の直前の発言を直接受けているかを判定し、該当時は @ やメンションと同じように通常の返信フローへ入る。"
+
 [mid_term_memory_summary]
 display_name = "中期チャット要約"
 advanced = true

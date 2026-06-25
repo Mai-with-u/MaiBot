@@ -524,6 +524,21 @@ class ChatConfig(ConfigBase):
     )
     """开启后，被 @ 时会尽量回复。"""
 
+    enable_direct_followup_reply: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "接话必回复",
+                "en_US": "Always reply to direct follow-ups",
+                "ja_JP": "直接の続きには必ず返信",
+            },
+            "x-widget": "switch",
+            "x-icon": "message-square-reply",
+            "x-row": "reply-switches",
+        },
+    )
+    """开启后，会用 LLM 判断新消息是否在接麦麦上一句话；命中时会像 @ 或提及一样进入回复流程。"""
+
     self_message_special_mark: bool = Field(
         default=True,
         json_schema_extra={

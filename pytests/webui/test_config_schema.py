@@ -77,6 +77,17 @@ def test_field_without_extra_metadata():
     assert not inevitable_at_reply.get("x-icon")
 
 
+def test_direct_followup_reply_schema_metadata():
+    """接话必回复应作为聊天回复开关暴露给前端。"""
+    schema = ConfigSchemaGenerator.generate_schema(ChatConfig)
+    direct_followup_reply = next(f for f in schema["fields"] if f["name"] == "enable_direct_followup_reply")
+
+    assert direct_followup_reply["type"] == "boolean"
+    assert direct_followup_reply.get("x-widget") == "switch"
+    assert direct_followup_reply.get("x-row") == "reply-switches"
+    assert direct_followup_reply.get("advanced") is not True
+
+
 def test_all_top_level_sections_have_ui_metadata():
     """所有顶层配置节都必须声明 uiParent 或独立 Tab 的标签与图标。"""
     schema = ConfigSchemaGenerator.generate_schema(Config)

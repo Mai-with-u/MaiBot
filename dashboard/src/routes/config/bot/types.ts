@@ -23,6 +23,8 @@ export interface PersonalityConfig {
 export interface ChatConfig {
   talk_value: number
   mentioned_bot_reply: boolean
+  inevitable_at_reply: boolean
+  enable_direct_followup_reply: boolean
   max_context_size: number
   enable_context_optimization: boolean
   planner_smooth: number
