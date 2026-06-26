@@ -1829,6 +1829,46 @@ class AMemorixEmbeddingConfig(ConfigBase):
     """段落向量回填配置"""
 
 
+class AMemorixRelationVectorizationConfig(ConfigBase):
+    """A_Memorix 关系向量化配置"""
+
+    enabled: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用",
+                "en_US": "Enabled",
+                "ja_JP": "有効",
+            },
+        },
+    )
+    """是否启用关系向量化"""
+
+    backfill_enabled: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "回填",
+                "en_US": "Backfill",
+                "ja_JP": "バックフィル",
+            },
+        },
+    )
+    """是否启用关系向量回填"""
+
+    write_on_import: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "导入时写入",
+                "en_US": "Write on import",
+                "ja_JP": "インポート時書き込み",
+            },
+        },
+    )
+    """导入时是否写入关系向量"""
+
+
 class AMemorixSparseRetrievalConfig(ConfigBase):
     """A_Memorix 稀疏检索配置"""
 
@@ -2038,6 +2078,18 @@ class AMemorixRetrievalConfig(ConfigBase):
         },
     )
     """稀疏检索配置"""
+
+    relation_vectorization: AMemorixRelationVectorizationConfig = Field(
+        default_factory=lambda: AMemorixRelationVectorizationConfig(),
+        json_schema_extra={
+            "label": {
+                "zh_CN": "关系向量化",
+                "en_US": "Relation vectorization",
+                "ja_JP": "関係ベクトル化",
+            },
+        },
+    )
+    """关系向量化配置"""
 
 
 class AMemorixThresholdConfig(ConfigBase):
