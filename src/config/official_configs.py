@@ -6,6 +6,7 @@ from .config_base import ConfigBase, Field
 RULE_TYPE_OPTION_DESCRIPTIONS = {
     "group": "群聊聊天流，item_id 填群号或群聊 ID",
     "private": "私聊聊天流，item_id 填用户 ID",
+    "*": "所有聊天类型（群聊 + 私聊）",
 }
 
 VISUAL_MODE_OPTION_DESCRIPTIONS = {
@@ -426,7 +427,7 @@ class TalkRulesItem(ConfigBase):
     )
     """规则作用的群号或用户 ID；留空表示不限定聊天，* 表示任意聊天。"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -1083,7 +1084,7 @@ class TargetItem(ConfigBase):
     )
     """用户/群 ID；留空时和平台字段共同决定全局默认或平台兜底，* 表示任意聊天流。"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -1096,7 +1097,7 @@ class TargetItem(ConfigBase):
             "x-option-descriptions": RULE_TYPE_OPTION_DESCRIPTIONS,
         },
     )
-    """聊天流类型，group（群聊）或private（私聊）"""
+    """聊天流类型，group（群聊）、private（私聊）或 *（全部）"""
 
 
 class AMemorixIntegrationConfig(ConfigBase):
@@ -3109,7 +3110,7 @@ class LearningItem(ConfigBase):
     )
     """要单独配置的群号或用户 ID；留空表示默认规则。"""
 
-    type: Literal["group", "private"] = Field(
+    type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "label": {
@@ -4225,7 +4226,7 @@ class ExtraPromptItem(ConfigBase):
     )
     """额外提示作用的群号或用户 ID。"""
 
-    rule_type: Literal["group", "private"] = Field(
+    rule_type: Literal["group", "private", "*"] = Field(
         default="group",
         json_schema_extra={
             "x-widget": "select",

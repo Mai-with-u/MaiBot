@@ -565,7 +565,7 @@ def _normalize_prompt_generator_result(raw_data: Dict[str, Any]) -> PromptGenera
                 PromptGeneratorChatPrompt(
                     platform=platform,
                     item_id=item_id,
-                    rule_type=rule_type if rule_type in {"group", "private"} else "group",
+                    rule_type=rule_type if rule_type in {"group", "private", "*"} else "group",
                     prompt=prompt,
                 )
             )
@@ -796,7 +796,7 @@ def _normalize_prompt_generator_block_value(block: PromptGeneratorConfigBlock) -
                 {
                     "platform": platform,
                     "item_id": item_id,
-                    "rule_type": rule_type if rule_type in {"group", "private"} else "group",
+                    "rule_type": rule_type if rule_type in {"group", "private", "*"} else "group",
                     "prompt": prompt,
                 }
             )

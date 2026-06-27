@@ -290,20 +290,27 @@ class ChatConfigUtils:
 
             if rule_type == "group":
                 config_is_group = True
-                target_attr = "group_id"
+                target_attrs = ("group_id",)
             elif rule_type == "private":
                 config_is_group = False
-                target_attr = "user_id"
+                target_attrs = ("user_id",)
+            elif rule_type == "*":
+                config_is_group = None
+                target_attrs = ("group_id", "user_id")
             else:
                 continue
 
-            if is_group_chat is not None and config_is_group != is_group_chat:
+            if is_group_chat is not None and config_is_group is not None and config_is_group != is_group_chat:
                 continue
 
             if chat_stream is not None:
                 chat_stream_platform = str(chat_stream.platform or "").strip()
-                chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-                if chat_stream_platform == platform and chat_stream_target_id == item_id:
+                target_ids = {
+                    str(getattr(chat_stream, attr) or "").strip()
+                    for attr in target_attrs
+                }
+                target_ids.discard("")
+                if chat_stream_platform == platform and item_id in target_ids:
                     yield prompt_content
                     continue
 
@@ -355,9 +362,9 @@ class ChatConfigUtils:
 
     @staticmethod
     def is_wildcard_target(target_item) -> bool:
-        """判断配置目标是否包含 platform/item_id 通配符。"""
-        platform, item_id, _ = ChatConfigUtils._target_values(target_item)
-        return platform == "*" or item_id == "*"
+        """判断配置目标是否包含 platform/item_id/rule_type 通配符。"""
+        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        return platform == "*" or item_id == "*" or rule_type == "*"
 
     @staticmethod
     def _get_chat_stream(session_id: str):
@@ -400,7 +407,7 @@ class ChatConfigUtils:
 
     @staticmethod
     def get_target_session_ids_with_wildcards(target_item) -> set[str]:
-        """获取配置目标对应的已知真实聊天流 ID，允许 platform/item_id 使用 * 通配。"""
+        """获取配置目标对应的已知真实聊天流 ID，允许 platform/item_id/rule_type 使用 * 通配。"""
         platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
         if not platform or not item_id:
             return set()
@@ -409,9 +416,11 @@ class ChatConfigUtils:
             return ChatConfigUtils.get_target_session_ids(target_item)
 
         if rule_type == "group":
-            target_attr = "group_id"
+            target_attrs = ["group_id"]
         elif rule_type == "private":
-            target_attr = "user_id"
+            target_attrs = ["user_id"]
+        elif rule_type == "*":
+            target_attrs = ["group_id", "user_id"]
         else:
             return set()
 
@@ -421,15 +430,15 @@ class ChatConfigUtils:
 
             for chat_stream in chat_manager.sessions.values():
                 chat_stream_platform = str(chat_stream.platform or "").strip()
-                chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-                if not chat_stream_target_id:
+                if not (platform == "*" or chat_stream_platform == platform):
                     continue
-                if (platform == "*" or chat_stream_platform == platform) and (
-                    item_id == "*" or chat_stream_target_id == item_id
-                ):
-                    matched_session_ids.add(chat_stream.session_id)
+                for attr in target_attrs:
+                    chat_stream_target_id = str(getattr(chat_stream, attr) or "").strip()
+                    if chat_stream_target_id and (item_id == "*" or chat_stream_target_id == item_id):
+                        matched_session_ids.add(chat_stream.session_id)
+                        break
         except Exception as e:
-            logger.debug(f"解析通配配置内存聊天流失败: platform={platform} item_id={item_id} error={e}")
+            logger.debug(f"解析通配配置内存聊天流失败: platform={platform} item_id={item_id} rule_type={rule_type} error={e}")
 
         try:
             from sqlmodel import select
@@ -441,15 +450,17 @@ class ChatConfigUtils:
                 statement = select(ChatSession)
                 if platform != "*":
                     statement = statement.where(ChatSession.platform == platform)
-                if item_id != "*":
-                    statement = statement.where(getattr(ChatSession, target_attr) == item_id)
-                for chat_session in session.exec(statement).all():
-                    target_id = str(getattr(chat_session, target_attr) or "").strip()
-                    if not target_id:
+                for db_instance in session.exec(statement).all():
+                    chat_session_platform = str(db_instance.platform or "").strip()
+                    if not (platform == "*" or chat_session_platform == platform):
                         continue
-                    matched_session_ids.add(chat_session.session_id)
+                    for attr in target_attrs:
+                        target_id = str(getattr(db_instance, attr) or "").strip()
+                        if target_id and (item_id == "*" or target_id == item_id):
+                            matched_session_ids.add(db_instance.session_id)
+                            break
         except Exception as e:
-            logger.debug(f"解析通配配置数据库聊天流失败: platform={platform} item_id={item_id} error={e}")
+            logger.debug(f"解析通配配置数据库聊天流失败: platform={platform} item_id={item_id} rule_type={rule_type} error={e}")
 
         return matched_session_ids
 
@@ -469,17 +480,27 @@ class ChatConfigUtils:
         elif rule_type == "private":
             config_is_group = False
             target_attr = "user_id"
+        elif rule_type == "*":
+            config_is_group = None
+            target_attr = ""
         else:
             return False
 
-        if is_group_chat is not None and config_is_group != is_group_chat:
+        if is_group_chat is not None and config_is_group is not None and config_is_group != is_group_chat:
             return False
 
         chat_stream = ChatConfigUtils._get_chat_stream(session_id)
         if chat_stream is not None:
             chat_stream_platform = str(chat_stream.platform or "").strip()
-            chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-            return chat_stream_platform == platform and chat_stream_target_id == item_id
+            if rule_type == "*":
+                target_ids = {
+                    str(getattr(chat_stream, "group_id", None) or "").strip(),
+                    str(getattr(chat_stream, "user_id", None) or "").strip(),
+                }
+                target_ids.discard("")
+                return chat_stream_platform == platform and item_id in target_ids
+            actual_target_id = str(getattr(chat_stream, target_attr) or "").strip()
+            return chat_stream_platform == platform and actual_target_id == item_id
 
         return session_id in ChatConfigUtils.resolve_existing_session_ids(platform, item_id, rule_type)
 
@@ -537,7 +558,7 @@ class ChatConfigUtils:
         session_id: str,
         is_group_chat: Optional[bool] = None,
     ) -> bool:
-        """判断配置目标是否命中当前聊天流，允许 platform/item_id 使用 * 通配。"""
+        """判断配置目标是否命中当前聊天流，允许 platform/item_id/rule_type 使用 * 通配。"""
         if not session_id:
             return False
 
@@ -551,10 +572,13 @@ class ChatConfigUtils:
         elif rule_type == "private":
             config_is_group = False
             target_attr = "user_id"
+        elif rule_type == "*":
+            config_is_group = None
+            target_attr = ""
         else:
             return False
 
-        if is_group_chat is not None and config_is_group != is_group_chat:
+        if is_group_chat is not None and config_is_group is not None and config_is_group != is_group_chat:
             return False
 
         chat_stream = ChatConfigUtils._get_chat_stream(session_id)
@@ -564,12 +588,20 @@ class ChatConfigUtils:
             return ChatConfigUtils.target_matches_session(target_item, session_id, is_group_chat)
 
         chat_stream_platform = str(chat_stream.platform or "").strip()
-        chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-        if not chat_stream_target_id:
+        if rule_type == "*":
+            target_ids = {
+                str(getattr(chat_stream, "group_id", None) or "").strip(),
+                str(getattr(chat_stream, "user_id", None) or "").strip(),
+            }
+            target_ids.discard("")
+        else:
+            target_ids = {str(getattr(chat_stream, target_attr) or "").strip()}
+            target_ids.discard("")
+        if not target_ids:
             return False
 
         platform_matches = platform == "*" or chat_stream_platform == platform
-        item_matches = item_id == "*" or chat_stream_target_id == item_id
+        item_matches = item_id == "*" or item_id in target_ids
         return platform_matches and item_matches
 
     @staticmethod
@@ -633,16 +665,19 @@ class ChatConfigUtils:
         elif rule_type == "private":
             config_is_group = False
             target_attr = "user_id"
+        elif rule_type == "*":
+            config_is_group = None
+            target_attr = ""
         else:
             return None
 
-        if is_group_chat is not None and config_is_group != is_group_chat:
+        if is_group_chat is not None and config_is_group is not None and config_is_group != is_group_chat:
             return None
 
         if not platform and not item_id:
             return 1
 
-        has_wildcard = platform == "*" or item_id == "*"
+        has_wildcard = platform == "*" or item_id == "*" or rule_type == "*"
         if not session_id:
             if has_wildcard and (platform in {"", "*"} and item_id in {"", "*"}):
                 return 4
@@ -655,12 +690,20 @@ class ChatConfigUtils:
             return None
 
         chat_stream_platform = str(chat_stream.platform or "").strip()
-        chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
-        if not chat_stream_target_id:
+        if rule_type == "*":
+            target_ids = {
+                str(getattr(chat_stream, "group_id", None) or "").strip(),
+                str(getattr(chat_stream, "user_id", None) or "").strip(),
+            }
+            target_ids.discard("")
+        else:
+            target_ids = {str(getattr(chat_stream, target_attr) or "").strip()}
+            target_ids.discard("")
+        if not target_ids:
             return None
 
         platform_matches = not platform or platform == "*" or chat_stream_platform == platform
-        item_matches = not item_id or item_id == "*" or chat_stream_target_id == item_id
+        item_matches = not item_id or item_id == "*" or item_id in target_ids
         if not platform_matches or not item_matches:
             return None
 
@@ -742,7 +785,7 @@ class AMemorixConfigUtils:
             targets = getattr(group, "targets", []) or []
             group_session_ids: set[str] = set()
             for target in targets:
-                group_session_ids.update(ChatConfigUtils.get_target_session_ids(target))
+                group_session_ids.update(ChatConfigUtils.get_target_session_ids_with_wildcards(target))
             if clean_session_id in group_session_ids:
                 resolved_session_ids.update(group_session_ids)
         return resolved_session_ids or {clean_session_id}
