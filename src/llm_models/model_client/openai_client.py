@@ -117,6 +117,10 @@ CHAT_COMPLETIONS_RESERVED_EXTRA_BODY_KEYS = {
 }
 """由当前客户端显式承载、不应再落入 `extra_body` 的字段集合。"""
 
+_MODELS_REQUIRING_MAX_COMPLETION_TOKENS: set[tuple[str, str]] = set()
+"""记录本进程内已确认「仅支持 max_completion_tokens」的模型，键为 (base_url, model_identifier)。
+命中后直接使用 max_completion_tokens，避免重复触发首次失败重试。"""
+
 OpenAIStreamResponseHandler = Callable[
     [AsyncStream[ChatCompletionChunk], asyncio.Event | None],
     Coroutine[Any, Any, Tuple[APIResponse, UsageTuple | None]],
@@ -913,6 +917,23 @@ def _build_api_status_message(error: APIStatusError) -> str:
     return f"上游接口返回状态码 {error.status_code}"
 
 
+def _is_max_tokens_unsupported_error(error: APIStatusError) -> bool:
+    """判断该 400 错误是否为「max_tokens 不被支持、应改用 max_completion_tokens」。
+
+    以错误原文匹配为主判据（OpenAI 的报错即 "Use 'max_completion_tokens' instead."），
+    最稳健、不依赖动态属性。
+
+    Args:
+        error: OpenAI SDK 抛出的状态错误。
+
+    Returns:
+        bool: 命中该特征返回 True。
+    """
+    if error.status_code != 400:
+        return False
+    return "max_completion_tokens" in (error.message or "").lower()
+
+
 @dataclass(slots=True)
 class _StreamedToolCallState:
     """流式工具调用累积状态。"""
@@ -1368,63 +1389,96 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             temperature_argument = (
                 omit if "temperature" in request_overrides.extra_body else _coerce_openai_argument(request.temperature)
             )
-            max_tokens_argument = (
-                omit
-                if "max_tokens" in request_overrides.extra_body or "max_completion_tokens" in request_overrides.extra_body
-                else _coerce_openai_argument(request.max_tokens)
-            )
-            snapshot_provider_request["request_kwargs"] = {
-                "extra_body": request_overrides.extra_body or None,
-                "extra_headers": request_overrides.extra_headers or None,
-                "extra_query": request_overrides.extra_query or None,
-                "max_tokens": _snapshot_openai_argument(max_tokens_argument),
-                "messages": messages_payload,
-                "model": model_info.model_identifier,
-                "response_format": _snapshot_openai_argument(openai_response_format),
-                "stream": bool(model_info.force_stream_mode),
-                "temperature": _snapshot_openai_argument(temperature_argument),
-                "tools": tools_payload,
-            }
-            if model_info.force_stream_mode:
-                stream_task: asyncio.Task[AsyncStream[ChatCompletionChunk]] = asyncio.create_task(
+
+            async def _dispatch(use_max_completion_tokens: bool) -> Tuple[APIResponse, UsageTuple | None]:
+                """构造并发起一次 chat.completions 请求。
+
+                Args:
+                    use_max_completion_tokens: 为 True 时改用 max_completion_tokens 承载
+                        最大输出 token 数，并省略原生 max_tokens（适配 gpt-5 系列等模型）。
+                """
+                # 每次用副本，避免重试两次之间相互污染 extra_body
+                extra_body = dict(request_overrides.extra_body)
+                if use_max_completion_tokens:
+                    # 自动改用 max_completion_tokens：用户未显式给值时用任务级 max_tokens 填充
+                    if "max_completion_tokens" not in extra_body and request.max_tokens is not None:
+                        extra_body["max_completion_tokens"] = request.max_tokens
+                    max_tokens_argument = omit
+                else:
+                    max_tokens_argument = (
+                        omit
+                        if "max_tokens" in extra_body or "max_completion_tokens" in extra_body
+                        else _coerce_openai_argument(request.max_tokens)
+                    )
+                snapshot_provider_request["request_kwargs"] = {
+                    "extra_body": extra_body or None,
+                    "extra_headers": request_overrides.extra_headers or None,
+                    "extra_query": request_overrides.extra_query or None,
+                    "max_tokens": _snapshot_openai_argument(max_tokens_argument),
+                    "messages": messages_payload,
+                    "model": model_info.model_identifier,
+                    "response_format": _snapshot_openai_argument(openai_response_format),
+                    "stream": bool(model_info.force_stream_mode),
+                    "temperature": _snapshot_openai_argument(temperature_argument),
+                    "tools": tools_payload,
+                }
+
+                if model_info.force_stream_mode:
+                    stream_task: asyncio.Task[AsyncStream[ChatCompletionChunk]] = asyncio.create_task(
+                        self.client.chat.completions.create(
+                            model=model_info.model_identifier,
+                            messages=messages_payload,
+                            tools=tools_payload or omit,
+                            temperature=temperature_argument,
+                            max_tokens=max_tokens_argument,
+                            stream=True,
+                            response_format=openai_response_format,
+                            extra_headers=request_overrides.extra_headers or None,
+                            extra_query=request_overrides.extra_query or None,
+                            extra_body=extra_body or None,
+                        )
+                    )
+                    raw_response = cast(
+                        AsyncStream[ChatCompletionChunk],
+                        await await_task_with_interrupt(stream_task, request.interrupt_flag),
+                    )
+                    return await stream_response_handler(raw_response, request.interrupt_flag)
+
+                completion_task: asyncio.Task[ChatCompletion] = asyncio.create_task(
                     self.client.chat.completions.create(
                         model=model_info.model_identifier,
                         messages=messages_payload,
                         tools=tools_payload or omit,
                         temperature=temperature_argument,
                         max_tokens=max_tokens_argument,
-                        stream=True,
+                        stream=False,
                         response_format=openai_response_format,
                         extra_headers=request_overrides.extra_headers or None,
                         extra_query=request_overrides.extra_query or None,
-                        extra_body=request_overrides.extra_body or None,
+                        extra_body=extra_body or None,
                     )
                 )
                 raw_response = cast(
-                    AsyncStream[ChatCompletionChunk],
-                    await await_task_with_interrupt(stream_task, request.interrupt_flag),
+                    ChatCompletion,
+                    await await_task_with_interrupt(completion_task, request.interrupt_flag),
                 )
-                return await stream_response_handler(raw_response, request.interrupt_flag)
+                return response_parser(raw_response)
 
-            completion_task: asyncio.Task[ChatCompletion] = asyncio.create_task(
-                self.client.chat.completions.create(
-                    model=model_info.model_identifier,
-                    messages=messages_payload,
-                    tools=tools_payload or omit,
-                    temperature=temperature_argument,
-                    max_tokens=max_tokens_argument,
-                    stream=False,
-                    response_format=openai_response_format,
-                    extra_headers=request_overrides.extra_headers or None,
-                    extra_query=request_overrides.extra_query or None,
-                    extra_body=request_overrides.extra_body or None,
-                )
-            )
-            raw_response = cast(
-                ChatCompletion,
-                await await_task_with_interrupt(completion_task, request.interrupt_flag),
-            )
-            return response_parser(raw_response)
+            # 已知仅支持 max_completion_tokens 的模型直接走对应分支；否则先按常规发送，
+            # 命中「max_tokens 不被支持」的 400 错误时自动改用 max_completion_tokens 重试并记忆。
+            cache_key = (self.api_provider.base_url or "", model_info.model_identifier)
+            use_mct = cache_key in _MODELS_REQUIRING_MAX_COMPLETION_TOKENS
+            try:
+                return await _dispatch(use_mct)
+            except APIStatusError as exc:
+                if not use_mct and _is_max_tokens_unsupported_error(exc):
+                    _MODELS_REQUIRING_MAX_COMPLETION_TOKENS.add(cache_key)
+                    logger.info(
+                        f"模型 '{model_info.name}' 不支持 max_tokens，自动改用 "
+                        f"max_completion_tokens 重试并记忆该模型。"
+                    )
+                    return await _dispatch(True)
+                raise
         except (EmptyResponseException, RespParseException) as exc:
             snapshot_path = save_failed_request_snapshot(
                 api_provider=self.api_provider,
