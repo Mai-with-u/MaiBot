@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
+from weakref import WeakKeyDictionary
 
 import asyncio
 
@@ -240,8 +241,10 @@ class ClientRegistry:
         """APIProvider.client_type -> Provider 注册信息映射表。"""
         self.client_instance_cache: Dict[str, BaseClient] = {}
         """APIProvider.name -> BaseClient的映射表"""
-        self._per_loop_client_cache: Dict[Tuple[int | None, str], BaseClient] = {}
-        """(事件循环 id, APIProvider.name) -> BaseClient，用于 force_new 场景的按循环复用。"""
+        self._per_loop_client_cache: WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, BaseClient]] = (
+            WeakKeyDictionary()
+        )
+        """事件循环对象 -> APIProvider.name -> BaseClient，用于 force_new 场景的按循环复用。"""
         self._owner_client_types: Dict[str, Set[str]] = {}
         """插件 ID -> 该插件拥有的 client_type 集合。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
@@ -431,20 +434,23 @@ class ClientRegistry:
         for provider_name in stale_provider_names:
             self.client_instance_cache.pop(provider_name, None)
 
-        stale_loop_keys = [
-            key
-            for key, client in self._per_loop_client_cache.items()
-            if client.api_provider.client_type == normalized_client_type
-        ]
-        for key in stale_loop_keys:
-            self._per_loop_client_cache.pop(key, None)
+        for loop, loop_cache in list(self._per_loop_client_cache.items()):
+            stale_provider_names = [
+                provider_name
+                for provider_name, client in loop_cache.items()
+                if client.api_provider.client_type == normalized_client_type
+            ]
+            for provider_name in stale_provider_names:
+                loop_cache.pop(provider_name, None)
+            if not loop_cache:
+                self._per_loop_client_cache.pop(loop, None)
 
     def get_client_class_instance(self, api_provider: APIProvider, force_new: bool = False) -> BaseClient:
         """获取注册的 API 客户端实例。
 
         Args:
             api_provider: APIProvider 实例。
-            force_new: 是否强制创建新实例。
+            force_new: 是否隔离普通缓存；在运行事件循环中会按事件循环复用实例。
 
         Returns:
             BaseClient: 注册的 API 客户端实例。
@@ -453,22 +459,25 @@ class ClientRegistry:
 
         ensure_client_type_loaded(api_provider.client_type)
 
-        # 如果强制创建新实例，按事件循环缓存复用。
+        # force_new 用于避免跨事件循环复用同一实例。
         # 历史上 force_new 用于规避缓存实例绑定到其他事件循环的问题（fab46561）；
         # 每次真的新建会在事件循环上重建 SSL context（Windows 加载证书库可达数秒），
         # 因此改为同一循环内复用实例，跨循环各自独立，效果等价且不再阻塞循环。
         if force_new:
             try:
-                loop_key = id(asyncio.get_running_loop())
+                running_loop = asyncio.get_running_loop()
             except RuntimeError:
-                loop_key = None
-            cache_key = (loop_key, api_provider.name)
-            if cache_key not in self._per_loop_client_cache:
                 if registration := self.client_registry.get(api_provider.client_type):
-                    self._per_loop_client_cache[cache_key] = registration.factory(api_provider)
+                    return registration.factory(api_provider)
+                raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册") from None
+
+            loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
+            if api_provider.name not in loop_cache:
+                if registration := self.client_registry.get(api_provider.client_type):
+                    loop_cache[api_provider.name] = registration.factory(api_provider)
                 else:
                     raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
-            return self._per_loop_client_cache[cache_key]
+            return loop_cache[api_provider.name]
 
         # 正常的缓存逻辑
         if api_provider.name not in self.client_instance_cache:
