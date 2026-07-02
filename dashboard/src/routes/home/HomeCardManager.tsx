@@ -1,16 +1,23 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import {
+  closestCenter,
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
-  type DragStartEvent,
-  useDraggable,
 } from '@dnd-kit/core'
+import {
+  arrayMove,
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ExternalLink, GripVertical, Plus, RotateCcw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
@@ -33,12 +40,12 @@ import type { PluginHomeCard, PluginHomeCardContent, PluginHomeCardWidth } from 
 import { cn } from '@/lib/utils'
 
 const HOME_CARD_LAYOUT_STORAGE_KEY = 'maibot-home-card-layout-v1'
-const CANVAS_COLUMNS = 12
-const CANVAS_GAP = 16
-const CANVAS_ROW_HEIGHT = 64
-const CANVAS_MIN_HEIGHT = 220
+const HOME_CARD_LOW_ROW_HEIGHT = 236
+const HOME_CARD_HIGH_ROW_HEIGHT = 360
+const HOME_CARD_GRID_GAP = 16
 
 type HomeCardSource = 'builtin' | 'plugin'
+type HomeCardRowMode = 'low' | 'high'
 
 export interface HomeCardDefinition {
   id: string
@@ -52,14 +59,7 @@ export interface HomeCardDefinition {
 interface HomeCardLayout {
   order: string[]
   hidden: string[]
-  positions: Record<string, HomeCardPosition>
-  zOrder: string[]
-}
-
-interface HomeCardPosition {
-  x: number
-  y: number
-  z: number
+  rowModes: Record<string, HomeCardRowMode>
 }
 
 interface HomeCardManagerProps {
@@ -70,7 +70,7 @@ interface HomeCardManagerProps {
 
 function loadHomeCardLayout(): HomeCardLayout {
   if (typeof window === 'undefined') {
-    return { order: [], hidden: [], positions: {}, zOrder: [] }
+    return { order: [], hidden: [], rowModes: {} }
   }
 
   try {
@@ -78,25 +78,15 @@ function loadHomeCardLayout(): HomeCardLayout {
     return {
       order: Array.isArray(parsed.order) ? parsed.order.filter((item: unknown): item is string => typeof item === 'string') : [],
       hidden: Array.isArray(parsed.hidden) ? parsed.hidden.filter((item: unknown): item is string => typeof item === 'string') : [],
-      positions: isPositionMap(parsed.positions) ? parsed.positions : {},
-      zOrder: Array.isArray(parsed.zOrder) ? parsed.zOrder.filter((item: unknown): item is string => typeof item === 'string') : [],
+      rowModes: normalizeRowModes(parsed.rowModes),
     }
   } catch {
-    return { order: [], hidden: [], positions: {}, zOrder: [] }
+    return { order: [], hidden: [], rowModes: {} }
   }
 }
 
 function saveHomeCardLayout(layout: HomeCardLayout): void {
   localStorage.setItem(HOME_CARD_LAYOUT_STORAGE_KEY, JSON.stringify(layout))
-}
-
-function isPositionMap(value: unknown): value is Record<string, HomeCardPosition> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  return Object.values(value).every((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
-    const position = item as HomeCardPosition
-    return Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(position.z)
-  })
 }
 
 function sanitizeUrl(url: unknown): string {
@@ -109,19 +99,141 @@ function sanitizeUrl(url: unknown): string {
   return ''
 }
 
-function cardGridSize(width: PluginHomeCardWidth | undefined): { width: number; height: number } {
+function cardWidthClass(width: PluginHomeCardWidth | undefined): string {
   switch (width) {
     case 'small':
-      return { width: 3, height: 3 }
+      return 'lg:col-span-2'
     case 'medium':
-      return { width: 4, height: 3 }
+      return 'lg:col-span-3'
     case 'large':
-      return { width: 5, height: 3 }
+      return 'lg:col-span-5'
+    case 'wide':
+      return 'lg:col-span-7'
     case 'full':
-      return { width: CANVAS_COLUMNS, height: 5 }
+      return 'lg:col-span-10'
     default:
-      return { width: 4, height: 3 }
+      return 'lg:col-span-3'
   }
+}
+
+function normalizeRowModes(value: unknown): Record<string, HomeCardRowMode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.entries(value).reduce<Record<string, HomeCardRowMode>>((result, [key, mode]) => {
+    if (/^\d+$/.test(key) && (mode === 'low' || mode === 'high')) {
+      result[key] = mode
+    }
+    return result
+  }, {})
+}
+
+function rowModesEqual(left: Record<string, HomeCardRowMode>, right: Record<string, HomeCardRowMode>): boolean {
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key])
+}
+
+function defaultRowMode(rowIndex: number): HomeCardRowMode {
+  return rowIndex === 0 ? 'low' : 'high'
+}
+
+function rowHeight(mode: HomeCardRowMode): number {
+  return mode === 'high' ? HOME_CARD_HIGH_ROW_HEIGHT : HOME_CARD_LOW_ROW_HEIGHT
+}
+
+function cardWidthColumns(width: PluginHomeCardWidth | undefined): number {
+  switch (width) {
+    case 'small':
+      return 2
+    case 'medium':
+      return 3
+    case 'large':
+      return 5
+    case 'wide':
+      return 7
+    case 'full':
+      return 10
+    default:
+      return 3
+  }
+}
+
+function shrinkCardWidthOneStep(width: PluginHomeCardWidth | undefined): PluginHomeCardWidth | undefined {
+  switch (width) {
+    case 'full':
+      return 'wide'
+    case 'wide':
+      return 'large'
+    case 'large':
+      return 'medium'
+    case 'medium':
+      return 'small'
+    case 'small':
+    default:
+      return width
+  }
+}
+
+function buildAdaptiveCardWidths(cards: HomeCardDefinition[]): Map<string, PluginHomeCardWidth | undefined> {
+  const widths = new Map<string, PluginHomeCardWidth | undefined>()
+  let currentRowColumns = 0
+
+  for (const card of cards) {
+    const preferredWidth = card.width
+    const preferredColumns = cardWidthColumns(preferredWidth)
+    const remainingColumns = 10 - currentRowColumns
+    let renderedWidth = preferredWidth
+    let renderedColumns = preferredColumns
+
+    if (currentRowColumns > 0 && preferredColumns > remainingColumns) {
+      const shrunkWidth = shrinkCardWidthOneStep(preferredWidth)
+      const shrunkColumns = cardWidthColumns(shrunkWidth)
+      if (shrunkColumns <= remainingColumns) {
+        renderedWidth = shrunkWidth
+        renderedColumns = shrunkColumns
+      } else {
+        currentRowColumns = 0
+      }
+    }
+
+    widths.set(card.id, renderedWidth)
+    currentRowColumns += renderedColumns
+    if (currentRowColumns >= 10) {
+      currentRowColumns = 0
+    }
+  }
+
+  return widths
+}
+
+function buildCardRows(
+  cards: HomeCardDefinition[],
+  widths: Map<string, PluginHomeCardWidth | undefined>
+): HomeCardDefinition[][] {
+  const rows: HomeCardDefinition[][] = []
+  let currentRow: HomeCardDefinition[] = []
+  let currentRowColumns = 0
+
+  for (const card of cards) {
+    const columns = cardWidthColumns(widths.get(card.id) ?? card.width)
+    if (currentRow.length > 0 && currentRowColumns + columns > 10) {
+      rows.push(currentRow)
+      currentRow = []
+      currentRowColumns = 0
+    }
+
+    currentRow.push(card)
+    currentRowColumns += columns
+    if (currentRowColumns >= 10) {
+      rows.push(currentRow)
+      currentRow = []
+      currentRowColumns = 0
+    }
+  }
+
+  if (currentRow.length > 0) {
+    rows.push(currentRow)
+  }
+  return rows
 }
 
 function HomeMarkdown({ content }: { content: string }) {
@@ -273,93 +385,35 @@ function renderPluginContent(content: PluginHomeCardContent): ReactNode {
   return <p className="text-sm text-muted-foreground">暂无内容</p>
 }
 
-function getDefaultCardPositions(cards: HomeCardDefinition[]): Record<string, HomeCardPosition> {
-  const positions: Record<string, HomeCardPosition> = {}
-  let x = 0
-  let y = 0
-  let rowHeight = 0
-
-  cards.forEach((card, index) => {
-    const size = cardGridSize(card.width)
-    if (x > 0 && x + size.width > CANVAS_COLUMNS) {
-      y += rowHeight
-      x = 0
-      rowHeight = 0
-    }
-
-    positions[card.id] = { x, y, z: index + 1 }
-    x += size.width
-    rowHeight = Math.max(rowHeight, size.height)
-  })
-
-  return positions
-}
-
-function clampCardPosition(position: HomeCardPosition, card: HomeCardDefinition): HomeCardPosition {
-  const size = cardGridSize(card.width)
-  return {
-    x: Math.max(0, Math.min(CANVAS_COLUMNS - size.width, Math.round(position.x))),
-    y: Math.max(0, Math.round(position.y)),
-    z: Math.max(1, Math.round(position.z)),
-  }
-}
-
-function positionsEqual(left: Record<string, HomeCardPosition>, right: Record<string, HomeCardPosition>): boolean {
-  const leftKeys = Object.keys(left)
-  const rightKeys = Object.keys(right)
-  if (leftKeys.length !== rightKeys.length) return false
-  return leftKeys.every((key) => {
-    const leftPosition = left[key]
-    const rightPosition = right[key]
-    return Boolean(rightPosition)
-      && leftPosition.x === rightPosition.x
-      && leftPosition.y === rightPosition.y
-      && leftPosition.z === rightPosition.z
-  })
-}
-
 function stringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index])
 }
 
-function FreeformHomeCard({
+function SortableHomeCard({
   card,
-  columnWidth,
+  displayWidth,
   editing,
   onHide,
-  position,
-  size,
 }: {
   card: HomeCardDefinition
-  columnWidth: number
+  displayWidth?: PluginHomeCardWidth
   editing: boolean
   onHide: (id: string) => void
-  position: HomeCardPosition
-  size: { height: number; width: number }
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
     disabled: !editing,
   })
-  const left = position.x * (columnWidth + CANVAS_GAP)
-  const top = position.y * (CANVAS_ROW_HEIGHT + CANVAS_GAP)
-  const width = size.width * columnWidth + (size.width - 1) * CANVAS_GAP
-  const height = size.height * CANVAS_ROW_HEIGHT + (size.height - 1) * CANVAS_GAP
   const style = {
-    height,
-    left,
     transform: CSS.Translate.toString(transform),
-    top,
-    width,
-    zIndex: isDragging ? 1000 : position.z,
+    transition,
   }
 
   return (
     <div
       ref={setNodeRef}
-      data-home-card-canvas-item="true"
       style={style}
-      className={cn('absolute min-w-0 overflow-hidden transition-[filter,opacity] duration-150', isDragging && 'opacity-90')}
+      className={cn('relative h-full min-w-0', cardWidthClass(displayWidth ?? card.width), isDragging && 'z-20 opacity-80')}
     >
       {editing && (
         <div
@@ -400,7 +454,7 @@ function FreeformHomeCard({
       <div
         aria-hidden={editing}
         className={cn(
-          'h-full transition-[filter,opacity] duration-150',
+          'h-full overflow-hidden transition-[filter,opacity] duration-150',
           editing && 'pointer-events-none select-none blur-[2.5px] opacity-75'
         )}
         inert={editing}
@@ -414,14 +468,13 @@ function FreeformHomeCard({
 export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCardManagerProps) {
   const { t } = useTranslation()
   const [layout, setLayout] = useState<HomeCardLayout>(loadHomeCardLayout)
-  const [canvasWidth, setCanvasWidth] = useState(0)
   const [editing, setEditing] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [controlsContainer, setControlsContainer] = useState<HTMLElement | null>(null)
-  const canvasRef = useRef<HTMLDivElement | null>(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
   const pluginDefinitions = useMemo<HomeCardDefinition[]>(
@@ -443,10 +496,6 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
   )
   const cardMap = useMemo(() => new Map(allCards.map((card) => [card.id, card])), [allCards])
   const allCardIds = useMemo(() => allCards.map((card) => card.id), [allCards])
-  const columnWidth = useMemo(
-    () => Math.max(0, (canvasWidth - CANVAS_GAP * (CANVAS_COLUMNS - 1)) / CANVAS_COLUMNS),
-    [canvasWidth]
-  )
 
   const updateLayout = useCallback((updater: (current: HomeCardLayout) => HomeCardLayout) => {
     setLayout((current) => {
@@ -461,36 +510,17 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
       const knownIds = new Set(allCardIds)
       const order = [...current.order.filter((id) => knownIds.has(id)), ...allCardIds.filter((id) => !current.order.includes(id))]
       const hidden = current.hidden.filter((id) => knownIds.has(id))
-      const defaultPositions = getDefaultCardPositions(order.map((id) => cardMap.get(id)).filter((card): card is HomeCardDefinition => card !== undefined))
-      const positions: Record<string, HomeCardPosition> = {}
-      for (const id of order) {
-        const card = cardMap.get(id)
-        if (!card) continue
-        positions[id] = clampCardPosition(current.positions[id] || defaultPositions[id], card)
-      }
-      const zOrder = [...current.zOrder.filter((id) => knownIds.has(id)), ...allCardIds.filter((id) => !current.zOrder.includes(id))]
+      const rowModes = normalizeRowModes(current.rowModes)
       if (
         stringArraysEqual(order, current.order)
         && stringArraysEqual(hidden, current.hidden)
-        && stringArraysEqual(zOrder, current.zOrder)
-        && positionsEqual(positions, current.positions)
+        && rowModesEqual(rowModes, current.rowModes)
       ) {
         return current
       }
-      return { order, hidden, positions, zOrder }
+      return { ...current, order, hidden, rowModes }
     })
-  }, [allCardIds, cardMap, updateLayout])
-
-  useEffect(() => {
-    const canvasElement = canvasRef.current
-    if (!canvasElement) return
-
-    const updateCanvasWidth = () => setCanvasWidth(canvasElement.clientWidth)
-    updateCanvasWidth()
-    const observer = new ResizeObserver(updateCanvasWidth)
-    observer.observe(canvasElement)
-    return () => observer.disconnect()
-  }, [])
+  }, [allCardIds, updateLayout])
 
   useEffect(() => {
     if (!controlsPortalId || typeof document === 'undefined') {
@@ -514,55 +544,41 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
         .filter((card): card is HomeCardDefinition => card !== undefined),
     [cardMap, layout.hidden]
   )
-
-  const bringCardToFront = useCallback((id: string) => {
-    updateLayout((current) => {
-      const card = cardMap.get(id)
-      const position = current.positions[id]
-      if (!card || !position) return current
-      const maxZ = Math.max(0, ...Object.values(current.positions).map((item) => item.z))
-      const zOrder = [...current.zOrder.filter((item) => item !== id), id]
-      return {
-        ...current,
-        positions: {
-          ...current.positions,
-          [id]: { ...position, z: maxZ + 1 },
-        },
-        zOrder,
-      }
+  const adaptiveCardWidths = useMemo(() => buildAdaptiveCardWidths(visibleCards), [visibleCards])
+  const cardRows = useMemo(() => buildCardRows(visibleCards, adaptiveCardWidths), [adaptiveCardWidths, visibleCards])
+  const rowModes = useMemo(
+    () => cardRows.map((_, index) => layout.rowModes[String(index)] ?? defaultRowMode(index)),
+    [cardRows, layout.rowModes]
+  )
+  const rowControls = useMemo(() => {
+    let rowTop = 0
+    return rowModes.map((mode, index) => {
+      const top = rowTop
+      rowTop += rowHeight(mode) + HOME_CARD_GRID_GAP
+      return { index, mode, top }
     })
-  }, [cardMap, updateLayout])
-
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    bringCardToFront(String(event.active.id))
-  }, [bringCardToFront])
+  }, [rowModes])
+  const gridStyle = cardRows.length > 0
+    ? ({
+      '--home-card-grid-rows': rowModes.map((mode) => `${rowHeight(mode)}px`).join(' '),
+    } as CSSProperties)
+    : undefined
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const id = String(event.active.id)
-      const card = cardMap.get(id)
-      if (!card || columnWidth <= 0) return
+      const { active, over } = event
+      if (!over || active.id === over.id) return
       updateLayout((current) => {
-        const currentPosition = current.positions[id]
-        if (!currentPosition) return current
-        const nextPosition = clampCardPosition(
-          {
-            ...currentPosition,
-            x: currentPosition.x + event.delta.x / (columnWidth + CANVAS_GAP),
-            y: currentPosition.y + event.delta.y / (CANVAS_ROW_HEIGHT + CANVAS_GAP),
-          },
-          card
-        )
-        return {
-          ...current,
-          positions: {
-            ...current.positions,
-            [id]: nextPosition,
-          },
-        }
+        const visibleIds = visibleCards.map((card) => card.id)
+        const oldIndex = visibleIds.indexOf(String(active.id))
+        const newIndex = visibleIds.indexOf(String(over.id))
+        if (oldIndex < 0 || newIndex < 0) return current
+        const reorderedVisibleIds = arrayMove(visibleIds, oldIndex, newIndex)
+        const remainingIds = current.order.filter((id) => !visibleIds.includes(id))
+        return { ...current, order: [...reorderedVisibleIds, ...remainingIds] }
       })
     },
-    [cardMap, columnWidth, updateLayout]
+    [updateLayout, visibleCards]
   )
 
   const hideCard = useCallback((id: string) => {
@@ -573,26 +589,27 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
     updateLayout((current) => ({ ...current, hidden: current.hidden.filter((item) => item !== id) }))
   }, [updateLayout])
 
+  const toggleRowMode = useCallback((rowIndex: number) => {
+    updateLayout((current) => {
+      const key = String(rowIndex)
+      const currentMode = current.rowModes[key] ?? defaultRowMode(rowIndex)
+      return {
+        ...current,
+        rowModes: {
+          ...current.rowModes,
+          [key]: currentMode === 'high' ? 'low' : 'high',
+        },
+      }
+    })
+  }, [updateLayout])
+
   const resetLayout = useCallback(() => {
     updateLayout(() => ({
       order: allCardIds,
       hidden: [],
-      positions: getDefaultCardPositions(allCards),
-      zOrder: allCardIds,
+      rowModes: {},
     }))
-  }, [allCardIds, allCards, updateLayout])
-
-  const canvasHeight = useMemo(() => {
-    if (!visibleCards.length) return CANVAS_MIN_HEIGHT
-    const bottom = Math.max(
-      ...visibleCards.map((card) => {
-        const position = layout.positions[card.id] || { x: 0, y: 0, z: 1 }
-        const size = cardGridSize(card.width)
-        return position.y * (CANVAS_ROW_HEIGHT + CANVAS_GAP) + size.height * CANVAS_ROW_HEIGHT + (size.height - 1) * CANVAS_GAP
-      })
-    )
-    return Math.max(CANVAS_MIN_HEIGHT, bottom)
-  }, [layout.positions, visibleCards])
+  }, [allCardIds, updateLayout])
 
   const controls = (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -617,35 +634,46 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
         {controlsPortalId && controlsContainer ? createPortal(controls, controlsContainer) : null}
         {!controlsPortalId && controls}
 
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div
-            ref={canvasRef}
-            data-home-summary-cards="true"
-            className={cn(
-              'relative min-h-[220px] w-full overflow-visible transition-[background] duration-150',
-              editing && 'rounded-md bg-[linear-gradient(to_right,hsl(var(--border)/0.34)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--border)/0.34)_1px,transparent_1px)]'
-            )}
-            style={{
-              backgroundSize: editing ? `${columnWidth + CANVAS_GAP}px ${CANVAS_ROW_HEIGHT + CANVAS_GAP}px` : undefined,
-              height: canvasHeight,
-            }}
-          >
-            {visibleCards.map((card) => {
-              const position = layout.positions[card.id] || { x: 0, y: 0, z: 1 }
-              return (
-                <FreeformHomeCard
-                  key={card.id}
-                  card={card}
-                  columnWidth={columnWidth}
-                  editing={editing}
-                  onHide={hideCard}
-                  position={position}
-                  size={cardGridSize(card.width)}
-                />
-              )
-            })}
-          </div>
-        </DndContext>
+        <div className="relative">
+          {editing && rowControls.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden lg:block">
+              {rowControls.map((row) => (
+                <Button
+                  key={row.index}
+                  type="button"
+                  variant={row.mode === 'high' ? 'default' : 'outline'}
+                  size="sm"
+                  className="pointer-events-auto absolute left-2 h-7 bg-background/95 px-2 text-xs shadow-sm backdrop-blur"
+                  style={{ top: row.top + 8 }}
+                  onClick={() => toggleRowMode(row.index)}
+                >
+                  {row.mode === 'high' ? t('home.cards.row.high') : t('home.cards.row.low')}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={visibleCards.map((card) => card.id)} strategy={rectSortingStrategy}>
+              <div
+                data-home-summary-cards="true"
+                data-home-row-sizing="custom"
+                className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-10"
+                style={gridStyle}
+              >
+                {visibleCards.map((card) => (
+                  <SortableHomeCard
+                    key={card.id}
+                    card={card}
+                    displayWidth={adaptiveCardWidths.get(card.id)}
+                    editing={editing}
+                    onHide={hideCard}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent>

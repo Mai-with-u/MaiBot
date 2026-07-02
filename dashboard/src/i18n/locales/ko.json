@@ -814,6 +814,152 @@
     "closeMenu": "메뉴 닫기",
     "navigatedTo": "{{page}}으로 이동했습니다"
   },
+  "memory": {
+    "tuning": {
+      "task": {
+        "title": "튜닝 작업",
+        "description": "검색 매개변수 평가"
+      },
+      "form": {
+        "strategy": "튜닝 전략",
+        "objective": "최적화 목표",
+        "intensity": "평가 깊이",
+        "evalScope": "평가 범위",
+        "sampleSize": "샘플 수",
+        "topKEval": "평가 Top-K",
+        "persist": "설정 파일에도 쓰기"
+      },
+      "objectives": {
+        "precision": "정확도 우선",
+        "balanced": "정확도와 재현율 균형",
+        "recall": "재현율 우선"
+      },
+      "intensity": {
+        "quick": "빠름",
+        "standard": "표준",
+        "deep": "심층"
+      },
+      "actions": {
+        "createTask": "튜닝 작업 만들기",
+        "applyBest": "최적값 적용",
+        "showToml": "설정 조각 보기",
+        "showSummary": "결과 요약으로 돌아가기"
+      },
+      "tasks": {
+        "title": "최근 튜닝 작업",
+        "description": "작업 결과",
+        "recommended": "추천",
+        "notRecommended": "비추천",
+        "empty": "튜닝 작업이 없습니다"
+      },
+      "status": {
+        "completed": "완료",
+        "running": "실행 중",
+        "queued": "대기 중",
+        "failed": "실패",
+        "cancelled": "취소됨"
+      },
+      "result": {
+        "noTask": "아직 튜닝 결과가 없습니다. 작업이 완료되면 평가 결과가 여기에 표시됩니다.",
+        "statusTitle": "작업 상태",
+        "progressTitle": "진행률",
+        "roundsTitle": "평가 라운드",
+        "recommendationTitle": "적용 판단",
+        "recommended": "검증을 통과했습니다. 적용을 권장합니다.",
+        "notRecommended": "검증을 통과하지 못했습니다. 적용을 권장하지 않습니다.",
+        "scoreTitle": "종합 점수",
+        "validationTitle": "Holdout 검증",
+        "validationPassed": "통과",
+        "validationFailed": "미통과",
+        "holdoutWithCount": "{{result}}, 샘플 {{count}}개",
+        "metricsTitle": "주요 지표",
+        "metricsDescription": "기준값에서 최적 결과까지의 변화를 표시합니다.",
+        "reason": "이유: {{reason}}",
+        "errorReason": "실패 이유: {{reason}}",
+        "reasons": {
+          "holdoutEmpty": "Holdout 샘플이 부족해 튜닝 결과를 검증할 수 없습니다.",
+          "holdoutOnlineLikeValidationFailed": "Holdout 및 온라인 유사 검증을 통과하지 못했습니다.",
+          "unknown": "{{reason}}"
+        },
+        "metrics": {
+          "precisionAt1": "P@1",
+          "recallAtK": "Recall@K",
+          "emptyRate": "빈 결과율",
+          "avgElapsedMs": "평균 소요 시간"
+        }
+      },
+      "snapshot": {
+        "title": "현재 튜닝 결과",
+        "summaryDescription": "최근 완료된 작업의 평가 결과를 먼저 표시하고, 매개변수는 세부 정보에 둡니다.",
+        "tomlDescription": "수동 복사나 문제 확인에 사용하는 설정 조각입니다.",
+        "runtimeTitle": "런타임 적용",
+        "runtimeDescription": "현재 검색 런타임에 즉시 적용된 매개변수입니다.",
+        "runtimeResultApplied": "튜닝 결과가 현재 검색 런타임에 적용되어 있습니다.",
+        "runtimeResultEmpty": "아직 런타임 결과가 없습니다.",
+        "persistableTitle": "저장 가능한 설정",
+        "persistableDescription": "설정 파일에 쓸 수 있는 매개변수입니다.",
+        "persistableResultReady": "이 결과는 필요할 때 설정 파일에 저장할 수 있습니다.",
+        "persistableResultEmpty": "아직 저장 가능한 결과가 없습니다.",
+        "diffTitle": "차이",
+        "diffDescription": "런타임 설정과 저장 가능한 설정이 다른 항목입니다.",
+        "diffResultClean": "런타임 설정과 저장 가능한 설정이 일치합니다.",
+        "diffResultChanged": "런타임 설정과 저장 가능한 설정에 차이가 있습니다. 세부 정보에서 확인할 수 있습니다.",
+        "detailsTitle": "매개변수와 설정 세부 정보",
+        "detailsHint": "문제 확인과 비교용",
+        "parameterDetailsTitle": "매개변수 세부 정보",
+        "runtimeShort": "런타임",
+        "persistableShort": "저장 가능",
+        "empty": "데이터 없음",
+        "noDiff": "현재 두 설정에 차이가 없습니다.",
+        "technicalCount": "요약에는 기술 필드 {{count}}개가 숨겨져 있습니다. 설정 조각에서 확인할 수 있습니다.",
+        "technicalDiffCount": "요약에는 기술적 차이 {{count}}개가 숨겨져 있습니다. 설정 조각에서 확인할 수 있습니다."
+      },
+      "values": {
+        "enabled": "켜짐",
+        "disabled": "꺼짐",
+        "auto": "자동",
+        "always": "항상 켬",
+        "off": "꺼짐",
+        "weightedRrf": "가중 융합",
+        "rrf": "순위 융합",
+        "alphaLegacy": "이전 방식 가중 융합",
+        "singlePool": "단일 벡터 풀",
+        "dualPool": "이중 벡터 풀"
+      },
+      "parameters": {
+        "retrieval_top_k": "전체 후보 수",
+        "retrieval_top_k_paragraphs": "문단 후보 수",
+        "retrieval_top_k_relations": "관계 후보 수",
+        "retrieval_top_k_final": "최종 반환 수",
+        "retrieval_alpha": "문단과 관계 가중치",
+        "retrieval_enable_ppr": "그래프 순위화",
+        "retrieval_ppr_alpha": "그래프 전이 계수",
+        "retrieval_ppr_timeout_seconds": "그래프 순위화 제한 시간",
+        "retrieval_search_smart_fallback_enabled": "스마트 대체 검색",
+        "retrieval_sparse_enabled": "키워드 검색",
+        "retrieval_sparse_mode": "키워드 검색 모드",
+        "retrieval_sparse_candidate_k": "키워드 문단 후보",
+        "retrieval_sparse_relation_candidate_k": "키워드 관계 후보",
+        "retrieval_fusion_method": "결과 융합 방식",
+        "retrieval_fusion_rrf_k": "융합 완화 계수",
+        "retrieval_fusion_vector_weight": "벡터 검색 가중치",
+        "retrieval_fusion_bm25_weight": "키워드 검색 가중치",
+        "retrieval_vector_pools_mode": "벡터 풀 모드",
+        "retrieval_vector_pools_paragraph_top_k": "문단 벡터 후보",
+        "retrieval_vector_pools_graph_top_k": "그래프 벡터 후보",
+        "retrieval_vector_pools_graph_expand_paragraph_k": "그래프 확장 문단 수",
+        "retrieval_vector_pools_relation_expand_per_hit": "히트당 관계 확장 수",
+        "retrieval_vector_pools_entity_expand_per_hit": "히트당 엔티티 확장 수",
+        "retrieval_vector_pools_relation_evidence_weight": "관계 근거 가중치",
+        "retrieval_vector_pools_entity_evidence_weight": "엔티티 근거 가중치",
+        "threshold_percentile": "동적 임계값 분위",
+        "threshold_min_results": "최소 반환 수",
+        "threshold_min_threshold": "최소 임계값",
+        "threshold_max_threshold": "최대 임계값",
+        "threshold_enable_auto_adjust": "임계값 자동 조정"
+      }
+    }
+  },
   "home": {
     "title": "실시간 모니터",
     "subtitle": "MaiBot 실행 상태 및 통계 데이터 개요",
@@ -825,6 +971,25 @@
       "30d": "30일"
     },
     "autoRefresh": "자동 새로고침",
+    "cards": {
+      "add": "카드 추가",
+      "edit": "카드 편집",
+      "done": "완료",
+      "reset": "기본 레이아웃 복원",
+      "row": {
+        "low": "낮은 행",
+        "high": "높은 행"
+      },
+      "dialog": {
+        "title": "홈 카드 관리",
+        "description": "플러그인 또는 기본 제공 카드를 추가하거나 기본 레이아웃으로 복원합니다.",
+        "hiddenCards": "추가 가능한 카드",
+        "noHiddenCards": "추가 가능한 카드가 없습니다",
+        "restore": "추가",
+        "reset": "기본 레이아웃 복원",
+        "cancel": "닫기"
+      }
+    },
     "botStatus": {
       "title": "MaiBot 상태",
       "loading": "읽는 중",

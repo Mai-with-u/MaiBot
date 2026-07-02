@@ -15,7 +15,6 @@
         "title": "基础",
         "sections": [
           "plugin",
-          "storage",
           "embedding"
         ],
         "order": 1
@@ -34,6 +33,7 @@
         "title": "检索",
         "sections": [
           "retrieval",
+          "retrieval.search.smart_fallback",
           "retrieval.relation_vectorization",
           "retrieval.vector_pools",
           "retrieval.sparse",
@@ -93,31 +93,6 @@
         }
       }
     },
-    "storage": {
-      "name": "storage",
-      "title": "存储位置",
-      "description": "控制 A_Memorix 的运行数据目录。",
-      "icon": null,
-      "collapsed": false,
-      "order": 2,
-      "fields": {
-        "data_dir": {
-          "name": "data_dir",
-          "type": "string",
-          "default": "data/a-memorix",
-          "description": "数据目录",
-          "label": "数据目录",
-          "ui_type": "text",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 1,
-          "hint": "相对路径按 MaiBot 仓库根目录解析，建议保持默认外置目录。",
-          "placeholder": "data/a-memorix",
-          "choices": null
-        }
-      }
-    },
     "embedding": {
       "name": "embedding",
       "title": "Embedding",
@@ -139,23 +114,6 @@
           "order": 1,
           "hint": "默认 auto，会按宿主环境自动选择可用 embedding 模型。",
           "placeholder": "auto",
-          "choices": null
-        },
-        "dimension": {
-          "name": "dimension",
-          "type": "integer",
-          "default": 1024,
-          "description": "向量维度",
-          "label": "向量维度",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "唯一公开维度控制项，修改后建议先执行 runtime self-check。",
-          "min": 1,
-          "max": 32768,
-          "step": 1,
           "choices": null
         },
         "dimension_request_mode": {
@@ -224,22 +182,6 @@
           "order": 6,
           "hint": "适合重复写入较多的场景，默认关闭以保持路径更直观。",
           "choices": null
-        },
-        "quantization_type": {
-          "name": "quantization_type",
-          "type": "string",
-          "default": "int8",
-          "description": "量化方式",
-          "label": "量化方式",
-          "ui_type": "select",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 7,
-          "hint": "当前 vNext 主路径仅支持 int8(SQ8)。",
-          "choices": [
-            "int8"
-          ]
         }
       }
     },
@@ -281,20 +223,6 @@
           "max": 86400,
           "step": 1,
           "choices": null
-        },
-        "allow_metadata_only_write": {
-          "name": "allow_metadata_only_write",
-          "type": "boolean",
-          "default": true,
-          "description": "是否允许仅写入元数据",
-          "label": "允许仅写元数据",
-          "ui_type": "switch",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 3,
-          "hint": "embedding 不可用时允许先保留结构化记录，后续再回填向量。",
-          "choices": null
         }
       }
     },
@@ -318,23 +246,6 @@
           "disabled": false,
           "order": 1,
           "hint": "建议与 metadata-only 写入配合使用。",
-          "choices": null
-        },
-        "interval_seconds": {
-          "name": "interval_seconds",
-          "type": "integer",
-          "default": 60,
-          "description": "回填轮询间隔",
-          "label": "轮询间隔（秒）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "控制后台扫描待回填段落的频率。",
-          "min": 5,
-          "max": 86400,
-          "step": 1,
           "choices": null
         },
         "batch_size": {
@@ -432,23 +343,6 @@
           "step": 1,
           "choices": null
         },
-        "alpha": {
-          "name": "alpha",
-          "type": "number",
-          "default": 0.5,
-          "description": "关系融合权重",
-          "label": "关系权重 alpha",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 4,
-          "hint": "越高越偏向关系侧证据，越低越偏向段落语义召回。",
-          "min": 0,
-          "max": 1,
-          "step": 0.05,
-          "choices": null
-        },
         "enable_ppr": {
           "name": "enable_ppr",
           "type": "boolean",
@@ -461,23 +355,6 @@
           "disabled": false,
           "order": 5,
           "hint": "图扩散召回有助于补足关系链，但会增加检索时延。",
-          "choices": null
-        },
-        "ppr_alpha": {
-          "name": "ppr_alpha",
-          "type": "number",
-          "default": 0.85,
-          "description": "PPR alpha",
-          "label": "PPR Alpha",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 6,
-          "hint": "影响图扩散时的随机游走保守程度。",
-          "min": 0,
-          "max": 1,
-          "step": 0.01,
           "choices": null
         },
         "ppr_timeout_seconds": {
@@ -497,23 +374,6 @@
           "step": 0.1,
           "choices": null
         },
-        "ppr_concurrency_limit": {
-          "name": "ppr_concurrency_limit",
-          "type": "integer",
-          "default": 4,
-          "description": "PPR 并发限制",
-          "label": "PPR 并发上限",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 8,
-          "hint": "控制并发执行的图扩散任务数量。",
-          "min": 1,
-          "max": 128,
-          "step": 1,
-          "choices": null
-        },
         "enable_parallel": {
           "name": "enable_parallel",
           "type": "boolean",
@@ -526,6 +386,30 @@
           "disabled": false,
           "order": 9,
           "hint": "允许多路候选召回并发执行。",
+          "choices": null
+        }
+      }
+    },
+    "retrieval.search.smart_fallback": {
+      "name": "retrieval.search.smart_fallback",
+      "title": "智能兜底检索",
+      "description": "控制检索结果不足时是否启用智能兜底补召回。",
+      "icon": null,
+      "collapsed": false,
+      "order": 6.1,
+      "fields": {
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用智能兜底检索",
+          "label": "启用智能兜底",
+          "ui_type": "switch",
+          "required": false,
+          "hidden": false,
+          "disabled": false,
+          "order": 1,
+          "hint": "结果过少时尝试补充召回，通常能降低空结果率。",
           "choices": null
         }
       }
@@ -551,22 +435,6 @@
           "order": 1,
           "hint": "适合关键词明确、短文本或 embedding 退化场景。",
           "choices": null
-        },
-        "backend": {
-          "name": "backend",
-          "type": "string",
-          "default": "fts5",
-          "description": "稀疏检索后端",
-          "label": "后端类型",
-          "ui_type": "select",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "当前主路径固定为 FTS5。",
-          "choices": [
-            "fts5"
-          ]
         },
         "mode": {
           "name": "mode",
@@ -648,57 +516,6 @@
       "collapsed": false,
       "order": 10,
       "fields": {
-        "min_threshold": {
-          "name": "min_threshold",
-          "type": "number",
-          "default": 0.3,
-          "description": "最小阈值",
-          "label": "最小阈值",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 1,
-          "hint": "结果分数低于此值时会被过滤。",
-          "min": 0,
-          "max": 1,
-          "step": 0.01,
-          "choices": null
-        },
-        "max_threshold": {
-          "name": "max_threshold",
-          "type": "number",
-          "default": 0.95,
-          "description": "最大阈值",
-          "label": "最大阈值",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "自动调节阈值时不会超过这个上限。",
-          "min": 0,
-          "max": 1,
-          "step": 0.01,
-          "choices": null
-        },
-        "percentile": {
-          "name": "percentile",
-          "type": "number",
-          "default": 75,
-          "description": "百分位阈值",
-          "label": "百分位",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 3,
-          "hint": "用于按分数分布动态收紧候选集合。",
-          "min": 1,
-          "max": 99,
-          "step": 1,
-          "choices": null
-        },
         "min_results": {
           "name": "min_results",
           "type": "integer",
@@ -825,40 +642,6 @@
           "disabled": false,
           "order": 2,
           "hint": "关闭后只保留已存在的 Episode，不再新增。",
-          "choices": null
-        },
-        "pending_batch_size": {
-          "name": "pending_batch_size",
-          "type": "integer",
-          "default": 50,
-          "description": "待处理批大小",
-          "label": "待处理批大小",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 3,
-          "hint": "单轮处理的 pending source 数量。",
-          "min": 1,
-          "max": 500,
-          "step": 1,
-          "choices": null
-        },
-        "pending_max_retry": {
-          "name": "pending_max_retry",
-          "type": "integer",
-          "default": 3,
-          "description": "待处理最大重试次数",
-          "label": "最大重试次数",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 4,
-          "hint": "处理失败后的最大重试次数。",
-          "min": 0,
-          "max": 100,
-          "step": 1,
           "choices": null
         },
         "max_paragraphs_per_call": {
@@ -1018,40 +801,6 @@
           "max": 200,
           "step": 1,
           "choices": null
-        },
-        "evidence_classification_max_tokens": {
-          "name": "evidence_classification_max_tokens",
-          "type": "integer",
-          "default": 1200,
-          "description": "证据分类输出 token 上限",
-          "label": "证据分类输出上限",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 6,
-          "hint": "控制人物画像证据分类 LLM 调用的最大输出 token 数。",
-          "min": 128,
-          "max": 32768,
-          "step": 1,
-          "choices": null
-        },
-        "evidence_classification_temperature": {
-          "name": "evidence_classification_temperature",
-          "type": "number",
-          "default": 0.1,
-          "description": "证据分类模型温度",
-          "label": "证据分类温度",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 7,
-          "hint": "控制人物画像证据分类 LLM 调用的生成温度。",
-          "min": 0,
-          "max": 2,
-          "step": 0.1,
-          "choices": null
         }
       }
     },
@@ -1076,57 +825,6 @@
           "order": 1,
           "hint": "关闭后不再自动衰减、裁剪或冻结记忆状态。",
           "choices": null
-        },
-        "half_life_hours": {
-          "name": "half_life_hours",
-          "type": "number",
-          "default": 24,
-          "description": "半衰期小时数",
-          "label": "半衰期（小时）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "数值越大，记忆衰减越慢。",
-          "min": 0.1,
-          "max": 100000,
-          "step": 0.1,
-          "choices": null
-        },
-        "prune_threshold": {
-          "name": "prune_threshold",
-          "type": "number",
-          "default": 0.1,
-          "description": "裁剪阈值",
-          "label": "裁剪阈值",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 3,
-          "hint": "低于该活跃度时会更容易进入裁剪或回收流程。",
-          "min": 0,
-          "max": 1,
-          "step": 0.01,
-          "choices": null
-        },
-        "freeze_duration_hours": {
-          "name": "freeze_duration_hours",
-          "type": "number",
-          "default": 24,
-          "description": "冻结时长小时数",
-          "label": "冻结时长（小时）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 4,
-          "hint": "被保护或冻结的记忆在该时长内不参与衰减。",
-          "min": 0,
-          "max": 100000,
-          "step": 0.1,
-          "choices": null
         }
       }
     },
@@ -1138,37 +836,6 @@
       "collapsed": false,
       "order": 13,
       "fields": {
-        "enable_auto_save": {
-          "name": "enable_auto_save",
-          "type": "boolean",
-          "default": true,
-          "description": "是否启用自动保存",
-          "label": "启用自动保存",
-          "ui_type": "switch",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 1,
-          "hint": "建议保持开启，避免运行时状态长期只留在内存中。",
-          "choices": null
-        },
-        "auto_save_interval_minutes": {
-          "name": "auto_save_interval_minutes",
-          "type": "integer",
-          "default": 5,
-          "description": "自动保存间隔",
-          "label": "自动保存间隔（分钟）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "控制状态与缓存落盘频率。",
-          "min": 1,
-          "max": 10080,
-          "step": 1,
-          "choices": null
-        },
         "debug": {
           "name": "debug",
           "type": "boolean",
@@ -1203,25 +870,9 @@
           "required": false,
           "hidden": false,
           "disabled": false,
+          "advanced": true,
           "order": 1,
           "hint": "关闭后相关导入任务接口会被拒绝。",
-          "choices": null
-        },
-        "max_queue_size": {
-          "name": "max_queue_size",
-          "type": "integer",
-          "default": 20,
-          "description": "最大队列长度",
-          "label": "最大队列长度",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "限制导入任务同时排队的上限。",
-          "min": 1,
-          "max": 1000,
-          "step": 1,
           "choices": null
         },
         "max_files_per_task": {
@@ -1273,40 +924,6 @@
           "min": 100,
           "max": 5000000,
           "step": 100,
-          "choices": null
-        },
-        "default_file_concurrency": {
-          "name": "default_file_concurrency",
-          "type": "integer",
-          "default": 2,
-          "description": "默认文件并发",
-          "label": "默认文件并发",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 6,
-          "hint": "控制单任务内并行处理文件的默认数量。",
-          "min": 1,
-          "max": 128,
-          "step": 1,
-          "choices": null
-        },
-        "default_chunk_concurrency": {
-          "name": "default_chunk_concurrency",
-          "type": "integer",
-          "default": 4,
-          "description": "默认分块并发",
-          "label": "默认分块并发",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 7,
-          "hint": "控制单文件内部 chunk 处理的默认并行度。",
-          "min": 1,
-          "max": 128,
-          "step": 1,
           "choices": null
         },
         "default_narrative_window_size": {
@@ -1362,24 +979,6 @@
           "step": 100,
           "choices": null,
           "advanced": true
-        },
-        "max_chunk_chars": {
-          "name": "max_chunk_chars",
-          "type": "integer",
-          "default": 3200,
-          "description": "单个抽取分块的字符上限",
-          "label": "分块字符上限",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 11,
-          "hint": "限制导入任务可指定的 narrative/factual 分块长度上限。",
-          "min": 200,
-          "max": 10000,
-          "step": 100,
-          "choices": null,
-          "advanced": true
         }
       }
     },
@@ -1403,23 +1002,6 @@
           "disabled": false,
           "order": 1,
           "hint": "关闭后调优任务接口不可用。",
-          "choices": null
-        },
-        "max_queue_size": {
-          "name": "max_queue_size",
-          "type": "integer",
-          "default": 8,
-          "description": "最大队列长度",
-          "label": "最大队列长度",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "限制同时排队的调优任务数量。",
-          "min": 1,
-          "max": 200,
-          "step": 1,
           "choices": null
         },
         "poll_interval_ms": {
@@ -1536,57 +1118,6 @@
           "step": 1,
           "choices": null
         },
-        "process_poll_seconds": {
-          "name": "process_poll_seconds",
-          "type": "number",
-          "default": 1,
-          "description": "迁移或转换子进程状态轮询等待时间。",
-          "label": "子进程轮询等待（秒）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "值越小取消响应越快，但轮询更频繁。",
-          "min": 0.1,
-          "max": 60,
-          "step": 0.1,
-          "choices": null
-        },
-        "process_terminate_seconds": {
-          "name": "process_terminate_seconds",
-          "type": "number",
-          "default": 5,
-          "description": "取消任务时等待子进程正常终止的时间。",
-          "label": "子进程终止等待（秒）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 3,
-          "hint": "超时后会尝试强制结束子进程。",
-          "min": 0.1,
-          "max": 120,
-          "step": 0.1,
-          "choices": null
-        },
-        "process_kill_seconds": {
-          "name": "process_kill_seconds",
-          "type": "number",
-          "default": 3,
-          "description": "强制结束子进程后的等待时间。",
-          "label": "子进程强杀等待（秒）",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 4,
-          "hint": "用于取消任务时回收转换/迁移子进程。",
-          "min": 0.1,
-          "max": 120,
-          "step": 0.1,
-          "choices": null
-        },
         "convert_preflight_seconds": {
           "name": "convert_preflight_seconds",
           "type": "number",
@@ -1608,8 +1139,8 @@
     },
     "filter.retrieval.chat_stream": {
       "name": "filter.retrieval.chat_stream",
-      "title": "普通聊天流检索过滤",
-      "description": "按群组、私聊用户或聊天流裁剪普通 paragraph/relation 检索命中。",
+      "title": "普通聊天流跨聊天流检索过滤",
+      "description": "按群组、私聊用户或聊天流裁剪跨聊天流的普通 paragraph/relation 检索命中。",
       "icon": null,
       "collapsed": true,
       "order": 12,
@@ -1618,14 +1149,14 @@
           "name": "enabled",
           "type": "boolean",
           "default": false,
-          "description": "是否启用该类型的检索结果后置过滤。",
-          "label": "启用结果过滤",
+          "description": "是否启用该类型的跨聊天流检索结果后置过滤。",
+          "label": "启用跨聊天流过滤",
           "ui_type": "switch",
           "required": false,
           "hidden": false,
           "disabled": false,
           "order": 1,
-          "hint": "仅影响已经召回的检索结果，不影响写入、摘要生成、Episode 生成或人物画像。",
+          "hint": "仅影响其他聊天流来源的已召回结果，不影响本聊天流读取自身记忆、写入、摘要生成、Episode 生成或人物画像。",
           "choices": null
         },
         "mode": {
@@ -1639,7 +1170,7 @@
           "hidden": false,
           "disabled": false,
           "order": 2,
-          "hint": "blacklist 为移除列表中的来源；whitelist 为仅保留列表中的来源。",
+          "hint": "blacklist 为移除列表中的跨聊天流来源；whitelist 为仅保留列表中的跨聊天流来源。本聊天流来源会直接保留。",
           "choices": [
             "blacklist",
             "whitelist"
@@ -1656,7 +1187,7 @@
           "hidden": false,
           "disabled": false,
           "order": 3,
-          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。",
+          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。只对其他聊天流来源生效。",
           "item_type": "string",
           "min_items": 0,
           "max_items": 500,
@@ -1667,8 +1198,8 @@
     },
     "filter.retrieval.chat_summary": {
       "name": "filter.retrieval.chat_summary",
-      "title": "聊天总结检索过滤",
-      "description": "按群组、私聊用户或聊天流裁剪 chat_summary 来源的检索命中。",
+      "title": "聊天总结跨聊天流检索过滤",
+      "description": "按群组、私聊用户或聊天流裁剪跨聊天流的 chat_summary 来源检索命中。",
       "icon": null,
       "collapsed": true,
       "order": 13,
@@ -1677,14 +1208,14 @@
           "name": "enabled",
           "type": "boolean",
           "default": false,
-          "description": "是否启用该类型的检索结果后置过滤。",
-          "label": "启用结果过滤",
+          "description": "是否启用该类型的跨聊天流检索结果后置过滤。",
+          "label": "启用跨聊天流过滤",
           "ui_type": "switch",
           "required": false,
           "hidden": false,
           "disabled": false,
           "order": 1,
-          "hint": "仅影响已经召回的检索结果，不影响写入、摘要生成、Episode 生成或人物画像。",
+          "hint": "仅影响其他聊天流来源的已召回结果，不影响本聊天流读取自身记忆、写入、摘要生成、Episode 生成或人物画像。",
           "choices": null
         },
         "mode": {
@@ -1698,7 +1229,7 @@
           "hidden": false,
           "disabled": false,
           "order": 2,
-          "hint": "blacklist 为移除列表中的来源；whitelist 为仅保留列表中的来源。",
+          "hint": "blacklist 为移除列表中的跨聊天流来源；whitelist 为仅保留列表中的跨聊天流来源。本聊天流来源会直接保留。",
           "choices": [
             "blacklist",
             "whitelist"
@@ -1715,7 +1246,7 @@
           "hidden": false,
           "disabled": false,
           "order": 3,
-          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。",
+          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。只对其他聊天流来源生效。",
           "item_type": "string",
           "min_items": 0,
           "max_items": 500,
@@ -1726,8 +1257,8 @@
     },
     "filter.retrieval.episode": {
       "name": "filter.retrieval.episode",
-      "title": "Episode 检索过滤",
-      "description": "按群组、私聊用户或聊天流裁剪 Episode 检索命中。",
+      "title": "Episode 跨聊天流检索过滤",
+      "description": "按群组、私聊用户或聊天流裁剪跨聊天流的 Episode 检索命中。",
       "icon": null,
       "collapsed": true,
       "order": 14,
@@ -1736,14 +1267,14 @@
           "name": "enabled",
           "type": "boolean",
           "default": false,
-          "description": "是否启用该类型的检索结果后置过滤。",
-          "label": "启用结果过滤",
+          "description": "是否启用该类型的跨聊天流检索结果后置过滤。",
+          "label": "启用跨聊天流过滤",
           "ui_type": "switch",
           "required": false,
           "hidden": false,
           "disabled": false,
           "order": 1,
-          "hint": "仅影响已经召回的检索结果，不影响写入、摘要生成、Episode 生成或人物画像。",
+          "hint": "仅影响其他聊天流来源的已召回结果，不影响本聊天流读取自身记忆、写入、摘要生成、Episode 生成或人物画像。",
           "choices": null
         },
         "mode": {
@@ -1757,7 +1288,7 @@
           "hidden": false,
           "disabled": false,
           "order": 2,
-          "hint": "blacklist 为移除列表中的来源；whitelist 为仅保留列表中的来源。",
+          "hint": "blacklist 为移除列表中的跨聊天流来源；whitelist 为仅保留列表中的跨聊天流来源。本聊天流来源会直接保留。",
           "choices": [
             "blacklist",
             "whitelist"
@@ -1774,7 +1305,7 @@
           "hidden": false,
           "disabled": false,
           "order": 3,
-          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。",
+          "hint": "示例：group:123、user:456、private:456、stream:abc；裸字符串会匹配 stream/group/user 任一 token。只对其他聊天流来源生效。",
           "item_type": "string",
           "min_items": 0,
           "max_items": 500,
@@ -1791,34 +1322,6 @@
       "collapsed": false,
       "order": 7,
       "fields": {
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "default": false,
-          "description": "是否启用关系向量化",
-          "label": "启用关系向量",
-          "ui_type": "switch",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 1,
-          "hint": "开启后，新增关系会按配置写入向量库，并可参与关系向量回填。",
-          "choices": null
-        },
-        "backfill_enabled": {
-          "name": "backfill_enabled",
-          "type": "boolean",
-          "default": false,
-          "description": "是否启用关系向量回填",
-          "label": "启用关系向量回填",
-          "ui_type": "switch",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 2,
-          "hint": "开启后，后台会为缺少向量的已有关系补写向量。",
-          "choices": null
-        },
         "write_on_import": {
           "name": "write_on_import",
           "type": "boolean",
@@ -1843,23 +1346,6 @@
       "collapsed": false,
       "order": 8,
       "fields": {
-        "mode": {
-          "name": "mode",
-          "type": "string",
-          "default": "dual",
-          "description": "向量池模式",
-          "label": "向量池模式",
-          "ui_type": "select",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 1,
-          "hint": "single 保持当前单向量池逻辑；dual 启用段落池与图谱池分离检索。",
-          "choices": [
-            "single",
-            "dual"
-          ]
-        },
         "paragraph_top_k": {
           "name": "paragraph_top_k",
           "type": "integer",
@@ -1908,118 +1394,6 @@
           "min": 1,
           "max": 10000
         },
-        "relation_expand_per_hit": {
-          "name": "relation_expand_per_hit",
-          "type": "integer",
-          "default": 5,
-          "description": "每个关系命中最多展开的段落数",
-          "label": "每个关系展开段落数",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 5,
-          "hint": "防止单个关系展开过多支撑段落。",
-          "choices": null,
-          "min": 1,
-          "max": 1000
-        },
-        "entity_expand_per_hit": {
-          "name": "entity_expand_per_hit",
-          "type": "integer",
-          "default": 8,
-          "description": "每个实体命中最多展开的段落数",
-          "label": "每个实体展开段落数",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 6,
-          "hint": "防止热门实体召回过多弱相关段落。",
-          "choices": null,
-          "min": 1,
-          "max": 1000
-        },
-        "relation_evidence_weight": {
-          "name": "relation_evidence_weight",
-          "type": "number",
-          "default": 1,
-          "description": "关系证据分权重",
-          "label": "关系证据权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 7,
-          "hint": "关系命中映射为段落证据时的基础权重。",
-          "choices": null,
-          "min": 0,
-          "max": 10
-        },
-        "entity_evidence_weight": {
-          "name": "entity_evidence_weight",
-          "type": "number",
-          "default": 0.55,
-          "description": "实体证据分权重",
-          "label": "实体证据权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 8,
-          "hint": "实体命中映射为段落证据时的基础权重。",
-          "choices": null,
-          "min": 0,
-          "max": 10
-        },
-        "semantic_weight": {
-          "name": "semantic_weight",
-          "type": "number",
-          "default": 0.65,
-          "description": "段落语义分权重",
-          "label": "段落语义权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 9,
-          "hint": "dual 模式普通查询下段落向量分的最终权重。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
-        "sparse_weight": {
-          "name": "sparse_weight",
-          "type": "number",
-          "default": 0.2,
-          "description": "稀疏检索分权重",
-          "label": "稀疏检索权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 10,
-          "hint": "dual 模式普通查询下 BM25 段落分的最终权重。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
-        "graph_weight": {
-          "name": "graph_weight",
-          "type": "number",
-          "default": 0.15,
-          "description": "图谱证据分权重",
-          "label": "图谱证据权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 11,
-          "hint": "dual 模式普通查询下关系和实体证据分的最终权重。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
         "relation_intent.graph_top_k": {
           "name": "relation_intent.graph_top_k",
           "type": "integer",
@@ -2035,68 +1409,6 @@
           "choices": null,
           "min": 1,
           "max": 1000
-        },
-        "relation_intent.semantic_weight": {
-          "name": "relation_intent.semantic_weight",
-          "type": "number",
-          "default": 0.45,
-          "description": "关系意图命中时的段落语义权重",
-          "label": "关系意图语义权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 13,
-          "hint": "查询被判断为关系意图时使用。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
-        "relation_intent.sparse_weight": {
-          "name": "relation_intent.sparse_weight",
-          "type": "number",
-          "default": 0.15,
-          "description": "关系意图命中时的稀疏检索权重",
-          "label": "关系意图稀疏权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 14,
-          "hint": "查询被判断为关系意图时使用。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
-        "relation_intent.graph_weight": {
-          "name": "relation_intent.graph_weight",
-          "type": "number",
-          "default": 0.4,
-          "description": "关系意图命中时的图谱证据权重",
-          "label": "关系意图图谱权重",
-          "ui_type": "number",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 15,
-          "hint": "查询被判断为关系意图时使用。",
-          "choices": null,
-          "min": 0,
-          "max": 1
-        },
-        "relation_intent.return_relation_items": {
-          "name": "relation_intent.return_relation_items",
-          "type": "boolean",
-          "default": false,
-          "description": "关系意图命中时是否返回独立关系结果",
-          "label": "返回独立关系项",
-          "ui_type": "switch",
-          "required": false,
-          "hidden": false,
-          "disabled": false,
-          "order": 16,
-          "hint": "第一阶段默认关闭，关系和实体主要作为段落证据。",
-          "choices": null
         }
       }
     }

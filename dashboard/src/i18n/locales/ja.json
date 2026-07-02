@@ -822,6 +822,152 @@
     "closeMenu": "メニューを閉じる",
     "navigatedTo": "{{page}} に移動しました"
   },
+  "memory": {
+    "tuning": {
+      "task": {
+        "title": "調整タスク",
+        "description": "検索パラメータ評価"
+      },
+      "form": {
+        "strategy": "調整方針",
+        "objective": "最適化目標",
+        "intensity": "評価の深さ",
+        "evalScope": "評価範囲",
+        "sampleSize": "サンプル数",
+        "topKEval": "評価 Top-K",
+        "persist": "設定ファイルにも書き込む"
+      },
+      "objectives": {
+        "precision": "精度を優先",
+        "balanced": "精度と再現率を両立",
+        "recall": "再現率を優先"
+      },
+      "intensity": {
+        "quick": "高速",
+        "standard": "標準",
+        "deep": "詳細"
+      },
+      "actions": {
+        "createTask": "調整タスクを作成",
+        "applyBest": "最良結果を適用",
+        "showToml": "設定断片を表示",
+        "showSummary": "結果サマリーに戻る"
+      },
+      "tasks": {
+        "title": "最近の調整タスク",
+        "description": "タスク結果",
+        "recommended": "推奨",
+        "notRecommended": "非推奨",
+        "empty": "調整タスクはまだありません"
+      },
+      "status": {
+        "completed": "完了",
+        "running": "実行中",
+        "queued": "待機中",
+        "failed": "失敗",
+        "cancelled": "キャンセル済み"
+      },
+      "result": {
+        "noTask": "調整結果はまだありません。タスクが完了すると評価結果がここに表示されます。",
+        "statusTitle": "タスク状態",
+        "progressTitle": "進捗",
+        "roundsTitle": "評価ラウンド",
+        "recommendationTitle": "適用判断",
+        "recommended": "検証を通過しました。適用を推奨します。",
+        "notRecommended": "検証を通過していません。適用は推奨しません。",
+        "scoreTitle": "総合スコア",
+        "validationTitle": "Holdout 検証",
+        "validationPassed": "通過",
+        "validationFailed": "未通過",
+        "holdoutWithCount": "{{result}}、{{count}} 件のサンプル",
+        "metricsTitle": "主要指標",
+        "metricsDescription": "基準値から最良結果への変化を表示します。",
+        "reason": "理由：{{reason}}",
+        "errorReason": "失敗理由：{{reason}}",
+        "reasons": {
+          "holdoutEmpty": "Holdout サンプルが不足しているため、調整結果を検証できません。",
+          "holdoutOnlineLikeValidationFailed": "Holdout とオンライン相当の検証を通過しませんでした。",
+          "unknown": "{{reason}}"
+        },
+        "metrics": {
+          "precisionAt1": "P@1",
+          "recallAtK": "Recall@K",
+          "emptyRate": "空結果率",
+          "avgElapsedMs": "平均所要時間"
+        }
+      },
+      "snapshot": {
+        "title": "現在の調整結果",
+        "summaryDescription": "最新の完了タスクの評価結果を優先表示し、パラメータは詳細にまとめます。",
+        "tomlDescription": "手動コピーや調査用の設定断片です。",
+        "runtimeTitle": "実行中の設定",
+        "runtimeDescription": "現在の検索ランタイムに即時適用されているパラメータです。",
+        "runtimeResultApplied": "調整結果は現在の検索ランタイムに反映されています。",
+        "runtimeResultEmpty": "実行中の結果はまだありません。",
+        "persistableTitle": "保存可能な設定",
+        "persistableDescription": "設定ファイルへ書き込めるパラメータです。",
+        "persistableResultReady": "この結果は必要に応じて設定ファイルに保存できます。",
+        "persistableResultEmpty": "保存可能な結果はまだありません。",
+        "diffTitle": "差分",
+        "diffDescription": "実行中の設定と保存可能な設定で異なる項目です。",
+        "diffResultClean": "実行中の設定と保存可能な設定は一致しています。",
+        "diffResultChanged": "実行中の設定と保存可能な設定に差分があります。詳細で確認できます。",
+        "detailsTitle": "パラメータと設定詳細",
+        "detailsHint": "調査と比較用",
+        "parameterDetailsTitle": "パラメータ詳細",
+        "runtimeShort": "実行中",
+        "persistableShort": "保存可能",
+        "empty": "データなし",
+        "noDiff": "現在、2つの設定に差分はありません。",
+        "technicalCount": "サマリーでは {{count}} 件の技術項目を非表示にしています。設定断片で確認できます。",
+        "technicalDiffCount": "サマリーでは {{count}} 件の技術的な差分を非表示にしています。設定断片で確認できます。"
+      },
+      "values": {
+        "enabled": "有効",
+        "disabled": "無効",
+        "auto": "自動",
+        "always": "常に有効",
+        "off": "無効",
+        "weightedRrf": "重み付き融合",
+        "rrf": "順位融合",
+        "alphaLegacy": "旧式の重み付き融合",
+        "singlePool": "単一ベクトルプール",
+        "dualPool": "二重ベクトルプール"
+      },
+      "parameters": {
+        "retrieval_top_k": "総候補数",
+        "retrieval_top_k_paragraphs": "段落候補数",
+        "retrieval_top_k_relations": "関係候補数",
+        "retrieval_top_k_final": "最終返却数",
+        "retrieval_alpha": "段落と関係の重み",
+        "retrieval_enable_ppr": "グラフランキング",
+        "retrieval_ppr_alpha": "グラフ遷移係数",
+        "retrieval_ppr_timeout_seconds": "グラフランキングのタイムアウト",
+        "retrieval_search_smart_fallback_enabled": "スマートフォールバック",
+        "retrieval_sparse_enabled": "キーワード検索",
+        "retrieval_sparse_mode": "キーワード検索モード",
+        "retrieval_sparse_candidate_k": "キーワード段落候補",
+        "retrieval_sparse_relation_candidate_k": "キーワード関係候補",
+        "retrieval_fusion_method": "結果融合方式",
+        "retrieval_fusion_rrf_k": "融合スムージング係数",
+        "retrieval_fusion_vector_weight": "ベクトル検索の重み",
+        "retrieval_fusion_bm25_weight": "キーワード検索の重み",
+        "retrieval_vector_pools_mode": "ベクトルプールモード",
+        "retrieval_vector_pools_paragraph_top_k": "段落ベクトル候補",
+        "retrieval_vector_pools_graph_top_k": "グラフベクトル候補",
+        "retrieval_vector_pools_graph_expand_paragraph_k": "グラフ展開段落数",
+        "retrieval_vector_pools_relation_expand_per_hit": "ヒットごとの関係展開数",
+        "retrieval_vector_pools_entity_expand_per_hit": "ヒットごとのエンティティ展開数",
+        "retrieval_vector_pools_relation_evidence_weight": "関係証拠の重み",
+        "retrieval_vector_pools_entity_evidence_weight": "エンティティ証拠の重み",
+        "threshold_percentile": "動的しきい値の分位",
+        "threshold_min_results": "最小返却数",
+        "threshold_min_threshold": "最小しきい値",
+        "threshold_max_threshold": "最大しきい値",
+        "threshold_enable_auto_adjust": "しきい値の自動調整"
+      }
+    }
+  },
   "home": {
     "title": "リアルタイムモニター",
     "subtitle": "MaiBotの稼働状況と統計データの一覧",
@@ -838,6 +984,10 @@
       "edit": "カードを編集",
       "done": "完了",
       "reset": "既定のレイアウトに戻す",
+      "row": {
+        "low": "低い行",
+        "high": "高い行"
+      },
       "dialog": {
         "title": "ホームカード管理",
         "description": "プラグインまたは組み込みのカードを追加するか、既定のレイアウトに戻せます。",

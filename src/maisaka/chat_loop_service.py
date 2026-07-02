@@ -615,19 +615,23 @@ class MaisakaChatLoopService:
         """构造人格提示词。"""
 
         try:
-            bot_name = global_config.bot.nickname
-            if global_config.bot.alias_names:
-                bot_nickname = f"，也有人叫你{','.join(global_config.bot.alias_names)}"
-            else:
-                bot_nickname = ""
-
+            bot_name = global_config.bot.nickname.strip()
+            alias_names = [alias_name.strip() for alias_name in global_config.bot.alias_names if alias_name.strip()]
             prompt_personality = global_config.personality.personality.strip()
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
-            return f"你的名字是{bot_name}{bot_nickname}。\n{prompt_personality}"
+            if prompt_personality.startswith("是"):
+                identity_line = f"{bot_name}{prompt_personality}"
+            else:
+                identity_line = f"{bot_name}是{prompt_personality}"
+
+            prompt_lines = [identity_line]
+            if alias_names:
+                prompt_lines.append(f"{bot_name}的昵称还有{','.join(alias_names)}")
+            return "\n".join(prompt_lines)
         except Exception:
-            return "你的名字是麦麦。\n是人类。"
+            return "麦麦是人类。"
 
     async def ensure_chat_prompt_loaded(self, tools_section: str = "") -> None:
         """确保主聊天提示词已经加载完成。

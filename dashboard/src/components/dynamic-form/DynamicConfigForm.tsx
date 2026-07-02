@@ -61,14 +61,6 @@ function orderInlineFields(schema: ConfigSchema, fields: FieldSchema[]) {
     .map(({ field }) => field)
 }
 
-function countSectionItems(schema: ConfigSchema) {
-  return schema.fields.length + Object.keys(schema.nested ?? {}).length
-}
-
-function shouldShowSectionCollapse(sectionKey: string, schema: ConfigSchema) {
-  return sectionKey === 'a_memorix' && countSectionItems(schema) > 1
-}
-
 const CHAT_TALK_RULE_FIELD_NAMES = new Set(['enable_talk_value_rules', 'talk_value_rules'])
 
 export function AdvancedSettingsButton({
@@ -642,7 +634,7 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                 key={key}
                 advancedVisible={resolvedAdvancedVisible}
                 collapsedByDefault={Boolean(nestedField?.['x-collapsed-by-default'])}
-                collapsible={shouldShowSectionCollapse(key, nestedSchema)}
+                collapsible={false}
                 nestedSchema={nestedSchema}
                 values={(values[key] as Record<string, unknown>) || {}}
                 onChange={onChange}

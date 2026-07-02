@@ -89,10 +89,15 @@ export const AMemorixRetrievalChatsHook: FieldHookComponent = ({
       ? resolveLocalizedText(schema.label, undefined, '聊天流列表')
       : '聊天流列表'
   const retrievalCopy = resolveAMemorixRetrievalChatsCopy(fieldPath)
+  const isEntryFilter = fieldPath === 'a_memorix.filter.chats'
+  const defaultDescription = isEntryFilter
+    ? '选择要应用到入口聊天过滤的聊天流规则。'
+    : '选择要应用到当前跨聊天流检索结果类型的聊天流规则。'
+  const rawDescription = schema && 'description' in schema ? schema.description : ''
   const fieldDescription =
-    schema && 'description' in schema && typeof schema.description === 'string' && schema.description
-      ? schema.description
-      : '选择要应用到当前检索结果类型的聊天流规则。'
+    typeof rawDescription === 'string' && rawDescription && rawDescription !== '聊天流列表'
+      ? rawDescription
+      : defaultDescription
 
   return (
     <div className="min-w-0 space-y-3">

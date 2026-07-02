@@ -7,6 +7,7 @@ from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Seq
 
 from json_repair import repair_json
 import asyncio
+import copy
 import json
 import numpy as np
 import pickle
@@ -100,6 +101,14 @@ class _KernelRuntimeFacade:
         executor: Callable[[], Coroutine[Any, Any, Dict[str, Any]]],
     ) -> tuple[bool, Dict[str, Any]]:
         return await self._kernel.execute_request_with_dedup(request_key, executor)
+
+    async def apply_retrieval_tuning_profile(
+        self,
+        profile: Dict[str, Any],
+        *,
+        validate: bool = True,
+    ) -> Dict[str, Any]:
+        return await self._kernel.apply_retrieval_tuning_profile(profile, validate=validate)
 
     @property
     def vector_store(self) -> Optional[VectorStore]:
@@ -272,8 +281,8 @@ class SDKMemoryKernel:
             current = next_value
         current[parts[-1]] = value
 
-    def _build_runtime_config(self) -> Dict[str, Any]:
-        runtime_config = dict(self.config)
+    def _build_runtime_config(self, base_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        runtime_config = dict(base_config if isinstance(base_config, dict) else self.config)
         runtime_cfg = runtime_config.get("runtime")
         runtime_config["runtime"] = dict(runtime_cfg) if isinstance(runtime_cfg, dict) else {}
         runtime_config["runtime"]["vector_pools_ready"] = self._dual_vector_pools_enabled()
@@ -291,6 +300,66 @@ class SDKMemoryKernel:
             }
         )
         return runtime_config
+
+    @staticmethod
+    def _merge_runtime_config_patch(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+        merged = copy.deepcopy(base)
+        for key, value in (patch or {}).items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = SDKMemoryKernel._merge_runtime_config_patch(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
+        return merged
+
+    async def apply_retrieval_tuning_profile(
+        self,
+        profile: Dict[str, Any],
+        *,
+        validate: bool = True,
+    ) -> Dict[str, Any]:
+        if not isinstance(profile, dict):
+            return {
+                "success": False,
+                "runtime_rebuilt": False,
+                "validation_passed": False,
+                "error": "profile 必须是字典",
+            }
+
+        next_config = self._merge_runtime_config_patch(self.config, profile)
+        runtime_bundle = build_search_runtime(
+            plugin_config=self._build_runtime_config(next_config),
+            logger_obj=logger,
+            owner_tag="sdk_kernel_tuning_apply",
+            log_prefix="[sdk]",
+        )
+        if validate and not runtime_bundle.ready:
+            return {
+                "success": False,
+                "runtime_rebuilt": False,
+                "validation_passed": False,
+                "error": runtime_bundle.error or "检索运行时热重建失败",
+            }
+        if runtime_bundle.ready:
+            self.config.clear()
+            self.config.update(next_config)
+            self._runtime_bundle = runtime_bundle
+            self.retriever = runtime_bundle.retriever
+            self.threshold_filter = runtime_bundle.threshold_filter
+            self.sparse_index = runtime_bundle.sparse_index or self.sparse_index
+            self._refresh_runtime_dependents(preserve_managers=True)
+            self._apply_runtime_sparse_mode()
+            return {
+                "success": True,
+                "runtime_rebuilt": True,
+                "validation_passed": True,
+                "error": "",
+            }
+        return {
+            "success": False,
+            "runtime_rebuilt": False,
+            "validation_passed": False,
+            "error": runtime_bundle.error or "检索运行时热重建失败",
+        }
 
     def is_runtime_ready(self) -> bool:
         return bool(
@@ -2584,7 +2653,12 @@ class SDKMemoryKernel:
             hits = self._filter_episode_hits([self._episode_hit(row) for row in rows])
             hits = self._filter_hits_by_chat_scope(hits, request.chat_id, shared_chat_ids)
             if request.respect_filter:
-                hits = self._filter_hits_by_retrieval_type_scope(hits)
+                hits = self._filter_hits_by_retrieval_type_scope(
+                    hits,
+                    current_stream_id=request.chat_id,
+                    current_group_id=request.group_id,
+                    current_user_id=request.user_id,
+                )
             hits = hits[:limit]
             return {"summary": self._summary(hits), "hits": hits}
 
@@ -2607,7 +2681,12 @@ class SDKMemoryKernel:
             filtered = self._filter_user_visible_hits(filtered)
             filtered = self._filter_hits_by_chat_scope(filtered, request.chat_id, shared_chat_ids)
             if request.respect_filter:
-                filtered = self._filter_hits_by_retrieval_type_scope(filtered)
+                filtered = self._filter_hits_by_retrieval_type_scope(
+                    filtered,
+                    current_stream_id=request.chat_id,
+                    current_group_id=request.group_id,
+                    current_user_id=request.user_id,
+                )
             filtered = filtered[:limit]
             return {"summary": self._summary(filtered), "hits": filtered}
 
@@ -2634,7 +2713,12 @@ class SDKMemoryKernel:
         filtered = self._filter_user_visible_hits(filtered)
         filtered = self._filter_hits_by_chat_scope(filtered, request.chat_id, shared_chat_ids)
         if request.respect_filter:
-            filtered = self._filter_hits_by_retrieval_type_scope(filtered)
+            filtered = self._filter_hits_by_retrieval_type_scope(
+                filtered,
+                current_stream_id=request.chat_id,
+                current_group_id=request.group_id,
+                current_user_id=request.user_id,
+            )
         filtered = filtered[:limit]
         return {"summary": self._summary(filtered), "hits": filtered}
 
@@ -3559,7 +3643,14 @@ class SDKMemoryKernel:
             return {"success": True, "settings": manager.get_runtime_settings()}
         if act == "get_profile":
             profile = manager.get_profile_snapshot()
-            return {"success": True, "profile": profile, "toml": manager.export_toml_snippet(profile)}
+            persistable_profile = manager.get_persistable_profile(profile)
+            return {
+                "success": True,
+                "profile": profile,
+                "runtime_profile": profile,
+                "persistable_profile": persistable_profile,
+                "toml": manager.export_toml_snippet(persistable_profile),
+            }
         if act == "apply_profile":
             profile_raw = kwargs.get("profile")
             if isinstance(profile_raw, dict):
@@ -3575,13 +3666,21 @@ class SDKMemoryKernel:
                 **await manager.apply_profile(
                     profile_payload,
                     reason=str(kwargs.get("reason", "manual") or "manual"),
+                    validate=bool(kwargs.get("validate", True)),
                 ),
             }
         if act == "rollback_profile":
             return {"success": True, **await manager.rollback_profile()}
         if act == "export_profile":
             profile = manager.get_profile_snapshot()
-            return {"success": True, "profile": profile, "toml": manager.export_toml_snippet(profile)}
+            persistable_profile = manager.get_persistable_profile(profile)
+            return {
+                "success": True,
+                "profile": profile,
+                "runtime_profile": profile,
+                "persistable_profile": persistable_profile,
+                "toml": manager.export_toml_snippet(persistable_profile),
+            }
         if act == "create_task":
             payload = kwargs.get("payload") if isinstance(kwargs.get("payload"), dict) else kwargs
             return {"success": True, "task": await manager.create_task(payload)}
@@ -3605,7 +3704,13 @@ class SDKMemoryKernel:
             task = await manager.cancel_task(str(kwargs.get("task_id", "") or ""))
             return {"success": task is not None, "task": task, "error": "" if task is not None else "任务不存在"}
         if act == "apply_best":
-            return {"success": True, **await manager.apply_best(str(kwargs.get("task_id", "") or ""))}
+            return {
+                "success": True,
+                **await manager.apply_best(
+                    str(kwargs.get("task_id", "") or ""),
+                    validate=bool(kwargs.get("validate", True)),
+                ),
+            }
         if act == "get_report":
             report = await manager.get_report(str(kwargs.get("task_id", "") or ""), fmt=str(kwargs.get("format", "md") or "md"))
             return {"success": report is not None, "report": report, "error": "" if report is not None else "任务不存在"}
@@ -7412,11 +7517,23 @@ class SDKMemoryKernel:
 
         return [dict(hit) for index, hit in enumerate(hits) if index in allowed_indexes]
 
-    def _filter_hits_by_retrieval_type_scope(self, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """按检索结果类型应用可选聊天过滤，不改变写入和全局入口过滤。"""
+    def _filter_hits_by_retrieval_type_scope(
+        self,
+        hits: List[Dict[str, Any]],
+        *,
+        current_stream_id: str = "",
+        current_group_id: str = "",
+        current_user_id: str = "",
+    ) -> List[Dict[str, Any]]:
+        """按检索结果类型应用跨聊天流过滤，不改变本聊天流读取自身记忆。"""
 
         if not hits or not self._has_enabled_retrieval_type_filter():
             return hits
+        current_context = self._current_retrieval_filter_context(
+            stream_id=current_stream_id,
+            group_id=current_group_id,
+            user_id=current_user_id,
+        )
 
         paragraph_hashes: List[str] = []
         relation_hashes: List[str] = []
@@ -7443,6 +7560,12 @@ class SDKMemoryKernel:
                 paragraph_map=paragraph_map,
                 relation_paragraph_map=relation_paragraph_map,
             )
+            if any(
+                self._retrieval_filter_context_is_current_source(context, current_context)
+                for context in contexts
+            ):
+                filtered.append(dict(item))
+                continue
             if any(self._retrieval_filter_context_allowed(context) for context in contexts):
                 filtered.append(dict(item))
         return filtered
@@ -7556,6 +7679,39 @@ class SDKMemoryKernel:
             "group_id": group_id,
             "user_id": user_id,
         }
+
+    def _current_retrieval_filter_context(
+        self,
+        *,
+        stream_id: str,
+        group_id: str,
+        user_id: str,
+    ) -> Dict[str, str]:
+        resolved_context = self._retrieval_filter_context(kind="", stream_id=stream_id)
+        resolved_context["group_id"] = str(group_id or "").strip() or resolved_context["group_id"]
+        resolved_context["user_id"] = str(user_id or "").strip() or resolved_context["user_id"]
+        return resolved_context
+
+    @staticmethod
+    def _retrieval_filter_context_is_current_source(
+        context: Dict[str, str],
+        current_context: Dict[str, str],
+    ) -> bool:
+        current_stream_id = str(current_context.get("stream_id", "") or "").strip()
+        source_stream_id = str(context.get("stream_id", "") or "").strip()
+        if current_stream_id and source_stream_id and current_stream_id == source_stream_id:
+            return True
+
+        current_group_id = str(current_context.get("group_id", "") or "").strip()
+        source_group_id = str(context.get("group_id", "") or "").strip()
+        if current_group_id and source_group_id and current_group_id == source_group_id:
+            return True
+
+        current_user_id = str(current_context.get("user_id", "") or "").strip()
+        source_user_id = str(context.get("user_id", "") or "").strip()
+        current_is_private = bool(current_user_id) and not current_group_id
+        source_is_private = bool(source_user_id) and not source_group_id
+        return current_is_private and source_is_private and current_user_id == source_user_id
 
     def _retrieval_filter_context_allowed(self, context: Dict[str, str]) -> bool:
         kind = str(context.get("kind", "") or "").strip()

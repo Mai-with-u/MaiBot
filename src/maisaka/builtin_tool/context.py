@@ -6,9 +6,13 @@ from base64 import b64decode
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 
+import re
+
 from src.chat.utils.utils import process_llm_response
 from src.common.data_models.message_component_data_model import (
+    AtComponent,
     EmojiComponent,
+    ImageComponent,
     MessageSequence,
     TextComponent,
 )
@@ -30,6 +34,11 @@ if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 logger = get_logger("maisaka_builtin_context")
+
+RICH_REPLY_TAG_PATTERN = re.compile(
+    r"<(?P<tag>send|text|pic|emoji|at|split)\b(?P<body>[^>]*)>",
+    re.IGNORECASE,
+)
 
 
 class BuiltinToolRuntimeContext:
@@ -154,6 +163,173 @@ class BuiltinToolRuntimeContext:
         """将纯文本回复处理为可发送组件序列。"""
 
         return [MessageSequence([TextComponent(segment)]) for segment in self.post_process_reply_text(reply_text)]
+
+    @staticmethod
+    def is_rich_reply_send(reply_text: str) -> bool:
+        """判断检查器是否要求原样发送 replyer 输出。"""
+
+        return (reply_text or "").strip().lower() == "<send>"
+
+    @staticmethod
+    def _parse_rich_reply_tag_body(raw_body: str) -> tuple[List[str], Dict[str, str]]:
+        """解析 `<pic msg_id=... index=0>` 这类标签参数。"""
+
+        body = str(raw_body or "").strip()
+        if not body:
+            return [], {}
+
+        positional: List[str] = []
+        keyword_args: Dict[str, str] = {}
+        for token in re.split(r"\s+", body):
+            if not token:
+                continue
+            if "=" not in token:
+                positional.append(token)
+                continue
+            key, value = token.split("=", 1)
+            normalized_key = key.strip().lower()
+            if normalized_key:
+                keyword_args[normalized_key] = value.strip()
+        return positional, keyword_args
+
+    def _resolve_at_component(self, raw_body: str) -> AtComponent:
+        """把 `<at msg_id>` 解析为对该消息发送者的 at 组件。"""
+
+        positional, keyword_args = self._parse_rich_reply_tag_body(raw_body)
+        target_user_id = str(keyword_args.get("user_id") or "").strip()
+        target_message_id = str(keyword_args.get("msg_id") or keyword_args.get("message_id") or "").strip()
+        if not target_user_id and positional:
+            target_message_id = positional[0].strip()
+
+        if target_user_id:
+            return AtComponent(target_user_id=target_user_id)
+
+        target_message = self.runtime.find_source_message_by_id(target_message_id)
+        if target_message is None:
+            raise ValueError(f"无法解析 at 目标消息：msg_id={target_message_id}")
+
+        user_info = target_message.message_info.user_info
+        return AtComponent(
+            target_user_id=user_info.user_id,
+            target_user_nickname=user_info.user_nickname,
+            target_user_cardname=user_info.user_cardname,
+        )
+
+    async def _resolve_image_component(self, raw_body: str) -> ImageComponent:
+        """把 `<pic ...>` 按 send_image 的 msg_id/index 语义解析为图片组件。"""
+
+        from .send_image import _collect_message_images
+
+        positional, keyword_args = self._parse_rich_reply_tag_body(raw_body)
+        target_message_id = str(
+            keyword_args.get("media_index")
+            or keyword_args.get("msg_id")
+            or keyword_args.get("message_id")
+            or keyword_args.get("source")
+            or ""
+        ).strip()
+        if not target_message_id and positional:
+            target_message_id = positional[0].strip()
+
+        raw_index = keyword_args.get("index") or keyword_args.get("image_index") or ""
+        if not raw_index and len(positional) >= 2:
+            raw_index = positional[1]
+        try:
+            image_index = int(raw_index or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"图片序号无效：index={raw_index}") from exc
+
+        images, error = await _collect_message_images(self, target_message_id)
+        if error is not None:
+            raise ValueError(error)
+        if image_index < 0 or image_index >= len(images):
+            raise ValueError(f"图片序号超出范围：index={image_index}，该消息共有 {len(images)} 张图片。")
+
+        image = images[image_index]
+        return ImageComponent(
+            binary_hash=image.binary_hash,
+            content=image.content,
+            binary_data=image.binary_data,
+        )
+
+    async def _resolve_emoji_component(self, raw_body: str) -> EmojiComponent:
+        """把 `<emoji 情绪>` 解析为表情包组件。"""
+
+        from src.common.utils.image_path import resolve_stored_image_path
+        from src.emoji_system.emoji_manager import emoji_manager
+
+        requested_emotion = str(raw_body or "").strip()
+        selected_emoji = await emoji_manager.get_emoji_for_emotion(requested_emotion)
+        if selected_emoji is None:
+            available_emojis = list(emoji_manager.emojis)
+            if not available_emojis:
+                raise ValueError("当前表情包库中没有可用表情。")
+            selected_emoji = min(available_emojis, key=lambda item: int(getattr(item, "query_count", 0) or 0))
+
+        emoji_path = resolve_stored_image_path(selected_emoji.full_path)
+        emoji_bytes = emoji_path.read_bytes()
+        emoji_manager.update_emoji_usage(selected_emoji)
+        return EmojiComponent(
+            binary_hash=selected_emoji.file_hash,
+            content=selected_emoji.description.strip() or "[表情包]",
+            binary_data=emoji_bytes,
+        )
+
+    async def post_process_rich_reply_message_sequences_async(
+        self,
+        checker_output: str,
+        original_reply_text: str,
+    ) -> List[MessageSequence]:
+        """将检查器格式化输出处理为可发送组件序列。"""
+
+        normalized_output = (checker_output or "").strip()
+        if self.is_rich_reply_send(normalized_output):
+            return self.post_process_reply_message_sequences(original_reply_text)
+        if not RICH_REPLY_TAG_PATTERN.search(normalized_output):
+            return self.post_process_reply_message_sequences(normalized_output)
+
+        sequences: List[MessageSequence] = []
+        components: List[Any] = []
+
+        def flush_components() -> None:
+            nonlocal components
+            if not components:
+                return
+            sequences.append(MessageSequence(components))
+            components = []
+
+        cursor = 0
+        for match in RICH_REPLY_TAG_PATTERN.finditer(normalized_output):
+            prefix_text = normalized_output[cursor : match.start()]
+            if prefix_text:
+                components.append(TextComponent(prefix_text))
+
+            tag = match.group("tag").lower()
+            body = match.group("body") or ""
+            if tag == "split":
+                flush_components()
+            elif tag == "send":
+                components.append(TextComponent(original_reply_text))
+            elif tag == "text":
+                replacement_text = body.strip() or original_reply_text
+                if replacement_text:
+                    components.append(TextComponent(replacement_text))
+            elif tag == "pic":
+                components.append(await self._resolve_image_component(body))
+            elif tag == "emoji":
+                components.append(await self._resolve_emoji_component(body))
+            elif tag == "at":
+                components.append(self._resolve_at_component(body))
+            cursor = match.end()
+
+        suffix_text = normalized_output[cursor:]
+        if suffix_text:
+            components.append(TextComponent(suffix_text))
+        flush_components()
+
+        if not sequences:
+            return self.post_process_reply_message_sequences(original_reply_text)
+        return sequences
 
     def get_runtime_manager(self) -> Any:
         """获取插件运行时管理器。"""

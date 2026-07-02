@@ -822,6 +822,152 @@
     "closeMenu": "Close menu",
     "navigatedTo": "Navigated to {{page}}"
   },
+  "memory": {
+    "tuning": {
+      "task": {
+        "title": "Tuning Task",
+        "description": "Retrieval parameter evaluation"
+      },
+      "form": {
+        "strategy": "Tuning Strategy",
+        "objective": "Objective",
+        "intensity": "Evaluation Depth",
+        "evalScope": "Evaluation Scope",
+        "sampleSize": "Sample Size",
+        "topKEval": "Evaluation Top-K",
+        "persist": "Also write to config file"
+      },
+      "objectives": {
+        "precision": "Prefer precision",
+        "balanced": "Balance precision and recall",
+        "recall": "Prefer recall"
+      },
+      "intensity": {
+        "quick": "Quick",
+        "standard": "Standard",
+        "deep": "Deep"
+      },
+      "actions": {
+        "createTask": "Create tuning task",
+        "applyBest": "Apply best",
+        "showToml": "View config snippet",
+        "showSummary": "Back to summary"
+      },
+      "tasks": {
+        "title": "Recent Tuning Tasks",
+        "description": "Task results",
+        "recommended": "Recommended",
+        "notRecommended": "Not recommended",
+        "empty": "No tuning tasks yet"
+      },
+      "status": {
+        "completed": "Completed",
+        "running": "Running",
+        "queued": "Queued",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "result": {
+        "noTask": "No tuning result yet. After a task completes, its evaluation result will appear here.",
+        "statusTitle": "Task Status",
+        "progressTitle": "Progress",
+        "roundsTitle": "Evaluation Rounds",
+        "recommendationTitle": "Recommendation",
+        "recommended": "Validation passed. Recommended to apply.",
+        "notRecommended": "Validation failed. Not recommended.",
+        "scoreTitle": "Overall Score",
+        "validationTitle": "Holdout Validation",
+        "validationPassed": "Passed",
+        "validationFailed": "Failed",
+        "holdoutWithCount": "{{result}}, {{count}} samples",
+        "metricsTitle": "Key Metrics",
+        "metricsDescription": "Shows the change from baseline to best result.",
+        "reason": "Reason: {{reason}}",
+        "errorReason": "Failure reason: {{reason}}",
+        "reasons": {
+          "holdoutEmpty": "Not enough holdout samples to validate the tuning result.",
+          "holdoutOnlineLikeValidationFailed": "Holdout and online-like validation did not pass.",
+          "unknown": "{{reason}}"
+        },
+        "metrics": {
+          "precisionAt1": "P@1",
+          "recallAtK": "Recall@K",
+          "emptyRate": "Empty result rate",
+          "avgElapsedMs": "Average latency"
+        }
+      },
+      "snapshot": {
+        "title": "Current Tuning Result",
+        "summaryDescription": "Shows the latest completed task result first. Parameters stay in details.",
+        "tomlDescription": "Config snippet for manual copy or troubleshooting.",
+        "runtimeTitle": "Active Runtime",
+        "runtimeDescription": "Parameters hot-applied to the current retrieval runtime.",
+        "runtimeResultApplied": "The tuning result is active in the current retrieval runtime.",
+        "runtimeResultEmpty": "No runtime result is available yet.",
+        "persistableTitle": "Persistable Config",
+        "persistableDescription": "Parameters that can be written to the config file.",
+        "persistableResultReady": "This result can be written to the config file when needed.",
+        "persistableResultEmpty": "No persistable result is available yet.",
+        "diffTitle": "Differences",
+        "diffDescription": "Fields that differ between runtime and persistable config.",
+        "diffResultClean": "Runtime and persistable config currently match.",
+        "diffResultChanged": "Runtime and persistable config differ. Expand details to inspect them.",
+        "detailsTitle": "Parameters and Config Details",
+        "detailsHint": "For troubleshooting and comparison",
+        "parameterDetailsTitle": "Parameter Details",
+        "runtimeShort": "Runtime",
+        "persistableShort": "Persistable",
+        "empty": "No data",
+        "noDiff": "The two configs currently match.",
+        "technicalCount": "{{count}} technical fields are hidden from the summary. Switch to the config snippet to inspect them.",
+        "technicalDiffCount": "{{count}} technical differences are hidden from the summary. Switch to the config snippet to inspect them."
+      },
+      "values": {
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "auto": "Auto",
+        "always": "Always on",
+        "off": "Off",
+        "weightedRrf": "Weighted fusion",
+        "rrf": "Rank fusion",
+        "alphaLegacy": "Legacy weighted fusion",
+        "singlePool": "Single vector pool",
+        "dualPool": "Dual vector pools"
+      },
+      "parameters": {
+        "retrieval_top_k": "Total candidate count",
+        "retrieval_top_k_paragraphs": "Paragraph candidates",
+        "retrieval_top_k_relations": "Relation candidates",
+        "retrieval_top_k_final": "Final returned results",
+        "retrieval_alpha": "Paragraph and relation weight",
+        "retrieval_enable_ppr": "Graph ranking",
+        "retrieval_ppr_alpha": "Graph jump factor",
+        "retrieval_ppr_timeout_seconds": "Graph ranking timeout",
+        "retrieval_search_smart_fallback_enabled": "Smart fallback",
+        "retrieval_sparse_enabled": "Keyword retrieval",
+        "retrieval_sparse_mode": "Keyword retrieval mode",
+        "retrieval_sparse_candidate_k": "Keyword paragraph candidates",
+        "retrieval_sparse_relation_candidate_k": "Keyword relation candidates",
+        "retrieval_fusion_method": "Result fusion method",
+        "retrieval_fusion_rrf_k": "Fusion smoothing factor",
+        "retrieval_fusion_vector_weight": "Vector retrieval weight",
+        "retrieval_fusion_bm25_weight": "Keyword retrieval weight",
+        "retrieval_vector_pools_mode": "Vector pool mode",
+        "retrieval_vector_pools_paragraph_top_k": "Paragraph vector candidates",
+        "retrieval_vector_pools_graph_top_k": "Graph vector candidates",
+        "retrieval_vector_pools_graph_expand_paragraph_k": "Graph-expanded paragraphs",
+        "retrieval_vector_pools_relation_expand_per_hit": "Relations expanded per hit",
+        "retrieval_vector_pools_entity_expand_per_hit": "Entities expanded per hit",
+        "retrieval_vector_pools_relation_evidence_weight": "Relation evidence weight",
+        "retrieval_vector_pools_entity_evidence_weight": "Entity evidence weight",
+        "threshold_percentile": "Dynamic threshold percentile",
+        "threshold_min_results": "Minimum returned results",
+        "threshold_min_threshold": "Minimum threshold",
+        "threshold_max_threshold": "Maximum threshold",
+        "threshold_enable_auto_adjust": "Auto-adjust threshold"
+      }
+    }
+  },
   "home": {
     "title": "Live Monitor",
     "subtitle": "MaiBot runtime status and statistics overview",
@@ -838,6 +984,10 @@
       "edit": "Edit cards",
       "done": "Done",
       "reset": "Restore default layout",
+      "row": {
+        "low": "Low row",
+        "high": "High row"
+      },
       "dialog": {
         "title": "Manage Home Cards",
         "description": "Add plugin or built-in cards, or restore the default layout.",

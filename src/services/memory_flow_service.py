@@ -172,7 +172,7 @@ class PersonFactWritebackService:
         except Exception as exc:
             logger.debug(f"查询最近用户消息目标失败: {exc}")
             return None
-        for candidate in candidates:
+        for candidate in reversed(candidates):
             person = self._person_from_user_message(candidate, fallback_platform=session_platform)
             if person is not None:
                 return person
@@ -228,7 +228,9 @@ class PersonFactWritebackService:
         except Exception as exc:
             logger.debug("查询人物事实近期用户证据失败: %s", exc)
             return PersonFactEvidence(target_messages=[], context_messages=[])
-        target_messages = self._filter_target_user_messages(candidates, person, seen_ids)[:3]
+        target_messages = self._filter_target_user_messages(candidates, person, seen_ids)
+        if len(target_messages) > 3:
+            target_messages = target_messages[-3:]
         return PersonFactEvidence(target_messages=target_messages, context_messages=candidates)
 
     def _collect_context_messages(self, *, session_id: str, trigger_message: Any, limit: int = 8) -> List[Any]:

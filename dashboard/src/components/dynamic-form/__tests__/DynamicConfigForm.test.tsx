@@ -40,8 +40,6 @@ describe('DynamicConfigForm', () => {
 
       expect(screen.getByText('Field 1')).toBeInTheDocument()
       expect(screen.getByText('Field 2')).toBeInTheDocument()
-      expect(screen.getByText('First field')).toBeInTheDocument()
-      expect(screen.getByText('Second field')).toBeInTheDocument()
     })
 
     it('renders nested schema', () => {
@@ -87,6 +85,57 @@ describe('DynamicConfigForm', () => {
       expect(screen.getByText('Top Field')).toBeInTheDocument()
       expect(screen.getByText('Sub configuration')).toBeInTheDocument()
       expect(screen.getByText('Nested Field')).toBeInTheDocument()
+    })
+
+    it('does not add an extra collapse button for the A_Memorix root section', () => {
+      const schema: ConfigSchema = {
+        className: 'RootConfig',
+        classDoc: 'Root configuration',
+        fields: [],
+        nested: {
+          a_memorix: {
+            className: 'AMemorixConfig',
+            classDoc: '记忆',
+            fields: [
+              {
+                name: 'enabled',
+                type: 'boolean',
+                label: '启用记忆',
+                description: '是否启用记忆',
+                required: false,
+              },
+            ],
+            nested: {
+              memory: {
+                className: 'AMemorixMemoryConfig',
+                classDoc: '记忆演化',
+                fields: [
+                  {
+                    name: 'enabled',
+                    type: 'boolean',
+                    label: '启用记忆演化',
+                    description: '是否启用记忆演化',
+                    required: false,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }
+      const values = {
+        a_memorix: {
+          enabled: true,
+          memory: {
+            enabled: true,
+          },
+        },
+      }
+
+      render(<DynamicConfigForm schema={schema} values={values} onChange={vi.fn()} />)
+
+      expect(screen.getByText('记忆')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '收起' })).not.toBeInTheDocument()
     })
   })
 

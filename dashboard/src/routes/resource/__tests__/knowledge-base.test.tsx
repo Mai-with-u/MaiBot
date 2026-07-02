@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n from '@/i18n'
 import { KnowledgeBasePage } from '../knowledge-base'
 import * as memoryApi from '@/lib/memory-api'
 
@@ -237,7 +238,8 @@ async function waitForConsoleReady() {
 }
 
 describe('KnowledgeBasePage import workflow', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh')
     if (!Element.prototype.hasPointerCapture) {
       Element.prototype.hasPointerCapture = vi.fn()
     }
@@ -513,7 +515,46 @@ describe('KnowledgeBasePage import workflow', () => {
     })
     vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
       success: true,
-      items: [{ task_id: 'tune-1', status: 'done' }],
+      items: [{
+        task_id: 'tune-1',
+        status: 'completed',
+        progress: 100,
+        rounds_done: 20,
+        rounds_total: 20,
+        best_score: 0.58,
+        recommended: true,
+        validation_summary: {
+          recommended: true,
+          holdout_case_count: 6,
+          deltas: {
+            score: 0.08,
+            precision_at_1: 0.1,
+            recall_at_k: 0.12,
+            empty_rate: -0.02,
+            avg_elapsed_ms: 14,
+          },
+          online_like: {
+            baseline: {
+              score: 0.5,
+              metrics: {
+                precision_at_1: 0.6,
+                recall_at_k: 0.5,
+                empty_rate: 0.08,
+                avg_elapsed_ms: 80,
+              },
+            },
+            best: {
+              score: 0.58,
+              metrics: {
+                precision_at_1: 0.7,
+                recall_at_k: 0.62,
+                empty_rate: 0.06,
+                avg_elapsed_ms: 94,
+              },
+            },
+          },
+        },
+      }],
     })
     vi.mocked(memoryApi.createMemoryTuningTask).mockResolvedValue({ success: true } as never)
     vi.mocked(memoryApi.applyBestMemoryTuningProfile).mockResolvedValue({ success: true } as never)
@@ -1492,9 +1533,9 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '调优' }))
-    await screen.findByText('调优任务')
+    await screen.findByText('记忆搜索调优')
 
-    await user.click(screen.getByRole('button', { name: '创建调优任务' }))
+    await user.click(screen.getByRole('button', { name: '开始调优' }))
     await waitFor(() =>
       expect(memoryApi.createMemoryTuningTask).toHaveBeenCalledWith({
         objective: 'precision_priority',
@@ -1504,8 +1545,207 @@ describe('KnowledgeBasePage import workflow', () => {
       }),
     )
 
-    await user.click(screen.getByRole('button', { name: '应用最佳' }))
-    await waitFor(() => expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-1'))
+    await user.click(screen.getByRole('button', { name: '应用推荐结果' }))
+    await waitFor(() =>
+      expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-1', {
+        persist: false,
+        validate: true,
+      }),
+    )
+  }, 20_000)
+
+  it('keeps tuning parameters collapsed by default', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('当前调优结果')
+
+    expect(screen.getByText('验证通过，建议应用。')).toBeInTheDocument()
+    expect(screen.getByText('0.500 → 0.580 · Δ +0.080')).toBeInTheDocument()
+    expect(screen.getByText('通过，6 个样本')).toBeInTheDocument()
+    const parameterLabels = await screen.findAllByText('初步查找数量')
+    parameterLabels.forEach((label) => expect(label).not.toBeVisible())
+
+    await user.click(screen.getByText('设置详情'))
+    expect(parameterLabels[0]).toBeVisible()
+  }, 20_000)
+
+  it('shows tuning progress before evaluation result exists', async () => {
+    vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
+      success: true,
+      items: [{
+        task_id: 'tune-running',
+        status: 'running',
+        progress: 45,
+        rounds_done: 9,
+        rounds_total: 20,
+        recommended: false,
+      }],
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('当前调优结果')
+
+    expect(screen.getByText('任务状态')).toBeInTheDocument()
+    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0)
+    expect(screen.getByText('任务进度')).toBeInTheDocument()
+    expect(screen.getByText('45%')).toBeInTheDocument()
+    expect(screen.getByText('已尝试次数')).toBeInTheDocument()
+    expect(screen.getByText('9/20')).toBeInTheDocument()
+    expect(screen.queryByText('综合评分')).not.toBeInTheDocument()
+  }, 20_000)
+
+  it('shows failed tuning task reason in a readable way', async () => {
+    vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
+      success: true,
+      items: [{
+        task_id: 'tune-failed',
+        status: 'failed',
+        progress: 20,
+        rounds_done: 4,
+        rounds_total: 20,
+        recommended: false,
+        error: 'mock failure',
+      }],
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('当前调优结果')
+
+    expect(screen.getAllByText('失败').length).toBeGreaterThan(0)
+    expect(screen.getByText('失败原因：mock failure')).toBeInTheDocument()
+    expect(screen.getByText('20%')).toBeInTheDocument()
+  }, 20_000)
+
+  it('shows non-recommended tuning result with localized validation reason', async () => {
+    vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
+      success: true,
+      items: [{
+        task_id: 'tune-bad',
+        status: 'completed',
+        progress: 100,
+        rounds_done: 20,
+        rounds_total: 20,
+        best_score: 0.49,
+        recommended: false,
+        validation_summary: {
+          recommended: false,
+          reason: 'holdout_online_like_validation_failed',
+          holdout_case_count: 5,
+          deltas: {
+            score: -0.01,
+            precision_at_1: -0.02,
+            recall_at_k: -0.01,
+            empty_rate: 0.06,
+            avg_elapsed_ms: 120,
+          },
+          online_like: {
+            baseline: {
+              score: 0.5,
+              metrics: {
+                precision_at_1: 0.6,
+                recall_at_k: 0.5,
+                empty_rate: 0.08,
+                avg_elapsed_ms: 80,
+              },
+            },
+            best: {
+              score: 0.49,
+              metrics: {
+                precision_at_1: 0.58,
+                recall_at_k: 0.49,
+                empty_rate: 0.14,
+                avg_elapsed_ms: 200,
+              },
+            },
+          },
+        },
+      }],
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('当前调优结果')
+
+    expect(screen.getByText('验证未通过，不建议应用。')).toBeInTheDocument()
+    expect(screen.getByText('0.500 → 0.490 · Δ -0.010')).toBeInTheDocument()
+    expect(screen.getByText('未通过，5 个样本')).toBeInTheDocument()
+    expect(screen.getByText('原因：独立样本和实际搜索效果验证未通过。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '应用推荐结果' })).toBeDisabled()
+  }, 20_000)
+
+  it('applies tuning best profile with persist option enabled', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+
+    await user.click(screen.getByLabelText('同时保存为默认设置'))
+    await user.click(screen.getByRole('button', { name: '应用推荐结果' }))
+    await waitFor(() =>
+      expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-1', {
+        persist: true,
+        validate: true,
+      }),
+    )
+  }, 20_000)
+
+  it('disables tuning apply button when task is not recommended', async () => {
+    vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
+      success: true,
+      items: [{ task_id: 'tune-2', status: 'completed', recommended: false }],
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+
+    expect(screen.getByRole('button', { name: '应用推荐结果' })).toBeDisabled()
+  }, 20_000)
+
+  it('uses validation recommendation when enabling tuning apply button', async () => {
+    vi.mocked(memoryApi.getMemoryTuningTasks).mockResolvedValue({
+      success: true,
+      items: [
+        {
+          task_id: 'tune-3',
+          status: 'completed',
+          recommended: false,
+          validation_summary: { recommended: true },
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+
+    const applyButton = screen.getByRole('button', { name: '应用推荐结果' })
+    expect(applyButton).not.toBeDisabled()
+
+    await user.click(applyButton)
+    await waitFor(() =>
+      expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-3', {
+        persist: false,
+        validate: true,
+      }),
+    )
   }, 20_000)
 
   it('previews executes and restores source delete (delete module)', async () => {

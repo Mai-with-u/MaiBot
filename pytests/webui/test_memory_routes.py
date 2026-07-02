@@ -1304,6 +1304,83 @@ def test_tuning_report_route_flattens_report_payload(client: TestClient, monkeyp
     }
 
 
+def test_tuning_apply_best_defaults_to_runtime_only(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_tuning_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {"success": True, "applied": {"retrieval": {"top_k_final": 8}}, "runtime_rebuilt": True}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "tuning_admin", fake_tuning_admin)
+
+    response = client.post("/api/webui/memory/retrieval_tuning/tasks/task-1/apply-best")
+
+    assert response.status_code == 200
+    assert response.json()["persisted"] is False
+    assert calls == [("apply_best", {"task_id": "task-1", "validate": True})]
+
+
+def test_tuning_apply_best_persists_when_requested(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_tuning_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {"success": True, "applied": {"retrieval": {"top_k_final": 8}}, "runtime_rebuilt": True}
+
+    async def fake_runtime_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {"success": True, "config": {"retrieval": {"top_k_final": 8}}}
+
+    async def fake_update_config(config):
+        calls.append(("update_config", config))
+        return {"success": True, "path": "bot_config.toml"}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "tuning_admin", fake_tuning_admin)
+    monkeypatch.setattr(memory_router_module.memory_service, "runtime_admin", fake_runtime_admin)
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_config", fake_update_config)
+
+    response = client.post(
+        "/api/webui/memory/retrieval_tuning/tasks/task-1/apply-best",
+        json={"persist": True, "validate": False},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["persisted"] is True
+    assert payload["persist_result"] == {"success": True, "path": "bot_config.toml"}
+    assert calls == [
+        ("apply_best", {"task_id": "task-1", "validate": False}),
+        ("get_config", {}),
+        ("update_config", {"retrieval": {"top_k_final": 8}}),
+    ]
+
+
+def test_tuning_apply_best_reports_persist_error(client: TestClient, monkeypatch):
+    async def fake_tuning_admin(*, action: str, **kwargs):
+        return {"success": True, "applied": {"retrieval": {"top_k_final": 8}}, "runtime_rebuilt": True}
+
+    async def fake_runtime_admin(*, action: str, **kwargs):
+        return {"success": True, "config": {"retrieval": {"top_k_final": 8}}}
+
+    async def fake_update_config(config):
+        raise OSError("write denied")
+
+    monkeypatch.setattr(memory_router_module.memory_service, "tuning_admin", fake_tuning_admin)
+    monkeypatch.setattr(memory_router_module.memory_service, "runtime_admin", fake_runtime_admin)
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_config", fake_update_config)
+
+    response = client.post(
+        "/api/webui/memory/retrieval_tuning/tasks/task-1/apply-best",
+        json={"persist": True},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["persisted"] is False
+    assert payload["persist_error"] == "persist_failed: write denied"
+
+
 def test_delete_execute_route(client: TestClient, monkeypatch):
     async def fake_delete_admin(*, action: str, **kwargs):
         assert action == "execute"

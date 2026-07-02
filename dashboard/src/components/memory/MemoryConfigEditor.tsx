@@ -234,7 +234,9 @@ function SectionCard({
   }
 
   const sectionValues = getNestedRecord(config, sectionName) ?? {}
-  const orderedFields = Object.values(section.fields).sort((left, right) => left.order - right.order)
+  const orderedFields = Object.values(section.fields)
+    .filter((field) => !field.hidden)
+    .sort((left, right) => left.order - right.order)
 
   return (
     <Card>

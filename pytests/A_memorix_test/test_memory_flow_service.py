@@ -51,17 +51,22 @@ def test_person_fact_resolve_target_person_for_group_without_reply(monkeypatch):
     class FakePerson:
         def __init__(self, person_id: str):
             self.person_id = person_id
-            self.is_known = person_id == "qq:user-1"
+            self.is_known = person_id in {"qq:user-1", "qq:user-2"}
 
-    recent_user_message = SimpleNamespace(
+    older_user_message = SimpleNamespace(
         platform="qq",
         user_id="user-1",
         message_info=SimpleNamespace(user_info=SimpleNamespace(user_id="user-1")),
     )
+    latest_user_message = SimpleNamespace(
+        platform="qq",
+        user_id="user-2",
+        message_info=SimpleNamespace(user_info=SimpleNamespace(user_id="user-2")),
+    )
 
     def fake_find_messages(**kwargs):
         if kwargs.get("session_id") == "session-1":
-            return [recent_user_message]
+            return [older_user_message, latest_user_message]
         return []
 
     service = memory_flow_module.PersonFactWritebackService.__new__(memory_flow_module.PersonFactWritebackService)
@@ -80,7 +85,51 @@ def test_person_fact_resolve_target_person_for_group_without_reply(monkeypatch):
     person = service._resolve_target_person(message)
 
     assert person is not None
-    assert person.person_id == "qq:user-1"
+    assert person.person_id == "qq:user-2"
+
+
+def test_person_fact_collect_user_evidence_keeps_latest_target_messages_without_reply(monkeypatch):
+    class FakePerson:
+        person_id = "qq:user-1"
+
+    def make_message(message_id: str, user_id: str, text: str):
+        return SimpleNamespace(
+            message_id=message_id,
+            platform="qq",
+            user_id=user_id,
+            processed_plain_text=text,
+            message_info=SimpleNamespace(user_info=SimpleNamespace(user_id=user_id)),
+        )
+
+    messages = [
+        make_message("user-1-a", "user-1", "第一条旧证据"),
+        make_message("user-2-a", "user-2", "其他人的插话"),
+        make_message("user-1-b", "user-1", "第二条证据"),
+        make_message("user-1-c", "user-1", "第三条证据"),
+        make_message("user-1-d", "user-1", "第四条最新证据"),
+    ]
+
+    def fake_find_messages(**kwargs):
+        if kwargs.get("session_id") == "session-1":
+            return messages
+        return []
+
+    service = memory_flow_module.PersonFactWritebackService.__new__(memory_flow_module.PersonFactWritebackService)
+    monkeypatch.setattr(memory_flow_module, "find_messages", fake_find_messages)
+    monkeypatch.setattr(memory_flow_module, "is_bot_self", lambda platform, user_id: False)
+    monkeypatch.setattr(memory_flow_module, "get_person_id", lambda platform, user_id: f"{platform}:{user_id}")
+
+    message = SimpleNamespace(
+        session_id="session-1",
+        timestamp=20.0,
+        reply_to="",
+        session=SimpleNamespace(session_id="session-1"),
+    )
+
+    evidence = service._collect_user_evidence(message, FakePerson())
+
+    assert [item.message_id for item in evidence.target_messages] == ["user-1-b", "user-1-c", "user-1-d"]
+    assert evidence.context_messages == messages
 
 
 def test_person_fact_reply_evidence_keeps_context_for_short_answer(monkeypatch):

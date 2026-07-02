@@ -1,6 +1,6 @@
 import { backendApi } from '@/lib/http'
 
-export type PluginHomeCardWidth = 'small' | 'medium' | 'large' | 'full'
+export type PluginHomeCardWidth = 'small' | 'medium' | 'large' | 'wide' | 'full'
 
 export type PluginHomeCardContent =
   | string

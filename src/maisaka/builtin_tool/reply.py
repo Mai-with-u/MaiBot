@@ -5,7 +5,7 @@ import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
 from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
-from src.common.data_models.reply_generation_data_models import ReplyGenerationResult
+from src.common.data_models.reply_generation_data_models import ReplyGenerationResult, build_reply_monitor_detail
 from src.common.logger import get_logger
 from src.config import config as config_module
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
@@ -182,6 +182,9 @@ async def handle_tool(
             "Maisaka 回复生成器当前不可用。",
         )
 
+    rich_reply_enabled = bool(config_module.global_config.experimental.enable_rich_reply)
+    rich_reply_events: list[dict[str, Any]] = []
+    rich_reply_checker_records: list[dict[str, Any]] = []
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
     try:
         success, reply_result = await replyer.generate_reply_with_context(
@@ -205,9 +208,73 @@ async def handle_tool(
             "生成可见回复时发生异常。",
         )
 
-    reply_metadata = _build_monitor_metadata(reply_result)
     reply_text = reply_result.completion.response_text.strip() if success else ""
+    original_reply_text_for_rich_output = reply_text
+    if rich_reply_enabled and reply_text:
+        reply_result.metrics.extra["rich_reply_original_response"] = original_reply_text_for_rich_output
+        try:
+            check_result = await replyer.check_rich_reply_output(
+                generated_reply=reply_text,
+                chat_history=replyer_chat_history,
+                latest_chat_history=list(tool_ctx.runtime._chat_history),
+                reply_message=target_message,
+                reply_reason=latest_thought,
+                stream_id=tool_ctx.runtime.session_id,
+                reply_tool_args=reply_tool_args,
+            )
+        except Exception as exc:
+            logger.exception(f"{tool_ctx.runtime.log_prefix} 丰富回复检查器执行异常: {exc}")
+        else:
+            rich_reply_event = {
+                "attempt": 1,
+                "action": check_result.action,
+                "output": check_result.output_text,
+                "model_name": check_result.model_name,
+                "prompt_tokens": check_result.prompt_tokens,
+                "completion_tokens": check_result.completion_tokens,
+                "total_tokens": check_result.total_tokens,
+            }
+            rich_reply_events.append(rich_reply_event)
+            reply_result.metrics.extra["rich_reply_checker_output"] = check_result.output_text
+            rich_reply_checker_records.append(
+                {
+                    "prompt_title": "Reply Checker Prompt #1",
+                    "reasoning_title": "Reply Checker 思考",
+                    "output_title": "Reply Checker 输出",
+                    "prompt_category": "replyer",
+                    "request_kind": "replyer_checker",
+                    "selection_reason": (
+                        f"会话ID: {tool_ctx.runtime.session_id}\n"
+                        f"目标消息: {target_message_id}\n"
+                        f"检查器动作: {check_result.action}"
+                    ),
+                    "request_messages": check_result.request_messages,
+                    "prompt_text": check_result.request_prompt,
+                    "output_text": check_result.output_text,
+                    "reasoning_text": check_result.reasoning_text,
+                    "metrics": {
+                        "model_name": check_result.model_name,
+                        "prompt_tokens": check_result.prompt_tokens,
+                        "completion_tokens": check_result.completion_tokens,
+                        "total_tokens": check_result.total_tokens,
+                    },
+                }
+            )
+
+            if check_result.action == "rewrite":
+                reply_text = check_result.output_text
+                reply_result.metrics.extra["rich_reply_checker_request_message_count"] = check_result.request_message_count
+                reply_result.metrics.extra["rich_reply_checker_request_messages"] = check_result.request_messages
+                reply_result.metrics.extra["rich_reply_checker_reasoning"] = check_result.reasoning_text
+
+    if rich_reply_events:
+        reply_result.metrics.extra["rich_reply_checker_events"] = rich_reply_events
+    if rich_reply_checker_records:
+        reply_result.metrics.extra["rich_reply_checker_records"] = rich_reply_checker_records
+
     if not reply_text:
+        reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
+        reply_metadata = _build_monitor_metadata(reply_result)
         logger.warning(
             f"{tool_ctx.runtime.log_prefix} 回复生成器返回空文本: "
             f"目标消息编号={target_message_id} 错误信息={reply_result.error_message!r}"
@@ -218,9 +285,30 @@ async def handle_tool(
             metadata=reply_metadata,
         )
 
-    reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(reply_text)
+    try:
+        if rich_reply_enabled:
+            reply_sequences = await tool_ctx.post_process_rich_reply_message_sequences_async(
+                reply_text,
+                original_reply_text_for_rich_output,
+            )
+        else:
+            reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(reply_text)
+    except Exception as exc:
+        reply_result.completion.response_text = reply_text
+        reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
+        reply_metadata = _build_monitor_metadata(reply_result)
+        logger.exception(f"{tool_ctx.runtime.log_prefix} 解析丰富回复输出失败: {exc}")
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            f"解析丰富回复输出失败：{exc}",
+            metadata=reply_metadata,
+        )
     reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
     combined_reply_text = "".join(reply_segments)
+    reply_result.completion.response_text = combined_reply_text
+    reply_result.text_fragments = reply_segments
+    reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
+    reply_metadata = _build_monitor_metadata(reply_result)
     sent_message_ids: list[str] = []
     send_results: list[dict[str, Any]] = []
     try:

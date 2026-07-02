@@ -799,12 +799,6 @@
   color: var(--retro-ink);
 }
 
-:root[data-dashboard-style='future-retro'] [data-home-card-canvas-item='true'] {
-  background-color: var(--retro-paper);
-  background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
-  background-clip: padding-box;
-}
-
 :root[data-dashboard-style='future-retro'] [data-dashboard-card='true']::before {
   content: '';
   position: absolute;
@@ -2358,6 +2352,13 @@
     transform: translateX(calc(var(--scroll-container-width) - 100%));
   }
 }
+
+@media (min-width: 1024px) {
+  [data-home-summary-cards='true'][data-home-row-sizing='custom'] {
+    grid-template-rows: var(--home-card-grid-rows);
+  }
+}
+
 /* ============================================================
  * Touch 目标尺寸补丁 (Task 10)
  * 对小型交互元素用 ::before 伪元素扩大触控区，视觉不变。

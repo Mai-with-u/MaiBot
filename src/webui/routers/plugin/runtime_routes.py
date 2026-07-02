@@ -15,7 +15,7 @@ router = APIRouter()
 MAX_HOME_CARD_TEXT_LENGTH = 4000
 MAX_HOME_CARD_SHORT_TEXT_LENGTH = 120
 MAX_HOME_CARD_BLOCKS = 20
-ALLOWED_HOME_CARD_WIDTHS = {"small", "medium", "large", "full"}
+ALLOWED_HOME_CARD_WIDTHS = {"small", "medium", "large", "wide", "full"}
 ALLOWED_HOME_CARD_BLOCK_TYPES = {"markdown", "text", "stat", "key_value", "list", "actions"}
 ALLOWED_HOME_CARD_LINK_PREFIXES = ("http://", "https://", "mailto:", "/")
 

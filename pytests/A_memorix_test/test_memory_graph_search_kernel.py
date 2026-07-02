@@ -584,6 +584,58 @@ def test_retrieval_type_filter_matches_group_blacklist(monkeypatch: pytest.Monke
     assert [item["hash"] for item in filtered] == ["para-summary-current"]
 
 
+def test_retrieval_type_filter_keeps_current_group_when_source_is_blacklisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = _build_retrieval_filter_kernel(
+        config={
+            "filter": {
+                "retrieval": {
+                    "chat_summary": {
+                        "enabled": True,
+                        "mode": "blacklist",
+                        "chats": ["group:group-current"],
+                    }
+                }
+            }
+        }
+    )
+
+    monkeypatch.setattr(
+        "src.A_memorix.core.runtime.sdk_memory_kernel.chat_manager.get_existing_session_by_session_id",
+        lambda session_id: type(
+            "Session",
+            (),
+            {
+                "group_id": "group-current" if session_id == "session-current" else "group-other",
+                "user_id": "",
+            },
+        )(),
+    )
+    hits = [
+        {
+            "type": "paragraph",
+            "hash": "para-summary-current",
+            "content": "当前群聊摘要。",
+            "metadata": {"chat_id": "session-current", "source_type": "chat_summary"},
+        },
+        {
+            "type": "paragraph",
+            "hash": "para-summary-other",
+            "content": "其他群聊摘要。",
+            "metadata": {"chat_id": "session-other", "source_type": "chat_summary"},
+        },
+    ]
+
+    filtered = kernel._filter_hits_by_retrieval_type_scope(
+        hits,
+        current_stream_id="session-current",
+        current_group_id="group-current",
+    )
+
+    assert [item["hash"] for item in filtered] == ["para-summary-current", "para-summary-other"]
+
+
 def test_retrieval_type_filter_matches_stream_when_session_unresolved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -687,6 +739,44 @@ async def test_search_memory_respect_filter_false_skips_retrieval_type_filter(tm
             limit=10,
             mode="search",
             respect_filter=False,
+        )
+    )
+
+    assert [item["hash"] for item in payload["hits"]] == ["para-stream-other", "para-stream-current"]
+
+
+@pytest.mark.asyncio
+async def test_search_memory_retrieval_type_filter_keeps_current_chat_even_when_not_whitelisted(
+    tmp_path,
+) -> None:
+    kernel = _build_retrieval_filter_search_kernel(
+        tmp_path,
+        config={
+            "retrieval": {
+                "search": {
+                    "smart_fallback": {"enabled": False},
+                    "safe_content_dedup": {"enabled": False},
+                }
+            },
+            "filter": {
+                "retrieval": {
+                    "chat_stream": {
+                        "enabled": True,
+                        "mode": "whitelist",
+                        "chats": ["stream:session-other"],
+                    }
+                }
+            },
+        },
+    )
+
+    payload = await kernel.search_memory(
+        KernelSearchRequest(
+            query="普通记忆",
+            limit=10,
+            mode="search",
+            chat_id="session-current",
+            shared_chat_ids=("session-current", "session-other"),
         )
     )
 

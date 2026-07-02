@@ -1,9 +1,10 @@
-import random
-import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
+
+import random
+import re
+import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
@@ -60,6 +61,22 @@ class MaisakaReplyContext:
     expression_habits: str = ""
     selected_expression_ids: List[int] = field(default_factory=list)
     selected_expressions: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class RichReplyCheckResult:
+    """丰富回复检查器的输出结果。"""
+
+    action: Literal["send", "rewrite"] = "send"
+    output_text: str = "<send>"
+    request_prompt: str = ""
+    request_messages: List[Any] = field(default_factory=list)
+    request_message_count: int = 0
+    reasoning_text: str = ""
+    model_name: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class BaseMaisakaReplyGenerator:
@@ -525,6 +542,145 @@ class BaseMaisakaReplyGenerator:
                 max_image_num=global_config.visual.max_image_num,
             )
         return messages
+
+    @staticmethod
+    def _format_checker_new_message(message: LLMContextMessage) -> str:
+        message_id = str(getattr(message, "message_id", "") or "").strip()
+        text = str(getattr(message, "processed_plain_text", "") or "").strip()
+        if not text:
+            text = str(getattr(message, "visible_text", "") or "").strip()
+        if not text:
+            text = "[无可见文本内容]"
+        if message_id:
+            return f"- msg_id={message_id}：{text}"
+        return f"- {text}"
+
+    @classmethod
+    def _extract_checker_new_messages(
+        cls,
+        original_chat_history: List[LLMContextMessage],
+        latest_chat_history: Optional[List[LLMContextMessage]],
+    ) -> List[LLMContextMessage]:
+        if not latest_chat_history or len(latest_chat_history) <= len(original_chat_history):
+            return []
+        candidates = latest_chat_history[len(original_chat_history) :]
+        return [message for message in candidates if cls._should_keep_replyer_history_message(message)]
+
+    def _build_rich_reply_checker_user_message(
+        self,
+        *,
+        generated_reply: str,
+        new_messages: List[LLMContextMessage],
+    ) -> str:
+        sections = [
+            "你现在是 replyer 输出检查器。你拥有和 replyer 相同的聊天上下文，但最终任务不同。",
+            "你可以看到 replyer 刚刚生成、尚未发送的回复，请选择接下来要做的事。",
+            f"replyer 生成的回复：\n{generated_reply.strip()}",
+        ]
+        if new_messages:
+            rendered_new_messages = "\n".join(self._format_checker_new_message(message) for message in new_messages)
+            sections.append(
+                "replyer 生成回复之后，聊天里又出现了新消息。请把这些新消息当成最新 user message 提示：\n"
+                f"{rendered_new_messages}"
+            )
+        sections.append(
+            "你只能选择以下动作之一：\n"
+            "1. 插入表情包：使用 <emoji 情绪或描述>，例如 <emoji happy>。\n"
+            "2. 插入图片：使用 <pic msg_id=消息编号 index=图片序号>；也可以使用 "
+            "<pic media_index=tool_result:call_id:item_index index=0>。图片定位语义与 send_image 工具一致。\n"
+            "3. 插入 at：使用 <at msg_id>，表示 at 这条消息的发送者。\n"
+            "4. 分成多条消息发送：在两个组件之间使用 <split>，表示从这里切到下一条消息。\n"
+            "5. 不做改动直接发送：只输出 <send>。"
+        )
+        sections.append(
+            "如果要保留 replyer 原文本并插入元素，用 <text> 表示原文本。"
+            "例如 <text><pic msg_id=abc index=0>，或 <at abc><text><emoji 开心>。"
+            "如果希望拆成多条消息，例如先发文字再发表情，可以输出 <text><split><emoji 开心>。"
+            "不要输出解释、理由、自然语言前后缀或代码块，只输出格式化结果。"
+        )
+        return "\n\n".join(sections)
+
+    async def check_rich_reply_output(
+        self,
+        *,
+        generated_reply: str,
+        chat_history: List[LLMContextMessage],
+        latest_chat_history: Optional[List[LLMContextMessage]],
+        reply_message: Optional[SessionMessage],
+        reply_reason: str,
+        expression_habits: str = "",
+        stream_id: Optional[str] = None,
+        reply_tool_args: Optional[Dict[str, Any]] = None,
+    ) -> RichReplyCheckResult:
+        """在 replyer 生成文本后，用同上下文检查是否需要插入富回复元素。"""
+
+        filtered_history = [message for message in chat_history if self._should_keep_replyer_history_message(message)]
+        new_messages = self._extract_checker_new_messages(chat_history, latest_chat_history)
+        preview_chat_id = self._resolve_session_id(stream_id)
+        checker_model = self._llm_client_cls(
+            task_name=str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer",
+            request_type=f"{self.request_type}.checker",
+            session_id=preview_chat_id,
+        )
+
+        request_messages: List[Message] = []
+        prompt_preview = ""
+
+        async def message_factory(_client: object, model_info: Optional[ModelInfo] = None) -> List[Message]:
+            nonlocal request_messages, prompt_preview
+            built_messages = self._build_request_messages(
+                chat_history=filtered_history,
+                reply_message=reply_message,
+                reply_reason=reply_reason or "",
+                expression_habits=expression_habits,
+                stream_id=stream_id,
+                enable_visual_message=self._resolve_enable_visual_message(model_info),
+                reply_tool_args=reply_tool_args,
+            )
+            checker_user_message = self._build_rich_reply_checker_user_message(
+                generated_reply=generated_reply,
+                new_messages=new_messages,
+            )
+            if built_messages:
+                built_messages[-1] = MessageBuilder().set_role(RoleType.User).add_text_content(checker_user_message).build()
+            else:
+                built_messages.append(
+                    MessageBuilder().set_role(RoleType.User).add_text_content(checker_user_message).build()
+                )
+            request_messages = limit_latest_images_in_messages(
+                built_messages,
+                max_image_num=global_config.visual.max_image_num,
+            )
+            prompt_preview = PromptCLIVisualizer.build_prompt_dump_text(request_messages)
+            return request_messages
+
+        generation_result = await checker_model.generate_response_with_messages(
+            message_factory=message_factory,
+            options=LLMGenerationOptions(),
+        )
+        output_text = (generation_result.response or "").strip()
+        normalized_output = output_text.lower()
+        if normalized_output == "<send>" or not output_text:
+            action: Literal["send", "rewrite"] = "send"
+            output_text = "<send>"
+        else:
+            action = "rewrite"
+
+        return RichReplyCheckResult(
+            action=action,
+            output_text=output_text,
+            request_prompt=prompt_preview,
+            request_messages=PromptCLIVisualizer.build_structured_message_payload(
+                request_messages,
+                keep_base64=False,
+            ),
+            request_message_count=len(request_messages),
+            reasoning_text=generation_result.reasoning or "",
+            model_name=generation_result.model_name or "",
+            prompt_tokens=generation_result.prompt_tokens,
+            completion_tokens=generation_result.completion_tokens,
+            total_tokens=generation_result.total_tokens,
+        )
 
     async def _invoke_before_model_request_hook(
         self,

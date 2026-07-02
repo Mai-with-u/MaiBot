@@ -65,6 +65,7 @@ RawContentBody = Annotated[str, Body(embed=True)]
 PathBody = Annotated[Dict[str, str], Body()]
 
 router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_auth)])
+compat_router = APIRouter(prefix="/api/config", tags=["config-compat"], dependencies=[Depends(require_auth)])
 
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 CUSTOM_PROMPTS_DIR = PROJECT_ROOT / "data" / "custom_prompts"
@@ -1500,6 +1501,18 @@ async def get_bot_config_schema():
         raise HTTPException(status_code=500, detail=f"获取配置架构失败: {str(e)}") from e
 
 
+@compat_router.get("/schema")
+async def get_compat_bot_config_schema():
+    """兼容旧版 /api/config/schema，返回主程序配置架构。"""
+    return await get_bot_config_schema()
+
+
+@compat_router.get("/schema/bot")
+async def get_compat_bot_config_schema_alias():
+    """兼容旧版 /api/config/schema/bot。"""
+    return await get_bot_config_schema()
+
+
 @router.get("/schema/model")
 async def get_model_config_schema():
     """获取模型配置架构（包含提供商和模型任务配置）"""
@@ -1784,6 +1797,18 @@ async def update_bot_config_raw(raw_content: RawContentBody):
     except Exception as e:
         logger.error(f"保存配置文件失败: {e}")
         raise HTTPException(status_code=500, detail=f"保存配置文件失败: {str(e)}") from e
+
+
+@compat_router.get("/raw")
+async def get_compat_bot_config_raw():
+    """兼容旧版 /api/config/raw，读取主程序原始 TOML。"""
+    return await get_bot_config_raw()
+
+
+@compat_router.post("/raw")
+async def update_compat_bot_config_raw(raw_content: RawContentBody):
+    """兼容旧版 /api/config/raw，写入主程序原始 TOML。"""
+    return await update_bot_config_raw(raw_content)
 
 
 @router.post("/model/section/{section_name}")

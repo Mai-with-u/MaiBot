@@ -898,6 +898,20 @@ class ExperimentalConfig(ConfigBase):
     )
     """让麦麦从聊天中学习什么时候该怎么回应的经验。"""
 
+    enable_rich_reply: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "丰富回复能力",
+                "en_US": "Rich reply ability",
+                "ja_JP": "豊かな返信能力",
+            },
+            "x-widget": "switch",
+            "x-icon": "sparkles",
+        },
+    )
+    """开启后，replyer 生成文本后会由检查器决定是否插入图片、表情包或 at。"""
+
     behavior_learning_list: list["LearningItem"] = Field(
         default_factory=lambda: [
             LearningItem(
@@ -1989,6 +2003,95 @@ class AMemorixSparseRetrievalConfig(ConfigBase):
     """关系候选数"""
 
 
+class AMemorixSmartFallbackConfig(ConfigBase):
+    """A_Memorix 智能兜底检索配置"""
+
+    enabled: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用智能兜底",
+                "en_US": "Enable smart fallback",
+                "ja_JP": "スマートフォールバックを有効化",
+            },
+        },
+    )
+    """是否启用智能兜底检索"""
+
+
+class AMemorixRetrievalSearchConfig(ConfigBase):
+    """A_Memorix 搜索后处理配置"""
+
+    smart_fallback: AMemorixSmartFallbackConfig = Field(
+        default_factory=AMemorixSmartFallbackConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "智能兜底",
+                "en_US": "Smart fallback",
+                "ja_JP": "スマートフォールバック",
+            },
+        },
+    )
+    """智能兜底检索配置"""
+
+
+class AMemorixFusionRetrievalConfig(ConfigBase):
+    """A_Memorix 检索融合配置"""
+
+    method: Literal["weighted_rrf", "alpha_legacy"] = Field(
+        default="weighted_rrf",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "融合方法",
+                "en_US": "Fusion method",
+                "ja_JP": "融合方式",
+            },
+        },
+    )
+    """检索融合方法"""
+
+    rrf_k: int = Field(
+        default=60,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "RRF K",
+                "en_US": "RRF K",
+                "ja_JP": "RRF K",
+            },
+        },
+    )
+    """RRF 融合参数"""
+
+    vector_weight: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "向量权重",
+                "en_US": "Vector weight",
+                "ja_JP": "ベクトル重み",
+            },
+        },
+    )
+    """向量检索权重"""
+
+    bm25_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "BM25 权重",
+                "en_US": "BM25 weight",
+                "ja_JP": "BM25 重み",
+            },
+        },
+    )
+    """BM25 稀疏检索权重"""
+
+
 class AMemorixRelationVectorizationConfig(ConfigBase):
     """A_Memorix 关系向量化配置"""
 
@@ -2375,6 +2478,30 @@ class AMemorixRetrievalConfig(ConfigBase):
     )
     """是否启用并行检索"""
 
+    search: AMemorixRetrievalSearchConfig = Field(
+        default_factory=AMemorixRetrievalSearchConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "搜索后处理",
+                "en_US": "Search post-processing",
+                "ja_JP": "検索後処理",
+            },
+        },
+    )
+    """搜索后处理配置"""
+
+    fusion: AMemorixFusionRetrievalConfig = Field(
+        default_factory=AMemorixFusionRetrievalConfig,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "检索融合",
+                "en_US": "Retrieval fusion",
+                "ja_JP": "検索融合",
+            },
+        },
+    )
+    """检索融合配置"""
+
     relation_vectorization: AMemorixRelationVectorizationConfig = Field(
         default_factory=AMemorixRelationVectorizationConfig,
         json_schema_extra={
@@ -2484,19 +2611,19 @@ class AMemorixThresholdConfig(ConfigBase):
 
 
 class AMemorixRetrievalSubtypeFilterConfig(ConfigBase):
-    """A_Memorix 检索结果分类型聊天过滤配置"""
+    """A_Memorix 跨聊天流检索结果分类型过滤配置"""
 
     enabled: bool = Field(
         default=False,
         json_schema_extra={
             "label": {
-                "zh_CN": "启用结果过滤",
-                "en_US": "Enable result filter",
-                "ja_JP": "結果フィルターを有効化",
+                "zh_CN": "启用跨聊天流过滤",
+                "en_US": "Enable cross-chat filter",
+                "ja_JP": "チャット横断フィルターを有効化",
             },
         },
     )
-    """是否启用当前检索结果类型的聊天过滤"""
+    """是否启用当前检索结果类型的跨聊天流过滤"""
 
     mode: Literal["blacklist", "whitelist"] = Field(
         default="blacklist",
@@ -2524,7 +2651,7 @@ class AMemorixRetrievalSubtypeFilterConfig(ConfigBase):
 
 
 class AMemorixRetrievalFilterConfig(ConfigBase):
-    """A_Memorix 检索结果后置聊天过滤配置"""
+    """A_Memorix 跨聊天流检索结果后置过滤配置"""
 
     chat_stream: AMemorixRetrievalSubtypeFilterConfig = Field(
         default_factory=AMemorixRetrievalSubtypeFilterConfig,
@@ -2537,7 +2664,7 @@ class AMemorixRetrievalFilterConfig(ConfigBase):
             "x-collapsed-by-default": True,
         },
     )
-    """普通 paragraph/relation 命中的检索后置过滤"""
+    """普通 paragraph/relation 命中的跨聊天流检索后置过滤"""
 
     chat_summary: AMemorixRetrievalSubtypeFilterConfig = Field(
         default_factory=AMemorixRetrievalSubtypeFilterConfig,
@@ -2550,7 +2677,7 @@ class AMemorixRetrievalFilterConfig(ConfigBase):
             "x-collapsed-by-default": True,
         },
     )
-    """聊天总结命中的检索后置过滤"""
+    """聊天总结命中的跨聊天流检索后置过滤"""
 
     episode: AMemorixRetrievalSubtypeFilterConfig = Field(
         default_factory=AMemorixRetrievalSubtypeFilterConfig,
@@ -2563,7 +2690,7 @@ class AMemorixRetrievalFilterConfig(ConfigBase):
             "x-collapsed-by-default": True,
         },
     )
-    """Episode 命中的检索后置过滤"""
+    """Episode 命中的跨聊天流检索后置过滤"""
 
 
 class AMemorixFilterConfig(ConfigBase):
@@ -2609,14 +2736,14 @@ class AMemorixFilterConfig(ConfigBase):
         default_factory=AMemorixRetrievalFilterConfig,
         json_schema_extra={
             "label": {
-                "zh_CN": "检索结果过滤",
-                "en_US": "Retrieval result filter",
-                "ja_JP": "検索結果フィルター",
+                "zh_CN": "跨聊天流检索结果过滤",
+                "en_US": "Cross-chat retrieval result filter",
+                "ja_JP": "チャット横断検索結果フィルター",
             },
             "x-collapsed-by-default": True,
         },
     )
-    """仅对检索结果生效的分类型聊天过滤，不影响写入和后台生成"""
+    """仅对跨聊天流检索结果生效的分类型过滤，不影响本聊天流读取自身记忆、写入和后台生成"""
 
 
 class AMemorixSharedMemoryGroupConfig(ConfigBase):
@@ -3458,6 +3585,20 @@ class AMemorixConfig(ConfigBase):
         },
     )
     """聊天过滤配置"""
+
+    global_memory_sharing_enabled: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "全局共享记忆",
+                "en_US": "Global memory sharing",
+                "ja_JP": "記憶のグローバル共有",
+            },
+            "x-widget": "switch",
+            "x-icon": "globe-2",
+        },
+    )
+    """是否让普通记忆查询在所有聊天流范围内检索"""
 
     shared_memory_groups: list[AMemorixSharedMemoryGroupConfig] = Field(
         default_factory=list,

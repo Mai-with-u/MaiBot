@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import json
 import random
 import re
@@ -40,6 +41,26 @@ logger = get_logger("A_Memorix.RetrievalTuningManager")
 OBJECTIVES = {"precision_priority", "balanced", "recall_priority"}
 INTENSITIES = {"quick": 8, "standard": 20, "deep": 32}
 CATEGORIES = {"query_nl", "query_kw", "spo_relation", "spo_search"}
+MIN_VALIDATION_SCORE_DELTA = 0.02
+MAX_PRECISION_DROP = 0.01
+MAX_RECALL_DROP = 0.01
+MAX_EMPTY_RATE_INCREASE = 0.05
+MAX_LATENCY_INCREASE_MS = 100.0
+MAX_LATENCY_INCREASE_RATIO = 0.50
+NON_TUNED_RETRIEVAL_INFLUENCERS = [
+    "embedding.*",
+    "retrieval.sparse.tokenizer_mode",
+    "retrieval.relation_vectorization.*",
+    "retrieval.search.relation_intent.*",
+    "retrieval.search.graph_recall.*",
+    "retrieval.search.posterior_graph.*",
+    "retrieval.aggregate.*",
+    "filter.*",
+    "episode.*",
+    "person_profile.*",
+    "integration.memory_query_default_limit",
+    "integration.heuristic_memory_*",
+]
 _RUNTIME_CONFIG_INSTANCE_KEYS = {
     "vector_store",
     "graph_store",
@@ -197,6 +218,8 @@ class RetrievalTuningTaskRecord:
     best_score: float = -1.0
     baseline_profile: Dict[str, Any] = field(default_factory=dict)
     baseline_metrics: Dict[str, Any] = field(default_factory=dict)
+    validation_summary: Dict[str, Any] = field(default_factory=dict)
+    recommended: bool = False
     error: str = ""
     params: Dict[str, Any] = field(default_factory=dict)
     query_set_stats: Dict[str, Any] = field(default_factory=dict)
@@ -219,6 +242,8 @@ class RetrievalTuningTaskRecord:
             "rounds_total": self.rounds_total,
             "rounds_done": self.rounds_done,
             "best_score": self.best_score,
+            "recommended": bool(self.recommended),
+            "validation_summary": copy.deepcopy(self.validation_summary),
             "error": self.error,
             "query_set_stats": dict(self.query_set_stats),
             "artifact_paths": dict(self.artifact_paths),
@@ -237,6 +262,8 @@ class RetrievalTuningTaskRecord:
                 "best_metrics": copy.deepcopy(self.best_metrics),
                 "baseline_profile": copy.deepcopy(self.baseline_profile),
                 "baseline_metrics": copy.deepcopy(self.baseline_metrics),
+                "recommended": bool(self.recommended),
+                "validation_summary": copy.deepcopy(self.validation_summary),
                 "apply_log": copy.deepcopy(self.apply_log),
             }
         )
@@ -341,6 +368,8 @@ class RetrievalTuningManager:
                 "top_k_final": _nested_get(cfg, "retrieval.top_k_final", 10),
                 "alpha": _nested_get(cfg, "retrieval.alpha", 0.5),
                 "enable_ppr": _nested_get(cfg, "retrieval.enable_ppr", True),
+                "ppr_alpha": _nested_get(cfg, "retrieval.ppr_alpha", 0.85),
+                "ppr_timeout_seconds": _nested_get(cfg, "retrieval.ppr_timeout_seconds", 1.5),
                 "search": {"smart_fallback": {"enabled": _nested_get(cfg, "retrieval.search.smart_fallback.enabled", True)}},
                 "sparse": {
                     "enabled": _nested_get(cfg, "retrieval.sparse.enabled", True),
@@ -354,10 +383,32 @@ class RetrievalTuningManager:
                     "vector_weight": _nested_get(cfg, "retrieval.fusion.vector_weight", 0.7),
                     "bm25_weight": _nested_get(cfg, "retrieval.fusion.bm25_weight", 0.3),
                 },
+                "vector_pools": {
+                    "mode": _nested_get(cfg, "retrieval.vector_pools.mode", "single"),
+                    "paragraph_top_k": _nested_get(cfg, "retrieval.vector_pools.paragraph_top_k", 20),
+                    "graph_top_k": _nested_get(cfg, "retrieval.vector_pools.graph_top_k", 40),
+                    "graph_expand_paragraph_k": _nested_get(cfg, "retrieval.vector_pools.graph_expand_paragraph_k", 80),
+                    "relation_expand_per_hit": _nested_get(cfg, "retrieval.vector_pools.relation_expand_per_hit", 5),
+                    "entity_expand_per_hit": _nested_get(cfg, "retrieval.vector_pools.entity_expand_per_hit", 8),
+                    "relation_evidence_weight": _nested_get(cfg, "retrieval.vector_pools.relation_evidence_weight", 1.0),
+                    "entity_evidence_weight": _nested_get(cfg, "retrieval.vector_pools.entity_evidence_weight", 0.55),
+                    "semantic_weight": _nested_get(cfg, "retrieval.vector_pools.semantic_weight", 0.65),
+                    "sparse_weight": _nested_get(cfg, "retrieval.vector_pools.sparse_weight", 0.2),
+                    "graph_weight": _nested_get(cfg, "retrieval.vector_pools.graph_weight", 0.15),
+                    "relation_intent": {
+                        "graph_top_k": _nested_get(cfg, "retrieval.vector_pools.relation_intent.graph_top_k", 80),
+                        "semantic_weight": _nested_get(cfg, "retrieval.vector_pools.relation_intent.semantic_weight", 0.45),
+                        "sparse_weight": _nested_get(cfg, "retrieval.vector_pools.relation_intent.sparse_weight", 0.15),
+                        "graph_weight": _nested_get(cfg, "retrieval.vector_pools.relation_intent.graph_weight", 0.4),
+                    },
+                },
             },
             "threshold": {
+                "min_threshold": _nested_get(cfg, "threshold.min_threshold", 0.3),
+                "max_threshold": _nested_get(cfg, "threshold.max_threshold", 0.95),
                 "percentile": _nested_get(cfg, "threshold.percentile", 75.0),
                 "min_results": _nested_get(cfg, "threshold.min_results", 3),
+                "enable_auto_adjust": _nested_get(cfg, "threshold.enable_auto_adjust", True),
             },
         }
         return self._normalize_profile(profile, fallback=profile)
@@ -381,6 +432,10 @@ class RetrievalTuningManager:
         if sparse_mode not in {"auto", "hybrid", "fallback_only"}:
             sparse_mode = "auto"
 
+        vector_pool_mode = str(pick("retrieval.vector_pools.mode", "single") or "single").strip().lower()
+        if vector_pool_mode not in {"single", "dual"}:
+            vector_pool_mode = "single"
+
         vec_w = _clamp_float(pick("retrieval.fusion.vector_weight", 0.7), 0.7, 0.0, 1.0)
         bm_w = _clamp_float(pick("retrieval.fusion.bm25_weight", 0.3), 0.3, 0.0, 1.0)
         s = vec_w + bm_w
@@ -389,6 +444,48 @@ class RetrievalTuningManager:
         else:
             vec_w, bm_w = vec_w / s, bm_w / s
 
+        semantic_w = _clamp_float(pick("retrieval.vector_pools.semantic_weight", 0.65), 0.65, 0.0, 1.0)
+        sparse_w = _clamp_float(pick("retrieval.vector_pools.sparse_weight", 0.2), 0.2, 0.0, 1.0)
+        graph_w = _clamp_float(pick("retrieval.vector_pools.graph_weight", 0.15), 0.15, 0.0, 1.0)
+        weight_sum = semantic_w + sparse_w + graph_w
+        if weight_sum <= 1e-9:
+            semantic_w, sparse_w, graph_w = 0.65, 0.2, 0.15
+        else:
+            semantic_w, sparse_w, graph_w = semantic_w / weight_sum, sparse_w / weight_sum, graph_w / weight_sum
+
+        ri_semantic_w = _clamp_float(
+            pick("retrieval.vector_pools.relation_intent.semantic_weight", 0.45),
+            0.45,
+            0.0,
+            1.0,
+        )
+        ri_sparse_w = _clamp_float(
+            pick("retrieval.vector_pools.relation_intent.sparse_weight", 0.15),
+            0.15,
+            0.0,
+            1.0,
+        )
+        ri_graph_w = _clamp_float(
+            pick("retrieval.vector_pools.relation_intent.graph_weight", 0.4),
+            0.4,
+            0.0,
+            1.0,
+        )
+        ri_sum = ri_semantic_w + ri_sparse_w + ri_graph_w
+        if ri_sum <= 1e-9:
+            ri_semantic_w, ri_sparse_w, ri_graph_w = 0.45, 0.15, 0.4
+        else:
+            ri_semantic_w, ri_sparse_w, ri_graph_w = (
+                ri_semantic_w / ri_sum,
+                ri_sparse_w / ri_sum,
+                ri_graph_w / ri_sum,
+            )
+
+        min_threshold = _clamp_float(pick("threshold.min_threshold", 0.3), 0.3, 0.0, 1.0)
+        max_threshold = _clamp_float(pick("threshold.max_threshold", 0.95), 0.95, 0.0, 1.0)
+        if min_threshold >= max_threshold:
+            min_threshold, max_threshold = 0.3, 0.95
+
         return {
             "retrieval": {
                 "top_k_paragraphs": _clamp_int(pick("retrieval.top_k_paragraphs", 20), 20, 10, 1200),
@@ -396,6 +493,8 @@ class RetrievalTuningManager:
                 "top_k_final": _clamp_int(pick("retrieval.top_k_final", 10), 10, 4, 512),
                 "alpha": _clamp_float(pick("retrieval.alpha", 0.5), 0.5, 0.0, 1.0),
                 "enable_ppr": _coerce_bool(pick("retrieval.enable_ppr", True), True),
+                "ppr_alpha": _clamp_float(pick("retrieval.ppr_alpha", 0.85), 0.85, 0.1, 0.99),
+                "ppr_timeout_seconds": _clamp_float(pick("retrieval.ppr_timeout_seconds", 1.5), 1.5, 0.1, 10.0),
                 "search": {"smart_fallback": {"enabled": _coerce_bool(pick("retrieval.search.smart_fallback.enabled", True), True)}},
                 "sparse": {
                     "enabled": _coerce_bool(pick("retrieval.sparse.enabled", True), True),
@@ -409,14 +508,84 @@ class RetrievalTuningManager:
                     "vector_weight": float(vec_w),
                     "bm25_weight": float(bm_w),
                 },
+                "vector_pools": {
+                    "mode": vector_pool_mode,
+                    "paragraph_top_k": _clamp_int(pick("retrieval.vector_pools.paragraph_top_k", 20), 20, 4, 512),
+                    "graph_top_k": _clamp_int(pick("retrieval.vector_pools.graph_top_k", 40), 40, 4, 1000),
+                    "graph_expand_paragraph_k": _clamp_int(
+                        pick("retrieval.vector_pools.graph_expand_paragraph_k", 80),
+                        80,
+                        4,
+                        2000,
+                    ),
+                    "relation_expand_per_hit": _clamp_int(
+                        pick("retrieval.vector_pools.relation_expand_per_hit", 5),
+                        5,
+                        1,
+                        50,
+                    ),
+                    "entity_expand_per_hit": _clamp_int(
+                        pick("retrieval.vector_pools.entity_expand_per_hit", 8),
+                        8,
+                        1,
+                        80,
+                    ),
+                    "relation_evidence_weight": _clamp_float(
+                        pick("retrieval.vector_pools.relation_evidence_weight", 1.0),
+                        1.0,
+                        0.0,
+                        3.0,
+                    ),
+                    "entity_evidence_weight": _clamp_float(
+                        pick("retrieval.vector_pools.entity_evidence_weight", 0.55),
+                        0.55,
+                        0.0,
+                        3.0,
+                    ),
+                    "semantic_weight": float(semantic_w),
+                    "sparse_weight": float(sparse_w),
+                    "graph_weight": float(graph_w),
+                    "relation_intent": {
+                        "graph_top_k": _clamp_int(
+                            pick("retrieval.vector_pools.relation_intent.graph_top_k", 80),
+                            80,
+                            4,
+                            1000,
+                        ),
+                        "semantic_weight": float(ri_semantic_w),
+                        "sparse_weight": float(ri_sparse_w),
+                        "graph_weight": float(ri_graph_w),
+                    },
+                },
             },
             "threshold": {
+                "min_threshold": float(min_threshold),
+                "max_threshold": float(max_threshold),
                 "percentile": _clamp_float(pick("threshold.percentile", 75.0), 75.0, 1.0, 99.0),
                 "min_results": _clamp_int(pick("threshold.min_results", 3), 3, 1, 100),
+                "enable_auto_adjust": _coerce_bool(pick("threshold.enable_auto_adjust", True), True),
             },
         }
 
-    def _apply_profile_to_runtime(self, normalized: Dict[str, Any]) -> None:
+    def get_persistable_profile(self, profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._normalize_profile(profile or self.get_profile_snapshot())
+
+    async def _apply_profile_to_runtime(self, normalized: Dict[str, Any], *, validate: bool = True) -> Dict[str, Any]:
+        applier = getattr(self.plugin, "apply_retrieval_tuning_profile", None)
+        if callable(applier):
+            result = applier(normalized, validate=validate)
+            if inspect.isawaitable(result):
+                result = await result
+            if not isinstance(result, dict):
+                raise RuntimeError("运行时热重建返回值非法")
+            if not bool(result.get("success", True)):
+                raise RuntimeError(str(result.get("error") or "运行时热重建失败"))
+            return {
+                "runtime_rebuilt": bool(result.get("runtime_rebuilt", False)),
+                "validation_passed": bool(result.get("validation_passed", True)),
+                "apply_error": str(result.get("error", "") or ""),
+            }
+
         if not isinstance(getattr(self.plugin, "config", None), dict):
             raise RuntimeError("插件 config 不可写")
         for key, value in normalized.items():
@@ -425,25 +594,28 @@ class RetrievalTuningManager:
         if isinstance(plugin_cfg, dict):
             for key, value in normalized.items():
                 _nested_set(plugin_cfg, key, value)
+        return {"runtime_rebuilt": False, "validation_passed": True, "apply_error": ""}
 
-    async def apply_profile(self, profile: Dict[str, Any], *, reason: str = "manual") -> Dict[str, Any]:
+    async def apply_profile(self, profile: Dict[str, Any], *, reason: str = "manual", validate: bool = True) -> Dict[str, Any]:
         normalized = self._normalize_profile(profile)
         current = self.get_profile_snapshot()
         self._rollback_snapshot = current
-        self._apply_profile_to_runtime(normalized)
+        apply_result = await self._apply_profile_to_runtime(normalized, validate=validate)
         return {
             "applied": normalized,
             "rollback_snapshot": current,
             "reason": reason,
             "applied_at": _now(),
+            "persisted": False,
+            **apply_result,
         }
 
     async def rollback_profile(self) -> Dict[str, Any]:
         if not self._rollback_snapshot:
             raise ValueError("暂无可回滚的参数快照")
         target = self._normalize_profile(self._rollback_snapshot, fallback=self._rollback_snapshot)
-        self._apply_profile_to_runtime(target)
-        return {"rolled_back_to": target, "rolled_back_at": _now()}
+        apply_result = await self._apply_profile_to_runtime(target, validate=True)
+        return {"rolled_back_to": target, "rolled_back_at": _now(), **apply_result}
 
     def export_toml_snippet(self, profile: Optional[Dict[str, Any]] = None) -> str:
         p = self._normalize_profile(profile or self.get_profile_snapshot())
@@ -456,6 +628,8 @@ class RetrievalTuningManager:
             f"top_k_final = {int(r['top_k_final'])}",
             f"alpha = {float(r['alpha']):.4f}",
             f"enable_ppr = {str(bool(r['enable_ppr'])).lower()}",
+            f"ppr_alpha = {float(r['ppr_alpha']):.4f}",
+            f"ppr_timeout_seconds = {float(r['ppr_timeout_seconds']):.4f}",
             "",
             "[retrieval.search.smart_fallback]",
             f"enabled = {str(bool(r['search']['smart_fallback']['enabled'])).lower()}",
@@ -472,9 +646,31 @@ class RetrievalTuningManager:
             f"vector_weight = {float(r['fusion']['vector_weight']):.4f}",
             f"bm25_weight = {float(r['fusion']['bm25_weight']):.4f}",
             "",
+            "[retrieval.vector_pools]",
+            f"mode = \"{r['vector_pools']['mode']}\"",
+            f"paragraph_top_k = {int(r['vector_pools']['paragraph_top_k'])}",
+            f"graph_top_k = {int(r['vector_pools']['graph_top_k'])}",
+            f"graph_expand_paragraph_k = {int(r['vector_pools']['graph_expand_paragraph_k'])}",
+            f"relation_expand_per_hit = {int(r['vector_pools']['relation_expand_per_hit'])}",
+            f"entity_expand_per_hit = {int(r['vector_pools']['entity_expand_per_hit'])}",
+            f"relation_evidence_weight = {float(r['vector_pools']['relation_evidence_weight']):.4f}",
+            f"entity_evidence_weight = {float(r['vector_pools']['entity_evidence_weight']):.4f}",
+            f"semantic_weight = {float(r['vector_pools']['semantic_weight']):.4f}",
+            f"sparse_weight = {float(r['vector_pools']['sparse_weight']):.4f}",
+            f"graph_weight = {float(r['vector_pools']['graph_weight']):.4f}",
+            "",
+            "[retrieval.vector_pools.relation_intent]",
+            f"graph_top_k = {int(r['vector_pools']['relation_intent']['graph_top_k'])}",
+            f"semantic_weight = {float(r['vector_pools']['relation_intent']['semantic_weight']):.4f}",
+            f"sparse_weight = {float(r['vector_pools']['relation_intent']['sparse_weight']):.4f}",
+            f"graph_weight = {float(r['vector_pools']['relation_intent']['graph_weight']):.4f}",
+            "",
             "[threshold]",
+            f"min_threshold = {float(t['min_threshold']):.4f}",
+            f"max_threshold = {float(t['max_threshold']):.4f}",
             f"percentile = {float(t['percentile']):.4f}",
             f"min_results = {int(t['min_results'])}",
+            f"enable_auto_adjust = {str(bool(t['enable_auto_adjust'])).lower()}",
         ]
         return "\n".join(lines).strip() + "\n"
 
@@ -641,6 +837,50 @@ class RetrievalTuningManager:
 
         return selected[:target]
 
+    def _split_query_cases(
+        self,
+        *,
+        cases: List[RetrievalQueryCase],
+        seed: int,
+    ) -> Tuple[List[RetrievalQueryCase], List[RetrievalQueryCase], Dict[str, Any]]:
+        if len(cases) <= 1:
+            return list(cases), list(cases), {"strategy": "shared_small_set", "train": len(cases), "holdout": len(cases)}
+
+        rng = random.Random(f"{seed}:holdout_split")
+        by_cat: Dict[str, List[RetrievalQueryCase]] = {}
+        for item in cases:
+            by_cat.setdefault(str(item.category), []).append(item)
+
+        holdout_target = max(4, int(round(len(cases) * 0.25)))
+        holdout_target = min(holdout_target, max(1, len(cases) - 1))
+        holdout_ids = set()
+
+        for cat in sorted(by_cat):
+            pool = list(by_cat[cat])
+            rng.shuffle(pool)
+            per_cat = 1 if len(pool) > 1 else 0
+            for item in pool[:per_cat]:
+                if len(holdout_ids) < holdout_target:
+                    holdout_ids.add(item.case_id)
+
+        if len(holdout_ids) < holdout_target:
+            remain = [item for item in cases if item.case_id not in holdout_ids]
+            rng.shuffle(remain)
+            for item in remain[: holdout_target - len(holdout_ids)]:
+                holdout_ids.add(item.case_id)
+
+        train = [item for item in cases if item.case_id not in holdout_ids]
+        holdout = [item for item in cases if item.case_id in holdout_ids]
+        if not train or not holdout:
+            return list(cases), list(cases), {"strategy": "shared_fallback", "train": len(cases), "holdout": len(cases)}
+
+        return train, holdout, {
+            "strategy": "category_balanced_holdout",
+            "train": len(train),
+            "holdout": len(holdout),
+            "holdout_ratio": round(len(holdout) / max(1, len(cases)), 4),
+        }
+
     async def _ensure_worker(self) -> None:
         async with self._lock:
             if self._worker_task and not self._worker_task.done():
@@ -769,7 +1009,7 @@ class RetrievalTuningManager:
             task.updated_at = _now()
             return task.to_summary()
 
-    async def apply_best(self, task_id: str) -> Dict[str, Any]:
+    async def apply_best(self, task_id: str, *, validate: bool = True) -> Dict[str, Any]:
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
@@ -778,12 +1018,21 @@ class RetrievalTuningManager:
                 raise ValueError("任务未完成，无法应用最优参数")
             if not task.best_profile:
                 raise ValueError("任务没有可应用的最优参数")
+            if validate and task.validation_summary and not task.recommended:
+                raise ValueError("任务未通过 holdout/online_like 验证，无法应用最优参数")
             best = copy.deepcopy(task.best_profile)
-        applied = await self.apply_profile(best, reason=f"task:{task_id}:apply_best")
+        applied = await self.apply_profile(best, reason=f"task:{task_id}:apply_best", validate=validate)
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is not None:
-                task.apply_log.append({"applied_at": _now(), "reason": "apply_best", "profile": best})
+                task.apply_log.append(
+                    {
+                        "applied_at": _now(),
+                        "reason": "apply_best",
+                        "profile": best,
+                        "validate": bool(validate),
+                    }
+                )
                 task.updated_at = _now()
         return applied
 
@@ -872,6 +1121,11 @@ class RetrievalTuningManager:
             )
             if not cases:
                 raise ValueError("当前知识库样本不足，无法构建调优测试集")
+            train_cases, holdout_cases, split_stats = self._split_query_cases(
+                cases=cases,
+                seed=int(params["seed"]),
+            )
+            stats["split"] = split_stats
 
             query_set_path.write_text(
                 json.dumps(
@@ -891,10 +1145,11 @@ class RetrievalTuningManager:
             top_k_eval = int(params["top_k_eval"])
             baseline_eval = await self._evaluate_profile(
                 profile=baseline_profile,
-                cases=cases,
+                cases=train_cases,
                 objective=task.objective,
                 top_k_eval=top_k_eval,
                 query_timeout_s=float(params.get("eval_query_timeout_seconds") or self._eval_query_timeout_s()),
+                evaluation_mode="stable",
             )
             baseline_round = RetrievalTuningRoundRecord(
                 round_index=0,
@@ -957,7 +1212,7 @@ class RetrievalTuningManager:
                     llm_suggestions=llm_suggestions,
                 )
                 eval_cases = self._select_round_eval_cases(
-                    cases=cases,
+                    cases=train_cases,
                     intensity=task.intensity,
                     round_index=round_idx,
                     seed=int(params.get("seed", 0)),
@@ -968,6 +1223,7 @@ class RetrievalTuningManager:
                     objective=task.objective,
                     top_k_eval=top_k_eval,
                     query_timeout_s=float(params.get("eval_query_timeout_seconds") or self._eval_query_timeout_s()),
+                    evaluation_mode="stable",
                 )
                 round_record = RetrievalTuningRoundRecord(
                     round_index=round_idx,
@@ -999,13 +1255,14 @@ class RetrievalTuningManager:
                     task.updated_at = _now()
 
             if best_profile and (not task_cancelled):
-                # 候选轮可能基于子样本评估，收官时用全量样本复核，确保最终指标可解释。
+                # 候选轮可能基于子样本评估，收官时用训练集复核，再用 holdout 验证泛化。
                 best_full = await self._evaluate_profile(
                     profile=best_profile,
-                    cases=cases,
+                    cases=train_cases,
                     objective=task.objective,
                     top_k_eval=top_k_eval,
                     query_timeout_s=float(params.get("eval_query_timeout_seconds") or self._eval_query_timeout_s()),
+                    evaluation_mode="stable",
                 )
                 best_profile = copy.deepcopy(best_profile)
                 best_metrics = copy.deepcopy(best_full["metrics"])
@@ -1017,12 +1274,36 @@ class RetrievalTuningManager:
                     best_failure_summary = copy.deepcopy(baseline_eval["failure_summary"])
                     best_score = float(baseline_eval["score"])
 
+                validation_summary = await self._validate_best_profile(
+                    baseline_profile=baseline_profile,
+                    candidate_profile=best_profile,
+                    holdout_cases=holdout_cases,
+                    objective=task.objective,
+                    top_k_eval=top_k_eval,
+                    query_timeout_s=float(params.get("eval_query_timeout_seconds") or self._eval_query_timeout_s()),
+                )
+                recommended = bool(validation_summary.get("recommended", False))
+                online_like = validation_summary.get("online_like") if isinstance(validation_summary.get("online_like"), dict) else {}
+                online_baseline = online_like.get("baseline") if isinstance(online_like.get("baseline"), dict) else {}
+                online_best = online_like.get("best") if isinstance(online_like.get("best"), dict) else {}
+                if recommended:
+                    best_metrics = copy.deepcopy(online_best.get("metrics") or best_metrics)
+                    best_score = float(online_best.get("score", best_score) or best_score)
+                else:
+                    best_profile = copy.deepcopy(baseline_profile)
+                    best_metrics = copy.deepcopy(online_baseline.get("metrics") or baseline_eval["metrics"])
+                    best_score = float(online_baseline.get("score", baseline_eval["score"]) or baseline_eval["score"])
+                baseline_metrics_for_report = copy.deepcopy(online_baseline.get("metrics") or baseline_eval["metrics"])
+
                 async with self._lock:
                     task = self._tasks.get(task_id)
                     if task is not None:
                         task.best_profile = copy.deepcopy(best_profile)
                         task.best_metrics = copy.deepcopy(best_metrics)
                         task.best_score = float(best_score)
+                        task.baseline_metrics = baseline_metrics_for_report
+                        task.validation_summary = copy.deepcopy(validation_summary)
+                        task.recommended = recommended
                         task.updated_at = _now()
 
             async with self._lock:
@@ -1411,10 +1692,21 @@ class RetrievalTuningManager:
             "请基于基础参数与失败摘要，给出最多 "
             f"{int(max_count)} 组候选参数，返回 JSON: {{\"profiles\": [ ... ]}}。\n"
             "字段仅可包含：retrieval.top_k_paragraphs, retrieval.top_k_relations, retrieval.top_k_final, "
-            "retrieval.alpha, retrieval.enable_ppr, retrieval.search.smart_fallback.enabled, "
+            "retrieval.alpha, retrieval.enable_ppr, retrieval.ppr_alpha, retrieval.ppr_timeout_seconds, "
+            "retrieval.search.smart_fallback.enabled, "
             "retrieval.sparse.enabled, retrieval.sparse.mode, retrieval.sparse.candidate_k, retrieval.sparse.relation_candidate_k, "
             "retrieval.fusion.method, retrieval.fusion.rrf_k, retrieval.fusion.vector_weight, retrieval.fusion.bm25_weight, "
-            "threshold.percentile, threshold.min_results。\n"
+            "retrieval.vector_pools.paragraph_top_k, retrieval.vector_pools.graph_top_k, "
+            "retrieval.vector_pools.graph_expand_paragraph_k, retrieval.vector_pools.relation_expand_per_hit, "
+            "retrieval.vector_pools.entity_expand_per_hit, retrieval.vector_pools.relation_evidence_weight, "
+            "retrieval.vector_pools.entity_evidence_weight, retrieval.vector_pools.semantic_weight, "
+            "retrieval.vector_pools.sparse_weight, retrieval.vector_pools.graph_weight, "
+            "retrieval.vector_pools.relation_intent.graph_top_k, "
+            "retrieval.vector_pools.relation_intent.semantic_weight, "
+            "retrieval.vector_pools.relation_intent.sparse_weight, "
+            "retrieval.vector_pools.relation_intent.graph_weight, "
+            "threshold.min_threshold, threshold.max_threshold, threshold.percentile, "
+            "threshold.min_results, threshold.enable_auto_adjust。\n"
             f"objective={objective}\n"
             f"base={json.dumps(base_profile, ensure_ascii=False)}\n"
             f"failure_summary={json.dumps(failure_summary, ensure_ascii=False)}"
@@ -1478,8 +1770,9 @@ class RetrievalTuningManager:
         _nested_set(candidate, "retrieval.top_k_relations", rng.choice(rel_choices))
         _nested_set(candidate, "retrieval.top_k_final", rng.choice(final_choices))
         _nested_set(candidate, "retrieval.alpha", rng.choice(alpha_choices))
-        # PPR 在 TestClient/异步评估场景下存在偶发长时阻塞风险，调优评估链路固定关闭。
-        _nested_set(candidate, "retrieval.enable_ppr", False)
+        _nested_set(candidate, "retrieval.enable_ppr", bool(rng.choice([True, True, False])))
+        _nested_set(candidate, "retrieval.ppr_alpha", rng.choice([0.72, 0.80, 0.85, 0.90, 0.94]))
+        _nested_set(candidate, "retrieval.ppr_timeout_seconds", rng.choice([0.8, 1.2, 1.5, 2.0, 3.0]))
         _nested_set(candidate, "retrieval.search.smart_fallback.enabled", bool(rng.choice([True, True, False])))
         _nested_set(candidate, "retrieval.sparse.enabled", bool(rng.choice([True, True, False])))
         _nested_set(candidate, "retrieval.sparse.mode", rng.choice(["auto", "hybrid", "fallback_only"]))
@@ -1490,12 +1783,125 @@ class RetrievalTuningManager:
         vec_w = float(rng.choice([0.55, 0.65, 0.72, 0.80, 0.88]))
         _nested_set(candidate, "retrieval.fusion.vector_weight", vec_w)
         _nested_set(candidate, "retrieval.fusion.bm25_weight", 1.0 - vec_w)
+        semantic_w = float(rng.choice([0.50, 0.60, 0.65, 0.72, 0.80]))
+        graph_w = float(rng.choice([0.10, 0.15, 0.22, 0.30]))
+        sparse_pool_w = max(0.0, 1.0 - semantic_w - graph_w)
+        _nested_set(candidate, "retrieval.vector_pools.paragraph_top_k", rng.choice([12, 20, 32, 48, 64]))
+        _nested_set(candidate, "retrieval.vector_pools.graph_top_k", rng.choice([24, 40, 64, 80, 120]))
+        _nested_set(candidate, "retrieval.vector_pools.graph_expand_paragraph_k", rng.choice([40, 80, 120, 160]))
+        _nested_set(candidate, "retrieval.vector_pools.relation_expand_per_hit", rng.choice([3, 5, 8, 12]))
+        _nested_set(candidate, "retrieval.vector_pools.entity_expand_per_hit", rng.choice([4, 8, 12, 16]))
+        _nested_set(candidate, "retrieval.vector_pools.relation_evidence_weight", rng.choice([0.75, 1.0, 1.25]))
+        _nested_set(candidate, "retrieval.vector_pools.entity_evidence_weight", rng.choice([0.35, 0.55, 0.75]))
+        _nested_set(candidate, "retrieval.vector_pools.semantic_weight", semantic_w)
+        _nested_set(candidate, "retrieval.vector_pools.sparse_weight", sparse_pool_w)
+        _nested_set(candidate, "retrieval.vector_pools.graph_weight", graph_w)
+        ri_semantic_w = float(rng.choice([0.35, 0.45, 0.55, 0.65]))
+        ri_graph_w = float(rng.choice([0.25, 0.35, 0.40, 0.50]))
+        ri_sparse_w = max(0.0, 1.0 - ri_semantic_w - ri_graph_w)
+        _nested_set(candidate, "retrieval.vector_pools.relation_intent.graph_top_k", rng.choice([40, 80, 120, 160]))
+        _nested_set(candidate, "retrieval.vector_pools.relation_intent.semantic_weight", ri_semantic_w)
+        _nested_set(candidate, "retrieval.vector_pools.relation_intent.sparse_weight", ri_sparse_w)
+        _nested_set(candidate, "retrieval.vector_pools.relation_intent.graph_weight", ri_graph_w)
+        _nested_set(candidate, "threshold.min_threshold", rng.choice([0.20, 0.25, 0.30, 0.35, 0.42]))
+        _nested_set(candidate, "threshold.max_threshold", rng.choice([0.88, 0.92, 0.95, 0.98]))
         _nested_set(candidate, "threshold.percentile", rng.choice(pct_choices))
         _nested_set(candidate, "threshold.min_results", rng.choice(min_results_choices))
+        _nested_set(candidate, "threshold.enable_auto_adjust", bool(rng.choice([True, True, False])))
 
         return self._normalize_profile(candidate, fallback=base)
 
-    def _build_runtime_config(self, normalized_profile: Dict[str, Any]) -> Dict[str, Any]:
+    async def _validate_best_profile(
+        self,
+        *,
+        baseline_profile: Dict[str, Any],
+        candidate_profile: Dict[str, Any],
+        holdout_cases: List[RetrievalQueryCase],
+        objective: str,
+        top_k_eval: int,
+        query_timeout_s: float,
+    ) -> Dict[str, Any]:
+        cases = holdout_cases or []
+        if not cases:
+            return {"recommended": False, "reason": "holdout_empty"}
+
+        stable_baseline = await self._evaluate_profile(
+            profile=baseline_profile,
+            cases=cases,
+            objective=objective,
+            top_k_eval=top_k_eval,
+            query_timeout_s=query_timeout_s,
+            evaluation_mode="stable",
+        )
+        stable_best = await self._evaluate_profile(
+            profile=candidate_profile,
+            cases=cases,
+            objective=objective,
+            top_k_eval=top_k_eval,
+            query_timeout_s=query_timeout_s,
+            evaluation_mode="stable",
+        )
+        online_baseline = await self._evaluate_profile(
+            profile=baseline_profile,
+            cases=cases,
+            objective=objective,
+            top_k_eval=top_k_eval,
+            query_timeout_s=query_timeout_s,
+            evaluation_mode="online_like",
+        )
+        online_best = await self._evaluate_profile(
+            profile=candidate_profile,
+            cases=cases,
+            objective=objective,
+            top_k_eval=top_k_eval,
+            query_timeout_s=query_timeout_s,
+            evaluation_mode="online_like",
+        )
+
+        base_metrics = online_baseline.get("metrics") or {}
+        best_metrics = online_best.get("metrics") or {}
+        score_delta = float(online_best.get("score", 0.0) or 0.0) - float(online_baseline.get("score", 0.0) or 0.0)
+        p1_delta = float(best_metrics.get("precision_at_1", 0.0) or 0.0) - float(base_metrics.get("precision_at_1", 0.0) or 0.0)
+        recall_delta = float(best_metrics.get("recall_at_k", 0.0) or 0.0) - float(base_metrics.get("recall_at_k", 0.0) or 0.0)
+        empty_delta = float(best_metrics.get("empty_rate", 1.0) or 1.0) - float(base_metrics.get("empty_rate", 1.0) or 1.0)
+        latency_delta = float(best_metrics.get("avg_elapsed_ms", 0.0) or 0.0) - float(base_metrics.get("avg_elapsed_ms", 0.0) or 0.0)
+        latency_limit = max(
+            MAX_LATENCY_INCREASE_MS,
+            float(base_metrics.get("avg_elapsed_ms", 0.0) or 0.0) * MAX_LATENCY_INCREASE_RATIO,
+        )
+        checks = {
+            "score_delta_ok": score_delta >= MIN_VALIDATION_SCORE_DELTA,
+            "precision_drop_ok": p1_delta >= -MAX_PRECISION_DROP,
+            "recall_drop_ok": recall_delta >= -MAX_RECALL_DROP,
+            "empty_rate_ok": empty_delta <= MAX_EMPTY_RATE_INCREASE,
+            "latency_ok": latency_delta <= latency_limit,
+        }
+        recommended = all(bool(value) for value in checks.values())
+        return {
+            "recommended": recommended,
+            "reason": "" if recommended else "holdout_online_like_validation_failed",
+            "checks": checks,
+            "thresholds": {
+                "min_score_delta": MIN_VALIDATION_SCORE_DELTA,
+                "max_precision_drop": MAX_PRECISION_DROP,
+                "max_recall_drop": MAX_RECALL_DROP,
+                "max_empty_rate_increase": MAX_EMPTY_RATE_INCREASE,
+                "max_latency_increase_ms": MAX_LATENCY_INCREASE_MS,
+                "max_latency_increase_ratio": MAX_LATENCY_INCREASE_RATIO,
+            },
+            "deltas": {
+                "score": round(score_delta, 6),
+                "precision_at_1": round(p1_delta, 6),
+                "recall_at_k": round(recall_delta, 6),
+                "empty_rate": round(empty_delta, 6),
+                "avg_elapsed_ms": round(latency_delta, 3),
+            },
+            "stable": {"baseline": stable_baseline, "best": stable_best},
+            "online_like": {"baseline": online_baseline, "best": online_best},
+            "holdout_case_count": len(cases),
+        }
+
+    def _build_runtime_config(self, normalized_profile: Dict[str, Any], *, evaluation_mode: str = "stable") -> Dict[str, Any]:
         raw_base = getattr(self.plugin, "config", {}) or {}
         if isinstance(raw_base, dict):
             base = {
@@ -1506,10 +1912,11 @@ class RetrievalTuningManager:
         else:
             base = {}
         merged = _deep_merge(base, normalized_profile)
-        # 调优评估场景优先稳定性，避免并发访问共享 SQLite/Faiss 导致长时阻塞。
-        _nested_set(merged, "retrieval.enable_parallel", False)
-        # 调优评估阶段关闭 PPR，规避 PageRank 线程计算偶发阻塞导致整轮卡死。
-        _nested_set(merged, "retrieval.enable_ppr", False)
+        if str(evaluation_mode or "stable").strip().lower() == "stable":
+            # stable 模式优先稳定性，避免并发访问共享 SQLite/Faiss 导致长时阻塞。
+            _nested_set(merged, "retrieval.enable_parallel", False)
+            # stable 模式关闭 PPR，保留可重复评估口径。
+            _nested_set(merged, "retrieval.enable_ppr", False)
         merged["vector_store"] = getattr(self.plugin, "vector_store", None)
         merged["paragraph_vector_store"] = getattr(self.plugin, "paragraph_vector_store", None)
         merged["graph_vector_store"] = getattr(self.plugin, "graph_vector_store", None)
@@ -1533,8 +1940,12 @@ class RetrievalTuningManager:
         objective: str,
         top_k_eval: int,
         query_timeout_s: float,
+        evaluation_mode: str = "stable",
     ) -> Dict[str, Any]:
         normalized = self._normalize_profile(profile)
+        mode = str(evaluation_mode or "stable").strip().lower()
+        if mode not in {"stable", "online_like"}:
+            mode = "stable"
         eval_top_k = _clamp_int(top_k_eval, 20, 1, 1000)
         # 评估时让 top_k_final 参与有效召回深度，避免该参数对评分无影响。
         request_top_k = min(
@@ -1547,7 +1958,7 @@ class RetrievalTuningManager:
             0.01,
             120.0,
         )
-        runtime_cfg = self._build_runtime_config(normalized)
+        runtime_cfg = self._build_runtime_config(normalized, evaluation_mode=mode)
         runtime = build_search_runtime(
             plugin_config=runtime_cfg,
             logger_obj=logger,
@@ -1565,6 +1976,7 @@ class RetrievalTuningManager:
                 "empty_rate": 1.0,
                 "avg_elapsed_ms": 0.0,
                 "category": {},
+                "evaluation_mode": mode,
                 "error": runtime.error or "runtime_not_ready",
             }
             return {"metrics": metrics, "score": -1.0, "avg_elapsed_ms": 0.0, "failure_summary": {"reason": metrics["error"]}}
@@ -1636,8 +2048,7 @@ class RetrievalTuningManager:
                 query=str(case.query or "").strip(),
                 top_k=int(request_top_k),
                 use_threshold=True,
-                # 调优评估固定关闭 PPR，避免该链路阻塞拖挂整轮任务。
-                enable_ppr=False,
+                enable_ppr=False if mode == "stable" else bool(_nested_get(normalized, "retrieval.enable_ppr", True)),
             )
             try:
                 execution = await asyncio.wait_for(
@@ -1720,6 +2131,7 @@ class RetrievalTuningManager:
             "timeout_count": int(timeout_count),
             "avg_elapsed_ms": float(round(avg_elapsed, 3)),
             "category": category_stats,
+            "evaluation_mode": mode,
         }
         metrics["category_floor_penalty"] = float(round(self._category_floor_penalty(metrics, objective=objective), 6))
 
@@ -1737,7 +2149,8 @@ class RetrievalTuningManager:
             "query_timeout_seconds": float(eval_timeout_s),
             "timeout_count": int(timeout_count),
             "effective_top_k": int(request_top_k),
-            "ppr_forced_disabled": True,
+            "evaluation_mode": mode,
+            "ppr_forced_disabled": mode == "stable",
         }
         return {
             "metrics": metrics,
@@ -1806,6 +2219,21 @@ class RetrievalTuningManager:
             return 0.0
         return float(scale * (weighted_shortfall / weight_total))
 
+    def _profile_diff(self, before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
+        diff: Dict[str, Any] = {}
+
+        def walk(prefix: str, left: Any, right: Any) -> None:
+            if isinstance(left, dict) and isinstance(right, dict):
+                keys = sorted(set(left.keys()) | set(right.keys()))
+                for key in keys:
+                    walk(f"{prefix}.{key}" if prefix else str(key), left.get(key), right.get(key))
+                return
+            if left != right:
+                diff[prefix] = {"before": left, "after": right}
+
+        walk("", before or {}, after or {})
+        return diff
+
     def _build_report_payload(self, task: RetrievalTuningTaskRecord) -> Dict[str, Any]:
         baseline = task.baseline_metrics or {}
         best = task.best_metrics or {}
@@ -1825,6 +2253,8 @@ class RetrievalTuningManager:
             "rounds_done": task.rounds_done,
             "best_score": task.best_score,
             "baseline_score": self._score_metrics(baseline, objective=task.objective),
+            "recommended": bool(task.recommended),
+            "validation_summary": task.validation_summary,
             "query_set_stats": task.query_set_stats,
             "baseline_metrics": baseline,
             "best_metrics": best,
@@ -1840,6 +2270,8 @@ class RetrievalTuningManager:
             },
             "best_profile": task.best_profile,
             "baseline_profile": task.baseline_profile,
+            "profile_diff": self._profile_diff(task.baseline_profile, task.best_profile),
+            "non_tuned_retrieval_influencers": list(NON_TUNED_RETRIEVAL_INFLUENCERS),
             "apply_log": task.apply_log,
         }
 
@@ -1847,6 +2279,7 @@ class RetrievalTuningManager:
         baseline = payload.get("baseline_metrics", {}) or {}
         best = payload.get("best_metrics", {}) or {}
         d = payload.get("deltas", {}) or {}
+        validation = payload.get("validation_summary", {}) or {}
         lines = [
             f"# 检索调优报告（{task.task_id}）",
             "",
@@ -1855,6 +2288,7 @@ class RetrievalTuningManager:
             f"- 目标函数: {task.objective}",
             f"- 强度: {task.intensity}",
             f"- 轮次: baseline + {task.rounds_total}",
+            f"- 建议应用: {'是' if payload.get('recommended') else '否'}",
             f"- 创建时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(task.created_at))}",
             f"- 开始时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(task.started_at)) if task.started_at else '-'}",
             f"- 完成时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(task.finished_at)) if task.finished_at else '-'}",
@@ -1871,16 +2305,29 @@ class RetrievalTuningManager:
             f"- 超时数: {int(baseline.get('timeout_count', 0) or 0)} -> {int(best.get('timeout_count', 0) or 0)} (Δ {int(d.get('timeout_count', 0) or 0):+d})",
             f"- 平均耗时(ms): {baseline.get('avg_elapsed_ms', 0.0):.2f} -> {best.get('avg_elapsed_ms', 0.0):.2f} (Δ {d.get('avg_elapsed_ms', 0.0):+.2f})",
             "",
-            "## 3. 最优参数",
+            "## 3. 验证摘要",
+            f"- holdout 样本数: {int(validation.get('holdout_case_count', 0) or 0)}",
+            f"- 验证结果: {'通过' if validation.get('recommended') else '未通过'}",
+            f"- 原因: {validation.get('reason', '') or '-'}",
+            f"- 指标变化: {json.dumps(validation.get('deltas', {}), ensure_ascii=False)}",
+            f"- 检查项: {json.dumps(validation.get('checks', {}), ensure_ascii=False)}",
+            "",
+            "## 4. 最优参数",
             "```json",
             json.dumps(task.best_profile, ensure_ascii=False, indent=2),
             "```",
             "",
-            "## 4. 测试集规模",
+            "## 5. 参数变化",
+            "```json",
+            json.dumps(payload.get("profile_diff", {}), ensure_ascii=False, indent=2),
+            "```",
+            "",
+            "## 6. 测试集规模",
             f"- {json.dumps(task.query_set_stats, ensure_ascii=False)}",
             "",
-            "## 5. 说明",
+            "## 7. 说明",
             "- 本报告仅对当前已存储图谱与向量状态有效。",
-            "- 参数应用策略：运行时生效，不自动写入 config.toml。",
+            "- 参数应用策略：默认只热应用到运行时，不自动写入 config.toml。",
+            f"- 未参与自动调优但影响召回的参数: {', '.join(NON_TUNED_RETRIEVAL_INFLUENCERS)}",
         ]
         return "\n".join(lines).strip() + "\n"

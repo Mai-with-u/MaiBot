@@ -183,6 +183,12 @@ class MemoryRawConfigUpdateRequest(BaseModel):
 class TuningApplyProfileRequest(BaseModel):
     profile: dict[str, Any] = Field(default_factory=dict)
     reason: str = "manual"
+    validate_result: bool = Field(default=True, alias="validate")
+
+
+class TuningApplyBestRequest(BaseModel):
+    persist: bool = False
+    validate_result: bool = Field(default=True, alias="validate")
 
 
 class V5ActionRequest(BaseModel):
@@ -2287,7 +2293,12 @@ async def _tuning_profile() -> dict:
 
 
 async def _tuning_apply_profile(payload: TuningApplyProfileRequest) -> dict:
-    return await memory_service.tuning_admin(action="apply_profile", profile=payload.profile, reason=payload.reason)
+    return await memory_service.tuning_admin(
+        action="apply_profile",
+        profile=payload.profile,
+        reason=payload.reason,
+        validate=payload.validate_result,
+    )
 
 
 async def _tuning_rollback_profile() -> dict:
@@ -2318,8 +2329,35 @@ async def _tuning_cancel(task_id: str) -> dict:
     return await memory_service.tuning_admin(action="cancel", task_id=task_id)
 
 
-async def _tuning_apply_best(task_id: str) -> dict:
-    return await memory_service.tuning_admin(action="apply_best", task_id=task_id)
+async def _tuning_apply_best(task_id: str, payload: TuningApplyBestRequest | None = None) -> dict:
+    body = payload or TuningApplyBestRequest()
+    result = await memory_service.tuning_admin(
+        action="apply_best",
+        task_id=task_id,
+        validate=body.validate_result,
+    )
+    if not isinstance(result, dict):
+        return {"success": False, "error": "invalid_payload", "persisted": False}
+    result.setdefault("persisted", False)
+    if not bool(result.get("success", False)) or not body.persist:
+        return result
+
+    runtime_payload = await memory_service.runtime_admin(action="get_config")
+    runtime_config = runtime_payload.get("config") if isinstance(runtime_payload, dict) else None
+    if not isinstance(runtime_config, dict):
+        result["persisted"] = False
+        result["persist_error"] = "runtime_config_unavailable"
+        return result
+
+    try:
+        persist_payload = await a_memorix_host_service.update_config(runtime_config)
+    except Exception as exc:
+        result["persisted"] = False
+        result["persist_error"] = f"persist_failed: {exc}"
+        return result
+    result["persisted"] = bool(isinstance(persist_payload, dict) and persist_payload.get("success", False))
+    result["persist_result"] = persist_payload
+    return result
 
 
 async def _tuning_report(task_id: str, fmt: str) -> dict:
@@ -2999,8 +3037,11 @@ async def cancel_memory_tuning_task(task_id: str):
 
 
 @router.post("/retrieval_tuning/tasks/{task_id}/apply-best")
-async def apply_best_memory_tuning_profile(task_id: str):
-    return await _tuning_apply_best(task_id)
+async def apply_best_memory_tuning_profile(
+    task_id: str,
+    payload: TuningApplyBestRequest = Body(default_factory=TuningApplyBestRequest),
+):
+    return await _tuning_apply_best(task_id, payload)
 
 
 @router.get("/retrieval_tuning/tasks/{task_id}/report")
@@ -3449,13 +3490,19 @@ async def compat_cancel_tuning_task(task_id: str):
 
 
 @compat_router.post("/retrieval_tuning/tasks/{task_id}/apply_best")
-async def compat_apply_best_tuning_profile(task_id: str):
-    return await _tuning_apply_best(task_id)
+async def compat_apply_best_tuning_profile(
+    task_id: str,
+    payload: TuningApplyBestRequest = Body(default_factory=TuningApplyBestRequest),
+):
+    return await _tuning_apply_best(task_id, payload)
 
 
 @compat_router.post("/retrieval_tuning/tasks/{task_id}/apply-best")
-async def compat_apply_best_tuning_profile_kebab(task_id: str):
-    return await _tuning_apply_best(task_id)
+async def compat_apply_best_tuning_profile_kebab(
+    task_id: str,
+    payload: TuningApplyBestRequest = Body(default_factory=TuningApplyBestRequest),
+):
+    return await _tuning_apply_best(task_id, payload)
 
 
 @compat_router.get("/retrieval_tuning/tasks/{task_id}/report")

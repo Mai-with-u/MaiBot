@@ -239,6 +239,18 @@ def build_reply_monitor_detail(result: ReplyGenerationResult) -> Dict[str, Any]:
             "title": "已选表达方式",
             "content": selected_expression_content,
         })
+    original_reply_text = str(result.metrics.extra.get("rich_reply_original_response") or "").strip()
+    if original_reply_text:
+        extra_sections.append({
+            "title": "Replyer 原始回复",
+            "content": original_reply_text,
+        })
+    checker_output_text = str(result.metrics.extra.get("rich_reply_checker_output") or "").strip()
+    if checker_output_text:
+        extra_sections.append({
+            "title": "修改器输出",
+            "content": checker_output_text,
+        })
     if result.metrics.stage_logs:
         extra_sections.append({
             "title": "阶段日志",
@@ -251,6 +263,31 @@ def build_reply_monitor_detail(result: ReplyGenerationResult) -> Dict[str, Any]:
         })
     if extra_sections:
         detail["extra_sections"] = extra_sections
+
+    checker_records = result.metrics.extra.get("rich_reply_checker_records")
+    if isinstance(checker_records, list):
+        additional_prompt_records: List[Dict[str, Any]] = []
+        for index, raw_record in enumerate(checker_records, start=1):
+            if not isinstance(raw_record, dict):
+                continue
+            record: Dict[str, Any] = {
+                "prompt_title": raw_record.get("prompt_title") or f"Reply Checker Prompt #{index}",
+                "reasoning_title": raw_record.get("reasoning_title") or "Reply Checker 思考",
+                "output_title": raw_record.get("output_title") or "Reply Checker 输出",
+                "prompt_category": raw_record.get("prompt_category") or "replyer",
+                "request_kind": raw_record.get("request_kind") or "replyer_checker",
+                "selection_reason": raw_record.get("selection_reason") or f"replyer checker attempt {index}",
+                "output_text": raw_record.get("output_text") or "",
+                "reasoning_text": raw_record.get("reasoning_text") or "",
+                "metrics": raw_record.get("metrics") if isinstance(raw_record.get("metrics"), dict) else {},
+            }
+            if isinstance(raw_record.get("request_messages"), list):
+                record["request_messages"] = raw_record["request_messages"]
+            else:
+                record["prompt_text"] = str(raw_record.get("prompt_text") or "")
+            additional_prompt_records.append(record)
+        if additional_prompt_records:
+            detail["additional_prompt_records"] = additional_prompt_records
 
     return detail
 

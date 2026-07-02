@@ -186,13 +186,20 @@ class AMemorixHostService:
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
 
             chat_id = str(payload.get("chat_id", "") or "").strip()
+            config = self._read_config()
+            global_memory_sharing_enabled = bool(config.get("global_memory_sharing_enabled", False))
+            search_chat_id = "" if global_memory_sharing_enabled else chat_id
+            shared_chat_ids = ()
+            if not global_memory_sharing_enabled:
+                shared_chat_ids = tuple(AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
+
             return await kernel.search_memory(
                 KernelSearchRequest(
                     query=str(payload.get("query", "") or ""),
                     limit=int(payload.get("limit", 5) or 5),
                     mode=str(payload.get("mode", "search") or "search"),
-                    chat_id=chat_id,
-                    shared_chat_ids=tuple(AMemorixConfigUtils.get_shared_memory_session_ids(chat_id)),
+                    chat_id=search_chat_id,
+                    shared_chat_ids=shared_chat_ids,
                     person_id=str(payload.get("person_id", "") or ""),
                     time_start=payload.get("time_start"),
                     time_end=payload.get("time_end"),

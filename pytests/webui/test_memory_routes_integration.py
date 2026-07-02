@@ -311,6 +311,66 @@ def _create_seed_paste_task(client: TestClient, *, source: str, unique_token: st
                     {"subject": "Bob", "predicate": "位于", "object": "火星港"},
                 ],
             },
+            {
+                "content": "Carol 在翡翠仓库校准星图仪，并把星图仪交给 Alice 复核。",
+                "source": source,
+                "entities": ["Carol", "翡翠仓库", "星图仪", "Alice"],
+                "relations": [
+                    {"subject": "Carol", "predicate": "位于", "object": "翡翠仓库"},
+                    {"subject": "Carol", "predicate": "校准", "object": "星图仪"},
+                    {"subject": "Carol", "predicate": "交给", "object": "Alice"},
+                ],
+            },
+            {
+                "content": "Dylan 在土卫六码头转交冰层样本，接收人是 Carol。",
+                "source": source,
+                "entities": ["Dylan", "土卫六码头", "冰层样本", "Carol"],
+                "relations": [
+                    {"subject": "Dylan", "predicate": "位于", "object": "土卫六码头"},
+                    {"subject": "Dylan", "predicate": "转交", "object": "冰层样本"},
+                    {"subject": "Carol", "predicate": "接收", "object": "冰层样本"},
+                ],
+            },
+            {
+                "content": "Eve 在月面档案馆审核观测日志，日志提到火星港的地图缺页。",
+                "source": source,
+                "entities": ["Eve", "月面档案馆", "观测日志", "火星港", "地图"],
+                "relations": [
+                    {"subject": "Eve", "predicate": "位于", "object": "月面档案馆"},
+                    {"subject": "Eve", "predicate": "审核", "object": "观测日志"},
+                    {"subject": "观测日志", "predicate": "提到", "object": "火星港"},
+                ],
+            },
+            {
+                "content": "Frank 在深海实验室记录潮汐曲线，曲线用于校验星图仪。",
+                "source": source,
+                "entities": ["Frank", "深海实验室", "潮汐曲线", "星图仪"],
+                "relations": [
+                    {"subject": "Frank", "predicate": "位于", "object": "深海实验室"},
+                    {"subject": "Frank", "predicate": "记录", "object": "潮汐曲线"},
+                    {"subject": "潮汐曲线", "predicate": "校验", "object": "星图仪"},
+                ],
+            },
+            {
+                "content": "Grace 在北极中继站维修量子罗盘，并向 Dylan 汇报进度。",
+                "source": source,
+                "entities": ["Grace", "北极中继站", "量子罗盘", "Dylan"],
+                "relations": [
+                    {"subject": "Grace", "predicate": "位于", "object": "北极中继站"},
+                    {"subject": "Grace", "predicate": "维修", "object": "量子罗盘"},
+                    {"subject": "Grace", "predicate": "汇报", "object": "Dylan"},
+                ],
+            },
+            {
+                "content": "Heidi 在云杉观测塔整理风暴样本，样本标签来自翡翠仓库。",
+                "source": source,
+                "entities": ["Heidi", "云杉观测塔", "风暴样本", "翡翠仓库"],
+                "relations": [
+                    {"subject": "Heidi", "predicate": "位于", "object": "云杉观测塔"},
+                    {"subject": "Heidi", "predicate": "整理", "object": "风暴样本"},
+                    {"subject": "风暴样本", "predicate": "来自", "object": "翡翠仓库"},
+                ],
+            },
         ]
     }
     response = client.post(
@@ -376,6 +436,8 @@ def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dic
             "seed_task": seed_task,
             "source_name": source_name,
             "unique_token": unique_token,
+            "tuning_probe_query": "Carol 翡翠仓库 校准 星图仪",
+            "tuning_probe_phrase": "Carol 在翡翠仓库校准星图仪",
         }
 
     asyncio.run(host_service_module.a_memorix_host_service.stop())
@@ -420,6 +482,8 @@ def test_retrieval_module_end_to_end_queries_seeded_data(integration_state: Dict
 
 def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[str, Any]) -> None:
     client = integration_state["client"]
+    probe_query = integration_state["tuning_probe_query"]
+    probe_phrase = integration_state["tuning_probe_phrase"]
 
     create_payload = _assert_response_ok(
         client.post(
@@ -427,11 +491,11 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
             json={
                 "objective": "balanced",
                 "intensity": "quick",
-                "rounds": 2,
-                "sample_size": 4,
-                "top_k_eval": 5,
+                "rounds": 3,
+                "sample_size": 8,
+                "top_k_eval": 6,
                 "llm_enabled": False,
-                "eval_query_timeout_seconds": 1.0,
+                "eval_query_timeout_seconds": 1.5,
                 "seed": 20260403,
             },
         )
@@ -441,13 +505,50 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
 
     task = _wait_for_tuning_task_terminal(client, task_id)
     assert str(task.get("status", "") or "") == "completed", task
+    assert isinstance(task.get("recommended"), bool)
+
+    split_stats = ((task.get("query_set_stats") or {}).get("split") or {})
+    assert split_stats.get("strategy") == "category_balanced_holdout", task
+    assert int(split_stats.get("train", 0) or 0) > 0, task
+    assert int(split_stats.get("holdout", 0) or 0) > 0, task
+
+    validation_summary = task.get("validation_summary") or {}
+    assert int(validation_summary.get("holdout_case_count", 0) or 0) > 0, task
+    assert isinstance(validation_summary.get("stable"), dict), task
+    assert isinstance(validation_summary.get("online_like"), dict), task
+
+    report_payload = _assert_response_ok(
+        client.get(
+            f"/api/webui/memory/retrieval_tuning/tasks/{task_id}/report",
+            params={"format": "json"},
+        )
+    )
+    report = json.loads(str(report_payload.get("content") or "{}"))
+    assert report.get("recommended") == task.get("recommended")
+    assert isinstance(report.get("profile_diff"), dict), report
+    assert "embedding.*" in (report.get("non_tuned_retrieval_influencers") or []), report
 
     apply_payload = _assert_response_ok(
         client.post(
             f"/api/webui/memory/retrieval_tuning/tasks/{task_id}/apply-best",
+            json={"validate": False},
         )
     )
     assert "applied" in apply_payload
+    assert apply_payload.get("runtime_rebuilt") is True
+
+    applied_profile = apply_payload.get("applied") or {}
+    applied_retrieval = applied_profile.get("retrieval") if isinstance(applied_profile, dict) else {}
+    profile_payload = _assert_response_ok(client.get("/api/webui/memory/retrieval_tuning/profile"))
+    runtime_profile = profile_payload.get("runtime_profile") or profile_payload.get("profile") or {}
+    runtime_retrieval = runtime_profile.get("retrieval") if isinstance(runtime_profile, dict) else {}
+    assert runtime_retrieval.get("top_k_final") == applied_retrieval.get("top_k_final")
+    assert runtime_retrieval.get("fusion") == applied_retrieval.get("fusion")
+
+    probe_payload = _wait_for_query_hit(client, probe_query, timeout_seconds=45.0)
+    probe_hits = probe_payload.get("hits") or []
+    joined_probe_content = "\n".join(str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict))
+    assert probe_phrase in joined_probe_content
 
 
 def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dict[str, Any]) -> None:

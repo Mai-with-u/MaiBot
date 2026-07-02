@@ -128,6 +128,8 @@ def _get_builtin_tool_entries(
 def _is_builtin_tool_enabled_by_config(entry: BuiltinToolEntry) -> bool:
     """根据全局配置判断内置工具是否应暴露。"""
 
+    if entry.name in {"send_emoji", "send_image"} and bool(global_config.experimental.enable_rich_reply):
+        return False
     if entry.name in {"fetch_history", "switch_chat"}:
         return bool(global_config.experimental.focus_mode)
     return True

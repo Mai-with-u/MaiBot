@@ -1,42 +1,218 @@
+import inspect
 from functools import lru_cache
 from typing import Any, Dict, List, get_args, get_origin
 
 from pydantic_core import PydanticUndefined
 
-import inspect
-
 from src.config.config_base import ConfigBase
 
-AMEMORIX_BASIC_FIELDS: Dict[str, set[str]] = {
-    "AMemorixConfig": {
-        "episode",
-        "embedding",
-        "integration",
-        "memory",
-        "person_profile",
-        "plugin",
-        "shared_memory_groups",
-    },
-    "AMemorixIntegrationConfig": {
-        "enable_memory_query_tool",
-        "heuristic_memory_cross_chat_enabled",
-        "heuristic_memory_recall_enabled",
-        "memory_query_default_limit",
-        "enable_person_profile_query_tool",
-    },
-    "AMemorixEpisodeConfig": {"enabled"},
-    "AMemorixPluginConfig": {"enabled"},
-    "AMemorixEmbeddingConfig": {
-        "model_name",
-        "dimension",
-        "dimension_request_mode",
-        "batch_size",
-        "max_concurrent",
-        "enable_cache",
-        "quantization_type",
-    },
-    "AMemorixMemoryEvolutionConfig": {"enabled"},
-    "AMemorixPersonProfileConfig": {"enabled"},
+AMEMORIX_BASIC_FIELD_PATHS: set[str] = {
+    "a_memorix.filter.chats",
+    "a_memorix.filter.enabled",
+    "a_memorix.filter.mode",
+    "a_memorix.global_memory_sharing_enabled",
+    "a_memorix.integration.chat_summary_writeback_enabled",
+    "a_memorix.integration.enable_memory_query_tool",
+    "a_memorix.integration.enable_person_profile_query_tool",
+    "a_memorix.integration.heuristic_memory_recall_enabled",
+    "a_memorix.integration.memory_query_default_limit",
+    "a_memorix.person_profile.enabled",
+    "a_memorix.plugin.enabled",
+    "a_memorix.shared_memory_groups",
+    "a_memorix.shared_memory_groups[].targets",
+    "a_memorix.shared_memory_groups[].targets[].item_id",
+    "a_memorix.shared_memory_groups[].targets[].platform",
+    "a_memorix.shared_memory_groups[].targets[].rule_type",
+}
+
+AMEMORIX_ADVANCED_FIELD_PATHS: set[str] = {
+    "a_memorix.advanced.debug",
+    "a_memorix.embedding.batch_size",
+    "a_memorix.embedding.dimension_request_mode",
+    "a_memorix.embedding.enable_cache",
+    "a_memorix.embedding.fallback.enabled",
+    "a_memorix.embedding.fallback.probe_interval_seconds",
+    "a_memorix.embedding.max_concurrent",
+    "a_memorix.embedding.model_name",
+    "a_memorix.embedding.paragraph_vector_backfill.batch_size",
+    "a_memorix.embedding.paragraph_vector_backfill.enabled",
+    "a_memorix.embedding.paragraph_vector_backfill.max_retry",
+    "a_memorix.episode.disabled_source_types",
+    "a_memorix.episode.enabled",
+    "a_memorix.episode.generation_enabled",
+    "a_memorix.episode.max_chars_per_call",
+    "a_memorix.episode.max_paragraphs_per_call",
+    "a_memorix.episode.segmentation_model",
+    "a_memorix.episode.source_time_window_hours",
+    "a_memorix.filter.retrieval.chat_stream.chats",
+    "a_memorix.filter.retrieval.chat_stream.enabled",
+    "a_memorix.filter.retrieval.chat_stream.mode",
+    "a_memorix.filter.retrieval.chat_summary.chats",
+    "a_memorix.filter.retrieval.chat_summary.enabled",
+    "a_memorix.filter.retrieval.chat_summary.mode",
+    "a_memorix.filter.retrieval.episode.chats",
+    "a_memorix.filter.retrieval.episode.enabled",
+    "a_memorix.filter.retrieval.episode.mode",
+    "a_memorix.integration.chat_summary_writeback_context_length",
+    "a_memorix.integration.chat_summary_writeback_message_threshold",
+    "a_memorix.integration.enable_person_profile_injection",
+    "a_memorix.integration.feedback_correction_episode_rebuild_enabled",
+    "a_memorix.integration.feedback_correction_max_feedback_messages",
+    "a_memorix.integration.feedback_correction_profile_refresh_enabled",
+    "a_memorix.integration.feedback_correction_window_hours",
+    "a_memorix.integration.fuzzy_modify_candidate_limit",
+    "a_memorix.integration.fuzzy_modify_enabled",
+    "a_memorix.integration.heuristic_memory_recall_cache_ttl_seconds",
+    "a_memorix.integration.heuristic_memory_recall_limit",
+    "a_memorix.integration.heuristic_memory_recall_max_chars",
+    "a_memorix.integration.heuristic_memory_recall_min_interval_seconds",
+    "a_memorix.integration.heuristic_memory_recall_min_new_messages",
+    "a_memorix.integration.heuristic_memory_recall_window_size",
+    "a_memorix.integration.person_fact_writeback_enabled",
+    "a_memorix.integration.person_profile_injection_max_profiles",
+    "a_memorix.memory.enabled",
+    "a_memorix.person_profile.active_window_hours",
+    "a_memorix.person_profile.max_refresh_per_cycle",
+    "a_memorix.person_profile.refresh_interval_minutes",
+    "a_memorix.person_profile.top_k_evidence",
+    "a_memorix.retrieval.enable_parallel",
+    "a_memorix.retrieval.enable_ppr",
+    "a_memorix.retrieval.ppr_timeout_seconds",
+    "a_memorix.retrieval.relation_vectorization.write_on_import",
+    "a_memorix.retrieval.search.smart_fallback.enabled",
+    "a_memorix.retrieval.sparse.candidate_k",
+    "a_memorix.retrieval.sparse.enabled",
+    "a_memorix.retrieval.sparse.mode",
+    "a_memorix.retrieval.sparse.relation_candidate_k",
+    "a_memorix.retrieval.sparse.tokenizer_mode",
+    "a_memorix.retrieval.top_k_final",
+    "a_memorix.retrieval.top_k_paragraphs",
+    "a_memorix.retrieval.top_k_relations",
+    "a_memorix.retrieval.vector_pools.graph_expand_paragraph_k",
+    "a_memorix.retrieval.vector_pools.graph_top_k",
+    "a_memorix.retrieval.vector_pools.paragraph_top_k",
+    "a_memorix.retrieval.vector_pools.relation_intent.graph_top_k",
+    "a_memorix.threshold.enable_auto_adjust",
+    "a_memorix.threshold.min_results",
+    "a_memorix.web.import_config.enabled",
+    "a_memorix.web.import_config.default_factual_target_size",
+    "a_memorix.web.import_config.default_narrative_overlap",
+    "a_memorix.web.import_config.default_narrative_window_size",
+    "a_memorix.web.import_config.max_file_size_mb",
+    "a_memorix.web.import_config.max_files_per_task",
+    "a_memorix.web.import_config.max_paste_chars",
+    "a_memorix.web.import_config.timeout.convert_preflight_seconds",
+    "a_memorix.web.import_config.timeout.llm_call_seconds",
+    "a_memorix.web.tuning.default_intensity",
+    "a_memorix.web.tuning.default_objective",
+    "a_memorix.web.tuning.default_sample_size",
+    "a_memorix.web.tuning.default_top_k_eval",
+    "a_memorix.web.tuning.enabled",
+    "a_memorix.web.tuning.poll_interval_ms",
+}
+
+AMEMORIX_EXCLUDED_FIELD_PATHS: set[str] = {
+    "a_memorix.advanced.auto_save_interval_minutes",
+    "a_memorix.advanced.enable_auto_save",
+    "a_memorix.embedding.dimension",
+    "a_memorix.embedding.fallback.allow_metadata_only_write",
+    "a_memorix.embedding.paragraph_vector_backfill.interval_seconds",
+    "a_memorix.embedding.quantization_type",
+    "a_memorix.episode.pending_batch_size",
+    "a_memorix.episode.pending_max_retry",
+    "a_memorix.integration.feedback_correction_auto_apply_threshold",
+    "a_memorix.integration.feedback_correction_batch_size",
+    "a_memorix.integration.feedback_correction_check_interval_minutes",
+    "a_memorix.integration.feedback_correction_enabled",
+    "a_memorix.integration.feedback_correction_episode_query_block_enabled",
+    "a_memorix.integration.feedback_correction_paragraph_hard_filter_enabled",
+    "a_memorix.integration.feedback_correction_paragraph_mark_enabled",
+    "a_memorix.integration.feedback_correction_prefilter_enabled",
+    "a_memorix.integration.feedback_correction_profile_force_refresh_on_read",
+    "a_memorix.integration.feedback_correction_reconcile_batch_size",
+    "a_memorix.integration.feedback_correction_reconcile_interval_minutes",
+    "a_memorix.integration.fuzzy_modify_allow_global_scope",
+    "a_memorix.integration.fuzzy_modify_auto_execute_enabled",
+    "a_memorix.integration.fuzzy_modify_confirm_threshold",
+    "a_memorix.integration.fuzzy_modify_max_targets",
+    "a_memorix.integration.heuristic_memory_cross_chat_enabled",
+    "a_memorix.integration.heuristic_memory_group_to_private_enabled",
+    "a_memorix.integration.heuristic_memory_private_to_group_enabled",
+    "a_memorix.memory.freeze_duration_hours",
+    "a_memorix.memory.half_life_hours",
+    "a_memorix.memory.prune_threshold",
+    "a_memorix.person_profile.evidence_classification_max_tokens",
+    "a_memorix.person_profile.evidence_classification_temperature",
+    "a_memorix.person_profile.max_retry",
+    "a_memorix.person_profile.refresh_debounce_seconds",
+    "a_memorix.person_profile.refresh_queue_batch_size",
+    "a_memorix.person_profile.refresh_queue_interval_seconds",
+    "a_memorix.person_profile.refresh_retry_backoff_seconds",
+    "a_memorix.retrieval.alpha",
+    "a_memorix.retrieval.fusion.bm25_weight",
+    "a_memorix.retrieval.fusion.method",
+    "a_memorix.retrieval.fusion.rrf_k",
+    "a_memorix.retrieval.fusion.vector_weight",
+    "a_memorix.retrieval.ppr_alpha",
+    "a_memorix.retrieval.ppr_concurrency_limit",
+    "a_memorix.retrieval.relation_vectorization.backfill_enabled",
+    "a_memorix.retrieval.relation_vectorization.enabled",
+    "a_memorix.retrieval.sparse.backend",
+    "a_memorix.retrieval.vector_pools.entity_evidence_weight",
+    "a_memorix.retrieval.vector_pools.entity_expand_per_hit",
+    "a_memorix.retrieval.vector_pools.graph_weight",
+    "a_memorix.retrieval.vector_pools.mode",
+    "a_memorix.retrieval.vector_pools.relation_evidence_weight",
+    "a_memorix.retrieval.vector_pools.relation_expand_per_hit",
+    "a_memorix.retrieval.vector_pools.relation_intent.graph_weight",
+    "a_memorix.retrieval.vector_pools.relation_intent.return_relation_items",
+    "a_memorix.retrieval.vector_pools.relation_intent.semantic_weight",
+    "a_memorix.retrieval.vector_pools.relation_intent.sparse_weight",
+    "a_memorix.retrieval.vector_pools.semantic_weight",
+    "a_memorix.retrieval.vector_pools.sparse_weight",
+    "a_memorix.storage.data_dir",
+    "a_memorix.threshold.max_threshold",
+    "a_memorix.threshold.min_threshold",
+    "a_memorix.threshold.percentile",
+    "a_memorix.web.import_config.default_chunk_concurrency",
+    "a_memorix.web.import_config.default_file_concurrency",
+    "a_memorix.web.import_config.max_chunk_chars",
+    "a_memorix.web.import_config.max_queue_size",
+    "a_memorix.web.import_config.timeout.process_kill_seconds",
+    "a_memorix.web.import_config.timeout.process_poll_seconds",
+    "a_memorix.web.import_config.timeout.process_terminate_seconds",
+    "a_memorix.web.tuning.max_queue_size",
+}
+
+AMEMORIX_CLASS_PATH_PREFIX: Dict[str, str] = {
+    "AMemorixAdvancedConfig": "a_memorix.advanced",
+    "AMemorixConfig": "a_memorix",
+    "AMemorixEmbeddingConfig": "a_memorix.embedding",
+    "AMemorixEmbeddingFallbackConfig": "a_memorix.embedding.fallback",
+    "AMemorixEpisodeConfig": "a_memorix.episode",
+    "AMemorixFilterConfig": "a_memorix.filter",
+    "AMemorixFusionRetrievalConfig": "a_memorix.retrieval.fusion",
+    "AMemorixIntegrationConfig": "a_memorix.integration",
+    "AMemorixMemoryEvolutionConfig": "a_memorix.memory",
+    "AMemorixParagraphVectorBackfillConfig": "a_memorix.embedding.paragraph_vector_backfill",
+    "AMemorixPersonProfileConfig": "a_memorix.person_profile",
+    "AMemorixPluginConfig": "a_memorix.plugin",
+    "AMemorixRelationIntentVectorPoolConfig": "a_memorix.retrieval.vector_pools.relation_intent",
+    "AMemorixRelationVectorizationConfig": "a_memorix.retrieval.relation_vectorization",
+    "AMemorixRetrievalConfig": "a_memorix.retrieval",
+    "AMemorixRetrievalFilterConfig": "a_memorix.filter.retrieval",
+    "AMemorixRetrievalSearchConfig": "a_memorix.retrieval.search",
+    "AMemorixRetrievalSubtypeFilterConfig": "a_memorix.filter.retrieval.chat_stream",
+    "AMemorixSharedMemoryGroupConfig": "a_memorix.shared_memory_groups[]",
+    "AMemorixSmartFallbackConfig": "a_memorix.retrieval.search.smart_fallback",
+    "AMemorixSparseRetrievalConfig": "a_memorix.retrieval.sparse",
+    "AMemorixStorageConfig": "a_memorix.storage",
+    "AMemorixThresholdConfig": "a_memorix.threshold",
+    "AMemorixVectorPoolsConfig": "a_memorix.retrieval.vector_pools",
+    "AMemorixWebConfig": "a_memorix.web",
+    "AMemorixWebImportConfig": "a_memorix.web.import_config",
+    "AMemorixWebImportTimeoutConfig": "a_memorix.web.import_config.timeout",
+    "AMemorixWebTuningConfig": "a_memorix.web.tuning",
 }
 
 
@@ -55,22 +231,49 @@ class ConfigSchemaGenerator:
         return cls.generate_config_schema(config_class, include_nested=include_nested)
 
     @classmethod
-    def generate_config_schema(cls, config_class: type[ConfigBase], include_nested: bool = True) -> Dict[str, Any]:
+    def generate_config_schema(
+        cls,
+        config_class: type[ConfigBase],
+        include_nested: bool = True,
+        path_prefix: str = "",
+    ) -> Dict[str, Any]:
         fields: List[Dict[str, Any]] = []
         nested: Dict[str, Dict[str, Any]] = {}
         field_docs = cls._get_class_field_docs(config_class)
+        resolved_path_prefix = path_prefix or cls._default_path_prefix(config_class)
 
         for field_name, field_info in config_class.model_fields.items():
             if field_name in {"field_docs", "_validate_any", "suppress_any_warning"}:
                 continue
 
-            field_schema = cls._build_field_schema(config_class, field_name, field_info.annotation, field_info, field_docs)
-            fields.append(field_schema)
+            field_path = cls._join_field_path(resolved_path_prefix, field_name)
+            nested_schema = cls._build_nested_schema(field_info.annotation, field_path) if include_nested else None
+            visibility_schema = nested_schema
+            visibility = cls._get_a_memorix_visibility(field_path)
 
-            if include_nested:
-                nested_schema = cls._build_nested_schema(field_info.annotation)
-                if nested_schema is not None:
-                    nested[field_name] = nested_schema
+            if visibility == "excluded":
+                continue
+            if nested_schema is not None and not cls._schema_has_visible_content(nested_schema):
+                continue
+            if visibility is None and cls._is_a_memorix_path(field_path):
+                if visibility_schema is None and not include_nested:
+                    visibility_schema = cls._build_nested_schema(field_info.annotation, field_path)
+                if visibility_schema is None or not cls._schema_has_visible_content(visibility_schema):
+                    continue
+                visibility = "advanced" if cls._schema_has_only_advanced_content(visibility_schema) else "basic"
+
+            field_schema = cls._build_field_schema(
+                config_class,
+                field_name,
+                field_info.annotation,
+                field_info,
+                field_docs,
+                field_path,
+                visibility,
+            )
+            fields.append(field_schema)
+            if nested_schema is not None:
+                nested[field_name] = nested_schema
 
         schema: Dict[str, Any] = {
             "className": config_class.__name__,
@@ -104,17 +307,17 @@ class ConfigSchemaGenerator:
         return schema
 
     @classmethod
-    def _build_nested_schema(cls, annotation: Any) -> Dict[str, Any] | None:
+    def _build_nested_schema(cls, annotation: Any, path_prefix: str) -> Dict[str, Any] | None:
         origin = get_origin(annotation)
         args = get_args(annotation)
 
         if inspect.isclass(annotation) and issubclass(annotation, ConfigBase):
-            return cls.generate_config_schema(annotation)
+            return cls.generate_config_schema(annotation, path_prefix=path_prefix)
 
         if origin in {list, set, tuple} and args:
             first = args[0]
             if inspect.isclass(first) and issubclass(first, ConfigBase):
-                return cls.generate_config_schema(first)
+                return cls.generate_config_schema(first, path_prefix=f"{path_prefix}[]")
 
         return None
 
@@ -126,6 +329,8 @@ class ConfigSchemaGenerator:
         annotation: Any,
         field_info: Any,
         field_docs: Dict[str, str],
+        field_path: str,
+        visibility: str | None,
     ) -> Dict[str, Any]:
         field_type = cls._map_field_type(annotation)
         raw_description = field_docs.get(field_name, field_info.description or "")
@@ -164,22 +369,53 @@ class ConfigSchemaGenerator:
                 if hasattr(constraint, "le"):
                     schema["maxValue"] = constraint.le
 
-        cls._apply_a_memorix_visibility_policy(config_class, field_name, schema)
+        cls._apply_a_memorix_visibility_policy(field_path, visibility, schema)
 
         return schema
 
     @staticmethod
+    def _default_path_prefix(config_class: type[ConfigBase]) -> str:
+        return AMEMORIX_CLASS_PATH_PREFIX.get(config_class.__name__, "")
+
+    @staticmethod
+    def _join_field_path(path_prefix: str, field_name: str) -> str:
+        return f"{path_prefix}.{field_name}" if path_prefix else field_name
+
+    @staticmethod
+    def _is_a_memorix_path(field_path: str) -> bool:
+        return field_path == "a_memorix" or field_path.startswith("a_memorix.")
+
+    @staticmethod
+    def _get_a_memorix_visibility(field_path: str) -> str | None:
+        if field_path in AMEMORIX_BASIC_FIELD_PATHS:
+            return "basic"
+        if field_path in AMEMORIX_ADVANCED_FIELD_PATHS:
+            return "advanced"
+        if field_path in AMEMORIX_EXCLUDED_FIELD_PATHS:
+            return "excluded"
+        return None
+
+    @staticmethod
+    def _schema_has_visible_content(schema: Dict[str, Any]) -> bool:
+        return bool(schema.get("fields") or schema.get("nested"))
+
+    @classmethod
+    def _schema_has_only_advanced_content(cls, schema: Dict[str, Any]) -> bool:
+        for field in schema.get("fields", []):
+            if not field.get("advanced", False):
+                return False
+        return all(cls._schema_has_only_advanced_content(nested) for nested in schema.get("nested", {}).values())
+
+    @staticmethod
     def _apply_a_memorix_visibility_policy(
-        config_class: type[ConfigBase],
-        field_name: str,
+        field_path: str,
+        visibility: str | None,
         schema: Dict[str, Any],
     ) -> None:
-        class_name = config_class.__name__
-        if not class_name.startswith("AMemorix"):
+        if not ConfigSchemaGenerator._is_a_memorix_path(field_path):
             return
 
-        basic_fields = AMEMORIX_BASIC_FIELDS.get(class_name, set())
-        if field_name not in basic_fields:
+        if visibility == "advanced":
             schema["advanced"] = True
 
     @staticmethod

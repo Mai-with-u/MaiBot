@@ -25,4 +25,4 @@ export {
   RegexRulesHook,
 } from './complexFieldHooks'
 export { AMemorixRetrievalChatsHook } from './AMemorixRetrievalChatsHook'
-export { AMemorixRetrievalFilterMirrorHook } from './AMemorixRetrievalFilterMirrorHook'
+export { AMemorixRetrievalFilterGroupHook } from './AMemorixRetrievalFilterGroupHook'

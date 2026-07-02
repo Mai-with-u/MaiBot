@@ -474,7 +474,7 @@ class HomeCardEntry(ComponentEntry):
         """规范化首页卡片宽度。"""
 
         normalized_value = str(raw_value or "medium").strip().lower()
-        if normalized_value in {"small", "medium", "large", "full"}:
+        if normalized_value in {"small", "medium", "large", "wide", "full"}:
             return normalized_value
         return "medium"
 

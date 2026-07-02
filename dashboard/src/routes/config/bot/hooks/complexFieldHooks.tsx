@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 
-import { AlertCircle, ChevronDown, ChevronUp, GripVertical, Plus, Trash2 } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, ChevronUp, ExternalLink, GripVertical, Plus, Trash2 } from 'lucide-react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import {
   Dialog,
   DialogContent,
@@ -15,6 +23,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -26,7 +35,7 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
-import { resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
+import { getChatStreams, resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
 import { getBotConfigCached } from '@/lib/config-api'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import type { FieldHookComponent } from '@/lib/field-hooks'
@@ -446,6 +455,57 @@ const groupScopeLabel = (target: ExpressionGroupTarget) => {
   return `${platform}:${itemId}`
 }
 
+const chatStreamTargetId = (chat: ChatStream) => {
+  return chat.chat_type === 'group'
+    ? chat.group_id || chat.target_id
+    : chat.user_id || chat.target_id
+}
+
+const chatStreamOptionKey = (chat: ChatStream) => {
+  const targetId = chatStreamTargetId(chat)
+  return [chat.platform, targetId, chat.chat_type].map((value) => encodeURIComponent(value)).join('::')
+}
+
+const expressionTargetOptionKey = (target: ExpressionGroupTarget) => {
+  return [
+    normalizeSpecialTextValue(target.platform),
+    normalizeSpecialTextValue(target.item_id),
+    target.rule_type,
+  ].map((value) => encodeURIComponent(value)).join('::')
+}
+
+const chatStreamTypeLabel = (chatType: string) => {
+  return chatType === 'private' ? '私聊' : '群聊'
+}
+
+const chatStreamSelectLabel = (chat: ChatStream) => {
+  const targetId = chatStreamTargetId(chat)
+  const name = chat.display_name || targetId || chat.session_id
+  return `${name} · ${chatStreamTypeLabel(chat.chat_type)} · ${chat.platform}:${targetId}`
+}
+
+const findSharedMemoryChatStream = (chats: ChatStream[], target: ExpressionGroupTarget) => {
+  const selectedKey = expressionTargetOptionKey(target)
+  return chats.find((chat) => chatStreamOptionKey(chat) === selectedKey)
+}
+
+const normalizeSharedMemoryChatStreams = (chats: ChatStream[]) => {
+  const optionMap = new Map<string, ChatStream>()
+  chats.forEach((chat) => {
+    const targetId = chatStreamTargetId(chat)
+    if (!chat.platform || !targetId || !['group', 'private'].includes(chat.chat_type)) {
+      return
+    }
+    optionMap.set(chatStreamOptionKey(chat), chat)
+  })
+
+  return Array.from(optionMap.values()).sort((left, right) => {
+    const typeOrder = left.chat_type === right.chat_type ? 0 : left.chat_type === 'group' ? -1 : 1
+    if (typeOrder !== 0) return typeOrder
+    return chatStreamSelectLabel(left).localeCompare(chatStreamSelectLabel(right), 'zh-Hans-CN')
+  })
+}
+
 const resolveGroupPlatformValue = (
   target: ExpressionGroupTarget,
   platformOptions: PlatformSelectOption[],
@@ -836,6 +896,177 @@ function GroupScopeFields({
   )
 }
 
+function SharedMemoryChatStreamSelect({
+  chats,
+  onSelect,
+  target,
+}: {
+  chats: ChatStream[]
+  onSelect: (patch: Partial<ExpressionGroupTarget>) => void
+  target: ExpressionGroupTarget
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const selectedChat = findSharedMemoryChatStream(chats, target)
+  const normalizedSearch = search.trim().toLocaleLowerCase()
+  const matchedChats = chats.filter((chat) => {
+    if (!normalizedSearch) return true
+    return [
+      chat.display_name,
+      chat.platform,
+      chatStreamTargetId(chat),
+      chatStreamTypeLabel(chat.chat_type),
+      chat.session_id,
+      chat.group_name,
+      chat.user_nickname,
+      chat.user_cardname,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase()
+      .includes(normalizedSearch)
+  })
+  const resultLimit = 50
+  const allGroups = matchedChats.filter((chat) => chat.chat_type === 'group')
+  const allPrivateChats = matchedChats.filter((chat) => chat.chat_type === 'private')
+  const groups = allGroups.slice(0, resultLimit)
+  const privateChats = allPrivateChats.slice(0, resultLimit)
+  const isResultLimited = groups.length < allGroups.length || privateChats.length < allPrivateChats.length
+
+  const renderOption = (chat: ChatStream) => {
+    const selected = selectedChat ? chatStreamOptionKey(selectedChat) === chatStreamOptionKey(chat) : false
+    return (
+      <CommandItem
+        key={chatStreamOptionKey(chat)}
+        value={chatStreamOptionKey(chat)}
+        onSelect={() => {
+          onSelect({
+            platform: chat.platform,
+            item_id: chatStreamTargetId(chat),
+            rule_type: chat.chat_type,
+          })
+          setOpen(false)
+          setSearch('')
+        }}
+      >
+        <Check className={`h-4 w-4 ${selected ? 'opacity-100' : 'opacity-0'}`} />
+        <span className="min-w-0 truncate">{chatStreamSelectLabel(chat)}</span>
+      </CommandItem>
+    )
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">
+        选择群聊/私聊
+      </Label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            aria-label="选择群聊或私聊"
+            className="h-8 min-w-0 flex-1 justify-between font-normal"
+          >
+            {selectedChat ? (
+              <span className="min-w-0 truncate">{chatStreamSelectLabel(selectedChat)}</span>
+            ) : (
+              <span className="min-w-0 truncate text-muted-foreground">
+                {chats.length > 0 ? '搜索或选择已知聊天流' : '暂无已知聊天流'}
+              </span>
+            )}
+            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="p-0"
+          style={{ width: 'var(--radix-popover-trigger-width)' }}
+        >
+          <Command shouldFilter={false}>
+            <CommandInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="搜索群名、私聊名、群号或用户 ID..."
+            />
+            <CommandList className="max-h-[280px]">
+              <CommandEmpty>未找到匹配的聊天流</CommandEmpty>
+              {groups.length > 0 && (
+                <CommandGroup heading="群聊">
+                  {groups.map(renderOption)}
+                </CommandGroup>
+              )}
+              {privateChats.length > 0 && (
+                <CommandGroup heading="私聊">
+                  {privateChats.map(renderOption)}
+                </CommandGroup>
+              )}
+              {isResultLimited && (
+                <div className="border-t px-3 py-2 text-xs text-muted-foreground">
+                  群聊和私聊各最多显示 {resultLimit} 个匹配项，请输入关键词缩小范围。
+                </div>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
+function SharedMemoryManualFields({
+  onChange,
+  target,
+}: {
+  onChange: (patch: Partial<ExpressionGroupTarget>) => void
+  target: ExpressionGroupTarget
+}) {
+  const platform = normalizeSpecialTextValue(target.platform)
+  const itemId = normalizeSpecialTextValue(target.item_id)
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-2.5">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(10rem,1fr)_minmax(8rem,0.7fr)]">
+        <div className="min-w-0 space-y-1">
+          <Label className="text-[11px] leading-none text-muted-foreground">平台</Label>
+          <Input
+            className="h-8 min-w-0"
+            value={platform}
+            placeholder="qq"
+            onChange={(event) => onChange({ platform: event.target.value })}
+          />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <Label className="text-[11px] leading-none text-muted-foreground">群号或用户 ID</Label>
+          <Input
+            className="h-8 min-w-0 font-mono"
+            value={itemId === '*' ? '' : itemId}
+            placeholder="群号或用户 ID"
+            onChange={(event) => onChange({ item_id: event.target.value })}
+          />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
+          <Select
+            value={target.rule_type}
+            onValueChange={(value) => onChange({ rule_type: normalizeExpressionRuleType(value) })}
+          >
+            <SelectTrigger aria-label="选择聊天类型" className="h-8 min-w-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="group">群聊</SelectItem>
+              <SelectItem value="private">私聊</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function AddGroupTargetDialog({
   open,
   onAdd,
@@ -1164,8 +1395,10 @@ function LearningRuleEditor({
 }
 
 function ExpressionGroupMemberItem({
+  chatStreamOptions = [],
   groupIndex,
   groupLabel,
+  isSharedMemoryGroup = false,
   member,
   memberIndex,
   onRemoveMember,
@@ -1174,8 +1407,10 @@ function ExpressionGroupMemberItem({
   scopeKind,
   usePlatformSelect,
 }: {
+  chatStreamOptions?: ChatStream[]
   groupIndex: number
   groupLabel: string
+  isSharedMemoryGroup?: boolean
   member: ExpressionGroupTarget
   memberIndex: number
   onRemoveMember: (groupIndex: number, memberIndex: number) => void
@@ -1188,6 +1423,29 @@ function ExpressionGroupMemberItem({
   const itemId = normalizeSpecialTextValue(member.item_id)
   const platformValue = platform && platform !== '*' ? platform : platformOptions[0]?.value ?? 'qq'
   const chatTargetState = useExactChatTargetResolution(platformValue, itemId, member.rule_type, scopeKind === 'chat')
+  const sharedMemoryChat = isSharedMemoryGroup ? findSharedMemoryChatStream(chatStreamOptions, member) : undefined
+  const hasSharedMemoryTarget = isSharedMemoryGroup && Boolean(platform && itemId)
+  const unmatchedSharedMemoryTarget = isSharedMemoryGroup && hasSharedMemoryTarget && !sharedMemoryChat
+  const unmatchedSharedMemoryTargetKey = unmatchedSharedMemoryTarget ? expressionTargetOptionKey(member) : ''
+  const openedUnmatchedTargetKeyRef = useRef(unmatchedSharedMemoryTargetKey)
+  const [manualEditing, setManualEditing] = useState(unmatchedSharedMemoryTarget)
+  const showSharedMemoryManualFields = isSharedMemoryGroup && manualEditing
+
+  useEffect(() => {
+    if (!isSharedMemoryGroup) {
+      return
+    }
+    if (!unmatchedSharedMemoryTargetKey) {
+      openedUnmatchedTargetKeyRef.current = ''
+      setManualEditing(false)
+      return
+    }
+    if (openedUnmatchedTargetKeyRef.current !== unmatchedSharedMemoryTargetKey) {
+      openedUnmatchedTargetKeyRef.current = unmatchedSharedMemoryTargetKey
+      setManualEditing(true)
+    }
+  }, [isSharedMemoryGroup, unmatchedSharedMemoryTargetKey])
+
   const updateScopeField = (patch: Partial<ExpressionGroupTarget>) => {
     onUpdateMember(groupIndex, memberIndex, {
       ...patch,
@@ -1206,13 +1464,40 @@ function ExpressionGroupMemberItem({
     <div className="space-y-2 rounded-md bg-background/80 px-2.5 py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="truncate text-sm font-semibold">
-            {groupScopeLabel(member)}
-          </span>
-          <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
-            {ruleTypeLabel(member.rule_type)}
-          </Badge>
-          {scopeKind === 'chat' && <ChatTargetResolutionPreview state={chatTargetState} />}
+          {isSharedMemoryGroup ? (
+            sharedMemoryChat ? (
+              <>
+                <span className="max-w-[24rem] truncate text-sm font-semibold">
+                  {sharedMemoryChat.display_name || chatStreamTargetId(sharedMemoryChat)}
+                </span>
+                <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                  {chatStreamTypeLabel(sharedMemoryChat.chat_type)}
+                </Badge>
+                <span className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground">
+                  {sharedMemoryChat.platform}:{chatStreamTargetId(sharedMemoryChat)}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="truncate text-sm font-semibold text-muted-foreground">
+                  {hasSharedMemoryTarget ? `${platform}:${itemId}` : '未选择聊天流'}
+                </span>
+                <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                  {hasSharedMemoryTarget ? '未匹配' : '待选择'}
+                </Badge>
+              </>
+            )
+          ) : (
+            <>
+              <span className="truncate text-sm font-semibold">
+                {groupScopeLabel(member)}
+              </span>
+              <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                {ruleTypeLabel(member.rule_type)}
+              </Badge>
+              {scopeKind === 'chat' && <ChatTargetResolutionPreview state={chatTargetState} />}
+            </>
+          )}
         </div>
         <Button
           type="button"
@@ -1227,7 +1512,37 @@ function ExpressionGroupMemberItem({
         </Button>
       </div>
 
-      {scopeKind === 'global' ? (
+      {isSharedMemoryGroup ? (
+        <div className="space-y-2">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <SharedMemoryChatStreamSelect
+                chats={chatStreamOptions}
+                target={member}
+                onSelect={(patch) => {
+                  setManualEditing(false)
+                  updateScopeField(patch)
+                }}
+              />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 shrink-0"
+              onClick={() => setManualEditing((current) => !current)}
+            >
+              {showSharedMemoryManualFields ? '收起手动填写' : '手动填写'}
+            </Button>
+          </div>
+          {showSharedMemoryManualFields && (
+            <SharedMemoryManualFields
+              target={member}
+              onChange={updateScopeField}
+            />
+          )}
+        </div>
+      ) : scopeKind === 'global' ? (
         <div className="rounded-md border bg-background/70 px-2.5 py-2 text-xs text-muted-foreground">
           当前范围不需要填写平台或聊天流 ID。
         </div>
@@ -2691,7 +3006,7 @@ export const RegexRulesHook = createListItemEditorHook({
   },
 })
 
-export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, schema, value }) => {
+export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, onParentChange, parentValues, schema, value }) => {
   const groups = normalizeExpressionGroups(value)
   const isJargonGroup = fieldPath?.includes('jargon') ?? false
   const isBehaviorGroup = fieldPath?.includes('behavior') ?? false
@@ -2700,6 +3015,8 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
   const displaysAsSection =
     isSharedMemoryGroup &&
     Boolean(schema && 'x-display-as-section' in schema && schema['x-display-as-section'])
+  const globalMemorySharingEnabled =
+    isSharedMemoryGroup && parentValues?.global_memory_sharing_enabled === true
   const groupLabel = isSharedMemoryGroup
     ? '共享记忆组'
     : isFocusGroup
@@ -2717,10 +3034,58 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
     : isFocusGroup
       ? '配置后只有同组聊天流共享 Focus，不同组可以分别进入 Focus。'
     : `每个互通组内的聊天流会共享已学习的${learnedContentLabel}。`
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(() => new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(() =>
+    isSharedMemoryGroup ? new Set(Array.from({ length: groups.length }, (_, index) => index)) : new Set()
+  )
   const [definedPlatformOptions, setDefinedPlatformOptions] = useState<PlatformSelectOption[]>([])
+  const [chatStreamOptions, setChatStreamOptions] = useState<ChatStream[]>([])
   const [showAddGroupPanel, setShowAddGroupPanel] = useState(false)
   const [addingMemberGroupIndex, setAddingMemberGroupIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!isSharedMemoryGroup) {
+      return
+    }
+
+    if (globalMemorySharingEnabled) {
+      const allGroupIndexes = new Set(Array.from({ length: groups.length }, (_, index) => index))
+      setCollapsedGroups(allGroupIndexes)
+      setShowAddGroupPanel(false)
+      setAddingMemberGroupIndex(null)
+      return
+    }
+
+    setCollapsedGroups((current) => {
+      const next = new Set<number>()
+      current.forEach((index) => {
+        if (index < groups.length) {
+          next.add(index)
+        }
+      })
+      return next
+    })
+  }, [globalMemorySharingEnabled, groups.length, isSharedMemoryGroup])
+
+  useEffect(() => {
+    if (!isSharedMemoryGroup) {
+      return
+    }
+
+    let disposed = false
+    getChatStreams()
+      .then((chats) => {
+        if (!disposed) {
+          setChatStreamOptions(normalizeSharedMemoryChatStreams(chats))
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('加载共享记忆组聊天流列表失败:', error)
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [isSharedMemoryGroup])
 
   useEffect(() => {
     if (!isJargonGroup) {
@@ -2756,11 +3121,15 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
   }
 
   const addGroup = (scopeKind: GroupScopeKind, ruleType: ExpressionRuleType) => {
+    if (globalMemorySharingEnabled) return
+
     updateGroups([...groups, { targets: [createExpressionTarget(scopeKind, definedPlatformOptions, ruleType)] }])
     setShowAddGroupPanel(false)
   }
 
   const toggleGroupCollapsed = (groupIndex: number) => {
+    if (globalMemorySharingEnabled) return
+
     setCollapsedGroups((current) => {
       const next = new Set(current)
       if (next.has(groupIndex)) {
@@ -2777,6 +3146,8 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
   }
 
   const addMember = (groupIndex: number, scopeKind: GroupScopeKind, ruleType: ExpressionRuleType) => {
+    if (globalMemorySharingEnabled) return
+
     updateGroups(
       groups.map((group, index) =>
         index === groupIndex
@@ -2832,6 +3203,21 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
 
   return (
     <div className={displaysAsSection ? 'space-y-3' : 'space-y-3 rounded-lg border bg-card p-4 sm:p-5'}>
+      {isSharedMemoryGroup && (
+        <div className="flex flex-col gap-3 rounded-md border bg-muted/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <Label className="text-sm font-medium">全局共享记忆</Label>
+            <p className="text-xs text-muted-foreground">
+              开启后普通记忆查询会在所有聊天流范围内检索。
+            </p>
+          </div>
+          <Switch
+            aria-label="全局共享记忆"
+            checked={globalMemorySharingEnabled}
+            onCheckedChange={(checked) => onParentChange?.('global_memory_sharing_enabled', checked)}
+          />
+        </div>
+      )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           {!displaysAsSection && <h3 className="text-base font-semibold">{groupLabel}</h3>}
@@ -2839,34 +3225,61 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
             {helperText}
           </p>
         </div>
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          aria-label={`添加${groupLabel}`}
-          title={`添加${groupLabel}`}
-          onClick={() => setShowAddGroupPanel(true)}
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {isSharedMemoryGroup && (
+            <Button asChild size="sm" variant="outline" className="h-8">
+              <a href="/chat-management?view=groups&kind=memory">
+                <ExternalLink className="h-3.5 w-3.5" />
+                聊天管理
+              </a>
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            aria-label={`添加${groupLabel}`}
+            title={globalMemorySharingEnabled ? '全局共享开启时不需要配置共享组' : `添加${groupLabel}`}
+            disabled={globalMemorySharingEnabled}
+            onClick={() => {
+              if (isSharedMemoryGroup) {
+                addGroup('chat', 'group')
+                return
+              }
+              setShowAddGroupPanel(true)
+            }}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <AddGroupTargetDialog
-        open={showAddGroupPanel}
+        open={showAddGroupPanel && !globalMemorySharingEnabled && !isSharedMemoryGroup}
         title={`选择${groupLabel}的第一个成员`}
         onAdd={addGroup}
-        onOpenChange={setShowAddGroupPanel}
+        onOpenChange={(open) => {
+          if (globalMemorySharingEnabled) {
+            setShowAddGroupPanel(false)
+            return
+          }
+          setShowAddGroupPanel(open)
+        }}
         scopeOptions={groupScopeOptions}
       />
 
       {groups.length === 0 ? (
         <div className="rounded-md border border-dashed bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-          暂无{groupLabel}，点击上方按钮选择第一个成员。
+          {globalMemorySharingEnabled
+            ? '全局共享已开启，暂不需要配置共享记忆组。'
+            : isSharedMemoryGroup
+              ? `暂无${groupLabel}，点击上方按钮添加后可直接选择群聊或私聊。`
+              : `暂无${groupLabel}，点击上方按钮选择第一个成员。`}
         </div>
       ) : (
         <div className="space-y-2">
           {groups.map((group, groupIndex) => {
-            const isCollapsed = collapsedGroups.has(groupIndex)
+            const isCollapsed = globalMemorySharingEnabled || collapsedGroups.has(groupIndex)
 
             return (
               <div
@@ -2889,11 +3302,14 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
                       variant="outline"
                       className="h-8 w-8"
                       aria-label={`添加${groupLabel} ${groupIndex + 1} 的成员`}
-                      title="添加成员"
+                      title={globalMemorySharingEnabled ? '全局共享开启时共享组已折叠' : '添加成员'}
+                      disabled={globalMemorySharingEnabled}
                       onClick={() =>
-                        setAddingMemberGroupIndex((currentGroupIndex) =>
-                          currentGroupIndex === groupIndex ? null : groupIndex,
-                        )
+                        isSharedMemoryGroup
+                          ? addMember(groupIndex, 'chat', 'group')
+                          : setAddingMemberGroupIndex((currentGroupIndex) =>
+                              currentGroupIndex === groupIndex ? null : groupIndex,
+                            )
                       }
                     >
                       <Plus className="h-4 w-4" />
@@ -2904,7 +3320,8 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
                       variant="ghost"
                       className="h-8 w-8"
                       aria-label={isCollapsed ? `展开${groupLabel} ${groupIndex + 1}` : `折叠${groupLabel} ${groupIndex + 1}`}
-                      title={isCollapsed ? '展开' : '折叠'}
+                      title={globalMemorySharingEnabled ? '全局共享开启时共享组已折叠' : isCollapsed ? '展开' : '折叠'}
+                      disabled={globalMemorySharingEnabled}
                       onClick={() => toggleGroupCollapsed(groupIndex)}
                     >
                       {isCollapsed ? (
@@ -2919,7 +3336,8 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
                       variant="ghost"
                       className="h-8 w-8"
                       aria-label={`删除${groupLabel} ${groupIndex + 1}`}
-                      title={`删除${groupLabel} ${groupIndex + 1}`}
+                      title={globalMemorySharingEnabled ? '全局共享开启时共享组已折叠' : `删除${groupLabel} ${groupIndex + 1}`}
+                      disabled={globalMemorySharingEnabled}
                       onClick={() => removeGroup(groupIndex)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -2939,9 +3357,11 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
 
                       return (
                         <ExpressionGroupMemberItem
+                          chatStreamOptions={chatStreamOptions}
                           key={`${groupIndex}-${memberIndex}`}
                           groupIndex={groupIndex}
                           groupLabel={groupLabel}
+                          isSharedMemoryGroup={isSharedMemoryGroup}
                           member={member}
                           memberIndex={memberIndex}
                           onRemoveMember={removeMember}
@@ -2960,7 +3380,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
         </div>
       )}
       <AddGroupTargetDialog
-        open={addingMemberGroupIndex !== null}
+        open={addingMemberGroupIndex !== null && !globalMemorySharingEnabled && !isSharedMemoryGroup}
         title={`选择${groupLabel} ${
           addingMemberGroupIndex === null ? '' : addingMemberGroupIndex + 1
         } 的新成员`}
@@ -2969,7 +3389,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
           addMember(addingMemberGroupIndex, scopeKind, ruleType)
         }}
         onOpenChange={(open) => {
-          if (!open) setAddingMemberGroupIndex(null)
+          if (globalMemorySharingEnabled || !open) setAddingMemberGroupIndex(null)
         }}
         scopeOptions={groupScopeOptions}
       />

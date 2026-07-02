@@ -134,7 +134,7 @@ default_sample_size = 24
 
 - 长期记忆控制台：适合修改高频项，例如 embedding、检索、Episode、人物画像、导入与调优的常用开关。
 - 原始 TOML：适合复制整份配置、批量调整参数，或修改未在可视化表单中展示的高级项。
-- raw-only 高级项仍包括：`retrieval.fusion.*`、`retrieval.search.relation_intent.*`、`retrieval.search.graph_recall.*`、`retrieval.search.posterior_graph.*`、`retrieval.aggregate.*`、`memory.orphan.*`、`advanced.extraction_model`、`web.import.llm_retry.*`、`web.import.timeout.*`、`web.import.path_aliases`、`web.import.convert.*`、`web.tuning.llm_retry.*`、`web.tuning.eval_query_timeout_seconds`。
+- raw-only 高级项仍包括：`retrieval.search.relation_intent.*`、`retrieval.search.graph_recall.*`、`retrieval.search.posterior_graph.*`、`retrieval.aggregate.*`、`memory.orphan.*`、`advanced.extraction_model`、`web.import.llm_retry.*`、`web.import.timeout.*`、`web.import.path_aliases`、`web.import.convert.*`、`web.tuning.llm_retry.*`、`web.tuning.eval_query_timeout_seconds`。
 
 ## 1. 存储与嵌入
 
@@ -344,6 +344,14 @@ chats = []
   `source_type=chat_summary` 或 `source=chat_summary:<session_id>` 命中；
   `episode` 裁剪 Episode 命中。
 - 人物画像当前保持全局聚合与缓存，不按群组隔离。
+
+### `global_memory_sharing_enabled`
+
+- 默认 `false`
+- 关闭时，普通记忆查询只检索当前聊天流以及 `shared_memory_groups`
+  配置出的同组聊天流。
+- 开启时，普通记忆查询会在所有聊天流范围内检索；
+  `shared_memory_groups` 会保留配置，但不再限制普通查询范围。
 
 ### `shared_memory_groups`
 

@@ -535,6 +535,8 @@ export interface MemoryImportActionPayload {
 export interface MemoryTuningProfilePayload {
   success: boolean
   profile?: Record<string, unknown>
+  runtime_profile?: Record<string, unknown>
+  persistable_profile?: Record<string, unknown>
   settings?: Record<string, unknown>
   toml?: string
 }
@@ -1817,9 +1819,13 @@ export async function createMemoryTuningTask(payload: Record<string, unknown>): 
   })
 }
 
-export async function applyBestMemoryTuningProfile(taskId: string): Promise<{ success: boolean; error?: string }> {
+export async function applyBestMemoryTuningProfile(
+  taskId: string,
+  payload: { persist?: boolean; validate?: boolean } = {},
+): Promise<{ success: boolean; error?: string; persisted?: boolean; runtime_rebuilt?: boolean; validation_passed?: boolean }> {
   return requestJson(`/retrieval_tuning/tasks/${encodeURIComponent(taskId)}/apply-best`, {
     method: 'POST',
+    body: payload,
   })
 }
 

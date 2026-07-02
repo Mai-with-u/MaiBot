@@ -822,6 +822,152 @@
     "closeMenu": "关闭菜单",
     "navigatedTo": "已导航至 {{page}}"
   },
+  "memory": {
+    "tuning": {
+      "task": {
+        "title": "记忆搜索调优",
+        "description": "评估并改善记忆搜索效果"
+      },
+      "form": {
+        "strategy": "调优策略",
+        "objective": "优化目标",
+        "intensity": "评估强度",
+        "evalScope": "评估范围",
+        "sampleSize": "样本量",
+        "topKEval": "每次评估查看数量",
+        "persist": "同时保存为默认设置"
+      },
+      "objectives": {
+        "precision": "优先准确率",
+        "balanced": "准确率与召回平衡",
+        "recall": "优先召回率"
+      },
+      "intensity": {
+        "quick": "快速",
+        "standard": "标准",
+        "deep": "深入"
+      },
+      "actions": {
+        "createTask": "开始调优",
+        "applyBest": "应用推荐结果",
+        "showToml": "查看高级配置",
+        "showSummary": "返回结果摘要"
+      },
+      "tasks": {
+        "title": "最近调优记录",
+        "description": "每次调优的执行结果",
+        "recommended": "推荐",
+        "notRecommended": "不建议应用",
+        "empty": "暂无调优记录"
+      },
+      "status": {
+        "completed": "已完成",
+        "running": "运行中",
+        "queued": "排队中",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
+      "result": {
+        "noTask": "暂无调优结果。创建并完成任务后，这里会显示评估结果。",
+        "statusTitle": "任务状态",
+        "progressTitle": "任务进度",
+        "roundsTitle": "已尝试次数",
+        "recommendationTitle": "应用建议",
+        "recommended": "验证通过，建议应用。",
+        "notRecommended": "验证未通过，不建议应用。",
+        "scoreTitle": "综合评分",
+        "validationTitle": "独立样本验证",
+        "validationPassed": "通过",
+        "validationFailed": "未通过",
+        "holdoutWithCount": "{{result}}，{{count}} 个样本",
+        "metricsTitle": "关键结果",
+        "metricsDescription": "展示调优前后的效果变化。",
+        "reason": "原因：{{reason}}",
+        "errorReason": "失败原因：{{reason}}",
+        "reasons": {
+          "holdoutEmpty": "独立样本不足，无法验证调优结果。",
+          "holdoutOnlineLikeValidationFailed": "独立样本和实际搜索效果验证未通过。",
+          "unknown": "{{reason}}"
+        },
+        "metrics": {
+          "precisionAt1": "首条命中率",
+          "recallAtK": "目标找回率",
+          "emptyRate": "无结果比例",
+          "avgElapsedMs": "平均响应时间"
+        }
+      },
+      "snapshot": {
+        "title": "当前调优结果",
+        "summaryDescription": "默认展示最近完成任务的评估结果，设置细节放在详情里。",
+        "tomlDescription": "面向排查的高级配置内容。",
+        "runtimeTitle": "当前使用中",
+        "runtimeDescription": "已经用于当前记忆搜索的设置。",
+        "runtimeResultApplied": "调优结果已经用于当前记忆搜索。",
+        "runtimeResultEmpty": "暂时没有正在使用的结果。",
+        "persistableTitle": "可保存设置",
+        "persistableDescription": "保存为默认设置时会保留的内容。",
+        "persistableResultReady": "这组结果可按需保存为默认设置。",
+        "persistableResultEmpty": "暂时没有可保存结果。",
+        "diffTitle": "差异项",
+        "diffDescription": "当前使用的设置和可保存设置不一致的项目。",
+        "diffResultClean": "当前使用的设置与可保存设置一致。",
+        "diffResultChanged": "当前使用的设置与可保存设置存在差异，展开详情可查看。",
+        "detailsTitle": "设置详情",
+        "detailsHint": "排查时查看",
+        "parameterDetailsTitle": "参数明细",
+        "runtimeShort": "当前使用",
+        "persistableShort": "保存后",
+        "empty": "暂无数据",
+        "noDiff": "两份配置当前没有差异。",
+        "technicalCount": "另有 {{count}} 个高级项目未在摘要中展示，可切到高级配置查看。",
+        "technicalDiffCount": "另有 {{count}} 个高级差异未在摘要中展示，可切到高级配置查看。"
+      },
+      "values": {
+        "enabled": "启用",
+        "disabled": "关闭",
+        "auto": "自动",
+        "always": "始终启用",
+        "off": "关闭",
+        "weightedRrf": "综合排序",
+        "rrf": "排序整合",
+        "alphaLegacy": "旧版综合排序",
+        "singlePool": "单路语义搜索",
+        "dualPool": "双路语义搜索"
+      },
+      "parameters": {
+        "retrieval_top_k": "初步查找数量",
+        "retrieval_top_k_paragraphs": "段落查找数量",
+        "retrieval_top_k_relations": "关系查找数量",
+        "retrieval_top_k_final": "最终展示数量",
+        "retrieval_alpha": "段落和关系侧重",
+        "retrieval_enable_ppr": "关系图辅助排序",
+        "retrieval_ppr_alpha": "关系图扩展强度",
+        "retrieval_ppr_timeout_seconds": "关系图处理上限",
+        "retrieval_search_smart_fallback_enabled": "找不到时自动补查",
+        "retrieval_sparse_enabled": "关键词查找",
+        "retrieval_sparse_mode": "关键词查找方式",
+        "retrieval_sparse_candidate_k": "关键词段落查找数量",
+        "retrieval_sparse_relation_candidate_k": "关键词关系查找数量",
+        "retrieval_fusion_method": "结果合并方式",
+        "retrieval_fusion_rrf_k": "结果合并稳定度",
+        "retrieval_fusion_vector_weight": "语义查找侧重",
+        "retrieval_fusion_bm25_weight": "关键词查找侧重",
+        "retrieval_vector_pools_mode": "语义搜索方式",
+        "retrieval_vector_pools_paragraph_top_k": "段落语义查找数量",
+        "retrieval_vector_pools_graph_top_k": "关系图语义查找数量",
+        "retrieval_vector_pools_graph_expand_paragraph_k": "关系图补充段落数",
+        "retrieval_vector_pools_relation_expand_per_hit": "每次命中补充关系数",
+        "retrieval_vector_pools_entity_expand_per_hit": "每次命中补充实体数",
+        "retrieval_vector_pools_relation_evidence_weight": "关系证据侧重",
+        "retrieval_vector_pools_entity_evidence_weight": "实体证据侧重",
+        "threshold_percentile": "自动筛选强度",
+        "threshold_min_results": "最少展示数量",
+        "threshold_min_threshold": "最低筛选线",
+        "threshold_max_threshold": "最高筛选线",
+        "threshold_enable_auto_adjust": "自动调整筛选线"
+      }
+    }
+  },
   "home": {
     "title": "首页",
     "subtitle": "查看基本信息和快捷入口",
@@ -838,6 +984,10 @@
       "edit": "编辑卡片",
       "done": "完成编辑",
       "reset": "恢复默认布局",
+      "row": {
+        "low": "低行",
+        "high": "高行"
+      },
       "dialog": {
         "title": "管理首页卡片",
         "description": "添加插件或内置提供的卡片，或恢复默认布局。",

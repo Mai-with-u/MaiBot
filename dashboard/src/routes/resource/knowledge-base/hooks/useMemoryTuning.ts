@@ -30,6 +30,11 @@ export interface UseMemoryTuningOptions {
   onRuntimeChanged?: () => Promise<void> | void
 }
 
+export interface MemoryTuningProfileView {
+  runtime: Record<string, unknown>
+  persistable: Record<string, unknown>
+}
+
 export interface UseMemoryTuningResult {
   tuningObjective: string
   setTuningObjective: React.Dispatch<React.SetStateAction<string>>
@@ -39,9 +44,11 @@ export interface UseMemoryTuningResult {
   setTuningSampleSize: React.Dispatch<React.SetStateAction<string>>
   tuningTopKEval: string
   setTuningTopKEval: React.Dispatch<React.SetStateAction<string>>
+  persistBestProfile: boolean
+  setPersistBestProfile: React.Dispatch<React.SetStateAction<boolean>>
   submitTuningTask: () => Promise<void>
   creatingTuning: boolean
-  tuningProfile: Record<string, unknown>
+  tuningProfile: MemoryTuningProfileView
   tuningProfileToml: string
   tuningTasks: MemoryTaskPayload[]
   applyBestTask: (taskId: string) => Promise<void>
@@ -56,6 +63,7 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
   const [tuningIntensity, setTuningIntensity] = useState('standard')
   const [tuningSampleSize, setTuningSampleSize] = useState('24')
   const [tuningTopKEval, setTuningTopKEval] = useState('20')
+  const [persistBestProfile, setPersistBestProfile] = useState(false)
   const [creatingTuning, setCreatingTuning] = useState(false)
 
   // 调优配置：仅在面板激活时拉取
@@ -72,8 +80,11 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
   })
 
   const tuningProfile = useMemo(
-    () => profileQuery.data?.profile ?? {},
-    [profileQuery.data?.profile],
+    () => ({
+      runtime: profileQuery.data?.runtime_profile ?? profileQuery.data?.profile ?? {},
+      persistable: profileQuery.data?.persistable_profile ?? profileQuery.data?.profile ?? {},
+    }),
+    [profileQuery.data?.persistable_profile, profileQuery.data?.profile, profileQuery.data?.runtime_profile],
   )
   const tuningProfileToml = profileQuery.data?.toml ?? ''
   const tuningTasks = useMemo(() => tasksQuery.data?.items ?? [], [tasksQuery.data?.items])
@@ -110,10 +121,16 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
   const applyBestTask = useCallback(
     async (taskId: string) => {
       try {
-        await applyBestMemoryTuningProfile(taskId)
+        const result = await applyBestMemoryTuningProfile(taskId, {
+          persist: persistBestProfile,
+          validate: true,
+        })
         // 应用后刷新 profile + 任务列表，并通知运行时配置重拉
         await Promise.all([profileQuery.refetch(), tasksQuery.refetch(), onRuntimeChanged?.()])
-        toast({ title: '最佳参数已应用', description: `任务 ${taskId} 的最佳轮次已经写入运行时` })
+        toast({
+          title: '最佳参数已应用',
+          description: result.persisted ? `任务 ${taskId} 的最佳轮次已经写入运行时和配置文件` : `任务 ${taskId} 的最佳轮次已经写入运行时`,
+        })
       } catch (error) {
         toast({
           title: '应用最佳参数失败',
@@ -122,7 +139,7 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
         })
       }
     },
-    [onRuntimeChanged, profileQuery, tasksQuery, toast],
+    [onRuntimeChanged, persistBestProfile, profileQuery, tasksQuery, toast],
   )
 
   return {
@@ -134,6 +151,8 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
     setTuningSampleSize,
     tuningTopKEval,
     setTuningTopKEval,
+    persistBestProfile,
+    setPersistBestProfile,
     submitTuningTask,
     creatingTuning,
     tuningProfile,
