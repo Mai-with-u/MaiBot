@@ -291,6 +291,7 @@ function useFocusCompanionChat() {
 
     chatWsClient
       .openSession(FOCUS_SESSION_ID, {
+        client: { type: 'webui', name: 'MaiBot WebUI' },
         user_id: 'webui_focus_user',
         user_name: '专注中的你',
         platform: 'webui',

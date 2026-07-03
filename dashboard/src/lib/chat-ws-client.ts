@@ -1,6 +1,11 @@
 import { unifiedWsClient, type ConnectionStatus } from './unified-ws'
 
 interface ChatSessionOpenPayload {
+  client?: {
+    type?: 'webui' | 'floating' | 'launcher'
+    name?: string
+    version?: string
+  }
   group_id?: string
   group_name?: string
   person_id?: string
@@ -28,6 +33,12 @@ function arePayloadsEqual(left: ChatSessionOpenPayload, right: ChatSessionOpenPa
     ...(Object.keys(right) as Array<keyof ChatSessionOpenPayload>),
   ])
   for (const key of keys) {
+    if (key === 'client') {
+      if (JSON.stringify(left.client ?? {}) !== JSON.stringify(right.client ?? {})) {
+        return false
+      }
+      continue
+    }
     if (left[key] !== right[key]) {
       return false
     }

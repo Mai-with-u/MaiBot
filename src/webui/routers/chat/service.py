@@ -67,6 +67,7 @@ class ChatSessionConnection:
     user_name: str
     channel_key: str
     virtual_config: Optional[VirtualIdentityConfig]
+    client_info: Dict[str, Any]
     sender: AsyncMessageSender
 
 
@@ -333,6 +334,7 @@ class ChatConnectionManager:
         user_id: str,
         user_name: str,
         virtual_config: Optional[VirtualIdentityConfig],
+        client_info: Optional[Dict[str, Any]],
         sender: AsyncMessageSender,
     ) -> None:
         """注册一个新的逻辑聊天会话。
@@ -344,9 +346,11 @@ class ChatConnectionManager:
             user_id: 规范化后的用户 ID。
             user_name: 当前展示昵称。
             virtual_config: 当前虚拟身份配置。
+            client_info: 客户端形态声明，用于 WebUI、悬浮球等轻量客户端区分能力。
             sender: 发送消息到前端的异步回调。
         """
         channel_key = compute_channel_key(virtual_config, user_id)
+        normalized_client_info = normalize_chat_client_info(client_info)
         existing_session_id = self.client_sessions.get((connection_id, client_session_id))
         if existing_session_id is not None and existing_session_id == session_id:
             # 同一物理连接 + 前端会话重复打开（常见于 React StrictMode 双挂载或客户端去抖失败），
@@ -360,6 +364,7 @@ class ChatConnectionManager:
                 existing.user_id = user_id
                 existing.user_name = user_name
                 existing.virtual_config = virtual_config
+                existing.client_info = normalized_client_info
                 existing.sender = sender
                 logger.debug(
                     f"WebUI 聊天会话复用: session={session_id}, connection={connection_id}, "
@@ -377,6 +382,7 @@ class ChatConnectionManager:
             user_name=user_name,
             channel_key=channel_key,
             virtual_config=virtual_config,
+            client_info=normalized_client_info,
             sender=sender,
         )
 
@@ -387,7 +393,8 @@ class ChatConnectionManager:
         self._bind_channel(session_id, channel_key)
         logger.info(
             f"WebUI 聊天会话已连接: session={session_id}, connection={connection_id}, "
-            f"client_session={client_session_id}, user={user_id}, channel={channel_key}",
+            f"client_session={client_session_id}, user={user_id}, channel={channel_key}, "
+            f"client={normalized_client_info.get('type')}",
         )
 
     def disconnect(self, session_id: str) -> None:
@@ -586,6 +593,47 @@ def normalize_webui_user_id(user_id: Optional[str]) -> str:
     return f"{WEBUI_USER_ID_PREFIX}{user_id}"
 
 
+def _normalize_client_text(value: Any, fallback: str, max_length: int = 64) -> str:
+    text = str(value or fallback).strip()
+    if not text:
+        text = fallback
+    return text[:max_length]
+
+
+def normalize_chat_client_info(client_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """标准化聊天客户端形态声明。
+
+    客户端可以通过 ``session.open`` 的 ``data.client`` 声明自己是完整 WebUI、
+    悬浮球、原生启动器界面或其他轻量客户端。服务端据此在 ``session_info``
+    中返回稳定能力信息，避免客户端各自猜测协议形态。
+    """
+    raw_client = client_info if isinstance(client_info, dict) else {}
+    client_type = _normalize_client_text(raw_client.get("type"), "webui", 32).lower()
+    if client_type not in {"webui", "floating", "launcher"}:
+        client_type = "webui"
+
+    normalized: Dict[str, Any] = {
+        "type": client_type,
+        "name": _normalize_client_text(raw_client.get("name"), "MaiBot WebUI"),
+    }
+    version = str(raw_client.get("version") or "").strip()
+    if version:
+        normalized["version"] = version[:32]
+    return normalized
+
+
+def build_chat_client_capabilities(client_info: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
+    """返回当前聊天协议面向轻量客户端承诺支持的能力。"""
+    del client_info
+    return {
+        "history": True,
+        "rich_segments": True,
+        "typing": True,
+        "attachments": True,
+        "nickname_update": True,
+    }
+
+
 def get_person_by_person_id(person_id: str) -> Optional[PersonInfo]:
     """根据人物 ID 查询人物信息。
 
@@ -668,6 +716,7 @@ def build_session_info_message(
     user_id: str,
     user_name: str,
     virtual_config: Optional[VirtualIdentityConfig],
+    client_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """构建会话信息消息。
 
@@ -676,10 +725,12 @@ def build_session_info_message(
         user_id: 规范化后的用户 ID。
         user_name: 当前昵称。
         virtual_config: 虚拟身份配置。
+        client_info: 标准化客户端形态声明。
 
     Returns:
         Dict[str, Any]: 会话信息消息。
     """
+    normalized_client_info = normalize_chat_client_info(client_info)
     # bot_qq 用于前端通过 WebUI 头像缓存接口加载机器人头像（qq_account == 0 表示未配置，不推送）。
     bot_qq_account = int(getattr(global_config.bot, "qq_account", 0) or 0)
     session_info_data: Dict[str, Any] = {
@@ -688,6 +739,9 @@ def build_session_info_message(
         "user_id": user_id,
         "user_name": user_name,
         "bot_name": global_config.bot.nickname,
+        "client_mode": normalized_client_info["type"],
+        "client": normalized_client_info,
+        "capabilities": build_chat_client_capabilities(normalized_client_info),
     }
     if bot_qq_account > 0:
         session_info_data["bot_qq"] = str(bot_qq_account)
@@ -773,6 +827,7 @@ async def send_initial_chat_state(
     user_id: str,
     user_name: str,
     virtual_config: Optional[VirtualIdentityConfig],
+    client_info: Optional[Dict[str, Any]] = None,
     include_welcome: bool = True,
 ) -> None:
     """向新会话发送初始化状态。
@@ -782,6 +837,7 @@ async def send_initial_chat_state(
         user_id: 规范化后的用户 ID。
         user_name: 当前昵称。
         virtual_config: 虚拟身份配置。
+        client_info: 标准化客户端形态声明。
         include_welcome: 是否发送欢迎消息。
     """
     await chat_manager.send_message(
@@ -791,6 +847,7 @@ async def send_initial_chat_state(
             user_id=user_id,
             user_name=user_name,
             virtual_config=virtual_config,
+            client_info=client_info,
         ),
     )
 

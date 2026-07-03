@@ -14,6 +14,7 @@ from src.webui.logs_ws import load_recent_logs
 from src.webui.routers.chat.service import (
     chat_manager,
     dispatch_chat_event,
+    normalize_chat_client_info,
     normalize_webui_user_id,
     resolve_initial_virtual_identity,
     send_initial_chat_state,
@@ -252,6 +253,7 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
     data = _get_request_data(message)
     normalized_user_id = normalize_webui_user_id(cast(Optional[str], data.get("user_id")))
     current_user_name = str(data.get("user_name") or "WebUI用户")
+    client_info = normalize_chat_client_info(cast(Optional[Dict[str, Any]], data.get("client")))
     current_virtual_config = resolve_initial_virtual_identity(
         platform=cast(Optional[str], data.get("platform")),
         person_id=cast(Optional[str], data.get("person_id")),
@@ -283,6 +285,7 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
         user_id=normalized_user_id,
         user_name=current_user_name,
         virtual_config=current_virtual_config,
+        client_info=client_info,
         sender=send_chat_event,
     )
     websocket_manager.register_chat_session(connection_id, client_session_id, session_id)
@@ -290,13 +293,19 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
         connection_id,
         request_id=request_id,
         ok=True,
-        data={"session": client_session_id, "session_id": session_id},
+        data={
+            "session": client_session_id,
+            "session_id": session_id,
+            "client_mode": client_info["type"],
+            "client": client_info,
+        },
     )
     await send_initial_chat_state(
         session_id=session_id,
         user_id=normalized_user_id,
         user_name=current_user_name,
         virtual_config=current_virtual_config,
+        client_info=client_info,
         include_welcome=not restore,
     )
 
