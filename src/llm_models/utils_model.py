@@ -509,6 +509,9 @@ class LLMOrchestrator:
     ) -> Optional[float]:
         """解析响应请求最终使用的温度参数。
 
+        模型级别温度优先于调用方显式传入的温度，
+        避免任务侧的固定温度覆盖仅支持特定温度的模型（如 Kimi-K2 系列）。
+
         Args:
             model_info: 当前模型信息。
             temperature: 调用方显式传入的温度。
@@ -516,10 +519,10 @@ class LLMOrchestrator:
         Returns:
             Optional[float]: 最终生效的温度参数。
         """
-        if temperature is not None:
-            return temperature
         if model_info.temperature is not None:
             return model_info.temperature
+        if temperature is not None:
+            return temperature
         if "temperature" in model_info.extra_params:
             return model_info.extra_params["temperature"]
         return self.model_for_task.temperature
