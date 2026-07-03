@@ -419,7 +419,8 @@ class ChatConfigUtils:
         try:
             from src.chat.message_receive.chat_manager import chat_manager
 
-            for chat_stream in chat_manager.sessions.values():
+            # list() 先做快照：本函数可能在工作线程中执行，避免与事件循环并发增删 sessions 时迭代出错
+            for chat_stream in list(chat_manager.sessions.values()):
                 chat_stream_platform = str(chat_stream.platform or "").strip()
                 chat_stream_target_id = str(getattr(chat_stream, target_attr) or "").strip()
                 if not chat_stream_target_id:

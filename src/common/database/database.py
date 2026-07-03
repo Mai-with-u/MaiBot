@@ -89,6 +89,13 @@ _RUNTIME_PERFORMANCE_INDEXES = (
         "CREATE INDEX IF NOT EXISTS ix_jargons_complete_count_id "
         "ON jargons (is_complete, count DESC, id DESC)",
     ),
+    (
+        # platform 单列索引选择性极差（几乎全表同值），planner 无统计信息时会误选它，
+        # 导致 (platform, message_id) 等值查询退化为百万行级扫描（实测单次 >1s）。
+        "ix_mai_messages_platform_message_id",
+        "CREATE INDEX IF NOT EXISTS ix_mai_messages_platform_message_id "
+        "ON mai_messages (platform, message_id)",
+    ),
 )
 
 

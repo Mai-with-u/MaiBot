@@ -412,7 +412,11 @@ class JargonMiner:
             logger.debug(f"jargon {content} 是手动记录，跳过含义推断")
             return
 
-        raw_content_list, cleaned_evidence_messages, evidence_changed = self._load_evidence_contexts(jargon_obj)
+        # 逐条证据引用查询 Messages，同步 IO 较重，移入线程避免阻塞事件循环；
+        # jargon_obj 是脱离 session 的纯数据对象，跨线程只读安全。
+        raw_content_list, cleaned_evidence_messages, evidence_changed = await asyncio.to_thread(
+            self._load_evidence_contexts, jargon_obj
+        )
         used_evidence_messages = bool(raw_content_list)
         if used_evidence_messages:
             self._cleanup_jargon_evidence_messages(jargon_obj, None)

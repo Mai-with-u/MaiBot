@@ -1197,7 +1197,9 @@ class EmojiManager:
                         logger.debug(f"[emoji_maintenance] Emoji not registered, keep file: {emoji_file.name}")
 
             try:
-                self.check_emoji_file_integrity()
+                # 全表查询 + 逐条路径 realpath 在大库上可阻塞事件循环数十秒，移入线程执行；
+                # 方法内部自建 session，结束时对 self.emojis 的整体赋值是原子的。
+                await asyncio.to_thread(self.check_emoji_file_integrity)
             except Exception as e:
                 logger.error(f"[emoji_maintenance] Maintenance task failed: {e}")
 

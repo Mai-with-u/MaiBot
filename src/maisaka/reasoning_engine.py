@@ -508,7 +508,7 @@ class MaisakaReasoningEngine:
         injected_messages.extend(profile_messages)
         return injected_messages
 
-    def _refresh_jargon_reference_message(self) -> Optional[ReferenceMessage]:
+    async def _refresh_jargon_reference_message(self) -> Optional[ReferenceMessage]:
         """基于当前 planner 上下文刷新黑话参考消息。"""
 
         existing_jargon_contents = extract_jargon_reference_contents(self._runtime._chat_history)
@@ -518,7 +518,10 @@ class MaisakaReasoningEngine:
             max_context_size=self._runtime._max_context_size,
             is_group_chat=self._runtime.chat_stream.is_group_session,
         )
-        reference_message = build_jargon_reference_message(
+        # 黑话候选加载/作用域解析含同步 DB 查询，繁忙时可阻塞事件循环十余秒，移入线程；
+        # 聊天历史的读取（上方）与写入（下方 append）保持在事件循环线程内。
+        reference_message = await asyncio.to_thread(
+            build_jargon_reference_message,
             session_id=str(self._runtime.session_id or ""),
             context_messages=selected_history,
             excluded_contents=existing_jargon_contents,
@@ -686,7 +689,7 @@ class MaisakaReasoningEngine:
         self._runtime._update_stage_status("Planner", "组织上下文并请求模型", round_text=round_text)
         action_tool_definitions, deferred_tools_reminder = await self._build_action_tool_definitions()
         try:
-            jargon_reference_message = self._refresh_jargon_reference_message()
+            jargon_reference_message = await self._refresh_jargon_reference_message()
             if jargon_reference_message is not None:
                 logger.debug(f"{self._runtime.log_prefix} 已刷新黑话参考消息")
         except Exception as exc:
