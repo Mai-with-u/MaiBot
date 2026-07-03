@@ -248,6 +248,8 @@ class ClientRegistry:
         """事件循环对象 -> APIProvider.name -> BaseClient，用于 force_new 场景的按循环复用。"""
         self._per_loop_client_cache_lock = threading.Lock()
         """保护 _per_loop_client_cache：同步 Embedding 接口会在其他线程建独立事件循环并发进入。"""
+        self._per_loop_client_cache_generation = 0
+        """循环缓存失效版本号：清理时递增，防止清理期间在锁外构建的旧配置实例写回缓存。"""
         self._owner_client_types: Dict[str, Set[str]] = {}
         """插件 ID -> 该插件拥有的 client_type 集合。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
@@ -438,6 +440,7 @@ class ClientRegistry:
             self.client_instance_cache.pop(provider_name, None)
 
         with self._per_loop_client_cache_lock:
+            self._per_loop_client_cache_generation += 1
             for loop, loop_cache in list(self._per_loop_client_cache.items()):
                 stale_provider_names = [
                     provider_name
@@ -478,6 +481,7 @@ class ClientRegistry:
             with self._per_loop_client_cache_lock:
                 loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
                 cached_client = loop_cache.get(api_provider.name)
+                cache_generation = self._per_loop_client_cache_generation
             if cached_client is not None:
                 return cached_client
             registration = self.client_registry.get(api_provider.client_type)
@@ -487,6 +491,9 @@ class ClientRegistry:
             # 同一循环只跑在一个线程上，不会对同一 (loop, provider) 键并发构建。
             new_client = registration.factory(api_provider)
             with self._per_loop_client_cache_lock:
+                if cache_generation != self._per_loop_client_cache_generation:
+                    # 构建期间缓存被清理（如配置重载），本实例可能携带旧配置，仅用于本次请求不写回
+                    return new_client
                 loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
                 return loop_cache.setdefault(api_provider.name, new_client)
 
@@ -502,6 +509,7 @@ class ClientRegistry:
         """清空客户端实例缓存。"""
         self.client_instance_cache.clear()
         with self._per_loop_client_cache_lock:
+            self._per_loop_client_cache_generation += 1
             self._per_loop_client_cache.clear()
         logger.info("检测到配置重载，已清空LLM客户端实例缓存")
 

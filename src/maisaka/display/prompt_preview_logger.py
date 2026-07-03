@@ -34,6 +34,7 @@ class PromptPreviewLogger:
     _STEM_CACHE_MAX_ENTRIES = 512
     _trim_state_lock = threading.Lock()
     _pending_trim_dirs: Set[Path] = set()
+    _dirty_trim_dirs: Set[Path] = set()
 
     @classmethod
     def _get_io_executor(cls) -> ThreadPoolExecutor:
@@ -86,9 +87,11 @@ class PromptPreviewLogger:
 
     @classmethod
     def _submit_trim_overflow(cls, chat_dir: Path) -> None:
-        """按目录合并清理任务：同目录已有未完成清理时跳过，避免后台队列堆积。"""
+        """按目录合并清理任务；后台清理为尽力而为，本方法不向调用方抛出异常。"""
         with cls._trim_state_lock:
             if chat_dir in cls._pending_trim_dirs:
+                # 清理进行中，标记 dirty 以便完成后补跑一次，避免扫描后写入的文件漏清
+                cls._dirty_trim_dirs.add(chat_dir)
                 return
             cls._pending_trim_dirs.add(chat_dir)
         try:
@@ -96,17 +99,22 @@ class PromptPreviewLogger:
         except Exception:
             with cls._trim_state_lock:
                 cls._pending_trim_dirs.discard(chat_dir)
-            raise
+            logger.exception("Prompt 预览目录后台清理提交失败")
+            return
         trim_future.add_done_callback(lambda future: cls._finish_trim(chat_dir, future))
 
     @classmethod
     def _finish_trim(cls, chat_dir: Path, future: Future[None]) -> None:
         with cls._trim_state_lock:
             cls._pending_trim_dirs.discard(chat_dir)
+            resubmit = chat_dir in cls._dirty_trim_dirs
+            cls._dirty_trim_dirs.discard(chat_dir)
         try:
             future.result()
         except Exception as exc:
             logger.exception(f"Prompt 预览目录后台清理失败: {exc}")
+        if resubmit:
+            cls._submit_trim_overflow(chat_dir)
 
     @staticmethod
     def _group_sort_key(item: Tuple[str, List[Path]]) -> float:
