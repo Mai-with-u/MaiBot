@@ -31,6 +31,7 @@ class PromptPreviewLogger:
     _executor_lock = threading.Lock()
     _stem_lock = threading.Lock()
     _last_stem_by_chat_dir: Dict[Path, Tuple[str, int]] = {}
+    _STEM_CACHE_MAX_ENTRIES = 512
 
     @classmethod
     def _get_io_executor(cls) -> ThreadPoolExecutor:
@@ -44,6 +45,13 @@ class PromptPreviewLogger:
     def _build_file_stem(cls, chat_dir: Path) -> str:
         with cls._stem_lock:
             base_stem = str(int(time.time() * 1000))
+            if len(cls._last_stem_by_chat_dir) > cls._STEM_CACHE_MAX_ENTRIES:
+                # 条目仅在同一毫秒内有去重意义，超限时丢弃已过期的历史 chat_dir 状态
+                cls._last_stem_by_chat_dir = {
+                    cached_dir: cached_state
+                    for cached_dir, cached_state in cls._last_stem_by_chat_dir.items()
+                    if cached_state[0] == base_stem
+                }
             last_stem_base, last_stem_suffix = cls._last_stem_by_chat_dir.get(chat_dir, ("", 0))
             suffix_index = last_stem_suffix + 1 if base_stem == last_stem_base else 0
             while True:
@@ -67,9 +75,12 @@ class PromptPreviewLogger:
         chat_dir.mkdir(parents=True, exist_ok=True)
         stem = cls._build_file_stem(chat_dir)
         file_path = chat_dir / f"{stem}.json"
-        file_path.write_text(content, encoding="utf-8")
-        trim_future = cls._get_io_executor().submit(cls._trim_overflow, chat_dir)
-        trim_future.add_done_callback(cls._log_background_error)
+        try:
+            file_path.write_text(content, encoding="utf-8")
+        finally:
+            # 写入失败（如磁盘满）时更需要清理，保持与写入结果无关的清理提交
+            trim_future = cls._get_io_executor().submit(cls._trim_overflow, chat_dir)
+            trim_future.add_done_callback(cls._log_background_error)
         return file_path
 
     @staticmethod

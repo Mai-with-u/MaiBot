@@ -1101,11 +1101,12 @@ class EmojiManager:
         except Exception as exc:
             logger.error(f"[register_emoji] 标记表情包 VLM 处理状态失败: {exc}")
 
-    def check_emoji_file_integrity(self) -> None:
+    def _scan_emoji_file_integrity(self) -> list[MaiEmoji]:
         """
-        检查表情包文件和数据库注册记录的一致性。
+        检查表情包文件和数据库注册记录的一致性，返回当前可发送表情包列表。
 
-        该检查只维护数据库记录与内存可发送池，不主动删除 ``data/emoji`` 下的图片文件。
+        该检查只维护数据库记录，不主动删除 ``data/emoji`` 下的图片文件；
+        不修改内存缓存，因此可安全放入工作线程执行。
         """
         _ensure_directories()
         logger.info("[完整性检查] 开始检查表情包文件和注册记录一致性...")
@@ -1140,12 +1141,17 @@ class EmojiManager:
                     session.delete(record)
                     record_removal_count += 1
 
-        self.emojis = available_emojis
-        self._emoji_num = len(self.emojis)
         logger.info(
             f"[完整性检查] 表情包完整性检查完成，删除数据库记录 {record_removal_count} 条，"
-            f"当前可发送表情包 {self._emoji_num} 个"
+            f"当前可发送表情包 {len(available_emojis)} 个"
         )
+        return available_emojis
+
+    def check_emoji_file_integrity(self) -> None:
+        """检查表情包一致性并同步内存可发送池。"""
+        available_emojis = self._scan_emoji_file_integrity()
+        self.emojis = available_emojis
+        self._emoji_num = len(available_emojis)
 
     async def periodic_emoji_maintenance(self) -> None:
         """Run emoji maintenance tasks periodically."""
@@ -1197,9 +1203,11 @@ class EmojiManager:
                         logger.debug(f"[emoji_maintenance] Emoji not registered, keep file: {emoji_file.name}")
 
             try:
-                # 全表查询 + 逐条路径 realpath 在大库上可阻塞事件循环数十秒，移入线程执行；
-                # 方法内部自建 session，结束时对 self.emojis 的整体赋值是原子的。
-                await asyncio.to_thread(self.check_emoji_file_integrity)
+                # 全表查询 + 逐条路径 realpath 在大库上可阻塞事件循环数十秒，扫描移入线程执行；
+                # 内存缓存的赋值回到事件循环线程，与注册/删除等其他写入路径保持串行，避免跨线程覆盖。
+                available_emojis = await asyncio.to_thread(self._scan_emoji_file_integrity)
+                self.emojis = available_emojis
+                self._emoji_num = len(available_emojis)
             except Exception as e:
                 logger.error(f"[emoji_maintenance] Maintenance task failed: {e}")
 
