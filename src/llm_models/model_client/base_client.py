@@ -4,6 +4,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
 from weakref import WeakKeyDictionary
 
 import asyncio
+import threading
 
 from src.common.logger import get_logger
 from src.config.config import config_manager
@@ -245,6 +246,8 @@ class ClientRegistry:
             WeakKeyDictionary()
         )
         """事件循环对象 -> APIProvider.name -> BaseClient，用于 force_new 场景的按循环复用。"""
+        self._per_loop_client_cache_lock = threading.Lock()
+        """保护 _per_loop_client_cache：同步 Embedding 接口会在其他线程建独立事件循环并发进入。"""
         self._owner_client_types: Dict[str, Set[str]] = {}
         """插件 ID -> 该插件拥有的 client_type 集合。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
@@ -434,16 +437,17 @@ class ClientRegistry:
         for provider_name in stale_provider_names:
             self.client_instance_cache.pop(provider_name, None)
 
-        for loop, loop_cache in list(self._per_loop_client_cache.items()):
-            stale_provider_names = [
-                provider_name
-                for provider_name, client in loop_cache.items()
-                if client.api_provider.client_type == normalized_client_type
-            ]
-            for provider_name in stale_provider_names:
-                loop_cache.pop(provider_name, None)
-            if not loop_cache:
-                self._per_loop_client_cache.pop(loop, None)
+        with self._per_loop_client_cache_lock:
+            for loop, loop_cache in list(self._per_loop_client_cache.items()):
+                stale_provider_names = [
+                    provider_name
+                    for provider_name, client in loop_cache.items()
+                    if client.api_provider.client_type == normalized_client_type
+                ]
+                for provider_name in stale_provider_names:
+                    loop_cache.pop(provider_name, None)
+                if not loop_cache:
+                    self._per_loop_client_cache.pop(loop, None)
 
     def get_client_class_instance(self, api_provider: APIProvider, force_new: bool = False) -> BaseClient:
         """获取注册的 API 客户端实例。
@@ -471,13 +475,20 @@ class ClientRegistry:
                     return registration.factory(api_provider)
                 raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册") from None
 
-            loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
-            if api_provider.name not in loop_cache:
-                if registration := self.client_registry.get(api_provider.client_type):
-                    loop_cache[api_provider.name] = registration.factory(api_provider)
-                else:
-                    raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
-            return loop_cache[api_provider.name]
+            with self._per_loop_client_cache_lock:
+                loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
+                cached_client = loop_cache.get(api_provider.name)
+            if cached_client is not None:
+                return cached_client
+            registration = self.client_registry.get(api_provider.client_type)
+            if registration is None:
+                raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
+            # 构建放在锁外：Windows 上 SSL context 初始化可达数秒，不应串行化其他线程的缓存访问；
+            # 同一循环只跑在一个线程上，不会对同一 (loop, provider) 键并发构建。
+            new_client = registration.factory(api_provider)
+            with self._per_loop_client_cache_lock:
+                loop_cache = self._per_loop_client_cache.setdefault(running_loop, {})
+                return loop_cache.setdefault(api_provider.name, new_client)
 
         # 正常的缓存逻辑
         if api_provider.name not in self.client_instance_cache:
@@ -490,7 +501,8 @@ class ClientRegistry:
     def clear_client_instance_cache(self) -> None:
         """清空客户端实例缓存。"""
         self.client_instance_cache.clear()
-        self._per_loop_client_cache.clear()
+        with self._per_loop_client_cache_lock:
+            self._per_loop_client_cache.clear()
         logger.info("检测到配置重载，已清空LLM客户端实例缓存")
 
 

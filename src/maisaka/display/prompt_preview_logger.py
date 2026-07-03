@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import threading
 import time
@@ -32,6 +32,8 @@ class PromptPreviewLogger:
     _stem_lock = threading.Lock()
     _last_stem_by_chat_dir: Dict[Path, Tuple[str, int]] = {}
     _STEM_CACHE_MAX_ENTRIES = 512
+    _trim_state_lock = threading.Lock()
+    _pending_trim_dirs: Set[Path] = set()
 
     @classmethod
     def _get_io_executor(cls) -> ThreadPoolExecutor:
@@ -79,12 +81,28 @@ class PromptPreviewLogger:
             file_path.write_text(content, encoding="utf-8")
         finally:
             # 写入失败（如磁盘满）时更需要清理，保持与写入结果无关的清理提交
-            trim_future = cls._get_io_executor().submit(cls._trim_overflow, chat_dir)
-            trim_future.add_done_callback(cls._log_background_error)
+            cls._submit_trim_overflow(chat_dir)
         return file_path
 
-    @staticmethod
-    def _log_background_error(future: Future[None]) -> None:
+    @classmethod
+    def _submit_trim_overflow(cls, chat_dir: Path) -> None:
+        """按目录合并清理任务：同目录已有未完成清理时跳过，避免后台队列堆积。"""
+        with cls._trim_state_lock:
+            if chat_dir in cls._pending_trim_dirs:
+                return
+            cls._pending_trim_dirs.add(chat_dir)
+        try:
+            trim_future = cls._get_io_executor().submit(cls._trim_overflow, chat_dir)
+        except Exception:
+            with cls._trim_state_lock:
+                cls._pending_trim_dirs.discard(chat_dir)
+            raise
+        trim_future.add_done_callback(lambda future: cls._finish_trim(chat_dir, future))
+
+    @classmethod
+    def _finish_trim(cls, chat_dir: Path, future: Future[None]) -> None:
+        with cls._trim_state_lock:
+            cls._pending_trim_dirs.discard(chat_dir)
         try:
             future.result()
         except Exception as exc:
