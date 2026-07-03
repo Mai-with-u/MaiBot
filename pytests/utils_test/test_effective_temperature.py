@@ -40,6 +40,13 @@ def test_explicit_temperature_used_when_model_level_absent() -> None:
     assert orchestrator._resolve_effective_temperature(model_info, 0.1) == 0.1
 
 
+def test_explicit_temperature_overrides_extra_params_default() -> None:
+    orchestrator = _build_orchestrator()
+    model_info = _build_model_info(extra_params={"temperature": 0.5})
+
+    assert orchestrator._resolve_effective_temperature(model_info, 0.1) == 0.1
+
+
 def test_extra_params_temperature_used_as_model_default() -> None:
     orchestrator = _build_orchestrator()
     model_info = _build_model_info(extra_params={"temperature": 0.5})
