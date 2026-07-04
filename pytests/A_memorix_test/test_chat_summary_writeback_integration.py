@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, List
 import asyncio
 import inspect
 import json
-import pickle
 
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session, create_engine
@@ -376,16 +375,7 @@ async def test_text_to_stream_triggers_real_chat_summary_writeback(
         assert "好的，我会记住你最近买了绿色围巾。" in captured_prompts[-1]
         assert any("绿色围巾" in str(item.get("content", "") or "") for item in paragraphs)
         assert any(
-            int(
-                (
-                    pickle.loads(item.get("metadata"))
-                    if isinstance(item.get("metadata"), (bytes, bytearray))
-                    else item.get("metadata")
-                    or {}
-                ).get("trigger_message_count", 0)
-                or 0
-            )
-            == 2
+            int((item.get("metadata") or {}).get("trigger_message_count", 0) or 0) == 2
             for item in paragraphs
         )
         assert service.chat_summary_writeback._states["test-session"].last_trigger_message_count == 2

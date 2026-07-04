@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -177,12 +176,38 @@ def _collect_invalid_knowledge_types(conn: sqlite3.Connection) -> List[str]:
     return sorted(set(invalid))
 
 
+def _load_json_object(path: Path) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"JSON file must contain an object: {path}")
+    return payload
+
+
+def _graph_edge_hash_map_size(data_dir: Path) -> int:
+    db_path = data_dir / "metadata" / "metadata.db"
+    if db_path.exists():
+        conn = sqlite3.connect(str(db_path))
+        try:
+            if _sqlite_table_exists(conn, "graph_edge_relation_map"):
+                row = conn.execute("SELECT COUNT(*) FROM graph_edge_relation_map").fetchone()
+                return int(row[0] or 0) if row else 0
+        finally:
+            conn.close()
+
+    graph_meta_path = data_dir / "graph" / "graph_metadata.json"
+    if not graph_meta_path.exists():
+        return 0
+    graph_meta = _load_json_object(graph_meta_path)
+    edge_hash_map = graph_meta.get("edge_hash_map", {})
+    return len(edge_hash_map) if isinstance(edge_hash_map, dict) else 0
+
+
 def _guess_vector_dimension(config_doc: Dict[str, Any], vectors_dir: Path) -> int:
-    meta_path = vectors_dir / "vectors_metadata.pkl"
+    meta_path = vectors_dir / "vectors_metadata.json"
     if meta_path.exists():
         try:
-            with open(meta_path, "rb") as f:
-                meta = pickle.load(f)
+            meta = _load_json_object(meta_path)
             dim = int(meta.get("dimension", 0))
             if dim > 0:
                 return dim
@@ -415,7 +440,7 @@ def _preflight_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
             )
         )
 
-    graph_meta_path = data_dir / "graph" / "graph_metadata.pkl"
+    graph_meta_path = data_dir / "graph" / "graph_metadata.json"
     facts["graph_metadata_exists"] = graph_meta_path.exists()
     if relation_count > 0:
         if not graph_meta_path.exists():
@@ -428,10 +453,7 @@ def _preflight_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
             )
         else:
             try:
-                with open(graph_meta_path, "rb") as f:
-                    graph_meta = pickle.load(f)
-                edge_hash_map = graph_meta.get("edge_hash_map", {})
-                edge_hash_map_size = len(edge_hash_map) if isinstance(edge_hash_map, dict) else 0
+                edge_hash_map_size = _graph_edge_hash_map_size(data_dir)
                 facts["edge_hash_map_size"] = edge_hash_map_size
                 if edge_hash_map_size <= 0:
                     checks.append(
@@ -744,7 +766,7 @@ def _verify_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
 
         if relation_count > 0:
             graph_dir = data_dir / "graph"
-            if not (graph_dir / "graph_metadata.pkl").exists():
+            if not (graph_dir / "graph_metadata.json").exists():
                 checks.append(CheckItem("CP-06", "error", "graph metadata missing while relations exist"))
             else:
                 matrix_format = str(_get_nested(config_doc, ("graph", "sparse_matrix_format"), "csr") or "csr")

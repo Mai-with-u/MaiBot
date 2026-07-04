@@ -6,7 +6,6 @@ from typing import Any, Dict
 import asyncio
 import hashlib
 import json
-import pickle
 import numpy as np
 import pytest
 
@@ -1110,15 +1109,13 @@ async def test_plain_vector_store_save_preserves_existing_embedding_fingerprint(
         )
         kernel._save_vector_store(kernel.vector_store)
 
-        meta_path = data_dir / "vectors" / "vectors_metadata.pkl"
-        with open(meta_path, "rb") as handle:
-            first_meta = pickle.load(handle)
+        meta_path = data_dir / "vectors" / "vectors_metadata.json"
+        first_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         first_fingerprint = dict(first_meta["embedding_fingerprint"])
 
         kernel.vector_store.save()
 
-        with open(meta_path, "rb") as handle:
-            second_meta = pickle.load(handle)
+        second_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         assert second_meta["embedding_fingerprint"] == first_fingerprint
 
         config = await kernel.memory_runtime_admin(action="get_config")
@@ -1154,12 +1151,10 @@ async def test_runtime_auto_stamps_missing_embedding_fingerprint_when_dimension_
             ["missing-fingerprint"],
         )
         kernel.vector_store.save()
-        meta_path = data_dir / "vectors" / "vectors_metadata.pkl"
-        with open(meta_path, "rb") as handle:
-            meta = pickle.load(handle)
+        meta_path = data_dir / "vectors" / "vectors_metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         meta.pop("embedding_fingerprint", None)
-        with open(meta_path, "wb") as handle:
-            pickle.dump(meta, handle)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
         assert kernel._stored_vectors_compatible_with_current_embedding(kernel.vector_store) is True
 
@@ -1197,13 +1192,11 @@ async def test_runtime_does_not_auto_stamp_missing_embedding_fingerprint_when_di
             ["dimension-mismatch"],
         )
         kernel.vector_store.save()
-        meta_path = data_dir / "vectors" / "vectors_metadata.pkl"
-        with open(meta_path, "rb") as handle:
-            meta = pickle.load(handle)
+        meta_path = data_dir / "vectors" / "vectors_metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         meta.pop("embedding_fingerprint", None)
         meta["dimension"] = fake_embedding_manager.default_dimension + 1
-        with open(meta_path, "wb") as handle:
-            pickle.dump(meta, handle)
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
         assert kernel._stored_vectors_compatible_with_current_embedding(kernel.vector_store) is False
 
@@ -1445,6 +1438,7 @@ async def test_dual_migration_cleans_legacy_single_pool_files(
     assert kernel.graph_vector_store.has_data()
     assert not (data_dir / "vectors" / "vectors.bin").exists()
     assert not (data_dir / "vectors" / "vectors_ids.bin").exists()
+    assert not (data_dir / "vectors" / "vectors_metadata.json").exists()
     assert not (data_dir / "vectors" / "vectors_metadata.pkl").exists()
     assert (data_dir / "vectors" / "dual_ready.json").exists()
 

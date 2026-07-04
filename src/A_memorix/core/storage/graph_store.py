@@ -4,7 +4,8 @@
 基于SciPy稀疏矩阵的知识图谱存储与计算。
 """
 
-import pickle
+import json
+import sqlite3
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Union, Tuple, List, Dict, Set, Any
@@ -44,8 +45,23 @@ import contextlib
 from src.common.logger import get_logger
 from ..utils.hash import compute_hash
 from ..utils.io import atomic_write
+from .format_migration import ensure_graph_edge_map_table
 
 logger = get_logger("A_Memorix.GraphStore")
+
+
+def _read_json_object(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"JSON 元数据必须是对象: {path}")
+    return payload
+
+
+def _write_json_object(path: Path, payload: Dict[str, Any]) -> None:
+    with atomic_write(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
 
 
 class GraphModificationMode(Enum):
@@ -120,6 +136,63 @@ class GraphStore:
         self._lock = asyncio.Lock()
 
         logger.debug(f"图存储初始化: format={matrix_format}")
+
+    def _edge_map_db_path(self, data_dir: Path) -> Path:
+        return data_dir.parent / "metadata" / "metadata.db"
+
+    def _serialize_edge_hash_map(self) -> Dict[str, List[str]]:
+        return {
+            f"{int(src_idx)},{int(dst_idx)}": sorted(str(item) for item in hashes if str(item or "").strip())
+            for (src_idx, dst_idx), hashes in self._edge_hash_map.items()
+        }
+
+    def _save_edge_hash_map(self, data_dir: Path) -> bool:
+        db_path = self._edge_map_db_path(data_dir)
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        try:
+            ensure_graph_edge_map_table(conn)
+            conn.execute("DELETE FROM graph_edge_relation_map")
+            rows = [
+                (int(src_idx), int(dst_idx), str(relation_hash))
+                for (src_idx, dst_idx), hashes in self._edge_hash_map.items()
+                for relation_hash in hashes
+                if str(relation_hash or "").strip()
+            ]
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO graph_edge_relation_map (src_idx, dst_idx, relation_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _load_edge_hash_map(self, data_dir: Path) -> Dict[Tuple[int, int], Set[str]]:
+        db_path = self._edge_map_db_path(data_dir)
+        edge_hash_map: Dict[Tuple[int, int], Set[str]] = defaultdict(set)
+        if not db_path.exists():
+            return edge_hash_map
+        conn = sqlite3.connect(str(db_path))
+        try:
+            ensure_graph_edge_map_table(conn)
+            for src_idx, dst_idx, relation_hash in conn.execute(
+                "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
+            ).fetchall():
+                token = str(relation_hash or "").strip()
+                if token:
+                    edge_hash_map[(int(src_idx), int(dst_idx))].add(token)
+        finally:
+            conn.close()
+        return edge_hash_map
 
     def _canonicalize(self, node: str) -> str:
         """规范化节点名称 (用于去重和内部索引)"""
@@ -1209,12 +1282,13 @@ class GraphStore:
             "total_edges_added": self._total_edges_added,
             "total_nodes_deleted": self._total_nodes_deleted,
             "total_edges_deleted": self._total_edges_deleted,
-            "edge_hash_map": dict(self._edge_hash_map), # 持久化 V5 映射 (将 defaultdict 转换为普通 dict)
+            "schema_version": 1,
         }
+        if not self._save_edge_hash_map(data_dir):
+            metadata["edge_hash_map"] = self._serialize_edge_hash_map()
 
-        metadata_path = data_dir / "graph_metadata.pkl"
-        with atomic_write(metadata_path, "wb") as f:
-            pickle.dump(metadata, f)
+        metadata_path = data_dir / "graph_metadata.json"
+        _write_json_object(metadata_path, metadata)
         logger.debug(f"保存元数据: {metadata_path}")
 
         logger.info(f"图存储已保存到: {data_dir}")
@@ -1237,12 +1311,11 @@ class GraphStore:
             raise FileNotFoundError(f"数据目录不存在: {data_dir}")
 
         # 加载元数据
-        metadata_path = data_dir / "graph_metadata.pkl"
+        metadata_path = data_dir / "graph_metadata.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"元数据文件不存在: {metadata_path}")
 
-        with open(metadata_path, "rb") as f:
-            metadata = pickle.load(f)
+        metadata = _read_json_object(metadata_path)
 
         # 恢复状态，并通过规范化处理旧数据中的重复项
         self._nodes = metadata["nodes"]
@@ -1267,12 +1340,18 @@ class GraphStore:
         self._total_edges_deleted = metadata["total_edges_deleted"]
         
         # 恢复 V5 边哈希映射 (Restore V5 edge hash map)
+        self._edge_hash_map = defaultdict(set, self._load_edge_hash_map(data_dir))
         edge_map_data = metadata.get("edge_hash_map", {})
-        # 重新初始化为 defaultdict(set)
-        self._edge_hash_map = defaultdict(set)
-        if edge_map_data:
+        if not self._edge_hash_map and isinstance(edge_map_data, dict):
             for k, v in edge_map_data.items():
-                self._edge_hash_map[k] = set(v) # 确保类型为 set
+                if isinstance(k, (list, tuple)) and len(k) == 2:
+                    key = (int(k[0]), int(k[1]))
+                elif isinstance(k, str) and "," in k:
+                    left, right = k.strip("()").split(",", 1)
+                    key = (int(left.strip()), int(right.strip()))
+                else:
+                    continue
+                self._edge_hash_map[key] = set(v if isinstance(v, (list, tuple, set)) else [v])
 
         # 加载邻接矩阵
         matrix_path = data_dir / "graph_adjacency.npz"
@@ -1429,7 +1508,7 @@ class GraphStore:
         """检查磁盘上是否存在现有数据"""
         if self.data_dir is None:
             return False
-        return (self.data_dir / "graph_metadata.pkl").exists()
+        return (self.data_dir / "graph_metadata.json").exists()
 
     def __repr__(self) -> str:
         return (

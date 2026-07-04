@@ -4,9 +4,9 @@
 基于Faiss的高效向量存储与检索，支持SQ8量化、Append-Only磁盘存储和内存映射。
 """
 
-import os
-import pickle
 import hashlib
+import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -27,6 +27,20 @@ from ..utils.quantization import QuantizationType
 from ..utils.io import atomic_write, atomic_save_path
 
 logger = get_logger("A_Memorix.VectorStore")
+
+
+def _read_json_object(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"JSON 元数据必须是对象: {path}")
+    return payload
+
+
+def _write_json_object(path: Path, payload: Dict[str, Any]) -> None:
+    with atomic_write(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
 
 
 class VectorStore:
@@ -736,11 +750,10 @@ class VectorStore:
             self._flush_write_buffer_unlocked()
 
             previous_embedding_fingerprint: Optional[Dict[str, Any]] = None
-            meta_path = data_dir / "vectors_metadata.pkl"
+            meta_path = data_dir / "vectors_metadata.json"
             if embedding_fingerprint is None and meta_path.exists():
                 try:
-                    with open(meta_path, "rb") as f:
-                        previous_meta = pickle.load(f)
+                    previous_meta = _read_json_object(meta_path)
                 except Exception as exc:
                     logger.warning(f"读取旧向量元数据失败，跳过 embedding 指纹继承: {exc}")
                 else:
@@ -761,14 +774,14 @@ class VectorStore:
                 "vector_norm": self._vector_norm,
                 "deleted_ids": list(self._deleted_ids),
                 "known_hashes": list(self._known_hashes),
+                "schema_version": 1,
             }
             if isinstance(embedding_fingerprint, dict) and embedding_fingerprint:
                 meta["embedding_fingerprint"] = dict(embedding_fingerprint)
             elif previous_embedding_fingerprint is not None:
                 meta["embedding_fingerprint"] = previous_embedding_fingerprint
 
-            with atomic_write(meta_path, "wb") as f:
-                pickle.dump(meta, f)
+            _write_json_object(meta_path, meta)
 
             logger.debug("VectorStore saved.")
 
@@ -785,12 +798,12 @@ class VectorStore:
             idx_path = target_dir / "vectors.index"
             bin_path = target_dir / "vectors.bin"
             ids_bin_path = target_dir / "vectors_ids.bin"
-            meta_path = target_dir / "vectors_metadata.pkl"
+            meta_path = target_dir / "vectors_metadata.json"
 
             if not npy_path.exists():
                 return {"migrated": False, "reason": "npy_missing"}
             if not meta_path.exists():
-                raise RuntimeError("legacy vectors.npy migration requires vectors_metadata.pkl")
+                raise RuntimeError("legacy vectors.npy migration requires vectors_metadata.json")
             if bin_path.exists() and ids_bin_path.exists():
                 return {"migrated": False, "reason": "bin_exists"}
 
@@ -823,13 +836,12 @@ class VectorStore:
                     " 请先执行 scripts/release_vnext_migrate.py migrate。"
                 )
 
-            meta_path = data_dir / "vectors_metadata.pkl"
+            meta_path = data_dir / "vectors_metadata.json"
             if not meta_path.exists():
                 logger.warning("No metadata found, initialized empty.")
                 return
 
-            with open(meta_path, "rb") as f:
-                meta = pickle.load(f)
+            meta = _read_json_object(meta_path)
 
             if meta.get("vector_norm") != "l2":
                 logger.warning("Index IDMap2 version mismatch (L2 Norm), forcing rebuild...")
@@ -874,12 +886,11 @@ class VectorStore:
         except Exception:
             arr = np.load(npy_path)
 
-        meta_path = data_dir / "vectors_metadata.pkl"
+        meta_path = data_dir / "vectors_metadata.json"
         old_ids = []
         if meta_path.exists():
-            with open(meta_path, "rb") as f:
-                m = pickle.load(f)
-                old_ids = m.get("ids", [])
+            m = _read_json_object(meta_path)
+            old_ids = m.get("ids", [])
 
         if len(arr) != len(old_ids):
             logger.error(f"Migration mismatch: arr {len(arr)} != ids {len(old_ids)}")
@@ -913,7 +924,7 @@ class VectorStore:
             logger.info("VectorStore cleared.")
 
     def has_data(self) -> bool:
-        return (self.data_dir / "vectors_metadata.pkl").exists()
+        return (self.data_dir / "vectors_metadata.json").exists()
 
     @property
     def num_vectors(self) -> int:

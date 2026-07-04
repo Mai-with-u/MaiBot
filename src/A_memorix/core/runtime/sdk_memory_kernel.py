@@ -10,7 +10,6 @@ import asyncio
 import copy
 import json
 import numpy as np
-import pickle
 import shutil
 import time
 
@@ -25,6 +24,7 @@ from ...paths import default_data_dir, resolve_repo_path
 from ..embedding import create_embedding_api_adapter
 from ..retrieval import RetrievalResult, SparseBM25Config, SparseBM25Index
 from ..storage import GraphStore, MetadataStore, QuantizationType, SparseMatrixFormat, VectorStore
+from ..storage.format_migration import run_startup_format_migration
 from ..utils.aggregate_query_service import AggregateQueryService
 from ..utils.episode_retrieval_service import EpisodeRetrievalService
 from ..utils.episode_segmentation_service import EpisodeSegmentationService
@@ -466,12 +466,12 @@ class SDKMemoryKernel:
             if manifest_dimension > 0:
                 return manifest_dimension
         vector_dir = Path(store.data_dir) if store is not None and store.data_dir is not None else self._vectors_root()
-        meta_path = vector_dir / "vectors_metadata.pkl"
+        meta_path = vector_dir / "vectors_metadata.json"
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "rb") as handle:
-                meta = pickle.load(handle)
+            with open(meta_path, "r", encoding="utf-8") as handle:
+                meta = json.load(handle)
         except Exception as exc:
             logger.warning(f"读取向量元数据失败，将回退到 runtime self-check: {exc}")
             return None
@@ -536,12 +536,12 @@ class SDKMemoryKernel:
                 return manifest_fingerprint
 
         vector_dir = Path(store.data_dir) if store is not None and store.data_dir is not None else self._vectors_root()
-        meta_path = vector_dir / "vectors_metadata.pkl"
+        meta_path = vector_dir / "vectors_metadata.json"
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "rb") as handle:
-                meta = pickle.load(handle)
+            with open(meta_path, "r", encoding="utf-8") as handle:
+                meta = json.load(handle)
         except Exception as exc:
             logger.warning(f"读取向量指纹元数据失败: {exc}")
             return None
@@ -791,7 +791,13 @@ class SDKMemoryKernel:
 
     def _clear_legacy_single_vector_files_after_dual_ready(self) -> None:
         root = self._vectors_root()
-        for filename in ("vectors.bin", "vectors_ids.bin", "vectors.index", "vectors_metadata.pkl"):
+        for filename in (
+            "vectors.bin",
+            "vectors_ids.bin",
+            "vectors.index",
+            "vectors_metadata.json",
+            "vectors_metadata.pkl",
+        ):
             try:
                 (root / filename).unlink(missing_ok=True)
             except Exception as exc:
@@ -2199,6 +2205,7 @@ class SDKMemoryKernel:
             return
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        run_startup_format_migration(self.data_dir)
         self.embedding_manager = create_embedding_api_adapter(
             batch_size=int(self._cfg("embedding.batch_size", 32)),
             max_concurrent=int(self._cfg("embedding.max_concurrent", 5)),

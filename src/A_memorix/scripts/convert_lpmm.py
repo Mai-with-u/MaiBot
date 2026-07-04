@@ -34,6 +34,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="跳过按关系元数据重建关系向量（默认开启）",
     )
+    parser.add_argument(
+        "--allow-unsafe-pickle",
+        action="store_true",
+        help="允许读取 LPMM graph_structure.pkl。该格式会反序列化 pickle，只应在信任输入来源时开启。",
+    )
     return parser
 
 
@@ -81,12 +86,14 @@ class LPMMConverter:
         dimension: int = 384,
         batch_size: int = 1024,
         rebuild_relation_vectors: bool = True,
+        allow_unsafe_pickle: bool = False,
     ):
         self.lpmm_dir = lpmm_data_dir
         self.output_dir = output_dir
         self.dimension = dimension
         self.batch_size = max(1, int(batch_size))
         self.rebuild_relation_vectors = bool(rebuild_relation_vectors)
+        self.allow_unsafe_pickle = bool(allow_unsafe_pickle)
         
         self.vector_dir = output_dir / "vectors"
         self.graph_dir = output_dir / "graph"
@@ -442,6 +449,12 @@ class LPMMConverter:
                     if g_path.suffix == ".graphml":
                         nx_graph = nx.read_graphml(g_path)
                     elif g_path.suffix == ".pkl":
+                        if not self.allow_unsafe_pickle:
+                            logger.warning(
+                                f"跳过不安全的 pickle 图文件: {g_path}。"
+                                " 如确认来源可信，可添加 --allow-unsafe-pickle。"
+                            )
+                            continue
                         with open(g_path, "rb") as f:
                             data = pickle.load(f)
                             # LPMM 可能会将图存储在包装类中
@@ -524,6 +537,7 @@ def main():
         dimension=args.dim,
         batch_size=args.batch_size,
         rebuild_relation_vectors=not bool(args.skip_relation_vector_rebuild),
+        allow_unsafe_pickle=bool(args.allow_unsafe_pickle),
     )
     converter.run()
 

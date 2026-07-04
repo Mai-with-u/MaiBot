@@ -5,7 +5,6 @@
 """
 
 import json
-import pickle
 import re
 import sqlite3
 import time
@@ -2464,7 +2463,7 @@ class MetadataStore:
                 vector_index,
                 now,
                 now,
-                pickle.dumps(metadata or {}),
+                self._encode_metadata(metadata),
                 source,
                 word_count,
                 normalized_time.get("event_time"),
@@ -2564,7 +2563,7 @@ class MetadataStore:
                 name,
                 vector_index,
                 now,
-                pickle.dumps(metadata or {}),
+                self._encode_metadata(metadata),
             ))
             
             logger.debug(f"添加实体: {name} ({hash_value[:8]})")
@@ -2645,7 +2644,7 @@ class MetadataStore:
                 confidence,
                 now,
                 source_paragraph, # 这里的 source_paragraph 仅作为 "首次发现地" 记录，也可留空
-                pickle.dumps(metadata or {}),
+                self._encode_metadata(metadata),
             ))
             self._conn.commit()
             
@@ -3020,7 +3019,7 @@ class MetadataStore:
             SET metadata = ?
             WHERE hash = ?
             """,
-            (pickle.dumps(updated), hash_token),
+            (self._encode_metadata(updated), hash_token),
         )
         self._conn.commit()
         return updated
@@ -3297,7 +3296,7 @@ class MetadataStore:
     def get_all_triples(self) -> List[Tuple[str, str, str, str]]:
         """
         高效获取所有三元组 (subject, predicate, object, hash)
-        直接返回元组，跳过字典转换和pickle反序列化，用于构建 V5 Map 缓存。
+        直接返回元组，跳过字典转换和 metadata 解码，用于构建 V5 Map 缓存。
         """
         cursor = self._conn.cursor()
         cursor.execute("SELECT subject, predicate, object, hash FROM relations")
@@ -3840,7 +3839,7 @@ class MetadataStore:
 
     @staticmethod
     def _json_loads(value: Any, default: Any) -> Any:
-        if value in {None, ""}:
+        if value is None or value == "":
             return default
         try:
             return json.loads(value)
@@ -3848,12 +3847,26 @@ class MetadataStore:
             return default
 
     @staticmethod
+    def _encode_metadata(value: Optional[Dict[str, Any]]) -> str:
+        if value is None:
+            return "{}"
+        if not isinstance(value, dict):
+            raise TypeError("metadata 必须是 dict")
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
     def _decode_metadata(value: Any) -> Dict[str, Any]:
-        if value in {None, ""}:
-            return {}
         if isinstance(value, dict):
             return dict(value)
-        decoded = pickle.loads(value)
+        if value is None:
+            return {}
+        if isinstance(value, bytes):
+            if not value:
+                return {}
+            value = value.decode("utf-8")
+        if value == "":
+            return {}
+        decoded = json.loads(value)
         if not isinstance(decoded, dict):
             raise TypeError("metadata 字段必须解码为 dict")
         return decoded
@@ -3944,7 +3957,7 @@ class MetadataStore:
             SET metadata = ?, updated_at = ?
             WHERE hash = ?
             """,
-            (pickle.dumps(updated), datetime.now().timestamp(), paragraph_hash),
+            (self._encode_metadata(updated), datetime.now().timestamp(), paragraph_hash),
         )
         self._conn.commit()
         self._enqueue_episode_source_rebuilds(
@@ -4391,7 +4404,7 @@ class MetadataStore:
             SET metadata = ?, updated_at = ?
             WHERE hash = ?
             """,
-            (pickle.dumps(updated), datetime.now().timestamp(), hash_token),
+            (self._encode_metadata(updated), datetime.now().timestamp(), hash_token),
         )
         self._conn.commit()
         self._enqueue_episode_source_rebuilds(
@@ -5382,7 +5395,7 @@ class MetadataStore:
              # 是否需要解码元数据？是的，与普通行相同
              if "metadata" in d and d["metadata"]:
                  try:
-                     d["metadata"] = pickle.loads(d["metadata"])
+                     d["metadata"] = self._decode_metadata(d["metadata"])
                  except Exception:
                      d["metadata"] = {}
              data.append(d)
@@ -5398,7 +5411,7 @@ class MetadataStore:
         d = dict(row)
         if "metadata" in d and d["metadata"]:
              try:
-                 d["metadata"] = pickle.loads(d["metadata"])
+                 d["metadata"] = self._decode_metadata(d["metadata"])
              except Exception:
                  d["metadata"] = {}
         return d
@@ -5499,10 +5512,10 @@ class MetadataStore:
         """
         d = dict(row)
 
-        # 解码pickle字段
+        # 解码 JSON metadata 字段
         if "metadata" in d and d["metadata"]:
             try:
-                d["metadata"] = pickle.loads(d["metadata"])
+                d["metadata"] = self._decode_metadata(d["metadata"])
             except Exception:
                 d["metadata"] = {}
 
