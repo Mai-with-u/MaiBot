@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import List
 
 import re
 
@@ -19,7 +19,7 @@ class FactualStrategy(BaseStrategy):
         current_len = 0
         target_size = self.target_size
         
-        for i, line in enumerate(lines):
+        for line in lines:
             # 判断是否应当切分
             # 若当前行为列表项/定义/表格行，则尽量不切分
             is_structure = self._is_structural_line(line)
@@ -44,7 +44,8 @@ class FactualStrategy(BaseStrategy):
 
     def _is_structural_line(self, line: str) -> bool:
         line = line.strip()
-        if not line: return False
+        if not line:
+            return False
         # 列表项
         if re.match(r'^[\-\*]\s+', line) or re.match(r'^\d+\.\s+', line):
             return True

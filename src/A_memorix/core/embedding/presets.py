@@ -2,9 +2,9 @@
 嵌入模型配置模块
 """
 
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, Union
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional, Union
 
 
 @dataclass

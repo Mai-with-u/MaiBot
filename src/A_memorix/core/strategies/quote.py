@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List
 from .base import BaseStrategy, ProcessedChunk, KnowledgeType, SourceInfo, ChunkContext, ChunkFlags
 
 class QuoteStrategy(BaseStrategy):

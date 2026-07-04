@@ -16,7 +16,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import tomlkit
 
@@ -67,7 +67,7 @@ try:
     )
 except Exception as e:  # pragma: no cover
     print(f"❌ failed to import storage modules: {e}")
-    raise SystemExit(2)
+    raise SystemExit(2) from e
 
 
 @dataclass

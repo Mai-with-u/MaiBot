@@ -56,7 +56,7 @@ class ThresholdConfig:
             raise ValueError(f"max_threshold必须在[0, 1]之间: {self.max_threshold}")
 
         if self.min_threshold >= self.max_threshold:
-            raise ValueError(f"min_threshold必须小于max_threshold")
+            raise ValueError("min_threshold必须小于max_threshold")
 
         if not 0 <= self.percentile <= 100:
             raise ValueError(f"percentile必须在[0, 100]之间: {self.percentile}")

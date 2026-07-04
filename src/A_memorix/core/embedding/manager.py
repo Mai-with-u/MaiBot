@@ -19,13 +19,7 @@ except ImportError:
     HAS_SENTENCE_TRANSFORMERS = False
 
 from src.common.logger import get_logger
-from .presets import (
-    EmbeddingModelConfig,
-    get_custom_config,
-    validate_config_compatibility,
-    are_models_compatible,
-)
-from ..utils.quantization import QuantizationType
+from .presets import EmbeddingModelConfig, get_custom_config
 
 logger = get_logger("A_Memorix.EmbeddingManager")
 
@@ -299,12 +293,12 @@ class EmbeddingManager:
 
             # 更新缓存
             with self._cache_lock:
-                for text, embedding in zip(uncached_texts, new_embeddings):
+                for text, embedding in zip(uncached_texts, new_embeddings, strict=True):
                     cache_key = self._get_cache_key(text)
                     self._embedding_cache[cache_key] = embedding.copy()
 
             # 合并结果
-            for idx, embedding in zip(uncached_indices, new_embeddings):
+            for idx, embedding in zip(uncached_indices, new_embeddings, strict=True):
                 cached_embeddings.append((idx, embedding))
 
         # 按原始顺序排序

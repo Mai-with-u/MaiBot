@@ -4,16 +4,21 @@
 基于SciPy稀疏矩阵的知识图谱存储与计算。
 """
 
-import json
-import sqlite3
+from collections import defaultdict
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Union, Tuple, List, Dict, Set, Any
-from collections import defaultdict
-import threading
 import asyncio
+import contextlib
+import json
+import sqlite3
 
 import numpy as np
+
+from src.common.logger import get_logger
+
+from ..utils.io import atomic_write
+from .format_migration import ensure_graph_edge_map_table
 
 class SparseMatrixFormat(Enum):
     """稀疏矩阵格式"""
@@ -40,12 +45,6 @@ except ImportError:
     bmat = _scipy_missing
     norm = _scipy_missing
     HAS_SCIPY = False
-
-import contextlib
-from src.common.logger import get_logger
-from ..utils.hash import compute_hash
-from ..utils.io import atomic_write
-from .format_migration import ensure_graph_edge_map_table
 
 logger = get_logger("A_Memorix.GraphStore")
 
@@ -352,7 +351,7 @@ class GraphStore:
                  
                  # V5: Update edge hash map
                  if relation_hashes:
-                     for (src, tgt), r_hash in zip(edges, relation_hashes):
+                     for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
                          if r_hash:
                              s_idx = self._node_to_idx[self._canonicalize(src)]
                              t_idx = self._node_to_idx[self._canonicalize(tgt)]
@@ -370,7 +369,7 @@ class GraphStore:
         col_indices = []
         data_values = []
 
-        for (src, tgt), weight in zip(edges, weights):
+        for (src, tgt), weight in zip(edges, weights, strict=True):
             src_idx = self._node_to_idx[self._canonicalize(src)]
             tgt_idx = self._node_to_idx[self._canonicalize(tgt)]
 
@@ -402,7 +401,7 @@ class GraphStore:
         
         # V5: 更新边哈希映射 (Edge Hash Map)
         if relation_hashes:
-            for (src, tgt), r_hash in zip(edges, relation_hashes):
+            for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
                 if r_hash:
                     try:
                         s_idx = self._node_to_idx[self._canonicalize(src)]
@@ -498,7 +497,7 @@ class GraphStore:
 
         # 删除并重构节点属性
         new_node_attrs = {}
-        for idx, node_name in enumerate(self._nodes):
+        for node_name in self._nodes:
             canon = self._canonicalize(node_name)
             if canon in self._node_attrs:
                 new_node_attrs[canon] = self._node_attrs[canon]
@@ -584,7 +583,7 @@ class GraphStore:
             new_col = []
             new_data = []
 
-            for i, j, val in zip(adj_coo.row, adj_coo.col, adj_coo.data):
+            for i, j, val in zip(adj_coo.row, adj_coo.col, adj_coo.data, strict=True):
                 if (i, j) not in edges_to_delete:
                     new_row.append(i)
                     new_col.append(j)
@@ -1193,8 +1192,6 @@ class GraphStore:
             # 如果全空，则所有节点都是孤儿
             return self._nodes.copy()
             
-        n = len(self._nodes)
-        
         # 计算 Active Degree (In + Out)
         # 用 sum(axis) 会得到 dense matrix/array
         active_adj = self._adjacency
@@ -1469,7 +1466,7 @@ class GraphStore:
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
              try:
                  self._adjacency = self._adjacency.tolil()
-             except:
+             except Exception:
                  pass
 
     @property
@@ -1529,8 +1526,9 @@ class GraphStore:
         count = 0
         self._edge_hash_map = defaultdict(set)
         
-        for s, p, o, h in triples:
-            if not h: continue
+        for s, _predicate, o, h in triples:
+            if not h:
+                continue
             
             s_canon = self._canonicalize(s)
             o_canon = self._canonicalize(o)

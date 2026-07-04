@@ -3503,7 +3503,7 @@ class ImportTaskManager:
         imported_sources = getattr(file_record, "imported_sources", None)
         if imported_sources is None:
             imported_sources = []
-            setattr(file_record, "imported_sources", imported_sources)
+            file_record.imported_sources = imported_sources
         if source_text not in imported_sources:
             imported_sources.append(source_text)
 

@@ -5,7 +5,6 @@ IO Utilities
 """
 
 import os
-import shutil
 import contextlib
 from pathlib import Path
 from typing import Union
@@ -45,14 +44,14 @@ def atomic_write(file_path: Union[str, Path], mode: str = "w", encoding: str = N
         # 注意: Windows 上如果有其他进程占用文件，os.replace 可能会失败
         os.replace(tmp_path, path)
         
-    except Exception as e:
+    except Exception:
         # 清理临时文件
         if tmp_path.exists():
             try:
                 os.remove(tmp_path)
-            except:
+            except OSError:
                 pass
-        raise e
+        raise
 
 @contextlib.contextmanager
 def atomic_save_path(file_path: Union[str, Path]):
@@ -75,10 +74,10 @@ def atomic_save_path(file_path: Union[str, Path]):
         if Path(tmp_path).exists():
             os.replace(tmp_path, path)
             
-    except Exception as e:
+    except Exception:
         if Path(tmp_path).exists():
             try:
                 os.remove(tmp_path)
-            except:
+            except OSError:
                 pass
-        raise e
+        raise

@@ -5406,7 +5406,8 @@ class MetadataStore:
         cursor = self._conn.cursor()
         cursor.execute("SELECT * FROM deleted_relations WHERE hash = ?", (hash_value,))
         row = cursor.fetchone()
-        if not row: return None
+        if not row:
+            return None
         
         d = dict(row)
         if "metadata" in d and d["metadata"]:
@@ -5418,7 +5419,8 @@ class MetadataStore:
 
     def reinforce_relations(self, hashes: List[str]) -> None:
         """强化关系 (更新 last_reinforced, is_inactive=0)"""
-        if not hashes: return
+        if not hashes:
+            return
         now = datetime.now().timestamp()
         
         cursor = self._conn.cursor()
@@ -5465,7 +5467,8 @@ class MetadataStore:
         """
         设置保护状态
         """
-        if not hashes: return
+        if not hashes:
+            return
         now = datetime.now().timestamp()
         protected_until = (now + ttl_seconds) if ttl_seconds > 0 else 0
         
@@ -5741,7 +5744,8 @@ class MetadataStore:
 
     def physically_delete_entities(self, hashes: List[str]) -> int:
         """物理删除实体 (批量)"""
-        if not hashes: return 0
+        if not hashes:
+            return 0
         
         count = 0
         batch_size = 900
@@ -5758,7 +5762,8 @@ class MetadataStore:
 
     def physically_delete_paragraphs(self, hashes: List[str]) -> int:
         """物理删除段落 (批量)"""
-        if not hashes: return 0
+        if not hashes:
+            return 0
         touched_sources = self._get_sources_for_paragraph_hashes(hashes, include_deleted=True)
         active_delete_count = 0
         batch_size = 900
@@ -5868,7 +5873,8 @@ class MetadataStore:
         """
         根据名称复活实体 (Convenience wrapper)
         """
-        if not names: return 0
+        if not names:
+            return 0
         
         # 使用内部方法计算哈希
         hashes = [compute_hash(self._canonicalize_name(n)) for n in names]
@@ -5876,7 +5882,8 @@ class MetadataStore:
 
     def get_entity_status_batch(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
         """批量获取实体状态 (WebUI用)"""
-        if not hashes: return {}
+        if not hashes:
+            return {}
         
         result = {}
         batch_size = 900
@@ -8526,7 +8533,8 @@ class MetadataStore:
 
     def get_deleted_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取已软删除的实体 (回收站用)"""
-        if not self.has_table("entities"): return []
+        if not self.has_table("entities"):
+            return []
         
         cursor = self._conn.cursor()
         cursor.execute("""

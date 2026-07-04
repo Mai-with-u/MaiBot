@@ -6,7 +6,6 @@
 
 import hashlib
 import json
-import os
 import shutil
 import time
 from pathlib import Path
@@ -205,7 +204,7 @@ class VectorStore:
                 self._update_reservoir(batch_vecs)
                 # 这里的 TRAIN_SIZE 取默认 10k，或者根据当前数据量动态判断
                 if len(self._reservoir_buffer) >= 10000:
-                    logger.info(f"训练样本达到上限，开始训练...")
+                    logger.info("训练样本达到上限，开始训练...")
                     self._train_and_replay_unlocked()
 
             self._total_added += len(batch_ids)
@@ -279,7 +278,10 @@ class VectorStore:
             replay_count = self._replay_vectors_to_index()
             # 只有当 replay 成功且数据量一致时，才释放回退索引
             if self._index.ntotal >= self._bin_count:
-                logger.info(f"Replay successful ({self._index.ntotal}/{self._bin_count}). Releasing fallback index.")
+                logger.info(
+                    f"Replay successful ({replay_count}/{self._bin_count}). "
+                    "Releasing fallback index."
+                )
                 self._fallback_index.reset()
             else:
                 logger.warning(f"Replay count mismatch: {self._index.ntotal} vs {self._bin_count}. Keeping fallback index.")
@@ -295,6 +297,7 @@ class VectorStore:
         id_item_size = 8
         chunk_size = 10000
 
+        replay_count = 0
         with open(self._bin_path, "rb") as f_vec, open(self._ids_bin_path, "rb") as f_id:
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
@@ -316,6 +319,9 @@ class VectorStore:
 
                 if len(batch_ids) > 0:
                     self._index.add_with_ids(batch_fp32, batch_ids)
+                    replay_count += len(batch_ids)
+
+        return replay_count
 
     def search(
         self,
@@ -364,8 +370,9 @@ class VectorStore:
         ids = ids[0]
 
         results = []
-        for id_val, score in zip(ids, dists):
-            if id_val == -1: continue
+        for id_val, score in zip(ids, dists, strict=True):
+            if id_val == -1:
+                continue
             if filter_deleted and id_val in self._deleted_ids:
                 continue
 
@@ -602,7 +609,8 @@ class VectorStore:
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
                 id_data = f_id.read(chunk_size * id_item_size)
-                if not vec_data: break
+                if not vec_data:
+                    break
 
                 batch_fp16 = np.frombuffer(vec_data, dtype=np.float16).reshape(-1, self.dimension)
                 batch_fp32 = batch_fp16.astype(np.float32)
@@ -629,7 +637,8 @@ class VectorStore:
         with open(self._bin_path, "rb") as f:
             while len(self._reservoir_buffer) < self.TRAIN_SIZE:
                 data = f.read(chunk_size * vec_item_size)
-                if not data: break
+                if not data:
+                    break
                 fp16 = np.frombuffer(data, dtype=np.float16).reshape(-1, self.dimension)
                 fp32 = fp16.astype(np.float32)
                 faiss.normalize_L2(fp32)
@@ -664,7 +673,8 @@ class VectorStore:
 
     def _check_rebuild_needed(self):
         """GC Excution Check"""
-        if self._bin_count == 0: return
+        if self._bin_count == 0:
+            return
         ratio = len(self._deleted_ids) / self._bin_count
         if ratio > 0.3 and len(self._deleted_ids) > 1000:
             logger.info(f"Triggering GC/Rebuild (deleted ratio: {ratio:.2f})")
@@ -694,7 +704,8 @@ class VectorStore:
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
                 id_data = f_id.read(chunk_size * id_item_size)
-                if not vec_data: break
+                if not vec_data:
+                    break
 
                 batch_fp16 = np.frombuffer(vec_data, dtype=np.float16).reshape(-1, self.dimension)
                 batch_ids = np.frombuffer(id_data, dtype='>i8').astype(np.int64)
@@ -714,7 +725,8 @@ class VectorStore:
 
         # Close current index
         self._index.reset()
-        if self._fallback_index: self._fallback_index.reset() # Also clear fallback
+        if self._fallback_index:
+            self._fallback_index.reset() # Also clear fallback
         self._is_trained = False
 
         # Swap files
@@ -823,7 +835,8 @@ class VectorStore:
 
     def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
         with self._lock:
-            if not data_dir: data_dir = self.data_dir
+            if not data_dir:
+                data_dir = self.data_dir
             data_dir = Path(data_dir)
 
             npy_path = data_dir / "vectors.npy"

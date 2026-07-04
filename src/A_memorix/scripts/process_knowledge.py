@@ -12,27 +12,24 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import argparse
 import asyncio
 import hashlib
 import json
-import os
-import random
 import sys
 import time
 import tomlkit
+
+from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR
 
 console = Console()
 
 class LLMGenerationError(Exception):
     pass
-
-from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR
 
 # 数据目录
 DATA_DIR = DEFAULT_DATA_DIR
@@ -76,7 +73,7 @@ try:
     import A_memorix.core.storage as storage_module
     from src.common.logger import get_logger
     from src.services import llm_service as llm_api
-    from src.config.config import global_config, model_config
+    from src.config.config import global_config
 
     VectorStore = core_module.VectorStore
     GraphStore = core_module.GraphStore
@@ -209,7 +206,7 @@ class AutoImporter:
         )
         try:
             dim = await self.embedding_manager._detect_dimension()
-        except:
+        except Exception:
             dim = self.embedding_manager.default_dimension
             
         q_type_str = str(self.plugin_config.get("embedding", {}).get("quantization_type", "int8") or "int8").lower()
@@ -247,8 +244,10 @@ class AutoImporter:
                 embedding_manager=self.embedding_manager,
             )
         
-        if self.vector_store.has_data(): self.vector_store.load()
-        if self.graph_store.has_data(): self.graph_store.load()
+        if self.vector_store.has_data():
+            self.vector_store.load()
+        if self.graph_store.has_data():
+            self.graph_store.load()
 
     def _should_write_relation_vectors(self) -> bool:
         retrieval_cfg = self.plugin_config.get("retrieval", {})
@@ -397,12 +396,14 @@ Chat paragraph:
         return None
 
     async def process_and_import(self):
-        if not await self.initialize(): return
+        if not await self.initialize():
+            return
 
         files = list(RAW_DIR.glob("*.txt"))
         logger.info(f"扫描到 {len(files)} 个文件 in {RAW_DIR}")
 
-        if not files: return
+        if not files:
+            return
 
         tasks = []
         for file_path in files:
@@ -413,8 +414,10 @@ Chat paragraph:
         success_count = sum(1 for r in results if r is True)
         logger.info(f"本次主处理完成，共成功处理 {success_count}/{len(files)} 个文件")
         
-        if self.vector_store: self.vector_store.save()
-        if self.graph_store: self.graph_store.save()
+        if self.vector_store:
+            self.vector_store.save()
+        if self.graph_store:
+            self.graph_store.save()
 
     async def _process_single_file(self, file_path: Path) -> bool:
         filename = file_path.name
@@ -606,7 +609,8 @@ Chat paragraph:
 
     async def _select_model(self) -> "ResolvedLLMModel":
         models = get_text_generation_model_tasks(llm_api)
-        if not models: raise ValueError("No LLM models")
+        if not models:
+            raise ValueError("No LLM models")
         
         config_model = str(self.plugin_config.get("advanced", {}).get("extraction_model", "auto") or "auto").strip()
         if config_model != "auto":
@@ -643,8 +647,10 @@ Chat paragraph:
             emb = await self.embedding_manager.encode(entity_name)
             try:
                 self.vector_store.add(emb.reshape(1, -1), [hash_value])
-            except ValueError: pass
-        except Exception: pass
+            except ValueError:
+                pass
+        except Exception:
+            pass
         return hash_value
 
     async def import_json_data(self, data: Dict, filename: str = "script_import", progress_callback=None):
@@ -818,7 +824,8 @@ Chat paragraph:
             logger.warning(f"脚本导入完成，跳过异常项 {warning_count} 条")
     
     async def close(self):
-        if self.metadata_store: self.metadata_store.close()
+        if self.metadata_store:
+            self.metadata_store.close()
     
     def _save_manifest(self):
         with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
@@ -828,7 +835,8 @@ async def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    if not global_config: return
+    if not global_config:
+        return
     
     importer = AutoImporter(
         force=args.force, 

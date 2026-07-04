@@ -9,15 +9,15 @@ LPMM 到 A_memorix 存储转换器
 4. 绕过 Embedding 生成以节省 Token
 """
 
-import sys
-import os
-import json
 import argparse
 import asyncio
-import pickle
+import importlib.util
 import logging
+import pickle
+import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, Tuple
+
 import numpy as np
 import tomlkit
 
@@ -58,8 +58,10 @@ except Exception:
 
 try:
     import networkx as nx
-    from scipy import sparse
     import pyarrow.parquet as pq
+
+    if importlib.util.find_spec("scipy") is None:
+        raise ImportError("No module named 'scipy'")
 except ImportError as e:
     logger.error(f"缺少依赖: {e}")
     logger.error("请安装: pip install pandas pyarrow networkx scipy")
