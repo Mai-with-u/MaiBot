@@ -6,6 +6,19 @@
  */
 import { authApi } from '@/lib/http'
 
+export interface AuthStatus {
+  authenticated: boolean
+  token_source?: string
+  requires_custom_token?: boolean
+}
+
+export interface SetupStatus {
+  is_first_setup: boolean
+  token_source: string
+  requires_custom_token: boolean
+  message?: string
+}
+
 /**
  * 调用登出接口并跳转到登录页
  */
@@ -23,10 +36,32 @@ export async function logout(): Promise<void> {
  * 检查当前认证状态
  */
 export async function checkAuthStatus(): Promise<boolean> {
+  return (await getAuthStatus()).authenticated
+}
+
+/**
+ * 获取当前认证状态和 Token 来源
+ */
+export async function getAuthStatus(): Promise<AuthStatus> {
   try {
-    const data = await authApi.get<{ authenticated?: boolean }>('/api/webui/auth/check')
-    return data.authenticated === true
+    const data = await authApi.get<AuthStatus>('/api/webui/auth/check')
+    return {
+      authenticated: data.authenticated === true,
+      token_source: data.token_source,
+      requires_custom_token: data.requires_custom_token === true,
+    }
   } catch {
-    return false
+    return { authenticated: false }
+  }
+}
+
+/**
+ * 获取首次配置状态和 Token 来源
+ */
+export async function getSetupStatus(): Promise<SetupStatus | null> {
+  try {
+    return await authApi.get<SetupStatus>('/api/webui/setup/status')
+  } catch {
+    return null
   }
 }
