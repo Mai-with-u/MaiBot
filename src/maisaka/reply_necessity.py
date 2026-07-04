@@ -1,10 +1,18 @@
 """Maisaka 回复必要性评分规则。"""
 
 from dataclasses import dataclass
+from math import log1p
 from typing import Sequence
 import re
 
-REPLY_NECESSITY_TRIGGER_SCORE = 65
+REPLY_NECESSITY_TRIGGER_SCORE = 80
+REPLY_NECESSITY_PRESSURE_STANDARD_SCORE = 50
+REPLY_NECESSITY_PRESSURE_MAX_SCORE = 100
+REPLY_NECESSITY_PRESSURE_FULL_RATIO = 5.0
+REPLY_NECESSITY_IDLE_PRESSURE_BONUS = 15
+REPLY_NECESSITY_RECENT_SELF_RATIO_FREE = 0.25
+REPLY_NECESSITY_RECENT_SELF_RATIO_FULL = 0.60
+REPLY_NECESSITY_RECENT_SELF_PENALTY_MAX = 25
 DIRECT_REQUEST_TERMS = ("帮我", "帮忙", "能不能", "可以吗", "要不要")
 WEAK_REQUEST_TERMS = ("需要", "求", "看看", "试试")
 QUESTION_TERMS = ("怎么", "如何", "为什么", "有没有")
@@ -27,7 +35,7 @@ class ReplyNecessityInput:
     is_group_chat: bool
     focus_active: bool
     recent_self_replies: int
-    consecutive_self_replies: int
+    recent_window_messages: int
     effective_frequency: float
     idle_seconds: float
     idle_reached_average: bool
@@ -151,14 +159,17 @@ def score_reply_necessity(score_input: ReplyNecessityInput) -> ReplyNecessitySco
         combined_clean_text,
         is_direct_context=is_direct_context,
     )
-    pressure_score = min(40, int(round(40 * score_input.pending_count / normalized_threshold)))
-    if score_input.idle_reached_average:
-        pressure_score += 15
-
-    presence_penalty = min(45, score_input.recent_self_replies * 15) + min(
-        40,
-        score_input.consecutive_self_replies * 20,
+    pressure_score = _calculate_pressure_score(
+        pending_count=score_input.pending_count,
+        normalized_threshold=normalized_threshold,
+        idle_reached_average=score_input.idle_reached_average,
     )
+
+    recent_presence_penalty = _calculate_recent_presence_penalty(
+        recent_self_replies=score_input.recent_self_replies,
+        recent_window_messages=score_input.recent_window_messages,
+    )
+    presence_penalty = recent_presence_penalty
     raw_score = relevance_score + content_score + pressure_score - presence_penalty
     effective_frequency = min(1.0, score_input.effective_frequency)
     frequency_factor = 0.5 + 0.5 * effective_frequency
@@ -170,11 +181,53 @@ def score_reply_necessity(score_input: ReplyNecessityInput) -> ReplyNecessitySco
         f"文本长度={len(combined_clean_text)} "
         f"压力={pressure_score}(pending={score_input.pending_count}/{normalized_threshold},"
         f"idle={score_input.idle_seconds:.1f}s) "
-        f"存在感=-{presence_penalty}(5min={score_input.recent_self_replies},"
-        f"连续={score_input.consecutive_self_replies}) "
+        f"存在感=-{presence_penalty}(5min={score_input.recent_self_replies}/"
+        f"{score_input.recent_window_messages}) "
         f"频率={effective_frequency:.3f} 倍率={frequency_factor:.2f}"
     )
     return ReplyNecessityScore(score=final_score, detail=detail)
+
+
+def _calculate_recent_presence_penalty(*, recent_self_replies: int, recent_window_messages: int) -> int:
+    """按最近窗口内麦麦发言占比计算存在感惩罚。"""
+
+    if recent_self_replies <= 0 or recent_window_messages <= 0:
+        return 0
+
+    self_ratio = min(1.0, recent_self_replies / recent_window_messages)
+    if self_ratio <= REPLY_NECESSITY_RECENT_SELF_RATIO_FREE:
+        return 0
+
+    ratio_span = REPLY_NECESSITY_RECENT_SELF_RATIO_FULL - REPLY_NECESSITY_RECENT_SELF_RATIO_FREE
+    ratio_progress = min(1.0, (self_ratio - REPLY_NECESSITY_RECENT_SELF_RATIO_FREE) / ratio_span)
+    return int(round(REPLY_NECESSITY_RECENT_SELF_PENALTY_MAX * ratio_progress))
+
+
+def _calculate_pressure_score(
+    *,
+    pending_count: int,
+    normalized_threshold: int,
+    idle_reached_average: bool,
+) -> int:
+    """按积压消息量计算压力分，阈值内二次增长，超过阈值后对数增长。"""
+
+    pending_ratio = max(0.0, pending_count / normalized_threshold)
+    if pending_ratio <= 1.0:
+        pressure_score = int(round(REPLY_NECESSITY_PRESSURE_STANDARD_SCORE * pending_ratio * pending_ratio))
+        if idle_reached_average:
+            pressure_score += REPLY_NECESSITY_IDLE_PRESSURE_BONUS
+        return min(REPLY_NECESSITY_PRESSURE_STANDARD_SCORE, pressure_score)
+
+    overflow_ratio = pending_ratio - 1.0
+    full_overflow_ratio = REPLY_NECESSITY_PRESSURE_FULL_RATIO - 1.0
+    overflow_factor = min(1.0, log1p(overflow_ratio) / log1p(full_overflow_ratio))
+    pressure_score = REPLY_NECESSITY_PRESSURE_STANDARD_SCORE + int(
+        round(
+            (REPLY_NECESSITY_PRESSURE_MAX_SCORE - REPLY_NECESSITY_PRESSURE_STANDARD_SCORE)
+            * overflow_factor
+        )
+    )
+    return min(REPLY_NECESSITY_PRESSURE_MAX_SCORE, pressure_score)
 
 
 def _score_content(

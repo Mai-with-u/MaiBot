@@ -492,13 +492,32 @@ class SDKMemoryKernel:
         payload["hash"] = hash_value
         return payload
 
-    def _current_embedding_fingerprint(self) -> Optional[Dict[str, Any]]:
+    def _current_embedding_status_dimension(self) -> int:
+        manager = self.embedding_manager
+        getter = getattr(manager, "get_requested_dimension", None)
+        if callable(getter):
+            try:
+                requested_dimension = int(getter())
+            except Exception:
+                requested_dimension = 0
+            if requested_dimension > 0:
+                return requested_dimension
+        try:
+            default_dimension = int(getattr(manager, "default_dimension", 0) or 0)
+        except Exception:
+            default_dimension = 0
+        if default_dimension > 0:
+            return default_dimension
+        return max(1, int(self._cfg("embedding.dimension", self.embedding_dimension) or self.embedding_dimension))
+
+    def _current_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Optional[Dict[str, Any]]:
         manager = self.embedding_manager
         getter = getattr(manager, "get_embedding_fingerprint", None)
         if not callable(getter):
             return None
         try:
-            return self._normalize_embedding_fingerprint(getter(dimension=int(self.embedding_dimension)))
+            effective_dimension = int(dimension or self._current_embedding_status_dimension())
+            return self._normalize_embedding_fingerprint(getter(dimension=effective_dimension))
         except Exception as exc:
             logger.warning(f"生成 embedding 指纹失败: {exc}")
             return None
@@ -534,9 +553,10 @@ class SDKMemoryKernel:
         if store is None:
             return False
         stored_dimension = self._stored_vector_dimension(store)
-        if stored_dimension is None or int(stored_dimension) != int(self.embedding_dimension):
+        current_dimension = self._current_embedding_status_dimension()
+        if stored_dimension is None or int(stored_dimension) != int(current_dimension):
             return False
-        current_fingerprint = self._current_embedding_fingerprint()
+        current_fingerprint = self._current_embedding_fingerprint(dimension=current_dimension)
         if current_fingerprint is None:
             return False
         stored_fingerprint = self._stored_embedding_fingerprint(store)
@@ -593,7 +613,7 @@ class SDKMemoryKernel:
         stored_dimension = self._stored_vector_dimension()
         if self._vector_persist_blocked_until_rebuild and self._vector_rebuild_source_dimension is not None:
             stored_dimension = int(self._vector_rebuild_source_dimension)
-        current_dimension = int(self.embedding_dimension)
+        current_dimension = self._current_embedding_status_dimension()
         dimension_rebuild_required = stored_dimension is not None and stored_dimension != current_dimension
         current_fingerprint = self._current_embedding_fingerprint()
         stored_fingerprint = self._stored_embedding_fingerprint()
@@ -685,7 +705,7 @@ class SDKMemoryKernel:
         manifest = self._read_dual_vector_ready_manifest()
         if not manifest or manifest.get("status") != "ready":
             return False
-        dimension = int(expected_dimension or self.embedding_dimension or 0)
+        dimension = int(expected_dimension or self._current_embedding_status_dimension() or 0)
         manifest_dimension = int(manifest.get("dimension", 0) or 0)
         if dimension > 0 and manifest_dimension not in {0, dimension}:
             logger.warning(
@@ -717,12 +737,13 @@ class SDKMemoryKernel:
         stats: Dict[str, Dict[str, int]],
         migration_stats: Dict[str, Dict[str, int]],
     ) -> None:
-        embedding_fingerprint = self._current_embedding_fingerprint()
+        current_dimension = self._current_embedding_status_dimension()
+        embedding_fingerprint = self._current_embedding_fingerprint(dimension=current_dimension)
         payload = {
             "status": "ready",
             "version": 1,
             "mode": "dual",
-            "dimension": int(self.embedding_dimension),
+            "dimension": int(current_dimension),
             "created_at": time.time(),
             "paragraph_vectors": int(stats.get("paragraphs", {}).get("done", 0) or 0),
             "graph_vectors": int(stats.get("entities", {}).get("done", 0) or 0)
@@ -843,9 +864,10 @@ class SDKMemoryKernel:
         store.save(embedding_fingerprint=self._current_embedding_fingerprint())
 
     def _reload_dual_vector_stores_from_disk(self) -> bool:
-        if not self._dual_vector_ready(expected_dimension=self.embedding_dimension):
+        current_dimension = self._current_embedding_status_dimension()
+        if not self._dual_vector_ready(expected_dimension=current_dimension):
             self._try_recover_dual_ready_manifest()
-        if not self._dual_vector_ready(expected_dimension=self.embedding_dimension):
+        if not self._dual_vector_ready(expected_dimension=current_dimension):
             self.paragraph_vector_store = self._make_vector_store(self._paragraph_vector_dir())
             self.graph_vector_store = self._make_vector_store(self._graph_vector_dir())
             self._dual_vector_pools_ready = False
@@ -1061,7 +1083,7 @@ class SDKMemoryKernel:
             1,
             int(self._cfg("embedding.dimension", self.embedding_dimension) or self.embedding_dimension),
         )
-        requested_dimension = int(self.embedding_dimension)
+        requested_dimension = self._current_embedding_status_dimension()
         vector_store_dimension = int(getattr(self.vector_store, "dimension", 0) or 0)
         degraded = self._embedding_degraded_snapshot()
         is_degraded = bool(degraded.get("active", False))
@@ -1764,6 +1786,9 @@ class SDKMemoryKernel:
 
         started = time.time()
         safe_batch_size = max(1, int(batch_size or self._cfg("embedding.batch_size", 32) or 32))
+        detected_dimension = await self._detect_current_embedding_dimension_for_rebuild()
+        if detected_dimension > 0:
+            self.embedding_dimension = int(detected_dimension)
         self._set_embedding_degraded(
             active=True,
             reason="正在重建全部向量，检索临时降级",
@@ -2109,6 +2134,17 @@ class SDKMemoryKernel:
             "self_check": report,
             **self._vector_rebuild_status(),
         }
+
+    async def _detect_current_embedding_dimension_for_rebuild(self) -> int:
+        if self.embedding_manager is None:
+            raise RuntimeError("embedding_manager_missing")
+        detector = getattr(self.embedding_manager, "_detect_dimension", None)
+        if not callable(detector):
+            return max(1, int(self._cfg("embedding.dimension", self.embedding_dimension) or self.embedding_dimension))
+        detected_dimension = int(await detector())
+        if detected_dimension <= 0:
+            raise ValueError(f"embedding 维度检测结果非法: {detected_dimension}")
+        return detected_dimension
 
     async def _recover_embedding_once(self, *, sample_text: str = "A_Memorix runtime self check") -> Dict[str, Any]:
         report = await self._refresh_runtime_self_check(sample_text=sample_text)
@@ -3497,7 +3533,7 @@ class SDKMemoryKernel:
                 "success": True,
                 "config": self.config,
                 "data_dir": str(self.data_dir),
-                "embedding_dimension": int(self.embedding_dimension),
+                "embedding_dimension": int(rebuild_status["embedding_dimension"]),
                 "stored_vector_dimension": int(rebuild_status["stored_vector_dimension"]),
                 "vector_rebuild_required": bool(rebuild_status["vector_rebuild_required"]),
                 "vector_rebuild_message": str(rebuild_status["message"]),

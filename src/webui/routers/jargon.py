@@ -264,6 +264,67 @@ class ChatListResponse(BaseModel):
     data: List[ChatInfoResponse]
 
 
+class JargonTargetInfo(BaseModel):
+    """黑话导出中的聊天目标信息。"""
+
+    platform: str
+    id: str = Field(..., description="群聊使用 group_id，私聊使用 user_id")
+    type: Literal["group", "private"]
+    account_id: Optional[str] = None
+    scope: Optional[str] = None
+    count: int = 0
+
+
+class JargonExportItem(BaseModel):
+    """黑话导出条目，不包含本机数据库 ID 或 session_id。"""
+
+    content: str
+    meaning: str = ""
+    count: int = 0
+    is_jargon: bool = False
+    is_complete: bool = False
+    is_global: bool = False
+    created_by: JargonCreatedBy = JargonCreatedBy.MANUAL
+    targets: Optional[List[JargonTargetInfo]] = None
+
+
+class JargonExportRequest(BaseModel):
+    """黑话导出请求。"""
+
+    ids: Optional[List[int]] = None
+    include_chat_info: bool = False
+
+
+class JargonExportResponse(BaseModel):
+    """黑话导出响应。"""
+
+    success: bool = True
+    version: int = 1
+    type: str = "maibot.jargon.export"
+    exported_at: str
+    include_chat_info: bool = False
+    count: int
+    jargons: List[JargonExportItem]
+
+
+class JargonImportRequest(BaseModel):
+    """黑话导入请求。"""
+
+    target_session_ids: List[str] = Field(..., description="导入目标聊天流 ID 列表")
+    jargons: List[JargonExportItem]
+    conflict_strategy: Literal["skip", "overwrite"] = "skip"
+
+
+class JargonImportResponse(BaseModel):
+    """黑话导入响应。"""
+
+    success: bool = True
+    message: str
+    imported_count: int
+    skipped_count: int = 0
+    failed_count: int = 0
+
+
 # ==================== 工具函数 ====================
 
 
@@ -512,6 +573,60 @@ def normalize_jargon_created_by(created_by: Any, jargon_id: Optional[int]) -> Ja
 
     logger.warning(f"黑话记录存在未知创建来源，已按 AI 展示: id={jargon_id}, created_by={created_by!r}")
     return JargonCreatedBy.AI
+
+
+def chat_session_to_export_target(chat_session: ChatSession, count: int = 0) -> Optional[JargonTargetInfo]:
+    """将真实聊天流转换为可迁移的 platform/id/type 目标信息。"""
+
+    if chat_session.group_id:
+        return JargonTargetInfo(
+            platform=chat_session.platform,
+            id=chat_session.group_id,
+            type="group",
+            account_id=chat_session.account_id,
+            scope=chat_session.scope,
+            count=count,
+        )
+    if chat_session.user_id:
+        return JargonTargetInfo(
+            platform=chat_session.platform,
+            id=chat_session.user_id,
+            type="private",
+            account_id=chat_session.account_id,
+            scope=chat_session.scope,
+            count=count,
+        )
+    return None
+
+
+def jargon_to_export_item(
+    jargon: Jargon,
+    chat_session_by_session_id: Optional[Dict[str, ChatSession]] = None,
+) -> JargonExportItem:
+    """将数据库黑话记录转换为导出条目。"""
+
+    session_counts = parse_session_id_dict(jargon.session_id_dict)
+    targets: Optional[List[JargonTargetInfo]] = None
+    if chat_session_by_session_id is not None:
+        targets = []
+        for session_id, count in session_counts.items():
+            chat_session = chat_session_by_session_id.get(session_id)
+            if not chat_session:
+                continue
+            target = chat_session_to_export_target(chat_session, count)
+            if target is not None:
+                targets.append(target)
+
+    return JargonExportItem(
+        content=jargon.content,
+        meaning=jargon.meaning or "",
+        count=jargon.count,
+        is_jargon=bool(jargon.is_jargon),
+        is_complete=jargon.is_complete,
+        is_global=jargon.is_global,
+        created_by=normalize_jargon_created_by(jargon.created_by, jargon.id),
+        targets=targets,
+    )
 
 
 def jargon_to_dict(
@@ -829,6 +944,129 @@ async def get_jargon_stats() -> JargonStatsResponse:
     except Exception as e:
         logger.error(f"获取黑话统计失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取黑话统计失败: {str(e)}") from e
+
+
+@router.post("/export", response_model=JargonExportResponse)
+async def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
+    """导出黑话记录，可选携带 platform/id/type 形式的聊天目标信息。"""
+
+    try:
+        statement = select(Jargon).order_by(col(Jargon.count).desc(), col(Jargon.id).desc())
+        if request.ids:
+            unique_ids = list(dict.fromkeys(request.ids))
+            statement = statement.where(col(Jargon.id).in_(unique_ids))
+
+        with get_db_session() as session:
+            jargons = session.exec(statement).all()
+            if request.ids and len(jargons) != len(set(request.ids)):
+                found_ids = {jargon.id for jargon in jargons}
+                missing_ids = sorted(set(request.ids) - found_ids)
+                raise HTTPException(status_code=400, detail=f"部分黑话不存在: {missing_ids}")
+
+            chat_session_by_session_id: Optional[Dict[str, ChatSession]] = None
+            if request.include_chat_info:
+                session_ids: List[str] = []
+                for jargon in jargons:
+                    session_ids.extend(parse_session_id_dict(jargon.session_id_dict).keys())
+                unique_session_ids = list(dict.fromkeys(session_ids))
+                chat_session_by_session_id = {}
+                if unique_session_ids:
+                    chat_sessions = session.exec(
+                        select(ChatSession).where(col(ChatSession.session_id).in_(unique_session_ids))
+                    ).all()
+                    chat_session_by_session_id = {
+                        chat_session.session_id: chat_session for chat_session in chat_sessions
+                    }
+
+            items = [jargon_to_export_item(jargon, chat_session_by_session_id) for jargon in jargons]
+
+        return JargonExportResponse(
+            exported_at=datetime.now().isoformat(),
+            include_chat_info=request.include_chat_info,
+            count=len(items),
+            jargons=items,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出黑话失败: {e}")
+        raise HTTPException(status_code=500, detail=f"导出黑话失败: {str(e)}") from e
+
+
+@router.post("/import", response_model=JargonImportResponse)
+async def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
+    """将黑话 JSON 导入到用户选择的一个或多个真实聊天流。"""
+
+    try:
+        target_session_ids = require_existing_session_ids(request.target_session_ids)
+        if not request.jargons:
+            raise HTTPException(status_code=400, detail="导入文件中没有黑话")
+
+        imported_count = 0
+        skipped_count = 0
+        failed_count = 0
+        target_session_id_set = set(target_session_ids)
+
+        with get_db_session() as session:
+            for item in request.jargons:
+                content = item.content.strip()
+                if not content:
+                    failed_count += 1
+                    continue
+
+                meaning = item.meaning.strip()
+                same_content_jargons = session.exec(select(Jargon).where(col(Jargon.content) == content)).all()
+                overlapping_jargons = [
+                    jargon
+                    for jargon in same_content_jargons
+                    if scopes_overlap(jargon, target_session_id_set, False)
+                ]
+
+                if overlapping_jargons and request.conflict_strategy == "skip":
+                    skipped_count += 1
+                    continue
+
+                if request.conflict_strategy == "overwrite":
+                    for existing_jargon in overlapping_jargons:
+                        session.delete(existing_jargon)
+                    if overlapping_jargons:
+                        session.flush()
+
+                session_counts = {
+                    session_id: max(item.count, 1)
+                    for session_id in target_session_ids
+                }
+                jargon = Jargon(
+                    content=content,
+                    meaning=meaning,
+                    session_id_dict=dump_session_id_dict(session_counts),
+                    count=max(item.count, 0),
+                    is_jargon=item.is_jargon and bool(meaning),
+                    is_complete=item.is_complete,
+                    is_global=False,
+                    created_by=JargonCreatedBy.MANUAL,
+                    updated_timestamp=datetime.now(),
+                )
+                session.add(jargon)
+                imported_count += 1
+
+        logger.info(
+            f"导入黑话完成: targets={target_session_ids}, imported={imported_count}, "
+            f"skipped={skipped_count}, failed={failed_count}, strategy={request.conflict_strategy}"
+        )
+        return JargonImportResponse(
+            message=f"导入完成：成功 {imported_count} 个，跳过 {skipped_count} 个，失败 {failed_count} 个",
+            imported_count=imported_count,
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导入黑话失败: {e}")
+        raise HTTPException(status_code=500, detail=f"导入黑话失败: {str(e)}") from e
 
 
 @router.get("/{jargon_id}", response_model=JargonDetailResponse)

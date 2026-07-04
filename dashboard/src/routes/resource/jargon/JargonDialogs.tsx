@@ -1,5 +1,6 @@
-import { Check, Hash, HelpCircle } from 'lucide-react'
+import { Check, Hash, HelpCircle, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import type { ChangeEvent } from 'react'
 
 import {
   AlertDialog,
@@ -37,12 +38,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
-import { createJargon, updateJargon } from '@/lib/jargon-api'
+import { createJargon, importJargons, updateJargon } from '@/lib/jargon-api'
 
 import type {
   Jargon,
   JargonChatInfo,
   JargonCreateRequest,
+  JargonExportItem,
   JargonUpdateRequest,
 } from '@/types/jargon'
 
@@ -94,6 +96,7 @@ export function JargonDetailDialog({
   const [formData, setFormData] = useState<JargonUpdateRequest>({})
   const [saving, setSaving] = useState(false)
   const [pinning, setPinning] = useState(false)
+  const [unpinning, setUnpinning] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -186,6 +189,33 @@ export function JargonDetailDialog({
       })
     } finally {
       setPinning(false)
+    }
+  }
+
+  const handleUnpinMeaning = async () => {
+    if (!jargon) return
+
+    try {
+      setUnpinning(true)
+      const response = await updateJargon(jargon.id, {
+        ...formData,
+        created_by: 'AI',
+      })
+      if (response.data) {
+        onChanged(response.data)
+      }
+      toast({
+        title: '已取消固定',
+        description: '这条黑话已恢复为 AI 学习记录',
+      })
+    } catch (error) {
+      toast({
+        title: '取消固定失败',
+        description: error instanceof Error ? error.message : '无法取消固定黑话含义',
+        variant: 'destructive',
+      })
+    } finally {
+      setUnpinning(false)
     }
   }
 
@@ -316,11 +346,20 @@ export function JargonDetailDialog({
         </DialogBody>
 
         <DialogFooter className="flex-shrink-0">
-          {jargon.created_by !== 'MANUAL' && (
+          {jargon.created_by === 'MANUAL' ? (
+            <Button
+              variant="outline"
+              onClick={handleUnpinMeaning}
+              disabled={saving || unpinning}
+              title="恢复为 AI 学习记录，后续可由学习流程更新"
+            >
+              {unpinning ? '取消中...' : '取消固定'}
+            </Button>
+          ) : (
             <Button
               variant="outline"
               onClick={handlePinMeaning}
-              disabled={pinning || !canPinMeaning}
+              disabled={saving || pinning || !canPinMeaning}
               title={canPinMeaning ? '固定当前含义，后续不再由 AI 更新' : '当前黑话还没有含义'}
             >
               <Check className="mr-1 h-4 w-4" />
@@ -330,7 +369,11 @@ export function JargonDetailDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             关闭
           </Button>
-          <Button data-dialog-action="confirm" onClick={handleSave} disabled={saving || pinning}>
+          <Button
+            data-dialog-action="confirm"
+            onClick={handleSave}
+            disabled={saving || pinning || unpinning}
+          >
             {saving ? '保存中...' : '保存'}
           </Button>
         </DialogFooter>
@@ -462,6 +505,276 @@ export function JargonCreateDialog({
           </Button>
           <Button data-dialog-action="confirm" onClick={handleCreate} disabled={saving}>
             {saving ? '创建中...' : '创建'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ====================
+// 黑话导入对话框
+// ====================
+interface JargonImportDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  chatList: JargonChatInfo[]
+  onSuccess: () => void
+}
+
+function normalizeJargonImportItems(payload: unknown): JargonExportItem[] {
+  if (Array.isArray(payload)) {
+    return payload as JargonExportItem[]
+  }
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    Array.isArray((payload as { jargons?: unknown }).jargons)
+  ) {
+    return (payload as { jargons: JargonExportItem[] }).jargons
+  }
+  return []
+}
+
+export function JargonImportDialog({
+  open,
+  onOpenChange,
+  chatList,
+  onSuccess,
+}: JargonImportDialogProps) {
+  const [items, setItems] = useState<JargonExportItem[]>([])
+  const [fileName, setFileName] = useState('')
+  const [targetSessionIds, setTargetSessionIds] = useState<string[]>([])
+  const [conflictStrategy, setConflictStrategy] = useState<'skip' | 'overwrite'>('skip')
+  const [importing, setImporting] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    if (!open) {
+      setItems([])
+      setFileName('')
+      setTargetSessionIds([])
+      setConflictStrategy('skip')
+    }
+  }, [open])
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    try {
+      const payload = JSON.parse(await file.text()) as unknown
+      const nextItems = normalizeJargonImportItems(payload)
+      if (nextItems.length === 0) {
+        toast({
+          title: '读取失败',
+          description: 'JSON 中没有可导入的黑话',
+          variant: 'destructive',
+        })
+        return
+      }
+      setItems(nextItems)
+      setFileName(file.name)
+    } catch (error) {
+      toast({
+        title: '读取失败',
+        description: error instanceof Error ? error.message : '无法解析 JSON 文件',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleImport = async () => {
+    if (items.length === 0) {
+      toast({
+        title: '请选择文件',
+        description: '请先选择要导入的黑话 JSON 文件',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (targetSessionIds.length === 0) {
+      toast({
+        title: '请选择聊天',
+        description: '请至少选择一个导入目标聊天',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      setImporting(true)
+      const result = await importJargons({
+        target_session_ids: targetSessionIds,
+        jargons: items,
+        conflict_strategy: conflictStrategy,
+      })
+      toast({
+        title: '导入完成',
+        description: `成功 ${result.imported_count} 个，跳过 ${result.skipped_count} 个，失败 ${result.failed_count} 个`,
+      })
+      onSuccess()
+      onOpenChange(false)
+    } catch (error) {
+      toast({
+        title: '导入失败',
+        description: error instanceof Error ? error.message : '无法导入黑话',
+        variant: 'destructive',
+      })
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>导入黑话</DialogTitle>
+          <DialogDescription>将 JSON 中的黑话导入到一个或多个聊天</DialogDescription>
+        </DialogHeader>
+
+        <DialogBody>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="jargon_import_file">JSON 文件</Label>
+              <Input id="jargon_import_file" type="file" accept=".json,application/json" onChange={handleFileChange} />
+              <p className="text-muted-foreground text-xs">
+                {fileName ? `${fileName}，共 ${items.length} 条黑话` : '支持 maibot.jargon.export 或黑话数组'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>导入目标</Label>
+              <MultiSelect
+                options={chatList.map((chat) => ({
+                  label: chat.chat_name,
+                  value: chat.session_id,
+                }))}
+                selected={targetSessionIds}
+                onChange={setTargetSessionIds}
+                placeholder="选择一个或多个聊天"
+                emptyText="没有可选聊天"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>冲突处理</Label>
+              <Select
+                value={conflictStrategy}
+                onValueChange={(value) => setConflictStrategy(value as 'skip' | 'overwrite')}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="skip">跳过已有黑话</SelectItem>
+                  <SelectItem value="overwrite">覆盖已有黑话</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </DialogBody>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button onClick={handleImport} disabled={importing}>
+            {importing ? '导入中...' : '导入'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ====================
+// 黑话导出对话框
+// ====================
+export type JargonExportScope = 'all' | 'selected'
+
+interface JargonExportDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  selectedCount: number
+  scope: JargonExportScope
+  includeChatInfo: boolean
+  exporting: boolean
+  onScopeChange: (scope: JargonExportScope) => void
+  onIncludeChatInfoChange: (includeChatInfo: boolean) => void
+  onExport: (scope: JargonExportScope, includeChatInfo: boolean) => Promise<void>
+}
+
+export function JargonExportDialog({
+  open,
+  onOpenChange,
+  selectedCount,
+  scope,
+  includeChatInfo,
+  exporting,
+  onScopeChange,
+  onIncludeChatInfoChange,
+  onExport,
+}: JargonExportDialogProps) {
+  const effectiveScope = selectedCount === 0 && scope === 'selected' ? 'all' : scope
+
+  const handleExport = async () => {
+    await onExport(effectiveScope, includeChatInfo)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>导出黑话</DialogTitle>
+          <DialogDescription>选择导出范围和文件包含的信息</DialogDescription>
+        </DialogHeader>
+
+        <DialogBody>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>导出范围</Label>
+              <Select
+                value={effectiveScope}
+                onValueChange={(value) => onScopeChange(value as JargonExportScope)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部黑话</SelectItem>
+                  <SelectItem value="selected" disabled={selectedCount === 0}>
+                    已选择 {selectedCount} 个
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="jargon_export_include_chat">包含聊天目标信息</Label>
+                <p className="text-muted-foreground text-xs">
+                  导出 platform、id、type 等目标信息，不包含聊天显示名。
+                </p>
+              </div>
+              <Switch
+                id="jargon_export_include_chat"
+                checked={includeChatInfo}
+                onCheckedChange={onIncludeChatInfoChange}
+              />
+            </div>
+          </div>
+        </DialogBody>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={exporting}>
+            取消
+          </Button>
+          <Button onClick={handleExport} disabled={exporting}>
+            <Upload className="mr-1 h-4 w-4" />
+            {exporting ? '导出中...' : '导出'}
           </Button>
         </DialogFooter>
       </DialogContent>

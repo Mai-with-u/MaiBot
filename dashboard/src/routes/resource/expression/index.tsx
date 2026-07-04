@@ -129,7 +129,7 @@ export function ExpressionManagementPage() {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false)
   const [activeView, setActiveView] = useState<'list' | 'logs' | 'quick' | 'clusters'>('list')
 
-  // 兄弟读：聊天流 / 互通组 / 统计 / 审核统计统一以 'expression' 前缀分层，
+  // 兄弟读：聊天流 / 共享组 / 统计 / 审核统计统一以 'expression' 前缀分层，
   // list.invalidate() 失效 ['expression'] 前缀时一并刷新（读失败局部呈现，不弹全局 toast）
 
   // 列表：分页/搜索/筛选/多选统一由 useDataList 承载，翻页/改参自动重置页码并清空选中
@@ -139,7 +139,7 @@ export function ExpressionManagementPage() {
     initialFilters: INITIAL_FILTERS,
     searchDebounceMs: 0,
     queryFn: async ({ page, pageSize, search, filters }) => {
-      // 按互通组浏览时取该组的 chat_ids（全局组传 undefined，让后端返回全部）
+      // 按共享组浏览时取该组的 chat_ids（全局组传 undefined，让后端返回全部）
       const selectedGroup =
         filters.browseMode === 'group'
           ? groups.find((group) => group.index === filters.selectedGroupIndex)
@@ -192,7 +192,7 @@ export function ExpressionManagementPage() {
   const chatNameMap = new Map<string, string>()
   chatList.forEach((chat) => chatNameMap.set(chat.chat_id, chat.chat_name))
 
-  // 表达互通组（随「显示旧格式」开关刷新）
+  // 表达共享组（随「显示旧格式」开关刷新）
   const groupsQuery = useQuery({
     queryKey: ['expression', 'groups', { include_legacy: showLegacyExpressions }],
     queryFn: () =>
@@ -315,7 +315,7 @@ export function ExpressionManagementPage() {
     }
   }
 
-  // 浏览维度切换：按聊天 / 按互通组 / 全部（变更后 setFilter 自动重置页码并清空选中）
+  // 浏览维度切换：按聊天 / 按共享组 / 全部（变更后 setFilter 自动重置页码并清空选中）
   const handleBrowseModeChange = (mode: BrowseMode) => {
     list.setFilter('browseMode', mode)
     if (mode === 'chat' && !selectedChatId && chatList.length > 0) {
@@ -531,7 +531,7 @@ export function ExpressionManagementPage() {
                 emptyContent={
                   <div className="text-muted-foreground px-2 py-6 text-center text-sm">
                     {browseMode === 'group'
-                      ? '暂无互通组'
+                      ? '暂无共享组'
                       : '当前显示全部表达方式'}
                   </div>
                 }

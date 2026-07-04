@@ -221,7 +221,7 @@ def _normalize_learning_item_fields(data: dict[str, Any]) -> list[str]:
 
 def _normalize_group_item_fields(data: dict[str, Any]) -> list[str]:
     """
-    8.10.20: 统一 expression/jargon 互通组组内字段为 targets。
+    8.10.20: 统一 expression/jargon 共享组组内字段为 targets。
     """
     reasons: list[str] = []
 

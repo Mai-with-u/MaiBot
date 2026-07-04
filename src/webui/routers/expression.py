@@ -916,7 +916,7 @@ class ChatListResponse(BaseModel):
 
 
 class ExpressionGroupInfo(BaseModel):
-    """表达互通组信息。"""
+    """表达共享组信息。"""
 
     index: int
     name: str
@@ -926,7 +926,7 @@ class ExpressionGroupInfo(BaseModel):
 
 
 class ExpressionGroupListResponse(BaseModel):
-    """表达互通组列表响应。"""
+    """表达共享组列表响应。"""
 
     success: bool
     data: List[ExpressionGroupInfo]
@@ -1036,7 +1036,7 @@ async def get_chat_targets(
 
 
 def is_global_expression_group_marker(platform: str, item_id: str) -> bool:
-    """判断互通组成员是否为全局共享标记。"""
+    """判断共享组成员是否为全局共享标记。"""
     return platform == "*" and item_id == "*"
 
 
@@ -1044,7 +1044,7 @@ def is_global_expression_group_marker(platform: str, item_id: str) -> bool:
 async def get_expression_groups(
     include_legacy: bool = Query(False, description="是否显示旧格式/非当前账号的表达方式"),
 ) -> ExpressionGroupListResponse:
-    """获取已解析的表达互通组。"""
+    """获取已解析的表达共享组。"""
     try:
         groups: List[ExpressionGroupInfo] = []
         with get_db_session() as session:
@@ -1070,7 +1070,7 @@ async def get_expression_groups(
                 groups.append(
                     ExpressionGroupInfo(
                         index=index,
-                        name=f"互通组 {index + 1}",
+                        name=f"共享组 {index + 1}",
                         chat_ids=resolved_chat_ids,
                         members=members,
                         is_global=is_global,
@@ -1082,8 +1082,8 @@ async def get_expression_groups(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"获取表达互通组失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取表达互通组失败: {str(e)}") from e
+        logger.exception(f"获取表达共享组失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取表达共享组失败: {str(e)}") from e
 
 
 def read_expression_vector_index_payload() -> tuple[Path, Optional[dict[str, Any]]]:

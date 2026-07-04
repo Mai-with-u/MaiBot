@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
   Eye,
@@ -259,6 +259,7 @@ export function PromptManagementPage() {
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
   const [selectedVersionId, setSelectedVersionId] = useState(DEFAULT_VERSION_ID)
   const [validation, setValidation] = useState<PromptValidationResult | null>(null)
+  const diffModeRef = useRef(diffMode)
 
   const hasUnsavedChanges = content !== savedContent
 
@@ -317,6 +318,11 @@ export function PromptManagementPage() {
     },
     []
   )
+
+  useEffect(() => {
+    diffModeRef.current = diffMode
+  }, [diffMode])
+
   useEffect(() => {
     if (!filename || showAdvancedPrompts) return
     const currentFile = promptFiles.find((file) => file.name === filename)
@@ -377,7 +383,6 @@ export function PromptManagementPage() {
         setLoadingFile(true)
         const result = await getPromptFile(language, filename)
         if (cancelled) return
-        setDiffDefaultContent('')
         const persistedVersionId = selectedVersionStorageKey
           ? localStorage.getItem(selectedVersionStorageKey)
           : null
@@ -386,16 +391,28 @@ export function PromptManagementPage() {
           result.versions.some((version) => version.id === persistedVersionId)
             ? persistedVersionId
             : null
-        if (!nextVersionId || nextVersionId === result.active_version_id) {
-          applyPromptContent(result, nextVersionId ?? undefined)
-          return
+
+        let promptContentResult = result
+        if (nextVersionId && nextVersionId !== result.active_version_id) {
+          promptContentResult =
+            nextVersionId === DEFAULT_VERSION_ID
+              ? await getDefaultPromptFile(language, filename)
+              : await getPromptVersionFile(language, filename, nextVersionId)
+          if (cancelled) return
         }
-        const versionResult =
-          nextVersionId === DEFAULT_VERSION_ID
-            ? await getDefaultPromptFile(language, filename)
-            : await getPromptVersionFile(language, filename, nextVersionId)
-        if (cancelled) return
-        applyPromptContent(versionResult, nextVersionId)
+
+        if (diffModeRef.current) {
+          const defaultResult =
+            nextVersionId === DEFAULT_VERSION_ID
+              ? promptContentResult
+              : await getDefaultPromptFile(language, filename)
+          if (cancelled) return
+          setDiffDefaultContent(defaultResult.content)
+        } else {
+          setDiffDefaultContent('')
+        }
+
+        applyPromptContent(promptContentResult, nextVersionId ?? undefined)
       } catch (error) {
         if (!cancelled) {
           toast({

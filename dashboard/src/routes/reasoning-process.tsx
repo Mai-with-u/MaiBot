@@ -14,6 +14,7 @@ import {
   FileText,
   Loader2,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Timer,
@@ -69,6 +70,7 @@ import {
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 50
+const REPLAY_COUNT_MAX = 20
 const AUTO_SESSION = 'auto'
 const ALL_GROUP_SESSIONS = '__all_group_chats__'
 const CORE_STAGE_NAMES = ['planner', 'replyer']
@@ -1071,6 +1073,13 @@ type EditableReplayMessage = {
   tool_calls?: unknown[]
 }
 
+type ReplayRunResult = {
+  id: string
+  index: number
+  result: ReasoningReplayResponse | null
+  error: string | null
+}
+
 function hasReplayableImageReference(value: Record<string, unknown>): boolean {
   if (typeof value.image_base64 === 'string' && value.image_base64.trim()) {
     return true
@@ -1121,6 +1130,15 @@ function createEditableReplayMessages(prompt: StructuredPromptPayload | null): E
   })
 }
 
+function createBlankReplayMessage(): EditableReplayMessage {
+  return {
+    id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    role: 'user',
+    contentText: '',
+    originalContent: '',
+  }
+}
+
 function parseReplayMessageContent(contentText: string, originalContent: unknown): unknown {
   if (typeof originalContent === 'string' || originalContent === null || originalContent === undefined) {
     return contentText
@@ -1153,26 +1171,218 @@ function formatReplayTokenSummary(result: ReasoningReplayResponse): string {
   return parts.join(' · ')
 }
 
+function formatEmptyReplayResponseHint(result: ReasoningReplayResponse): string {
+  const hasReasoning = result.reasoning.trim().length > 0
+  const hasToolCalls = Boolean(result.tool_calls && result.tool_calls.length > 0)
+  if (hasReasoning && hasToolCalls) {
+    return '模型未返回正文，已返回推理内容和工具调用。'
+  }
+  if (hasReasoning) {
+    return '模型未返回正文，已返回推理内容。'
+  }
+  if (hasToolCalls) {
+    return '模型未返回正文，已返回工具调用。'
+  }
+  return '模型未返回正文。'
+}
+
+function ReplayMessageEditorColumn({
+  selectedTitle,
+  messages,
+  updateMessage,
+  addMessage,
+  deleteMessage,
+  onClose,
+}: {
+  selectedTitle: string
+  messages: EditableReplayMessage[]
+  updateMessage: (id: string, patch: Partial<EditableReplayMessage>) => void
+  addMessage: () => void
+  deleteMessage: (id: string) => void
+  onClose: () => void
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium">编辑重放消息</span>
+            <Badge variant="secondary">{messages.length} 条</Badge>
+          </div>
+          <div className="text-muted-foreground mt-1 truncate text-xs">{selectedTitle}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={addMessage}
+          >
+            <Plus className="h-4 w-4" />
+            添加消息
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={onClose}
+            title="退出重放编辑"
+            aria-label="退出重放编辑"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="divide-y">
+          {messages.length === 0 ? (
+            <div className="text-muted-foreground px-3 py-10 text-center text-sm">
+              这条记录没有可重放的结构化 messages。
+            </div>
+          ) : (
+            messages.map((message, index) => (
+              <section key={message.id} className="p-3 sm:p-4">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">#{index + 1}</Badge>
+                  <Select
+                    value={message.role}
+                    onValueChange={(value) => updateMessage(message.id, { role: value })}
+                  >
+                    <SelectTrigger className="h-8 w-[130px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="system">system</SelectItem>
+                      <SelectItem value="user">user</SelectItem>
+                      <SelectItem value="assistant">assistant</SelectItem>
+                      <SelectItem value="tool">tool</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {message.tool_call_id && (
+                    <span className="text-muted-foreground text-xs">
+                      tool_call_id: {message.tool_call_id}
+                    </span>
+                  )}
+                  {message.tool_calls && message.tool_calls.length > 0 && (
+                    <Badge variant="secondary">工具调用 {message.tool_calls.length}</Badge>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto h-8 w-8 p-0"
+                    onClick={() => deleteMessage(message.id)}
+                    title="删除消息"
+                    aria-label={`删除第 ${index + 1} 条消息`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+                <Textarea
+                  value={message.contentText}
+                  onChange={(event) => updateMessage(message.id, { contentText: event.target.value })}
+                  minHeight={120}
+                  maxHeight={420}
+                  className="font-mono text-xs leading-5"
+                />
+              </section>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
+
+function ReplayResultItem({ item }: { item: ReplayRunResult }) {
+  const result = item.result
+
+  if (!result) {
+    return (
+      <div className="space-y-2 rounded-md border p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="destructive">#{item.index} 失败</Badge>
+        </div>
+        <div className="border-destructive/30 bg-destructive/10 rounded-md border px-3 py-2 text-sm text-destructive">
+          {item.error || '请求重放接口失败'}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={result.success ? 'default' : 'destructive'}>
+          #{item.index} {result.success ? '完成' : '失败'}
+        </Badge>
+        <span className="text-muted-foreground text-xs">{result.model_name}</span>
+      </div>
+      <div className="text-muted-foreground text-xs leading-5">
+        {formatReplayTokenSummary(result)}
+      </div>
+      {result.error && (
+        <div className="border-destructive/30 bg-destructive/10 rounded-md border px-3 py-2 text-sm text-destructive">
+          {result.error}
+        </div>
+      )}
+      {result.response.trim() ? (
+        <pre className="bg-muted/30 max-h-56 min-h-24 overflow-auto rounded-md border p-3 text-sm leading-6 whitespace-pre-wrap">
+          {result.response}
+        </pre>
+      ) : (
+        <div className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-sm">
+          {formatEmptyReplayResponseHint(result)}
+        </div>
+      )}
+      {result.reasoning.trim() && (
+        <Collapsible className="rounded-md border" defaultOpen={!result.response.trim()}>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
+            >
+              推理内容
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t">
+            <pre className="max-h-56 overflow-auto p-3 text-sm leading-6 whitespace-pre-wrap">
+              {result.reasoning.trim()}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+      {result.tool_calls && result.tool_calls.length > 0 && (
+        <ToolCallsCollapsible toolCalls={result.tool_calls} />
+      )}
+    </div>
+  )
+}
+
 function ReasoningReplayPanel({
   open,
   onClose,
   selected,
   selectedTitle,
   structuredPrompt,
+  messages,
 }: {
   open: boolean
   onClose: () => void
   selected: ReasoningPromptFile | null
   selectedTitle: string
   structuredPrompt: StructuredPromptPayload | null
+  messages: EditableReplayMessage[]
 }) {
   const { toast } = useToast()
   const [modelName, setModelName] = useState('')
   const [temperature, setTemperature] = useState('')
   const [maxTokens, setMaxTokens] = useState('')
-  const [messages, setMessages] = useState<EditableReplayMessage[]>([])
-  const [result, setResult] = useState<ReasoningReplayResponse | null>(null)
+  const [replayCount, setReplayCount] = useState('1')
+  const [replayResults, setReplayResults] = useState<ReplayRunResult[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const [runningReplayIndex, setRunningReplayIndex] = useState(0)
 
   useEffect(() => {
     if (!open) {
@@ -1182,15 +1392,10 @@ function ReasoningReplayPanel({
     setModelName(structuredPrompt?.metadata?.model_name || selected?.model_name || '')
     setTemperature('')
     setMaxTokens('')
-    setMessages(createEditableReplayMessages(structuredPrompt))
-    setResult(null)
+    setReplayCount('1')
+    setReplayResults([])
+    setRunningReplayIndex(0)
   }, [open, selected, structuredPrompt])
-
-  const updateMessage = (id: string, patch: Partial<EditableReplayMessage>) => {
-    setMessages((current) =>
-      current.map((message) => (message.id === id ? { ...message, ...patch } : message))
-    )
-  }
 
   const handleReplay = async () => {
     const normalizedModelName = modelName.trim()
@@ -1198,6 +1403,15 @@ function ReasoningReplayPanel({
       toast({
         title: '缺少模型名称',
         description: '请填写 model_config.toml 中已配置的模型名称。',
+        variant: 'destructive',
+      })
+      return
+    }
+    const normalizedReplayCount = Number(replayCount.trim())
+    if (!Number.isInteger(normalizedReplayCount) || normalizedReplayCount < 1 || normalizedReplayCount > REPLAY_COUNT_MAX) {
+      toast({
+        title: '重放次数无效',
+        description: `请输入 1-${REPLAY_COUNT_MAX} 之间的整数。`,
         variant: 'destructive',
       })
       return
@@ -1212,35 +1426,56 @@ function ReasoningReplayPanel({
     }
 
     setSubmitting(true)
-    setResult(null)
+    setReplayResults([])
+    setRunningReplayIndex(0)
+    let successCount = 0
+    const requestMessages = messages.map((message) => ({
+      role: message.role,
+      content: parseReplayMessageContent(message.contentText, message.originalContent),
+      ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+      ...(message.tool_calls && message.tool_calls.length > 0 ? { tool_calls: message.tool_calls } : {}),
+    }))
+    const toolDefinitions = (structuredPrompt?.tool_definitions ?? []).filter(isRecord)
+
     try {
-      const replayResult = await replayReasoningPrompt({
-        source_path: selected?.json_path ?? null,
-        stage: selected?.stage ?? structuredPrompt?.request?.kind ?? '',
-        model_name: normalizedModelName,
-        messages: messages.map((message) => ({
-          role: message.role,
-          content: parseReplayMessageContent(message.contentText, message.originalContent),
-          ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
-          ...(message.tool_calls && message.tool_calls.length > 0 ? { tool_calls: message.tool_calls } : {}),
-        })),
-        tool_definitions: (structuredPrompt?.tool_definitions ?? []).filter(isRecord),
-        temperature: temperature.trim() ? Number(temperature) : null,
-        max_tokens: maxTokens.trim() ? Number(maxTokens) : null,
-      })
-      setResult(replayResult)
+      for (let index = 1; index <= normalizedReplayCount; index += 1) {
+        setRunningReplayIndex(index)
+        try {
+          const replayResult = await replayReasoningPrompt({
+            source_path: selected?.json_path ?? null,
+            stage: selected?.stage ?? structuredPrompt?.request?.kind ?? '',
+            model_name: normalizedModelName,
+            messages: requestMessages,
+            tool_definitions: toolDefinitions,
+            temperature: temperature.trim() ? Number(temperature) : null,
+            max_tokens: maxTokens.trim() ? Number(maxTokens) : null,
+          })
+          if (replayResult.success) {
+            successCount += 1
+          }
+          setReplayResults((current) => [
+            ...current,
+            { id: `${Date.now()}-${index}`, index, result: replayResult, error: null },
+          ])
+        } catch (err) {
+          setReplayResults((current) => [
+            ...current,
+            {
+              id: `${Date.now()}-${index}`,
+              index,
+              result: null,
+              error: err instanceof Error ? err.message : '请求重放接口失败',
+            },
+          ])
+        }
+      }
       toast({
-        title: replayResult.success ? '重放完成' : '重放失败',
-        description: replayResult.error || formatReplayTokenSummary(replayResult),
-        variant: replayResult.success ? 'default' : 'destructive',
-      })
-    } catch (err) {
-      toast({
-        title: '重放失败',
-        description: err instanceof Error ? err.message : '请求重放接口失败',
-        variant: 'destructive',
+        title: '批量重放完成',
+        description: `成功 ${successCount}/${normalizedReplayCount} 次。`,
+        variant: successCount === normalizedReplayCount ? 'default' : 'destructive',
       })
     } finally {
+      setRunningReplayIndex(0)
       setSubmitting(false)
     }
   }
@@ -1271,154 +1506,99 @@ function ReasoningReplayPanel({
         </Button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-shrink-0 border-b p-3 sm:p-4">
-          <div className="grid gap-3">
-            <div className="grid gap-2">
-              <Label htmlFor="reasoning-replay-model">模型名称</Label>
-              <Input
-                id="reasoning-replay-model"
-                value={modelName}
-                onChange={(event) => setModelName(event.target.value)}
-                placeholder="model_config.toml 中的模型名称"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="reasoning-replay-temperature">温度</Label>
-              <Input
-                id="reasoning-replay-temperature"
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={temperature}
-                onChange={(event) => setTemperature(event.target.value)}
-                placeholder="默认"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="reasoning-replay-max-tokens">最大 Token</Label>
-              <Input
-                id="reasoning-replay-max-tokens"
-                type="number"
-                min={1}
-                step={1}
-                value={maxTokens}
-                onChange={(event) => setMaxTokens(event.target.value)}
-                placeholder="默认"
-              />
-            </div>
-          </div>
-          <Button
-            className="mt-3 h-9 w-full gap-1.5"
-            onClick={handleReplay}
-            disabled={submitting || messages.length === 0}
-          >
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            执行重放
-          </Button>
-        </div>
-
-        <section className="flex-shrink-0 space-y-3 border-b p-3 sm:p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold">重放结果</div>
-            {submitting && (
-              <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                请求中
-              </span>
-            )}
-          </div>
-          {!result && !submitting ? (
-            <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-sm">
-              执行重放后，模型回复、推理内容和工具调用会显示在这里。
-            </div>
-          ) : null}
-          {result && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={result.success ? 'default' : 'destructive'}>
-                  {result.success ? '完成' : '失败'}
-                </Badge>
-                <span className="text-muted-foreground text-xs">{result.model_name}</span>
-              </div>
-              <div className="text-muted-foreground text-xs leading-5">
-                {formatReplayTokenSummary(result)}
-              </div>
-              {result.error && (
-                <div className="border-destructive/30 bg-destructive/10 rounded-md border px-3 py-2 text-sm text-destructive">
-                  {result.error}
-                </div>
-              )}
-              <pre className="bg-muted/30 max-h-56 min-h-24 overflow-auto rounded-md border p-3 text-sm leading-6 whitespace-pre-wrap">
-                {result.response || '空响应'}
-              </pre>
-              {result.reasoning && (
-                <Collapsible className="rounded-md border">
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
-                    >
-                      推理内容
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="border-t">
-                    <pre className="max-h-56 overflow-auto p-3 text-sm leading-6 whitespace-pre-wrap">
-                      {result.reasoning}
-                    </pre>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-              {result.tool_calls && result.tool_calls.length > 0 && (
-                <ToolCallsCollapsible toolCalls={result.tool_calls} />
-              )}
-            </div>
-          )}
-        </section>
-
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="divide-y">
-            {messages.map((message, index) => (
-              <section key={message.id} className="p-3 sm:p-4">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">#{index + 1}</Badge>
-                  <Select
-                    value={message.role}
-                    onValueChange={(value) => updateMessage(message.id, { role: value })}
-                  >
-                    <SelectTrigger className="h-8 w-[130px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="system">system</SelectItem>
-                      <SelectItem value="user">user</SelectItem>
-                      <SelectItem value="assistant">assistant</SelectItem>
-                      <SelectItem value="tool">tool</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {message.tool_call_id && (
-                    <span className="text-muted-foreground text-xs">
-                      tool_call_id: {message.tool_call_id}
-                    </span>
-                  )}
-                  {message.tool_calls && message.tool_calls.length > 0 && (
-                    <Badge variant="secondary">工具调用 {message.tool_calls.length}</Badge>
-                  )}
-                </div>
-                <Textarea
-                  value={message.contentText}
-                  onChange={(event) => updateMessage(message.id, { contentText: event.target.value })}
-                  minHeight={110}
-                  maxHeight={360}
-                  className="font-mono text-xs leading-5"
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="divide-y">
+          <section className="p-3 sm:p-4">
+            <div className="grid gap-3">
+              <div className="grid gap-2">
+                <Label htmlFor="reasoning-replay-model">模型名称</Label>
+                <Input
+                  id="reasoning-replay-model"
+                  value={modelName}
+                  onChange={(event) => setModelName(event.target.value)}
+                  placeholder="model_config.toml 中的模型名称"
                 />
-              </section>
-            ))}
-          </div>
-        </ScrollArea>
-      </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="reasoning-replay-temperature">温度</Label>
+                  <Input
+                    id="reasoning-replay-temperature"
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    value={temperature}
+                    onChange={(event) => setTemperature(event.target.value)}
+                    placeholder="默认"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="reasoning-replay-max-tokens">最大 Token</Label>
+                  <Input
+                    id="reasoning-replay-max-tokens"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={maxTokens}
+                    onChange={(event) => setMaxTokens(event.target.value)}
+                    placeholder="默认"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-end gap-3">
+                <Button
+                  className="h-9 w-full gap-1.5"
+                  onClick={handleReplay}
+                  disabled={submitting || messages.length === 0}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {submitting && runningReplayIndex > 0
+                    ? `执行中 ${runningReplayIndex}/${replayCount.trim() || '?'}`
+                    : '执行重放'}
+                </Button>
+                <div className="grid gap-2">
+                  <Label htmlFor="reasoning-replay-count">次数</Label>
+                  <Input
+                    id="reasoning-replay-count"
+                    type="number"
+                    min={1}
+                    max={REPLAY_COUNT_MAX}
+                    step={1}
+                    value={replayCount}
+                    onChange={(event) => setReplayCount(event.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3 p-3 sm:p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">重放结果</div>
+              {submitting && (
+                <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  第 {runningReplayIndex || 1} 次
+                </span>
+              )}
+            </div>
+            {replayResults.length === 0 && !submitting ? (
+              <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-sm">
+                执行重放后，模型回复、推理内容和工具调用会显示在这里。
+              </div>
+            ) : null}
+            {replayResults.length > 0 && (
+              <div className="space-y-3">
+                {replayResults.map((item) => (
+                  <ReplayResultItem key={item.id} item={item} />
+                ))}
+              </div>
+            )}
+          </section>
+
+        </div>
+      </ScrollArea>
     </aside>
   )
 }
@@ -1479,6 +1659,7 @@ export function ReasoningProcessPage({
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
   const [topbarActionsRoot, setTopbarActionsRoot] = useState<HTMLElement | null>(null)
   const [replayPanelOpen, setReplayPanelOpen] = useState(false)
+  const [replayMessages, setReplayMessages] = useState<EditableReplayMessage[]>([])
   const [eraseNicknameOnExport, setEraseNicknameOnExport] = useState(true)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -1493,6 +1674,15 @@ export function ReasoningProcessPage({
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
   const hasToolbarContent = Boolean(returnTo)
+
+  useEffect(() => {
+    if (!replayPanelOpen) {
+      setReplayMessages([])
+      return
+    }
+
+    setReplayMessages(createEditableReplayMessages(structuredPrompt))
+  }, [replayPanelOpen, selected?.session_id, selected?.stage, selected?.stem, structuredPrompt])
 
   useEffect(() => {
     setToolbarRoot(toolbarContainerId ? document.getElementById(toolbarContainerId) : null)
@@ -1831,6 +2021,20 @@ export function ReasoningProcessPage({
         variant: 'destructive',
       })
     }
+  }
+
+  const updateReplayMessage = (id: string, patch: Partial<EditableReplayMessage>) => {
+    setReplayMessages((current) =>
+      current.map((message) => (message.id === id ? { ...message, ...patch } : message))
+    )
+  }
+
+  const addReplayMessage = () => {
+    setReplayMessages((current) => [...current, createBlankReplayMessage()])
+  }
+
+  const deleteReplayMessage = (id: string) => {
+    setReplayMessages((current) => current.filter((message) => message.id !== id))
   }
 
   const selectedSessionInfo = selected ? sessionInfoByName.get(selected.session_id) : undefined
@@ -2293,11 +2497,21 @@ export function ReasoningProcessPage({
           </div>
 
           <div className="bg-background flex min-h-0 flex-col overflow-hidden rounded-md border">
-            <Tabs
-              value={activePreview}
-              onValueChange={(value) => setActivePreview(value as 'structured' | 'text' | 'html')}
-              className="flex min-h-0 flex-1 flex-col"
-            >
+            {replayPanelOpen ? (
+              <ReplayMessageEditorColumn
+                selectedTitle={selectedTitle}
+                messages={replayMessages}
+                updateMessage={updateReplayMessage}
+                addMessage={addReplayMessage}
+                deleteMessage={deleteReplayMessage}
+                onClose={() => setReplayPanelOpen(false)}
+              />
+            ) : (
+              <Tabs
+                value={activePreview}
+                onValueChange={(value) => setActivePreview(value as 'structured' | 'text' | 'html')}
+                className="flex min-h-0 flex-1 flex-col"
+              >
               <div className="relative min-h-0 flex-1 overflow-hidden">
                 <ScrollArea className="h-full transition-transform duration-300 ease-out">
                   <div className="min-h-full">
@@ -2635,7 +2849,8 @@ export function ReasoningProcessPage({
                   </div>
                 </ScrollArea>
               </div>
-            </Tabs>
+              </Tabs>
+            )}
           </div>
           <ReasoningReplayPanel
             open={replayPanelOpen}
@@ -2643,6 +2858,7 @@ export function ReasoningProcessPage({
             selected={selected}
             selectedTitle={selectedTitle}
             structuredPrompt={structuredPrompt}
+            messages={replayMessages}
           />
         </div>
       )}

@@ -3,7 +3,7 @@ You need to focus on the dialogue between {bot_name} (AI) and different users to
 
 {bot_name}'s persona: {identity}
 
-Please analyze the current scenario and output rules.
+Please analyze the current scenario and output rules. You are not {bot_name} itself; do not speak on behalf of {bot_name}. You need to decide {bot_name}'s behavior based on {bot_name}'s persona, the current situation, and the available tools.
 In the current scenario, different people are interacting ({bot_name} is also a participating user), and users may also be chatting with each other. Your task is not to generate user-visible speech, but to analyze the situation to guide the AI's actions.
 "Analysis" should reflect your judgment of the current situation, your suggestions, your next-step plan, and why you think so. By default, directly output your latest current analysis. Do not repeat previous analysis content. The latest analysis should be as specific as possible and close to the context.
 You need to first gather information that can help {bot_name} take the next action, and then provide your thoughts.

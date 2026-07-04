@@ -1,5 +1,5 @@
-import { Eye, EyeOff } from 'lucide-react'
-import { useState } from 'react'
+import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, XCircle } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { validateToken } from '@/lib/token-validator'
+import { cn } from '@/lib/utils'
 
 import type {
   ApiProviderSetupConfig,
@@ -14,6 +16,94 @@ import type {
   ModelSetupConfig,
   PersonalityConfig,
 } from './types'
+
+interface CustomTokenFormProps {
+  token: string
+  onChange: (token: string) => void
+}
+
+export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
+  const { t } = useTranslation()
+  const [showToken, setShowToken] = useState(false)
+  const tokenValidation = useMemo(() => validateToken(token), [token])
+  const toggleLabel = showToken
+    ? t('setupPage.forms.customToken.hide')
+    : t('setupPage.forms.customToken.show')
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-200">
+        <div className="flex gap-3">
+          <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0" strokeWidth={2} fill="none" />
+          <div className="space-y-1">
+            <p className="font-semibold">{t('setupPage.forms.customToken.noticeTitle')}</p>
+            <p>{t('setupPage.forms.customToken.noticeDescription')}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Label htmlFor="custom-token">{t('setupPage.forms.customToken.label')}</Label>
+        <div className="relative">
+          <KeyRound
+            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            strokeWidth={2}
+            fill="none"
+          />
+          <Input
+            id="custom-token"
+            type={showToken ? 'text' : 'password'}
+            placeholder={t('setupPage.forms.customToken.placeholder')}
+            value={token}
+            onChange={(e) => onChange(e.target.value)}
+            className="pl-10 pr-10 font-mono"
+            autoComplete="new-password"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="absolute top-0 right-0 h-full px-3 hover:bg-transparent"
+            onClick={() => setShowToken(!showToken)}
+            aria-label={toggleLabel}
+            title={toggleLabel}
+          >
+            {showToken ? (
+              <EyeOff className="text-muted-foreground h-4 w-4" />
+            ) : (
+              <Eye className="text-muted-foreground h-4 w-4" />
+            )}
+          </Button>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          {t('setupPage.forms.customToken.description')}
+        </p>
+      </div>
+
+      <div className="space-y-2 rounded-lg bg-muted/50 p-4">
+        <p className="text-sm font-medium">{t('setupPage.forms.customToken.requirements')}</p>
+        <div className="space-y-1.5">
+          {tokenValidation.rules.map((rule) => (
+            <div key={rule.id} className="flex items-center gap-2 text-sm">
+              {rule.passed ? (
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-green-500" />
+              ) : (
+                <XCircle className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              )}
+              <span
+                className={cn(
+                  rule.passed ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
+                )}
+              >
+                {rule.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface BotBasicFormProps {
   config: BotBasicConfig

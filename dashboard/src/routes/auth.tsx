@@ -33,7 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useTheme } from '@/components/use-theme'
 
-import { checkAuthStatus } from '@/lib/auth'
+import { checkAuthStatus, getSetupStatus } from '@/lib/auth'
 import { authApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 import { APP_FULL_NAME } from '@/lib/version'
@@ -175,6 +175,7 @@ export function AuthPage() {
         const data = await authApi.post<{
           valid: boolean
           is_first_setup?: boolean
+          requires_custom_token?: boolean
           message?: string
         }>('/api/webui/auth/verify', {
           body: { token: trimmed },
@@ -190,7 +191,7 @@ export function AuthPage() {
           await checkAuthStatus()
 
           // 直接使用验证响应中的 is_first_setup 字段，避免额外请求
-          if (data.is_first_setup) {
+          if (data.requires_custom_token || data.is_first_setup) {
             navigate({ to: '/setup' })
           } else {
             navigate({ to: '/' })
@@ -225,7 +226,10 @@ export function AuthPage() {
         if (isAuth) {
           // 已登录场景下，URL 中残留的 token 也清掉，避免外泄。
           stripTokenFromUrl()
-          navigate({ to: '/' })
+          const setupStatus = await getSetupStatus()
+          navigate({
+            to: setupStatus?.requires_custom_token || setupStatus?.is_first_setup ? '/setup' : '/',
+          })
           return
         }
 

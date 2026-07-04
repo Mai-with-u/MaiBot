@@ -153,7 +153,7 @@ async function renderPage() {
 }
 
 describe('ExpressionManagementPage 特征化', () => {
-  it('初始加载拉取列表/统计/审核统计/聊天流/互通组', async () => {
+  it('初始加载拉取列表/统计/审核统计/聊天流/共享组', async () => {
     await renderPage()
     await waitFor(() => expect(expressionApi.getExpressionList).toHaveBeenCalled())
     expect(expressionApi.getExpressionStats).toHaveBeenCalled()

@@ -158,7 +158,7 @@ def _parse_triplet_target(s: str) -> Optional[dict[str, str]]:
 
 def _parse_expression_group_target(s: str) -> Optional[dict[str, str]]:
     """
-    解析表达互通组目标，兼容旧版 "*" 全局共享标记。
+    解析表达共享组目标，兼容旧版 "*" 全局共享标记。
     """
     if not isinstance(s, str):
         return None

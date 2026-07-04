@@ -938,7 +938,7 @@ class ExperimentalConfig(ConfigBase):
         default_factory=list,
         json_schema_extra={
             "label": {
-                "zh_CN": "行为互通组",
+                "zh_CN": "行为共享组",
                 "en_US": "Behavior sharing groups",
                 "ja_JP": "行動共有グループ",
             },
@@ -994,7 +994,7 @@ class ExperimentalConfig(ConfigBase):
         default_factory=list,
         json_schema_extra={
             "label": {
-                "zh_CN": "Focus 互通组",
+                "zh_CN": "Focus 共享组",
                 "en_US": "Focus sharing groups",
                 "ja_JP": "Focus 共有グループ",
             },
@@ -1114,6 +1114,24 @@ class TargetItem(ConfigBase):
     """聊天流类型，group（群聊）或private（私聊）"""
 
 
+class ChatStreamGroup(ConfigBase):
+    """聊天流共享组配置类"""
+
+    targets: list[TargetItem] = Field(
+        default_factory=lambda: [],
+        json_schema_extra={
+            "label": {
+                "zh_CN": "共享聊天流",
+                "en_US": "Shared chat streams",
+                "ja_JP": "共有チャットストリーム",
+            },
+            "x-widget": "custom",
+            "x-icon": "users",
+        },
+    )
+    """_wrap_这个组里的聊天流会共享对应的学习内容。"""
+
+
 class AMemorixIntegrationConfig(ConfigBase):
     """记忆在聊天中的使用"""
 
@@ -1139,9 +1157,9 @@ class AMemorixIntegrationConfig(ConfigBase):
         le=20,
         json_schema_extra={
             "label": {
-                "zh_CN": "默认检索条数",
+                "zh_CN": "回忆记忆条数",
                 "en_US": "Default memory result count",
-                "ja_JP": "既定の記憶検索件数",
+                "ja_JP": "記憶検索件数",
             },
             "x-widget": "input",
             "x-icon": "hash",
@@ -1683,7 +1701,7 @@ class AMemorixIntegrationConfig(ConfigBase):
 
 
 class AMemorixPluginConfig(ConfigBase):
-    """记忆系统"""
+    """记忆系统  A-Memorix"""
 
     enabled: bool = Field(
         default=False,
@@ -2694,7 +2712,7 @@ class AMemorixRetrievalFilterConfig(ConfigBase):
 
 
 class AMemorixFilterConfig(ConfigBase):
-    """A_Memorix 聊天过滤配置"""
+    """聊天过滤配置"""
 
     enabled: bool = Field(
         default=True,
@@ -2744,24 +2762,6 @@ class AMemorixFilterConfig(ConfigBase):
         },
     )
     """仅对跨聊天流检索结果生效的分类型过滤，不影响本聊天流读取自身记忆、写入和后台生成"""
-
-
-class AMemorixSharedMemoryGroupConfig(ConfigBase):
-    """A_Memorix 共享记忆聊天流组配置"""
-
-    targets: list[TargetItem] = Field(
-        default_factory=list,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "共享聊天流",
-                "en_US": "Shared chat streams",
-                "ja_JP": "共有チャットストリーム",
-            },
-            "x-widget": "custom",
-            "x-icon": "users",
-        },
-    )
-    """同组聊天会在回忆长期记忆时互相参考，新内容仍记在原来的聊天中"""
 
 
 class AMemorixEpisodeConfig(ConfigBase):
@@ -2883,7 +2883,7 @@ class AMemorixEpisodeConfig(ConfigBase):
 
 
 class AMemorixPersonProfileConfig(ConfigBase):
-    """A_Memorix 人物画像配置"""
+    """人物画像配置"""
 
     enabled: bool = Field(
         default=True,
@@ -3600,7 +3600,7 @@ class AMemorixConfig(ConfigBase):
     )
     """是否让普通记忆查询在所有聊天流范围内检索"""
 
-    shared_memory_groups: list[AMemorixSharedMemoryGroupConfig] = Field(
+    shared_memory_groups: list[ChatStreamGroup] = Field(
         default_factory=list,
         json_schema_extra={
             "label": {
@@ -3749,24 +3749,6 @@ class LearningItem(ConfigBase):
     """是否从这个聊天里继续学习新内容。"""
 
 
-class ChatStreamGroup(ConfigBase):
-    """聊天流互通组配置类"""
-
-    targets: list[TargetItem] = Field(
-        default_factory=lambda: [],
-        json_schema_extra={
-            "label": {
-                "zh_CN": "互通聊天流",
-                "en_US": "Shared chat streams",
-                "ja_JP": "共有チャットストリーム",
-            },
-            "x-widget": "custom",
-            "x-icon": "users",
-        },
-    )
-    """_wrap_这个组里的聊天流会共享对应的学习内容。"""
-
-
 ExperimentalConfig.model_rebuild()
 
 
@@ -3907,7 +3889,7 @@ class ExpressionConfig(ConfigBase):
         default_factory=list,
         json_schema_extra={
             "label": {
-                "zh_CN": "表达互通组",
+                "zh_CN": "共享共享组",
                 "en_US": "Expression sharing groups",
                 "ja_JP": "表現共有グループ",
             },
@@ -3951,7 +3933,7 @@ class JargonConfig(ConfigBase):
         default_factory=list,
         json_schema_extra={
             "label": {
-                "zh_CN": "黑话互通组",
+                "zh_CN": "黑话共享组",
                 "en_US": "Jargon sharing groups",
                 "ja_JP": "隠語共有グループ",
             },

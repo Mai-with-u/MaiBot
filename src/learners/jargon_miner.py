@@ -394,7 +394,7 @@ class JargonMiner:
             logger.warning(f"jargon {jargon_content} 推断 Prompt 保存失败: stage={stage_name}, error={exc}")
             return
 
-        logger.info(
+        logger.debug(
             f"jargon {jargon_content} 推断 Prompt 已生成: stage={stage_name} "
             f"WebUI={preview_access.preview_web_uri} "
             f"推理详情={preview_access.reasoning_web_uri} "

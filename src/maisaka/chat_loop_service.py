@@ -68,6 +68,9 @@ PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "sub_agent": "sub_agent",
 }
 CONTEXT_SELECTION_CACHE_STABILITY_RATIO = 2.0
+PLANNER_FINAL_ASSISTANT_REMINDER_TEMPLATE = (
+    "我需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
+)
 
 
 @dataclass(slots=True)
@@ -650,6 +653,12 @@ class MaisakaChatLoopService:
         except Exception:
             return f"{self.personality_prompt}\n\nYou are a helpful AI assistant."
 
+    @staticmethod
+    def _build_planner_final_assistant_reminder() -> str:
+        """构造每轮 Planner 请求末尾的一次性 assistant 提醒。"""
+
+        return PLANNER_FINAL_ASSISTANT_REMINDER_TEMPLATE.format(bot_name=global_config.bot.nickname.strip())
+
     def _get_chat_prompt_name(self) -> str:
         """选择当前聊天使用的 Planner 模板。"""
 
@@ -671,10 +680,16 @@ class MaisakaChatLoopService:
 
 
     @staticmethod
+    def _build_time_user_message(timestamp: datetime) -> str:
+        """构建统一格式的时间提示消息。"""
+
+        return f"时间：{timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+
+    @staticmethod
     def _build_current_time_user_message() -> str:
         """构建追加到请求末尾的当前时间消息。"""
 
-        return f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        return MaisakaChatLoopService._build_time_user_message(datetime.now())
 
     def _build_group_chat_attention_block(self) -> str:
         """构建当前聊天场景下的额外注意事项块。"""
@@ -766,8 +781,10 @@ class MaisakaChatLoopService:
         selected_history: List[LLMContextMessage],
         *,
         enable_visual_message: bool,
+        include_day_boundary_time_messages: bool = False,
         injected_user_messages: Sequence[str] | None = None,
         tail_user_messages: Sequence[str] | None = None,
+        final_assistant_message: str | None = None,
         system_prompt: Optional[str] = None,
     ) -> List[Message]:
         """构造发给大模型的消息列表。
@@ -790,13 +807,30 @@ class MaisakaChatLoopService:
         system_msg.add_text_content(resolved_system_prompt)
         messages.append(system_msg.build())
 
+        previous_context_timestamp: datetime | None = None
         for msg in selected_history:
             llm_message = build_llm_message_from_context(
                 msg,
                 enable_visual_message=enable_visual_message,
             )
-            if llm_message is not None:
-                messages.append(llm_message)
+            if llm_message is None:
+                continue
+
+            if (
+                include_day_boundary_time_messages
+                and previous_context_timestamp is not None
+                and previous_context_timestamp.date() != msg.timestamp.date()
+            ):
+                boundary_message = self._build_time_user_message(msg.timestamp)
+                messages.append(
+                    MessageBuilder()
+                    .set_role(RoleType.User)
+                    .add_text_content(boundary_message)
+                    .build()
+                )
+
+            messages.append(llm_message)
+            previous_context_timestamp = msg.timestamp
 
         normalized_injected_messages: List[Message] = []
         current_chat_attention = self._build_current_chat_attention_tail_message()
@@ -819,6 +853,15 @@ class MaisakaChatLoopService:
 
         if normalized_injected_messages:
             messages.extend(normalized_injected_messages)
+
+        normalized_final_assistant_message = str(final_assistant_message or "").strip()
+        if normalized_final_assistant_message:
+            messages.append(
+                MessageBuilder()
+                .set_role(RoleType.Assistant)
+                .add_text_content(normalized_final_assistant_message)
+                .build()
+            )
 
         return messages
 
@@ -854,8 +897,12 @@ class MaisakaChatLoopService:
         built_messages = self._build_request_messages(
             selected_history,
             enable_visual_message=enable_visual_message,
+            include_day_boundary_time_messages=request_kind == "planner",
             injected_user_messages=injected_user_messages,
             tail_user_messages=tail_user_messages,
+            final_assistant_message=(
+                self._build_planner_final_assistant_reminder() if request_kind == "planner" else None
+            ),
             system_prompt=system_prompt,
         )
         if enable_visual_message:

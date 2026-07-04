@@ -203,7 +203,6 @@ AMEMORIX_CLASS_PATH_PREFIX: Dict[str, str] = {
     "AMemorixRetrievalFilterConfig": "a_memorix.filter.retrieval",
     "AMemorixRetrievalSearchConfig": "a_memorix.retrieval.search",
     "AMemorixRetrievalSubtypeFilterConfig": "a_memorix.filter.retrieval.chat_stream",
-    "AMemorixSharedMemoryGroupConfig": "a_memorix.shared_memory_groups[]",
     "AMemorixSmartFallbackConfig": "a_memorix.retrieval.search.smart_fallback",
     "AMemorixSparseRetrievalConfig": "a_memorix.retrieval.sparse",
     "AMemorixStorageConfig": "a_memorix.storage",

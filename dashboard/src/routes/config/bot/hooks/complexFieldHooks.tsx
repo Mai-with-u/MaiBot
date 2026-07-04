@@ -1094,7 +1094,6 @@ function AddGroupTargetDialog({
       <DialogContent style={{ '--dialog-width': '44rem' } as CSSProperties}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>选择成员范围和聊天类型。添加后范围与类型不可直接修改，需要删除后重新添加。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid gap-2 md:grid-cols-2">
@@ -3020,12 +3019,12 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
   const groupLabel = isSharedMemoryGroup
     ? '共享记忆组'
     : isFocusGroup
-      ? 'Focus 互通组'
+      ? 'Focus 共享组'
       : isBehaviorGroup
-        ? '行为互通组'
+        ? '行为共享组'
         : isJargonGroup
-          ? '黑话互通组'
-          : '表达互通组'
+          ? '黑话共享组'
+          : '表达共享组'
   const learnedContentLabel = isBehaviorGroup ? '行为经验' : isJargonGroup ? '黑话' : '表达方式'
   const supportsWildcardTargets = !isSharedMemoryGroup
   const groupScopeOptions = supportsWildcardTargets ? GROUP_SCOPE_OPTIONS : EXACT_GROUP_SCOPE_OPTIONS
@@ -3033,7 +3032,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
     ? '把几个群聊或私聊放进同一组后，麦麦在其中任意一个聊天里回忆长期记忆时，会一起参考同组聊天的记忆；新产生的内容仍记在原来的聊天里。'
     : isFocusGroup
       ? '配置后只有同组聊天流共享 Focus，不同组可以分别进入 Focus。'
-    : `每个互通组内的聊天流会共享已学习的${learnedContentLabel}。`
+    : `每个共享组内的聊天流会共享已学习的${learnedContentLabel}。`
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(() =>
     isSharedMemoryGroup ? new Set(Array.from({ length: groups.length }, (_, index) => index)) : new Set()
   )
@@ -3100,7 +3099,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
         }
       })
       .catch((error: unknown) => {
-        console.error('加载黑话互通组平台列表失败:', error)
+        console.error('加载黑话共享组平台列表失败:', error)
       })
 
     return () => {

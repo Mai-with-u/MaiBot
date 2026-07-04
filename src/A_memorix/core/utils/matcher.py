@@ -102,11 +102,18 @@ class AhoCorasick:
         if not patterns or len(patterns) < self.native_min_patterns:
             return
         try:
-            self._native_matcher = ahocorasick_rs.AhoCorasick(
-                patterns,
-                match_kind=ahocorasick_rs.MATCHKIND_STANDARD,
-                store_patterns=True,
-            )
+            try:
+                self._native_matcher = ahocorasick_rs.AhoCorasick(
+                    patterns,
+                    matchkind=ahocorasick_rs.MATCHKIND_STANDARD,
+                    store_patterns=True,
+                )
+            except TypeError:
+                self._native_matcher = ahocorasick_rs.AhoCorasick(
+                    patterns,
+                    match_kind=ahocorasick_rs.MATCHKIND_STANDARD,
+                    store_patterns=True,
+                )
             self._native_patterns = patterns
         except Exception:
             self._native_matcher = None

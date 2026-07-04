@@ -24,8 +24,8 @@ def search_jargon(
     Args:
         keyword: 搜索关键词
         chat_id: 可选的聊天 ID（session_id）
-            - 如果当前聊天命中通配互通组：查询所有 is_global=True 的记录
-            - 否则如果提供则优先搜索该聊天、同互通组或 global 的 jargon
+            - 如果当前聊天命中通配共享组：查询所有 is_global=True 的记录
+            - 否则如果提供则优先搜索该聊天、同共享组或 global 的 jargon
         limit: 返回结果数量限制，默认 10
         case_sensitive: 是否大小写敏感，默认 False（不敏感）
         fuzzy: 是否模糊搜索，默认 True（使用 LIKE 匹配）
@@ -49,7 +49,7 @@ def search_jargon(
 
     related_session_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(chat_id)
 
-    # 根据黑话互通组配置在 Python 层面过滤，同时限制结果数量（先多取一些，因为后面可能过滤）
+    # 根据黑话共享组配置在 Python 层面过滤，同时限制结果数量（先多取一些，因为后面可能过滤）
     query = (
         select(Jargon)
         .where(search_condition)
@@ -65,7 +65,7 @@ def search_jargon(
         jargons = session.exec(query).all()
 
         for jargon in jargons:
-            # 如果提供了 chat_id，需要检查 session_id_dict 是否属于当前聊天流或互通组范围
+            # 如果提供了 chat_id，需要检查 session_id_dict 是否属于当前聊天流或共享组范围
             if chat_id and not jargon.is_global:
                 try:  # 解析 session_id_dict
                     session_id_dict = json.loads(jargon.session_id_dict) if jargon.session_id_dict else {}
@@ -75,7 +75,7 @@ def search_jargon(
                         f"解析 session_id_dict 失败，jargon_id={jargon.id}，原始数据：{jargon.session_id_dict}"
                     )
 
-                # 检查是否属于目标 chat_id 或同互通组
+                # 检查是否属于目标 chat_id 或同共享组
                 if not related_session_ids.intersection(session_id_dict):
                     continue
             # 只返回有 meaning 的记录

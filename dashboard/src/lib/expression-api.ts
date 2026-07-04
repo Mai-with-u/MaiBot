@@ -64,16 +64,16 @@ export async function getExpressionChatTargets(
 }
 
 /**
- * 获取表达互通组列表
+ * 获取表达共享组列表
  */
 export async function getExpressionGroups(
   params: { include_legacy?: boolean } = {}
 ): Promise<ExpressionGroupListResponse['data']> {
   const data = await backendApi.get<ExpressionGroupListResponse>(`${API_BASE}/groups`, {
     query: { include_legacy: params.include_legacy ? true : undefined },
-    errorMessage: '获取表达互通组失败',
+    errorMessage: '获取表达共享组失败',
   })
-  return requireSuccess(data, '获取表达互通组失败').data
+  return requireSuccess(data, '获取表达共享组失败').data
 }
 
 /**

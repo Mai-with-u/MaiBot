@@ -8,7 +8,7 @@ import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
-from src.chat.utils.utils import get_chat_type_and_target_info
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.data_models.message_component_data_model import (
     AtComponent,
@@ -171,12 +171,22 @@ class BaseMaisakaReplyGenerator:
 
         user_info = reply_message.message_info.user_info
         sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+        bot_name = global_config.bot.nickname.strip() or sender_name
         target_message_id = reply_message.message_id.strip() if reply_message.message_id else "未知"
         # target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         quote_ids = extract_quote_ids_from_message_sequence(reply_message.raw_message)
         target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
         if not target_content:
             target_content = "[无可见文本内容]"
+
+        if is_bot_self(reply_message.platform, user_info.user_id):
+            return "\n".join(
+                [
+                    f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
+                    "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
+                    f"- 你之前的发言内容：{target_content}",
+                ]
+            )
 
         # target_lines = [
         #     "【本次回复目标】",
@@ -423,7 +433,7 @@ class BaseMaisakaReplyGenerator:
         return system_prompt
 
     def _build_reply_instruction(self) -> str:
-        return "请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发送的内容。"
+        return "以上是你的思考，你可以参考其中内容或根据实际情况调整回复内容，请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发送的内容。"
 
     def _build_final_user_message(
         self,

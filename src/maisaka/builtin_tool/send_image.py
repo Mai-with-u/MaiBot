@@ -20,7 +20,7 @@ def get_tool_spec() -> ToolSpec:
     return ToolSpec(
         name="send_image",
         description=(
-            "将图片发送给用户，变为用户可见的图片消息。当你需要通过图片进行说明解释时使用。当用户需要你发图片时使用。"
+            "将context中的图片展示给用户，给用户发送图片信息时使用。当你需要通过图片进行说明解释时使用。当用户需要你发图片时使用。不是查看图片内容，而是将图片展示给其他用户。"
             "按 msg_id + index 或 工具返回媒体索引 tool_result:<call_id>:<item_index> 发送指定图片"
         ),
         parameters_schema={
