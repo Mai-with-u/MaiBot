@@ -16,6 +16,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "image": ("#5f87d7", None, False),
     "image_cache_cleanup": ("#5f87d7", None, False),
     "emoji": ("#ffaf00", None, False),  # 橙黄色，偏向橙色
+    "update_notice": ("#daaf10", None, False),
     "emoji_cache_cleanup": ("#ffaf00", None, False),  # 与表情包模块保持一致
     # 核心模块
     "main": ("#ffffff", None, True),  # 亮白色 + 粗体 (主程序)

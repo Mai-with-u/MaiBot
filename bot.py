@@ -18,6 +18,7 @@ from src.common.i18n import set_locale, t, tn
 from src.common.logger import get_logger, initialize_logging, shutdown_logging
 from src.common.runtime_loop import set_main_loop
 from src.common.shutdown import request_shutdown
+from src.common.update_notice import emit_terminal_update_notice_if_needed
 from src.config.legacy_upgrade_confirmation import require_legacy_upgrade_confirmation
 
 # 设置工作目录为脚本所在目录
@@ -142,6 +143,7 @@ if os.environ.get("MAIBOT_WORKER_PROCESS") != "1":
 # 不过由于是不同进程，每个进程仍会初始化一次，这是预期的行为
 
 require_legacy_upgrade_confirmation(Path(script_dir))
+emit_terminal_update_notice_if_needed()
 
 logger.info(t("startup.worker_dir_set", script_dir=script_dir))
 
