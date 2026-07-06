@@ -36,6 +36,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "chat_stream": ("#00ffff", None, False),
     "message_storage": ("#0087ff", None, False),
     "expressor": ("#d75f00", None, False),
+    "expression_utils":("#d75f00", None, False),
     # jargon相关
     "jargon": ("#ffd700", None, False),  # 金黄色，突出显示
     # 插件系统
@@ -129,6 +130,7 @@ MODULE_ALIASES = {
     "memory_activator": "记忆",
     "tool_use": "工具",
     "expressor": "表达方式",
+    "expression_utils": "表达方式",
     "database_model": "数据库",
     "tool_executor": "工具",
     "plugin_manager": "插件",

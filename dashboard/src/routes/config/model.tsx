@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { type CSSProperties, type MouseEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,6 +50,7 @@ import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Trash2, Save, Search, Info, Check, ChevronsUpDown, RefreshCw, Loader2, GraduationCap, Share2, AlertTriangle, Settings, Zap } from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
+import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { RestartOverlay } from '@/components/restart-overlay'
@@ -67,6 +68,73 @@ import type { ModelInfo } from './model/types'
 
 const MODEL_CONFIG_TABS = ['providers', 'models', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
+
+interface ModelIdentifierMarqueeProps {
+  text: string
+  className?: string
+  textClassName?: string
+}
+
+function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentifierMarqueeProps) {
+  const containerRef = useRef<HTMLSpanElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const [scrollDistance, setScrollDistance] = useState(0)
+
+  useEffect(() => {
+    const containerElement = containerRef.current
+    const textElement = textRef.current
+    if (!containerElement || !textElement) {
+      return
+    }
+
+    const updateOverflowState = () => {
+      setScrollDistance(Math.max(0, textElement.scrollWidth - containerElement.clientWidth))
+    }
+
+    updateOverflowState()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateOverflowState)
+      return () => window.removeEventListener('resize', updateOverflowState)
+    }
+
+    const resizeObserver = new ResizeObserver(updateOverflowState)
+    resizeObserver.observe(containerElement)
+    resizeObserver.observe(textElement)
+    return () => resizeObserver.disconnect()
+  }, [text])
+
+  const shouldScroll = scrollDistance > 1
+  const durationMs = Math.min(Math.max(scrollDistance * 45, 1800), 6000)
+
+  return (
+    <span
+      ref={containerRef}
+      className={cn('group/model-marquee block min-w-0 overflow-hidden', className)}
+      title={text}
+    >
+      <span
+        ref={textRef}
+        className={cn(
+          'model-identifier-marquee-text block max-w-full overflow-hidden text-ellipsis whitespace-nowrap',
+          shouldScroll &&
+            'group-hover/model-marquee:w-max group-hover/model-marquee:max-w-none group-hover/model-marquee:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-marquee:overflow-visible group-hover/model-option:w-max group-hover/model-option:max-w-none group-hover/model-option:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-option:overflow-visible',
+          textClassName
+        )}
+        style={
+          shouldScroll
+            ? ({
+                '--model-identifier-marquee-distance': `-${scrollDistance}px`,
+                '--model-identifier-marquee-duration': `${durationMs}ms`,
+              } as CSSProperties)
+            : undefined
+        }
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
@@ -909,7 +977,10 @@ function ModelConfigPageContent() {
                         ) : modelFetchError ? (
                           <span className="text-muted-foreground text-sm">手动填写</span>
                         ) : editingModel?.model_identifier ? (
-                          <span className="truncate">{editingModel.model_identifier}</span>
+                          <ModelIdentifierMarquee
+                            text={editingModel.model_identifier}
+                            className="min-w-0 flex-1 text-left"
+                          />
                         ) : (
                           <span className="text-muted-foreground">搜索或选择模型...</span>
                         )}
@@ -943,7 +1014,7 @@ function ModelConfigPageContent() {
                               <CommandItem
                                 key={model.id}
                                 value={model.id}
-                                className="pr-8"
+                                className="group/model-option pr-8"
                                 onSelect={() => {
                                   setEditingModel((prev) =>
                                     prev ? { ...prev, model_identifier: model.id } : null
@@ -954,10 +1025,13 @@ function ModelConfigPageContent() {
                                 {editingModel?.model_identifier === model.id && (
                                   <Check className="absolute right-2 h-4 w-4" />
                                 )}
-                                <div className="flex min-w-0 flex-col">
-                                  <span className="truncate">{model.id}</span>
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <ModelIdentifierMarquee text={model.id} />
                                   {model.name !== model.id && (
-                                    <span className="truncate text-xs text-muted-foreground">{model.name}</span>
+                                    <ModelIdentifierMarquee
+                                      text={model.name}
+                                      textClassName="text-xs text-muted-foreground"
+                                    />
                                   )}
                                 </div>
                               </CommandItem>

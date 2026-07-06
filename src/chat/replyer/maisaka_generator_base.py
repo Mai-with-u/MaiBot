@@ -28,9 +28,11 @@ from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
+from src.config.official_configs import build_personality_emotion_suffix
 from src.config.model_configs import ModelInfo
 from src.core.types import ActionInfo
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.context.messages import (
     AssistantMessage,
@@ -115,7 +117,8 @@ class BaseMaisakaReplyGenerator:
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
-            return f"你的名字是{bot_name}{bot_aliases}。\n{prompt_personality}"
+            emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
+            return f"你的名字是{bot_name}{bot_aliases}。\n{prompt_personality}\n{emotion_suffix}"
         except Exception as exc:
             logger.warning(f"构建 Maisaka 人设提示词失败: {exc}")
             return "你的名字是麦麦。\n是人类。"

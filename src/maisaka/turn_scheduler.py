@@ -30,17 +30,19 @@ class MessageTurnScheduler:
     ) -> tuple[int, str]:
         """按当前 runtime 快照为待处理消息计算回复必要性评分。"""
 
-        return self._reply_necessity_gate.score(
+        score_result = self._reply_necessity_gate.score(
             pending_messages=pending_messages,
             trigger_threshold=trigger_threshold,
         )
+        return score_result.score, score_result.detail
 
     def should_trigger_by_reply_necessity(
         self,
         *,
         pending_messages: Sequence[SessionMessage],
         trigger_threshold: int,
-        schedule_detail: str | None = None,
+        formatted_frequency: str,
+        pending_count: int,
     ) -> bool:
         """判断新 Maisaka 是否应基于回复必要性进入 Planner。"""
 
@@ -48,9 +50,13 @@ class MessageTurnScheduler:
             pending_messages=pending_messages,
             trigger_threshold=trigger_threshold,
         )
-        schedule_detail_prefix = f"{schedule_detail} " if schedule_detail else ""
+        decision_label = "进入Planner" if result.should_trigger else "等待更多消息"
+        schedule_detail = (
+            f"[频率: {formatted_frequency}]"
+            f"[{pending_count}/{trigger_threshold} 消息 | 压力: {result.pressure_score}]"
+        )
         logger.info(
-            f"{self._runtime.log_prefix} 回复调度: {schedule_detail_prefix}{result.detail}"
+            f"{self._runtime.log_prefix}{schedule_detail}[{result.detail}][{decision_label}]"
         )
         return result.should_trigger
 
@@ -80,7 +86,7 @@ class MessageTurnScheduler:
             return
 
         effective_frequency = runtime._get_effective_reply_frequency()
-        formatted_frequency = runtime._format_reply_frequency_for_display(effective_frequency)
+        formatted_frequency = f"{effective_frequency:.3f}"
         if runtime._is_reply_frequency_silent():
             logger.info(
                 f"{runtime.log_prefix} 回复频率调度: 频率={formatted_frequency} "
@@ -101,12 +107,13 @@ class MessageTurnScheduler:
             return
 
         trigger_threshold = runtime._get_message_trigger_threshold()
-        schedule_detail = f"频率={formatted_frequency} pending={pending_count} 消息阈值={trigger_threshold}"
+        schedule_detail = f"[频率: {formatted_frequency}][{pending_count}/{trigger_threshold} 消息]"
         if is_reply_necessity_trigger_enabled():
             if self.should_trigger_by_reply_necessity(
                 pending_messages=runtime.message_cache[runtime._last_processed_index :],
                 trigger_threshold=trigger_threshold,
-                schedule_detail=schedule_detail,
+                formatted_frequency=formatted_frequency,
+                pending_count=pending_count,
             ):
                 runtime._enqueue_message_turn()
             return
