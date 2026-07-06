@@ -631,8 +631,10 @@ class MaisakaChatLoopService:
             else:
                 identity_line = f"{bot_name}是{prompt_personality}"
 
+            prompt_lines = [identity_line]
             emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
-            prompt_lines = [identity_line, emotion_suffix]
+            if emotion_suffix:
+                prompt_lines.append(emotion_suffix)
             if alias_names:
                 prompt_lines.append(f"{bot_name}的昵称还有{','.join(alias_names)}")
             return "\n".join(prompt_lines)

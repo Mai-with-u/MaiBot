@@ -117,8 +117,11 @@ class BaseMaisakaReplyGenerator:
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
+            prompt_lines = [f"你的名字是{bot_name}{bot_aliases}。", prompt_personality]
             emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
-            return f"你的名字是{bot_name}{bot_aliases}。\n{prompt_personality}\n{emotion_suffix}"
+            if emotion_suffix:
+                prompt_lines.append(emotion_suffix)
+            return "\n".join(prompt_lines)
         except Exception as exc:
             logger.warning(f"构建 Maisaka 人设提示词失败: {exc}")
             return "你的名字是麦麦。\n是人类。"

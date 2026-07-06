@@ -38,14 +38,14 @@ EMOTION_TRAIT_OPTION_LABELS = {
 
 EMOTION_TRAIT_OPTION_DESCRIPTIONS = {
     "rational_calm": "情绪表达更克制，优先保持客观、清晰和稳定。",
-    "neutral": "情绪表达自然中性，不额外压低或放大情绪。",
+    "neutral": "不追加额外情绪特点描述，完全使用原人格设定。",
     "sentimental": "情绪表达更细腻敏感，更容易被聊天氛围触动。",
 }
 
 PERSONALITY_EMOTION_SUFFIXES: Final[dict[str, str]] = {
-    "rational_calm": "情绪特点：你整体理性冷静，回应时更偏向客观、克制和清晰判断，少用强烈情绪表达。",
-    "neutral": "情绪特点：你的情绪表达保持自然中性，不刻意压抑或放大感受，根据聊天上下文正常回应。",
-    "sentimental": "情绪特点：你更敏感细腻，容易被聊天氛围触动，会自然表现出一点惆怅、共情或情绪波动，但不要过度煽情。",
+    "rational_calm": "你整体理性冷静，回应时更偏向客观、克制和清晰判断，少用强烈情绪表达。",
+    "neutral": "",
+    "sentimental": "你更敏感细腻，容易被聊天氛围触动，会自然表现出一点惆怅、共情或情绪波动，但不要过度煽情。",
 }
 
 
@@ -1067,7 +1067,7 @@ class ExperimentalConfig(ConfigBase):
             "x-option-descriptions": EMOTION_TRAIT_OPTION_DESCRIPTIONS,
         },
     )
-    """实验性人格情绪特点；会在每次构造人格提示词时追加对应后缀。"""
+    """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""

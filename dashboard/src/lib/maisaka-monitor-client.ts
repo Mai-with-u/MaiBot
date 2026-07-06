@@ -301,6 +301,8 @@ class MaisakaMonitorClient {
   private initialized = false
   private listenerIdCounter = 0
   private listeners: Map<number, MaisakaEventListener> = new Map()
+  private replayCursor = 0
+  private readonly replayLimit = 1000
   private subscriptionActive = false
   private subscriptionPromise: Promise<void> | null = null
   private deferredUnsubTimer: ReturnType<typeof setTimeout> | null = null
@@ -339,7 +341,10 @@ class MaisakaMonitorClient {
 
     if (this.subscriptionPromise === null) {
       this.subscriptionPromise = unifiedWsClient
-        .subscribe('maisaka_monitor', 'main')
+        .subscribe('maisaka_monitor', 'main', {
+          since_event_id: this.replayCursor,
+          replay_limit: this.replayLimit,
+        })
         .then(() => {
           this.subscriptionActive = true
         })
@@ -349,6 +354,24 @@ class MaisakaMonitorClient {
     }
 
     await this.subscriptionPromise
+  }
+
+  updateReplayCursor(eventId: number): void {
+    if (!Number.isFinite(eventId) || eventId <= this.replayCursor) {
+      return
+    }
+    this.replayCursor = Math.floor(eventId)
+    unifiedWsClient.updateSubscriptionData('maisaka_monitor', 'main', {
+      since_event_id: this.replayCursor,
+      replay_limit: this.replayLimit,
+    })
+  }
+
+  setInitialReplayCursor(eventId: number): void {
+    if (!Number.isFinite(eventId) || eventId < 0) {
+      return
+    }
+    this.replayCursor = Math.max(this.replayCursor, Math.floor(eventId))
   }
 
   async subscribe(listener: MaisakaEventListener): Promise<() => Promise<void>> {

@@ -13,6 +13,8 @@ import { maisakaMonitorClient } from '@/lib/maisaka-monitor-client'
 export interface TimelineEntry {
   /** 唯一 ID */
   id: string
+  /** 后端事件账本 ID */
+  eventId?: number
   /** 事件类型 */
   type: MaisakaMonitorEvent['type']
   /** 原始事件数据 */
@@ -52,6 +54,7 @@ const MAX_TIMELINE_ENTRIES = 3000
 const MAX_PERSISTED_TIMELINE_ENTRIES = 10000
 const PERSIST_PRUNE_INTERVAL = 200
 const BACKGROUND_COLLECTION_STORAGE_KEY = 'maisaka-monitor-background-collection'
+const LAST_EVENT_ID_STORAGE_KEY = 'maisaka-monitor-last-event-id'
 const MONITOR_DB_NAME = 'maisaka-monitor-db'
 const MONITOR_DB_VERSION = 1
 
@@ -91,6 +94,8 @@ let cachedTimeline: TimelineEntry[] = []
 let cachedSessions: Map<string, SessionInfo> = new Map()
 let cachedStageStatuses: Map<string, StageStatusInfo> = new Map()
 let cachedSelectedSession: string | null = null
+let cachedLastEventId = loadLastEventIdFromStorage()
+let cachedSeenEventIds = new Set<number>()
 let cachedConnected = false
 let backgroundCollectionEnabled = false
 let backgroundCollectionPreferenceLoaded = false
@@ -132,6 +137,27 @@ interface MaisakaMonitorDb extends DBSchema {
     key: string
     value: MonitorMetaRecord
   }
+}
+
+maisakaMonitorClient.setInitialReplayCursor(cachedLastEventId)
+
+function loadLastEventIdFromStorage() {
+  if (typeof window === 'undefined') {
+    return 0
+  }
+  const rawValue = window.localStorage.getItem(LAST_EVENT_ID_STORAGE_KEY)
+  if (!rawValue) {
+    return 0
+  }
+  const parsedValue = Number(rawValue)
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? Math.floor(parsedValue) : 0
+}
+
+function persistLastEventIdToStorage() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(LAST_EVENT_ID_STORAGE_KEY, String(cachedLastEventId))
 }
 
 function toStageStatusInfo(raw: Record<string, unknown>): StageStatusInfo | null {
@@ -187,6 +213,7 @@ function getMonitorDb() {
 function toTimelineEntry(entry: PersistedTimelineEntry): TimelineEntry {
   return {
     id: entry.id,
+    eventId: entry.eventId,
     type: entry.type,
     data: entry.data,
     timestamp: entry.timestamp,
@@ -206,19 +233,30 @@ async function loadMonitorSnapshot() {
     }
 
     const db = await dbPromise
-    const [timelineRecords, sessionRecords, selectedSessionMeta, entryCounterMeta] = await Promise.all([
+    const [timelineRecords, sessionRecords, selectedSessionMeta, entryCounterMeta, lastEventIdMeta] = await Promise.all([
       db.getAllFromIndex('timeline', 'by-timestamp'),
       db.getAll('sessions'),
       db.get('meta', 'selectedSession'),
       db.get('meta', 'entryCounter'),
+      db.get('meta', 'lastEventId'),
     ])
 
     cachedTimeline = timelineRecords
       .slice(-MAX_TIMELINE_ENTRIES)
       .map(toTimelineEntry)
+    cachedSeenEventIds = new Set(
+      cachedTimeline
+        .map((entry) => entry.eventId)
+        .filter((eventId): eventId is number => typeof eventId === 'number' && eventId > 0),
+    )
     cachedSessions = new Map(sessionRecords.map((session) => [session.sessionId, session]))
     cachedSelectedSession = typeof selectedSessionMeta?.value === 'string' ? selectedSessionMeta.value : null
     entryCounter = typeof entryCounterMeta?.value === 'number' ? entryCounterMeta.value : cachedTimeline.length
+    if (typeof lastEventIdMeta?.value === 'number') {
+      cachedLastEventId = Math.max(cachedLastEventId, lastEventIdMeta.value)
+      persistLastEventIdToStorage()
+      maisakaMonitorClient.setInitialReplayCursor(cachedLastEventId)
+    }
     notifyStoreListeners()
   } catch (error) {
     console.warn('读取 MaiSaka 观察 IndexedDB 缓存失败，已忽略:', error)
@@ -279,6 +317,7 @@ async function flushMonitorSnapshot() {
     }
     await tx.objectStore('meta').put({ key: 'selectedSession', value: cachedSelectedSession })
     await tx.objectStore('meta').put({ key: 'entryCounter', value: entryCounter })
+    await tx.objectStore('meta').put({ key: 'lastEventId', value: cachedLastEventId })
     await tx.done
 
     persistedEntryCountSincePrune += entries.length
@@ -371,6 +410,28 @@ function compareTimelineEntries(a: TimelineEntry, b: TimelineEntry) {
     return a.timestamp - b.timestamp
   }
   return getTimelineEntrySequence(a) - getTimelineEntrySequence(b)
+}
+
+function getMonitorEventId(dataRecord: Record<string, unknown>) {
+  const eventId = dataRecord.event_id
+  if (typeof eventId === 'number' && Number.isFinite(eventId) && eventId > 0) {
+    return Math.floor(eventId)
+  }
+  return null
+}
+
+function markMonitorEventSeen(eventId: number | null) {
+  if (eventId === null) {
+    return true
+  }
+  if (cachedSeenEventIds.has(eventId)) {
+    return false
+  }
+  cachedSeenEventIds.add(eventId)
+  cachedLastEventId = Math.max(cachedLastEventId, eventId)
+  persistLastEventIdToStorage()
+  maisakaMonitorClient.updateReplayCursor(cachedLastEventId)
+  return true
 }
 
 function updateSessionInfo(event: MaisakaMonitorEvent, sessionId: string, timestamp: number) {
@@ -529,6 +590,10 @@ function updateTimelineMessageContent(event: MaisakaMonitorEvent, sessionId: str
 
 function handleMonitorEvent(event: MaisakaMonitorEvent) {
   const dataRecord = event.data as unknown as Record<string, unknown>
+  const eventId = getMonitorEventId(dataRecord)
+  if (!markMonitorEventSeen(eventId)) {
+    return
+  }
   const sessionId = dataRecord.session_id as string
   const timestamp = dataRecord.timestamp as number
 
@@ -560,7 +625,8 @@ function handleMonitorEvent(event: MaisakaMonitorEvent) {
   }
 
   const entry: TimelineEntry = {
-    id: `evt_${++entryCounter}_${Date.now()}`,
+    id: eventId ? `evt_${eventId}` : `evt_${++entryCounter}_${Date.now()}`,
+    eventId: eventId ?? undefined,
     type: event.type,
     data: event.data,
     timestamp,
@@ -662,6 +728,7 @@ export function useMaisakaMonitor() {
     setStageStatuses(new Map())
     setSelectedSessionState(null)
     pendingPersistEntries = []
+    pendingPersistUpdatedEntryIds = new Set()
     pendingPersistSessionIds = new Set()
     pendingPersistMeta = false
     void clearPersistedMonitorSnapshot()

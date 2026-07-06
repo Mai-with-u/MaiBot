@@ -5,6 +5,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import asyncio
 import json
 import time
 
@@ -15,6 +16,7 @@ logger = get_logger("maisaka_monitor")
 
 MONITOR_DOMAIN = "maisaka_monitor"
 MONITOR_TOPIC = "main"
+NON_PERSISTED_EVENTS = {"stage.status", "stage.removed", "stage.snapshot"}
 
 
 def _normalize_payload_value(value: Any) -> Any:
@@ -285,11 +287,16 @@ async def _broadcast(event: str, data: Dict[str, Any]) -> None:
         from src.webui.routers.websocket.manager import websocket_manager
 
         data = _enrich_session_identity(data)
+        broadcast_data = data
+        if event not in NON_PERSISTED_EVENTS:
+            from src.maisaka.monitor.event_store import record_monitor_event
+
+            broadcast_data = await asyncio.to_thread(record_monitor_event, event, data)
         await websocket_manager.broadcast_to_topic(
             domain=MONITOR_DOMAIN,
             topic=MONITOR_TOPIC,
             event=event,
-            data=data,
+            data=broadcast_data,
         )
     except Exception as exc:
         logger.warning(f"MaiSaka 监控事件广播失败: {exc}", exc_info=True)
