@@ -20,7 +20,6 @@ import {
   FileCode2,
   ImageIcon,
   PauseCircle,
-  Radio,
   Timer,
   Wrench,
   XCircle,
@@ -281,9 +280,7 @@ interface MonitorStats {
 
 interface StageStatusPanelProps {
   autoScroll: boolean
-  backgroundCollection: boolean
   onClearTimeline: () => void
-  onToggleBackgroundCollection: () => void
   onScrollToBottom: () => void
   stats: MonitorStats
   status?: StageStatusInfo
@@ -291,9 +288,7 @@ interface StageStatusPanelProps {
 
 function MonitorStatusActions({
   autoScroll,
-  backgroundCollection,
   onClearTimeline,
-  onToggleBackgroundCollection,
   onScrollToBottom,
   stats,
 }: Omit<StageStatusPanelProps, 'status'>) {
@@ -315,16 +310,6 @@ function MonitorStatusActions({
         </Tooltip>
       </TooltipProvider>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button
-          variant={backgroundCollection ? 'secondary' : 'ghost'}
-          size="sm"
-          className="h-6 shrink-0 px-2 text-[11px]"
-          onClick={onToggleBackgroundCollection}
-          title={backgroundCollection ? '关闭离开页面后的持续获取' : '开启离开页面后的持续获取'}
-        >
-          <Radio className={cn('h-3 w-3 mr-1', backgroundCollection && 'text-primary')} />
-          持续获取
-        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -352,9 +337,7 @@ function MonitorStatusActions({
 
 function StageStatusPanel({
   autoScroll,
-  backgroundCollection,
   onClearTimeline,
-  onToggleBackgroundCollection,
   onScrollToBottom,
   stats,
   status,
@@ -362,9 +345,7 @@ function StageStatusPanel({
   const actions = (
       <MonitorStatusActions
         autoScroll={autoScroll}
-        backgroundCollection={backgroundCollection}
         onClearTimeline={onClearTimeline}
-        onToggleBackgroundCollection={onToggleBackgroundCollection}
         onScrollToBottom={onScrollToBottom}
         stats={stats}
       />
@@ -1179,8 +1160,6 @@ export function MaisakaMonitor() {
     selectedSession,
     setSelectedSession,
     connected,
-    backgroundCollection,
-    setBackgroundCollectionEnabled,
     clearTimeline,
   } = useMaisakaMonitor()
 
@@ -1297,9 +1276,7 @@ export function MaisakaMonitor() {
         {/* 时间线 */}
         <StageStatusPanel
           autoScroll={autoScroll}
-          backgroundCollection={backgroundCollection}
           onClearTimeline={clearTimeline}
-          onToggleBackgroundCollection={() => setBackgroundCollectionEnabled(!backgroundCollection)}
           onScrollToBottom={() => scrollToBottom('smooth')}
           stats={stats}
           status={selectedStageStatus}

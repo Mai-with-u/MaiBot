@@ -160,7 +160,7 @@ async def _handle_maisaka_monitor_subscribe(
     )
     since_event_id = _coerce_non_negative_int(data.get("since_event_id"))
     replay_limit = _coerce_non_negative_int(data.get("replay_limit"), default=1000)
-    replay_limit = max(1, min(replay_limit, 3000))
+    replay_limit = max(1, min(replay_limit, 10000))
     websocket_manager.subscribe(connection_id, domain="maisaka_monitor", topic="main")
     await websocket_manager.send_response(
         connection_id,

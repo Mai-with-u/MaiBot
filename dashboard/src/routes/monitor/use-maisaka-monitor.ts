@@ -53,10 +53,9 @@ const MAX_TIMELINE_ENTRIES = 3000
 /** IndexedDB 中最多持久化的时间线条目数。 */
 const MAX_PERSISTED_TIMELINE_ENTRIES = 10000
 const PERSIST_PRUNE_INTERVAL = 200
-const BACKGROUND_COLLECTION_STORAGE_KEY = 'maisaka-monitor-background-collection'
 const LAST_EVENT_ID_STORAGE_KEY = 'maisaka-monitor-last-event-id'
 const MONITOR_DB_NAME = 'maisaka-monitor-db'
-const MONITOR_DB_VERSION = 1
+const MONITOR_DB_VERSION = 2
 
 function resolveSessionDisplayName({
   fallbackName,
@@ -97,8 +96,6 @@ let cachedSelectedSession: string | null = null
 let cachedLastEventId = loadLastEventIdFromStorage()
 let cachedSeenEventIds = new Set<number>()
 let cachedConnected = false
-let backgroundCollectionEnabled = false
-let backgroundCollectionPreferenceLoaded = false
 let activeConsumerCount = 0
 let monitorSubscriptionStarted = false
 let monitorSubscriptionPromise: Promise<void> | null = null
@@ -181,29 +178,29 @@ function notifyStoreListeners() {
   storeListeners.forEach((listener) => listener())
 }
 
-function loadBackgroundCollectionPreference() {
-  if (backgroundCollectionPreferenceLoaded) {
-    return backgroundCollectionEnabled
-  }
-
-  backgroundCollectionPreferenceLoaded = true
-  if (typeof window !== 'undefined') {
-    backgroundCollectionEnabled = window.localStorage.getItem(BACKGROUND_COLLECTION_STORAGE_KEY) === 'true'
-  }
-  return backgroundCollectionEnabled
-}
-
 function getMonitorDb() {
   if (typeof window === 'undefined' || !window.indexedDB) {
     return null
   }
 
   monitorDbPromise ??= openDB<MaisakaMonitorDb>(MONITOR_DB_NAME, MONITOR_DB_VERSION, {
-    upgrade(db) {
-      const timelineStore = db.createObjectStore('timeline', { keyPath: 'id' })
-      timelineStore.createIndex('by-timestamp', 'timestamp')
-      db.createObjectStore('sessions', { keyPath: 'sessionId' })
-      db.createObjectStore('meta', { keyPath: 'key' })
+    upgrade(db, oldVersion, _newVersion, transaction) {
+      if (!db.objectStoreNames.contains('timeline')) {
+        const timelineStore = db.createObjectStore('timeline', { keyPath: 'id' })
+        timelineStore.createIndex('by-timestamp', 'timestamp')
+      }
+      if (!db.objectStoreNames.contains('sessions')) {
+        db.createObjectStore('sessions', { keyPath: 'sessionId' })
+      }
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'key' })
+      }
+
+      if (oldVersion > 0 && oldVersion < 2) {
+        transaction.objectStore('timeline').clear()
+        transaction.objectStore('sessions').clear()
+        transaction.objectStore('meta').clear()
+      }
     },
   })
 
@@ -372,7 +369,7 @@ function schedulePersistMonitorSnapshot(entry?: TimelineEntry, sessionId?: strin
 void loadMonitorSnapshot()
 
 function shouldKeepMonitorActive() {
-  return activeConsumerCount > 0 || backgroundCollectionEnabled
+  return activeConsumerCount > 0
 }
 
 function appendTimelineEntry(entry: TimelineEntry) {
@@ -695,7 +692,6 @@ export function useMaisakaMonitor() {
   const [stageStatuses, setStageStatuses] = useState<Map<string, StageStatusInfo>>(new Map(cachedStageStatuses))
   const [selectedSession, setSelectedSessionState] = useState<string | null>(cachedSelectedSession)
   const [connected, setConnected] = useState(cachedConnected)
-  const [backgroundCollection, setBackgroundCollection] = useState(loadBackgroundCollectionPreference)
 
   useEffect(() => {
     activeConsumerCount += 1
@@ -706,7 +702,6 @@ export function useMaisakaMonitor() {
       setStageStatuses(new Map(cachedStageStatuses))
       setSelectedSessionState(cachedSelectedSession)
       setConnected(cachedConnected)
-      setBackgroundCollection(backgroundCollectionEnabled)
     }
 
     storeListeners.add(syncFromStore)
@@ -742,21 +737,6 @@ export function useMaisakaMonitor() {
     notifyStoreListeners()
   }, [])
 
-  const setBackgroundCollectionEnabled = useCallback((enabled: boolean) => {
-    backgroundCollectionEnabled = enabled
-    backgroundCollectionPreferenceLoaded = true
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(BACKGROUND_COLLECTION_STORAGE_KEY, String(enabled))
-    }
-
-    if (enabled) {
-      ensureMonitorSubscription()
-    } else {
-      stopMonitorSubscriptionIfIdle()
-    }
-    notifyStoreListeners()
-  }, [])
-
   /** 当前选中会话的时间线 */
   const filteredTimeline = selectedSession
     ? timeline.filter((e) => e.sessionId === selectedSession)
@@ -770,8 +750,6 @@ export function useMaisakaMonitor() {
     selectedSession,
     setSelectedSession,
     connected,
-    backgroundCollection,
-    setBackgroundCollectionEnabled,
     clearTimeline,
   }
 }

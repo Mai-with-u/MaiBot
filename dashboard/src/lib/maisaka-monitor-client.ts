@@ -299,10 +299,11 @@ export type MaisakaEventListener = (event: MaisakaMonitorEvent) => void
 
 class MaisakaMonitorClient {
   private initialized = false
+  private readonly initialReplayLimit = 1000
   private listenerIdCounter = 0
   private listeners: Map<number, MaisakaEventListener> = new Map()
   private replayCursor = 0
-  private readonly replayLimit = 1000
+  private readonly replayLimit = 10000
   private subscriptionActive = false
   private subscriptionPromise: Promise<void> | null = null
   private deferredUnsubTimer: ReturnType<typeof setTimeout> | null = null
@@ -334,17 +335,21 @@ class MaisakaMonitorClient {
     this.initialized = true
   }
 
-  private async ensureSubscribed(): Promise<void> {
+  private getReplaySubscribeData(): Record<string, unknown> {
+    return {
+      since_event_id: this.replayCursor,
+      replay_limit: this.replayCursor > 0 ? this.replayLimit : this.initialReplayLimit,
+    }
+  }
+
+  private async ensureSubscribed(): Promise<boolean> {
     if (this.subscriptionActive) {
-      return
+      return false
     }
 
     if (this.subscriptionPromise === null) {
       this.subscriptionPromise = unifiedWsClient
-        .subscribe('maisaka_monitor', 'main', {
-          since_event_id: this.replayCursor,
-          replay_limit: this.replayLimit,
-        })
+        .subscribe('maisaka_monitor', 'main', this.getReplaySubscribeData())
         .then(() => {
           this.subscriptionActive = true
         })
@@ -354,6 +359,11 @@ class MaisakaMonitorClient {
     }
 
     await this.subscriptionPromise
+    return true
+  }
+
+  private async replayFromCursor(): Promise<void> {
+    await unifiedWsClient.subscribe('maisaka_monitor', 'main', this.getReplaySubscribeData())
   }
 
   updateReplayCursor(eventId: number): void {
@@ -361,10 +371,7 @@ class MaisakaMonitorClient {
       return
     }
     this.replayCursor = Math.floor(eventId)
-    unifiedWsClient.updateSubscriptionData('maisaka_monitor', 'main', {
-      since_event_id: this.replayCursor,
-      replay_limit: this.replayLimit,
-    })
+    unifiedWsClient.updateSubscriptionData('maisaka_monitor', 'main', this.getReplaySubscribeData())
   }
 
   setInitialReplayCursor(eventId: number): void {
@@ -385,7 +392,10 @@ class MaisakaMonitorClient {
       this.deferredUnsubTimer = null
     }
 
-    await this.ensureSubscribed()
+    const createdSubscription = await this.ensureSubscribed()
+    if (!createdSubscription) {
+      await this.replayFromCursor()
+    }
 
     return async () => {
       this.listeners.delete(listenerId)
