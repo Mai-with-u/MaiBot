@@ -663,28 +663,6 @@ function IndexPageContent() {
         </Card>
       ),
     },
-    ...(platformAccountConfigured === false
-      ? [{
-          id: 'builtin:platform-guide',
-          title: t('home.platformGuide.title'),
-          width: 'full' as const,
-          source: 'builtin' as const,
-          render: () => (
-            <Card className="h-full border-2 border-orange-500 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-950/20">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-2xl text-orange-700 dark:text-orange-300">{t('home.platformGuide.title')}</CardTitle>
-                <CardDescription>{t('home.platformGuide.description')}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">{t('home.platformGuide.detail')}</p>
-                <Button asChild className="shrink-0">
-                  <Link to="/config/bot">{t('home.platformGuide.action')}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ),
-        }]
-      : []),
     {
       id: 'builtin:stats-overview',
       title: t('home.stats.overviewTitle'),
@@ -902,6 +880,29 @@ function IndexPageContent() {
           </p>
         ) : null}
       </div>
+
+      {platformAccountConfigured === false && (
+        <Card className="border-2 border-orange-500 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-2xl text-orange-700 dark:text-orange-300">
+              {t('home.platformGuide.title')}
+            </CardTitle>
+            <CardDescription>
+              {t('home.platformGuide.description')}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              {t('home.platformGuide.detail')}
+            </p>
+            <Button asChild className="shrink-0">
+              <Link to="/config/bot">
+                {t('home.platformGuide.action')}
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <HomeCardManager
         cards={homeCards}
