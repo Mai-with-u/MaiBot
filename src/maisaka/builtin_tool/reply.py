@@ -15,7 +15,7 @@ from src.services import send_service
 from .context import BuiltinToolRuntimeContext
 
 logger = get_logger("maisaka_builtin_reply")
-_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote"}
+_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote", "attach_pic", "attach_emoji", "attach_at"}
 
 
 def _use_expression_intent() -> bool:
@@ -86,6 +86,46 @@ def get_tool_spec() -> ToolSpec:
                 },
             },
         }
+    if bool(config_module.global_config.experimental.enable_rich_reply):
+        properties["attach_pic"] = {
+            "type": "array",
+            "description": (
+                "可选。随本次回复附加一张或多张上下文图片。每项使用 msg_id + index，"
+                "或使用 media_index=tool_result:<call_id>:<item_index> 指向工具返回媒体。"
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "msg_id": {
+                        "type": "string",
+                        "description": "图片所在的消息编号。",
+                        "default": "",
+                    },
+                    "media_index": {
+                        "type": "string",
+                        "description": "工具返回媒体索引，例如 tool_result:call_x:1；与 msg_id 二选一。",
+                        "default": "",
+                    },
+                    "index": {
+                        "type": "integer",
+                        "description": "同一消息中的图片序号，从 0 开始。",
+                        "default": 0,
+                    },
+                },
+            },
+            "default": [],
+        }
+        properties["attach_emoji"] = {
+            "type": "string",
+            "description": "可选。随本次回复附加一个表情包，填写情绪或表情描述。",
+            "default": "",
+        }
+        properties["attach_at"] = {
+            "type": "array",
+            "description": "可选。随本次回复 at 一个或多个目标消息的发送者，填写目标 msg_id。",
+            "items": {"type": "string"},
+            "default": [],
+        }
 
     return ToolSpec(
         name="reply",
@@ -135,12 +175,13 @@ async def handle_tool(
 ) -> ToolExecutionResult:
     """执行 reply 内置工具。"""
 
+    invocation_arguments = dict(invocation.arguments or {})
     latest_thought = context.reasoning if context is not None else invocation.reasoning
-    target_message_id = str(invocation.arguments.get("msg_id") or "").strip()
-    set_quote = bool(invocation.arguments.get("set_quote", True))
+    target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
+    set_quote = bool(invocation_arguments.get("set_quote", True))
     reply_tool_args = {
         key: value
-        for key, value in dict(invocation.arguments or {}).items()
+        for key, value in invocation_arguments.items()
         if key not in _REPLY_TOOL_INTERNAL_ARGUMENTS
     }
     if not _use_expression_intent():
@@ -183,8 +224,6 @@ async def handle_tool(
         )
 
     rich_reply_enabled = bool(config_module.global_config.experimental.enable_rich_reply)
-    rich_reply_events: list[dict[str, Any]] = []
-    rich_reply_checker_records: list[dict[str, Any]] = []
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
     try:
         tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")
@@ -210,68 +249,6 @@ async def handle_tool(
         )
 
     reply_text = reply_result.completion.response_text.strip() if success else ""
-    original_reply_text_for_rich_output = reply_text
-    if rich_reply_enabled and reply_text:
-        reply_result.metrics.extra["rich_reply_original_response"] = original_reply_text_for_rich_output
-        try:
-            check_result = await replyer.check_rich_reply_output(
-                generated_reply=reply_text,
-                chat_history=replyer_chat_history,
-                latest_chat_history=list(tool_ctx.runtime._chat_history),
-                reply_message=target_message,
-                reply_reason=latest_thought,
-                stream_id=tool_ctx.runtime.session_id,
-                reply_tool_args=reply_tool_args,
-            )
-        except Exception as exc:
-            logger.exception(f"{tool_ctx.runtime.log_prefix} 丰富回复检查器执行异常: {exc}")
-        else:
-            rich_reply_event = {
-                "attempt": 1,
-                "action": check_result.action,
-                "output": check_result.output_text,
-                "model_name": check_result.model_name,
-                "prompt_tokens": check_result.prompt_tokens,
-                "completion_tokens": check_result.completion_tokens,
-                "total_tokens": check_result.total_tokens,
-            }
-            rich_reply_events.append(rich_reply_event)
-            reply_result.metrics.extra["rich_reply_checker_output"] = check_result.output_text
-            rich_reply_checker_records.append(
-                {
-                    "prompt_title": "Reply Checker Prompt #1",
-                    "reasoning_title": "Reply Checker 思考",
-                    "output_title": "Reply Checker 输出",
-                    "prompt_category": "replyer",
-                    "request_kind": "replyer_checker",
-                    "selection_reason": (
-                        f"会话ID: {tool_ctx.runtime.session_id}\n"
-                        f"目标消息: {target_message_id}\n"
-                        f"检查器动作: {check_result.action}"
-                    ),
-                    "request_messages": check_result.request_messages,
-                    "prompt_text": check_result.request_prompt,
-                    "output_text": check_result.output_text,
-                    "reasoning_text": check_result.reasoning_text,
-                    "metrics": {
-                        "model_name": check_result.model_name,
-                        "prompt_tokens": check_result.prompt_tokens,
-                        "completion_tokens": check_result.completion_tokens,
-                        "total_tokens": check_result.total_tokens,
-                    },
-                }
-            )
-
-            if check_result.action == "rewrite":
-                reply_text = check_result.output_text
-                reply_result.metrics.extra["rich_reply_checker_request_message_count"] = check_result.request_message_count
-                reply_result.metrics.extra["rich_reply_checker_request_messages"] = check_result.request_messages
-                reply_result.metrics.extra["rich_reply_checker_reasoning"] = check_result.reasoning_text
-
-    if rich_reply_events:
-        reply_result.metrics.extra["rich_reply_checker_events"] = rich_reply_events
-    if rich_reply_checker_records:
-        reply_result.metrics.extra["rich_reply_checker_records"] = rich_reply_checker_records
 
     if not reply_text:
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
@@ -290,7 +267,7 @@ async def handle_tool(
         if rich_reply_enabled:
             reply_sequences = await tool_ctx.post_process_rich_reply_message_sequences_async(
                 reply_text,
-                original_reply_text_for_rich_output,
+                invocation_arguments,
             )
         else:
             reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(reply_text)
@@ -298,10 +275,10 @@ async def handle_tool(
         reply_result.completion.response_text = reply_text
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
         reply_metadata = _build_monitor_metadata(reply_result)
-        logger.exception(f"{tool_ctx.runtime.log_prefix} 解析丰富回复输出失败: {exc}")
+        logger.exception(f"{tool_ctx.runtime.log_prefix} 解析回复附件失败: {exc}")
         return tool_ctx.build_failure_result(
             invocation.tool_name,
-            f"解析丰富回复输出失败：{exc}",
+            f"解析回复附件失败：{exc}",
             metadata=reply_metadata,
         )
     reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]

@@ -1,16 +1,12 @@
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 
-import json
 import pytest
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.reply_generation_data_models import (
-    GenerationMetrics,
     LLMCompletionResult,
     ReplyGenerationResult,
-    build_reply_monitor_detail,
 )
 from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import AtComponent, TextComponent
@@ -21,8 +17,6 @@ import src.maisaka.turn_scheduler as turn_scheduler_module
 from src.maisaka.builtin_tool import reply as reply_tool_module
 from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
-from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
-from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.maisaka.builtin_tool.wait import handle_tool as handle_wait_tool
 from src.maisaka.mode_policy import is_idle_cycle_reason, is_reply_necessity_trigger_enabled
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
@@ -63,6 +57,28 @@ def test_rich_reply_hides_standalone_media_tools(monkeypatch) -> None:
     assert "send_emoji" not in tool_names
 
 
+def test_rich_reply_adds_reply_attachment_parameters(monkeypatch) -> None:
+    monkeypatch.setattr(global_config.experimental, "enable_rich_reply", True, raising=False)
+
+    reply_tool = next(tool for tool in get_builtin_tools(_availability_context()) if tool["name"] == "reply")
+    properties = reply_tool["parameters_schema"]["properties"]
+
+    assert "attach_pic" in properties
+    assert "attach_emoji" in properties
+    assert "attach_at" in properties
+
+
+def test_reply_attachment_parameters_are_hidden_when_rich_reply_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(global_config.experimental, "enable_rich_reply", False, raising=False)
+
+    reply_tool = next(tool for tool in get_builtin_tools(_availability_context()) if tool["name"] == "reply")
+    properties = reply_tool["parameters_schema"]["properties"]
+
+    assert "attach_pic" not in properties
+    assert "attach_emoji" not in properties
+    assert "attach_at" not in properties
+
+
 @pytest.mark.asyncio
 async def test_rich_reply_output_expands_at_and_text() -> None:
     target_message = SessionMessage(message_id="msg-1", timestamp=datetime.now(), platform="qq")
@@ -80,10 +96,14 @@ async def test_rich_reply_output_expands_at_and_text() -> None:
         def find_source_message_by_id(message_id: str):
             return target_message if message_id == "msg-1" else None
 
+        @staticmethod
+        def _update_stage_status(stage: str, detail: str) -> None:
+            del stage, detail
+
     tool_ctx = BuiltinToolRuntimeContext.__new__(BuiltinToolRuntimeContext)
     tool_ctx.runtime = DummyRuntime()
 
-    sequences = await tool_ctx.post_process_rich_reply_message_sequences_async("<at msg-1><text>", "你好")
+    sequences = await tool_ctx.post_process_rich_reply_message_sequences_async("你好", {"attach_at": ["msg-1"]})
 
     assert len(sequences) == 1
     components = sequences[0].components
@@ -95,76 +115,7 @@ async def test_rich_reply_output_expands_at_and_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rich_reply_split_outputs_multiple_messages() -> None:
-    tool_ctx = BuiltinToolRuntimeContext.__new__(BuiltinToolRuntimeContext)
-    tool_ctx.runtime = SimpleNamespace()
-
-    sequences = await tool_ctx.post_process_rich_reply_message_sequences_async("<text><split>第二条", "第一条")
-
-    assert len(sequences) == 2
-    assert [sequence.components[0].text for sequence in sequences] == ["第一条", "第二条"]
-
-
-def test_rich_reply_checker_prompt_record_is_saved(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(PromptPreviewLogger, "_BASE_DIR", tmp_path / "maisaka_prompt")
-    result = ReplyGenerationResult(
-        metrics=GenerationMetrics(
-            extra={
-                "rich_reply_checker_records": [
-                    {
-                        "prompt_category": "replyer",
-                        "request_kind": "replyer_checker",
-                        "selection_reason": "会话ID: session-1",
-                        "prompt_text": "checker prompt",
-                        "output_text": "<send>",
-                        "metrics": {"model_name": "replyer-model", "prompt_tokens": 3},
-                    }
-                ]
-            }
-        )
-    )
-    detail = build_reply_monitor_detail(result)
-    display = MaisakaRuntimeDisplayMixin.__new__(MaisakaRuntimeDisplayMixin)
-    display.session_id = "session-1"
-
-    parts = display._build_default_tool_detail_parts(
-        tool_name="reply",
-        tool_call_id="reply-call",
-        tool_args={},
-        summary="",
-        duration_ms=None,
-        detail=detail,
-        planner_style=False,
-    )
-
-    saved_files = list((tmp_path / "maisaka_prompt" / "replyer").glob("*/*.json"))
-    assert parts
-    assert len(saved_files) == 1
-    saved_payload = json.loads(saved_files[0].read_text(encoding="utf-8"))
-    assert saved_payload["request"]["kind"] == "replyer_checker"
-    assert saved_payload["output"]["content"] == "<send>"
-    assert detail["additional_prompt_html_uris"]
-
-
-def test_rich_reply_monitor_detail_separates_original_and_checker_output() -> None:
-    result = ReplyGenerationResult(
-        metrics=GenerationMetrics(
-            extra={
-                "rich_reply_original_response": "原始回复",
-                "rich_reply_checker_output": "<text><emoji 开心>",
-            }
-        )
-    )
-
-    detail = build_reply_monitor_detail(result)
-
-    sections = detail["extra_sections"]
-    assert {"title": "Replyer 原始回复", "content": "原始回复"} in sections
-    assert {"title": "修改器输出", "content": "<text><emoji 开心>"} in sections
-
-
-@pytest.mark.asyncio
-async def test_rich_reply_monitor_detail_uses_translated_visible_output(monkeypatch) -> None:
+async def test_rich_reply_uses_action_parameters_without_checker(monkeypatch) -> None:
     monkeypatch.setattr(global_config.experimental, "enable_rich_reply", True, raising=False)
 
     target_message = SessionMessage(message_id="msg-1", timestamp=datetime.now(), platform="qq")
@@ -179,25 +130,10 @@ async def test_rich_reply_monitor_detail_uses_translated_visible_output(monkeypa
 
     class DummyReplyer:
         async def generate_reply_with_context(self, **kwargs):
-            del kwargs
+            assert "attach_at" not in kwargs["reply_tool_args"]
             return True, ReplyGenerationResult(
                 success=True,
                 completion=LLMCompletionResult(response_text="啥基米弓前端是真好用吧"),
-            )
-
-        async def check_rich_reply_output(self, **kwargs):
-            del kwargs
-            return SimpleNamespace(
-                action="rewrite",
-                output_text="<text>",
-                model_name="checker-model",
-                prompt_tokens=1,
-                completion_tokens=1,
-                total_tokens=2,
-                request_message_count=1,
-                request_messages=[],
-                request_prompt="checker prompt",
-                reasoning_text="",
             )
 
     class DummyRuntime:
@@ -212,10 +148,16 @@ async def test_rich_reply_monitor_detail_uses_translated_visible_output(monkeypa
         def find_source_message_by_id(message_id: str):
             return target_message if message_id == "msg-1" else None
 
+        @staticmethod
+        def _update_stage_status(stage: str, detail: str) -> None:
+            del stage, detail
+
     sent_segments: list[str] = []
+    sent_sequences: list[object] = []
 
     async def fake_send_to_target_with_message(**kwargs):
         sent_segments.append(kwargs["processed_plain_text"])
+        sent_sequences.append(kwargs["message_sequence"])
         return SimpleNamespace(message_id="sent-1")
 
     monkeypatch.setattr(reply_tool_module.replyer_manager, "get_replyer", lambda **kwargs: DummyReplyer())
@@ -223,16 +165,20 @@ async def test_rich_reply_monitor_detail_uses_translated_visible_output(monkeypa
 
     tool_ctx = BuiltinToolRuntimeContext.__new__(BuiltinToolRuntimeContext)
     tool_ctx.runtime = DummyRuntime()
-    invocation = ToolInvocation(tool_name="reply", arguments={"msg_id": "msg-1"}, call_id="reply-1")
+    invocation = ToolInvocation(
+        tool_name="reply",
+        arguments={"msg_id": "msg-1", "attach_at": ["msg-1"]},
+        call_id="reply-1",
+    )
 
     result = await reply_tool_module.handle_tool(tool_ctx, invocation)
 
     assert result.success is True
-    assert sent_segments == ["啥基米弓前端是真好用吧"]
+    assert sent_segments == ["@群名片啥基米弓前端是真好用吧"]
+    assert isinstance(sent_sequences[0].components[0], AtComponent)
     monitor_detail = result.metadata["monitor_detail"]
-    assert monitor_detail["output_text"] == "啥基米弓前端是真好用吧"
-    assert {"title": "Replyer 原始回复", "content": "啥基米弓前端是真好用吧"} in monitor_detail["extra_sections"]
-    assert {"title": "修改器输出", "content": "<text>"} in monitor_detail["extra_sections"]
+    assert monitor_detail["output_text"] == "@群名片啥基米弓前端是真好用吧"
+    assert "extra_sections" not in monitor_detail
 
 
 def test_planner_no_tool_ends_cycle() -> None:

@@ -1049,7 +1049,7 @@ class ExperimentalConfig(ConfigBase):
             "x-icon": "sparkles",
         },
     )
-    """开启后，replyer 生成文本后会由检查器决定是否插入图片、表情包或 at。"""
+    """开启后，reply 动作可通过 attach_pic、attach_emoji、attach_at 参数附加图片、表情包或 at。"""
 
     emotion_trait: Literal["rational_calm", "neutral", "sentimental"] = Field(
         default="neutral",

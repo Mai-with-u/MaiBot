@@ -1440,7 +1440,7 @@ class MaisakaReasoningEngine:
             bool: 是否需要替换
         """
         if not self._last_reasoning_content or not current_content:
-            logger.info(
+            logger.debug(
                 f"{self._runtime.log_prefix} 跳过思考相似度判定: "
                 f"上一轮为空={not bool(self._last_reasoning_content)} "
                 f"当前为空={not bool(current_content)} 相似度=0.00"
