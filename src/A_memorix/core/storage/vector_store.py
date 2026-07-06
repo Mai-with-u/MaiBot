@@ -108,7 +108,7 @@ class VectorStore:
         # Thread safety lock
         self._lock = threading.RLock()
 
-        logger.info(f"向量存储初始化: dim={dimension}, mode=SQ8")
+        logger.debug(f"向量存储实例已创建: dim={dimension}, mode=SQ8, data_dir={self.data_dir}")
 
     def _init_index(self):
         """初始化空的 Faiss 索引"""

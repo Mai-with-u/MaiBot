@@ -146,11 +146,11 @@ def initialize_database() -> None:
         )
         create_all_start_time = perf_counter()
         SQLModel.metadata.create_all(engine)
-        logger.info(f"数据库模型建表检查完成，耗时={int((perf_counter() - create_all_start_time) * 1000)}ms")
+        logger.debug(f"数据库模型建表检查完成，耗时={int((perf_counter() - create_all_start_time) * 1000)}ms")
         ensure_runtime_performance_indexes()
         finalize_start_time = perf_counter()
         _migration_bootstrapper.finalize_database(migration_state)
-        logger.info(f"数据库 schema 版本收尾完成，耗时={int((perf_counter() - finalize_start_time) * 1000)}ms")
+        logger.debug(f"数据库 schema 版本收尾完成，耗时={int((perf_counter() - finalize_start_time) * 1000)}ms")
         _db_initialized = True
 
 
