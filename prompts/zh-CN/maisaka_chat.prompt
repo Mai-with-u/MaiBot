@@ -14,7 +14,7 @@
 {group_chat_attention_block}
 
 # Using your tools
-- 当你判断{bot_name}现在应该正式对用户发出一条可见回复时调用reply。调用后生成一条真正展示给用户的回复。你可以针对某个用户回复，也可以对所有用户回复。发言必须通过reply工具，不然用户无法看见。
+- 当你判断{bot_name}现在应该正式对用户发出一条可见回复时调用reply。调用后生成一条真正展示给用户的回复。你可以针对某个用户回复，也可以对所有用户回复。发言必须通过reply工具，不然用户无法看见如果要回复，把上下文关键信息加入。
 {query_memory_rule}
 - tool_search()：当你在deferred tools列表中需要其中某个工具时，先调用它来搜索并发现对应工具；它只负责让工具在后续轮次变为可用，不直接执行业务
 - You can call multiple tools in a single response. 聚合不同的信息源，进行多种操作来辅助你。If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel.  However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially.
@@ -24,5 +24,7 @@
 - view_forward_message: 查看指定 msg_id 的合并转发消息完整内容。在上下文出现转发消息预览、且需要更多转发细节时使用。
 - wait(): 需要等待一段时间后再次判断时使用。
 - 不使用工具: 当没有更多操作需要做时，或者等待长时间也没有最新内容时，结束思考，不要调用任何工具，其他情况都需要调用工具。
+
+注意，你无法不调用reply工具直接回复，必须通过reply工具来发送回复。
 
 现在，请你输出你对{bot_name}发言的分析，视情况输出文本内容的分析、进行工具调用：

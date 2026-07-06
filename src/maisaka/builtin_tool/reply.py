@@ -15,7 +15,8 @@ from src.services import send_service
 from .context import BuiltinToolRuntimeContext
 
 logger = get_logger("maisaka_builtin_reply")
-_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote", "attach_pic", "attach_emoji", "attach_at"}
+_REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote"}
+_RICH_REPLY_ARGUMENTS = {"attach_pic", "attach_emoji", "attach_at"}
 
 
 def _use_expression_intent() -> bool:
@@ -42,12 +43,19 @@ def get_tool_spec() -> ToolSpec:
         },
         "set_quote": {
             "type": "boolean",
-            "description": "以引用回复的方式发送这条回复，不用每句都引用。",
+            "description": "以引用回复的方式发送这条回复，当发言人数过多，聊天比较乱时使用。",
             "default": True,
         },
         "reply_guide": {
             "type": "string",
-            "description": "回复需要注意的事项和回复指引",
+            "description": "回复需要注意的事项和回复指引，包含当前聊天状态，情感态度等等。",
+        },
+        "reference_info": {
+            "type": "string",
+            "description": (
+                "上下文中的关键信息，包括人物关系，情感关系，事实信息，回忆信息，聊天情况。"
+                "这些信息将，为回复提供信息参考"
+            ),
         },
     }
     if _use_expression_intent():
@@ -179,11 +187,15 @@ async def handle_tool(
     latest_thought = context.reasoning if context is not None else invocation.reasoning
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     set_quote = bool(invocation_arguments.get("set_quote", True))
+    rich_reply_enabled = bool(config_module.global_config.experimental.enable_rich_reply)
     reply_tool_args = {
         key: value
         for key, value in invocation_arguments.items()
         if key not in _REPLY_TOOL_INTERNAL_ARGUMENTS
     }
+    if not rich_reply_enabled:
+        for key in _RICH_REPLY_ARGUMENTS:
+            reply_tool_args.pop(key, None)
     if not _use_expression_intent():
         reply_tool_args.pop("expression_intent", None)
     enable_reply_quote = bool(config_module.global_config.chat.reply_style.enable_reply_quote)
@@ -223,7 +235,6 @@ async def handle_tool(
             "Maisaka 回复生成器当前不可用。",
         )
 
-    rich_reply_enabled = bool(config_module.global_config.experimental.enable_rich_reply)
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
     try:
         tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")

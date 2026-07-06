@@ -62,10 +62,13 @@ def test_rich_reply_adds_reply_attachment_parameters(monkeypatch) -> None:
 
     reply_tool = next(tool for tool in get_builtin_tools(_availability_context()) if tool["name"] == "reply")
     properties = reply_tool["parameters_schema"]["properties"]
+    required = reply_tool["parameters_schema"]["required"]
 
     assert "attach_pic" in properties
     assert "attach_emoji" in properties
     assert "attach_at" in properties
+    assert "reference_info" in properties
+    assert "reference_info" in required
 
 
 def test_reply_attachment_parameters_are_hidden_when_rich_reply_disabled(monkeypatch) -> None:
@@ -73,10 +76,13 @@ def test_reply_attachment_parameters_are_hidden_when_rich_reply_disabled(monkeyp
 
     reply_tool = next(tool for tool in get_builtin_tools(_availability_context()) if tool["name"] == "reply")
     properties = reply_tool["parameters_schema"]["properties"]
+    required = reply_tool["parameters_schema"]["required"]
 
     assert "attach_pic" not in properties
     assert "attach_emoji" not in properties
     assert "attach_at" not in properties
+    assert "reference_info" in properties
+    assert "reference_info" in required
 
 
 @pytest.mark.asyncio
@@ -130,7 +136,7 @@ async def test_rich_reply_uses_action_parameters_without_checker(monkeypatch) ->
 
     class DummyReplyer:
         async def generate_reply_with_context(self, **kwargs):
-            assert "attach_at" not in kwargs["reply_tool_args"]
+            assert kwargs["reply_tool_args"]["attach_at"] == ["msg-1"]
             return True, ReplyGenerationResult(
                 success=True,
                 completion=LLMCompletionResult(response_text="啥基米弓前端是真好用吧"),
@@ -179,6 +185,68 @@ async def test_rich_reply_uses_action_parameters_without_checker(monkeypatch) ->
     monitor_detail = result.metadata["monitor_detail"]
     assert monitor_detail["output_text"] == "@群名片啥基米弓前端是真好用吧"
     assert "extra_sections" not in monitor_detail
+
+
+@pytest.mark.asyncio
+async def test_reply_ignores_attachment_parameters_when_rich_reply_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(global_config.experimental, "enable_rich_reply", False, raising=False)
+
+    target_message = SessionMessage(message_id="msg-1", timestamp=datetime.now(), platform="qq")
+    target_message.message_info = MessageInfo(
+        user_info=UserInfo(
+            user_id="user-1",
+            user_nickname="用户",
+            user_cardname="群名片",
+        ),
+        additional_config={},
+    )
+
+    class DummyReplyer:
+        async def generate_reply_with_context(self, **kwargs):
+            assert "attach_at" not in kwargs["reply_tool_args"]
+            assert kwargs["reply_tool_args"]["reference_info"] == "这是一条关键信息"
+            return True, ReplyGenerationResult(
+                success=True,
+                completion=LLMCompletionResult(response_text="不开启就只发正文"),
+            )
+
+    class DummyRuntime:
+        session_id = "session-1"
+        chat_stream = SimpleNamespace(platform="qq", is_group_session=True)
+        log_prefix = "[test]"
+
+        def __init__(self) -> None:
+            self._chat_history = []
+
+        @staticmethod
+        def find_source_message_by_id(message_id: str):
+            return target_message if message_id == "msg-1" else None
+
+        @staticmethod
+        def _update_stage_status(stage: str, detail: str) -> None:
+            del stage, detail
+
+    sent_segments: list[str] = []
+
+    async def fake_send_to_target_with_message(**kwargs):
+        sent_segments.append(kwargs["processed_plain_text"])
+        return SimpleNamespace(message_id="sent-1")
+
+    monkeypatch.setattr(reply_tool_module.replyer_manager, "get_replyer", lambda **kwargs: DummyReplyer())
+    monkeypatch.setattr(reply_tool_module.send_service, "_send_to_target_with_message", fake_send_to_target_with_message)
+
+    tool_ctx = BuiltinToolRuntimeContext.__new__(BuiltinToolRuntimeContext)
+    tool_ctx.runtime = DummyRuntime()
+    invocation = ToolInvocation(
+        tool_name="reply",
+        arguments={"msg_id": "msg-1", "attach_at": ["msg-1"], "reference_info": "这是一条关键信息"},
+        call_id="reply-1",
+    )
+
+    result = await reply_tool_module.handle_tool(tool_ctx, invocation)
+
+    assert result.success is True
+    assert sent_segments == ["不开启就只发正文"]
 
 
 def test_planner_no_tool_ends_cycle() -> None:

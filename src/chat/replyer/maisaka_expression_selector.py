@@ -243,13 +243,20 @@ class MaisakaExpressionSelector:
         if expression_intent_block:
             query_parts.append(expression_intent_block)
 
-        normalized_reply_reason = str(reply_reason or "").strip()
-        if normalized_reply_reason:
-            query_parts.append(f"Planner 推理：\n{normalized_reply_reason}")
-        elif isinstance(reply_tool_args, dict):
+        guide_parts: List[str] = []
+        if isinstance(reply_tool_args, dict):
             reply_guide = str(reply_tool_args.get("reply_guide") or "").strip()
             if reply_guide:
-                query_parts.append(f"回复指引：\n{reply_guide}")
+                guide_parts.append(f"回复指引：\n{reply_guide}")
+            reference_info = str(reply_tool_args.get("reference_info") or "").strip()
+            if reference_info:
+                guide_parts.append(f"关键信息参考：\n{reference_info}")
+        if guide_parts:
+            query_parts.extend(guide_parts)
+        else:
+            normalized_reply_reason = str(reply_reason or "").strip()
+            if normalized_reply_reason:
+                query_parts.append(f"Planner 推理：\n{normalized_reply_reason}")
 
         return "\n\n".join(query_parts)
 
