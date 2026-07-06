@@ -882,7 +882,7 @@ class ExperimentalConfig(ConfigBase):
 
     __ui_label__ = "实验性功能"
     __ui_advanced__ = True
-    __ui_order__ = 30
+    __ui_order__ = 140
 
     enable_behavior_learning: bool = Field(
         default=False,
@@ -3947,9 +3947,9 @@ class JargonConfig(ConfigBase):
 class VoiceConfig(ConfigBase):
     """语音识别配置类"""
 
+    __ui_parent__ = "message_receive"
     __ui_label__ = "语音"
     __ui_advanced__ = True
-    __ui_order__ = 90
 
     enable_asr: bool = Field(
         default=False,
@@ -4146,6 +4146,11 @@ class KeywordRuleConfig(ConfigBase):
     keywords: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "关键词",
+                "en_US": "Keywords",
+                "ja_JP": "キーワード",
+            },
             "x-widget": "custom",
             "x-icon": "tag",
         },
@@ -4155,6 +4160,11 @@ class KeywordRuleConfig(ConfigBase):
     regex: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "正则表达式",
+                "en_US": "Regular expressions",
+                "ja_JP": "正規表現",
+            },
             "x-widget": "custom",
             "x-icon": "regex",
         },
@@ -4164,6 +4174,11 @@ class KeywordRuleConfig(ConfigBase):
     reaction: str = Field(
         default="",
         json_schema_extra={
+            "label": {
+                "zh_CN": "反应提示",
+                "en_US": "Reaction prompt",
+                "ja_JP": "リアクションプロンプト",
+            },
             "x-widget": "textarea",
             "x-icon": "message-circle",
         },
@@ -4194,6 +4209,11 @@ class KeywordReactionConfig(ConfigBase):
     keyword_rules: list[KeywordRuleConfig] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "关键词规则",
+                "en_US": "Keyword rules",
+                "ja_JP": "キーワードルール",
+            },
             "x-widget": "custom",
             "x-icon": "list",
         },
@@ -4203,6 +4223,11 @@ class KeywordReactionConfig(ConfigBase):
     regex_rules: list[KeywordRuleConfig] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "正则规则",
+                "en_US": "Regex rules",
+                "ja_JP": "正規表現ルール",
+            },
             "x-widget": "custom",
             "x-icon": "list",
         },

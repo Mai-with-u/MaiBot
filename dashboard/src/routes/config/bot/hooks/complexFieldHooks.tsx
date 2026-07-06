@@ -2969,18 +2969,21 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
 
 export const KeywordRulesHook = createListItemEditorHook({
   addLabel: '添加关键词规则',
-  helperText: '匹配命中后会用 reaction 内容作为额外上下文。keywords 至少填一条，或使用正则模式。',
+  helperText: '匹配命中后会把反应提示作为额外上下文。关键词至少填写一条。',
   emptyText: '尚未添加任何关键词规则。',
+  visibleFields: ['keywords', 'reaction'],
+  normalizeItems: (items) =>
+    items.map((item) => ({
+      ...item,
+      regex: [],
+    })),
   itemTitle: (item) => {
     const keywords = collectStringList(item.keywords)
-    const regex = collectStringList(item.regex)
     const reaction =
       typeof item.reaction === 'string' ? item.reaction.trim() : ''
     const left = keywords.length
       ? `关键词 ${keywords.length} 条`
-      : regex.length
-        ? `正则 ${regex.length} 条`
-        : '未配置匹配项'
+      : '未配置关键词'
     const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
     return `${left} ${right}`
   },
@@ -2988,18 +2991,21 @@ export const KeywordRulesHook = createListItemEditorHook({
 
 export const RegexRulesHook = createListItemEditorHook({
   addLabel: '添加正则规则',
-  helperText: '正则模式按 Python 语法编写，命中时把 reaction 作为提示注入。',
+  helperText: '正则模式按 Python 语法编写，命中时把反应提示作为额外上下文。',
   emptyText: '尚未添加任何正则规则。',
+  visibleFields: ['regex', 'reaction'],
+  normalizeItems: (items) =>
+    items.map((item) => ({
+      ...item,
+      keywords: [],
+    })),
   itemTitle: (item) => {
     const regex = collectStringList(item.regex)
-    const keywords = collectStringList(item.keywords)
     const reaction =
       typeof item.reaction === 'string' ? item.reaction.trim() : ''
     const left = regex.length
       ? `正则 ${regex.length} 条`
-      : keywords.length
-        ? `关键词 ${keywords.length} 条`
-        : '未配置匹配项'
+      : '未配置正则'
     const right = reaction ? `→ ${truncate(reaction)}` : '→ 未填写反应'
     return `${left} ${right}`
   },

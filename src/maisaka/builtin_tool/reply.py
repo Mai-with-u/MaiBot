@@ -187,6 +187,7 @@ async def handle_tool(
     rich_reply_checker_records: list[dict[str, Any]] = []
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
     try:
+        tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")
         success, reply_result = await replyer.generate_reply_with_context(
             reply_reason=latest_thought,
             stream_id=tool_ctx.runtime.session_id,

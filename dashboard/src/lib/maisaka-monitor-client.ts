@@ -38,6 +38,9 @@ export interface SessionStartEvent {
 export interface StageStatusEvent {
   session_id: string
   session_name?: string
+  platform?: string
+  user_id?: string | null
+  group_id?: string | null
   stage: string
   detail: string
   round_text: string
@@ -50,11 +53,41 @@ export interface StageStatusEvent {
 export interface StageRemovedEvent {
   session_id: string
   session_name?: string
+  platform?: string
+  user_id?: string | null
+  group_id?: string | null
   timestamp: number
 }
 
 export interface StageSnapshotEvent {
   entries: StageStatusEvent[]
+  timestamp: number
+}
+
+export interface LlmRetryEvent {
+  session_id: string
+  platform?: string
+  user_id?: string | null
+  group_id?: string | null
+  task_name: string
+  request_type: string
+  model_name: string
+  attempt: number
+  max_attempts: number
+  reason: string
+  retry_interval: number
+  timestamp: number
+}
+
+export interface LlmErrorEvent {
+  session_id: string
+  platform?: string
+  user_id?: string | null
+  group_id?: string | null
+  task_name: string
+  request_type: string
+  model_name: string
+  message: string
   timestamp: number
 }
 
@@ -247,6 +280,8 @@ export type MaisakaMonitorEvent =
   | { type: 'stage.status'; data: StageStatusEvent }
   | { type: 'stage.removed'; data: StageRemovedEvent }
   | { type: 'stage.snapshot'; data: StageSnapshotEvent }
+  | { type: 'llm.retry'; data: LlmRetryEvent }
+  | { type: 'llm.error'; data: LlmErrorEvent }
   | { type: 'message.ingested'; data: MessageIngestedEvent }
   | { type: 'message.sent'; data: MessageSentEvent }
   | { type: 'message.updated'; data: MessageUpdatedEvent }

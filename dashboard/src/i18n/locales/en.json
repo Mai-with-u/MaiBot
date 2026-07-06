@@ -94,6 +94,13 @@
       "errorFallback": "An error occurred",
       "thinking": "Loading..."
     },
+    "activity": {
+      "acting": "{{bot}} is taking action{{retry}}",
+      "error": "{{bot}} ran into an error{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} is thinking{{retry}}",
+      "typing": "{{bot}} is typing{{retry}}"
+    },
     "composer": {
       "hint": "Enter to send · Shift + Enter for newline"
     },

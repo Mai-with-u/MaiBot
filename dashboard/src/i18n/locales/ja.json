@@ -94,6 +94,13 @@
       "errorFallback": "エラーが発生しました",
       "thinking": "考え中..."
     },
+    "activity": {
+      "acting": "{{bot}} が行動中{{retry}}",
+      "error": "{{bot}} でエラーが発生しました{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} が考え中{{retry}}",
+      "typing": "{{bot}} が入力中{{retry}}"
+    },
     "composer": {
       "hint": "Enter で送信・Shift + Enter で改行"
     },

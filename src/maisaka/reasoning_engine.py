@@ -1078,12 +1078,17 @@ class MaisakaReasoningEngine:
             self._runtime._log_internal_loop_cancelled()
             raise
         except RespNotOkException as exc:
+            self._runtime._update_stage_status(
+                "错误",
+                f"模型响应异常 HTTP {exc.status_code} - {exc}",
+            )
             logger.error(
                 f"{self._runtime.log_prefix} Maisaka 内部循环发生异常: "
                 f"模型响应异常 HTTP {exc.status_code} - {exc}"
             )
             raise
-        except Exception:
+        except Exception as exc:
+            self._runtime._update_stage_status("错误", str(exc))
             logger.exception(f"{self._runtime.log_prefix} Maisaka 内部循环发生异常")
             raise
 

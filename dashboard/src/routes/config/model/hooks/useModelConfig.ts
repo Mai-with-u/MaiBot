@@ -615,24 +615,55 @@ export function useModelConfig() {
   }, [])
 
   const handleSaveProviderEdit = useCallback(
-    (provider: APIProvider, index: number | null) => {
+    async (provider: APIProvider, index: number | null) => {
       const providerToSave = cleanProviderData(provider)
+      const nextProviders = [...apiProviders]
       if (index !== null) {
-        const nextProviders = [...apiProviders]
         nextProviders[index] = providerToSave
-        syncProviderState(nextProviders)
       } else {
-        syncProviderState([...apiProviders, providerToSave])
+        nextProviders.push(providerToSave)
       }
-      setProviderDialogOpen(false)
-      setEditingProvider(null)
-      setEditingProviderIndex(null)
-      toast({
-        title: index !== null ? '提供商已更新' : '提供商已添加',
-        description: '配置将在 2 秒后自动保存',
-      })
+
+      if (providerAutoSaveTimerRef.current) {
+        clearTimeout(providerAutoSaveTimerRef.current)
+      }
+      clearAutoSaveTimers()
+
+      const { shouldProceed } = await checkDeleteProviderImpact(nextProviders, 'manual')
+      if (!shouldProceed) {
+        setProviderDialogOpen(false)
+        setEditingProvider(null)
+        setEditingProviderIndex(null)
+        return
+      }
+
+      try {
+        setSaving(true)
+        await saveProviders(nextProviders, 'manual')
+        setProviderDialogOpen(false)
+        setEditingProvider(null)
+        setEditingProviderIndex(null)
+        toast({
+          title: index !== null ? '提供商已更新' : '提供商已添加',
+          description: '模型配置已保存',
+        })
+      } catch (error) {
+        toast({
+          title: '保存失败',
+          description: (error as Error).message,
+          variant: 'destructive',
+        })
+      } finally {
+        setSaving(false)
+      }
     },
-    [apiProviders, syncProviderState, toast]
+    [
+      apiProviders,
+      checkDeleteProviderImpact,
+      clearAutoSaveTimers,
+      saveProviders,
+      toast,
+    ]
   )
 
   // 保存模型编辑

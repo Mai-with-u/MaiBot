@@ -94,6 +94,13 @@
       "errorFallback": "发生错误",
       "thinking": "思考中..."
     },
+    "activity": {
+      "acting": "{{bot}} 正在行动{{retry}}",
+      "error": "{{bot}} 出错了{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} 思考中{{retry}}",
+      "typing": "{{bot}} 正在输入{{retry}}"
+    },
     "composer": {
       "hint": "Enter 发送 · Shift + Enter 换行"
     },

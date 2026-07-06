@@ -358,6 +358,52 @@ async def emit_stage_removed(
     })
 
 
+async def emit_llm_retry(
+    *,
+    session_id: str,
+    task_name: str,
+    request_type: str,
+    model_name: str,
+    attempt: int,
+    max_attempts: int,
+    reason: str,
+    retry_interval: float,
+) -> None:
+    """广播模型请求失败后的重试进度。"""
+
+    await _broadcast("llm.retry", {
+        "session_id": session_id,
+        "task_name": task_name,
+        "request_type": request_type,
+        "model_name": model_name,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "reason": reason,
+        "retry_interval": retry_interval,
+        "timestamp": time.time(),
+    })
+
+
+async def emit_llm_error(
+    *,
+    session_id: str,
+    task_name: str,
+    request_type: str,
+    model_name: str,
+    message: str,
+) -> None:
+    """广播模型请求最终失败。"""
+
+    await _broadcast("llm.error", {
+        "session_id": session_id,
+        "task_name": task_name,
+        "request_type": request_type,
+        "model_name": model_name,
+        "message": message,
+        "timestamp": time.time(),
+    })
+
+
 async def emit_message_ingested(
     session_id: str,
     speaker_name: str,

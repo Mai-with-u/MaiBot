@@ -739,6 +739,11 @@ def build_session_info_message(
         "user_id": user_id,
         "user_name": user_name,
         "bot_name": global_config.bot.nickname,
+        "platform": (
+            virtual_config.platform
+            if is_virtual_mode_enabled(virtual_config) and virtual_config
+            else WEBUI_CHAT_PLATFORM
+        ),
         "client_mode": normalized_client_info["type"],
         "client": normalized_client_info,
         "capabilities": build_chat_client_capabilities(normalized_client_info),

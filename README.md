@@ -13,7 +13,7 @@
 
   <!-- Badges Row -->
   <p>
-    <img src="https://img.shields.io/badge/Python-3.10+-blue" alt="Python Version">
+    <img src="https://img.shields.io/badge/Python-3.12+-blue" alt="Python Version">
     <img src="https://img.shields.io/github/license/Mai-with-u/MaiBot?label=License" alt="License">
     <img src="https://img.shields.io/badge/Status-In%20Development-yellow" alt="Status">
     <img src="https://img.shields.io/github/contributors/Mai-with-u/MaiBot.svg?style=flat&label=Contributors" alt="Contributors">
@@ -84,8 +84,8 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 <sub><sup>Updates and Installation</sup></sub>
 
 
-> **最新版本: v1.0.10** ([📄 更新日志](changelogs/changelog.md))  
-> <sub><sup><strong>Latest Version: v1.0.10</strong> (<a href="changelogs/changelog.md">📄 Changelog</a>)</sup></sub>
+> **最新版本: v1.0.12** ([📄 更新日志](changelogs/changelog.md))  
+> <sub><sup><strong>Latest Version: v1.0.12</strong> (<a href="changelogs/changelog.md">📄 Changelog</a>)</sup></sub>
 
 
 - **下载**：前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本。  

@@ -92,6 +92,13 @@
       "errorFallback": "오류가 발생했습니다",
       "thinking": "생각 중..."
     },
+    "activity": {
+      "acting": "{{bot}} 행동 중{{retry}}",
+      "error": "{{bot}} 오류 발생{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} 생각 중{{retry}}",
+      "typing": "{{bot}} 입력 중{{retry}}"
+    },
     "composer": {
       "hint": "Enter 전송 · Shift + Enter 줄바꿈"
     },
