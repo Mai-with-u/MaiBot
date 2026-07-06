@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from 'react'
+import { lazy, StrictMode, Suspense, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
@@ -9,13 +9,20 @@ import { AnnouncerProvider } from './components/ui/announcer'
 import { AssetStoreProvider } from './components/asset-provider'
 import { AnimationProvider } from './components/animation-provider'
 import { ThemeProvider } from './components/theme-provider'
-import { TourProvider, TourRenderer } from './components/tour'
+import { TourProvider } from './components/tour/tour-provider'
+import { useTour } from './components/tour/use-tour'
 import { ErrorBoundary } from './components/error-boundary'
 import { BackendSetupWizard } from './components/electron/BackendSetupWizard'
 import { Toaster } from './components/ui/toaster'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
 import { router } from './router'
+
+const TourRenderer = lazy(() =>
+  import('./components/tour/tour-renderer').then((module) => ({
+    default: module.TourRenderer,
+  }))
+)
 
 function ElectronShell() {
   const [isFirstLaunch, setIsFirstLaunch] = useState(false)
@@ -25,6 +32,20 @@ function ElectronShell() {
   }, [])
 
   return <BackendSetupWizard open={isFirstLaunch} />
+}
+
+function LazyTourRenderer() {
+  const { state } = useTour()
+
+  if (!state.isRunning) {
+    return null
+  }
+
+  return (
+    <Suspense fallback={null}>
+      <TourRenderer />
+    </Suspense>
+  )
 }
 
 createRoot(document.getElementById('root')!).render(
@@ -38,7 +59,7 @@ createRoot(document.getElementById('root')!).render(
               <TourProvider>
                 {isElectron() && <ElectronShell />}
                 <RouterProvider router={router} />
-                <TourRenderer />
+                <LazyTourRenderer />
                 <Toaster />
               </TourProvider>
             </AnimationProvider>
