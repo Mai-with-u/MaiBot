@@ -17,15 +17,19 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 
 import { ToastAction, type ToastActionElement } from '@/components/ui/toast'
 import {
+  createModelConfigVersion,
+  deleteModelConfigVersion,
   getModelConfig,
   getModelConfigCached,
   getModelConfigSchema,
+  getModelConfigVersions,
+  switchModelConfigVersion,
   testModelCapability,
   testProviderConnection,
   updateModelConfig,
   updateModelConfigSection,
 } from '@/lib/config-api'
-import type { ModelTestResult, TestConnectionResult } from '@/lib/config-api'
+import type { ModelConfigVersionInfo, ModelTestResult, TestConnectionResult } from '@/lib/config-api'
 import { useToast } from '@/hooks/use-toast'
 import type { ConfigSchema } from '@/types/config-schema'
 
@@ -79,6 +83,13 @@ export function useModelConfig() {
   const [saving, setSaving] = useState(false)
   const [autoSaving, setAutoSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+
+  // ---- 模型配置文件副本 ----
+  const [activeConfigVersion, setActiveConfigVersion] = useState<ModelConfigVersionInfo | null>(null)
+  const [configVersions, setConfigVersions] = useState<ModelConfigVersionInfo[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [switchingConfigVersion, setSwitchingConfigVersion] = useState<string | null>(null)
+  const [creatingConfigVersion, setCreatingConfigVersion] = useState(false)
 
   // ---- 模型编辑对话框 ----
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -219,14 +230,33 @@ export function useModelConfig() {
   const { setPrevious: setPreviousEmbedding, detectChange: detectEmbeddingChange } =
     embeddingWarning
 
+  const loadConfigVersions = useCallback(async () => {
+    try {
+      setVersionsLoading(true)
+      const versionResult = await getModelConfigVersions()
+      setActiveConfigVersion(versionResult.active_version)
+      setConfigVersions(versionResult.versions)
+    } catch (error) {
+      console.error('加载模型配置副本失败:', error)
+      toast({
+        title: '副本列表加载失败',
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [toast])
+
   // 加载配置
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)
       // 用 allSettled：模型配置为必需，schema 为可选，二者失败互不影响
-      const [result, schemaResult] = await Promise.allSettled([
+      const [result, schemaResult, versionsResult] = await Promise.allSettled([
         getModelConfigCached(),
         getModelConfigSchema(),
+        getModelConfigVersions(),
       ])
       if (result.status !== 'fulfilled') {
         toast({
@@ -262,6 +292,12 @@ export function useModelConfig() {
         nextTaskConfigSchema = schema.nested?.model_task_config ?? null
         taskConfigSchemaRef.current = nextTaskConfigSchema
         setTaskConfigSchema(nextTaskConfigSchema)
+      }
+      if (versionsResult.status === 'fulfilled') {
+        setActiveConfigVersion(versionsResult.value.active_version)
+        setConfigVersions(versionsResult.value.versions)
+      } else {
+        console.error('加载模型配置副本失败:', versionsResult.reason)
       }
 
       // 检查任务配置问题
@@ -523,26 +559,36 @@ export function useModelConfig() {
     })
   }, [taskConfig, models, toast])
 
+  const persistCurrentDraft = useCallback(async () => {
+    clearAutoSaveTimers()
+    if (providerAutoSaveTimerRef.current) {
+      clearTimeout(providerAutoSaveTimerRef.current)
+      providerAutoSaveTimerRef.current = null
+    }
+
+    const config = unwrapModelConfig(await getModelConfig())
+    config.api_providers = apiProviders.map(cleanProviderData)
+    config.models = models.map(cleanModelForSave)
+    config.model_task_config = taskConfig
+    await updateModelConfig(config)
+    resetSnapshots(config.models as ModelInfo[], taskConfig)
+    providersSnapshotRef.current = JSON.stringify(config.api_providers)
+    setHasUnsavedChanges(false)
+  }, [
+    apiProviders,
+    clearAutoSaveTimers,
+    cleanModelForSave,
+    models,
+    resetSnapshots,
+    taskConfig,
+  ])
+
   // 保存配置（手动保存）
   const saveConfig = useCallback(async () => {
     try {
       setSaving(true)
 
-      // 先取消自动保存定时器
-      clearAutoSaveTimers()
-      if (providerAutoSaveTimerRef.current) {
-        clearTimeout(providerAutoSaveTimerRef.current)
-      }
-
-      const config = unwrapModelConfig(await getModelConfig())
-      // 清理每个模型中的 null 值
-      config.api_providers = apiProviders.map(cleanProviderData)
-      config.models = models.map(cleanModelForSave)
-      config.model_task_config = taskConfig
-      await updateModelConfig(config)
-      resetSnapshots(config.models as ModelInfo[], taskConfig)
-      providersSnapshotRef.current = JSON.stringify(config.api_providers)
-      setHasUnsavedChanges(false)
+      await persistCurrentDraft()
       toast({
         title: '保存成功',
         description: '模型配置已保存',
@@ -558,16 +604,91 @@ export function useModelConfig() {
     } finally {
       setSaving(false)
     }
-  }, [
-    apiProviders,
-    clearAutoSaveTimers,
-    cleanModelForSave,
-    loadConfig,
-    models,
-    resetSnapshots,
-    taskConfig,
-    toast,
-  ])
+  }, [loadConfig, persistCurrentDraft, toast])
+
+  const handleCreateConfigVersion = useCallback(
+    async (label: string) => {
+      try {
+        setCreatingConfigVersion(true)
+        setSaving(true)
+        if (hasUnsavedChanges) {
+          await persistCurrentDraft()
+        }
+        const version = await createModelConfigVersion(label)
+        await loadConfigVersions()
+        toast({
+          title: '副本已创建',
+          description: `已保存为「${version.label}」`,
+        })
+      } catch (error) {
+        toast({
+          title: '创建副本失败',
+          description: (error as Error).message,
+          variant: 'destructive',
+        })
+      } finally {
+        setCreatingConfigVersion(false)
+        setSaving(false)
+      }
+    },
+    [hasUnsavedChanges, loadConfigVersions, persistCurrentDraft, toast]
+  )
+
+  const handleSwitchConfigVersion = useCallback(
+    async (versionId: string) => {
+      if (!versionId || versionId === 'active') return
+
+      try {
+        setSwitchingConfigVersion(versionId)
+        setSaving(true)
+        if (hasUnsavedChanges) {
+          await persistCurrentDraft()
+        } else {
+          clearAutoSaveTimers()
+          if (providerAutoSaveTimerRef.current) {
+            clearTimeout(providerAutoSaveTimerRef.current)
+            providerAutoSaveTimerRef.current = null
+          }
+        }
+        await switchModelConfigVersion(versionId)
+        await loadConfig()
+        toast({
+          title: '副本已切换',
+          description: '当前模型配置已更新，切换前配置已归档为未启用副本',
+        })
+      } catch (error) {
+        toast({
+          title: '切换副本失败',
+          description: (error as Error).message,
+          variant: 'destructive',
+        })
+      } finally {
+        setSwitchingConfigVersion(null)
+        setSaving(false)
+      }
+    },
+    [clearAutoSaveTimers, hasUnsavedChanges, loadConfig, persistCurrentDraft, toast]
+  )
+
+  const handleDeleteConfigVersion = useCallback(
+    async (versionId: string) => {
+      try {
+        await deleteModelConfigVersion(versionId)
+        await loadConfigVersions()
+        toast({
+          title: '副本已删除',
+          description: '未启用的模型配置副本已删除',
+        })
+      } catch (error) {
+        toast({
+          title: '删除副本失败',
+          description: (error as Error).message,
+          variant: 'destructive',
+        })
+      }
+    },
+    [loadConfigVersions, toast]
+  )
 
   // ---- 模型编辑对话框 ----
   const openEditDialog = useCallback(
@@ -1145,8 +1266,17 @@ export function useModelConfig() {
     saving,
     autoSaving,
     hasUnsavedChanges,
+    activeConfigVersion,
+    configVersions,
+    versionsLoading,
+    switchingConfigVersion,
+    creatingConfigVersion,
     loadConfig,
+    loadConfigVersions,
     saveConfig,
+    handleCreateConfigVersion,
+    handleSwitchConfigVersion,
+    handleDeleteConfigVersion,
     // 任务配置问题
     invalidModelRefs,
     emptyTasks,
