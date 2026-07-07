@@ -4,6 +4,7 @@
 而不是直接依赖更底层的私有子模块。
 """
 
+from .adapter_policy import AdapterIdentity, AdapterPolicyManager, AdapterPolicyResult, get_adapter_policy_manager
 from .manager import PlatformIOManager, get_platform_io_manager
 from .route_key_factory import RouteKeyFactory
 from .routing import RouteTable
@@ -26,9 +27,13 @@ __all__ = [
     "DriverKind",
     "InboundMessageEnvelope",
     "PlatformIOManager",
+    "AdapterIdentity",
+    "AdapterPolicyManager",
+    "AdapterPolicyResult",
     "RouteKeyFactory",
     "RouteBinding",
     "RouteKey",
     "RouteTable",
+    "get_adapter_policy_manager",
     "get_platform_io_manager",
 ]

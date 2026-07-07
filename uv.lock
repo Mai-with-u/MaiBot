@@ -876,7 +876,7 @@ requires-dist = [
     { name = "httpx", extras = ["socks"] },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "json-repair", specifier = ">=0.47.6" },
-    { name = "maibot-dashboard", specifier = ">=1.5.5.dev20260706307" },
+    { name = "maibot-dashboard", specifier = ">=1.5.5.dev20260706308" },
     { name = "maibot-plugin-sdk", specifier = ">=2.7.0" },
     { name = "maim-message", specifier = "==0.6.8" },
     { name = "mcp" },

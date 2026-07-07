@@ -54,6 +54,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
 import { useAvatarFetchEnabled } from '@/lib/avatar-url'
+import { getModelConfig } from '@/lib/config-api'
 import {
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
@@ -1080,6 +1081,46 @@ type ReplayRunResult = {
   error: string | null
 }
 
+type ReplayModelOption = {
+  name: string
+}
+
+function unwrapModelConfigPayload(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') {
+    return {}
+  }
+
+  const record = payload as Record<string, unknown>
+  const config = record.config
+  return config && typeof config === 'object' ? (config as Record<string, unknown>) : record
+}
+
+function normalizeReplayModelOptions(payload: unknown): ReplayModelOption[] {
+  const config = unwrapModelConfigPayload(payload)
+  const rawModels = config.models
+  if (!Array.isArray(rawModels)) {
+    return []
+  }
+
+  return rawModels
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null
+      }
+
+      const record = item as Record<string, unknown>
+      const name = String(record.name ?? '').trim()
+      if (!name) {
+        return null
+      }
+
+      return {
+        name,
+      }
+    })
+    .filter((item): item is ReplayModelOption => item !== null)
+}
+
 function hasReplayableImageReference(value: Record<string, unknown>): boolean {
   if (typeof value.image_base64 === 'string' && value.image_base64.trim()) {
     return true
@@ -1377,6 +1418,9 @@ function ReasoningReplayPanel({
 }) {
   const { toast } = useToast()
   const [modelName, setModelName] = useState('')
+  const [modelOptions, setModelOptions] = useState<ReplayModelOption[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null)
   const [temperature, setTemperature] = useState('')
   const [maxTokens, setMaxTokens] = useState('')
   const [replayCount, setReplayCount] = useState('1')
@@ -1389,7 +1433,8 @@ function ReasoningReplayPanel({
       return
     }
 
-    setModelName(structuredPrompt?.metadata?.model_name || selected?.model_name || '')
+    const snapshotModelName = structuredPrompt?.metadata?.model_name || selected?.model_name || ''
+    setModelName(snapshotModelName)
     setTemperature('')
     setMaxTokens('')
     setReplayCount('1')
@@ -1397,12 +1442,64 @@ function ReasoningReplayPanel({
     setRunningReplayIndex(0)
   }, [open, selected, structuredPrompt])
 
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    let cancelled = false
+    const snapshotModelName = (structuredPrompt?.metadata?.model_name || selected?.model_name || '').trim()
+    setLoadingModels(true)
+    setModelLoadError(null)
+
+    getModelConfig()
+      .then((payload) => {
+        if (cancelled) {
+          return
+        }
+
+        const nextModelOptions = normalizeReplayModelOptions(payload)
+        setModelOptions(nextModelOptions)
+        if (nextModelOptions.length === 0) {
+          setModelName('')
+          return
+        }
+
+        const modelNames = new Set(nextModelOptions.map((model) => model.name))
+        setModelName(modelNames.has(snapshotModelName) ? snapshotModelName : nextModelOptions[0].name)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return
+        }
+
+        const message = error instanceof Error ? error.message : '读取模型配置失败'
+        setModelOptions([])
+        setModelName('')
+        setModelLoadError(message)
+        toast({
+          title: '加载模型列表失败',
+          description: message,
+          variant: 'destructive',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingModels(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, selected?.model_name, structuredPrompt?.metadata?.model_name, toast])
+
   const handleReplay = async () => {
     const normalizedModelName = modelName.trim()
     if (!normalizedModelName) {
       toast({
         title: '缺少模型名称',
-        description: '请填写 model_config.toml 中已配置的模型名称。',
+        description: '请选择 model_config.toml 中已配置的模型名称。',
         variant: 'destructive',
       })
       return
@@ -1512,12 +1609,35 @@ function ReasoningReplayPanel({
             <div className="grid gap-3">
               <div className="grid gap-2">
                 <Label htmlFor="reasoning-replay-model">模型名称</Label>
-                <Input
-                  id="reasoning-replay-model"
+                <Select
                   value={modelName}
-                  onChange={(event) => setModelName(event.target.value)}
-                  placeholder="model_config.toml 中的模型名称"
-                />
+                  onValueChange={setModelName}
+                  disabled={loadingModels || submitting || modelOptions.length === 0}
+                >
+                  <SelectTrigger id="reasoning-replay-model">
+                    <SelectValue
+                      placeholder={
+                        loadingModels
+                          ? '加载模型中...'
+                          : modelLoadError
+                            ? '模型列表加载失败'
+                            : '选择模型'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.map((model) => (
+                      <SelectItem key={model.name} value={model.name}>
+                        {model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!loadingModels && modelOptions.length === 0 ? (
+                  <div className="text-destructive text-xs">
+                    {modelLoadError || 'model_config.toml 中没有可选模型。'}
+                  </div>
+                ) : null}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
@@ -1550,7 +1670,7 @@ function ReasoningReplayPanel({
                 <Button
                   className="h-9 w-full gap-1.5"
                   onClick={handleReplay}
-                  disabled={submitting || messages.length === 0}
+                  disabled={submitting || loadingModels || modelOptions.length === 0 || messages.length === 0}
                 >
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                   {submitting && runningReplayIndex > 0
