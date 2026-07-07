@@ -59,12 +59,14 @@ ATTENTION_DRIFT_LEVEL_OPTION_LABELS = {
     "subtle": "轻微漂移",
     "active": "活跃联想",
     "scattered": "明显发散",
+    "wild": "强烈跳跃",
 }
 
 ATTENTION_DRIFT_LEVEL_OPTION_DESCRIPTIONS = {
     "subtle": "只在很自然的触发点上轻轻联想一句，整体仍跟随当前话题。",
     "active": "允许更主动地抓有趣支线，但回复仍应保持清楚、短促、可追溯。",
-    "scattered": "可以表现出更明显的跳跃感，但仍不能无依据乱跳或连续跑题。",
+    "scattered": "会更明显地抓支线和突然联想，回复里可以出现可理解的拐弯。",
+    "wild": "强实验档位；可以有更强的跳跃、插话和突然联想，但必须能从最近消息找到触发点。",
 }
 
 ATTENTION_DRIFT_ANCHOR_OPTION_LABELS = {
@@ -958,8 +960,8 @@ class AttentionDriftConfig(ConfigBase):
     )
     """开启后，麦麦会更容易被有趣的新话题、梗或反差点吸引，但仍需保持上下文可理解。"""
 
-    drift_level: Literal["subtle", "active", "scattered"] = Field(
-        default="active",
+    drift_level: Literal["subtle", "active", "scattered", "wild"] = Field(
+        default="scattered",
         json_schema_extra={
             "label": {
                 "zh_CN": "漂移档位",
@@ -997,7 +999,7 @@ class AttentionDriftConfig(ConfigBase):
     """控制话题漂移后需要多强地回到当前聊天上下文。"""
 
     reaction_style: Literal["reserved", "natural", "lively"] = Field(
-        default="natural",
+        default="lively",
         json_schema_extra={
             "label": {
                 "zh_CN": "短反应风格",
@@ -4883,34 +4885,6 @@ class DebugConfig(ConfigBase):
         },
     )
     """在日志或界面中显示麦麦的思考过程。"""
-
-    show_jargon_prompt: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "显示黑话 Prompt",
-                "en_US": "Show jargon prompt",
-                "ja_JP": "隠語 Prompt を表示",
-            },
-            "x-widget": "switch",
-            "x-icon": "book",
-        },
-    )
-    """调试黑话学习时显示相关 Prompt。"""
-
-    show_memory_prompt: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "显示记忆 Prompt",
-                "en_US": "Show memory prompt",
-                "ja_JP": "記憶 Prompt を表示",
-            },
-            "x-widget": "switch",
-            "x-icon": "database",
-        },
-    )
-    """调试记忆检索时显示相关 Prompt。"""
 
     enable_reply_effect_tracking: bool = Field(
         default=False,

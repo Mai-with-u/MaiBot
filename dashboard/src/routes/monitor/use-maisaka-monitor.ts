@@ -3,7 +3,7 @@
  *
  * 管理 WebSocket 订阅与事件流的状态。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
 import type { MaisakaMonitorEvent } from '@/lib/maisaka-monitor-client'
@@ -738,9 +738,23 @@ export function useMaisakaMonitor() {
   }, [])
 
   /** 当前选中会话的时间线 */
-  const filteredTimeline = selectedSession
-    ? timeline.filter((e) => e.sessionId === selectedSession)
-    : timeline
+  const timelineBySession = useMemo(() => {
+    const groupedTimeline = new Map<string, TimelineEntry[]>()
+    for (const entry of timeline) {
+      const sessionTimeline = groupedTimeline.get(entry.sessionId)
+      if (sessionTimeline) {
+        sessionTimeline.push(entry)
+      } else {
+        groupedTimeline.set(entry.sessionId, [entry])
+      }
+    }
+    return groupedTimeline
+  }, [timeline])
+
+  const filteredTimeline = useMemo(
+    () => selectedSession ? timelineBySession.get(selectedSession) ?? [] : timeline,
+    [selectedSession, timeline, timelineBySession],
+  )
 
   return {
     timeline: filteredTimeline,

@@ -506,18 +506,11 @@ class JargonMiner:
             logger.warning(f"jargon {content} 推断2解析失败")
             return
 
-        if global_config.debug.show_jargon_prompt:
-            logger.info(f"jargon {content} 推断1提示词: {prompt1}")
-            logger.info(f"jargon {content} 推断2提示词: {prompt2}")
-
         # 步骤3: 比较两个推断结果
         prompt3_template = prompt_manager.get_prompt("jargon_compare_inference")
         prompt3_template.add_context("inference1", json.dumps(inference1, ensure_ascii=False))
         prompt3_template.add_context("inference2", json.dumps(inference2, ensure_ascii=False))
         prompt3 = await prompt_manager.render_prompt(prompt3_template)
-
-        if global_config.debug.show_jargon_prompt:
-            logger.info(f"jargon {content} 比较提示词: {prompt3}")
 
         generation_result_3 = await llm_inference.generate_response(
             prompt3, options=LLMGenerationOptions(temperature=0.3), session_id=self.session_id
