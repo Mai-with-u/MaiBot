@@ -60,6 +60,8 @@ import { useMaisakaMonitor } from './use-maisaka-monitor'
 
 // ─── 工具函数 ──────────────────────────────────────────────────
 
+type TimelineScrollBehavior = 'auto' | 'smooth'
+
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
   return `${(ms / 1000).toFixed(2)}s`
@@ -1243,7 +1245,7 @@ export function MaisakaMonitor() {
     overscan: 8,
   })
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+  const scrollToBottom = useCallback((behavior: TimelineScrollBehavior = 'smooth') => {
     if (visibleTimelineEntries.length > 0) {
       timelineVirtualizer.scrollToIndex(visibleTimelineEntries.length - 1, {
         align: 'end',
