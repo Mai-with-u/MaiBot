@@ -9,7 +9,9 @@ from src.common.data_models.reply_generation_data_models import ReplyGenerationR
 from src.common.logger import get_logger
 from src.config import config as config_module
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
-from src.maisaka.context.message_adapter import build_visible_text_from_sequence
+from src.maisaka.context.message_adapter import build_visible_text_from_sequence, parse_speaker_content
+from src.maisaka.context.messages import LLMContextMessage, SessionBackedMessage
+from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
 from src.services import send_service
 
 from .context import BuiltinToolRuntimeContext
@@ -17,6 +19,11 @@ from .context import BuiltinToolRuntimeContext
 logger = get_logger("maisaka_builtin_reply")
 _REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote"}
 _RICH_REPLY_ARGUMENTS = {"attach_pic", "attach_emoji", "attach_at"}
+_DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
+_DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE = (
+    "你刚刚已经回复过这条消息，你刚刚的发言是：“{previous_reply}”\n"
+    "你现在想再次回复这条消息，进行补充，注意请不要和之前你的发言重复。"
+)
 
 
 def _use_expression_intent() -> bool:
@@ -176,6 +183,58 @@ def _build_send_result(
     }
 
 
+def _extract_guided_reply_text(message: SessionBackedMessage) -> str:
+    """提取 bot 已发送 guided reply 的可见正文。"""
+
+    plain_text = message.processed_plain_text.strip()
+    _speaker, body = parse_speaker_content(plain_text)
+    normalized_text = (body or plain_text).strip()
+    if not normalized_text:
+        normalized_text = build_visible_text_from_sequence(message.raw_message).strip()
+    return " ".join(normalized_text.split())
+
+
+def _find_recent_reply_to_target(
+    chat_history: list[LLMContextMessage],
+    target_message_id: str,
+) -> str:
+    """查找最近一次已经引用回复过目标消息的 bot 发言。"""
+
+    normalized_target_message_id = target_message_id.strip()
+    if not normalized_target_message_id:
+        return ""
+
+    for message in reversed(chat_history):
+        if not isinstance(message, SessionBackedMessage):
+            continue
+        if message.source_kind != "guided_reply":
+            continue
+        quote_ids = extract_quote_ids_from_message_sequence(message.raw_message)
+        if normalized_target_message_id not in quote_ids:
+            continue
+        reply_text = _extract_guided_reply_text(message)
+        if reply_text:
+            return reply_text
+    return ""
+
+
+def _with_duplicate_target_reply_reminder(
+    reply_tool_args: dict[str, Any],
+    previous_reply: str,
+) -> dict[str, Any]:
+    """把重复回复同一目标消息的提醒作为独立提示传给 replyer。"""
+
+    normalized_previous_reply = " ".join(previous_reply.split()).strip()
+    if not normalized_previous_reply:
+        return reply_tool_args
+
+    updated_args = dict(reply_tool_args)
+    updated_args[_DUPLICATE_TARGET_REPLY_REMINDER_ARG] = _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE.format(
+        previous_reply=normalized_previous_reply
+    )
+    return updated_args
+
+
 async def handle_tool(
     tool_ctx: BuiltinToolRuntimeContext,
     invocation: ToolInvocation,
@@ -236,6 +295,9 @@ async def handle_tool(
         )
 
     replyer_chat_history = list(tool_ctx.runtime._chat_history)
+    previous_target_reply = _find_recent_reply_to_target(replyer_chat_history, target_message_id)
+    if previous_target_reply:
+        reply_tool_args = _with_duplicate_target_reply_reminder(reply_tool_args, previous_target_reply)
     try:
         tool_ctx.runtime._update_stage_status("Replyer", "生成可见回复")
         success, reply_result = await replyer.generate_reply_with_context(
