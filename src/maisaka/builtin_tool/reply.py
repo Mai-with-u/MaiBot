@@ -42,8 +42,8 @@ def get_tool_spec() -> ToolSpec:
         },
         "set_quote": {
             "type": "boolean",
-            "description": "以引用回复的方式发送这条回复，不用每句都引用。",
-            "default": True,
+            "description": "是否强制以引用回复的方式发送。连续回复最新消息时通常不要引用；只有话题被其他消息打断、需要指明回复对象时才设为 true。",
+            "default": False,
         },
         "reply_guide": {
             "type": "string",
@@ -109,6 +109,47 @@ def _build_monitor_metadata(reply_result: ReplyGenerationResult) -> dict[str, ob
     return {}
 
 
+def _is_latest_external_target_message(tool_ctx: BuiltinToolRuntimeContext, target_message_id: str) -> bool:
+    """判断目标消息是否是当前上下文中最新一条外部会话消息。"""
+
+    normalized_target_id = str(target_message_id or "").strip()
+    if not normalized_target_id:
+        return False
+
+    for history_message in reversed(tool_ctx.runtime._chat_history):
+        source_kind = str(getattr(history_message, "source_kind", "") or "").strip()
+        if source_kind and source_kind != "user":
+            continue
+
+        original_message = getattr(history_message, "original_message", None)
+        if original_message is None:
+            continue
+
+        latest_message_id = str(getattr(original_message, "message_id", "") or "").strip()
+        return latest_message_id == normalized_target_id
+
+    return False
+
+
+def _resolve_effective_set_quote(
+    tool_ctx: BuiltinToolRuntimeContext,
+    invocation: ToolInvocation,
+    target_message_id: str,
+    enable_reply_quote: bool,
+) -> tuple[bool, bool, bool]:
+    """根据工具参数和上下文连续性决定是否真正发送引用回复。"""
+
+    raw_arguments = dict(invocation.arguments or {})
+    latest_external_target = _is_latest_external_target_message(tool_ctx, target_message_id)
+    if "set_quote" in raw_arguments:
+        requested_set_quote = bool(raw_arguments.get("set_quote"))
+    else:
+        requested_set_quote = not latest_external_target
+
+    effective_set_quote = requested_set_quote and enable_reply_quote and not latest_external_target
+    return requested_set_quote, effective_set_quote, latest_external_target
+
+
 def _build_send_result(
     *,
     index: int,
@@ -137,7 +178,6 @@ async def handle_tool(
 
     latest_thought = context.reasoning if context is not None else invocation.reasoning
     target_message_id = str(invocation.arguments.get("msg_id") or "").strip()
-    set_quote = bool(invocation.arguments.get("set_quote", True))
     reply_tool_args = {
         key: value
         for key, value in dict(invocation.arguments or {}).items()
@@ -146,7 +186,6 @@ async def handle_tool(
     if not _use_expression_intent():
         reply_tool_args.pop("expression_intent", None)
     enable_reply_quote = bool(config_module.global_config.chat.reply_style.enable_reply_quote)
-    effective_set_quote = set_quote and enable_reply_quote
 
     if not target_message_id:
         return tool_ctx.build_failure_result(
@@ -160,6 +199,12 @@ async def handle_tool(
             invocation.tool_name,
             f"未找到要回复的目标消息，msg_id={target_message_id}",
         )
+    set_quote, effective_set_quote, latest_external_target = _resolve_effective_set_quote(
+        tool_ctx,
+        invocation,
+        target_message_id,
+        enable_reply_quote,
+    )
 
     try:
         replyer = replyer_manager.get_replyer(
@@ -379,6 +424,7 @@ async def handle_tool(
                 "msg_id": target_message_id,
                 "set_quote": set_quote,
                 "effective_set_quote": effective_set_quote,
+                "latest_external_target": latest_external_target,
                 "reply_segments": reply_segments,
                 "send_results": send_results,
             },
@@ -419,6 +465,7 @@ async def handle_tool(
             "msg_id": target_message_id,
             "set_quote": set_quote,
             "effective_set_quote": effective_set_quote,
+            "latest_external_target": latest_external_target,
             "reply_text": combined_reply_text,
             "reply_segments": reply_segments,
             "send_results": send_results,
