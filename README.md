@@ -1,3 +1,5 @@
+[![Listed on TakoAPI](https://takoapi.com/api/badge/mai-with-u-maibot)](https://takoapi.com/agents/mai-with-u-maibot)
+
 <a id="-双语--bilingual"></a>
 
 <div align="center">
