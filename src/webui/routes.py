@@ -16,6 +16,7 @@ from src.webui.dependencies import require_auth, verify_token_optional
 from src.webui.routers.avatar import router as avatar_router
 from src.webui.routers.behavior import router as behavior_router
 from src.webui.routers.config import router as config_router
+from src.webui.routers.data_transfer import router as data_transfer_router
 from src.webui.routers.emoji import router as emoji_router
 from src.webui.routers.expression import router as expression_router
 from src.webui.routers.jargon import router as jargon_router
@@ -52,6 +53,7 @@ router.include_router(avatar_router)
 router.include_router(plugin_router)
 # 注册系统控制路由
 router.include_router(system_router)
+router.include_router(data_transfer_router)
 router.include_router(reasoning_process_router)
 # 注册模型列表获取路由
 router.include_router(model_router)

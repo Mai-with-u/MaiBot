@@ -201,28 +201,6 @@ export async function getPack(packId: string): Promise<ModelPack> {
 }
 
 /**
- * 创建新 Pack
- */
-export async function createPack(pack: {
-  name: string
-  description: string
-  author: string
-  tags?: string[]
-  providers: PackProvider[]
-  models: PackModel[]
-  task_config: PackTaskConfigs
-}): Promise<{ pack_id: string; message: string }> {
-  const data = await statsApi.post<PackEnvelope & { pack_id: string; message: string }>('/pack', {
-    body: pack,
-    errorMessage: '创建 Pack 失败',
-  })
-  if (!data.success) {
-    throw new ApiError(data.error || '创建 Pack 失败', { detail: data })
-  }
-  return data
-}
-
-/**
  * 记录 Pack 下载
  */
 export async function recordPackDownload(packId: string, userId?: string): Promise<void> {
@@ -464,70 +442,6 @@ export async function applyPack(
     parse: 'response',
     errorMessage: '保存配置失败',
   })
-}
-
-/**
- * 从当前配置导出 Pack
- */
-export async function exportCurrentConfigAsPack(params: {
-  name: string
-  description: string
-  author: string
-  tags?: string[]
-  selectedProviders?: string[]
-  selectedModels?: string[]
-  selectedTasks?: string[]
-}): Promise<{
-  providers: PackProvider[]
-  models: PackModel[]
-  task_config: PackTaskConfigs
-}> {
-  // 获取当前配置
-  const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
-    errorMessage: '获取当前模型配置失败',
-  })
-
-  // API 返回的格式是 { success: true, config: {...} }
-  if (!responseData.success || !responseData.config) {
-    throw new ApiError('获取配置失败', { detail: responseData })
-  }
-
-  const currentConfig = responseData.config
-
-  // 过滤提供商（移除 api_key）
-  let providers: PackProvider[] = (currentConfig.api_providers || []).map(
-    (p) => ({
-      name: p.name,
-      base_url: p.base_url,
-      client_type: p.client_type,
-      max_retry: p.max_retry,
-      timeout: p.timeout,
-      retry_interval: p.retry_interval,
-    })
-  )
-
-  if (params.selectedProviders) {
-    providers = providers.filter(p => params.selectedProviders!.includes(p.name))
-  }
-
-  // 过滤模型
-  let models: PackModel[] = currentConfig.models || []
-  if (params.selectedModels) {
-    models = models.filter(m => params.selectedModels!.includes(m.name))
-  }
-
-  // 过滤任务配置
-  const task_config: PackTaskConfigs = {}
-  const allTasks = currentConfig.model_task_config || {}
-  const taskKeys = params.selectedTasks || Object.keys(allTasks)
-
-  for (const key of taskKeys) {
-    if (allTasks[key]) {
-      task_config[key as keyof PackTaskConfigs] = allTasks[key]
-    }
-  }
-
-  return { providers, models, task_config }
 }
 
 // ============ 辅助函数 ============

@@ -62,7 +62,6 @@ import {
   Save,
   Search,
   Settings,
-  Share2,
   Trash2,
   Zap,
 } from 'lucide-react'
@@ -73,7 +72,6 @@ import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
-import { SharePackDialog } from '@/components/share-pack-dialog'
 import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import { ProviderForm } from './modelProvider/ProviderForm'
@@ -506,15 +504,6 @@ function ModelConfigPageContent() {
                 <History className="h-4 w-4" />
               </Button>
             </div>
-            {activeTab === 'models' && (
-              <SharePackDialog
-                trigger={
-                  <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label="分享配置">
-                    <Share2 className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )}
           </div>
           {/* 模型厂商设置标签页 */}
           <TabsContent value="providers" className="space-y-4 mt-0">

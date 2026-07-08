@@ -46,10 +46,6 @@ export function ModelPresetsPage() {
                   </li>
                   <li className="flex items-start">
                     <span className="mr-2">•</span>
-                    <span>分享自己的模型分配方案</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-2">•</span>
                     <span>预设配置评分和评论系统</span>
                   </li>
                   <li className="flex items-start">
