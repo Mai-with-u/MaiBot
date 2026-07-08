@@ -78,6 +78,7 @@ interface PlatformSelectOption {
 type LearningScopeKind = 'chat' | 'default' | 'global' | 'platform' | 'platformDefault' | 'target'
 type GroupScopeKind = 'chat' | 'global' | 'platform' | 'target'
 
+const DEFAULT_LEARNING_PLATFORM = 'qq'
 const PLATFORM_ACCOUNT_ROW_GRID_CLASS =
   'grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-[minmax(0,5.5rem)_minmax(0,8.5rem)_2.5rem] md:grid-cols-[minmax(0,6rem)_minmax(0,9.5rem)_2.5rem]'
 
@@ -403,7 +404,7 @@ const resolveLearningPlatformValue = (
   if (platform && platform !== '*') {
     return platform
   }
-  return platformOptions[0]?.value ?? ''
+  return platformOptions[0]?.value ?? DEFAULT_LEARNING_PLATFORM
 }
 
 const buildLearningRulePatch = (
@@ -514,7 +515,7 @@ const resolveGroupPlatformValue = (
   if (platform && platform !== '*') {
     return platform
   }
-  return platformOptions[0]?.value ?? 'qq'
+  return platformOptions[0]?.value ?? DEFAULT_LEARNING_PLATFORM
 }
 
 const buildGroupTargetPatch = (
@@ -1208,6 +1209,7 @@ function LearningRuleItem({
   onItemFieldChange,
   onRemoveItem,
   platformOptions,
+  scopeKindOverride,
   usePlatformSelect,
 }: {
   index: number
@@ -1215,13 +1217,17 @@ function LearningRuleItem({
   onItemFieldChange: (index: number, fieldName: string, fieldValue: unknown) => void
   onRemoveItem: (index: number) => void
   platformOptions: PlatformSelectOption[]
+  scopeKindOverride?: LearningScopeKind
   usePlatformSelect: boolean
 }) {
-  const scopeLabel = learningScopeLabel(item)
   const ruleType = normalizeExpressionRuleType(item.type)
-  const scopeKind = resolveLearningScopeKind(item)
+  const scopeKind = scopeKindOverride ?? resolveLearningScopeKind(item)
   const platform = normalizeSpecialTextValue(item.platform)
   const itemId = normalizeSpecialTextValue(item.item_id)
+  const scopeLabel =
+    scopeKindOverride === 'chat'
+      ? `${platform || '留空'}:${itemId && itemId !== '*' ? itemId : '待填写聊天流'}`
+      : learningScopeLabel(item)
   const platformValue = platform && platform !== '*' ? platform : platformOptions[0]?.value ?? ''
   const chatTargetState = useExactChatTargetResolution(platformValue, itemId, ruleType, scopeKind === 'chat')
   const updateScopeField = (fieldName: string, fieldValue: unknown) => {
@@ -1308,6 +1314,7 @@ function LearningRuleEditor({
 }: LearningRuleEditorProps) {
   const [definedPlatformOptions, setDefinedPlatformOptions] = useState<PlatformSelectOption[]>([])
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [scopeKindOverrides, setScopeKindOverrides] = useState<Record<number, LearningScopeKind>>({})
 
   useEffect(() => {
     if (!usePlatformSelect) {
@@ -1348,8 +1355,27 @@ function LearningRuleEditor({
   }
 
   const addRule = (scopeKind: LearningScopeKind, ruleType: ExpressionRuleType) => {
+    if (scopeKind === 'chat') {
+      setScopeKindOverrides((current) => ({ ...current, [items.length]: scopeKind }))
+    }
     onAddItem(createLearningRule(scopeKind, ruleType))
     setShowAddDialog(false)
+  }
+
+  const removeRule = (index: number) => {
+    setScopeKindOverrides((current) => {
+      const next: Record<number, LearningScopeKind> = {}
+      Object.entries(current).forEach(([key, value]) => {
+        const numericKey = Number(key)
+        if (numericKey < index) {
+          next[numericKey] = value
+        } else if (numericKey > index) {
+          next[numericKey - 1] = value
+        }
+      })
+      return next
+    })
+    onRemoveItem(index)
   }
 
   return (
@@ -1366,8 +1392,9 @@ function LearningRuleEditor({
               index={index}
               item={item}
               onItemFieldChange={onItemFieldChange}
-              onRemoveItem={onRemoveItem}
+              onRemoveItem={removeRule}
               platformOptions={getPlatformOptions(item.platform)}
+              scopeKindOverride={scopeKindOverrides[index]}
               usePlatformSelect={usePlatformSelect}
             />
           ))}
