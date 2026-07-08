@@ -23,6 +23,8 @@ class JargonCreatedBy(str, Enum):
 
 class Messages(SQLModel, table=True):
     __tablename__ = "mai_messages"  # type: ignore
+    __table_args__ = (Index("ix_mai_messages_platform_message_id", "platform", "message_id"),)
+
     id: Optional[int] = Field(default=None, primary_key=True)  # 自增主键
 
     # 消息元数据

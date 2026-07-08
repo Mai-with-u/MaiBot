@@ -40,6 +40,7 @@ from .v31_to_v32 import migrate_v31_to_v32
 from .v32_to_v33 import migrate_v32_to_v33
 from .v33_to_v34 import migrate_v33_to_v34
 from .v34_to_v35 import migrate_v34_to_v35
+from .v35_to_v36 import migrate_v35_to_v36
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -78,7 +79,8 @@ V32_SCHEMA_VERSION = 32
 V33_SCHEMA_VERSION = 33
 V34_SCHEMA_VERSION = 34
 V35_SCHEMA_VERSION = 35
-LATEST_SCHEMA_VERSION = 35
+V36_SCHEMA_VERSION = 36
+LATEST_SCHEMA_VERSION = 36
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -1842,6 +1844,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v34_to_v35",
                 description="新增麦麦观察事件账本表。",
                 handler=migrate_v34_to_v35,
+            ),
+            MigrationStep(
+                version_from=V35_SCHEMA_VERSION,
+                version_to=V36_SCHEMA_VERSION,
+                name="v35_to_v36",
+                description="为消息表新增平台与消息 ID 复合索引。",
+                handler=migrate_v35_to_v36,
             ),
         ]
     )
