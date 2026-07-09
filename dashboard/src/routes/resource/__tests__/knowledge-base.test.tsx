@@ -1917,6 +1917,40 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.getMemoryEpisode).toHaveBeenCalledWith('ep-1'))
   }, 20_000)
 
+  it('prefers a real chat stream over WebUI local chat in audit timeline', async () => {
+    const user = userEvent.setup()
+    vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          chat_id: 'webui-chat',
+          chat_name: 'WebUI用户的私聊',
+          platform: 'webui',
+          group_id: null,
+          user_id: 'webui',
+          is_group: false,
+        },
+        {
+          chat_id: 'chat-1',
+          chat_name: '测试群',
+          platform: 'qq',
+          group_id: '10001',
+          user_id: null,
+          is_group: true,
+        },
+      ],
+    })
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '审计时间线' }))
+
+    await waitFor(() =>
+      expect(memoryApi.getMemoryTimeline).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1' })),
+    )
+    expect(memoryApi.getMemoryTimeline).not.toHaveBeenCalledWith(expect.objectContaining({ chatId: 'webui-chat' }))
+  }, 20_000)
+
   it('jumps from paragraph timeline event to graph paragraph detail', async () => {
     vi.mocked(memoryApi.getMemoryTimeline).mockResolvedValue({
       success: true,

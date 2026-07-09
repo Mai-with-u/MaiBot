@@ -109,6 +109,11 @@ function formatChatTarget(target: MemoryImportChatTargetPayload): string {
   return `${target.chat_name || target.chat_id} (${suffix}${platform})`
 }
 
+function getDefaultTimelineChatId(targets: MemoryImportChatTargetPayload[]): string {
+  const realChat = targets.find((target) => String(target.platform ?? '').trim().toLowerCase() !== 'webui')
+  return realChat?.chat_id ?? targets[0]?.chat_id ?? ''
+}
+
 function getQuickRangeSeconds(range: TimelineQuickRange): number {
   switch (range) {
     case '24h':
@@ -203,7 +208,7 @@ export function MemoryTimelineManager({
     if (chatId || chatTargets.length === 0) {
       return
     }
-    setChatId(chatTargets[0].chat_id)
+    setChatId(getDefaultTimelineChatId(chatTargets))
   }, [chatId, chatTargets])
 
   useEffect(() => {

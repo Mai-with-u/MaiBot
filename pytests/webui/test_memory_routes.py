@@ -48,6 +48,16 @@ class _FakeMemoryMetadataStore:
                 "deleted_at": None,
             },
             {
+                "hash": "p-memory-source",
+                "content": "普通运行时记忆段落",
+                "created_at": 115.0,
+                "updated_at": 115.0,
+                "metadata": {},
+                "source": "memory:chat-1",
+                "is_deleted": 0,
+                "deleted_at": None,
+            },
+            {
                 "hash": "p-other",
                 "content": "其他聊天流段落",
                 "created_at": 120.0,
@@ -69,7 +79,18 @@ class _FakeMemoryMetadataStore:
                 "updated_at": 130.0,
                 "event_time_start": 100.0,
                 "event_time_end": 130.0,
-            }
+            },
+            {
+                "episode_id": "ep-memory",
+                "source": "memory:chat-1",
+                "title": "普通记忆 Episode",
+                "summary": "普通记忆 Episode 摘要",
+                "paragraph_count": 1,
+                "created_at": 125.0,
+                "updated_at": 125.0,
+                "event_time_start": 115.0,
+                "event_time_end": 125.0,
+            },
         ]
         self.feedback_rows = [
             {
@@ -646,6 +667,8 @@ def test_webui_memory_timeline_returns_chat_scoped_events(client: TestClient, mo
     assert "delete_restored" in event_types
     assert any(item["key_id"] == "p-meta" and item["attribution"] == "metadata.chat_id" for item in payload["items"])
     assert any(item["key_id"] == "p-source" and item["attribution"] == "source" for item in payload["items"])
+    assert any(item["key_id"] == "p-memory-source" and item["attribution"] == "source" for item in payload["items"])
+    assert any(item["key_id"] == "ep-memory" and item["attribution"] == "source" for item in payload["items"])
     paragraph_created = next(
         item for item in payload["items"]
         if item["event_type"] == "paragraph_created" and item["key_id"] == "p-meta"
