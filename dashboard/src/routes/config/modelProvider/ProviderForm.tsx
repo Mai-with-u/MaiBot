@@ -23,7 +23,7 @@ interface ProviderFormProps {
   editingProvider: APIProvider | null
   editingIndex: number | null
   providers: APIProvider[]
-  onSave: (provider: APIProvider, index: number | null) => void
+  onSave: (provider: APIProvider, index: number | null) => Promise<void> | void
   tourState: { isRunning: boolean }
 }
 
@@ -42,6 +42,7 @@ export function ProviderForm({
   const [showApiKey, setShowApiKey] = useState(false)
   const [localProvider, setLocalProvider] = useState<APIProvider | null>(editingProvider)
   const [clientTypes, setClientTypes] = useState<ModelClientType[]>([])
+  const [saving, setSaving] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -72,6 +73,7 @@ export function ProviderForm({
       setFormErrors({})
       setShowApiKey(false)
       setSelectedTemplate('custom')
+      setSaving(false)
       return
     }
 
@@ -149,7 +151,7 @@ export function ProviderForm({
     }
   }, [localProvider?.api_key, toast])
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!localProvider) return
 
     const { isValid, errors } = validateProvider(localProvider, providers, editingIndex)
@@ -160,7 +162,12 @@ export function ProviderForm({
     }
 
     setFormErrors({})
-    onSave(localProvider, editingIndex)
+    setSaving(true)
+    try {
+      await onSave(localProvider, editingIndex)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -181,7 +188,7 @@ export function ProviderForm({
         </DialogHeader>
 
         <form
-          onSubmit={(e) => { e.preventDefault(); handleSaveEdit(); }}
+          onSubmit={(e) => { e.preventDefault(); void handleSaveEdit(); }}
           autoComplete="off"
           className="contents"
         >
@@ -516,7 +523,14 @@ export function ProviderForm({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-tour="provider-cancel-button">
               取消
             </Button>
-            <Button type="submit" data-dialog-action="confirm" data-tour="provider-save-button">保存</Button>
+            <Button
+              type="submit"
+              data-dialog-action="confirm"
+              data-tour="provider-save-button"
+              disabled={saving}
+            >
+              {saving ? '保存中...' : '保存'}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

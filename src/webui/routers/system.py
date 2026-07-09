@@ -23,6 +23,7 @@ import time
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
+from src.common.update_notice import get_pending_update_notice, mark_update_notice_seen
 from src.common.utils.image_path import (
     StoredImagePathError,
     resolve_stored_image_path,
@@ -135,6 +136,24 @@ class StatusResponse(BaseModel):
     uptime: float
     version: str
     start_time: str
+
+
+class UpdateNoticeResponse(BaseModel):
+    """更新公告响应。"""
+
+    pending: bool
+    current_version: str
+    from_version: str | None = None
+    versions: list[str] = Field(default_factory=list)
+    content: str = ""
+
+
+class UpdateNoticeAckResponse(BaseModel):
+    """更新公告确认响应。"""
+
+    success: bool
+    message: str
+    version: str
 
 
 class CacheDirectoryStats(BaseModel):
@@ -1451,6 +1470,38 @@ async def get_maibot_status():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}") from e
+
+
+@router.get("/update-notice", response_model=UpdateNoticeResponse)
+async def get_update_notice() -> UpdateNoticeResponse:
+    """获取当前 WebUI 是否需要弹出更新公告。"""
+
+    try:
+        notice = get_pending_update_notice("webui", current_version=MMC_VERSION)
+        if notice is None:
+            return UpdateNoticeResponse(pending=False, current_version=MMC_VERSION)
+        return UpdateNoticeResponse(
+            pending=True,
+            current_version=notice.current_version,
+            from_version=notice.from_version,
+            versions=notice.versions,
+            content=notice.content,
+        )
+    except Exception as e:
+        logger.exception(f"获取更新公告失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取更新公告失败: {str(e)}") from e
+
+
+@router.post("/update-notice/ack", response_model=UpdateNoticeAckResponse)
+async def ack_update_notice() -> UpdateNoticeAckResponse:
+    """确认当前版本的 WebUI 更新公告已展示。"""
+
+    try:
+        mark_update_notice_seen("webui", current_version=MMC_VERSION)
+        return UpdateNoticeAckResponse(success=True, message="更新公告已确认", version=MMC_VERSION)
+    except Exception as e:
+        logger.exception(f"确认更新公告失败: {e}")
+        raise HTTPException(status_code=500, detail=f"确认更新公告失败: {str(e)}") from e
 
 
 @router.get("/local-cache", response_model=LocalCacheStatsResponse)

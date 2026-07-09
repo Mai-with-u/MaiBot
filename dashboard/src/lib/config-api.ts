@@ -195,6 +195,92 @@ export async function updateModelConfig(
 }
 
 /**
+ * 模型配置文件副本信息
+ */
+export interface ModelConfigVersionInfo {
+  id: string
+  label: string
+  created_at: number
+  modified_at: number
+  size: number
+  active: boolean
+  inner_config_version: string | null
+  valid: boolean
+  error: string | null
+}
+
+/**
+ * 模型配置文件副本列表
+ */
+export interface ModelConfigVersionListResponse {
+  success: boolean
+  active_version: ModelConfigVersionInfo
+  versions: ModelConfigVersionInfo[]
+}
+
+/**
+ * 获取模型配置文件副本列表
+ */
+export async function getModelConfigVersions(): Promise<ModelConfigVersionListResponse> {
+  return backendApi.get<ModelConfigVersionListResponse>(`${API_BASE}/model/versions`, {
+    cache: 'no-store',
+    errorMessage: '获取模型配置副本失败',
+  })
+}
+
+/**
+ * 将当前模型配置保存为副本
+ */
+export async function createModelConfigVersion(label: string): Promise<ModelConfigVersionInfo> {
+  const result = await backendApi.post<{ version: ModelConfigVersionInfo }>(`${API_BASE}/model/versions`, {
+    body: { label },
+    errorMessage: '创建模型配置副本失败',
+  })
+  return result.version
+}
+
+/**
+ * 切换当前启用的模型配置文件副本
+ */
+export async function switchModelConfigVersion(versionId: string): Promise<ModelConfigVersionInfo> {
+  const result = await backendApi.post<{ version: ModelConfigVersionInfo }>(
+    `${API_BASE}/model/versions/${encodeURIComponent(versionId)}/activate`,
+    {
+      body: { archive_current: true },
+      errorMessage: '切换模型配置副本失败',
+    }
+  )
+  invalidateConfigDataCache('model')
+  return result.version
+}
+
+/**
+ * 更新模型配置副本名称
+ */
+export async function updateModelConfigVersionLabel(
+  versionId: string,
+  label: string
+): Promise<ModelConfigVersionInfo> {
+  const result = await backendApi.patch<{ version: ModelConfigVersionInfo }>(
+    `${API_BASE}/model/versions/${encodeURIComponent(versionId)}`,
+    {
+      body: { label },
+      errorMessage: '更新模型配置副本失败',
+    }
+  )
+  return result.version
+}
+
+/**
+ * 删除模型配置副本
+ */
+export async function deleteModelConfigVersion(versionId: string): Promise<void> {
+  await backendApi.delete(`${API_BASE}/model/versions/${encodeURIComponent(versionId)}`, {
+    errorMessage: '删除模型配置副本失败',
+  })
+}
+
+/**
  * 更新麦麦主程序配置的指定节
  */
 export async function updateBotConfigSection(

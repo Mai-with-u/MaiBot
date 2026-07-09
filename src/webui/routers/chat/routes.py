@@ -36,6 +36,7 @@ from src.common.utils.utils_config import (
     JargonConfigUtils,
 )
 from src.config.config import BOT_CONFIG_PATH, config_manager, global_config
+from src.platform_io import AdapterIdentity, DriverKind, RouteKey, get_adapter_policy_manager, get_platform_io_manager
 from src.webui.dependencies import require_auth
 from src.webui.utils.toml_utils import save_toml_with_format
 
@@ -70,6 +71,13 @@ class ChatPromptUpdateRequest(BaseModel):
     """聊天流专属 Prompt 编辑请求。"""
 
     prompt: str = Field(default="")
+
+
+class AdapterPolicyUpdateRequest(BaseModel):
+    """聊天流适配器放行策略编辑请求。"""
+
+    adapter_id: str = Field(default="")
+    action: str = Field(default="")
 
 
 class ChatTargetResolveItem(BaseModel):
@@ -550,7 +558,6 @@ def _is_same_prompt_target(prompt_item: Dict[str, Any], chat_session: ChatSessio
 def _get_chat_prompt_details(chat_session: ChatSession) -> Dict[str, Any]:
     """获取当前聊天流实际使用的基础 Prompt 与额外聊天流 Prompt。"""
 
-    session_id = chat_session.session_id
     is_group_chat = _get_chat_type(chat_session) == "group"
     reply_style_config = global_config.chat.reply_style
     base_prompt_type = "group" if is_group_chat else "private"
@@ -919,7 +926,116 @@ def _chat_session_detail_to_response(chat_session: ChatSession) -> Dict[str, Any
         },
         "talk_frequency": _get_talk_rule_details(chat_session),
         "prompts": _get_chat_prompt_details(chat_session),
+        "adapters": _get_adapter_policy_details(chat_session),
     }
+
+
+def _get_adapter_policy_details(chat_session: ChatSession) -> List[Dict[str, Any]]:
+    """返回当前聊天流在各适配器插件中的路由与放行状态。"""
+
+    platform = str(chat_session.platform or "").strip()
+    target_id = _get_chat_target_id(chat_session)
+    chat_type = _get_chat_type(chat_session)
+    if not platform or not target_id:
+        return []
+
+    try:
+        chat_route_key = RouteKey(
+            platform=platform,
+            account_id=str(chat_session.account_id or "").strip() or None,
+            scope=str(chat_session.scope or "").strip() or None,
+        )
+    except ValueError:
+        return []
+
+    platform_io_manager = get_platform_io_manager()
+    policy_manager = get_adapter_policy_manager()
+    adapter_details: List[Dict[str, Any]] = []
+    for driver in platform_io_manager.driver_registry.list(kind=DriverKind.PLUGIN):
+        descriptor = driver.descriptor
+        metadata = descriptor.metadata if isinstance(descriptor.metadata, dict) else {}
+        if str(metadata.get("plugin_type") or "").strip().lower() != "adapter":
+            continue
+
+        identity = _get_driver_adapter_identity(driver)
+        policy_result = policy_manager.evaluate(
+            identity,
+            chat_type=chat_type,
+            target_id=target_id,
+        )
+        send_bound = platform_io_manager.send_route_table.has_binding_for_driver(chat_route_key, descriptor.driver_id)
+        receive_bound = platform_io_manager.receive_route_table.has_binding_for_driver(
+            chat_route_key,
+            descriptor.driver_id,
+        )
+        adapter_details.append(
+            {
+                "adapter_id": descriptor.driver_id,
+                "plugin_id": descriptor.plugin_id or "",
+                "gateway_name": identity.gateway_name,
+                "platform": descriptor.platform,
+                "account_id": descriptor.account_id,
+                "scope": descriptor.scope,
+                "protocol": metadata.get("protocol") or "",
+                "route_type": metadata.get("route_type") or "",
+                "send_bound": send_bound,
+                "receive_bound": receive_bound,
+                "routed": send_bound or receive_bound,
+                "policy": policy_result.to_dict(),
+            }
+        )
+
+    return sorted(adapter_details, key=lambda item: (not item["routed"], item["plugin_id"], item["gateway_name"]))
+
+
+def _get_driver_adapter_identity(driver: Any) -> AdapterIdentity:
+    """根据运行中的插件驱动描述构造适配器策略身份。"""
+
+    descriptor = driver.descriptor
+    metadata = descriptor.metadata if isinstance(descriptor.metadata, dict) else {}
+    return AdapterIdentity(
+        adapter_id=descriptor.driver_id,
+        plugin_id=descriptor.plugin_id or "",
+        gateway_name=str(metadata.get("gateway_name") or "").strip(),
+        platform=descriptor.platform,
+        account_id=descriptor.account_id,
+        scope=descriptor.scope,
+    )
+
+
+def _get_running_adapter_identity(adapter_id: str) -> AdapterIdentity:
+    """按 driver_id 查找运行中的适配器插件。"""
+
+    normalized_adapter_id = str(adapter_id or "").strip()
+    if not normalized_adapter_id:
+        raise HTTPException(status_code=400, detail="缺少适配器 ID")
+
+    driver = get_platform_io_manager().driver_registry.get(normalized_adapter_id)
+    if driver is None:
+        raise HTTPException(status_code=404, detail="适配器当前未运行，无法修改策略")
+
+    metadata = driver.descriptor.metadata if isinstance(driver.descriptor.metadata, dict) else {}
+    if str(metadata.get("plugin_type") or "").strip().lower() != "adapter":
+        raise HTTPException(status_code=400, detail="目标驱动不是适配器插件")
+    return _get_driver_adapter_identity(driver)
+
+
+async def _save_adapter_policy_rule(chat_session: ChatSession, request: AdapterPolicyUpdateRequest) -> None:
+    """写入当前聊天流在指定适配器上的显式放行策略。"""
+
+    target_id = _get_chat_target_id(chat_session)
+    if not target_id:
+        raise HTTPException(status_code=400, detail="聊天流缺少目标 ID，无法保存适配器策略")
+
+    try:
+        get_adapter_policy_manager().set_chat_override(
+            _get_running_adapter_identity(request.adapter_id),
+            chat_type=_get_chat_type(chat_session),
+            target_id=target_id,
+            action=request.action,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 SESSION_DELETE_TABLES = [
@@ -1291,6 +1407,29 @@ async def upsert_chat_session_prompt(
         raise HTTPException(status_code=404, detail=f"聊天流不存在: {normalized_session_id}")
 
     await _save_chat_prompt_rule(chat_session, index, request)
+    return {"success": True, "detail": _chat_session_detail_to_response(chat_session)}
+
+
+@router.put("/sessions/{session_id}/adapters/policy")
+async def update_chat_session_adapter_policy(
+    session_id: str,
+    request: AdapterPolicyUpdateRequest,
+) -> Dict[str, object]:
+    """为当前聊天流新增、更新或移除一条适配器显式放行规则。"""
+
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        raise HTTPException(status_code=400, detail="缺少聊天流 session_id")
+
+    with get_db_session() as session:
+        chat_session = session.exec(
+            select(ChatSession).where(col(ChatSession.session_id) == normalized_session_id)
+        ).first()
+
+    if chat_session is None:
+        raise HTTPException(status_code=404, detail=f"聊天流不存在: {normalized_session_id}")
+
+    await _save_adapter_policy_rule(chat_session, request)
     return {"success": True, "detail": _chat_session_detail_to_response(chat_session)}
 
 

@@ -16,6 +16,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "image": ("#5f87d7", None, False),
     "image_cache_cleanup": ("#5f87d7", None, False),
     "emoji": ("#ffaf00", None, False),  # 橙黄色，偏向橙色
+    "update_notice": ("#daaf10", None, False),
     "emoji_cache_cleanup": ("#ffaf00", None, False),  # 与表情包模块保持一致
     # 核心模块
     "main": ("#ffffff", None, True),  # 亮白色 + 粗体 (主程序)
@@ -35,6 +36,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "chat_stream": ("#00ffff", None, False),
     "message_storage": ("#0087ff", None, False),
     "expressor": ("#d75f00", None, False),
+    "expression_utils":("#d75f00", None, False),
     # jargon相关
     "jargon": ("#ffd700", None, False),  # 金黄色，突出显示
     # 插件系统
@@ -128,6 +130,7 @@ MODULE_ALIASES = {
     "memory_activator": "记忆",
     "tool_use": "工具",
     "expressor": "表达方式",
+    "expression_utils": "表达方式",
     "database_model": "数据库",
     "tool_executor": "工具",
     "plugin_manager": "插件",

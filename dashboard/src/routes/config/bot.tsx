@@ -15,6 +15,15 @@ import {
 import { parse as parseToml } from 'smol-toml'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -67,6 +76,8 @@ type ConfigSectionData = Record<string, unknown>
 /** Toast 显示前的延迟时间 (毫秒) */
 const TOAST_DISPLAY_DELAY = 500
 const FILE_MODE_NOTICE_DISMISSED_KEY = 'bot-config-file-mode-notice-dismissed'
+const EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY =
+  'bot-config-experimental-features-notice-dismissed'
 
 // ==================== Tab 分组类型与构建 ====================
 interface TabGroup {
@@ -779,13 +790,19 @@ interface DynamicConfigTabsProps {
 
 function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   const { configSchema, sectionValues, setHasUnsavedChanges, setSectionValue, tabGroups } = props
+  const initialActiveTab = tabGroups[0]?.id ?? ''
   const [expanded, setExpanded] = useState(false)
-  const [activeTab, setActiveTab] = useState(tabGroups[0]?.id ?? '')
+  const [activeTab, setActiveTab] = useState(initialActiveTab)
   const [expandedSubtabGroups, setExpandedSubtabGroups] = useState<Record<string, boolean>>({})
   const [activeSubtabByGroup, setActiveSubtabByGroup] = useState<Record<string, string>>({})
   const [advancedVisible, setAdvancedVisible] = useState(false)
   const [tabGuideVisible, setTabGuideVisible] = useState(
     () => localStorage.getItem('bot-config-tabs-guide-dismissed') !== 'true'
+  )
+  const [experimentalNoticeOpen, setExperimentalNoticeOpen] = useState(
+    () =>
+      initialActiveTab === 'experimental' &&
+      localStorage.getItem(EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY) !== 'true'
   )
 
   useEffect(() => {
@@ -817,6 +834,21 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   const dismissTabGuide = () => {
     localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
     setTabGuideVisible(false)
+  }
+
+  const dismissExperimentalNotice = () => {
+    localStorage.setItem(EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY, 'true')
+    setExperimentalNoticeOpen(false)
+  }
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value)
+    if (
+      value === 'experimental' &&
+      localStorage.getItem(EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY) !== 'true'
+    ) {
+      setExperimentalNoticeOpen(true)
+    }
   }
 
   const updateSectionValueByPath = (sectionName: string, restPath: string[], value: unknown) => {
@@ -1109,7 +1141,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   }
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+    <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
       <DashboardTabBar
         data-config-bot-tab-list="true"
         className="h-auto min-h-[3.25rem] content-start items-stretch sm:flex-wrap"
@@ -1184,6 +1216,29 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
           {renderTabContent(tab)}
         </TabsContent>
       ))}
+      <AlertDialog
+        open={experimentalNoticeOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setExperimentalNoticeOpen(true)
+            return
+          }
+
+          dismissExperimentalNotice()
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>实验性功能</AlertDialogTitle>
+            <AlertDialogDescription className="leading-6">
+              实验性功能指的是尚未完善、并不适用于所有麦麦、用于测试、可能移除，或可能具有有趣效果的功能选项。请斟酌开启，遇见预料之外的问题时，优先关闭实验性功能看看。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={dismissExperimentalNotice}>我知道了</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Tabs>
   )
 }

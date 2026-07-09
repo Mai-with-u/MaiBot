@@ -482,6 +482,18 @@ class UnifiedWebSocketClient {
     })
   }
 
+  updateSubscriptionData(domain: string, topic: string, data: Record<string, unknown>): void {
+    const subscriptionKey = this.getSubscriptionKey(domain, topic)
+    const subscription = this.subscriptions.get(subscriptionKey)
+    if (!subscription) {
+      return
+    }
+    this.subscriptions.set(subscriptionKey, {
+      ...subscription,
+      data,
+    })
+  }
+
   addEventListener(listener: EventListener): () => void {
     this.eventListeners.add(listener)
     return () => {

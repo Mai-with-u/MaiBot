@@ -225,6 +225,8 @@ class RegisterPluginPayload(BaseModel):
     """插件 ID"""
     plugin_version: str = Field(default="1.0.0", description="插件版本")
     """插件版本"""
+    plugin_type: str = Field(default="extension", description="插件类型")
+    """插件类型"""
     components: List[ComponentDeclaration] = Field(default_factory=list, description="组件列表")
     """组件列表"""
     llm_providers: List[LLMProviderDeclaration] = Field(default_factory=list, description="LLM Provider 声明列表")
@@ -248,6 +250,8 @@ class BootstrapPluginPayload(BaseModel):
     """插件 ID"""
     plugin_version: str = Field(default="1.0.0", description="插件版本")
     """插件版本"""
+    plugin_type: str = Field(default="extension", description="插件类型")
+    """插件类型"""
     capabilities_required: List[str] = Field(default_factory=list, description="所需能力列表")
     """所需能力列表"""
 

@@ -12,7 +12,15 @@ import time
 from src.common.logger import get_logger
 from src.common.shutdown import is_shutdown_requested
 from src.config.config import global_config
-from src.platform_io import DriverKind, InboundMessageEnvelope, RouteBinding, RouteKey, get_platform_io_manager
+from src.platform_io import (
+    AdapterIdentity,
+    DriverKind,
+    InboundMessageEnvelope,
+    RouteBinding,
+    RouteKey,
+    get_adapter_policy_manager,
+    get_platform_io_manager,
+)
 from src.platform_io.drivers import PluginPlatformDriver
 from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime import (
@@ -22,8 +30,10 @@ from src.plugin_runtime import (
     ENV_IPC_ADDRESS,
     ENV_LOCAL_PLUGIN_SDK_PATH,
     ENV_PLUGIN_DIRS,
+    ENV_PLUGIN_TYPE_FILTER,
     ENV_RUNNER_GROUP,
     ENV_SESSION_TOKEN,
+    ENV_TRUSTED_PLUGIN_DIRS,
     detect_host_application_version,
 )
 from src.plugin_runtime.local_sdk import build_pythonpath_with_local_sdk
@@ -72,6 +82,7 @@ logger = get_logger("plugin_runtime.host.runner_manager")
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _RUNNER_DEBUG_FILE_PATH = _PROJECT_ROOT / "logs" / "plugin_runtime_debug" / "runner_rpc_debug.jsonl"
+_ADAPTER_PLUGIN_TYPE = "adapter"
 
 
 @dataclass(slots=True)
@@ -98,6 +109,8 @@ class PluginRunnerSupervisor:
         group_name: str = "third_party",
         hook_spec_registry: Optional[HookSpecRegistry] = None,
         socket_path: Optional[str] = None,
+        plugin_type_filter: str = "",
+        trusted_plugin_dirs: Optional[List[Path]] = None,
         health_check_interval_sec: Optional[float] = None,
         max_restart_attempts: Optional[int] = None,
         runner_spawn_timeout_sec: Optional[float] = None,
@@ -109,6 +122,8 @@ class PluginRunnerSupervisor:
             group_name: 当前 Supervisor 所属运行时分组名称。
             hook_spec_registry: 可选的共享 Hook 规格注册中心。
             socket_path: 自定义 IPC 地址；留空时由传输层自动生成。
+            plugin_type_filter: Runner 侧插件类型过滤模式。
+            trusted_plugin_dirs: 在过滤模式下始终由当前 Runner 加载的插件根目录。
             health_check_interval_sec: 健康检查间隔，单位秒。
             max_restart_attempts: 自动重启 Runner 的最大次数。
             runner_spawn_timeout_sec: 等待 Runner 建连并就绪的超时时间，单位秒。
@@ -116,6 +131,8 @@ class PluginRunnerSupervisor:
         runtime_config = global_config.plugin_runtime
         self._group_name: str = str(group_name or "third_party").strip() or "third_party"
         self._plugin_dirs: List[Path] = plugin_dirs or []
+        self._plugin_type_filter: str = str(plugin_type_filter or "").strip()
+        self._trusted_plugin_dirs: List[Path] = trusted_plugin_dirs or []
         self._host_version: str = detect_host_application_version(_PROJECT_ROOT)
         self._health_interval: float = health_check_interval_sec or runtime_config.health_check_interval_sec or 30.0
         self._runner_spawn_timeout: float = runner_spawn_timeout_sec or runtime_config.runner_spawn_timeout_sec or 30.0
@@ -916,6 +933,16 @@ class PluginRunnerSupervisor:
         self._rpc_server.register_method("runner.log_batch", self._log_bridge.handle_log_batch)
         self._rpc_server.register_method("runner.ready", self._handle_runner_ready)
 
+    @staticmethod
+    def _build_granted_capabilities(payload: BootstrapPluginPayload | RegisterPluginPayload) -> List[str]:
+        """规范化插件声明的能力列表。"""
+
+        return [
+            str(capability or "").strip()
+            for capability in payload.capabilities_required
+            if str(capability or "").strip()
+        ]
+
     async def _handle_bootstrap_plugin(self, envelope: Envelope) -> Envelope:
         """处理插件 bootstrap 请求。
 
@@ -930,8 +957,9 @@ class PluginRunnerSupervisor:
         except Exception as exc:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
 
-        if payload.capabilities_required:
-            self._authorization.register_plugin(payload.plugin_id, payload.capabilities_required)
+        granted_capabilities = self._build_granted_capabilities(payload)
+        if granted_capabilities:
+            self._authorization.register_plugin(payload.plugin_id, granted_capabilities)
         else:
             self._authorization.revoke_permission_token(payload.plugin_id)
 
@@ -950,6 +978,10 @@ class PluginRunnerSupervisor:
             payload = RegisterPluginPayload.model_validate(envelope.payload)
         except Exception as exc:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
+        granted_capabilities = self._build_granted_capabilities(payload)
+        if granted_capabilities:
+            self._authorization.register_plugin(payload.plugin_id, granted_capabilities)
 
         component_declarations = [component.model_dump() for component in payload.components]
         runtime_components, api_components = self._split_component_declarations(component_declarations)
@@ -1188,6 +1220,9 @@ class PluginRunnerSupervisor:
             metadata={
                 "protocol": gateway_entry.protocol,
                 "route_type": gateway_entry.route_type,
+                "plugin_type": str(
+                    getattr(self._registered_plugins.get(plugin_id), "plugin_type", "") or ""
+                ).strip(),
                 **gateway_entry.metadata,
             },
         )
@@ -1210,6 +1245,7 @@ class PluginRunnerSupervisor:
             "gateway_name": gateway_entry.name,
             "protocol": gateway_entry.protocol,
             "route_type": gateway_entry.route_type,
+            "plugin_type": str(getattr(self._registered_plugins.get(plugin_id), "plugin_type", "") or "").strip(),
             **gateway_entry.metadata,
         }
         binding = RouteBinding(
@@ -1400,6 +1436,51 @@ class PluginRunnerSupervisor:
             scope=scope,
         )
 
+    @staticmethod
+    def _resolve_policy_target(message: Dict[str, Any]) -> tuple[str, str]:
+        """从标准消息字典解析群聊/私聊策略目标。"""
+
+        group_id = str(message.get("group_id") or "").strip()
+        message_info = message.get("message_info")
+        if not group_id and isinstance(message_info, dict):
+            group_info = message_info.get("group_info")
+            if isinstance(group_info, dict):
+                group_id = str(group_info.get("group_id") or "").strip()
+        if group_id:
+            return "group", group_id
+
+        user_id = str(message.get("user_id") or "").strip()
+        user_info = message.get("user_info")
+        if not user_id and isinstance(message_info, dict):
+            user_info = message_info.get("user_info")
+        if not user_id and isinstance(user_info, dict):
+            user_id = str(user_info.get("user_id") or "").strip()
+        return "private", user_id
+
+    def _evaluate_inbound_adapter_policy(
+        self,
+        plugin_id: str,
+        gateway_entry: Any,
+        route_key: RouteKey,
+        message: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """执行统一适配器入站名单策略。"""
+
+        chat_type, target_id = self._resolve_policy_target(message)
+        result = get_adapter_policy_manager().evaluate(
+            AdapterIdentity(
+                adapter_id=self._build_message_gateway_driver_id(plugin_id, gateway_entry.name),
+                plugin_id=plugin_id,
+                gateway_name=gateway_entry.name,
+                platform=route_key.platform,
+                account_id=route_key.account_id,
+                scope=route_key.scope,
+            ),
+            chat_type=chat_type,
+            target_id=target_id,
+        )
+        return result.to_dict()
+
     async def _handle_update_message_gateway_state(self, envelope: Envelope) -> Envelope:
         """处理消息网关上报的运行时状态更新。
 
@@ -1482,6 +1563,23 @@ class PluginRunnerSupervisor:
                 message=payload.message,
                 route_metadata=payload.route_metadata,
             )
+            policy_result = self._evaluate_inbound_adapter_policy(
+                envelope.plugin_id,
+                gateway_entry,
+                route_key,
+                payload.message,
+            )
+            if policy_result.get("configured") and not policy_result.get("allowed"):
+                response = ReceiveExternalMessageResultPayload(
+                    accepted=False,
+                    route_key={
+                        "platform": route_key.platform,
+                        "account_id": route_key.account_id,
+                        "scope": route_key.scope,
+                        "policy": policy_result,
+                    },
+                )
+                return envelope.make_response(payload=response.model_dump())
             session_message = self._message_gateway.build_session_message(payload.message)
             self._attach_inbound_route_metadata(session_message, route_key, payload.route_metadata)
         except Exception as exc:
@@ -1557,8 +1655,10 @@ class PluginRunnerSupervisor:
             ENV_HOST_VERSION: self._host_version,
             ENV_IPC_ADDRESS: self._transport.get_address(),
             ENV_PLUGIN_DIRS: os.pathsep.join(str(path) for path in self._plugin_dirs),
+            ENV_PLUGIN_TYPE_FILTER: self._plugin_type_filter,
             ENV_RUNNER_GROUP: self._group_name,
             ENV_SESSION_TOKEN: self._rpc_server.session_token,
+            ENV_TRUSTED_PLUGIN_DIRS: os.pathsep.join(str(path) for path in self._trusted_plugin_dirs),
         }
 
     async def _spawn_runner(self) -> None:

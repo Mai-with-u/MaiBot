@@ -11,10 +11,12 @@ from src.webui.core import (
     get_token_manager,
     set_auth_cookie,
 )
+from src.webui.core.security import TOKEN_SOURCE_TEMPORARY
 from src.webui.dependencies import require_auth, verify_token_optional
 from src.webui.routers.avatar import router as avatar_router
 from src.webui.routers.behavior import router as behavior_router
 from src.webui.routers.config import router as config_router
+from src.webui.routers.data_transfer import router as data_transfer_router
 from src.webui.routers.emoji import router as emoji_router
 from src.webui.routers.expression import router as expression_router
 from src.webui.routers.jargon import router as jargon_router
@@ -51,6 +53,7 @@ router.include_router(avatar_router)
 router.include_router(plugin_router)
 # 注册系统控制路由
 router.include_router(system_router)
+router.include_router(data_transfer_router)
 router.include_router(reasoning_process_router)
 # 注册模型列表获取路由
 router.include_router(model_router)
@@ -74,6 +77,8 @@ class TokenVerifyResponse(BaseModel):
     valid: bool = Field(..., description="Token 是否有效")
     message: str = Field(..., description="验证结果消息")
     is_first_setup: bool = Field(False, description="是否为首次设置")
+    token_source: str = Field("temporary", description="Token 来源")
+    requires_custom_token: bool = Field(False, description="是否需要设置自定义 Token")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -101,6 +106,8 @@ class FirstSetupStatusResponse(BaseModel):
     """首次配置状态响应"""
 
     is_first_setup: bool = Field(..., description="是否为首次配置")
+    token_source: str = Field(..., description="Token 来源")
+    requires_custom_token: bool = Field(..., description="是否需要设置自定义 Token")
     message: str = Field(..., description="状态消息")
 
 
@@ -155,7 +162,14 @@ async def verify_token(
             set_auth_cookie(response, request_body.token, request)
             # 同时返回首次配置状态，避免额外请求
             is_first_setup = token_manager.is_first_setup()
-            return TokenVerifyResponse(valid=True, message="Token 验证成功", is_first_setup=is_first_setup)
+            token_source = token_manager.get_token_source()
+            return TokenVerifyResponse(
+                valid=True,
+                message="Token 验证成功",
+                is_first_setup=is_first_setup,
+                token_source=token_source,
+                requires_custom_token=token_source == TOKEN_SOURCE_TEMPORARY,
+            )
         else:
             # 记录失败尝试
             blocked, remaining = rate_limiter.record_failed_attempt(
@@ -207,7 +221,15 @@ async def check_auth_status(
     """
     try:
         logger.debug(f"检查认证状态，结果: {authenticated}")
-        return {"authenticated": authenticated}
+        if not authenticated:
+            return {"authenticated": False}
+
+        token_source = get_token_manager().get_token_source()
+        return {
+            "authenticated": True,
+            "token_source": token_source,
+            "requires_custom_token": token_source == TOKEN_SOURCE_TEMPORARY,
+        }
     except Exception as e:
         logger.error(f"认证检查失败: {e}", exc_info=True)
         return {"authenticated": False}
@@ -289,8 +311,15 @@ async def get_setup_status():
 
         # 检查是否为首次配置
         is_first = token_manager.is_first_setup()
+        token_source = token_manager.get_token_source()
+        requires_custom_token = token_source == TOKEN_SOURCE_TEMPORARY
 
-        return FirstSetupStatusResponse(is_first_setup=is_first, message="首次配置" if is_first else "已完成配置")
+        return FirstSetupStatusResponse(
+            is_first_setup=is_first,
+            token_source=token_source,
+            requires_custom_token=requires_custom_token,
+            message="需要设置自定义 Token" if requires_custom_token else "首次配置" if is_first else "已完成配置",
+        )
     except HTTPException:
         raise
     except Exception as e:

@@ -1,6 +1,6 @@
 // 设置向导API调用函数
 
-import { backendApi } from '@/lib/http'
+import { authApi, backendApi } from '@/lib/http'
 import { PROVIDER_TEMPLATES } from '@/routes/config/providerTemplates'
 
 import type {
@@ -47,6 +47,18 @@ interface ModelConfig {
   model_task_config?: Record<string, TaskConfig>
 }
 
+export interface SetupStatus {
+  is_first_setup: boolean
+  token_source: string
+  requires_custom_token: boolean
+  message?: string
+}
+
+export interface TokenUpdateResult {
+  success: boolean
+  message: string
+}
+
 const DEFAULT_API_PROVIDER_TEMPLATE = PROVIDER_TEMPLATES.find(
   (template) => template.id === 'deepseek'
 )
@@ -86,6 +98,12 @@ function buildThinkingExtraParams(
 }
 
 // ===== 读取配置 =====
+
+export async function loadSetupStatus(): Promise<SetupStatus> {
+  return authApi.get<SetupStatus>('/api/webui/setup/status', {
+    errorMessage: '读取设置状态失败',
+  })
+}
 
 // 读取Bot基础配置
 export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
@@ -332,5 +350,12 @@ export async function saveModelSetupConfig(
 export async function completeSetup() {
   return backendApi.post('/api/webui/setup/complete', {
     errorMessage: '标记设置完成失败',
+  })
+}
+
+export async function updateAccessToken(newToken: string): Promise<TokenUpdateResult> {
+  return authApi.post<TokenUpdateResult>('/api/webui/auth/update', {
+    body: { new_token: newToken },
+    errorMessage: '更新 Token 失败',
   })
 }

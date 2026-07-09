@@ -14,6 +14,7 @@ from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
+from src.config.official_configs import build_personality_emotion_suffix
 from src.core.tooling import ToolAvailabilityContext, ToolRegistry
 from src.llm_models.model_client.base_client import BaseClient
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
@@ -30,7 +31,9 @@ from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.services.llm_service import LLMServiceClient
 
+from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.builtin_tool import get_builtin_tools
+from src.maisaka.context.history import normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
     AssistantMessage,
     LLMContextMessage,
@@ -40,9 +43,8 @@ from src.maisaka.context.messages import (
     ToolResultMessage,
     build_llm_message_from_context,
 )
-from src.maisaka.context.history import normalize_tool_call_result_pairs
-from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
+from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.focus import focus_mode_manager
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
@@ -630,6 +632,9 @@ class MaisakaChatLoopService:
                 identity_line = f"{bot_name}是{prompt_personality}"
 
             prompt_lines = [identity_line]
+            emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
+            if emotion_suffix:
+                prompt_lines.append(emotion_suffix)
             if alias_names:
                 prompt_lines.append(f"{bot_name}的昵称还有{','.join(alias_names)}")
             return "\n".join(prompt_lines)
@@ -1028,20 +1033,20 @@ class MaisakaChatLoopService:
             "duration_ms": llm_duration_ms,
         }
 
+        prompt_section_result = PromptCLIVisualizer.build_prompt_section_result(
+            built_messages,
+            category=self._resolve_prompt_preview_category(request_kind),
+            chat_id=self._session_id,
+            request_kind=request_kind,
+            selection_reason=prompt_selection_reason,
+            tool_definitions=list(all_tools),
+            output_content=final_response.strip(),
+            output_tool_calls=final_tool_calls,
+            metadata=prompt_metadata,
+        )
+        prompt_html_uri = prompt_section_result.preview_access.preview_web_uri
         if global_config.debug.show_maisaka_thinking:
-            prompt_section_result = PromptCLIVisualizer.build_prompt_section_result(
-                built_messages,
-                category=self._resolve_prompt_preview_category(request_kind),
-                chat_id=self._session_id,
-                request_kind=request_kind,
-                selection_reason=prompt_selection_reason,
-                tool_definitions=list(all_tools),
-                output_content=final_response.strip(),
-                output_tool_calls=final_tool_calls,
-                metadata=prompt_metadata,
-            )
             prompt_section = prompt_section_result.panel
-            prompt_html_uri = prompt_section_result.preview_access.preview_web_uri
 
         raw_message = AssistantMessage(
             content=final_response,

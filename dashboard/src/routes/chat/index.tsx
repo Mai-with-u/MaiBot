@@ -4,6 +4,13 @@ import { useTranslation } from 'react-i18next'
 import { useToast } from '@/hooks/use-toast'
 import { chatWsClient } from '@/lib/chat-ws-client'
 import { ApiError, backendApi } from '@/lib/http'
+import {
+  maisakaMonitorClient,
+  type LlmErrorEvent,
+  type LlmRetryEvent,
+  type StageRemovedEvent,
+  type StageStatusEvent,
+} from '@/lib/maisaka-monitor-client'
 
 import { ChatComposer } from './ChatComposer'
 import { ChatTabBar } from './ChatTabBar'
@@ -14,6 +21,7 @@ import type {
   ChatIncomingImage,
   ChatTab,
   ChatMessage,
+  ChatRuntimeStatus,
   MessageSegment,
   PersonInfo,
   PlatformInfo,
@@ -86,6 +94,103 @@ function readImageFile(file: File, id: string): Promise<ChatImageAttachment> {
   })
 }
 
+function normalizeStatusText(value: string | null | undefined): string {
+  return (value || '').trim().toLowerCase()
+}
+
+function resolveStatusKind(stage: string, agentState: string): ChatRuntimeStatus['kind'] | null {
+  const normalizedStage = normalizeStatusText(stage)
+  const normalizedAgentState = normalizeStatusText(agentState)
+  if (
+    normalizedAgentState === 'wait' ||
+    normalizedStage === '空闲' ||
+    normalizedStage === '等待消息'
+  ) {
+    return null
+  }
+
+  if (
+    normalizedStage.includes('错误') ||
+    normalizedStage.includes('异常') ||
+    normalizedStage.includes('失败') ||
+    normalizedStage.includes('error')
+  ) {
+    return 'error'
+  }
+
+  if (
+    normalizedStage.includes('replyer') ||
+    normalizedStage.includes('replier') ||
+    normalizedStage.includes('回复生成') ||
+    (normalizedStage.includes('工具执行') && normalizedStage.includes('reply'))
+  ) {
+    return 'typing'
+  }
+
+  if (
+    normalizedStage.includes('planner') ||
+    normalizedStage.includes('思考') ||
+    normalizedStage === '消息整理' ||
+    normalizedStage === '启动循环'
+  ) {
+    return 'thinking'
+  }
+
+  return 'acting'
+}
+
+function resolveRetryStatusKind(data: LlmRetryEvent): ChatRuntimeStatus['kind'] {
+  const taskText = normalizeStatusText(`${data.task_name} ${data.request_type}`)
+  if (taskText.includes('replyer') || taskText.includes('replier')) {
+    return 'typing'
+  }
+  if (taskText.includes('planner')) {
+    return 'thinking'
+  }
+  return 'acting'
+}
+
+function matchesMonitorTarget(
+  tab: ChatTab,
+  data: StageStatusEvent | StageRemovedEvent | LlmRetryEvent | LlmErrorEvent
+): boolean {
+  if (data.session_id && data.session_id === tab.sessionInfo.session_id) {
+    return true
+  }
+
+  const eventGroupId = typeof data.group_id === 'string' ? data.group_id : ''
+  const tabGroupId = tab.sessionInfo.group_id || tab.virtualConfig?.groupId || ''
+  if (eventGroupId && tabGroupId) {
+    return eventGroupId === tabGroupId
+  }
+
+  const eventUserId = typeof data.user_id === 'string' ? data.user_id : ''
+  const tabUserId =
+    tab.type === 'virtual' ? tab.virtualConfig?.userId || '' : tab.sessionInfo.user_id || ''
+  if (!eventUserId || !tabUserId || eventUserId !== tabUserId) {
+    return false
+  }
+
+  const eventPlatform = typeof data.platform === 'string' ? data.platform : ''
+  const tabPlatform =
+    tab.type === 'virtual' ? tab.virtualConfig?.platform || '' : tab.sessionInfo.platform || 'webui'
+  return !eventPlatform || !tabPlatform || eventPlatform === tabPlatform
+}
+
+function buildRuntimeStatusFromStage(data: StageStatusEvent): ChatRuntimeStatus | null {
+  const kind = resolveStatusKind(data.stage, data.agent_state)
+  if (!kind) {
+    return null
+  }
+
+  return {
+    kind,
+    stage: data.stage,
+    detail: data.detail,
+    updatedAt: data.updated_at || data.timestamp || Date.now() / 1000,
+  }
+}
+
 export function ChatPage() {
   const { t, i18n } = useTranslation()
 
@@ -97,6 +202,7 @@ export function ChatPage() {
     messages: [],
     isConnected: false,
     isTyping: false,
+    runtimeStatus: null,
     sessionInfo: {},
   }
 
@@ -117,6 +223,7 @@ export function ChatPage() {
         messages: [],
         isConnected: false,
         isTyping: false,
+        runtimeStatus: null,
         sessionInfo: {},
       }
     })
@@ -156,6 +263,7 @@ export function ChatPage() {
   const userIdRef = useRef(getOrCreateUserId())
 
   const messageIdCounterRef = useRef(0)
+  const monitorStatusesRef = useRef<Map<string, StageStatusEvent>>(new Map())
   const processedMessagesMapRef = useRef<Map<string, Set<string>>>(new Map())
   const sessionUnsubscribeMapRef = useRef<Map<string, () => void>>(new Map())
   const tabsRef = useRef<ChatTab[]>([])
@@ -254,15 +362,36 @@ export function ChatPage() {
     ) => {
       switch (data.type) {
         case 'session_info':
-          updateTab(tabId, {
-            sessionInfo: {
-              session_id: data.session_id,
-              user_id: data.user_id,
-              user_name: data.user_name,
-              bot_name: data.bot_name,
-              bot_qq: data.bot_qq,
-            },
-          })
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (tab.id !== tabId) {
+                return tab
+              }
+              const nextTab: ChatTab = {
+                ...tab,
+                sessionInfo: {
+                  session_id: data.session_id,
+                  user_id: data.user_id,
+                  user_name: data.user_name,
+                  bot_name: data.bot_name,
+                  bot_qq: data.bot_qq,
+                  group_id: data.group_id,
+                  platform: data.platform,
+                  virtual_mode: data.virtual_mode,
+                },
+              }
+              const currentStatus = Array.from(monitorStatusesRef.current.values()).find((status) =>
+                matchesMonitorTarget(nextTab, status)
+              )
+              if (!currentStatus) {
+                return nextTab
+              }
+              return {
+                ...nextTab,
+                runtimeStatus: buildRuntimeStatusFromStage(currentStatus),
+              }
+            })
+          )
           break
 
         case 'system':
@@ -275,6 +404,7 @@ export function ChatPage() {
           break
 
         case 'user_message': {
+          updateTab(tabId, { runtimeStatus: null })
           const senderUserId = data.sender?.user_id
           const currentUserId = tabType === 'virtual' && config ? config.userId : userIdRef.current
 
@@ -313,7 +443,7 @@ export function ChatPage() {
         }
 
         case 'bot_message': {
-          updateTab(tabId, { isTyping: false })
+          updateTab(tabId, { isTyping: false, runtimeStatus: null })
           const processedSet = processedMessagesMapRef.current.get(tabId) || new Set()
           const contentHash = `bot-${data.content}-${Math.floor((data.timestamp || 0) * 1000)}`
           if (processedSet.has(contentHash)) {
@@ -349,7 +479,16 @@ export function ChatPage() {
         }
 
         case 'typing':
-          updateTab(tabId, { isTyping: data.is_typing || false })
+          updateTab(tabId, {
+            isTyping: data.is_typing || false,
+            runtimeStatus: data.is_typing
+              ? {
+                  kind: 'typing',
+                  stage: 'typing',
+                  updatedAt: data.timestamp || Date.now() / 1000,
+                }
+              : null,
+          })
           break
 
         case 'error':
@@ -358,6 +497,11 @@ export function ChatPage() {
               if (tab.id !== tabId) return tab
               return {
                 ...tab,
+                runtimeStatus: {
+                  kind: 'error',
+                  detail: data.content,
+                  updatedAt: data.timestamp || Date.now() / 1000,
+                },
                 messages: [
                   ...tab.messages,
                   {
@@ -513,6 +657,136 @@ export function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    let active = true
+    let unsubscribe: (() => Promise<void>) | undefined
+
+    void maisakaMonitorClient
+      .subscribe((event) => {
+        if (!active) {
+          return
+        }
+
+        if (event.type === 'stage.snapshot') {
+          monitorStatusesRef.current = new Map(
+            event.data.entries.map((entry) => [entry.session_id, entry])
+          )
+          setTabs((prev) =>
+            prev.map((tab) => {
+              const status = event.data.entries.find((entry) => matchesMonitorTarget(tab, entry))
+              if (!status) {
+                return tab
+              }
+              return {
+                ...tab,
+                runtimeStatus: buildRuntimeStatusFromStage(status),
+              }
+            })
+          )
+          return
+        }
+
+        if (event.type === 'stage.status') {
+          monitorStatusesRef.current.set(event.data.session_id, event.data)
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (!matchesMonitorTarget(tab, event.data)) {
+                return tab
+              }
+              const nextStatus = buildRuntimeStatusFromStage(event.data)
+              if (!nextStatus && tab.runtimeStatus?.kind === 'error') {
+                return tab
+              }
+              return {
+                ...tab,
+                runtimeStatus: nextStatus,
+                isTyping: nextStatus?.kind === 'typing',
+              }
+            })
+          )
+          return
+        }
+
+        if (event.type === 'stage.removed') {
+          monitorStatusesRef.current.delete(event.data.session_id)
+          setTabs((prev) =>
+            prev.map((tab) =>
+              matchesMonitorTarget(tab, event.data)
+                ? { ...tab, isTyping: false, runtimeStatus: null }
+                : tab
+            )
+          )
+          return
+        }
+
+        if (event.type === 'llm.retry') {
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (!matchesMonitorTarget(tab, event.data)) {
+                return tab
+              }
+              const currentStatus = tab.runtimeStatus
+              const nextStatus: ChatRuntimeStatus = {
+                kind: currentStatus?.kind ?? resolveRetryStatusKind(event.data),
+                stage: currentStatus?.stage,
+                detail: event.data.reason,
+                retry: {
+                  attempt: event.data.attempt,
+                  maxAttempts: event.data.max_attempts,
+                },
+                updatedAt: event.data.timestamp || Date.now() / 1000,
+              }
+              return {
+                ...tab,
+                runtimeStatus: nextStatus,
+                isTyping: nextStatus.kind === 'typing',
+              }
+            })
+          )
+          return
+        }
+
+        if (event.type === 'llm.error') {
+          setTabs((prev) =>
+            prev.map((tab) => {
+              if (!matchesMonitorTarget(tab, event.data)) {
+                return tab
+              }
+              const currentStatus = tab.runtimeStatus
+              return {
+                ...tab,
+                isTyping: false,
+                runtimeStatus: {
+                  kind: 'error',
+                  stage: currentStatus?.stage,
+                  detail: event.data.message,
+                  retry: currentStatus?.retry,
+                  updatedAt: event.data.timestamp || Date.now() / 1000,
+                },
+              }
+            })
+          )
+        }
+      })
+      .then((cleanup) => {
+        if (active) {
+          unsubscribe = cleanup
+          return
+        }
+        void cleanup()
+      })
+      .catch((error) => {
+        console.error('[Chat] 订阅 MaiSaka 状态失败:', error)
+      })
+
+    return () => {
+      active = false
+      if (unsubscribe) {
+        void unsubscribe()
+      }
+    }
+  }, [])
+
   // 发送消息到当前活动标签页
   const sendMessage = useCallback(async () => {
     if ((!inputValue.trim() && selectedImages.length === 0) || !activeTab?.isConnected) {
@@ -572,6 +846,7 @@ export function ChatPage() {
           return {
             ...tab,
             isTyping: false,
+            runtimeStatus: null,
           }
         })
       )
@@ -694,6 +969,7 @@ export function ChatPage() {
       messages: [],
       isConnected: false,
       isTyping: false,
+      runtimeStatus: null,
       sessionInfo: {},
     }
 
@@ -835,6 +1111,7 @@ export function ChatPage() {
           botQq={activeTab?.sessionInfo.bot_qq}
           userName={userName}
           language={i18n.language}
+          runtimeStatus={activeTab?.runtimeStatus ?? null}
         />
 
         <ChatComposer

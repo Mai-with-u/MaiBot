@@ -44,6 +44,7 @@ from src.maisaka.context.messages import (
 from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.maisaka.display.stage_status_board import remove_stage_status, update_stage_status
 from src.maisaka.focus import MaisakaFocusRuntimeMixin, focus_mode_manager
+from src.maisaka.mode_policy import is_reply_necessity_trigger_enabled
 from src.maisaka.monitor.events import emit_message_ingested, emit_message_sent, emit_message_updated, emit_session_start
 from src.maisaka.monitor.message_payload import (
     build_monitor_message_content,
@@ -1027,11 +1028,13 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         return snapshot
 
     def _get_message_trigger_threshold(self) -> int:
-        """根据回复频率按反平方关系折算出触发一轮循环所需的消息数。"""
+        """根据回复触发模式和频率折算出触发一轮循环所需的消息数。"""
         effective_frequency = min(1.0, self._get_effective_reply_frequency())
         if effective_frequency <= 0:
             return 0
-        return max(1, int(ceil(1.0 / (effective_frequency * effective_frequency))))
+        if is_reply_necessity_trigger_enabled():
+            return max(1, int(ceil(1.0 / (effective_frequency * effective_frequency))))
+        return max(1, int(ceil(1.0 / effective_frequency)))
 
     def _get_pending_message_count(self) -> int:
         """统计当前尚未进入内部循环的新消息数量。"""

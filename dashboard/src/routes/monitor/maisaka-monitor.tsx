@@ -5,6 +5,7 @@
  * 以时间线形式展示聊天流的推理过程。
  */
 import { useNavigate } from '@tanstack/react-router'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   Activity,
   AlertCircle,
@@ -20,13 +21,12 @@ import {
   FileCode2,
   ImageIcon,
   PauseCircle,
-  Radio,
   Timer,
   Wrench,
   XCircle,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -59,6 +59,8 @@ import type { SessionInfo, StageStatusInfo, TimelineEntry } from './use-maisaka-
 import { useMaisakaMonitor } from './use-maisaka-monitor'
 
 // ─── 工具函数 ──────────────────────────────────────────────────
+
+type TimelineScrollBehavior = 'auto' | 'smooth'
 
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`
@@ -281,9 +283,7 @@ interface MonitorStats {
 
 interface StageStatusPanelProps {
   autoScroll: boolean
-  backgroundCollection: boolean
   onClearTimeline: () => void
-  onToggleBackgroundCollection: () => void
   onScrollToBottom: () => void
   stats: MonitorStats
   status?: StageStatusInfo
@@ -291,9 +291,7 @@ interface StageStatusPanelProps {
 
 function MonitorStatusActions({
   autoScroll,
-  backgroundCollection,
   onClearTimeline,
-  onToggleBackgroundCollection,
   onScrollToBottom,
   stats,
 }: Omit<StageStatusPanelProps, 'status'>) {
@@ -315,16 +313,6 @@ function MonitorStatusActions({
         </Tooltip>
       </TooltipProvider>
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button
-          variant={backgroundCollection ? 'secondary' : 'ghost'}
-          size="sm"
-          className="h-6 shrink-0 px-2 text-[11px]"
-          onClick={onToggleBackgroundCollection}
-          title={backgroundCollection ? '关闭离开页面后的持续获取' : '开启离开页面后的持续获取'}
-        >
-          <Radio className={cn('h-3 w-3 mr-1', backgroundCollection && 'text-primary')} />
-          持续获取
-        </Button>
         <Button
           variant="ghost"
           size="sm"
@@ -352,9 +340,7 @@ function MonitorStatusActions({
 
 function StageStatusPanel({
   autoScroll,
-  backgroundCollection,
   onClearTimeline,
-  onToggleBackgroundCollection,
   onScrollToBottom,
   stats,
   status,
@@ -362,9 +348,7 @@ function StageStatusPanel({
   const actions = (
       <MonitorStatusActions
         autoScroll={autoScroll}
-        backgroundCollection={backgroundCollection}
         onClearTimeline={onClearTimeline}
-        onToggleBackgroundCollection={onToggleBackgroundCollection}
         onScrollToBottom={onScrollToBottom}
         stats={stats}
       />
@@ -1179,12 +1163,11 @@ export function MaisakaMonitor() {
     selectedSession,
     setSelectedSession,
     connected,
-    backgroundCollection,
-    setBackgroundCollectionEnabled,
     clearTimeline,
   } = useMaisakaMonitor()
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [scrollViewport, setScrollViewport] = useState<HTMLDivElement | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('maisaka-monitor-sidebar-collapsed')
@@ -1208,49 +1191,114 @@ export function MaisakaMonitor() {
     localStorage.setItem('maisaka-monitor-sidebar-collapsed', String(sidebarCollapsed))
   }, [sidebarCollapsed])
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')
-    if (!viewport) return
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior,
-    })
-    setAutoScroll(true)
+  useEffect(() => {
+    const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement | null
+    setScrollViewport(viewport)
   }, [])
+
+  const visibleTimelineEntries = useMemo(() => {
+    const noReplyTimingGateCycles = new Set<string>()
+    const visibleEntries: TimelineEntry[] = []
+
+    for (const entry of timeline) {
+      if (entry.type === 'timing_gate.result') {
+        const data = entry.data as TimingGateResultEvent
+        if (data.action === 'no_action') {
+          noReplyTimingGateCycles.add(buildCycleKey(data.session_id, data.cycle_id))
+        }
+        visibleEntries.push(entry)
+        continue
+      }
+
+      if (entry.type === 'planner.response' || entry.type === 'planner.finalized') {
+        const data = entry.data as PlannerResponseEvent | PlannerFinalizedEvent
+        const cycleKey = buildCycleKey(data.session_id, data.cycle_id)
+        if (entry.type === 'planner.finalized' && isPlannerInterrupted(data as PlannerFinalizedEvent)) {
+          visibleEntries.push(entry)
+          continue
+        }
+        if (noReplyTimingGateCycles.has(cycleKey)) {
+          continue
+        }
+        visibleEntries.push(entry)
+        continue
+      }
+
+      if (
+        entry.type === 'message.ingested'
+        || entry.type === 'message.sent'
+        || entry.type === 'tool.execution'
+        || entry.type === 'replier.response'
+      ) {
+        visibleEntries.push(entry)
+      }
+    }
+
+    return visibleEntries
+  }, [timeline])
+
+  const timelineVirtualizer = useVirtualizer({
+    count: visibleTimelineEntries.length,
+    getScrollElement: () => scrollViewport,
+    estimateSize: () => 140,
+    getItemKey: (index) => visibleTimelineEntries[index]?.id ?? index,
+    overscan: 8,
+  })
+
+  const scrollToBottom = useCallback((behavior: TimelineScrollBehavior = 'smooth') => {
+    if (visibleTimelineEntries.length > 0) {
+      timelineVirtualizer.scrollToIndex(visibleTimelineEntries.length - 1, {
+        align: 'end',
+        behavior,
+      })
+    } else {
+      scrollViewport?.scrollTo({
+        top: scrollViewport.scrollHeight,
+        behavior,
+      })
+    }
+    setAutoScroll(true)
+  }, [scrollViewport, timelineVirtualizer, visibleTimelineEntries.length])
 
   // 自动滚动到底部
   useEffect(() => {
     if (autoScroll) {
       requestAnimationFrame(() => scrollToBottom('auto'))
     }
-  }, [timeline, autoScroll, scrollToBottom])
+  }, [visibleTimelineEntries.length, autoScroll, scrollToBottom])
 
   useEffect(() => {
     requestAnimationFrame(() => scrollToBottom('auto'))
   }, [selectedSession, scrollToBottom])
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.currentTarget.querySelector('[data-radix-scroll-area-viewport]')
+    const target = scrollViewport ?? e.currentTarget.querySelector('[data-radix-scroll-area-viewport]')
     if (!target) return
     const { scrollTop, scrollHeight, clientHeight } = target as HTMLElement
     setAutoScroll(scrollHeight - scrollTop - clientHeight < 80)
-  }, [])
+  }, [scrollViewport])
 
   // 统计当前会话的各事件类型计数
-  const stats = {
-    messages: timeline.filter((e) => e.type === 'message.ingested' || e.type === 'message.sent').length,
-    cycles: timeline.filter((e) => e.type === 'planner.finalized').length,
-    toolCalls: timeline.reduce((count, entry) => {
-      if (entry.type === 'tool.execution') {
-        return count + 1
+  const stats = useMemo(() => timeline.reduce<MonitorStats>(
+    (currentStats, entry) => {
+      if (entry.type === 'message.ingested' || entry.type === 'message.sent') {
+        currentStats.messages += 1
+        return currentStats
       }
       if (entry.type === 'planner.finalized') {
-        return count + ((entry.data as PlannerFinalizedEvent).tools?.length ?? 0)
+        currentStats.cycles += 1
+        currentStats.toolCalls += (entry.data as PlannerFinalizedEvent).tools?.length ?? 0
+        return currentStats
       }
-      return count
-    }, 0),
-  }
+      if (entry.type === 'tool.execution') {
+        currentStats.toolCalls += 1
+      }
+      return currentStats
+    },
+    { messages: 0, cycles: 0, toolCalls: 0 },
+  ), [timeline])
   const selectedStageStatus = selectedSession ? stageStatuses.get(selectedSession) : undefined
+  const virtualItems = timelineVirtualizer.getVirtualItems()
 
   return (
     <div className="flex min-w-0 flex-col gap-4 lg:h-[calc(100vh-116px)] lg:flex-row">
@@ -1297,9 +1345,7 @@ export function MaisakaMonitor() {
         {/* 时间线 */}
         <StageStatusPanel
           autoScroll={autoScroll}
-          backgroundCollection={backgroundCollection}
           onClearTimeline={clearTimeline}
-          onToggleBackgroundCollection={() => setBackgroundCollectionEnabled(!backgroundCollection)}
           onScrollToBottom={() => scrollToBottom('smooth')}
           stats={stats}
           status={selectedStageStatus}
@@ -1311,8 +1357,8 @@ export function MaisakaMonitor() {
             ref={scrollRef}
             onScrollCapture={handleScroll}
           >
-            <div className="min-w-0 space-y-3 p-4">
-              {timeline.length === 0 ? (
+            <div className="min-w-0 p-4">
+              {visibleTimelineEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
                   <Clock className="h-10 w-10 opacity-30" />
                   <p className="text-sm">等待 MaiSaka 推理事件…</p>
@@ -1321,59 +1367,31 @@ export function MaisakaMonitor() {
                   </p>
                 </div>
               ) : (
-                (() => {
-                  const noReplyTimingGateCycles = new Set<string>()
-
-                  return timeline.map((entry) => {
-                    if (entry.type === 'timing_gate.result') {
-                      const data = entry.data as TimingGateResultEvent
-                      if (data.action === 'no_action') {
-                        noReplyTimingGateCycles.add(buildCycleKey(data.session_id, data.cycle_id))
-                      }
-                    }
-
-                    if (entry.type === 'planner.response' || entry.type === 'planner.finalized') {
-                      const data = entry.data as PlannerResponseEvent | PlannerFinalizedEvent
-                      const cycleKey = buildCycleKey(data.session_id, data.cycle_id)
-                      if (entry.type === 'planner.finalized' && isPlannerInterrupted(data as PlannerFinalizedEvent)) {
-                        const rendered = (
+                <div
+                  className="relative min-w-0"
+                  style={{ height: `${timelineVirtualizer.getTotalSize()}px` }}
+                >
+                  {virtualItems.map((virtualItem) => {
+                    const entry = visibleTimelineEntries[virtualItem.index]
+                    if (!entry) return null
+                    return (
+                      <div
+                        key={virtualItem.key}
+                        ref={timelineVirtualizer.measureElement}
+                        data-index={virtualItem.index}
+                        className="absolute left-0 right-0 top-0 pb-3"
+                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                      >
+                        <div className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
                           <TimelineEventRenderer
                             entry={entry}
                             onOpenReasoning={handleOpenReasoning}
                           />
-                        )
-                        if (!rendered) return null
-                        return (
-                          <div
-                            key={entry.id}
-                            className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
-                          >
-                            {rendered}
-                          </div>
-                        )
-                      }
-                      if (noReplyTimingGateCycles.has(cycleKey)) {
-                        return null
-                      }
-                    }
-
-                    const rendered = (
-                      <TimelineEventRenderer
-                        entry={entry}
-                        onOpenReasoning={handleOpenReasoning}
-                      />
-                    )
-                    if (!rendered) return null
-                    return (
-                      <div
-                        key={entry.id}
-                        className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
-                      >
-                        {rendered}
+                        </div>
                       </div>
                     )
-                  })
-                })()
+                  })}
+                </div>
               )}
             </div>
           </ScrollArea>

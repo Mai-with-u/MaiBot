@@ -5,6 +5,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import asyncio
 import json
 import time
 
@@ -15,6 +16,7 @@ logger = get_logger("maisaka_monitor")
 
 MONITOR_DOMAIN = "maisaka_monitor"
 MONITOR_TOPIC = "main"
+NON_PERSISTED_EVENTS = {"stage.status", "stage.removed", "stage.snapshot"}
 
 
 def _normalize_payload_value(value: Any) -> Any:
@@ -285,11 +287,16 @@ async def _broadcast(event: str, data: Dict[str, Any]) -> None:
         from src.webui.routers.websocket.manager import websocket_manager
 
         data = _enrich_session_identity(data)
+        broadcast_data = data
+        if event not in NON_PERSISTED_EVENTS:
+            from src.maisaka.monitor.event_store import record_monitor_event
+
+            broadcast_data = await asyncio.to_thread(record_monitor_event, event, data)
         await websocket_manager.broadcast_to_topic(
             domain=MONITOR_DOMAIN,
             topic=MONITOR_TOPIC,
             event=event,
-            data=data,
+            data=broadcast_data,
         )
     except Exception as exc:
         logger.warning(f"MaiSaka 监控事件广播失败: {exc}", exc_info=True)
@@ -354,6 +361,52 @@ async def emit_stage_removed(
     await _broadcast("stage.removed", {
         "session_id": session_id,
         "session_name": session_name,
+        "timestamp": time.time(),
+    })
+
+
+async def emit_llm_retry(
+    *,
+    session_id: str,
+    task_name: str,
+    request_type: str,
+    model_name: str,
+    attempt: int,
+    max_attempts: int,
+    reason: str,
+    retry_interval: float,
+) -> None:
+    """广播模型请求失败后的重试进度。"""
+
+    await _broadcast("llm.retry", {
+        "session_id": session_id,
+        "task_name": task_name,
+        "request_type": request_type,
+        "model_name": model_name,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "reason": reason,
+        "retry_interval": retry_interval,
+        "timestamp": time.time(),
+    })
+
+
+async def emit_llm_error(
+    *,
+    session_id: str,
+    task_name: str,
+    request_type: str,
+    model_name: str,
+    message: str,
+) -> None:
+    """广播模型请求最终失败。"""
+
+    await _broadcast("llm.error", {
+        "session_id": session_id,
+        "task_name": task_name,
+        "request_type": request_type,
+        "model_name": model_name,
+        "message": message,
         "timestamp": time.time(),
     })
 

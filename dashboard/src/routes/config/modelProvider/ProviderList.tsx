@@ -233,10 +233,11 @@ export function ProviderList({
                         <div className="flex justify-end gap-2">
                           <Button
                             variant="outline"
-                            size="sm"
+                            size="icon"
                             onClick={() => onTest(provider.name)}
                             disabled={testingProviders.has(provider.name)}
                             title="测试连接"
+                            aria-label={`测试厂商 ${provider.name} 连接`}
                           >
                             {testingProviders.has(provider.name) ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -278,7 +279,7 @@ export function ProviderList({
         <div className="mt-4 flex flex-col items-center justify-between gap-4 sm:flex-row">
           <div className="flex items-center gap-2">
             <Label htmlFor="page-size-provider" className="text-sm whitespace-nowrap">
-              每页显示
+              显示
             </Label>
             <Select
               value={pageSize.toString()}
@@ -298,7 +299,7 @@ export function ProviderList({
               </SelectContent>
             </Select>
             <span className="text-muted-foreground text-sm">
-              显示 {(page - 1) * pageSize + 1} 到{' '}
+              {(page - 1) * pageSize + 1} 到{' '}
               {Math.min(page * pageSize, filteredProviders.length)} 条，共{' '}
               {filteredProviders.length} 条
             </span>
@@ -310,6 +311,8 @@ export function ProviderList({
               onClick={() => setPage(1)}
               disabled={page === 1}
               className="hidden sm:flex"
+              aria-label="第一页"
+              title="第一页"
             >
               <ChevronsLeft className="h-4 w-4" />
             </Button>
@@ -318,9 +321,11 @@ export function ProviderList({
               size="sm"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
+              className="h-8 w-8 px-0"
+              aria-label="上一页"
+              title="上一页"
             >
-              <ChevronLeft className="h-4 w-4 sm:mr-1" />
-              <span className="hidden sm:inline">上一页</span>
+              <ChevronLeft className="h-4 w-4" />
             </Button>
             <div className="flex items-center gap-2">
               <Input
@@ -348,9 +353,11 @@ export function ProviderList({
               size="sm"
               onClick={() => setPage((p) => p + 1)}
               disabled={page >= totalPages}
+              className="h-8 w-8 px-0"
+              aria-label="下一页"
+              title="下一页"
             >
-              <span className="hidden sm:inline">下一页</span>
-              <ChevronRight className="h-4 w-4 sm:ml-1" />
+              <ChevronRight className="h-4 w-4" />
             </Button>
             <Button
               variant="outline"
@@ -358,6 +365,8 @@ export function ProviderList({
               onClick={() => setPage(totalPages)}
               disabled={page >= totalPages}
               className="hidden sm:flex"
+              aria-label="最后一页"
+              title="最后一页"
             >
               <ChevronsRight className="h-4 w-4" />
             </Button>

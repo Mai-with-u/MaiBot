@@ -94,6 +94,13 @@
       "errorFallback": "An error occurred",
       "thinking": "Loading..."
     },
+    "activity": {
+      "acting": "{{bot}} is taking action{{retry}}",
+      "error": "{{bot}} ran into an error{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} is thinking{{retry}}",
+      "typing": "{{bot}} is typing{{retry}}"
+    },
     "composer": {
       "hint": "Enter to send · Shift + Enter for newline"
     },
@@ -510,6 +517,10 @@
         "title": "Basics & Personality",
         "description": "Configure nickname, personality, and reply style"
       },
+      "customToken": {
+        "title": "Set Login Token",
+        "description": "Replace this startup's random token with a fixed custom token"
+      },
       "botBasic": {
         "title": "Bot Basics",
         "description": "Configure the bot's basic information"
@@ -547,7 +558,8 @@
       "enterBaseUrl": "Please enter the API base URL",
       "enterApiKey": "Please enter the API key",
       "enterPlannerModelIdentifier": "Please enter the planner model identifier",
-      "enterReplyerModelIdentifier": "Please enter the replyer model identifier"
+      "enterReplyerModelIdentifier": "Please enter the replyer model identifier",
+      "customTokenInvalid": "Token does not meet the requirements: {{failedRules}}"
     },
     "toast": {
       "loadFailedTitle": "Failed to load configuration",
@@ -560,6 +572,8 @@
       "completeSuccessDescription": "{{appName}} configuration has been saved and applied.",
       "completeFailedTitle": "Setup failed",
       "skipFailedTitle": "Failed to skip the setup wizard",
+      "customTokenSuccessTitle": "Token updated",
+      "customTokenSuccessDescription": "Please sign in again with the new custom token, then continue setup.",
       "unknownError": "Unknown error"
     },
     "actions": {
@@ -567,6 +581,7 @@
       "next": "Next",
       "skip": "Skip Wizard",
       "complete": "Complete Setup",
+      "saveToken": "Save Token",
       "saving": "Saving...",
       "completing": "Completing..."
     },
@@ -592,6 +607,16 @@
       }
     },
     "forms": {
+      "customToken": {
+        "noticeTitle": "You are still using the random startup token",
+        "noticeDescription": "The random token changes on the next startup. Set a fixed custom token and use it for future WebUI sign-ins.",
+        "label": "Custom Token *",
+        "placeholder": "Enter a secure token you can store safely",
+        "description": "After saving, your current session will expire and you will need to sign in with the new token.",
+        "requirements": "Token requirements",
+        "show": "Show token",
+        "hide": "Hide token"
+      },
       "botBasic": {
         "platform": {
           "label": "Platform *",

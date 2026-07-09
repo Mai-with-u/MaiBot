@@ -94,6 +94,13 @@
       "errorFallback": "エラーが発生しました",
       "thinking": "考え中..."
     },
+    "activity": {
+      "acting": "{{bot}} が行動中{{retry}}",
+      "error": "{{bot}} でエラーが発生しました{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} が考え中{{retry}}",
+      "typing": "{{bot}} が入力中{{retry}}"
+    },
     "composer": {
       "hint": "Enter で送信・Shift + Enter で改行"
     },
@@ -510,6 +517,10 @@
         "title": "基本情報と人格",
         "description": "ニックネーム、人格、返信スタイルを設定します"
       },
+      "customToken": {
+        "title": "ログイン Token を設定",
+        "description": "今回の起動で生成されたランダム Token を固定のカスタム Token に変更します"
+      },
       "botBasic": {
         "title": "Bot基本設定",
         "description": "ボットの基本情報を設定します"
@@ -547,7 +558,8 @@
       "enterBaseUrl": "API Base URL を入力してください",
       "enterApiKey": "API Key を入力してください",
       "enterPlannerModelIdentifier": "planner モデル識別子を入力してください",
-      "enterReplyerModelIdentifier": "replyer モデル識別子を入力してください"
+      "enterReplyerModelIdentifier": "replyer モデル識別子を入力してください",
+      "customTokenInvalid": "Token が要件を満たしていません：{{failedRules}}"
     },
     "toast": {
       "loadFailedTitle": "設定の読み込みに失敗しました",
@@ -560,6 +572,8 @@
       "completeSuccessDescription": "{{appName}} の設定を保存して適用しました。",
       "completeFailedTitle": "設定の完了に失敗しました",
       "skipFailedTitle": "セットアップのスキップに失敗しました",
+      "customTokenSuccessTitle": "Token を更新しました",
+      "customTokenSuccessDescription": "新しいカスタム Token で再度ログインしてから、設定を続けてください。",
       "unknownError": "不明なエラー"
     },
     "actions": {
@@ -567,6 +581,7 @@
       "next": "次へ",
       "skip": "ウィザードをスキップ",
       "complete": "設定を完了",
+      "saveToken": "Token を保存",
       "saving": "保存中...",
       "completing": "完了処理中..."
     },
@@ -592,6 +607,16 @@
       }
     },
     "forms": {
+      "customToken": {
+        "noticeTitle": "現在は起動時のランダム Token を使用しています",
+        "noticeDescription": "ランダム Token は次回起動時に変わります。固定のカスタム Token を設定し、今後の WebUI ログインに使用してください。",
+        "label": "カスタム Token *",
+        "placeholder": "安全に保管できる Token を入力してください",
+        "description": "保存後、現在のログインは無効になります。新しい Token で再度ログインしてください。",
+        "requirements": "Token の要件",
+        "show": "Token を表示",
+        "hide": "Token を非表示"
+      },
       "botBasic": {
         "platform": {
           "label": "プラットフォーム *",

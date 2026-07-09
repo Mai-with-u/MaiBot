@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
+  Ban,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -11,6 +13,7 @@ import {
   Save,
   Search,
   Trash2,
+  Undo2,
   UserRound,
   UsersRound,
   X,
@@ -55,9 +58,11 @@ import {
   getChatStreamDetail,
   getChatStreams,
   updateChatStreamLearning,
+  updateChatStreamAdapterPolicy,
   updateChatStreamTalkFrequency,
   upsertChatStreamPrompt,
   type ChatConfigRule,
+  type ChatAdapterStatus,
   type ChatLearningStatus,
   type ChatPromptRule,
   type ChatStream,
@@ -1656,6 +1661,185 @@ function CompactDetailItem({ label, value }: { label: string; value: ReactNode }
   )
 }
 
+function getAdapterDisplayName(adapter: ChatAdapterStatus): string {
+  const rawName = adapter.gateway_name || adapter.plugin_id || adapter.adapter_id
+  const namePart = rawName.split('.').at(-1) || rawName
+  return namePart
+    .replace(/[-_]+/g, ' ')
+    .replace(/\badapter\b/gi, '')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase()) || '适配器'
+}
+
+function getAdapterPolicyLabel(adapter: ChatAdapterStatus): string {
+  if (adapter.policy.reason === 'matched_allow_override') {
+    return '已允许当前聊天'
+  }
+  if (adapter.policy.reason === 'matched_deny_override') {
+    return '已阻止当前聊天'
+  }
+  if (!adapter.policy.configured) {
+    return '使用默认：允许'
+  }
+  if (adapter.policy.allowed) {
+    return adapter.policy.list_type === 'blacklist' ? '黑名单未命中' : '白名单已放行'
+  }
+  return adapter.policy.list_type === 'blacklist' ? '黑名单已阻止' : '白名单未放行'
+}
+
+function getAdapterPolicyDescription(adapter: ChatAdapterStatus): string {
+  if (adapter.policy.reason === 'matched_allow_override') {
+    return '这条聊天已被单独加入允许规则。'
+  }
+  if (adapter.policy.reason === 'matched_deny_override') {
+    return '这条聊天已被单独加入阻止规则。'
+  }
+  if (!adapter.policy.configured) {
+    return '未设置统一规则，主程序默认放行。'
+  }
+  if (adapter.policy.allowed) {
+    return adapter.policy.source === 'defaults'
+      ? '当前聊天被全局适配器规则放行。'
+      : '当前聊天被这个适配器的规则放行。'
+  }
+  return adapter.policy.source === 'defaults'
+    ? '当前聊天被全局适配器规则阻止。'
+    : '当前聊天被这个适配器的规则阻止。'
+}
+
+function getAdapterRouteDescription(adapter: ChatAdapterStatus): string {
+  const routeState = adapter.routed ? '已接入当前聊天' : '未接入当前聊天'
+  const directions = [
+    adapter.receive_bound ? '收消息' : '',
+    adapter.send_bound ? '发消息' : '',
+  ].filter(Boolean)
+  return `${routeState}${directions.length > 0 ? `，负责${directions.join('、')}` : ''}`
+}
+
+function hasAdapterAllowOverride(adapter: ChatAdapterStatus): boolean {
+  return adapter.policy.reason === 'matched_allow_override'
+}
+
+function hasAdapterBlockOverride(adapter: ChatAdapterStatus): boolean {
+  return adapter.policy.reason === 'matched_deny_override'
+}
+
+function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
+  const adapters = detail.adapters ?? []
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const policyMutation = useMutation({
+    mutationFn: (payload: { adapter_id: string; action: 'allow' | 'block' | 'inherit' }) =>
+      updateChatStreamAdapterPolicy(detail.session_id, payload),
+    onSuccess: (nextDetail) => {
+      queryClient.setQueryData(['chat-stream-detail', detail.session_id], nextDetail)
+      toast({ title: '适配器放行规则已保存' })
+    },
+    onError: (error) => {
+      toast({
+        title: '适配器放行规则保存失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    },
+  })
+  const savingAdapterId = policyMutation.variables?.adapter_id
+
+  const saveAdapterPolicy = (
+    adapter: ChatAdapterStatus,
+    action: 'allow' | 'block' | 'inherit'
+  ) => {
+    policyMutation.mutate({ adapter_id: adapter.adapter_id, action })
+  }
+
+  return (
+    <section className="space-y-3 rounded-md border p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">适配器放行</div>
+          <div className="text-muted-foreground text-xs">设置当前聊天是否允许经过适配器收发消息</div>
+        </div>
+        <Badge variant="outline">{adapters.length} 个</Badge>
+      </div>
+      {adapters.length === 0 ? (
+        <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
+          当前没有运行中的适配器插件路由。
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {adapters.map((adapter) => (
+            <div
+              key={adapter.adapter_id}
+              className="bg-muted/20 grid gap-3 rounded-md border p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+            >
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{getAdapterDisplayName(adapter)}</span>
+                  <Badge
+                    variant={
+                      !adapter.policy.configured
+                        ? 'outline'
+                        : adapter.policy.allowed
+                          ? 'default'
+                          : 'destructive'
+                    }
+                  >
+                    {getAdapterPolicyLabel(adapter)}
+                  </Badge>
+                </div>
+                <div className="text-muted-foreground text-sm">
+                  {getAdapterPolicyDescription(adapter)}
+                </div>
+                <div className="text-muted-foreground text-xs">
+                  {getAdapterRouteDescription(adapter)}
+                  {adapter.account_id ? `；账号 ${adapter.account_id}` : ''}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 md:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={hasAdapterAllowOverride(adapter) ? 'secondary' : 'outline'}
+                  disabled={policyMutation.isPending}
+                  onClick={() => saveAdapterPolicy(adapter, 'allow')}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  允许
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={hasAdapterBlockOverride(adapter) ? 'destructive' : 'outline'}
+                  disabled={policyMutation.isPending}
+                  onClick={() => saveAdapterPolicy(adapter, 'block')}
+                >
+                  <Ban className="h-4 w-4" />
+                  阻止
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={policyMutation.isPending}
+                  onClick={() => saveAdapterPolicy(adapter, 'inherit')}
+                >
+                  <Undo2 className="h-4 w-4" />
+                  {policyMutation.isPending && savingAdapterId === adapter.adapter_id ? '保存中' : '使用默认'}
+                </Button>
+              </div>
+              <div className="text-muted-foreground min-w-0 text-xs break-all md:col-span-2">
+                插件：{adapter.plugin_id || adapter.adapter_id}
+                {adapter.gateway_name ? `；网关：${adapter.gateway_name}` : ''}
+                {adapter.scope ? `；范围：${adapter.scope}` : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ChatDetailContent({
   detail,
   loading,
@@ -1700,6 +1884,7 @@ function ChatDetailContent({
         </div>
       </section>
 
+      <ChatAdapterSection detail={detail} />
       <TalkFrequencySection detail={detail} />
       <ChatPromptSection detail={detail} />
       <ConfigStatusRows detail={detail} />

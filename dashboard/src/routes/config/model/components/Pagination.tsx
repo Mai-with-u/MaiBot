@@ -60,7 +60,7 @@ export const Pagination = React.memo(function Pagination({
   return (
     <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4">
       <div className="flex items-center gap-2">
-        <Label htmlFor="page-size-model" className="text-sm whitespace-nowrap">每页显示</Label>
+        <Label htmlFor="page-size-model" className="text-sm whitespace-nowrap">显示</Label>
         <Select
           value={pageSize.toString()}
           onValueChange={handlePageSizeChange}
@@ -77,7 +77,7 @@ export const Pagination = React.memo(function Pagination({
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground">
-          显示 {(page - 1) * pageSize + 1} 到{' '}
+          {(page - 1) * pageSize + 1} 到{' '}
           {Math.min(page * pageSize, totalItems)} 条，共 {totalItems} 条
         </span>
       </div>
@@ -88,6 +88,8 @@ export const Pagination = React.memo(function Pagination({
           onClick={() => onPageChange(1)}
           disabled={page === 1}
           className="hidden sm:flex"
+          aria-label="第一页"
+          title="第一页"
         >
           <span className="flex -space-x-2">
             <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4 rotate-180" />
@@ -99,9 +101,11 @@ export const Pagination = React.memo(function Pagination({
           size="sm"
           onClick={() => onPageChange(Math.max(1, page - 1))}
           disabled={page === 1}
+          className="h-8 w-8 px-0"
+          aria-label="上一页"
+          title="上一页"
         >
-          <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4 rotate-180 sm:mr-1" />
-          <span className="hidden sm:inline">上一页</span>
+          <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4 rotate-180" />
         </Button>
         <div className="flex items-center gap-2">
           <Input
@@ -129,9 +133,11 @@ export const Pagination = React.memo(function Pagination({
           size="sm"
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
+          className="h-8 w-8 px-0"
+          aria-label="下一页"
+          title="下一页"
         >
-          <span className="hidden sm:inline">下一页</span>
-          <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4 sm:ml-1" />
+          <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4" />
         </Button>
         <Button
           variant="outline"
@@ -139,6 +145,8 @@ export const Pagination = React.memo(function Pagination({
           onClick={() => onPageChange(totalPages)}
           disabled={page >= totalPages}
           className="hidden sm:flex"
+          aria-label="最后一页"
+          title="最后一页"
         >
           <span className="flex -space-x-2">
             <StreamlineIcon name="line-arrow-right-1-remix" fallback={ChevronRight} className="h-4 w-4" />

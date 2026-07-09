@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { BackgroundLayer } from '@/components/background-layer'
 import { BackToTop } from '@/components/back-to-top'
 import { HttpWarningBanner } from '@/components/http-warning-banner'
+import { UpdateNoticeDialog } from '@/components/update-notice-dialog'
 import { SkipNav } from '@/components/ui/skip-nav'
 import { useAnnounce } from '@/components/ui/announcer'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -322,6 +323,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </div>
       </div>
+      <UpdateNoticeDialog />
     </TooltipProvider>
   )
 }

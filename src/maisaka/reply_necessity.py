@@ -47,6 +47,7 @@ class ReplyNecessityScore:
 
     score: int
     detail: str
+    pressure_score: int
 
 
 def strip_reply_necessity_noise(text: str) -> str:
@@ -174,18 +175,23 @@ def score_reply_necessity(score_input: ReplyNecessityInput) -> ReplyNecessitySco
     effective_frequency = min(1.0, score_input.effective_frequency)
     frequency_factor = 0.5 + 0.5 * effective_frequency
     final_score = max(0, int(round(raw_score * frequency_factor)))
-    detail = (
-        f"最终={final_score} 原始={raw_score} "
-        f"强相关={relevance_score}({relevance_reason}) "
-        f"内容={content_score}({','.join(content_reasons) or '无'}) "
-        f"文本长度={len(combined_clean_text)} "
-        f"压力={pressure_score}(pending={score_input.pending_count}/{normalized_threshold},"
-        f"idle={score_input.idle_seconds:.1f}s) "
-        f"存在感=-{presence_penalty}(5min={score_input.recent_self_replies}/"
-        f"{score_input.recent_window_messages}) "
-        f"频率={effective_frequency:.3f} 倍率={frequency_factor:.2f}"
+    detail_parts = [f"最终={final_score}", f"原始={raw_score}"]
+    if relevance_score != 0:
+        detail_parts.append(f"强相关={relevance_score}({relevance_reason})")
+    if content_score != 0:
+        detail_parts.append(f"内容={content_score}({','.join(content_reasons)})")
+    if presence_penalty != 0:
+        detail_parts.append(
+            f"存在感=-{presence_penalty}(5min={score_input.recent_self_replies}/"
+            f"{score_input.recent_window_messages})"
+        )
+    detail_parts.extend(
+        [
+            f"频率={effective_frequency:.3f}",
+            f"倍率={frequency_factor:.2f}",
+        ]
     )
-    return ReplyNecessityScore(score=final_score, detail=detail)
+    return ReplyNecessityScore(score=final_score, detail=" ".join(detail_parts), pressure_score=pressure_score)
 
 
 def _calculate_recent_presence_penalty(*, recent_self_replies: int, recent_window_messages: int) -> int:
