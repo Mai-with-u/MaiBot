@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Tuple
 
 import json
 import pickle
@@ -21,6 +22,21 @@ from ..utils.io import atomic_write
 logger = get_logger("A_Memorix.FormatMigration")
 
 FORMAT_MIGRATION_VERSION = "pickle_to_json_v1"
+
+
+class _LegacyDataUnpickler(pickle.Unpickler):
+    """仅加载旧存储中的基础数据结构，禁止解析任何全局对象。"""
+
+    def find_class(self, module: str, name: str) -> Any:
+        raise pickle.UnpicklingError(f"旧存储 pickle 禁止加载全局对象: {module}.{name}")
+
+
+def _load_legacy_pickle(handle: BinaryIO) -> Any:
+    return _LegacyDataUnpickler(handle).load()
+
+
+def _loads_legacy_pickle(payload: bytes) -> Any:
+    return _load_legacy_pickle(BytesIO(payload))
 
 
 def _json_dumps(value: Any) -> str:
@@ -60,7 +76,7 @@ def _legacy_backup_candidates(path: Path) -> List[Path]:
 
 def _load_pickle_dict(path: Path, label: str) -> Dict[str, Any]:
     with path.open("rb") as handle:
-        payload = pickle.load(handle)
+        payload = _load_legacy_pickle(handle)
     if not isinstance(payload, dict):
         raise TypeError(f"{label}必须是 dict: {path}")
     return dict(payload)
@@ -161,7 +177,7 @@ def _metadata_to_json_text(raw: Any) -> Tuple[Optional[str], bool]:
                 raise TypeError("metadata JSON 必须是对象")
             return _json_dumps(decoded), True
         except Exception as json_exc:
-            decoded = pickle.loads(raw)
+            decoded = _loads_legacy_pickle(raw)
             if not isinstance(decoded, dict):
                 raise TypeError("pickle metadata 必须解码为 dict") from json_exc
             return _json_dumps(decoded), True

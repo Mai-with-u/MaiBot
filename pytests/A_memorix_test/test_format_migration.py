@@ -15,6 +15,19 @@ import pytest
 from src.A_memorix.core.storage.format_migration import run_startup_format_migration
 
 
+def _create_marker(path: str) -> dict:
+    Path(path).write_text("pickle payload executed", encoding="utf-8")
+    return {"known_hashes": []}
+
+
+class _MarkerPayload:
+    def __init__(self, marker_path: Path) -> None:
+        self.marker_path = marker_path
+
+    def __reduce__(self):
+        return _create_marker, (str(self.marker_path),)
+
+
 def _dump_pickle(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
@@ -474,6 +487,54 @@ def test_startup_format_migration_corrupt_vector_pickle_fails_without_backup(tmp
     assert pkl_path.exists()
     assert not (data_dir / "vectors" / "vectors_metadata.json").exists()
     assert not (data_dir / "vectors" / "vectors_metadata.pkl.bak").exists()
+
+
+def test_startup_format_migration_rejects_global_objects_in_pickle_file(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    marker_path = tmp_path / "pickle_file_executed"
+    pkl_path = data_dir / "vectors" / "vectors_metadata.pkl"
+    pkl_path.parent.mkdir(parents=True, exist_ok=True)
+    pkl_path.write_bytes(pickle.dumps(_MarkerPayload(marker_path)))
+
+    with pytest.raises(pickle.UnpicklingError, match="禁止加载全局对象"):
+        run_startup_format_migration(data_dir)
+
+    assert not marker_path.exists()
+    assert pkl_path.exists()
+    assert not (data_dir / "vectors" / "vectors_metadata.json").exists()
+    assert not (data_dir / "vectors" / "vectors_metadata.pkl.bak").exists()
+
+
+def test_startup_format_migration_rejects_global_objects_in_sqlite_blob(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    marker_path = tmp_path / "sqlite_blob_executed"
+    malicious_payload = pickle.dumps(_MarkerPayload(marker_path))
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata BLOB)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("malicious-paragraph", malicious_payload),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(pickle.UnpicklingError, match="禁止加载全局对象"):
+        run_startup_format_migration(data_dir)
+
+    assert not marker_path.exists()
+    conn = sqlite3.connect(str(db_path))
+    try:
+        stored_payload = conn.execute(
+            "SELECT metadata FROM paragraphs WHERE hash = ?",
+            ("malicious-paragraph",),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert stored_payload == malicious_payload
 
 
 def test_startup_format_migration_recovers_corrupt_vector_json_from_legacy_pickle(tmp_path: Path) -> None:
