@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run A_Memorix runtime self-check against real embedding/runtime configuration."""
+"""基于真实 embedding 和运行时配置执行 A_Memorix 自检。"""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     raise SystemExit(0)
 
-from A_memorix.core.runtime.lifecycle_orchestrator import initialize_storage_async
-from A_memorix.core.utils.runtime_self_check import run_embedding_runtime_self_check
+from A_memorix.core.runtime.lifecycle_orchestrator import initialize_storage_async  # noqa: E402
+from A_memorix.core.utils.runtime_self_check import run_embedding_runtime_self_check  # noqa: E402
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -128,8 +128,8 @@ async def _main_async(args: argparse.Namespace) -> int:
         if plugin.metadata_store is not None:
             try:
                 plugin.metadata_store.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"warning: metadata store close failed: {exc}", file=sys.stderr)
         if temp_dir_ctx is not None:
             temp_dir_ctx.cleanup()
 

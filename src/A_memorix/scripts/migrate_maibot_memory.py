@@ -19,7 +19,6 @@ import importlib
 import json
 import logging
 import os
-import pickle
 import sqlite3
 import sys
 import time
@@ -103,8 +102,8 @@ def _disable_unavailable_gemini_provider() -> None:
     try:
         from google import genai  # type: ignore  # noqa: F401
         return
-    except Exception:
-        pass
+    except ImportError:
+        logger.info("未安装 google-genai，迁移时禁用 Gemini provider")
 
     from src.config.config import model_config as loaded_model_config
 
@@ -289,7 +288,7 @@ def _safe_float(value: Any, default: float) -> float:
         return value.timestamp()
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         pass
 
     text = str(value or "").strip()
@@ -898,12 +897,12 @@ class MigrationRunner:
         self.plugin_config = merged
 
     def _read_existing_vector_dimension(self, fallback_dimension: int) -> int:
-        meta_path = self.target_data_dir / "vectors" / "vectors_metadata.pkl"
+        meta_path = self.target_data_dir / "vectors" / "vectors_metadata.json"
         if not meta_path.exists():
             return fallback_dimension
         try:
-            with open(meta_path, "rb") as f:
-                payload = pickle.load(f)
+            with open(meta_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
             value = _safe_int(payload.get("dimension"), fallback_dimension)
             return max(1, value)
         except Exception:
@@ -948,7 +947,7 @@ class MigrationRunner:
 
             try:
                 detected_dim = self._read_existing_vector_dimension(emb_default_dim)
-                has_existing_vectors = (self.target_data_dir / "vectors" / "vectors_metadata.pkl").exists()
+                has_existing_vectors = (self.target_data_dir / "vectors" / "vectors_metadata.json").exists()
                 if not has_existing_vectors:
                     detected_dim = await self.embedding_manager._detect_dimension()
             except Exception as e:
@@ -1251,16 +1250,16 @@ class MigrationRunner:
                 if not isinstance(parsed, list):
                     self._warn_list_field_coerced(row_id, field_name, f"JSON 类型为 {type(parsed).__name__}")
                 return self._normalize_list_field_items(parsed)
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.debug(f"列表字段不是 JSON，继续兼容解析: row={row_id}, field={field_name}")
 
             try:
                 parsed_literal = ast.literal_eval(text)
                 if isinstance(parsed_literal, (list, tuple, set, dict)):
                     self._warn_list_field_coerced(row_id, field_name, "使用 Python literal 兼容解析")
                     return self._normalize_list_field_items(parsed_literal)
-            except Exception:
-                pass
+            except (SyntaxError, ValueError):
+                logger.debug(f"列表字段不是 Python literal，继续分隔符解析: row={row_id}, field={field_name}")
 
             separators = [",", "，", "、", ";", "；", "\n"]
             for sep in separators:
@@ -1415,7 +1414,7 @@ class MigrationRunner:
             return
 
         now_ts = time.time()
-        empty_meta_blob = pickle.dumps({})
+        empty_meta_blob = json.dumps({}, ensure_ascii=False, sort_keys=True)
 
         conn = self.metadata_store.get_connection()
 
@@ -1882,7 +1881,7 @@ class MigrationRunner:
             if self.metadata_store is not None:
                 self.metadata_store.close()
         except Exception:
-            pass
+            logger.exception("关闭 A_Memorix 迁移目标存储失败")
         self.source_db.close()
 
 

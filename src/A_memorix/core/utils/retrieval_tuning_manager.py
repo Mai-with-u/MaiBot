@@ -1,5 +1,5 @@
 """
-Retrieval tuning manager for WebUI.
+WebUI 检索调优管理器（Retrieval tuning manager）。
 """
 
 from __future__ import annotations
@@ -150,14 +150,14 @@ def _safe_json_loads(text: str) -> Optional[Any]:
                 break
     try:
         return json.loads(raw)
-    except Exception:
-        pass
+    except json.JSONDecodeError:
+        logger.debug("检索调优响应不是完整 JSON，继续提取对象片段")
     s = raw.find("{")
     e = raw.rfind("}")
     if s >= 0 and e > s:
         try:
             return json.loads(raw[s : e + 1])
-        except Exception:
+        except json.JSONDecodeError:
             return None
     return None
 
@@ -728,7 +728,7 @@ class RetrievalTuningManager:
         selected: List[int] = []
         selected_set = set()
 
-        # First pass: predicate round-robin to avoid head predicate dominating query set.
+        # 第一轮按谓词轮询，避免高频谓词主导查询集。
         while len(selected) < target:
             progressed = False
             for key in predicate_order:
@@ -750,7 +750,7 @@ class RetrievalTuningManager:
             remain = [idx for idx in range(len(normalized)) if idx not in selected_set]
             rng.shuffle(remain)
 
-            # Second pass: prefer lower-frequency entities and predicates for better diversity.
+            # 第二轮优先低频实体和谓词，提高样本多样性。
             def _remain_score(idx: int) -> Tuple[int, int]:
                 subj, predicate, obj, _ = normalized[idx]
                 subject_freq = int(entity_counter.get(str(subj or "").strip().lower() or "__empty__", 0))

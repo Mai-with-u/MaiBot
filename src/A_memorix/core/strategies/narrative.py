@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import List
 
 import re
 
@@ -72,7 +72,6 @@ class NarrativeStrategy(BaseStrategy):
             chunks.append(self._create_chunk(text, scene_id, scene_idx, 0, 0))
             return chunks
 
-        stride = window_size - overlap
         start = 0
         local_idx = 0
         while start < len(text):

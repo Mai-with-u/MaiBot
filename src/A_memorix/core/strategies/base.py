@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List
 import hashlib
 
 class KnowledgeType(str, Enum):
@@ -34,7 +34,7 @@ class ProcessedChunk:
     type: KnowledgeType
     source: SourceInfo
     chunk: ChunkContext
-    data: Dict[str, Any] = field(default_factory=dict) # triples、events、verbatim_entities
+    data: Dict[str, Any] = field(default_factory=dict) # 数据字段：triples、events、verbatim_entities
     flags: ChunkFlags = field(default_factory=ChunkFlags)
 
     def to_dict(self) -> Dict:

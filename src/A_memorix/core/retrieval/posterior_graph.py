@@ -631,16 +631,12 @@ def apply_posterior_graph_gate(
     if not isinstance(cfg, PosteriorGraphConfig) or not cfg.enabled:
         return list(base_results)[:top_k]
     if not base_results:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_empty",
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_empty",
+        }
         return []
 
     top_k_int = max(1, int(top_k))
@@ -702,22 +698,18 @@ def apply_posterior_graph_gate(
         seed_names = incidental_seeds
 
     if not seed_names:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_none",
-                "grounded_seeds": list(grounded_seeds),
-                "incidental_seeds": list(incidental_seeds),
-                "selected_seed_type": seed_type,
-                "need_for_graph": bool(need_for_graph),
-                "need_reason": str(need_reason),
-                "rag_confidence": round(float(rag_confidence), 4),
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_none",
+            "grounded_seeds": list(grounded_seeds),
+            "incidental_seeds": list(incidental_seeds),
+            "selected_seed_type": seed_type,
+            "need_for_graph": bool(need_for_graph),
+            "need_reason": str(need_reason),
+            "rag_confidence": round(float(rag_confidence), 4),
+        }
         return list(base_results)[:top_k_int]
 
     graph_results = _build_graph_results_from_seeds(
@@ -741,23 +733,19 @@ def apply_posterior_graph_gate(
         ]
 
     if not graph_results:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_graph_filtered",
-                "grounded_seeds": list(grounded_seeds),
-                "incidental_seeds": list(incidental_seeds),
-                "selected_seed_type": seed_type,
-                "need_for_graph": bool(need_for_graph),
-                "need_reason": str(need_reason),
-                "rag_confidence": round(float(rag_confidence), 4),
-                "graph_result_count": int(raw_graph_count),
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_graph_filtered",
+            "grounded_seeds": list(grounded_seeds),
+            "incidental_seeds": list(incidental_seeds),
+            "selected_seed_type": seed_type,
+            "need_for_graph": bool(need_for_graph),
+            "need_reason": str(need_reason),
+            "rag_confidence": round(float(rag_confidence), 4),
+            "graph_result_count": int(raw_graph_count),
+        }
         return list(base_results)[:top_k_int]
 
     final_results = _competition_merge(
@@ -770,23 +758,19 @@ def apply_posterior_graph_gate(
     )
     selected_hashes = {item.hash_value for item in final_results}
     graph_selected = any(item.hash_value in selected_hashes for item in graph_results)
-    setattr(
-        retriever,
-        "_posterior_graph_gate_last_decision",
-        {
-            "scheme": "posterior_graph_gate",
-            "query": str(query or ""),
-            "enabled": bool(graph_selected),
-            "bucket": "posterior_gate_enabled" if graph_selected else "posterior_gate_tail_rejected",
-            "grounded_seeds": list(grounded_seeds),
-            "incidental_seeds": list(incidental_seeds),
-            "selected_seed_type": seed_type,
-            "need_for_graph": bool(need_for_graph),
-            "need_reason": str(need_reason),
-            "rag_confidence": round(float(rag_confidence), 4),
-            "graph_result_count": int(raw_graph_count),
-            "filtered_graph_count": max(0, raw_graph_count - len(graph_results)),
-            "base_top_k_count": min(len(base_results), top_k_int),
-        },
-    )
+    retriever._posterior_graph_gate_last_decision = {
+        "scheme": "posterior_graph_gate",
+        "query": str(query or ""),
+        "enabled": bool(graph_selected),
+        "bucket": "posterior_gate_enabled" if graph_selected else "posterior_gate_tail_rejected",
+        "grounded_seeds": list(grounded_seeds),
+        "incidental_seeds": list(incidental_seeds),
+        "selected_seed_type": seed_type,
+        "need_for_graph": bool(need_for_graph),
+        "need_reason": str(need_reason),
+        "rag_confidence": round(float(rag_confidence), 4),
+        "graph_result_count": int(raw_graph_count),
+        "filtered_graph_count": max(0, raw_graph_count - len(graph_results)),
+        "base_top_k_count": min(len(base_results), top_k_int),
+    }
     return final_results[:top_k_int]

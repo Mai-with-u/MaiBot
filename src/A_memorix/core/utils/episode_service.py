@@ -165,14 +165,14 @@ class EpisodeService:
             current_chars = 0
             last_anchor: Optional[float] = None
 
-            def flush() -> None:
+            def flush(current_source: str = source) -> None:
                 nonlocal current, current_chars, last_anchor
                 if not current:
                     return
                 sorted_current = sorted(current, key=self._paragraph_sort_key)
                 groups.append(
                     {
-                        "source": source,
+                        "source": current_source,
                         "paragraphs": sorted_current,
                     }
                 )

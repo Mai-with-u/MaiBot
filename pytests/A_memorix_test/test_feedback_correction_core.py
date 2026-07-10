@@ -9,14 +9,14 @@ IMPORT_ERROR: str | None = None
 
 try:
     from src.A_memorix.core.retrieval.sparse_bm25 import SparseBM25Config, SparseBM25Index
-    from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
     from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
+    from src.A_memorix.core.utils import feedback_policy
 except SystemExit as exc:
     IMPORT_ERROR = f"config initialization exited during import: {exc}"
     SparseBM25Config = None  # type: ignore[assignment]
     SparseBM25Index = None  # type: ignore[assignment]
-    kernel_module = None  # type: ignore[assignment]
     SDKMemoryKernel = None  # type: ignore[assignment]
+    feedback_policy = None  # type: ignore[assignment]
 
 
 pytestmark = pytest.mark.skipif(IMPORT_ERROR is not None, reason=IMPORT_ERROR or "")
@@ -38,15 +38,11 @@ async def test_kernel_enqueue_feedback_task_delegates_to_metadata_store(monkeypa
         }
 
     monkeypatch.setattr(
-        kernel_module,
-        "global_config",
-        SimpleNamespace(
-            a_memorix=SimpleNamespace(
-                integration=SimpleNamespace(
-                    feedback_correction_enabled=True,
-                    feedback_correction_window_hours=12.0,
-                )
-            )
+        feedback_policy,
+        "_integration_config",
+        lambda: SimpleNamespace(
+            feedback_correction_enabled=True,
+            feedback_correction_window_hours=12.0,
         ),
     )
 
@@ -73,13 +69,9 @@ async def test_kernel_enqueue_feedback_task_delegates_to_metadata_store(monkeypa
 @pytest.mark.asyncio
 async def test_kernel_enqueue_feedback_task_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        kernel_module,
-        "global_config",
-        SimpleNamespace(
-            a_memorix=SimpleNamespace(
-                integration=SimpleNamespace(feedback_correction_enabled=False),
-            )
-        ),
+        feedback_policy,
+        "_integration_config",
+        lambda: SimpleNamespace(feedback_correction_enabled=False),
     )
 
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
@@ -97,7 +89,7 @@ async def test_kernel_enqueue_feedback_task_skipped_when_disabled(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_apply_feedback_decision_resolves_paragraph_targets() -> None:
+async def test_apply_feedback_decision_resolves_paragraph_targets(monkeypatch: pytest.MonkeyPatch) -> None:
     action_logs: list[Dict[str, Any]] = []
     forgotten_hashes: list[str] = []
     ingested_payloads: list[Dict[str, Any]] = []
@@ -106,6 +98,16 @@ async def test_apply_feedback_decision_resolves_paragraph_targets() -> None:
     profile_refresh_ids: list[str] = []
 
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
+    monkeypatch.setattr(
+        feedback_policy,
+        "_integration_config",
+        lambda: SimpleNamespace(
+            feedback_correction_auto_apply_threshold=0.85,
+            feedback_correction_paragraph_mark_enabled=True,
+            feedback_correction_episode_rebuild_enabled=True,
+            feedback_correction_profile_refresh_enabled=True,
+        ),
+    )
     kernel.metadata_store = SimpleNamespace(
         get_paragraph_relations=lambda paragraph_hash: [
             {
@@ -134,14 +136,10 @@ async def test_apply_feedback_decision_resolves_paragraph_targets() -> None:
         else None,
         append_feedback_action_log=lambda **kwargs: action_logs.append(kwargs),
     )
-    kernel._feedback_cfg_auto_apply_threshold = lambda: 0.85  # type: ignore[method-assign]
     kernel._apply_v5_relation_action = lambda *, action, hashes, strength=1.0: (  # type: ignore[method-assign]
         forgotten_hashes.extend([str(item) for item in hashes]),
         {"success": True, "action": action, "hashes": list(hashes), "strength": strength},
     )[1]
-    kernel._feedback_cfg_paragraph_mark_enabled = lambda: True  # type: ignore[method-assign]
-    kernel._feedback_cfg_episode_rebuild_enabled = lambda: True  # type: ignore[method-assign]
-    kernel._feedback_cfg_profile_refresh_enabled = lambda: True  # type: ignore[method-assign]
     kernel._resolve_feedback_related_person_ids = lambda **kwargs: ["person-1"]  # type: ignore[method-assign]
     kernel._query_relation_rows_by_hashes = lambda relation_hashes, include_inactive=False: [  # type: ignore[method-assign]
         {
@@ -204,9 +202,13 @@ async def test_apply_feedback_decision_resolves_paragraph_targets() -> None:
     }
 
 
-def test_filter_active_relation_hits_removes_inactive_relations() -> None:
+def test_filter_active_relation_hits_removes_inactive_relations(monkeypatch: pytest.MonkeyPatch) -> None:
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
-    kernel._feedback_cfg_paragraph_hard_filter_enabled = lambda: True  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        feedback_policy,
+        "_integration_config",
+        lambda: SimpleNamespace(feedback_correction_paragraph_hard_filter_enabled=True),
+    )
     kernel.metadata_store = SimpleNamespace(
         get_relation_status_batch=lambda hashes: {
             "r-active": {"is_inactive": False},

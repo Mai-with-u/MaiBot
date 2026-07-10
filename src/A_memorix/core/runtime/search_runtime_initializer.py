@@ -1,4 +1,4 @@
-"""Shared runtime initializer for Action/Tool/Command retrieval components."""
+"""Action、Tool 和 Command 检索组件共用的运行时初始化器。"""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def _resolve_vector_pools_ready(plugin_config: Optional[dict]) -> bool:
 
 @dataclass
 class SearchRuntimeBundle:
-    """Resolved runtime components and initialized retriever/filter."""
+    """已解析的运行时组件，以及完成初始化的检索器和过滤器。"""
 
     vector_store: Optional[Any] = None
     paragraph_vector_store: Optional[Any] = None
@@ -159,7 +159,7 @@ def build_search_runtime(
     *,
     log_prefix: str = "",
 ) -> SearchRuntimeBundle:
-    """Build retriever + threshold filter with unified fallback/config parsing."""
+    """通过统一的降级与配置解析构建检索器和阈值过滤器。"""
 
     log = logger_obj or _logger
     owner = str(owner_tag or "runtime").strip().lower() or "runtime"
@@ -292,7 +292,7 @@ def build_search_runtime(
 
 
 class SearchRuntimeInitializer:
-    """Compatibility wrapper around the function style initializer."""
+    """函数式初始化器的兼容包装类。"""
 
     @staticmethod
     def build_search_runtime(

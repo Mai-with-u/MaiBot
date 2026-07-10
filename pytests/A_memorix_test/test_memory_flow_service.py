@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -647,3 +648,14 @@ async def test_memory_automation_service_on_incoming_message_auto_starts_only():
         ("shutdown", "summary"),
         ("shutdown", "fact"),
     ]
+
+def test_chat_summary_writeback_metadata_decodes_json_bytes_only():
+    metadata = memory_flow_module.ChatSummaryWritebackService._paragraph_metadata(
+        {"metadata": json.dumps({"trigger_message_count": 7}).encode("utf-8")}
+    )
+    invalid = memory_flow_module.ChatSummaryWritebackService._paragraph_metadata(
+        {"metadata": b"not-json-or-utf8"}
+    )
+
+    assert metadata == {"trigger_message_count": 7}
+    assert invalid == {}

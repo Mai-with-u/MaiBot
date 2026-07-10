@@ -4,15 +4,21 @@
 基于SciPy稀疏矩阵的知识图谱存储与计算。
 """
 
-import pickle
+from collections import defaultdict
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Union, Tuple, List, Dict, Set, Any
-from collections import defaultdict
-import threading
 import asyncio
+import contextlib
+import json
+import sqlite3
 
 import numpy as np
+
+from src.common.logger import get_logger
+
+from ..utils.io import atomic_write
+from .format_migration import ensure_graph_edge_map_table
 
 class SparseMatrixFormat(Enum):
     """稀疏矩阵格式"""
@@ -40,12 +46,21 @@ except ImportError:
     norm = _scipy_missing
     HAS_SCIPY = False
 
-import contextlib
-from src.common.logger import get_logger
-from ..utils.hash import compute_hash
-from ..utils.io import atomic_write
-
 logger = get_logger("A_Memorix.GraphStore")
+
+
+def _read_json_object(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"JSON 元数据必须是对象: {path}")
+    return payload
+
+
+def _write_json_object(path: Path, payload: Dict[str, Any]) -> None:
+    with atomic_write(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
 
 
 class GraphModificationMode(Enum):
@@ -105,10 +120,10 @@ class GraphStore:
         self._total_edges_added = 0
         self._total_nodes_deleted = 0
         self._total_edges_deleted = 0
-
+        
         # 状态管理
         self._modification_mode = GraphModificationMode.BATCH
-
+        
         # 状态管理
         self._adjacency_T: Optional[Union[csr_matrix, csc_matrix]] = None
         self._adjacency_dirty: bool = True
@@ -121,6 +136,63 @@ class GraphStore:
 
         logger.debug(f"图存储初始化: format={matrix_format}")
 
+    def _edge_map_db_path(self, data_dir: Path) -> Path:
+        return data_dir.parent / "metadata" / "metadata.db"
+
+    def _serialize_edge_hash_map(self) -> Dict[str, List[str]]:
+        return {
+            f"{int(src_idx)},{int(dst_idx)}": sorted(str(item) for item in hashes if str(item or "").strip())
+            for (src_idx, dst_idx), hashes in self._edge_hash_map.items()
+        }
+
+    def _save_edge_hash_map(self, data_dir: Path) -> bool:
+        db_path = self._edge_map_db_path(data_dir)
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        try:
+            ensure_graph_edge_map_table(conn)
+            conn.execute("DELETE FROM graph_edge_relation_map")
+            rows = [
+                (int(src_idx), int(dst_idx), str(relation_hash))
+                for (src_idx, dst_idx), hashes in self._edge_hash_map.items()
+                for relation_hash in hashes
+                if str(relation_hash or "").strip()
+            ]
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO graph_edge_relation_map (src_idx, dst_idx, relation_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    rows,
+                )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _load_edge_hash_map(self, data_dir: Path) -> Dict[Tuple[int, int], Set[str]]:
+        db_path = self._edge_map_db_path(data_dir)
+        edge_hash_map: Dict[Tuple[int, int], Set[str]] = defaultdict(set)
+        if not db_path.exists():
+            return edge_hash_map
+        conn = sqlite3.connect(str(db_path))
+        try:
+            ensure_graph_edge_map_table(conn)
+            for src_idx, dst_idx, relation_hash in conn.execute(
+                "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
+            ).fetchall():
+                token = str(relation_hash or "").strip()
+                if token:
+                    edge_hash_map[(int(src_idx), int(dst_idx))].add(token)
+        finally:
+            conn.close()
+        return edge_hash_map
+
     def _canonicalize(self, node: str) -> str:
         """规范化节点名称 (用于去重和内部索引)"""
         if not node:
@@ -131,7 +203,7 @@ class GraphStore:
     def batch_update(self):
         """
         批量更新上下文管理器
-
+        
         进入时切换到 LIL 格式以优化随机/增量更新
         退出时恢复到 CSR/CSC 格式以优化存储和计算
         """
@@ -141,18 +213,18 @@ class GraphStore:
             yield
         finally:
             self._switch_mode(original_mode)
-
+            
     def _switch_mode(self, new_mode: GraphModificationMode):
         """切换修改模式并转换矩阵格式"""
         if new_mode == self._modification_mode:
             return
-
+            
         if self._adjacency is None:
             self._modification_mode = new_mode
             return
 
         logger.debug(f"切换图模式: {self._modification_mode.value} -> {new_mode.value}")
-
+        
         # 转换逻辑
         if new_mode == GraphModificationMode.INCREMENTAL:
             # 转换为 LIL 格式
@@ -162,7 +234,7 @@ class GraphStore:
                      logger.debug("已转换为 LIL 格式")
                  except Exception as e:
                      logger.warning(f"转换为 LIL 失败: {e}")
-
+        
         elif new_mode in [GraphModificationMode.BATCH, GraphModificationMode.READ_ONLY]:
             # 转换回配置的格式 (CSR/CSC)
             if self.matrix_format == "csr":
@@ -170,7 +242,7 @@ class GraphStore:
             elif self.matrix_format == "csc":
                 self._adjacency = self._adjacency.tocsc()
             logger.debug(f"已恢复为 {self.matrix_format.upper()} 格式")
-
+            
         self._modification_mode = new_mode
 
     def add_nodes(
@@ -270,16 +342,16 @@ class GraphStore:
                  # 批量获取索引
                  rows = [self._node_to_idx[self._canonicalize(src)] for src, _ in edges]
                  cols = [self._node_to_idx[self._canonicalize(tgt)] for _, tgt in edges]
-
+                 
                  # 确保矩阵足够大 (如果 add_nodes 没有扩展它) - 通常 add_nodes 会处理
                  # 这里直接赋值
                  self._adjacency[rows, cols] = weights
-
+                 
                  self._total_edges_added += len(edges)
-
-                 # V5: Update edge hash map
+                 
+                 # V5：更新边哈希映射
                  if relation_hashes:
-                     for (src, tgt), r_hash in zip(edges, relation_hashes):
+                     for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
                          if r_hash:
                              s_idx = self._node_to_idx[self._canonicalize(src)]
                              t_idx = self._node_to_idx[self._canonicalize(tgt)]
@@ -289,7 +361,7 @@ class GraphStore:
                  return len(edges)
              except Exception as e:
                  logger.warning(f"LIL 增量更新失败，回退到通用方法: {e}")
-                 # Fallback to general method below
+                 # 失败时回退到下方通用方法
 
         # 通用方法 (构建 COO 然后合并)
         # 构建边的三元组
@@ -297,7 +369,7 @@ class GraphStore:
         col_indices = []
         data_values = []
 
-        for (src, tgt), weight in zip(edges, weights):
+        for (src, tgt), weight in zip(edges, weights, strict=True):
             src_idx = self._node_to_idx[self._canonicalize(src)]
             tgt_idx = self._node_to_idx[self._canonicalize(tgt)]
 
@@ -326,10 +398,10 @@ class GraphStore:
 
         self._total_edges_added += len(edges)
         self._adjacency_dirty = True  # 标记脏位
-
+        
         # V5: 更新边哈希映射 (Edge Hash Map)
         if relation_hashes:
-            for (src, tgt), r_hash in zip(edges, relation_hashes):
+            for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
                 if r_hash:
                     try:
                         s_idx = self._node_to_idx[self._canonicalize(src)]
@@ -373,19 +445,19 @@ class GraphStore:
         if current_weight == 0.0 and delta <= 0:
             # 边不存在且试图减少权重，忽略
             return 0.0
-
+        
         # 如果边不存在但 delta > 0，相当于添加新边 (默认基础权重0 + delta)
         # 但为了逻辑清晰，我们假设只更新存在的边，或者确实添加
-
+        
         new_weight = current_weight + delta
         new_weight = max(min_weight, min(max_weight, new_weight))
-
+        
         # 使用 batch_update 上下文自动处理格式转换
         # 这里我们临时切换到 incremental 模式进行单次更新
         with self.batch_update():
             # add_edges 会覆盖或添加，我们需要覆盖
             self.add_edges([(source, target)], [new_weight])
-
+            
         logger.debug(f"更新权重 {source}->{target}: {current_weight:.2f} -> {new_weight:.2f}")
         return new_weight
 
@@ -425,7 +497,7 @@ class GraphStore:
 
         # 删除并重构节点属性
         new_node_attrs = {}
-        for idx, node_name in enumerate(self._nodes):
+        for node_name in self._nodes:
             canon = self._canonicalize(node_name)
             if canon in self._node_attrs:
                 new_node_attrs[canon] = self._node_attrs[canon]
@@ -437,7 +509,7 @@ class GraphStore:
             self._adjacency = self._adjacency.tocoo()
             mask_rows = np.isin(self._adjacency.row, list(indices_to_keep))
             mask_cols = np.isin(self._adjacency.col, list(indices_to_keep))
-
+            
             # 筛选出保留的行和列
             new_rows = self._adjacency.row[mask_rows & mask_cols]
             new_cols = self._adjacency.col[mask_rows & mask_cols]
@@ -450,7 +522,7 @@ class GraphStore:
             n = len(self._nodes)
             if self.matrix_format == "csr":
                 self._adjacency = csr_matrix((new_data, (new_rows, new_cols)), shape=(n, n))
-            else: # csc
+            else: # 转换为 CSC 格式
                 self._adjacency = csc_matrix((new_data, (new_rows, new_cols)), shape=(n, n))
 
         # 重建关系哈希映射，移除涉及已删除节点的记录并重映射索引。
@@ -511,7 +583,7 @@ class GraphStore:
             new_col = []
             new_data = []
 
-            for i, j, val in zip(adj_coo.row, adj_coo.col, adj_coo.data):
+            for i, j, val in zip(adj_coo.row, adj_coo.col, adj_coo.data, strict=True):
                 if (i, j) not in edges_to_delete:
                     new_row.append(i)
                     new_col.append(j)
@@ -554,7 +626,7 @@ class GraphStore:
     def has_node(self, node: str) -> bool:
         """
         检查节点是否存在
-
+        
         Args:
             node: 节点名称
         """
@@ -563,11 +635,11 @@ class GraphStore:
     def find_node(self, node: str, ignore_case: bool = False) -> Optional[str]:
         """
         查找节点 (由于底层已统一规范化，ignore_case 始终有效)
-
+        
         Args:
             node: 节点名称
             ignore_case: 是否忽略大小写 (已默认忽略)
-
+            
         Returns:
             真实节点名称 (如果存在)，否则 None
         """
@@ -724,7 +796,7 @@ class GraphStore:
     def deactivate_edges(self, edges: List[Tuple[str, str]]) -> int:
         """
         冻结边 (将权重设为0.0，使其在计算意义上消失，但保留在Map中)
-
+        
         Args:
             edges: [(s1, t1), (s2, t2)...]
         """
@@ -758,7 +830,7 @@ class GraphStore:
             # find_paths 以“按行读取邻居”为主，因此统一缓存为 CSR，避免
             # CSR->CSC 转置后按行切片读出错误的索引视图。
             self._adjacency_T = self._adjacency.transpose().tocsr()
-
+            
             self._adjacency_dirty = False
             # logger.debug("重建转置邻接矩阵缓存")
 
@@ -779,24 +851,24 @@ class GraphStore:
         return np.asarray(indices, dtype=np.int32)
 
     def find_paths(
-        self,
-        start_node: str,
-        end_node: str,
-        max_depth: int = 3,
+        self, 
+        start_node: str, 
+        end_node: str, 
+        max_depth: int = 3, 
         max_paths: int = 5,
         max_expansions: int = 20000
     ) -> List[List[str]]:
         """
         查找两个节点之间的路径 (BFS)
         支持有向和无向 (视作双向) 探索
-
+        
         Args:
             start_node: 起始节点
             end_node: 目标节点
             max_depth: 最大深度
             max_paths: 最大路径数 (找到这么多就停止)
             max_expansions: 最大扩展次数 (防止爆炸)
-
+            
         Returns:
             路径列表 [[n1, n2, n3], ...]
         """
@@ -805,29 +877,29 @@ class GraphStore:
 
         if start_canon not in self._node_to_idx or end_canon not in self._node_to_idx:
             return []
-
+            
         if self._adjacency is None:
             return []
 
         # 确保转置矩阵可用 (用于查找入边)
         self._ensure_adjacency_T()
-
+        
         start_idx = self._node_to_idx[start_canon]
         end_idx = self._node_to_idx[end_canon]
-
+        
         # 队列: (current_idx, path_indices)
         queue = [(start_idx, [start_idx])]
         found_paths = []
         expansions = 0
-
+        
         unique_paths = set()
-
+        
         while queue:
             curr, path = queue.pop(0)
-
+            
             if len(path) > max_depth + 1:
                 continue
-
+                
             if curr == end_idx:
                 # 找到路径
                 # 转换回节点名
@@ -836,38 +908,38 @@ class GraphStore:
                 if path_tuple not in unique_paths:
                     found_paths.append(path_names)
                     unique_paths.add(path_tuple)
-
+                    
                 if len(found_paths) >= max_paths:
                     break
                 continue
-
+                
             if expansions >= max_expansions:
                 break
-
+            
             expansions += 1
-
+            
             # 获取邻居 (出边 + 入边)
             out_indices = self._row_neighbor_indices(self._adjacency, curr)
-
+            
             # 2. 入边 (使用转置矩阵)
             if self._adjacency_T is not None:
                 in_indices = self._row_neighbor_indices(self._adjacency_T, curr)
                 neighbors = np.concatenate((out_indices, in_indices))
             else:
                 neighbors = out_indices
-
+                
             # 去重并过滤已在路径中的节点 (防止环)
             # 注意: 这里简单去重，可能包含重复的邻居(如果既是出又是入)
             seen_in_path = set(path)
             queued_neighbors = set()
-
+            
             for neighbor_idx in neighbors:
                 neighbor = int(neighbor_idx)
                 if neighbor not in seen_in_path and neighbor not in queued_neighbors:
                     # 只有未访问过的才加入
                     queue.append((neighbor, path + [neighbor]))
                     queued_neighbors.add(neighbor)
-
+                    
         return found_paths
 
     def compute_pagerank(
@@ -933,9 +1005,9 @@ class GraphStore:
         # 幂迭代法
         p_orig = p.copy()
         for i in range(max_iter):
-            # p_new = alpha * M * p + (1-alpha) * personalization
+            # PageRank 更新公式：p_new = alpha * M * p + (1-alpha) * personalization
             p_new = alpha * (M @ p) + (1 - alpha) * p_orig
-
+            
             # 处理因为悬挂节点导致的概率流失
             current_sum = p_new.sum()
             if current_sum < 1.0:
@@ -1016,43 +1088,43 @@ class GraphStore:
 
 
     # =========================================================================
-    # V5 Memory System Methods (Graph Level)
+    # V5 记忆系统方法（图存储层）
     # =========================================================================
 
     def decay(self, factor: float, min_active_weight: float = 0.0) -> None:
         """
         全图衰减 (Atomic Decay)
-
+        
         Args:
             factor: 衰减因子 (0.0 < factor < 1.0)
             min_active_weight: 最小活跃权重 (低于此值可能被视为无效，但在物理修剪前仍保留)
         """
         if self._adjacency is None or factor >= 1.0 or factor <= 0.0:
             return
-
+            
         logger.debug(f"正在执行全图衰减，因子: {factor}")
-
+        
         # 直接矩阵乘法，SciPy CSR/CSC 非常高效
         self._adjacency *= factor
-
+        
         # 如果需要处理极小值 (可选，防止下溢，但通常浮点数足够小)
-        # if min_active_weight > 0:
+        # 预留条件：if min_active_weight > 0
         #    ... (复杂操作，暂不需要，由 prune 逻辑处理)
-
+            
         self._adjacency_dirty = True
 
     def prune_relation_hashes(self, operations: List[Tuple[str, str, str]]) -> None:
         """
         修剪特定关系哈希 (从 _edge_hash_map 移除; 如果边变空则从矩阵移除)
-
+        
         Args:
            operations: List[(src, tgt, relation_hash)]
         """
         if not operations:
             return
-
+            
         edges_to_check_removal = set()
-
+        
         # 1. 更新映射 (Update Map)
         for src, tgt, h in operations:
              src_canon = self._canonicalize(src)
@@ -1060,16 +1132,16 @@ class GraphStore:
              if src_canon in self._node_to_idx and tgt_canon in self._node_to_idx:
                  s_idx = self._node_to_idx[src_canon]
                  t_idx = self._node_to_idx[tgt_canon]
-
+                 
                  key = (s_idx, t_idx)
                  if key in self._edge_hash_map:
                      if h in self._edge_hash_map[key]:
                          self._edge_hash_map[key].remove(h)
-
+                         
                      if not self._edge_hash_map[key]:
                          del self._edge_hash_map[key]
                          edges_to_check_removal.add((src, tgt))
-
+                         
         # 2. 从矩阵中移除空边 (Remove Empty Edges from Matrix)
         if edges_to_check_removal:
             self.deactivate_edges(list(edges_to_check_removal))
@@ -1078,22 +1150,22 @@ class GraphStore:
     def get_low_weight_edges(self, threshold: float) -> List[Tuple[str, str]]:
         """
         获取低于阈值的边 (candidates for pruning/freezing)
-
+        
         Args:
             threshold: 权重阈值
-
+            
         Returns:
             List[(src, tgt)]: 边列表
         """
         if self._adjacency is None:
             return []
-
+            
         # 获取所有非零元素
         rows, cols = self._adjacency.nonzero()
         data = self._adjacency.data
-
+        
         low_weight_indices = np.where(data < threshold)[0]
-
+        
         results = []
         for idx in low_weight_indices:
             r = rows[idx]
@@ -1101,44 +1173,42 @@ class GraphStore:
             src = self._nodes[r]
             tgt = self._nodes[c]
             results.append((src, tgt))
-
+            
         return results
 
     def get_isolated_nodes(self, include_inactive: bool = True) -> List[str]:
         """
         获取孤儿节点 (Active Degree = 0)
-
+        
         Args:
             include_inactive: 是否包含参与了inactive边(冻结边)的节点。
                               如果 True (默认推荐): 排除掉虽然active degree=0但存在于_edge_hash_map(冻结边)中的节点。
                               如果 False: 只要在 active matrix 里度为0就返回 (可能会误删冻结节点)。
-
+                              
         Returns:
             孤儿节点名称列表
         """
         if self._adjacency is None:
             # 如果全空，则所有节点都是孤儿
             return self._nodes.copy()
-
-        n = len(self._nodes)
-
+            
         # 计算 Active Degree (In + Out)
         # 用 sum(axis) 会得到 dense matrix/array
         active_adj = self._adjacency
         out_degrees = np.array(active_adj.sum(axis=1)).flatten()
         in_degrees = np.array(active_adj.sum(axis=0)).flatten()
-
+        
         # 处理悬挂节点 (dangling node check not really needed here, just sum)
         total_degrees = out_degrees + in_degrees
-
+        
         # 找到 active degree = 0 的索引
         isolated_indices = np.where(total_degrees == 0)[0]
-
+        
         if len(isolated_indices) == 0:
             return []
-
+            
         isolated_nodes_set = {self._nodes[i] for i in isolated_indices}
-
+        
         # 如果需要排除 Inactive 参与者
         if include_inactive and self._edge_hash_map:
             # 收集所有在冻结边中的 unique 节点索引
@@ -1147,14 +1217,14 @@ class GraphStore:
                 if hashes: # 只要有 hash 存在 (哪怕 inactive)
                     frozen_participant_indices.add(u_idx)
                     frozen_participant_indices.add(v_idx)
-
+            
             # 过滤
             final_isolated = []
             for idx in isolated_indices:
                 if idx not in frozen_participant_indices:
                     final_isolated.append(self._nodes[idx])
             return final_isolated
-
+            
         else:
             return list(isolated_nodes_set)
 
@@ -1209,15 +1279,17 @@ class GraphStore:
             "total_edges_added": self._total_edges_added,
             "total_nodes_deleted": self._total_nodes_deleted,
             "total_edges_deleted": self._total_edges_deleted,
-            "edge_hash_map": dict(self._edge_hash_map), # 持久化 V5 映射 (将 defaultdict 转换为普通 dict)
+            "schema_version": 1,
         }
+        if not self._save_edge_hash_map(data_dir):
+            metadata["edge_hash_map"] = self._serialize_edge_hash_map()
 
-        metadata_path = data_dir / "graph_metadata.pkl"
-        with atomic_write(metadata_path, "wb") as f:
-            pickle.dump(metadata, f)
-        logger.debug(f"保存元数据: {metadata_path} | 图存储已保存到: {data_dir}")
+        metadata_path = data_dir / "graph_metadata.json"
+        _write_json_object(metadata_path, metadata)
+        logger.debug(f"保存元数据: {metadata_path}")
 
-        logger.info("记忆图已保存")
+        logger.info(f"图存储已保存到: {data_dir}")
+
     def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
         """
         从磁盘加载
@@ -1236,12 +1308,11 @@ class GraphStore:
             raise FileNotFoundError(f"数据目录不存在: {data_dir}")
 
         # 加载元数据
-        metadata_path = data_dir / "graph_metadata.pkl"
+        metadata_path = data_dir / "graph_metadata.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"元数据文件不存在: {metadata_path}")
 
-        with open(metadata_path, "rb") as f:
-            metadata = pickle.load(f)
+        metadata = _read_json_object(metadata_path)
 
         # 恢复状态，并通过规范化处理旧数据中的重复项
         self._nodes = metadata["nodes"]
@@ -1253,7 +1324,7 @@ class GraphStore:
             canon = self._canonicalize(node_name)
             if canon not in self._node_to_idx:
                 self._node_to_idx[canon] = idx
-
+            
             # 处理属性 (优先保留已有的)
             orig_attrs = metadata.get("node_attrs", {})
             if node_name in orig_attrs and canon not in self._node_attrs:
@@ -1264,14 +1335,20 @@ class GraphStore:
         self._total_edges_added = metadata["total_edges_added"]
         self._total_nodes_deleted = metadata["total_nodes_deleted"]
         self._total_edges_deleted = metadata["total_edges_deleted"]
-
+        
         # 恢复 V5 边哈希映射 (Restore V5 edge hash map)
+        self._edge_hash_map = defaultdict(set, self._load_edge_hash_map(data_dir))
         edge_map_data = metadata.get("edge_hash_map", {})
-        # 重新初始化为 defaultdict(set)
-        self._edge_hash_map = defaultdict(set)
-        if edge_map_data:
+        if not self._edge_hash_map and isinstance(edge_map_data, dict):
             for k, v in edge_map_data.items():
-                self._edge_hash_map[k] = set(v) # 确保类型为 set
+                if isinstance(k, (list, tuple)) and len(k) == 2:
+                    key = (int(k[0]), int(k[1]))
+                elif isinstance(k, str) and "," in k:
+                    left, right = k.strip("()").split(",", 1)
+                    key = (int(left.strip()), int(right.strip()))
+                else:
+                    continue
+                self._edge_hash_map[key] = set(v if isinstance(v, (list, tuple, set)) else [v])
 
         # 加载邻接矩阵
         matrix_path = data_dir / "graph_adjacency.npz"
@@ -1323,7 +1400,7 @@ class GraphStore:
     def _expand_adjacency_matrix(self, added_nodes: int) -> None:
         """
         扩展邻接矩阵以容纳新节点
-
+        
         Args:
             added_nodes: 新增节点数量
         """
@@ -1339,20 +1416,20 @@ class GraphStore:
 
         old_n = self._adjacency.shape[0]
         new_n = old_n + added_nodes
-
+        
         # 优化：根据模式选择不同的扩容策略
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
             # LIL 格式可以直接 resize，非常高效
             try:
                 if not isinstance(self._adjacency, lil_matrix):
                     self._adjacency = self._adjacency.tolil()
-
+                
                 self._adjacency.resize((new_n, new_n))
                 # logger.debug(f"扩展 LIL 矩阵: {old_n} -> {new_n}")
             except Exception as e:
                 logger.warning(f"LIL resize 失败，回退到通用方法: {e}")
                 self._expand_generic(new_n, old_n)
-
+                
         else:
             # CSR/CSC 格式使用 bmat 避免结构破坏警告
             try:
@@ -1365,7 +1442,7 @@ class GraphStore:
                 z_br = csr_matrix((added, added), dtype=np.float32)
 
                 self._adjacency = bmat(
-                    [[self._adjacency, z_tr], [z_bl, z_br]],
+                    [[self._adjacency, z_tr], [z_bl, z_br]], 
                     format=self.matrix_format,
                     dtype=np.float32
                 )
@@ -1384,13 +1461,10 @@ class GraphStore:
             new_adjacency[:old_n, :old_n] = self._adjacency
         self._adjacency = new_adjacency
         self._adjacency_dirty = True
-
+        
         # 如果都在增量模式，确保是LIL
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
-             try:
-                 self._adjacency = self._adjacency.tolil()
-             except:
-                 pass
+            self._adjacency = self._adjacency.tolil()
 
     @property
     def num_nodes(self) -> int:
@@ -1428,7 +1502,7 @@ class GraphStore:
         """检查磁盘上是否存在现有数据"""
         if self.data_dir is None:
             return False
-        return (self.data_dir / "graph_metadata.pkl").exists()
+        return (self.data_dir / "graph_metadata.json").exists()
 
     def __repr__(self) -> str:
         return (
@@ -1439,31 +1513,32 @@ class GraphStore:
     def rebuild_edge_hash_map(self, triples: List[Tuple[str, str, str, str]]) -> int:
         """
         从元数据重建 V5 边哈希映射 (Migration Tool)
-
+        
         Args:
             triples: List of (s, p, o, hash)
-
+            
         Returns:
             count of mapped hashes
         """
         count = 0
         self._edge_hash_map = defaultdict(set)
-
-        for s, p, o, h in triples:
-            if not h: continue
-
+        
+        for s, _predicate, o, h in triples:
+            if not h:
+                continue
+            
             s_canon = self._canonicalize(s)
             o_canon = self._canonicalize(o)
-
+            
             if s_canon in self._node_to_idx and o_canon in self._node_to_idx:
                 u = self._node_to_idx[s_canon]
                 v = self._node_to_idx[o_canon]
-
+                
                 # 如果是双向的，通常在元数据中存储为有向，而 GraphStore 也通常是有向的。
                 # 映射键对应特定的边方向。
                 self._edge_hash_map[(u, v)].add(h)
                 count += 1
-
+                
         self._adjacency_dirty = True
         logger.info(f"已从 {count} 条哈希重建边哈希映射，覆盖 {len(self._edge_hash_map)} 条边")
         return count

@@ -4,9 +4,8 @@ Personalized PageRank实现
 提供个性化的图节点排序功能。
 """
 
-from typing import Dict, List, Optional, Tuple, Union, Any
 from dataclasses import dataclass
-import numpy as np
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 from ..storage import GraphStore
@@ -49,7 +48,7 @@ class PageRankConfig:
             raise ValueError(f"min_iterations必须大于等于0: {self.min_iterations}")
 
         if self.min_iterations >= self.max_iter:
-            raise ValueError(f"min_iterations必须小于max_iter")
+            raise ValueError("min_iterations必须小于max_iter")
 
 
 class PersonalizedPageRank:
@@ -198,7 +197,7 @@ class PersonalizedPageRank:
         if len(weights) != len(entities):
             raise ValueError(f"权重数量与实体数量不匹配: {len(weights)} vs {len(entities)}")
 
-        personalization = {entity: weight for entity, weight in zip(entities, weights)}
+        personalization = {entity: weight for entity, weight in zip(entities, weights, strict=True)}
 
         return self.compute(personalization=personalization, normalize=normalize)
 

@@ -534,6 +534,9 @@ def _timeline_sources_for_chat(chat_id: str) -> set[str]:
         return set()
     return {
         f"chat_summary:{token}",
+        f"memory:{token}",
+        f"chat_stream:{token}",
+        f"chat_history:{token}",
         f"maibot.chat_history:{token}",
     }
 

@@ -116,7 +116,7 @@ class EmbeddingAPIAdapter:
             return ""
 
     def get_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Dict[str, Any]:
-        """Return a compact fingerprint for the vector space used by this adapter."""
+        """返回当前适配器所用向量空间的精简指纹。"""
         effective_dimension = max(1, int(dimension or self.get_embedding_dimension()))
         model_token = str(self._last_success_model_name or "").strip()
         provider_token = str(self._last_success_provider_name or "").strip()
@@ -476,8 +476,13 @@ class EmbeddingAPIAdapter:
 
             semaphore = asyncio.Semaphore(self.max_concurrent)
 
-            async def encode_with_semaphore(text: str, batch_index: int, absolute_index: int):
-                async with semaphore:
+            async def encode_with_semaphore(
+                text: str,
+                batch_index: int,
+                absolute_index: int,
+                _semaphore: asyncio.Semaphore = semaphore,
+            ):
+                async with _semaphore:
                     embedding = await self._get_embedding_direct(text, dimensions=dimensions)
                     if embedding is None:
                         raise RuntimeError(f"文本 {absolute_index} 编码失败：embedding 返回为空")

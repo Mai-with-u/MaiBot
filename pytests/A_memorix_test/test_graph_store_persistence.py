@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import pickle
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ def _build_empty_graph_metadata() -> dict:
         "total_edges_added": 0,
         "total_nodes_deleted": 0,
         "total_edges_deleted": 0,
-        "edge_hash_map": {},
+        "schema_version": 1,
     }
 
 
@@ -52,9 +53,8 @@ def test_graph_store_load_resets_stale_adjacency_when_metadata_is_empty(tmp_path
     store.add_edges([("Alice", "Bob")], relation_hashes=["rel-1"])
     store.save()
 
-    metadata_path = data_dir / "graph_metadata.pkl"
-    with metadata_path.open("wb") as handle:
-        pickle.dump(_build_empty_graph_metadata(), handle)
+    metadata_path = data_dir / "graph_metadata.json"
+    metadata_path.write_text(json.dumps(_build_empty_graph_metadata()), encoding="utf-8")
 
     reloaded = GraphStore(data_dir=data_dir)
     reloaded.load()
@@ -70,13 +70,32 @@ def test_graph_store_load_clears_stale_edge_hash_map_when_metadata_is_empty(tmp_
     store.add_edges([("Alice", "Bob")], relation_hashes=["rel-1"])
     store.save()
 
-    metadata_path = data_dir / "graph_metadata.pkl"
-    empty_metadata = _build_empty_graph_metadata()
-    empty_metadata["edge_hash_map"] = {(0, 1): {"rel-1"}}
-    with metadata_path.open("wb") as handle:
-        pickle.dump(empty_metadata, handle)
+    store.clear()
+    store.save()
 
     reloaded = GraphStore(data_dir=data_dir)
     reloaded.load()
 
     assert reloaded.has_edge_hash_map() is False
+
+
+def test_graph_store_save_uses_sqlite_edge_map_when_metadata_db_exists(tmp_path: Path) -> None:
+    data_dir = tmp_path / "graph"
+    db_path = tmp_path / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(str(db_path)).close()
+
+    store = GraphStore(data_dir=data_dir)
+    store.add_edges([("Alice", "Bob")], relation_hashes=["rel-1"])
+    store.save()
+
+    graph_metadata = json.loads((data_dir / "graph_metadata.json").read_text(encoding="utf-8"))
+    assert "edge_hash_map" not in graph_metadata
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map").fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0][2] == "rel-1"

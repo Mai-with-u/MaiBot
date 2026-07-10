@@ -1,4 +1,4 @@
-"""Knowledge type and import strategy helpers."""
+"""知识类型与导入策略辅助工具。"""
 
 from __future__ import annotations
 

@@ -56,7 +56,7 @@ class ThresholdConfig:
             raise ValueError(f"max_threshold必须在[0, 1]之间: {self.max_threshold}")
 
         if self.min_threshold >= self.max_threshold:
-            raise ValueError(f"min_threshold必须小于max_threshold")
+            raise ValueError("min_threshold必须小于max_threshold")
 
         if not 0 <= self.percentile <= 100:
             raise ValueError(f"percentile必须在[0, 100]之间: {self.percentile}")
@@ -180,7 +180,7 @@ class DynamicThresholdFilter:
             threshold = self._std_dev_threshold(scores)
         elif self.config.method == ThresholdMethod.GAP_DETECTION:
             threshold = self._gap_detection_threshold(scores)
-        else:  # ADAPTIVE
+        else:  # 自适应阈值（ADAPTIVE）
             # 自适应方法：综合多种方法
             thresholds = [
                 self._percentile_threshold(scores),

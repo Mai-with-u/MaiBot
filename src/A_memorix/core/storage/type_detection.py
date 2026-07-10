@@ -1,4 +1,4 @@
-"""Heuristic detection for import strategies and stored knowledge types."""
+"""基于启发式规则识别导入策略和存储知识类型。"""
 
 from __future__ import annotations
 

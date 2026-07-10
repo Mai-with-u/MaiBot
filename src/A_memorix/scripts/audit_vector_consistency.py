@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import sys
 from pathlib import Path
 from typing import Any, Dict, Set
@@ -36,7 +35,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     sys.exit(0)
@@ -57,12 +56,12 @@ def _safe_ratio(numerator: int, denominator: int) -> float:
 
 
 def _load_vector_store(data_dir: Path) -> VectorStore:
-    meta_path = data_dir / "vectors" / "vectors_metadata.pkl"
+    meta_path = data_dir / "vectors" / "vectors_metadata.json"
     if not meta_path.exists():
         raise FileNotFoundError(f"未找到向量元数据文件: {meta_path}")
 
-    with open(meta_path, "rb") as f:
-        meta = pickle.load(f)
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
     dimension = int(meta.get("dimension", 1024))
 
     store = VectorStore(

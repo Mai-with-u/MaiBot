@@ -38,8 +38,8 @@ class SparseBM25Config:
     enabled: bool = True
     backend: str = "fts5"
     lazy_load: bool = True
-    mode: str = "auto"  # auto | fallback_only | hybrid
-    tokenizer_mode: str = "jieba"  # jieba | mixed | char_2gram
+    mode: str = "auto"  # 检索模式：auto、fallback_only 或 hybrid
+    tokenizer_mode: str = "jieba"  # 分词方式：jieba、mixed 或 char_2gram
     jieba_user_dict: str = ""
     char_ngram_n: int = 2
     candidate_k: int = 80
@@ -658,12 +658,12 @@ class SparseBM25Index:
             try:
                 if self.config.shrink_memory_on_unload:
                     self.metadata_store.shrink_memory(conn=self._conn)
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning(f"SparseBM25Index 释放 SQLite 缓存失败: {exc}")
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning(f"SparseBM25Index 关闭连接失败: {exc}")
         self._conn = None
         self._loaded = False
         logger.info("SparseBM25Index unloaded")

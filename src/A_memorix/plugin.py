@@ -33,35 +33,31 @@ class AMemorixPlugin(MaiBotPlugin):
         self._kernel: Optional[SDKMemoryKernel] = None
 
     def set_plugin_config(self, config: Dict[str, Any]) -> None:
+        """更新下一次内核初始化使用的配置，不在同步入口关闭活动内核。"""
         self._plugin_config = config or {}
-        if self._kernel is not None:
-            self._kernel.close()
-            self._kernel = None
+
+    async def _shutdown_kernel(self) -> None:
+        """等待内核后台任务退出并释放资源，成功后再清除实例引用。"""
+        if self._kernel is None:
+            return
+        await self._kernel.shutdown()
+        self._kernel = None
 
     async def on_load(self):
         await self._get_kernel()
 
     async def on_unload(self):
-        if self._kernel is not None:
-            shutdown = getattr(self._kernel, "shutdown", None)
-            if callable(shutdown):
-                await shutdown()
-            else:
-                self._kernel.close()
-            self._kernel = None
+        await self._shutdown_kernel()
 
     async def on_config_update(self, scope: str, config_data: dict[str, Any], version: str) -> None:
+        """配置变化时异步停机，后续工具调用会按最新配置惰性重建内核。"""
         _ = version
         if scope == "self":
             self.set_plugin_config(config_data if isinstance(config_data, dict) else {})
+            await self._shutdown_kernel()
             return
         if scope in {"bot", "model"} and self._kernel is not None:
-            shutdown = getattr(self._kernel, "shutdown", None)
-            if callable(shutdown):
-                await shutdown()
-            else:
-                self._kernel.close()
-            self._kernel = None
+            await self._shutdown_kernel()
 
     async def _get_kernel(self) -> SDKMemoryKernel:
         if self._kernel is None:

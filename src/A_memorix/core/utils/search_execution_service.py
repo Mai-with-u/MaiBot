@@ -49,7 +49,7 @@ class SearchExecutionRequest:
     stream_id: Optional[str] = None
     group_id: Optional[str] = None
     user_id: Optional[str] = None
-    query_type: str = "search"  # search|time|hybrid
+    query_type: str = "search"  # 检索类型：search、time、hybrid
     query: str = ""
     top_k: Optional[int] = None
     time_from: Optional[str] = None
@@ -213,6 +213,11 @@ class SearchExecutionService:
         enforce_chat_filter: bool = True,
         reinforce_access: bool = True,
     ) -> SearchExecutionResult:
+        """执行一次 search、time 或 hybrid 检索并返回领域结果。
+
+        本层负责参数归一化、聊天过滤、同请求合并、检索执行、阈值处理和访问强化，
+        不负责把 ``RetrievalResult`` 转换为宿主或 SDK 的展示结构。
+        """
         if retriever is None:
             return SearchExecutionResult(success=False, error="知识检索器未初始化")
 

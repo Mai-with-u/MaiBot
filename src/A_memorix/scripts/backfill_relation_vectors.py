@@ -52,20 +52,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     raise SystemExit(0)
 
-from A_memorix.core.storage import (
+from A_memorix.core.storage import (  # noqa: E402
     VectorStore,
     GraphStore,
     MetadataStore,
     QuantizationType,
     SparseMatrixFormat,
 )
-from A_memorix.core.embedding import create_embedding_api_adapter
-from A_memorix.core.utils.relation_write_service import RelationWriteService
+from A_memorix.core.embedding import create_embedding_api_adapter  # noqa: E402
+from A_memorix.core.utils.relation_write_service import RelationWriteService  # noqa: E402
 
 
 def _load_config(config_path: Path) -> Dict[str, Any]:

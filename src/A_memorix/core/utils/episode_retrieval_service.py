@@ -1,4 +1,4 @@
-"""Episode hybrid retrieval service."""
+"""Episode 混合检索服务。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ logger = get_logger("A_Memorix.EpisodeRetrievalService")
 
 
 class EpisodeRetrievalService:
-    """Hybrid episode retrieval backed by lexical rows and evidence projection."""
+    """结合词法记录与证据投影的 Episode 混合检索。"""
 
     _RRF_K = 60.0
     _BRANCH_WEIGHTS = {
@@ -20,6 +20,22 @@ class EpisodeRetrievalService:
         "paragraph_evidence": 1.0,
         "relation_evidence": 0.85,
     }
+    _RELATION_QUERY_MARKERS = (
+        "关系",
+        "关联",
+        "联系",
+        "相关",
+        "相互",
+        "之间",
+        "依赖",
+        "属于",
+        "包含",
+        "影响",
+        "导致",
+        "为什么",
+        "怎么",
+        "如何",
+    )
 
     def __init__(
         self,
@@ -43,7 +59,7 @@ class EpisodeRetrievalService:
     ) -> List[Dict[str, Any]]:
         clean_query = str(query or "").strip()
         safe_top_k = max(1, int(top_k))
-        candidate_k = max(30, safe_top_k * 6)
+        candidate_k = max(20, safe_top_k * 4)
 
         branches: Dict[str, List[Dict[str, Any]]] = {
             "lexical": self.metadata_store.query_episodes(
@@ -96,7 +112,7 @@ class EpisodeRetrievalService:
                             support_key="matched_paragraph_hashes",
                         )
 
-                if relation_rank_map:
+                if relation_rank_map and self._should_project_relation_evidence(clean_query):
                     relation_rows = self.metadata_store.get_episode_rows_by_relation_hashes(
                         list(relation_rank_map.keys()),
                         source=source,
@@ -180,3 +196,10 @@ class EpisodeRetrievalService:
         for item in out:
             item.pop("_fusion_score", None)
         return out[: max(1, int(top_k))]
+
+    @classmethod
+    def _should_project_relation_evidence(cls, query: str) -> bool:
+        clean_query = str(query or "").strip()
+        if not clean_query:
+            return False
+        return any(marker in clean_query for marker in cls._RELATION_QUERY_MARKERS)

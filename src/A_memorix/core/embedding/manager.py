@@ -5,7 +5,6 @@
 """
 
 import hashlib
-import pickle
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,13 +19,7 @@ except ImportError:
     HAS_SENTENCE_TRANSFORMERS = False
 
 from src.common.logger import get_logger
-from .presets import (
-    EmbeddingModelConfig,
-    get_custom_config,
-    validate_config_compatibility,
-    are_models_compatible,
-)
-from ..utils.quantization import QuantizationType
+from .presets import EmbeddingModelConfig, get_custom_config
 
 logger = get_logger("A_Memorix.EmbeddingManager")
 
@@ -300,12 +293,12 @@ class EmbeddingManager:
 
             # 更新缓存
             with self._cache_lock:
-                for text, embedding in zip(uncached_texts, new_embeddings):
+                for text, embedding in zip(uncached_texts, new_embeddings, strict=True):
                     cache_key = self._get_cache_key(text)
                     self._embedding_cache[cache_key] = embedding.copy()
 
             # 合并结果
-            for idx, embedding in zip(uncached_indices, new_embeddings):
+            for idx, embedding in zip(uncached_indices, new_embeddings, strict=True):
                 cached_embeddings.append((idx, embedding))
 
         # 按原始顺序排序
@@ -319,19 +312,24 @@ class EmbeddingManager:
         保存缓存到磁盘
 
         Args:
-            cache_path: 缓存文件路径（默认使用cache_dir/embeddings_cache.pkl）
+            cache_path: 缓存文件路径（默认使用cache_dir/embeddings_cache.npz）
         """
         if cache_path is None:
             if self.cache_dir is None:
                 raise ValueError("未指定缓存目录")
-            cache_path = self.cache_dir / "embeddings_cache.pkl"
+            cache_path = self.cache_dir / "embeddings_cache.npz"
 
         cache_path = Path(cache_path)
+        if cache_path.suffix.lower() == ".pkl":
+            raise ValueError("embedding cache 不再支持 pickle 格式")
         cache_path.parent.mkdir(parents=True, exist_ok=True)
 
         with self._cache_lock:
-            with open(cache_path, "wb") as f:
-                pickle.dump(self._embedding_cache, f)
+            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+            arrays = {key: np.asarray(value, dtype=np.float32) for key, value in self._embedding_cache.items()}
+            with open(tmp_path, "wb") as f:
+                np.savez_compressed(f, **arrays)
+            tmp_path.replace(cache_path)
 
             logger.info(f"缓存已保存: {cache_path} ({len(self._embedding_cache)} 条)")
 
@@ -340,21 +338,30 @@ class EmbeddingManager:
         从磁盘加载缓存
 
         Args:
-            cache_path: 缓存文件路径（默认使用cache_dir/embeddings_cache.pkl）
+            cache_path: 缓存文件路径（默认使用cache_dir/embeddings_cache.npz）
         """
         if cache_path is None:
             if self.cache_dir is None:
                 raise ValueError("未指定缓存目录")
-            cache_path = self.cache_dir / "embeddings_cache.pkl"
+            cache_path = self.cache_dir / "embeddings_cache.npz"
 
         cache_path = Path(cache_path)
+        if cache_path.suffix.lower() == ".pkl":
+            logger.warning(f"忽略旧 pickle embedding 缓存: {cache_path}")
+            return
         if not cache_path.exists():
+            legacy_path = cache_path.with_name("embeddings_cache.pkl")
+            if legacy_path.exists():
+                logger.info(f"检测到旧 pickle embedding 缓存，将忽略并按需重建: {legacy_path}")
             logger.warning(f"缓存文件不存在: {cache_path}")
             return
 
         with self._cache_lock:
-            with open(cache_path, "rb") as f:
-                self._embedding_cache = pickle.load(f)
+            with np.load(cache_path, allow_pickle=False) as data:
+                self._embedding_cache = {
+                    str(key): np.asarray(data[key], dtype=np.float32)
+                    for key in data.files
+                }
 
             logger.info(f"缓存已加载: {cache_path} ({len(self._embedding_cache)} 条)")
 

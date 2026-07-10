@@ -7,7 +7,6 @@ from typing import Any, List, Optional
 
 import asyncio
 import json
-import pickle
 import time
 
 from src.common.logger import get_logger
@@ -585,7 +584,12 @@ class ChatSummaryWritebackService:
             return metadata
         if isinstance(metadata, (bytes, bytearray)):
             try:
-                parsed = pickle.loads(metadata)
+                metadata = metadata.decode("utf-8")
+            except Exception:
+                return {}
+        if isinstance(metadata, str):
+            try:
+                parsed = json.loads(metadata)
             except Exception:
                 return {}
             return parsed if isinstance(parsed, dict) else {}

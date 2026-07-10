@@ -9,15 +9,15 @@ LPMM 到 A_memorix 存储转换器
 4. 绕过 Embedding 生成以节省 Token
 """
 
-import sys
-import os
-import json
 import argparse
 import asyncio
-import pickle
+import importlib.util
 import logging
+import pickle
+import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, Tuple
+
 import numpy as np
 import tomlkit
 
@@ -34,10 +34,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="跳过按关系元数据重建关系向量（默认开启）",
     )
+    parser.add_argument(
+        "--allow-unsafe-pickle",
+        action="store_true",
+        help="允许读取 LPMM graph_structure.pkl。该格式会反序列化 pickle，只应在信任输入来源时开启。",
+    )
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     sys.exit(0)
@@ -53,8 +58,10 @@ except Exception:
 
 try:
     import networkx as nx
-    from scipy import sparse
     import pyarrow.parquet as pq
+
+    if importlib.util.find_spec("scipy") is None:
+        raise ImportError("No module named 'scipy'")
 except ImportError as e:
     logger.error(f"缺少依赖: {e}")
     logger.error("请安装: pip install pandas pyarrow networkx scipy")
@@ -81,12 +88,14 @@ class LPMMConverter:
         dimension: int = 384,
         batch_size: int = 1024,
         rebuild_relation_vectors: bool = True,
+        allow_unsafe_pickle: bool = False,
     ):
         self.lpmm_dir = lpmm_data_dir
         self.output_dir = output_dir
         self.dimension = dimension
         self.batch_size = max(1, int(batch_size))
         self.rebuild_relation_vectors = bool(rebuild_relation_vectors)
+        self.allow_unsafe_pickle = bool(allow_unsafe_pickle)
         
         self.vector_dir = output_dir / "vectors"
         self.graph_dir = output_dir / "graph"
@@ -288,10 +297,7 @@ class LPMMConverter:
                     continue
                 imported_hashes.add(rel_hash)
                 self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
-                try:
-                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                except Exception:
-                    pass
+                self.metadata_store.set_relation_vector_state(rel_hash, "none")
                 imported += 1
 
         return imported
@@ -330,7 +336,7 @@ class LPMMConverter:
                     logger.info(f"{p_path} 为空，跳过。")
                     continue
 
-                # LPMM Schema: 'hash', 'embedding', 'str'
+                # LPMM 字段结构：'hash'、'embedding'、'str'
                 cols = parquet_file.schema_arrow.names
                 # 兼容性检查
                 content_col = 'str' if 'str' in cols else 'content'
@@ -442,6 +448,12 @@ class LPMMConverter:
                     if g_path.suffix == ".graphml":
                         nx_graph = nx.read_graphml(g_path)
                     elif g_path.suffix == ".pkl":
+                        if not self.allow_unsafe_pickle:
+                            logger.warning(
+                                f"跳过不安全的 pickle 图文件: {g_path}。"
+                                " 如确认来源可信，可添加 --allow-unsafe-pickle。"
+                            )
+                            continue
                         with open(g_path, "rb") as f:
                             data = pickle.load(f)
                             # LPMM 可能会将图存储在包装类中
@@ -524,6 +536,7 @@ def main():
         dimension=args.dim,
         batch_size=args.batch_size,
         rebuild_relation_vectors=not bool(args.skip_relation_vector_rebuild),
+        allow_unsafe_pickle=bool(args.allow_unsafe_pickle),
     )
     converter.run()
 

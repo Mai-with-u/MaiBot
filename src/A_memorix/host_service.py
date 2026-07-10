@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
@@ -13,7 +16,7 @@ from src.common.utils.utils_config import AMemorixConfigUtils
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
 
-from .paths import repo_root, schema_path
+from .paths import default_data_dir, repo_root, resolve_repo_path, schema_path
 from .runtime_registry import set_runtime_kernel
 
 if TYPE_CHECKING:
@@ -40,8 +43,8 @@ def _to_builtin_data(obj: Any) -> Any:
     if hasattr(obj, "unwrap"):
         try:
             obj = obj.unwrap()
-        except Exception:
-            pass
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug(f"配置值 unwrap 失败，保留原值: type={type(obj).__name__}, error={exc}")
 
     if isinstance(obj, dict):
         return {str(key): _to_builtin_data(value) for key, value in obj.items()}
@@ -74,7 +77,14 @@ def _backup_config_file(path: Path) -> Optional[Path]:
 class AMemorixHostService:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
+        self._queue_lock = asyncio.Lock()
         self._kernel: Optional[SDKMemoryKernel] = None
+        self._startup_task: Optional[asyncio.Task] = None
+        self._runtime_state = "stopped"
+        self._startup_error = ""
+        self._startup_error_stage = ""
+        self._startup_started_at: Optional[float] = None
+        self._startup_finished_at: Optional[float] = None
         self._config_cache: Dict[str, Any] | None = None
         self._reload_callback_registered = False
 
@@ -82,7 +92,7 @@ class AMemorixHostService:
         if not self.is_enabled():
             logger.info("A_Memorix 未启用，跳过长期记忆运行时初始化")
             return
-        await self._ensure_kernel()
+        await self._ensure_startup_task()
 
     async def stop(self) -> None:
         async with self._lock:
@@ -95,7 +105,7 @@ class AMemorixHostService:
             config = self._read_config()
 
         if self._is_enabled_config(config):
-            await self._ensure_kernel()
+            await self._ensure_startup_task()
         else:
             logger.info("A_Memorix 配置为未启用，运行时保持关闭")
 
@@ -176,11 +186,20 @@ class AMemorixHostService:
         }
 
     async def invoke(self, component_name: str, args: Dict[str, Any] | None = None, *, timeout_ms: int = 30000) -> Any:
+        """将 MaiBot 宿主请求路由到共享 A_Memorix 内核。
+
+        本层负责启动状态、宿主参数适配、共享聊天范围、启动期写入排队和管理命令
+        分发；检索、写入及维护操作的业务语义由内核服务负责。
+        """
         del timeout_ms
         payload = args or {}
         if not self.is_enabled():
             return self._disabled_response(component_name)
-        kernel = await self._ensure_kernel()
+        kernel = self._kernel
+        if kernel is None or self._runtime_state != "ready":
+            if self._runtime_state == "stopped":
+                await self._ensure_startup_task()
+            return await self._unavailable_response(component_name, payload)
 
         if component_name == "search_memory":
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
@@ -292,27 +311,88 @@ class AMemorixHostService:
         if component_name in admin_action_names:
             kwargs = dict(payload)
             action = str(kwargs.pop("action", "") or "")
-            return await getattr(kernel, component_name)(action=action, **kwargs)
+            result = await getattr(kernel, component_name)(action=action, **kwargs)
+            if component_name == "memory_runtime_admin" and isinstance(result, dict):
+                return {**result, **self._startup_status_payload()}
+            return result
 
         raise RuntimeError(f"不支持的 A_Memorix 调用: {component_name}")
 
     async def _ensure_kernel(self) -> SDKMemoryKernel:
         async with self._lock:
             if self._kernel is None:
-                from .core.runtime.sdk_memory_kernel import SDKMemoryKernel
-
-                config = self._read_config()
-                if not self._is_enabled_config(config):
-                    raise RuntimeError("A_Memorix 未启用")
-                kernel = SDKMemoryKernel(plugin_root=repo_root(), config=config)
-                try:
-                    await kernel.initialize()
-                except Exception:
-                    kernel.close()
-                    raise
-                self._kernel = kernel
-                set_runtime_kernel(kernel)
+                raise RuntimeError(self._startup_error or "A_Memorix 正在初始化")
             return self._kernel
+
+    async def _ensure_startup_task(self) -> None:
+        async with self._lock:
+            if self._kernel is not None and self._runtime_state == "ready":
+                return
+            if self._startup_task is not None and not self._startup_task.done():
+                return
+            self._runtime_state = "starting"
+            self._startup_error = ""
+            self._startup_error_stage = ""
+            self._startup_started_at = time.time()
+            self._startup_finished_at = None
+            self._startup_task = asyncio.create_task(self._startup_kernel_task(), name="A_Memorix.host_startup")
+
+    async def _startup_kernel_task(self) -> None:
+        from .core.runtime.sdk_memory_kernel import SDKMemoryKernel
+
+        kernel: Optional[SDKMemoryKernel] = None
+        try:
+            config = self._read_config()
+            if not self._is_enabled_config(config):
+                async with self._lock:
+                    self._runtime_state = "stopped"
+                    self._startup_finished_at = time.time()
+                return
+            async with self._lock:
+                self._runtime_state = "migrating"
+                self._startup_error_stage = "startup_migration"
+            kernel = SDKMemoryKernel(plugin_root=repo_root(), config=config)
+            await kernel.initialize()
+            async with self._lock:
+                self._kernel = kernel
+                self._runtime_state = "ready"
+                self._startup_error = ""
+                self._startup_error_stage = ""
+                self._startup_finished_at = time.time()
+                set_runtime_kernel(kernel)
+            await self._replay_startup_write_queue(kernel)
+            async with self._lock:
+                if self._kernel is kernel and self._runtime_state == "ready":
+                    self._startup_finished_at = time.time()
+        except asyncio.CancelledError:
+            if kernel is not None:
+                shutdown = getattr(kernel, "shutdown", None)
+                if callable(shutdown):
+                    await shutdown()
+                else:
+                    kernel.close()
+            if self._kernel is kernel:
+                self._kernel = None
+            self._runtime_state = "stopped"
+            self._startup_finished_at = time.time()
+            set_runtime_kernel(None)
+            raise
+        except Exception as exc:
+            if kernel is not None:
+                shutdown = getattr(kernel, "shutdown", None)
+                if callable(shutdown):
+                    await shutdown()
+                else:
+                    kernel.close()
+            set_runtime_kernel(None)
+            async with self._lock:
+                self._kernel = None
+                self._runtime_state = "failed"
+                self._startup_error = str(exc)
+                if not self._startup_error_stage:
+                    self._startup_error_stage = "startup"
+                self._startup_finished_at = time.time()
+            logger.error(f"A_Memorix 后台初始化失败: {exc}", exc_info=True)
 
     def _read_config(self) -> Dict[str, Any]:
         if self._config_cache is not None:
@@ -328,6 +408,226 @@ class AMemorixHostService:
 
         self._config_cache = self._config_model_to_runtime_dict(config_model)
         return dict(self._config_cache)
+
+    def _runtime_data_dir(self) -> Path:
+        config = self._read_config()
+        storage_cfg = config.get("storage") if isinstance(config, dict) else {}
+        data_dir = "./data"
+        if isinstance(storage_cfg, dict):
+            data_dir = str(storage_cfg.get("data_dir", data_dir) or data_dir)
+        return resolve_repo_path(data_dir, fallback=default_data_dir())
+
+    def _startup_queue_path(self) -> Path:
+        return self._runtime_data_dir() / "startup_write_queue.jsonl"
+
+    def _startup_queue_done_path(self) -> Path:
+        return self._runtime_data_dir() / "startup_write_queue.done.jsonl"
+
+    def _startup_queue_failed_path(self) -> Path:
+        return self._runtime_data_dir() / "startup_write_queue.failed.jsonl"
+
+    @staticmethod
+    def _ensure_jsonl_append_boundary(path: Path) -> None:
+        if not path.exists() or path.stat().st_size <= 0:
+            return
+        with path.open("rb+") as handle:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) == b"\n":
+                return
+            handle.seek(0, os.SEEK_END)
+            handle.write(b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    async def _append_jsonl(self, path: Path, payload: Dict[str, Any]) -> None:
+        async with self._queue_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            self._ensure_jsonl_append_boundary(path)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+
+    def _read_jsonl(self, path: Path) -> list[Dict[str, Any]]:
+        if not path.exists():
+            return []
+        rows: list[Dict[str, Any]] = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                token = line.strip()
+                if not token:
+                    continue
+                try:
+                    payload = json.loads(token)
+                except Exception:
+                    continue
+                if isinstance(payload, dict):
+                    rows.append(payload)
+        return rows
+
+    def _queue_done_ids(self) -> set[str]:
+        return {
+            str(item.get("record_id", "") or "").strip()
+            for item in self._read_jsonl(self._startup_queue_done_path())
+            if str(item.get("record_id", "") or "").strip()
+        }
+
+    def _startup_queue_pending_records(self) -> list[Dict[str, Any]]:
+        done_ids = self._queue_done_ids()
+        records = []
+        for item in self._read_jsonl(self._startup_queue_path()):
+            record_id = str(item.get("record_id", "") or "").strip()
+            component_name = str(item.get("component_name", "") or "").strip()
+            if not record_id or record_id in done_ids:
+                continue
+            if component_name not in {"ingest_summary", "ingest_text"}:
+                continue
+            records.append(item)
+        records.sort(key=lambda item: float(item.get("created_at", 0.0) or 0.0))
+        return records
+
+    def _startup_status_payload(self) -> Dict[str, Any]:
+        pending_count = len(self._startup_queue_pending_records())
+        return {
+            "enabled": self.is_enabled(),
+            "runtime_ready": self._runtime_state == "ready",
+            "startup_state": self._runtime_state,
+            "initializing": self._runtime_state in {"starting", "migrating"},
+            "initialization_failed": self._runtime_state == "failed",
+            "error_stage": self._startup_error_stage,
+            "error": self._startup_error,
+            "startup_started_at": self._startup_started_at,
+            "startup_finished_at": self._startup_finished_at,
+            "startup_queue_pending": pending_count,
+            "data_dir": str(self._runtime_data_dir()),
+        }
+
+    async def _enqueue_startup_write(self, component_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        record = {
+            "record_id": uuid.uuid4().hex,
+            "component_name": component_name,
+            "payload": payload,
+            "created_at": time.time(),
+        }
+        await self._append_jsonl(self._startup_queue_path(), record)
+        return {
+            "success": True,
+            "queued": True,
+            "initializing": True,
+            "reason": "a_memorix_initializing_queued",
+            "record_id": record["record_id"],
+            "stored_ids": [],
+            "skipped_ids": [],
+            "detail": "A_Memorix 正在初始化，写入已进入启动队列",
+        }
+
+    async def _unavailable_response(self, component_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        status = self._startup_status_payload()
+        initializing = bool(status.get("initializing"))
+        failed = bool(status.get("initialization_failed"))
+        if initializing and component_name in {"ingest_summary", "ingest_text"}:
+            return await self._enqueue_startup_write(component_name, payload)
+
+        reason = "a_memorix_initializing" if initializing else "a_memorix_initialization_failed"
+        message = "A_Memorix 正在初始化" if initializing else f"A_Memorix 初始化失败: {self._startup_error}"
+        base = {
+            "success": component_name == "memory_runtime_admin"
+            or (not failed and component_name in {"search_memory", "get_person_profile", "memory_stats"}),
+            "reason": reason,
+            "message": message,
+            **status,
+        }
+        if component_name == "search_memory":
+            return {**base, "summary": "", "hits": [], "filtered": False}
+        if component_name == "get_person_profile":
+            return {**base, "summary": "", "traits": [], "evidence": []}
+        if component_name == "memory_stats":
+            return {**base, "paragraph_count": 0, "relation_count": 0, "episode_count": 0}
+        if component_name == "memory_runtime_admin":
+            return base
+        if component_name in {"ingest_summary", "ingest_text"}:
+            return {
+                **base,
+                "success": False,
+                "queued": False,
+                "stored_ids": [],
+                "skipped_ids": [reason],
+                "detail": message,
+            }
+        if component_name == "enqueue_feedback_task":
+            return {**base, "queued": False}
+        return {**base, "success": False, "error": message}
+
+    async def _dispatch_queued_write(self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]) -> Any:
+        if component_name == "ingest_summary":
+            return await kernel.ingest_summary(
+                external_id=str(payload.get("external_id", "") or ""),
+                chat_id=str(payload.get("chat_id", "") or ""),
+                text=str(payload.get("text", "") or ""),
+                participants=list(payload.get("participants") or []),
+                time_start=payload.get("time_start"),
+                time_end=payload.get("time_end"),
+                tags=list(payload.get("tags") or []),
+                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+                respect_filter=bool(payload.get("respect_filter", True)),
+                user_id=str(payload.get("user_id", "") or "").strip(),
+                group_id=str(payload.get("group_id", "") or "").strip(),
+            )
+        if component_name == "ingest_text":
+            return await kernel.ingest_text(
+                external_id=str(payload.get("external_id", "") or ""),
+                source_type=str(payload.get("source_type", "") or ""),
+                text=str(payload.get("text", "") or ""),
+                chat_id=str(payload.get("chat_id", "") or ""),
+                person_ids=list(payload.get("person_ids") or []),
+                participants=list(payload.get("participants") or []),
+                timestamp=payload.get("timestamp"),
+                time_start=payload.get("time_start"),
+                time_end=payload.get("time_end"),
+                tags=list(payload.get("tags") or []),
+                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+                entities=list(payload.get("entities") or []),
+                relations=list(payload.get("relations") or []),
+                respect_filter=bool(payload.get("respect_filter", True)),
+                user_id=str(payload.get("user_id", "") or "").strip(),
+                group_id=str(payload.get("group_id", "") or "").strip(),
+            )
+        raise ValueError(f"不支持的启动队列写入类型: {component_name}")
+
+    async def _replay_startup_write_queue(self, kernel: SDKMemoryKernel) -> None:
+        records = self._startup_queue_pending_records()
+        if not records:
+            return
+        logger.info(f"A_Memorix 开始回放启动写入队列: pending={len(records)}")
+        for record in records:
+            record_id = str(record.get("record_id", "") or "").strip()
+            component_name = str(record.get("component_name", "") or "").strip()
+            payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+            try:
+                result = await self._dispatch_queued_write(kernel, component_name, payload)
+                if isinstance(result, dict) and result.get("success") is False:
+                    raise RuntimeError(str(result.get("detail") or result.get("error") or result))
+                await self._append_jsonl(
+                    self._startup_queue_done_path(),
+                    {
+                        "record_id": record_id,
+                        "component_name": component_name,
+                        "finished_at": time.time(),
+                        "result": result if isinstance(result, dict) else {},
+                    },
+                )
+            except Exception as exc:
+                await self._append_jsonl(
+                    self._startup_queue_failed_path(),
+                    {
+                        "record_id": record_id,
+                        "component_name": component_name,
+                        "failed_at": time.time(),
+                        "error": str(exc),
+                    },
+                )
+                logger.warning(f"A_Memorix 启动队列回放失败: record={record_id}, error={exc}")
 
     @staticmethod
     def _config_model_to_runtime_dict(config_model: AMemorixConfig) -> Dict[str, Any]:
@@ -464,7 +764,19 @@ class AMemorixHostService:
         }
 
     async def _shutdown_locked(self) -> None:
+        task = self._startup_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._startup_task = None
+
         if self._kernel is None:
+            self._runtime_state = "stopped"
+            self._startup_finished_at = time.time()
+            set_runtime_kernel(None)
             return
         shutdown = getattr(self._kernel, "shutdown", None)
         if callable(shutdown):
@@ -472,6 +784,8 @@ class AMemorixHostService:
         else:
             self._kernel.close()
         self._kernel = None
+        self._runtime_state = "stopped"
+        self._startup_finished_at = time.time()
         set_runtime_kernel(None)
 
 

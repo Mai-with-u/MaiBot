@@ -2051,9 +2051,9 @@ class ImportTaskManager:
             try:
                 await worker
             except asyncio.CancelledError:
-                pass
+                logger.debug("Web 导入工作线程已取消")
             except Exception:
-                pass
+                logger.exception("Web 导入工作线程关闭异常")
 
         self._cleanup_temp_root()
 
@@ -2402,12 +2402,16 @@ class ImportTaskManager:
         try:
             process.terminate()
             await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_terminate_seconds"])
-        except Exception:
+        except ProcessLookupError:
+            logger.debug("迁移子进程已在终止前退出")
+        except asyncio.TimeoutError:
             try:
                 process.kill()
                 await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_kill_seconds"])
-            except Exception:
-                pass
+            except ProcessLookupError:
+                logger.debug("迁移子进程已在强制终止前退出")
+            except asyncio.TimeoutError:
+                logger.error("迁移子进程强制终止超时")
 
     async def _reload_stores_after_external_migration(self) -> None:
         async with self._storage_lock:
@@ -2569,9 +2573,11 @@ class ImportTaskManager:
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         for old in dirs[keep:]:
             try:
-                shutil.rmtree(old, ignore_errors=True)
-            except Exception:
-                pass
+                shutil.rmtree(old)
+            except FileNotFoundError:
+                logger.debug(f"旧转换目录已不存在: {old}")
+            except OSError as exc:
+                logger.warning(f"清理旧转换目录失败: path={old}, error={exc}")
 
     def _verify_convert_output(self, output_dir: Path) -> Dict[str, Any]:
         vectors = output_dir / "vectors"
@@ -2797,8 +2803,10 @@ class ImportTaskManager:
                 if src_backup.exists() and not dst_original.exists():
                     try:
                         shutil.move(str(src_backup), str(dst_original))
-                    except Exception:
-                        pass
+                    except OSError as restore_exc:
+                        logger.error(
+                            f"恢复转换备份失败: source={src_backup}, target={dst_original}, error={restore_exc}"
+                        )
             rollback_info["restored"] = True
             async with self._lock:
                 t = self._tasks.get(task_id)
@@ -2880,7 +2888,7 @@ class ImportTaskManager:
             try:
                 store.close()
             except Exception:
-                pass
+                logger.exception(f"关闭临时迁移存储失败: target_dir={target_dir}")
 
         async with self._lock:
             t = self._tasks.get(task_id)
@@ -3503,7 +3511,7 @@ class ImportTaskManager:
         imported_sources = getattr(file_record, "imported_sources", None)
         if imported_sources is None:
             imported_sources = []
-            setattr(file_record, "imported_sources", imported_sources)
+            file_record.imported_sources = imported_sources
         if source_text not in imported_sources:
             imported_sources.append(source_text)
 
@@ -3649,10 +3657,7 @@ class ImportTaskManager:
             )
             self.plugin.graph_store.add_edges([(subject_token, object_token)], relation_hashes=[rel_hash])
             if not write_vector:
-                try:
-                    self.plugin.metadata_store.set_relation_vector_state(rel_hash, "none")
-                except Exception:
-                    pass
+                self.plugin.metadata_store.set_relation_vector_state(rel_hash, "none")
                 return rel_hash
             target_store = self._graph_vector_store()
             vector_id = self._graph_vector_id("relation", rel_hash)

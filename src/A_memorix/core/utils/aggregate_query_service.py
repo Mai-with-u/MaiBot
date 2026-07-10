@@ -300,7 +300,7 @@ class AggregateQueryService:
                 *[task for _, task in scheduled],
                 return_exceptions=True,
             )
-            for (branch_name, _), payload in zip(scheduled, done):
+            for (branch_name, _), payload in zip(scheduled, done, strict=True):
                 if isinstance(payload, Exception):
                     logger.error(f"aggregate branch failed: branch={branch_name} error={payload}")
                     normalized = self._normalize_branch_payload(

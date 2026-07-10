@@ -1,4 +1,4 @@
-"""Post-processing helpers for unified search execution."""
+"""统一检索执行使用的后处理辅助工具。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from .path_fallback_service import find_paths_from_query, to_retrieval_results
 
 
 def apply_safe_content_dedup(results: List[Any]) -> Tuple[List[Any], int]:
-    """Deduplicate results by hash/content while preserving at least one entry."""
+    """按哈希和内容去重，同时至少保留一条结果。"""
     if not results:
         return [], 0
 
@@ -55,7 +55,7 @@ def maybe_apply_smart_path_fallback(
     max_depth: int = 3,
     max_paths: int = 5,
 ) -> Tuple[List[Any], bool, int]:
-    """Append indirect relation paths when semantic results are weak."""
+    """语义结果较弱时补充间接关系路径。"""
     if not enabled or not str(query or "").strip():
         return results, False, 0
     if graph_store is None or metadata_store is None:
@@ -87,4 +87,3 @@ def maybe_apply_smart_path_fallback(
 
     merged = list(path_results) + list(results)
     return merged, True, len(path_results)
-

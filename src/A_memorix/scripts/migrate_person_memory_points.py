@@ -76,33 +76,35 @@ async def _main() -> int:
 
     data_dir = resolve_repo_path(args.data_dir, fallback=DEFAULT_DATA_DIR)
     kernel = SDKMemoryKernel(plugin_root=PLUGIN_ROOT, config={"storage": {"data_dir": str(data_dir)}})
-    await kernel.initialize()
-    migrated = 0
-    skipped = 0
-    for row in rows:
-        person_id = str(row["person_id"] or "").strip()
-        if not person_id:
-            continue
-        display_name = str(row["person_name"] or row["user_nickname"] or "").strip()
-        for item in _parse_memory_points(row["memory_points"]):
-            result: Dict[str, Any] = await kernel.ingest_text(
-                external_id=f"person_memory:{person_id}:{item['index']}",
-                source_type="person_fact",
-                text=f"[{item['category']}] {item['content']}",
-                person_ids=[person_id],
-                tags=[item["category"]],
-                entities=[person_id, display_name] if display_name else [person_id],
-                metadata={"category": item["category"], "weight": item["weight"], "display_name": display_name},
-            )
-            if result.get("stored_ids"):
-                migrated += 1
-            else:
-                skipped += 1
+    try:
+        await kernel.initialize()
+        migrated = 0
+        skipped = 0
+        for row in rows:
+            person_id = str(row["person_id"] or "").strip()
+            if not person_id:
+                continue
+            display_name = str(row["person_name"] or row["user_nickname"] or "").strip()
+            for item in _parse_memory_points(row["memory_points"]):
+                result: Dict[str, Any] = await kernel.ingest_text(
+                    external_id=f"person_memory:{person_id}:{item['index']}",
+                    source_type="person_fact",
+                    text=f"[{item['category']}] {item['content']}",
+                    person_ids=[person_id],
+                    tags=[item["category"]],
+                    entities=[person_id, display_name] if display_name else [person_id],
+                    metadata={"category": item["category"], "weight": item["weight"], "display_name": display_name},
+                )
+                if result.get("stored_ids"):
+                    migrated += 1
+                else:
+                    skipped += 1
 
-    print(f"迁移完成: migrated={migrated} skipped={skipped}")
-    print(json.dumps(kernel.memory_stats(), ensure_ascii=False))
-    kernel.close()
-    return 0
+        print(f"迁移完成: migrated={migrated} skipped={skipped}")
+        print(json.dumps(kernel.memory_stats(), ensure_ascii=False))
+        return 0
+    finally:
+        await kernel.shutdown()
 
 
 if __name__ == "__main__":

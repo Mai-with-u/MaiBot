@@ -12,27 +12,24 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import argparse
 import asyncio
 import hashlib
 import json
-import os
-import random
 import sys
 import time
 import tomlkit
+
+from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR
 
 console = Console()
 
 class LLMGenerationError(Exception):
     pass
-
-from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR
 
 # 数据目录
 DATA_DIR = DEFAULT_DATA_DIR
@@ -65,7 +62,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     sys.exit(0)
@@ -76,7 +73,7 @@ try:
     import A_memorix.core.storage as storage_module
     from src.common.logger import get_logger
     from src.services import llm_service as llm_api
-    from src.config.config import global_config, model_config
+    from src.config.config import global_config
 
     VectorStore = core_module.VectorStore
     GraphStore = core_module.GraphStore
@@ -199,7 +196,7 @@ class AutoImporter:
         return True
 
     async def _init_stores(self):
-        # ... (Same as original)
+        # 使用与主运行时一致的存储初始化流程。
         self.embedding_manager = create_embedding_api_adapter(
             batch_size=self.plugin_config.get("embedding", {}).get("batch_size", 32),
             default_dimension=self.plugin_config.get("embedding", {}).get("dimension", 384),
@@ -209,11 +206,11 @@ class AutoImporter:
         )
         try:
             dim = await self.embedding_manager._detect_dimension()
-        except:
+        except Exception:
             dim = self.embedding_manager.default_dimension
             
         q_type_str = str(self.plugin_config.get("embedding", {}).get("quantization_type", "int8") or "int8").lower()
-        # Need to access QuantizationType from storage_module if not imported globally
+        # QuantizationType 通过 storage_module 延迟获取，避免脚本启动阶段提前导入。
         QuantizationType = storage_module.QuantizationType
         if q_type_str != "int8":
             raise ValueError(
@@ -247,8 +244,10 @@ class AutoImporter:
                 embedding_manager=self.embedding_manager,
             )
         
-        if self.vector_store.has_data(): self.vector_store.load()
-        if self.graph_store.has_data(): self.graph_store.load()
+        if self.vector_store.has_data():
+            self.vector_store.load()
+        if self.graph_store.has_data():
+            self.graph_store.load()
 
     def _should_write_relation_vectors(self) -> bool:
         retrieval_cfg = self.plugin_config.get("retrieval", {})
@@ -367,7 +366,7 @@ Chat paragraph:
         return normalized
 
     def _determine_strategy(self, filename: str, content: str) -> BaseStrategy:
-        """Layer 1: Global Strategy Routing"""
+        """第一层：全局导入策略路由。"""
         strategy = select_import_strategy(
             content,
             override=self.target_type,
@@ -385,8 +384,8 @@ Chat paragraph:
         return NarrativeStrategy(filename)
 
     def _chunk_rescue(self, chunk: ProcessedChunk, filename: str) -> Optional[BaseStrategy]:
-        """Layer 2: Chunk-level rescue strategies"""
-        # If we are already in Quote strategy, no need to rescue
+        """第二层：分块级策略修正。"""
+        # Quote 分块已经满足目标格式，不再重复修正。
         if chunk.type == StratKnowledgeType.QUOTE:
             return None
 
@@ -397,12 +396,14 @@ Chat paragraph:
         return None
 
     async def process_and_import(self):
-        if not await self.initialize(): return
+        if not await self.initialize():
+            return
 
         files = list(RAW_DIR.glob("*.txt"))
         logger.info(f"扫描到 {len(files)} 个文件 in {RAW_DIR}")
 
-        if not files: return
+        if not files:
+            return
 
         tasks = []
         for file_path in files:
@@ -413,8 +414,10 @@ Chat paragraph:
         success_count = sum(1 for r in results if r is True)
         logger.info(f"本次主处理完成，共成功处理 {success_count}/{len(files)} 个文件")
         
-        if self.vector_store: self.vector_store.save()
-        if self.graph_store: self.graph_store.save()
+        if self.vector_store:
+            self.vector_store.save()
+        if self.graph_store:
+            self.graph_store.save()
 
     async def _process_single_file(self, file_path: Path) -> bool:
         filename = file_path.name
@@ -431,43 +434,38 @@ Chat paragraph:
                 
                 logger.info(f">>> 开始处理: {filename}")
                 
-                # 1. Strategy Selection
+                # 1. 选择导入策略
                 strategy = self._determine_strategy(filename, content)
                 logger.info(f"  策略: {strategy.__class__.__name__}")
                 
-                # 2. Split (Strategy-Aware)
+                # 2. 按策略分块
                 initial_chunks = strategy.split(content)
                 logger.info(f"  初步分块: {len(initial_chunks)}")
                 
                 processed_data = {"paragraphs": [], "entities": [], "relations": []}
                 
-                # 3. Extract Loop
+                # 3. 逐块抽取
                 resolved_model = await self._select_model()
                 
                 for i, chunk in enumerate(initial_chunks):
                     current_strategy = strategy
-                    # Layer 2: Chunk Rescue
+                    # 第二层：分块级策略修正
                     rescue_strategy = self._chunk_rescue(chunk, filename)
                     if rescue_strategy:
-                        # Re-split? No, just re-process this text as a single chunk using the rescue strategy
-                        # But rescue strategy might want to split it further?
-                        # Simplification: Treat the whole chunk text as one block for the rescue strategy 
-                        # OR create a single chunk object for it.
-                        # Creating a new chunk using rescue strategy logic might be complex if split behavior differs.
-                        # Let's just instantiate a chunk of the new type manually
+                        # 修正后不再重新切分，直接把当前分块作为完整 Quote 交给新策略。
                         chunk.type = StratKnowledgeType.QUOTE
                         chunk.flags.verbatim = True
-                        chunk.flags.requires_llm = False # Quotes don't usually need LLM
+                        chunk.flags.requires_llm = False # Quote 通常不需要 LLM
                         current_strategy = rescue_strategy
                     
-                    # Extraction
+                    # 抽取内容
                     if chunk.flags.requires_llm:
                         result_chunk = await current_strategy.extract(
                             chunk,
                             lambda p: self._llm_call(p, resolved_model),
                         )
                     else:
-                         # For quotes, extract might be just pass through or regex
+                         # QuoteStrategy 通常透传文本，并保留统一抽取接口。
                         result_chunk = await current_strategy.extract(chunk)
                     
                     time_meta = None
@@ -477,7 +475,7 @@ Chat paragraph:
                             resolved_model=resolved_model,
                         )
 
-                    # Normalize Data
+                    # 归一化结果
                     self._normalize_and_aggregate(
                         result_chunk,
                         processed_data,
@@ -486,12 +484,12 @@ Chat paragraph:
                     
                     logger.info(f"  已处理块 {i+1}/{len(initial_chunks)}")
                 
-                # 4. Save Json
+                # 4. 保存 JSON
                 json_path = PROCESSED_DIR / f"{file_path.stem}.json"
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(processed_data, f, ensure_ascii=False, indent=2)
                 
-                # 5. Import to DB
+                # 5. 导入数据库
                 async with self.storage_lock:
                     await self._import_to_db(processed_data)
                     
@@ -518,8 +516,8 @@ Chat paragraph:
         all_data: Dict,
         time_meta: Optional[Dict[str, Any]] = None,
     ):
-        """Convert strategy-specific data to unified generic format for storage."""
-        # Generic fields
+        """将策略特有结果转换为存储层统一格式。"""
+        # 通用字段
         para_item = {
             "content": chunk.chunk.text,
             "source": chunk.source.file,
@@ -533,7 +531,7 @@ Chat paragraph:
         
         data = chunk.data
         
-        # 1. Triples (Factual)
+        # 1. 事实三元组（Factual）
         if "triples" in data:
             for t in data["triples"]:
                 para_item["relations"].append({
@@ -541,26 +539,24 @@ Chat paragraph:
                     "predicate": t.get("predicate"),
                     "object": t.get("object")
                 })
-                # Auto-add entities from triples
+                # 自动收集三元组中的实体。
                 para_item["entities"].extend([t.get("subject"), t.get("object")])
         
-        # 2. Events & Relations (Narrative)
+        # 2. 事件与关系（Narrative）
         if "events" in data:
-            # Store events as content/metadata? Or entities?
-            # For now maybe just keep them in logic, or add as 'Event' entities?
-            # Creating entities for events is good.
+            # 当前将事件作为实体写入，保留既有检索语义。
             para_item["entities"].extend(data["events"])
         
-        if "relations" in data: # Narrative also outputs relations list
+        if "relations" in data: # Narrative 同时输出关系列表
              para_item["relations"].extend(data["relations"])
              for r in data["relations"]:
                  para_item["entities"].extend([r.get("subject"), r.get("object")])
 
-        # 3. Verbatim Entities (Quote)
+        # 3. 逐字实体（Quote）
         if "verbatim_entities" in data:
             para_item["entities"].extend(data["verbatim_entities"])
             
-        # Dedupe per paragraph
+        # 在每个段落内去重。
         para_item["entities"] = list(set([e for e in para_item["entities"] if e]))
 
         if time_meta:
@@ -578,7 +574,7 @@ Chat paragraph:
         before_sleep=_log_before_retry
     )
     async def _llm_call(self, prompt: str, resolved_model: Any) -> Dict:
-        """Generic LLM Caller"""
+        """统一的 LLM 调用入口。"""
         result = await generate_with_resolved_model(
             resolved_model,
             request_type="Script.ProcessKnowledge",
@@ -595,7 +591,7 @@ Chat paragraph:
             try:
                 return json.loads(txt)
             except json.JSONDecodeError:
-                # Fallback: try to find first { and last }
+                # 回退解析：截取首个左花括号到最后一个右花括号。
                 start = txt.find('{')
                 end = txt.rfind('}')
                 if start != -1 and end != -1:
@@ -606,7 +602,8 @@ Chat paragraph:
 
     async def _select_model(self) -> "ResolvedLLMModel":
         models = get_text_generation_model_tasks(llm_api)
-        if not models: raise ValueError("No LLM models")
+        if not models:
+            raise ValueError("No LLM models")
         
         config_model = str(self.plugin_config.get("advanced", {}).get("extraction_model", "auto") or "auto").strip()
         if config_model != "auto":
@@ -627,7 +624,7 @@ Chat paragraph:
             return ResolvedLLMModel(task_name=task_name, task_config=task_config)
         raise ValueError("No LLM models")
 
-    # Re-use existing methods
+    # 复用现有写入方法。
     async def _add_entity_with_vector(self, name: str, source_paragraph: Optional[str] = None) -> str:
         # 最后一道守卫：防止旁路把 hash 写入实体名
         entity_name = str(name or "").strip()
@@ -641,14 +638,13 @@ Chat paragraph:
         self.graph_store.add_nodes([entity_name])
         try:
             emb = await self.embedding_manager.encode(entity_name)
-            try:
-                self.vector_store.add(emb.reshape(1, -1), [hash_value])
-            except ValueError: pass
-        except Exception: pass
+            self.vector_store.add(emb.reshape(1, -1), [hash_value])
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(f"实体向量写入失败: entity={entity_name}, hash={hash_value}, error={exc}")
         return hash_value
 
     async def import_json_data(self, data: Dict, filename: str = "script_import", progress_callback=None):
-        """Public import entrypoint for pre-processed JSON payloads."""
+        """预处理 JSON 载荷的公开导入入口。"""
         if not self.storage_lock:
             raise RuntimeError("Importer is not initialized. Call initialize() first.")
 
@@ -664,7 +660,7 @@ Chat paragraph:
             self.graph_store.save()
 
     async def _import_to_db(self, data: Dict, progress_callback=None):
-        # Same logic, but ensure robust
+        # 沿用统一导入逻辑，并逐项记录非法数据。
         warning_count = 0
 
         def append_warning(message: str) -> None:
@@ -755,10 +751,7 @@ Chat paragraph:
                             metadata=rel_meta if isinstance(rel_meta, dict) else {},
                         )
                         self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                        try:
-                            self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                        except Exception:
-                            pass
+                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
                 if progress_callback:
                     progress_callback(1)
@@ -809,16 +802,14 @@ Chat paragraph:
                         metadata=rel_meta if isinstance(rel_meta, dict) else {},
                     )
                     self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
-                    try:
-                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                    except Exception:
-                        pass
+                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
         if warning_count > 0:
             logger.warning(f"脚本导入完成，跳过异常项 {warning_count} 条")
     
     async def close(self):
-        if self.metadata_store: self.metadata_store.close()
+        if self.metadata_store:
+            self.metadata_store.close()
     
     def _save_manifest(self):
         with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
@@ -828,7 +819,8 @@ async def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    if not global_config: return
+    if not global_config:
+        return
     
     importer = AutoImporter(
         force=args.force, 

@@ -1,15 +1,15 @@
-"""Shared path-fallback helpers for search post-processing."""
+"""检索后处理共用的路径回退辅助工具。"""
 
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from ..retrieval.dual_path import RetrievalResult
 
 
 def extract_entities(query: str, graph_store: Any) -> List[str]:
-    """Extract up to two graph nodes from a query using n-gram matching."""
+    """使用 n-gram 匹配从查询中提取至多两个图节点。"""
     if not graph_store:
         return []
 
@@ -17,7 +17,7 @@ def extract_entities(query: str, graph_store: Any) -> List[str]:
     if not text:
         return []
 
-    # Keep the heuristic aligned with previous legacy behavior.
+    # 保持该启发式规则与历史兼容行为一致。
     tokens = (
         text.replace("?", " ")
         .replace("!", " ")
@@ -55,7 +55,7 @@ def find_paths_between_entities(
     max_depth: int = 3,
     max_paths: int = 5,
 ) -> List[Dict[str, Any]]:
-    """Find and enrich indirect paths between two nodes."""
+    """查找并补充两个节点之间的间接路径信息。"""
     if not graph_store or not metadata_store:
         return []
 
@@ -124,7 +124,7 @@ def find_paths_from_query(
     max_depth: int = 3,
     max_paths: int = 5,
 ) -> List[Dict[str, Any]]:
-    """Extract entities from query and resolve indirect paths."""
+    """从查询中提取实体并解析间接路径。"""
     entities = extract_entities(query, graph_store)
     if len(entities) != 2:
         return []
@@ -139,7 +139,7 @@ def find_paths_from_query(
 
 
 def to_retrieval_results(paths: Sequence[Dict[str, Any]]) -> List[RetrievalResult]:
-    """Convert path results into retrieval results for the unified pipeline."""
+    """将路径结果转换为统一检索链路使用的结果。"""
     converted: List[RetrievalResult] = []
     for item in paths:
         description = str(item.get("description", "")).strip()
