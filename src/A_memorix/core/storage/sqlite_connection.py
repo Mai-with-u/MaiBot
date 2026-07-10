@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from pathlib import Path
-from threading import RLock, get_ident
+from threading import RLock, Thread, current_thread
 from typing import Dict, Iterator, Optional, Set
 
 import sqlite3
@@ -53,16 +53,20 @@ class SQLiteConnectionManager:
     def __init__(self, db_path: Path, *, timeout: float = 30.0) -> None:
         self.db_path = db_path
         self.timeout = timeout
-        self._connections: Dict[int, ManagedSQLiteConnection] = {}
+        self._connections: Dict[Thread, ManagedSQLiteConnection] = {}
         self._lock = RLock()
+        self._closed = False
 
     def connection(self) -> ManagedSQLiteConnection:
-        thread_id = get_ident()
+        owner_thread = current_thread()
         with self._lock:
-            connection = self._connections.get(thread_id)
+            if self._closed:
+                raise RuntimeError("SQLite 连接管理器已关闭")
+            self._prune_inactive_connections_locked(owner_thread)
+            connection = self._connections.get(owner_thread)
             if connection is None:
                 connection = self._create_connection()
-                self._connections[thread_id] = connection
+                self._connections[owner_thread] = connection
             return connection
 
     def _create_connection(self) -> ManagedSQLiteConnection:
@@ -126,20 +130,49 @@ class SQLiteConnectionManager:
             connection.force_rollback()
 
     def close_current(self) -> None:
-        thread_id = get_ident()
+        owner_thread = current_thread()
         with self._lock:
-            connection = self._connections.pop(thread_id, None)
+            connection = self._connections.pop(owner_thread, None)
         if connection is not None:
             connection.close()
 
     def close_all(self) -> None:
+        """关闭全部连接；调用方应先停止所有使用该管理器的后台任务。"""
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             connections = list(self._connections.values())
             self._connections.clear()
         for connection in connections:
             connection.close()
 
+    def prune_inactive_connections(self) -> int:
+        """关闭已结束线程持有的连接，返回本次回收数量。"""
+        with self._lock:
+            return self._prune_inactive_connections_locked(current_thread())
+
+    def _prune_inactive_connections_locked(self, owner_thread: Thread) -> int:
+        inactive_threads = [
+            thread
+            for thread in self._connections
+            if thread is not owner_thread and not thread.is_alive()
+        ]
+        for thread in inactive_threads:
+            self._connections.pop(thread).close()
+        return len(inactive_threads)
+
     @property
     def current(self) -> Optional[sqlite3.Connection]:
         with self._lock:
-            return self._connections.get(get_ident())
+            return self._connections.get(current_thread())
+
+    @property
+    def connection_count(self) -> int:
+        with self._lock:
+            return len(self._connections)
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed

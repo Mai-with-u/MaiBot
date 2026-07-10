@@ -1,6 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Thread
 
+import sqlite3
 import pytest
 
 from src.A_memorix.core.storage.metadata_store import MetadataStore
@@ -125,3 +127,44 @@ def test_metadata_store_nested_transaction_preserves_outer_commit_control(tmp_pa
         assert store.get_paragraph(inner_hash) is not None
     finally:
         store.close()
+
+
+def test_metadata_store_reaps_connections_owned_by_finished_threads(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    worker_connections = []
+
+    def write_paragraph() -> None:
+        worker_connections.append(store.get_connection())
+        store.add_paragraph("短生命周期线程写入")
+
+    try:
+        manager = store._connection_manager
+        assert manager is not None
+        worker = Thread(target=write_paragraph, name="metadata-short-lived-worker")
+        worker.start()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        assert manager.connection_count == 2
+
+        store.get_connection()
+
+        assert manager.connection_count == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            worker_connections[0].execute("SELECT 1")
+    finally:
+        store.close()
+
+
+def test_metadata_store_closed_manager_cannot_create_new_connections(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    manager = store._connection_manager
+    assert manager is not None
+
+    store.close()
+
+    assert manager.closed is True
+    assert manager.connection_count == 0
+    with pytest.raises(RuntimeError, match="连接管理器已关闭"):
+        manager.connection()
