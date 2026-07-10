@@ -4,7 +4,7 @@
 提供从各个 AI 厂商 API 获取可用模型列表的代理接口
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -143,6 +143,10 @@ async def test_model_capability(request: ModelTestRequest):
     model_config = _get_model_config(model_name)
     if model_config is None:
         raise HTTPException(status_code=404, detail=f"未找到模型: {model_name}")
+
+    # 嵌入模型不支持 chat/completions 接口，需改用嵌入接口测试
+    if model_name in _get_embedding_task_model_names():
+        return await _test_embedding_model(model_name)
 
     visual_enabled = bool(model_config.get("visual", False))
     start_time = time.time()
@@ -374,6 +378,61 @@ def _get_model_config(model_name: str) -> Optional[Dict]:
     except Exception as e:
         logger.error(f"读取模型配置失败: {e}")
         return None
+
+
+def _get_embedding_task_model_names() -> Set[str]:
+    """从 model_config.toml 获取嵌入任务配置的模型名称集合。
+
+    Returns:
+        嵌入任务 model_list 中的模型名称集合，读取失败时返回空集合。
+    """
+    config_path = os.path.join(CONFIG_DIR, "model_config.toml")
+    if not os.path.exists(config_path):
+        return set()
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_data = tomlkit.load(f)
+
+        task_config = config_data.get("model_task_config", {}).get("embedding", {})
+        return {str(name) for name in task_config.get("model_list", [])}
+    except Exception as e:
+        logger.error(f"读取嵌入任务配置失败: {e}")
+        return set()
+
+
+async def _test_embedding_model(model_name: str) -> ModelTestResponse:
+    """对嵌入任务中的模型执行嵌入测试。
+
+    嵌入模型不支持 chat/completions 接口，直接发对话测试会被服务商拒绝，
+    因此改为调用嵌入接口验证可用性。
+    """
+    start_time = time.time()
+    try:
+        orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
+        result = await orchestrator.get_embedding("MaiBot 模型可用性测试")
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        return ModelTestResponse(
+            success=True,
+            model_name=result.model_name or model_name,
+            visual_tested=False,
+            tool_call_ok=False,
+            response=f"嵌入向量维度: {len(result.embedding)}",
+            latency_ms=latency_ms,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"嵌入模型测试失败: model={model_name}, error={e}", exc_info=True)
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        return ModelTestResponse(
+            success=False,
+            model_name=model_name,
+            visual_tested=False,
+            tool_call_ok=False,
+            latency_ms=latency_ms,
+            error=str(e),
+        )
 
 
 def _build_model_test_prompt(visual_enabled: bool) -> str:

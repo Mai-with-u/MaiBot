@@ -9,6 +9,8 @@ class TokenVerifyResponse(BaseModel):
     valid: bool = Field(..., description="Token 是否有效")
     message: str = Field(..., description="验证结果消息")
     is_first_setup: bool = Field(False, description="是否为首次设置")
+    token_source: str = Field("temporary", description="Token 来源")
+    requires_custom_token: bool = Field(False, description="是否需要设置自定义 Token")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -28,6 +30,8 @@ class TokenRegenerateResponse(BaseModel):
 
 class FirstSetupStatusResponse(BaseModel):
     is_first_setup: bool = Field(..., description="是否为首次配置")
+    token_source: str = Field(..., description="Token 来源")
+    requires_custom_token: bool = Field(..., description="是否需要设置自定义 Token")
     message: str = Field(..., description="状态消息")
 
 

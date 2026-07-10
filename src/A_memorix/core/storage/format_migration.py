@@ -23,20 +23,12 @@ logger = get_logger("A_Memorix.FormatMigration")
 
 FORMAT_MIGRATION_VERSION = "pickle_to_json_v1"
 
-_ALLOWED_PICKLE_GLOBALS = {
-    ("builtins", "frozenset"): frozenset,
-    ("builtins", "set"): set,
-}
-
 
 class _LegacyDataUnpickler(pickle.Unpickler):
-    """仅允许迁移历史存储格式所需的基础容器类型。"""
+    """仅加载旧存储中的基础数据结构，禁止解析任何全局对象。"""
 
     def find_class(self, module: str, name: str) -> Any:
-        allowed = _ALLOWED_PICKLE_GLOBALS.get((module, name))
-        if allowed is None:
-            raise pickle.UnpicklingError(f"历史 pickle 包含不允许的全局对象: {module}.{name}")
-        return allowed
+        raise pickle.UnpicklingError(f"旧存储 pickle 禁止加载全局对象: {module}.{name}")
 
 
 def _load_legacy_pickle(handle: BinaryIO) -> Any:

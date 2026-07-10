@@ -3,7 +3,7 @@
  */
 import { useState, useCallback, useEffect } from 'react'
 import { fetchProviderModels, type ModelListItem } from '@/lib/config-api'
-import { findTemplateByBaseUrl, type ProviderTemplate } from '../../providerTemplates'
+import { resolveModelFetcherTemplate, type ProviderTemplate } from '../../providerTemplates'
 import { modelListCache, CACHE_TTL } from '../constants'
 import type { ProviderConfig } from '../types'
 
@@ -63,8 +63,8 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
       return
     }
 
-    // 查找匹配的模板
-    const template = findTemplateByBaseUrl(config.base_url)
+    // 查找匹配的模板；自定义端点默认按客户端类型尝试获取模型列表
+    const template = resolveModelFetcherTemplate(config.base_url, config.client_type)
     setMatchedTemplate(template)
 
     // 如果没有模板或模板不支持获取模型列表

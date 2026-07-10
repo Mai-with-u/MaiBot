@@ -246,7 +246,7 @@ class ImageManager:
                 session.add(record)
                 session.flush()  # 确保记录被写入数据库以获取ID
                 record_id = record.id
-                logger.info(f"成功保存图片记录到数据库: ID: {record_id}，路径: {record.full_path}")
+                logger.debug(f"保存图片: ID: {record_id}，路径: {record.full_path}")
         except Exception as e:
             logger.error(f"保存图片记录到数据库时发生错误: {e}")
             return False
@@ -273,7 +273,7 @@ class ImageManager:
                 record.last_used_time = datetime.now()
                 record.vlm_processed = image.vlm_processed
                 session.add(record)
-                logger.info(f"成功更新图片描述: {image.file_hash}，新描述: {image.description}")
+                logger.info(f"理解图片: {image.description}")
         except Exception as e:
             logger.error(f"更新图片描述时发生错误: {e}")
             return False
@@ -363,7 +363,7 @@ class ImageManager:
                 record.last_used_time = datetime.now()
                 session.add(record)
                 session.flush()
-                logger.info(f"成功保存图片记录到数据库: ID: {record.id}，路径: {record.full_path}")
+                logger.info(f"保存图片: ID: {record.id}，路径: {record.full_path}")
         except Exception as e:
             logger.error(f"保存图片记录到数据库时发生错误: {e}")
             return False

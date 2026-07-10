@@ -1,14 +1,10 @@
-import { Icon, addCollection } from '@iconify/react'
-import streamlineBlockIcons from '@iconify-json/streamline-block/icons.json'
-import streamlineSharpIcons from '@iconify-json/streamline-sharp/icons.json'
+import type { ComponentType } from 'react'
+import { Icon } from '@iconify/react'
 
 import { useTheme } from '@/components/use-theme'
 import { cn } from '@/lib/utils'
-
-import type { ComponentType } from 'react'
-
-addCollection(streamlineSharpIcons)
-addCollection(streamlineBlockIcons)
+import { getStreamlineIcon } from './streamline-icons'
+import type { StreamlineCollection } from './streamline-icons'
 
 type FallbackIcon = ComponentType<{
   className?: string
@@ -18,7 +14,7 @@ type FallbackIcon = ComponentType<{
 
 interface StreamlineIconProps {
   name: string
-  collection?: 'streamline-block' | 'streamline-sharp'
+  collection?: StreamlineCollection
   fallback?: FallbackIcon
   className?: string
   color?: string
@@ -34,14 +30,15 @@ export function StreamlineIcon({
   size = 16,
 }: StreamlineIconProps) {
   const { themeConfig } = useTheme()
+  const icon = getStreamlineIcon(collection, name)
 
-  if (themeConfig.dashboardStyle !== 'future-retro' && Fallback) {
+  if ((themeConfig.dashboardStyle !== 'future-retro' || !icon) && Fallback) {
     return <Fallback className={className} color={color} size={size} />
   }
 
   return (
     <Icon
-      icon={`${collection}:${name}`}
+      icon={icon ?? `${collection}:${name}`}
       className={cn('inline-block shrink-0', className)}
       color={color}
       width={size}

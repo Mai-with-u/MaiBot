@@ -193,6 +193,22 @@ class PluginRuntimeManager(
         return blocked_reasons
 
     @classmethod
+    def _discover_plugin_ids_by_type(cls, plugin_dirs: Iterable[Path], plugin_type: str) -> Set[str]:
+        """扫描指定目录集合，返回匹配 manifest plugin_type 的插件 ID。"""
+
+        validator = ManifestValidator(
+            validate_python_package_dependencies=False,
+            log_errors=False,
+            log_compat_warnings=False,
+        )
+        normalized_plugin_type = str(plugin_type or "").strip().lower()
+        plugin_ids: Set[str] = set()
+        for _plugin_path, manifest in validator.iter_plugin_manifests(plugin_dirs, require_entrypoint=True):
+            if str(manifest.plugin_type or "extension").strip().lower() == normalized_plugin_type:
+                plugin_ids.add(manifest.id)
+        return plugin_ids
+
+    @classmethod
     def _get_group_dependency_flags(
         cls,
         builtin_dirs: Sequence[Path],
@@ -202,16 +218,18 @@ class PluginRuntimeManager(
 
         builtin_dependencies = cls._discover_plugin_dependency_map(builtin_dirs)
         third_party_dependencies = cls._discover_plugin_dependency_map(third_party_dirs)
+        adapter_plugin_ids = cls._discover_plugin_ids_by_type(third_party_dirs, "adapter")
         builtin_plugin_ids = set(builtin_dependencies)
         third_party_plugin_ids = set(third_party_dependencies)
 
         builtin_needs_third_party = any(
             dependency in third_party_plugin_ids
+            and dependency not in adapter_plugin_ids
             for dependencies in builtin_dependencies.values()
             for dependency in dependencies
         )
         third_party_needs_builtin = any(
-            dependency in builtin_plugin_ids
+            dependency in builtin_plugin_ids or dependency in adapter_plugin_ids
             for dependencies in third_party_dependencies.values()
             for dependency in dependencies
         )
@@ -354,13 +372,15 @@ class PluginRuntimeManager(
         self._builtin_supervisor = None
         self._third_party_supervisor = None
 
-        if builtin_dirs:
+        if builtin_dirs or third_party_dirs:
             builtin_supervisor = self._instantiate_supervisor(
                 PluginSupervisor,
-                plugin_dirs=list(builtin_dirs),
+                plugin_dirs=list(builtin_dirs) + list(third_party_dirs),
                 group_name="builtin",
                 hook_spec_registry=self._hook_spec_registry,
                 socket_path=builtin_socket,
+                plugin_type_filter="trusted_or_adapter",
+                trusted_plugin_dirs=list(builtin_dirs),
             )
             self._builtin_supervisor = builtin_supervisor
             self._register_capability_impls(builtin_supervisor)
@@ -372,6 +392,7 @@ class PluginRuntimeManager(
                 group_name="third_party",
                 hook_spec_registry=self._hook_spec_registry,
                 socket_path=third_party_socket,
+                plugin_type_filter="not_adapter",
             )
             self._third_party_supervisor = third_party_supervisor
             self._register_capability_impls(third_party_supervisor)
@@ -1418,7 +1439,10 @@ class PluginRuntimeManager(
         cached_path = self._plugin_path_cache.get(plugin_id)
         if cached_path is not None:
             for plugin_dir in getattr(supervisor, "_plugin_dirs", []):
-                if self._plugin_dir_matches(cached_path, Path(plugin_dir)):
+                if self._plugin_dir_matches(cached_path, Path(plugin_dir)) and self._supervisor_accepts_plugin_path(
+                    supervisor,
+                    cached_path,
+                ):
                     return cached_path
 
         for candidate_plugin_id, plugin_path in self._iter_discovered_plugin_paths(
@@ -1426,10 +1450,38 @@ class PluginRuntimeManager(
         ):
             if candidate_plugin_id != plugin_id:
                 continue
+            if not self._supervisor_accepts_plugin_path(supervisor, plugin_path):
+                continue
             self._plugin_path_cache[plugin_id] = plugin_path
             return plugin_path
 
         return None
+
+    def _supervisor_accepts_plugin_path(self, supervisor: Any, plugin_path: Path) -> bool:
+        """按 Supervisor 的 manifest 类型过滤配置判断插件目录是否归其管理。"""
+
+        plugin_type_filter = str(getattr(supervisor, "_plugin_type_filter", "") or "").strip().lower()
+        if not plugin_type_filter:
+            return True
+
+        resolved_plugin_path = plugin_path.resolve()
+        trusted_plugin_dirs = [Path(path).resolve() for path in getattr(supervisor, "_trusted_plugin_dirs", [])]
+        if plugin_type_filter == "trusted_or_adapter" and any(
+            self._plugin_dir_matches(resolved_plugin_path, trusted_dir)
+            for trusted_dir in trusted_plugin_dirs
+        ):
+            return True
+
+        manifest = self._manifest_validator.load_from_plugin_path(resolved_plugin_path, require_entrypoint=True)
+        if manifest is None:
+            return False
+
+        plugin_type = str(manifest.plugin_type or "extension").strip().lower() or "extension"
+        if plugin_type_filter == "trusted_or_adapter":
+            return plugin_type == "adapter"
+        if plugin_type_filter == "not_adapter":
+            return plugin_type != "adapter"
+        return plugin_type == plugin_type_filter
 
     def _refresh_plugin_config_watch_subscriptions(self) -> None:
         """按当前可识别插件集合刷新 config.toml 的单插件订阅。
@@ -1617,6 +1669,8 @@ class PluginRuntimeManager(
                 return plugin_id
 
         for plugin_id, plugin_path in self._plugin_path_cache.items():
+            if not self._supervisor_accepts_plugin_path(supervisor, plugin_path):
+                continue
             if not any(
                 self._plugin_dir_matches(plugin_path, Path(plugin_dir))
                 for plugin_dir in getattr(supervisor, "_plugin_dirs", [])
@@ -1626,6 +1680,8 @@ class PluginRuntimeManager(
                 return plugin_id
 
         for plugin_id, plugin_path in self._iter_discovered_plugin_paths(getattr(supervisor, "_plugin_dirs", [])):
+            if not self._supervisor_accepts_plugin_path(supervisor, plugin_path):
+                continue
             if resolved_path == plugin_path or resolved_path.is_relative_to(plugin_path):
                 self._plugin_path_cache[plugin_id] = plugin_path
                 return plugin_id

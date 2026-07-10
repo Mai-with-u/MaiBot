@@ -7,7 +7,12 @@ import time
 
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import is_bot_self
-from src.maisaka.reply_necessity import REPLY_NECESSITY_TRIGGER_SCORE, ReplyNecessityInput, score_reply_necessity
+from src.maisaka.reply_necessity import (
+    REPLY_NECESSITY_TRIGGER_SCORE,
+    ReplyNecessityInput,
+    ReplyNecessityScore,
+    score_reply_necessity,
+)
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -23,6 +28,7 @@ class TurnGateResult:
     decision: TurnGateDecision
     detail: str
     delay_seconds: Optional[float] = None
+    pressure_score: Optional[int] = None
 
     @property
     def should_trigger(self) -> bool:
@@ -40,7 +46,7 @@ class ReplyNecessityTurnGate:
         *,
         pending_messages: Sequence[SessionMessage],
         trigger_threshold: int,
-    ) -> tuple[int, str]:
+    ) -> ReplyNecessityScore:
         """按当前 runtime 快照为待处理消息计算回复必要性评分。"""
 
         runtime = self._runtime
@@ -58,7 +64,8 @@ class ReplyNecessityTurnGate:
             idle_seconds = 0.0
             idle_reached_average = False
 
-        score_result = score_reply_necessity(
+        recent_self_replies, recent_window_messages = self._count_recent_presence_messages()
+        return score_reply_necessity(
             ReplyNecessityInput(
                 texts=[(message.processed_plain_text or "").strip() for message in external_messages],
                 pending_count=len(external_messages),
@@ -67,14 +74,13 @@ class ReplyNecessityTurnGate:
                 has_mention=any(message.is_mentioned for message in external_messages),
                 is_group_chat=runtime.chat_stream.is_group_session,
                 focus_active=runtime._is_focus_mode_active_for_current_chat(),
-                recent_self_replies=self._count_recent_self_replies(),
-                consecutive_self_replies=self._count_consecutive_self_replies(),
+                recent_self_replies=recent_self_replies,
+                recent_window_messages=recent_window_messages,
                 effective_frequency=runtime._get_effective_reply_frequency(),
                 idle_seconds=idle_seconds,
                 idle_reached_average=idle_reached_average,
             )
         )
-        return score_result.score, score_result.detail
 
     def evaluate(
         self,
@@ -84,39 +90,29 @@ class ReplyNecessityTurnGate:
     ) -> TurnGateResult:
         """返回回复必要性门控的触发判定。"""
 
-        score, detail = self.score(
+        score_result = self.score(
             pending_messages=pending_messages,
             trigger_threshold=trigger_threshold,
         )
-        decision = "trigger" if score >= REPLY_NECESSITY_TRIGGER_SCORE else "wait"
-        decision_label = "进入Planner" if decision == "trigger" else "等待更多消息"
-        gate_detail = f"必要性: {detail} 评分阈值={REPLY_NECESSITY_TRIGGER_SCORE} 判定={decision_label}"
-        return TurnGateResult(decision=decision, detail=gate_detail)
+        decision = "trigger" if score_result.score >= REPLY_NECESSITY_TRIGGER_SCORE else "wait"
+        gate_detail = f"必要性: {score_result.detail} 评分阈值={REPLY_NECESSITY_TRIGGER_SCORE}"
+        return TurnGateResult(decision=decision, detail=gate_detail, pressure_score=score_result.pressure_score)
 
-    def _count_recent_self_replies(self, window_seconds: float = 300.0) -> int:
-        """统计最近一段时间内麦麦自己已经同步进历史的发言数。"""
+    def _count_recent_presence_messages(self, window_seconds: float = 300.0) -> tuple[int, int]:
+        """统计最近一段时间内麦麦发言数和总消息数。"""
 
         now = datetime.now()
-        recent_count = 0
+        recent_self_count = 0
+        recent_total_count = 0
         for message in reversed(self._runtime._chat_history):
             if (now - message.timestamp).total_seconds() > window_seconds:
                 break
-            if message.source == "guided_reply":
-                recent_count += 1
-        return recent_count
-
-    def _count_consecutive_self_replies(self) -> int:
-        """统计历史尾部连续的麦麦发言数，用于控制存在感。"""
-
-        consecutive_count = 0
-        for message in reversed(self._runtime._chat_history):
             if not message.count_in_context:
                 continue
+            recent_total_count += 1
             if message.source == "guided_reply":
-                consecutive_count += 1
-                continue
-            break
-        return consecutive_count
+                recent_self_count += 1
+        return recent_self_count, recent_total_count
 
 
 class FrequencyThresholdTurnGate:

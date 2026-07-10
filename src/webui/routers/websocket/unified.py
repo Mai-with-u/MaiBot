@@ -142,24 +142,53 @@ async def _handle_plugin_progress_subscribe(connection_id: str, request_id: Opti
     )
 
 
-async def _handle_maisaka_monitor_subscribe(connection_id: str, request_id: Optional[str]) -> None:
+async def _handle_maisaka_monitor_subscribe(
+    connection_id: str,
+    request_id: Optional[str],
+    data: Dict[str, Any],
+) -> None:
     """处理 MaiSaka 监控域订阅请求。
 
     Args:
         connection_id: 连接 ID。
         request_id: 请求 ID。
+        data: 订阅参数。
     """
     logger.info(
         f"MaiSaka 监控订阅请求: connection_id={connection_id} "
         f"manager_id={id(websocket_manager)}"
     )
+    since_event_id = _coerce_non_negative_int(data.get("since_event_id"))
+    replay_limit = _coerce_non_negative_int(data.get("replay_limit"), default=1000)
+    replay_limit = max(1, min(replay_limit, 10000))
     websocket_manager.subscribe(connection_id, domain="maisaka_monitor", topic="main")
     await websocket_manager.send_response(
         connection_id,
         request_id=request_id,
         ok=True,
-        data={"domain": "maisaka_monitor", "topic": "main"},
+        data={
+            "domain": "maisaka_monitor",
+            "topic": "main",
+            "since_event_id": since_event_id,
+            "replay_limit": replay_limit,
+        },
     )
+    from src.maisaka.monitor.event_store import replay_monitor_events
+
+    replay_events = await asyncio.to_thread(
+        replay_monitor_events,
+        since_event_id=since_event_id,
+        limit=replay_limit,
+    )
+    for replay_event in replay_events:
+        await websocket_manager.send_event(
+            connection_id,
+            domain="maisaka_monitor",
+            event=str(replay_event["event"]),
+            topic="main",
+            data=cast(Dict[str, Any], replay_event["data"]),
+        )
+
     from src.maisaka.display.stage_status_board import get_stage_status_snapshot
 
     await websocket_manager.send_event(
@@ -169,6 +198,25 @@ async def _handle_maisaka_monitor_subscribe(connection_id: str, request_id: Opti
         topic="main",
         data={"entries": get_stage_status_snapshot(), "timestamp": time.time()},
     )
+
+
+def _coerce_non_negative_int(value: Any, *, default: int = 0) -> int:
+    """将订阅参数解析为非负整数。"""
+
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    if isinstance(value, str):
+        normalized_value = value.strip()
+        if normalized_value:
+            try:
+                return max(0, int(normalized_value))
+            except ValueError:
+                return default
+    return default
 
 
 async def _handle_subscribe(connection_id: str, message: Dict[str, Any]) -> None:
@@ -192,7 +240,7 @@ async def _handle_subscribe(connection_id: str, message: Dict[str, Any]) -> None
         return
 
     if domain == "maisaka_monitor" and topic == "main":
-        await _handle_maisaka_monitor_subscribe(connection_id, request_id)
+        await _handle_maisaka_monitor_subscribe(connection_id, request_id, data)
         return
 
     await websocket_manager.send_response(

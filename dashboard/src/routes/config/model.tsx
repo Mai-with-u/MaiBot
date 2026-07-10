@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react'
+import { type CSSProperties, type MouseEvent, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,14 +48,30 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Trash2, Save, Search, Info, Check, ChevronsUpDown, RefreshCw, Loader2, GraduationCap, Share2, AlertTriangle, Settings, Zap } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  ChevronsUpDown,
+  Copy,
+  GraduationCap,
+  History,
+  Info,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Settings,
+  Trash2,
+  Zap,
+} from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
+import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
-import { SharePackDialog } from '@/components/share-pack-dialog'
 import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import { ProviderForm } from './modelProvider/ProviderForm'
@@ -67,6 +83,73 @@ import type { ModelInfo } from './model/types'
 
 const MODEL_CONFIG_TABS = ['providers', 'models', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
+
+interface ModelIdentifierMarqueeProps {
+  text: string
+  className?: string
+  textClassName?: string
+}
+
+function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentifierMarqueeProps) {
+  const containerRef = useRef<HTMLSpanElement>(null)
+  const textRef = useRef<HTMLSpanElement>(null)
+  const [scrollDistance, setScrollDistance] = useState(0)
+
+  useEffect(() => {
+    const containerElement = containerRef.current
+    const textElement = textRef.current
+    if (!containerElement || !textElement) {
+      return
+    }
+
+    const updateOverflowState = () => {
+      setScrollDistance(Math.max(0, textElement.scrollWidth - containerElement.clientWidth))
+    }
+
+    updateOverflowState()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateOverflowState)
+      return () => window.removeEventListener('resize', updateOverflowState)
+    }
+
+    const resizeObserver = new ResizeObserver(updateOverflowState)
+    resizeObserver.observe(containerElement)
+    resizeObserver.observe(textElement)
+    return () => resizeObserver.disconnect()
+  }, [text])
+
+  const shouldScroll = scrollDistance > 1
+  const durationMs = Math.min(Math.max(scrollDistance * 45, 1800), 6000)
+
+  return (
+    <span
+      ref={containerRef}
+      className={cn('group/model-marquee block min-w-0 overflow-hidden', className)}
+      title={text}
+    >
+      <span
+        ref={textRef}
+        className={cn(
+          'model-identifier-marquee-text block max-w-full overflow-hidden text-ellipsis whitespace-nowrap',
+          shouldScroll &&
+            'group-hover/model-marquee:w-max group-hover/model-marquee:max-w-none group-hover/model-marquee:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-marquee:overflow-visible group-hover/model-option:w-max group-hover/model-option:max-w-none group-hover/model-option:animate-[model-identifier-marquee_var(--model-identifier-marquee-duration)_ease-in-out_infinite_alternate] group-hover/model-option:overflow-visible',
+          textClassName
+        )}
+        style={
+          shouldScroll
+            ? ({
+                '--model-identifier-marquee-distance': `-${scrollDistance}px`,
+                '--model-identifier-marquee-duration': `${durationMs}ms`,
+              } as CSSProperties)
+            : undefined
+        }
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
@@ -106,7 +189,15 @@ function ModelConfigPageContent() {
     saving,
     autoSaving,
     hasUnsavedChanges,
+    activeConfigVersion,
+    configVersions,
+    versionsLoading,
+    switchingConfigVersion,
+    creatingConfigVersion,
     saveConfig,
+    handleCreateConfigVersion,
+    handleSwitchConfigVersion,
+    handleDeleteConfigVersion,
     // 任务配置问题
     invalidModelRefs,
     emptyTasks,
@@ -195,6 +286,10 @@ function ModelConfigPageContent() {
   const [advancedTaskSettingsVisible, setAdvancedTaskSettingsVisible] = useState(false)
   const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
   const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
+  const [createVersionDialogOpen, setCreateVersionDialogOpen] = useState(false)
+  const [manageVersionsDialogOpen, setManageVersionsDialogOpen] = useState(false)
+  const [newVersionLabel, setNewVersionLabel] = useState('')
+  const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null)
   const [tourEntryVisible, setTourEntryVisible] = useState(
     () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
   )
@@ -239,6 +334,28 @@ function ModelConfigPageContent() {
     const nextUrl = nextTab === 'providers' ? '/config/model' : `/config/model?tab=${nextTab}`
     window.history.replaceState(null, '', nextUrl)
   }
+
+  const formatVersionTime = (timestamp?: number) => {
+    if (!timestamp) {
+      return '-'
+    }
+    return new Date(timestamp * 1000).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  const handleCreateVersion = async () => {
+    await handleCreateConfigVersion(newVersionLabel)
+    setNewVersionLabel('')
+    setCreateVersionDialogOpen(false)
+  }
+
+  const deletingVersion = deletingVersionId
+    ? configVersions.find((version) => version.id === deletingVersionId)
+    : null
 
   // Tour 引导 (使用 hook 封装的逻辑)
   const { startTour: handleStartTour, isRunning: tourIsRunning } = useModelTour({
@@ -331,22 +448,62 @@ function ModelConfigPageContent() {
         <Tabs value={activeTab} onValueChange={handleActiveTabChange} className="w-full">
           <div
             data-model-config-tabs-bar="true"
-            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] items-stretch gap-2 border-b bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
+            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 border-b bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
           >
-            <TabsList className="grid h-9 min-w-0 flex-1 grid-cols-3">
+            <TabsList className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-3">
               <TabsTrigger value="providers" className="w-full" data-tour="providers-tab-trigger">模型厂商设置</TabsTrigger>
               <TabsTrigger value="models" className="w-full" data-tour="models-tab-trigger">模型列表</TabsTrigger>
               <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">为模型分配功能</TabsTrigger>
             </TabsList>
-            {activeTab === 'models' && (
-              <SharePackDialog
-                trigger={
-                  <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label="分享配置">
-                    <Share2 className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )}
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+              <Select
+                value="active"
+                onValueChange={(value) => {
+                  if (value !== 'active') {
+                    void handleSwitchConfigVersion(value)
+                  }
+                }}
+                disabled={versionsLoading || saving || autoSaving || Boolean(switchingConfigVersion)}
+              >
+                <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-[190px] sm:flex-none" aria-label="模型配置副本">
+                  <History className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <SelectValue placeholder={activeConfigVersion?.label || '当前启用'} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">
+                    {activeConfigVersion?.label || '默认配置'} · 当前启用
+                  </SelectItem>
+                  {configVersions.map((version) => (
+                    <SelectItem key={version.id} value={version.id} disabled={!version.valid}>
+                      {version.label} · {formatVersionTime(version.modified_at)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                title="保存当前配置副本"
+                aria-label="保存当前配置副本"
+                disabled={saving || autoSaving || creatingConfigVersion}
+                onClick={() => setCreateVersionDialogOpen(true)}
+              >
+                {creatingConfigVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                title="管理配置副本"
+                aria-label="管理配置副本"
+                onClick={() => setManageVersionsDialogOpen(true)}
+              >
+                <History className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           {/* 模型厂商设置标签页 */}
           <TabsContent value="providers" className="space-y-4 mt-0">
@@ -578,6 +735,117 @@ function ModelConfigPageContent() {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={createVersionDialogOpen} onOpenChange={setCreateVersionDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>保存模型配置副本</DialogTitle>
+            <DialogDescription>
+              当前启用的 model_config.toml 会复制到 config/versions/model，之后可随时切换回来。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="model_config_version_label">副本名称</Label>
+            <Input
+              id="model_config_version_label"
+              value={newVersionLabel}
+              onChange={(event) => setNewVersionLabel(event.target.value)}
+              placeholder="例如：生产环境模型配置副本"
+              maxLength={80}
+            />
+          </div>
+          <DialogFooter className="flex-row justify-end gap-2 space-x-0">
+            <Button
+              variant="outline"
+              className="flex-1 sm:flex-none"
+              onClick={() => setCreateVersionDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              data-dialog-action="confirm"
+              className="flex-1 sm:flex-none"
+              disabled={creatingConfigVersion}
+              onClick={handleCreateVersion}
+            >
+              {creatingConfigVersion ? '保存中...' : '保存副本'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={manageVersionsDialogOpen} onOpenChange={setManageVersionsDialogOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>模型配置副本</DialogTitle>
+            <DialogDescription>
+              未启用副本保存在 config/versions/model，切换副本时当前配置会先自动归档。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody viewportClassName="max-h-[60vh] pr-3 sm:pr-4">
+            <div className="space-y-2 py-2">
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">当前启用</p>
+                  <p className="text-xs text-muted-foreground">
+                    {activeConfigVersion?.label || '默认配置'}
+                  </p>
+                </div>
+                <Badge variant="secondary">启用中</Badge>
+              </div>
+
+              {configVersions.length === 0 ? (
+                <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+                  暂无未启用副本
+                </div>
+              ) : (
+                configVersions.map((version) => (
+                  <div key={version.id} className="flex flex-col gap-3 rounded-md border px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="truncate text-sm font-medium">{version.label}</p>
+                        {!version.valid && <Badge variant="destructive">无效</Badge>}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatVersionTime(version.modified_at)}
+                      </p>
+                      {version.error && (
+                        <p className="line-clamp-2 text-xs text-destructive">{version.error}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!version.valid || switchingConfigVersion === version.id}
+                        onClick={() => void handleSwitchConfigVersion(version.id)}
+                      >
+                        {switchingConfigVersion === version.id ? '切换中...' : '切换'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="h-9 w-9"
+                        aria-label={`删除副本 ${version.label}`}
+                        onClick={() => setDeletingVersionId(version.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </DialogBody>
+          <DialogFooter className="flex-row justify-end gap-2 space-x-0">
+            <Button variant="outline" onClick={() => setManageVersionsDialogOpen(false)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={selectedModelTestResult !== null}
@@ -909,7 +1177,10 @@ function ModelConfigPageContent() {
                         ) : modelFetchError ? (
                           <span className="text-muted-foreground text-sm">手动填写</span>
                         ) : editingModel?.model_identifier ? (
-                          <span className="truncate">{editingModel.model_identifier}</span>
+                          <ModelIdentifierMarquee
+                            text={editingModel.model_identifier}
+                            className="min-w-0 flex-1 text-left"
+                          />
                         ) : (
                           <span className="text-muted-foreground">搜索或选择模型...</span>
                         )}
@@ -943,7 +1214,7 @@ function ModelConfigPageContent() {
                               <CommandItem
                                 key={model.id}
                                 value={model.id}
-                                className="pr-8"
+                                className="group/model-option pr-8"
                                 onSelect={() => {
                                   setEditingModel((prev) =>
                                     prev ? { ...prev, model_identifier: model.id } : null
@@ -954,10 +1225,13 @@ function ModelConfigPageContent() {
                                 {editingModel?.model_identifier === model.id && (
                                   <Check className="absolute right-2 h-4 w-4" />
                                 )}
-                                <div className="flex min-w-0 flex-col">
-                                  <span className="truncate">{model.id}</span>
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <ModelIdentifierMarquee text={model.id} />
                                   {model.name !== model.id && (
-                                    <span className="truncate text-xs text-muted-foreground">{model.name}</span>
+                                    <ModelIdentifierMarquee
+                                      text={model.name}
+                                      textClassName="text-xs text-muted-foreground"
+                                    />
                                   )}
                                 </div>
                               </CommandItem>
@@ -1436,6 +1710,30 @@ function ModelConfigPageContent() {
           )
         }
       />
+
+      <AlertDialog open={deletingVersionId !== null} onOpenChange={(open) => !open && setDeletingVersionId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除模型配置副本</AlertDialogTitle>
+            <AlertDialogDescription>
+              确定要删除副本「{deletingVersion?.label || deletingVersionId}」吗？此操作不会影响当前启用配置，但无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deletingVersionId) {
+                  void handleDeleteConfigVersion(deletingVersionId)
+                }
+                setDeletingVersionId(null)
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* 重启遮罩层 */}
       <RestartOverlay />

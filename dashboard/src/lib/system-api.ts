@@ -36,6 +36,32 @@ export async function getMaiBotStatus(): Promise<{
   })
 }
 
+export interface UpdateNoticeResponse {
+  pending: boolean
+  current_version: string
+  from_version: string | null
+  versions: string[]
+  content: string
+}
+
+export interface UpdateNoticeAckResponse {
+  success: boolean
+  message: string
+  version: string
+}
+
+export async function getUpdateNotice(): Promise<UpdateNoticeResponse> {
+  return backendApi.get<UpdateNoticeResponse>('/api/webui/system/update-notice', {
+    errorMessage: '获取更新公告失败',
+  })
+}
+
+export async function ackUpdateNotice(): Promise<UpdateNoticeAckResponse> {
+  return backendApi.post<UpdateNoticeAckResponse>('/api/webui/system/update-notice/ack', {
+    errorMessage: '确认更新公告失败',
+  })
+}
+
 export interface CacheDirectoryStats {
   key: string
   label: string

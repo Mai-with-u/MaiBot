@@ -27,9 +27,13 @@ vi.mock('../model/hooks', async (importActual) => {
 })
 
 vi.mock('@/lib/config-api', () => ({
+  createModelConfigVersion: vi.fn(),
+  deleteModelConfigVersion: vi.fn(),
   getModelConfigCached: vi.fn(),
   getModelConfig: vi.fn(),
   getModelConfigSchema: vi.fn(),
+  getModelConfigVersions: vi.fn(),
+  switchModelConfigVersion: vi.fn(),
   updateModelConfig: vi.fn(),
   updateModelConfigSection: vi.fn(),
   testProviderConnection: vi.fn(),
@@ -95,10 +99,37 @@ function baseSchema() {
   }
 }
 
+function baseVersions() {
+  return {
+    success: true,
+    active_version: {
+      id: 'active',
+      label: '默认配置',
+      created_at: 1,
+      modified_at: 1,
+      size: 100,
+      active: true,
+      inner_config_version: '1.17.6',
+      valid: true,
+      error: null,
+    },
+    versions: [],
+  }
+}
+
 beforeEach(() => {
   vi.mocked(configApi.getModelConfigCached).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfig).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(baseSchema() as never)
+  vi.mocked(configApi.getModelConfigVersions).mockResolvedValue(baseVersions() as never)
+  vi.mocked(configApi.createModelConfigVersion).mockResolvedValue({
+    ...baseVersions().active_version,
+    id: 'v1',
+    label: '测试副本',
+    active: false,
+  } as never)
+  vi.mocked(configApi.switchModelConfigVersion).mockResolvedValue(baseVersions().active_version as never)
+  vi.mocked(configApi.deleteModelConfigVersion).mockResolvedValue(undefined as never)
   vi.mocked(configApi.updateModelConfig).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.updateModelConfigSection).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.testProviderConnection).mockResolvedValue({

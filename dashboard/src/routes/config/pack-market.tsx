@@ -248,7 +248,7 @@ export default function PackMarketPage() {
               <CardContent className="text-center text-muted-foreground">
                 <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p className="text-lg font-medium">暂无模板</p>
-                <p className="mt-1">还没有人分享配置模板，快来分享第一个吧！</p>
+                <p className="mt-1">当前还没有可用的配置模板</p>
               </CardContent>
             </Card>
           ) : (

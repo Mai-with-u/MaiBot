@@ -213,6 +213,10 @@ def _format_profile_reference_block(blocks: Sequence[str]) -> str:
     )
 
 
+def _format_profile_person_block(display_name: str, profile_text: str) -> str:
+    return f"{display_name}：\n  {_truncate_profile_text(profile_text)}"
+
+
 async def build_person_profile_injection_messages(
     *,
     anchor_message: SessionMessage,
@@ -259,10 +263,7 @@ async def build_person_profile_injection_messages(
             continue
 
         display_name = _profile_display_name(candidate, payload)
-        blocks.append(
-            f"- {display_name}（person_id: {candidate.person_id}，来源: {candidate.source}）\n"
-            f"  {_truncate_profile_text(profile_text)}"
-        )
+        blocks.append(_format_profile_person_block(display_name, profile_text))
 
     reference_block = _format_profile_reference_block(blocks)
     return [reference_block] if reference_block else []

@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import Final, List, Literal, Optional
 
 import re
 
@@ -28,6 +28,69 @@ REPLY_TRIGGER_MODE_OPTION_DESCRIPTIONS = {
 REPLY_TRIGGER_MODE_OPTION_LABELS = {
     "frequency": "频率触发",
     "reply_necessity": "必要性触发",
+}
+
+EMOTION_TRAIT_OPTION_LABELS = {
+    "rational_calm": "理性冷静",
+    "neutral": "中性",
+    "sentimental": "多愁善感",
+}
+
+EMOTION_TRAIT_OPTION_DESCRIPTIONS = {
+    "rational_calm": "情绪表达更克制，优先保持客观、清晰和稳定。",
+    "neutral": "不追加额外情绪特点描述，完全使用原人格设定。",
+    "sentimental": "情绪表达更细腻敏感，更容易被聊天氛围触动。",
+}
+
+PERSONALITY_EMOTION_SUFFIXES: Final[dict[str, str]] = {
+    "rational_calm": "你整体理性冷静，回应时更偏向客观、克制和清晰判断，少用强烈情绪表达。",
+    "neutral": "",
+    "sentimental": "你更敏感细腻，容易被聊天氛围触动，会自然表现出一点惆怅、共情或情绪波动，但不要过度煽情。",
+}
+
+
+def build_personality_emotion_suffix(emotion_trait: str) -> str:
+    """根据实验性情绪特点档位生成追加到人格后的提示词。"""
+
+    return PERSONALITY_EMOTION_SUFFIXES[emotion_trait]
+
+
+ATTENTION_DRIFT_LEVEL_OPTION_LABELS = {
+    "subtle": "轻微漂移",
+    "active": "活跃联想",
+    "scattered": "明显发散",
+    "wild": "强烈跳跃",
+}
+
+ATTENTION_DRIFT_LEVEL_OPTION_DESCRIPTIONS = {
+    "subtle": "只在很自然的触发点上轻轻联想一句，整体仍跟随当前话题。",
+    "active": "允许更主动地抓有趣支线，但回复仍应保持清楚、短促、可追溯。",
+    "scattered": "会更明显地抓支线和突然联想，回复里可以出现可理解的拐弯。",
+    "wild": "强实验档位；可以有更强的跳跃、插话和突然联想，但必须能从最近消息找到触发点。",
+}
+
+ATTENTION_DRIFT_ANCHOR_OPTION_LABELS = {
+    "strict": "严格回钩",
+    "balanced": "自然回钩",
+    "loose": "宽松关联",
+}
+
+ATTENTION_DRIFT_ANCHOR_OPTION_DESCRIPTIONS = {
+    "strict": "每次联想后都要快速拉回当前话题，适合技术群或严肃场景。",
+    "balanced": "可以短暂支线联想，但通常要让回复和最近消息保持明显关系。",
+    "loose": "允许更自由的相关联想，但仍必须能从最近消息找到触发点。",
+}
+
+ATTENTION_DRIFT_REACTION_OPTION_LABELS = {
+    "reserved": "少量短反应",
+    "natural": "自然短反应",
+    "lively": "活泼短反应",
+}
+
+ATTENTION_DRIFT_REACTION_OPTION_DESCRIPTIONS = {
+    "reserved": "短反应很少出现，只在特别好接的话题上使用。",
+    "natural": "偶尔先用短句、吐槽或语气词接住话题，再继续回复。",
+    "lively": "更容易先用短促反应开头，但不能把回复拆得太碎。",
 }
 
 """
@@ -877,12 +940,90 @@ class ChatConfig(ConfigBase):
     """如何回复、引用回复与聊天 Prompt 配置。"""
 
 
+class AttentionDriftConfig(ConfigBase):
+    """注意力漂移实验功能配置。"""
+
+    __ui_label__ = "注意力漂移"
+    __ui_icon__ = "sparkles"
+
+    enabled: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "注意力漂移模式",
+                "en_US": "Attention drift mode",
+                "ja_JP": "注意ドリフトモード",
+            },
+            "x-widget": "switch",
+            "x-icon": "sparkles",
+        },
+    )
+    """开启后，麦麦会更容易被有趣的新话题、梗或反差点吸引，但仍需保持上下文可理解。"""
+
+    drift_level: Literal["subtle", "active", "scattered", "wild"] = Field(
+        default="scattered",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "漂移档位",
+                "en_US": "Drift level",
+                "ja_JP": "ドリフト段階",
+            },
+            "x-widget": "select",
+            "x-icon": "gauge",
+            "x-layout": "inline-right",
+            "x-input-width": "12rem",
+            "x-option-labels": ATTENTION_DRIFT_LEVEL_OPTION_LABELS,
+            "x-option-descriptions": ATTENTION_DRIFT_LEVEL_OPTION_DESCRIPTIONS,
+            "x-row": "attention-drift-style",
+        },
+    )
+    """控制注意力漂移的整体表现档位，而不是用数值概率描述。"""
+
+    anchor_policy: Literal["strict", "balanced", "loose"] = Field(
+        default="balanced",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "回钩策略",
+                "en_US": "Anchor policy",
+                "ja_JP": "アンカー方針",
+            },
+            "x-widget": "select",
+            "x-icon": "anchor",
+            "x-layout": "inline-right",
+            "x-input-width": "12rem",
+            "x-option-labels": ATTENTION_DRIFT_ANCHOR_OPTION_LABELS,
+            "x-option-descriptions": ATTENTION_DRIFT_ANCHOR_OPTION_DESCRIPTIONS,
+            "x-row": "attention-drift-style",
+        },
+    )
+    """控制话题漂移后需要多强地回到当前聊天上下文。"""
+
+    reaction_style: Literal["reserved", "natural", "lively"] = Field(
+        default="lively",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "短反应风格",
+                "en_US": "Short reaction style",
+                "ja_JP": "短い反応スタイル",
+            },
+            "x-widget": "select",
+            "x-icon": "message-circle",
+            "x-layout": "inline-right",
+            "x-input-width": "12rem",
+            "x-option-labels": ATTENTION_DRIFT_REACTION_OPTION_LABELS,
+            "x-option-descriptions": ATTENTION_DRIFT_REACTION_OPTION_DESCRIPTIONS,
+            "x-row": "attention-drift-reaction",
+        },
+    )
+    """控制短句、吐槽、语气词等短反应在漂移风格中的使用方式。"""
+
+
 class ExperimentalConfig(ConfigBase):
     """实验性功能配置类"""
 
     __ui_label__ = "实验性功能"
     __ui_advanced__ = True
-    __ui_order__ = 30
+    __ui_order__ = 140
 
     enable_behavior_learning: bool = Field(
         default=False,
@@ -910,7 +1051,28 @@ class ExperimentalConfig(ConfigBase):
             "x-icon": "sparkles",
         },
     )
-    """开启后，replyer 生成文本后会由检查器决定是否插入图片、表情包或 at。"""
+    """开启后，reply 动作可通过 attach_pic、attach_emoji、attach_at 参数附加图片、表情包或 at。"""
+
+    emotion_trait: Literal["rational_calm", "neutral", "sentimental"] = Field(
+        default="neutral",
+        json_schema_extra={
+            "label": {
+                "zh_CN": "情绪特点",
+                "en_US": "Emotion trait",
+                "ja_JP": "感情特徴",
+            },
+            "x-widget": "select",
+            "x-icon": "heart-pulse",
+            "x-layout": "inline-right",
+            "x-input-width": "12rem",
+            "x-option-labels": EMOTION_TRAIT_OPTION_LABELS,
+            "x-option-descriptions": EMOTION_TRAIT_OPTION_DESCRIPTIONS,
+        },
+    )
+    """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
+
+    attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
+    """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
 
     behavior_learning_list: list["LearningItem"] = Field(
         default_factory=lambda: [
@@ -3947,9 +4109,9 @@ class JargonConfig(ConfigBase):
 class VoiceConfig(ConfigBase):
     """语音识别配置类"""
 
+    __ui_parent__ = "message_receive"
     __ui_label__ = "语音"
     __ui_advanced__ = True
-    __ui_order__ = 90
 
     enable_asr: bool = Field(
         default=False,
@@ -4146,6 +4308,11 @@ class KeywordRuleConfig(ConfigBase):
     keywords: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "关键词",
+                "en_US": "Keywords",
+                "ja_JP": "キーワード",
+            },
             "x-widget": "custom",
             "x-icon": "tag",
         },
@@ -4155,6 +4322,11 @@ class KeywordRuleConfig(ConfigBase):
     regex: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "正则表达式",
+                "en_US": "Regular expressions",
+                "ja_JP": "正規表現",
+            },
             "x-widget": "custom",
             "x-icon": "regex",
         },
@@ -4164,6 +4336,11 @@ class KeywordRuleConfig(ConfigBase):
     reaction: str = Field(
         default="",
         json_schema_extra={
+            "label": {
+                "zh_CN": "反应提示",
+                "en_US": "Reaction prompt",
+                "ja_JP": "リアクションプロンプト",
+            },
             "x-widget": "textarea",
             "x-icon": "message-circle",
         },
@@ -4194,6 +4371,11 @@ class KeywordReactionConfig(ConfigBase):
     keyword_rules: list[KeywordRuleConfig] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "关键词规则",
+                "en_US": "Keyword rules",
+                "ja_JP": "キーワードルール",
+            },
             "x-widget": "custom",
             "x-icon": "list",
         },
@@ -4203,6 +4385,11 @@ class KeywordReactionConfig(ConfigBase):
     regex_rules: list[KeywordRuleConfig] = Field(
         default_factory=lambda: [],
         json_schema_extra={
+            "label": {
+                "zh_CN": "正则规则",
+                "en_US": "Regex rules",
+                "ja_JP": "正規表現ルール",
+            },
             "x-widget": "custom",
             "x-icon": "list",
         },
@@ -4698,34 +4885,6 @@ class DebugConfig(ConfigBase):
         },
     )
     """在日志或界面中显示麦麦的思考过程。"""
-
-    show_jargon_prompt: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "显示黑话 Prompt",
-                "en_US": "Show jargon prompt",
-                "ja_JP": "隠語 Prompt を表示",
-            },
-            "x-widget": "switch",
-            "x-icon": "book",
-        },
-    )
-    """调试黑话学习时显示相关 Prompt。"""
-
-    show_memory_prompt: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "显示记忆 Prompt",
-                "en_US": "Show memory prompt",
-                "ja_JP": "記憶 Prompt を表示",
-            },
-            "x-widget": "switch",
-            "x-icon": "database",
-        },
-    )
-    """调试记忆检索时显示相关 Prompt。"""
 
     enable_reply_effect_tracking: bool = Field(
         default=False,

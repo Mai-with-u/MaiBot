@@ -146,6 +146,23 @@
   }
 }
 
+@keyframes model-identifier-marquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(var(--model-identifier-marquee-distance));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-identifier-marquee-text {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
 @font-face {
   font-family: 'JetBrains Mono';
   src: url('/fonts/JetBrainsMono-Medium.ttf') format('truetype');

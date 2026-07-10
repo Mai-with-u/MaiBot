@@ -60,7 +60,7 @@
 涉及 Tabs/TabsList/TabsTrigger、Radix 或 motion 动画指示器时，要先确认视觉效果来自 TabsList 容器、TabsTrigger 本体、内部 motion/span，还是父级 header/card/dialog 的 backdrop-filter 或主题覆盖，再做最小范围修改。
 Radix 组件不随便移出上下文，像 TabsTrigger 必须留在 TabsList 里。
 
-修改完webui不用急着npm run build，这个应该手动来
+修改完webui，如果是小改动小修复，不用急着npm run build。当完成一个较大功能新增或者较广重构时，才需要运行 npm run build。
 WebUI 开发服务固定起到 7999 端口。
 
 # 会话 ID 规范
@@ -69,13 +69,12 @@ WebUI 开发服务固定起到 7999 端口。
 # 关于 A_memorix 修改
 如果修改涉及 `src/A_memorix`，请先阅读 `src/A_memorix/MODIFICATION_POLICY.md`。
 
-# prompt模板、
-涉及对prompt模板的修改，要同步修改英文和日文的文件，对齐到中文
-
-默认原则：
 1. `src/A_memorix` 的实现层改动应优先遵守 `src/A_memorix/MODIFICATION_POLICY.md` 中的归属约束。
 2. 不要提交无边界的 `ruff`、格式化、导入整理或大面积实现整理。
 3. 本地实验目录或依赖其运行的测试，除非明确说明并确认，否则不要进入共享历史。
+
+# prompt模板、
+涉及对prompt模板的修改，要同步修改英文和日文的文件，对齐到中文
 
 # maibot插件开发文档
 https://github.com/Mai-with-u/maibot-plugin-sdk/blob/main/docs/guide.md
@@ -83,11 +82,6 @@ https://github.com/Mai-with-u/maibot-plugin-sdk/blob/main/docs/guide.md
 如果你要编写插件，不要改动根目录的.gitignore，而是在/plugins下创建独立仓库，然后进行编写
 如果你要编写插件有需求需要改动主程序代码，请你先请求许可。
 
-插件仓库路径在本地上层文件夹plugin-repo下
-
-
-# 修改文档
-如果有功能性的变更或者api或者开发变更，可以对根目录下/mai-docs进行修改，不要在上层目录新建内容
 
 # 如何提交maibot插件
 https://github.com/Mai-with-u/plugin-repo/blob/main/CONTRIBUTING.md

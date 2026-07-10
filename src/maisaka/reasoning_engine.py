@@ -596,12 +596,12 @@ class MaisakaReasoningEngine:
         """处理 Planner 未调用工具时的终止策略。"""
 
         planner_no_tool_count += 1
-        cycle_end = CycleEnd("planner_no_tool_end", "Planner 未调用工具，已视为本轮思考结束。")
+        cycle_end = CycleEnd("planner_no_tool_end", "Planner本轮思考结束。")
         self._end_planner_no_tool_cycle(
             planner_extra_lines,
-            status_line="状态：未调用工具，已结束本轮思考",
+            status_line="状态：已结束本轮思考",
         )
-        logger.info(f"{self._runtime.log_prefix} Planner 未调用工具，已结束本轮思考")
+        logger.info(f"{self._runtime.log_prefix} Planner 已结束本轮思考")
         return planner_no_tool_count, cycle_end, True
 
     def _end_planner_no_tool_cycle(
@@ -702,9 +702,9 @@ class MaisakaReasoningEngine:
                 log_prefix=self._runtime.log_prefix,
             )
         logger.info(
-            f"{self._runtime.log_prefix} 规划器开始执行: "
-            f"回合={round_index + 1} "
-            f"历史消息数={len(self._runtime._chat_history)} "
+            f"{self._runtime.log_prefix} 开始思考: "
+            f"第 {round_index + 1} 轮"
+            f"消息数={len(self._runtime._chat_history)} "
             f"开始时间={planner_started_at:.3f}"
         )
         state.current_stage_started_at = planner_started_at
@@ -904,7 +904,7 @@ class MaisakaReasoningEngine:
             if trigger_message is None:
                 logger.warning(f"{self._runtime.log_prefix} wait 超时后没有可复用的触发消息，跳过本轮")
                 return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
-            logger.info(f"{self._runtime.log_prefix} 等待超时后开始新一轮思考")
+            logger.info(f"{self._runtime.log_prefix} 等待结束，再看一眼！")
             if self._runtime._has_pending_wait_tool_call():
                 self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=False))
 
@@ -1078,12 +1078,17 @@ class MaisakaReasoningEngine:
             self._runtime._log_internal_loop_cancelled()
             raise
         except RespNotOkException as exc:
+            self._runtime._update_stage_status(
+                "错误",
+                f"模型响应异常 HTTP {exc.status_code} - {exc}",
+            )
             logger.error(
                 f"{self._runtime.log_prefix} Maisaka 内部循环发生异常: "
                 f"模型响应异常 HTTP {exc.status_code} - {exc}"
             )
             raise
-        except Exception:
+        except Exception as exc:
+            self._runtime._update_stage_status("错误", str(exc))
             logger.exception(f"{self._runtime.log_prefix} Maisaka 内部循环发生异常")
             raise
 
@@ -1435,7 +1440,7 @@ class MaisakaReasoningEngine:
             bool: 是否需要替换
         """
         if not self._last_reasoning_content or not current_content:
-            logger.info(
+            logger.debug(
                 f"{self._runtime.log_prefix} 跳过思考相似度判定: "
                 f"上一轮为空={not bool(self._last_reasoning_content)} "
                 f"当前为空={not bool(current_content)} 相似度=0.00"

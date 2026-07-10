@@ -81,6 +81,32 @@ export interface ChatPromptRule {
   prompt: string
 }
 
+export interface AdapterPolicyStatus {
+  allowed: boolean
+  configured: boolean
+  chat_type: ChatStreamType | string
+  target_id: string
+  list_type: string
+  source: string
+  reason: string
+  matched_ids: string[]
+}
+
+export interface ChatAdapterStatus {
+  adapter_id: string
+  plugin_id: string
+  gateway_name: string
+  platform: string
+  account_id: string | null
+  scope: string | null
+  protocol: string
+  route_type: string
+  send_bound: boolean
+  receive_bound: boolean
+  routed: boolean
+  policy: AdapterPolicyStatus
+}
+
 export interface ChatStreamDetail {
   session_id: string
   display_name: string
@@ -94,6 +120,7 @@ export interface ChatStreamDetail {
   jargon: ChatLearningStatus
   talk_frequency: ChatTalkFrequencyDetail
   prompts: ChatPromptDetail
+  adapters: ChatAdapterStatus[]
 }
 
 interface ChatStreamsResponse {
@@ -159,6 +186,11 @@ interface UpdateLearningPayload {
 
 interface UpdateChatPromptPayload {
   prompt: string
+}
+
+interface UpdateAdapterPolicyPayload {
+  adapter_id: string
+  action: 'allow' | 'block' | 'inherit'
 }
 
 export async function getChatStreams(limit = 1000): Promise<ChatStream[]> {
@@ -282,6 +314,23 @@ export async function deleteChatStreamPrompt(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}/prompts/${index}`,
     {
       errorMessage: '删除聊天 Prompt 失败',
+    }
+  )
+  if (!result.detail) {
+    throw new Error('聊天流详情为空')
+  }
+  return result.detail
+}
+
+export async function updateChatStreamAdapterPolicy(
+  sessionId: string,
+  payload: UpdateAdapterPolicyPayload
+): Promise<ChatStreamDetail> {
+  const result = await backendApi.put<ChatStreamDetailResponse>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/adapters/policy`,
+    {
+      body: payload,
+      errorMessage: '保存适配器放行规则失败',
     }
   )
   if (!result.detail) {

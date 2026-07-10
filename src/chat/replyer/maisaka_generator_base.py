@@ -8,7 +8,7 @@ import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
-from src.chat.utils.utils import get_chat_type_and_target_info
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.data_models.message_component_data_model import (
     AtComponent,
@@ -28,6 +28,7 @@ from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
+from src.config.official_configs import build_personality_emotion_suffix
 from src.config.model_configs import ModelInfo
 from src.core.types import ActionInfo
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
@@ -52,6 +53,7 @@ logger = get_logger("replyer")
 
 REPLYER_MAX_HOOK_RETRIES = 3
 TOOL_RESULT_MEDIA_SOURCE_KIND = "tool_result_media"
+DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 
 
 @dataclass
@@ -61,22 +63,6 @@ class MaisakaReplyContext:
     expression_habits: str = ""
     selected_expression_ids: List[int] = field(default_factory=list)
     selected_expressions: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class RichReplyCheckResult:
-    """丰富回复检查器的输出结果。"""
-
-    action: Literal["send", "rewrite"] = "send"
-    output_text: str = "<send>"
-    request_prompt: str = ""
-    request_messages: List[Any] = field(default_factory=list)
-    request_message_count: int = 0
-    reasoning_text: str = ""
-    model_name: str = ""
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
 
 
 class BaseMaisakaReplyGenerator:
@@ -115,7 +101,11 @@ class BaseMaisakaReplyGenerator:
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
-            return f"你的名字是{bot_name}{bot_aliases}。\n{prompt_personality}"
+            prompt_lines = [f"你的名字是{bot_name}{bot_aliases}。", prompt_personality]
+            emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
+            if emotion_suffix:
+                prompt_lines.append(emotion_suffix)
+            return "\n".join(prompt_lines)
         except Exception as exc:
             logger.warning(f"构建 Maisaka 人设提示词失败: {exc}")
             return "你的名字是麦麦。\n是人类。"
@@ -171,12 +161,22 @@ class BaseMaisakaReplyGenerator:
 
         user_info = reply_message.message_info.user_info
         sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+        bot_name = global_config.bot.nickname.strip() or sender_name
         target_message_id = reply_message.message_id.strip() if reply_message.message_id else "未知"
         # target_time = reply_message.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         quote_ids = extract_quote_ids_from_message_sequence(reply_message.raw_message)
         target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
         if not target_content:
             target_content = "[无可见文本内容]"
+
+        if is_bot_self(reply_message.platform, user_info.user_id):
+            return "\n".join(
+                [
+                    f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
+                    "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
+                    f"- 你之前的发言内容：{target_content}",
+                ]
+            )
 
         # target_lines = [
         #     "【本次回复目标】",
@@ -245,6 +245,146 @@ class BaseMaisakaReplyGenerator:
         if normalized_content:
             return normalized_content
         return (reply_message.processed_plain_text or "").strip()
+
+    @staticmethod
+    def _normalize_attachment_items(raw_value: Any) -> List[Any]:
+        """将 reply 附件参数统一为列表，供 prompt 提示渲染使用。"""
+
+        if raw_value is None or raw_value == "":
+            return []
+        if isinstance(raw_value, list):
+            return raw_value
+        if isinstance(raw_value, (str, dict)):
+            return [raw_value]
+        return []
+
+    @staticmethod
+    def _join_chinese_items(items: List[str]) -> str:
+        normalized_items = [item.strip() for item in items if item.strip()]
+        if not normalized_items:
+            return ""
+        if len(normalized_items) == 1:
+            return normalized_items[0]
+        if len(normalized_items) == 2:
+            return " 和 ".join(normalized_items)
+        return "、".join(normalized_items[:-1]) + " 和 " + normalized_items[-1]
+
+    @staticmethod
+    def _find_message_by_id(
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+        message_id: str,
+    ) -> Optional[SessionMessage]:
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            return None
+        if reply_message is not None and str(reply_message.message_id or "").strip() == normalized_message_id:
+            return reply_message
+
+        for history_message in reversed(chat_history):
+            if not isinstance(history_message, SessionBackedMessage):
+                continue
+            if str(history_message.message_id or "").strip() != normalized_message_id:
+                continue
+            return history_message.original_message
+        return None
+
+    def _format_attachment_image_target(
+        self,
+        raw_attachment: Any,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+    ) -> str:
+        if isinstance(raw_attachment, dict):
+            media_index = str(raw_attachment.get("media_index") or "").strip()
+            message_id = str(
+                raw_attachment.get("msg_id")
+                or raw_attachment.get("message_id")
+                or raw_attachment.get("source")
+                or ""
+            ).strip()
+            raw_index = raw_attachment.get("index", raw_attachment.get("image_index", 0))
+        else:
+            media_index = ""
+            message_id = str(raw_attachment or "").strip()
+            raw_index = 0
+
+        try:
+            image_index = int(raw_index or 0)
+        except (TypeError, ValueError):
+            image_index = 0
+
+        if media_index:
+            return f"工具返回媒体 {media_index} 中的第 {image_index + 1} 张图片"
+
+        target_message = self._find_message_by_id(chat_history, reply_message, message_id)
+        if target_message is None:
+            return f"msg_id={message_id} 的第 {image_index + 1} 张图片"
+
+        user_info = target_message.message_info.user_info
+        sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+        return f"{sender_name} 的消息 msg_id={message_id} 中的第 {image_index + 1} 张图片"
+
+    def _format_attachment_at_target(
+        self,
+        raw_target: Any,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+    ) -> str:
+        if isinstance(raw_target, dict):
+            user_id = str(raw_target.get("user_id") or "").strip()
+            message_id = str(raw_target.get("msg_id") or raw_target.get("message_id") or "").strip()
+        else:
+            user_id = ""
+            message_id = str(raw_target or "").strip()
+
+        target_message = self._find_message_by_id(chat_history, reply_message, message_id)
+        if target_message is not None:
+            user_info = target_message.message_info.user_info
+            target_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+            return f"@{target_name}".strip()
+        if user_id:
+            return f"@{user_id}"
+        return f"msg_id={message_id} 的发送者"
+
+    def _build_reply_attachment_prompt(
+        self,
+        *,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+        reply_tool_args: Optional[Dict[str, Any]],
+    ) -> str:
+        """构建 replyer 正文之外的附件发送提示。"""
+
+        if not isinstance(reply_tool_args, dict):
+            return ""
+
+        lines: List[str] = []
+        image_targets = [
+            self._format_attachment_image_target(raw_attachment, chat_history, reply_message)
+            for raw_attachment in self._normalize_attachment_items(reply_tool_args.get("attach_pic"))
+        ]
+        if image_targets:
+            lines.append(
+                "除了当前你输出的回复，你还会（由另一个模型控制）发送图片"
+                f"{self._join_chinese_items(image_targets)}。"
+            )
+
+        at_targets = [
+            self._format_attachment_at_target(raw_target, chat_history, reply_message)
+            for raw_target in self._normalize_attachment_items(reply_tool_args.get("attach_at"))
+        ]
+        if at_targets:
+            lines.append(
+                "除了当前你输出的回复，你还会（由另一个模型控制）at "
+                f"{self._join_chinese_items(at_targets)}。"
+            )
+
+        raw_emoji = str(reply_tool_args.get("attach_emoji") or "").strip()
+        if raw_emoji:
+            lines.append(f"除了当前你输出的回复，你还会（由另一个模型控制）发送一个 {raw_emoji} 表情包。")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _get_chat_prompt_for_chat(chat_id: str, is_group_chat: Optional[bool]) -> str:
@@ -423,31 +563,69 @@ class BaseMaisakaReplyGenerator:
         return system_prompt
 
     def _build_reply_instruction(self) -> str:
-        return "请自然地回复。不要输出多余说明、括号、@ 或额外标记，只输出实际要发送的内容。"
+        return (
+            "请优先依据【回复信息参考】中的回复指引和关键信息；只有缺少这些信息时，"
+            "才结合当前思考和聊天记录判断。请自然地回复。不要输出多余说明、括号、@ 或额外标记，"
+            "只输出实际要发送的内容。"
+        )
+
+    @staticmethod
+    def _build_reply_reference_lines(reply_reason: str, reply_guide: str, reference_info: str) -> List[str]:
+        """构建 replyer 的信息参考块，优先使用显式指引和关键信息。"""
+
+        normalized_reply_guide = reply_guide.strip()
+        normalized_reference_info = reference_info.strip()
+        if normalized_reply_guide or normalized_reference_info:
+            reference_lines: List[str] = []
+            if normalized_reply_guide:
+                reference_lines.append(f"回复指引：\n{normalized_reply_guide}")
+            if normalized_reference_info:
+                reference_lines.append(f"关键信息参考：\n{normalized_reference_info}")
+            return reference_lines
+
+        normalized_reply_reason = reply_reason.strip()
+        if normalized_reply_reason:
+            return [f"当前思考：\n{normalized_reply_reason}"]
+        return []
 
     def _build_final_user_message(
         self,
+        chat_history: List[LLMContextMessage],
         reply_message: Optional[SessionMessage],
         reply_reason: str,
         reply_guide: str = "",
         reply_requirements: str = "",
         keywords_reaction_prompt: str = "",
+        reply_tool_args: Optional[Dict[str, Any]] = None,
     ) -> str:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sections: List[str] = [f"当前时间：{current_time}"]
         target_message_block = self._build_target_message_block(reply_message)
         if target_message_block:
             sections.append(target_message_block)
-        reply_reference_lines: List[str] = []
-        latest_thought = reply_reason.strip() or reply_guide.strip()
-        if latest_thought:
-            reply_reference_lines.append(f"你的最新想法：\n{latest_thought}")
+        duplicate_target_reply_reminder = str(
+            (reply_tool_args or {}).get(DUPLICATE_TARGET_REPLY_REMINDER_ARG) or ""
+        ).strip()
+        if duplicate_target_reply_reminder:
+            sections.append(duplicate_target_reply_reminder)
+        reply_reference_lines = self._build_reply_reference_lines(
+            reply_reason=reply_reason,
+            reply_guide=reply_guide,
+            reference_info=str((reply_tool_args or {}).get("reference_info") or ""),
+        )
         if reply_reference_lines:
             sections.append("【回复信息参考】\n" + "\n\n".join(reply_reference_lines))
         if reply_requirements.strip():
             sections.append(reply_requirements.strip())
         if keywords_reaction_prompt.strip():
             sections.append(keywords_reaction_prompt.strip())
+        attachment_prompt = self._build_reply_attachment_prompt(
+            chat_history=chat_history,
+            reply_message=reply_message,
+            reply_tool_args=reply_tool_args,
+        )
+        if attachment_prompt.strip():
+            sections.append("【额外发送内容参考】\n" + attachment_prompt.strip())
         sections.append(self._build_reply_instruction())
         return "\n\n".join(sections)
 
@@ -517,11 +695,13 @@ class BaseMaisakaReplyGenerator:
             stream_id=stream_id,
         )
         final_user_message = self._build_final_user_message(
+            chat_history=chat_history,
             reply_message=reply_message,
             reply_reason=reply_reason,
             reply_guide=str((reply_tool_args or {}).get("reply_guide") or ""),
             reply_requirements=reply_requirements,
             keywords_reaction_prompt=keywords_reaction_prompt,
+            reply_tool_args=reply_tool_args,
         )
         temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
 
@@ -542,145 +722,6 @@ class BaseMaisakaReplyGenerator:
                 max_image_num=global_config.visual.max_image_num,
             )
         return messages
-
-    @staticmethod
-    def _format_checker_new_message(message: LLMContextMessage) -> str:
-        message_id = str(getattr(message, "message_id", "") or "").strip()
-        text = str(getattr(message, "processed_plain_text", "") or "").strip()
-        if not text:
-            text = str(getattr(message, "visible_text", "") or "").strip()
-        if not text:
-            text = "[无可见文本内容]"
-        if message_id:
-            return f"- msg_id={message_id}：{text}"
-        return f"- {text}"
-
-    @classmethod
-    def _extract_checker_new_messages(
-        cls,
-        original_chat_history: List[LLMContextMessage],
-        latest_chat_history: Optional[List[LLMContextMessage]],
-    ) -> List[LLMContextMessage]:
-        if not latest_chat_history or len(latest_chat_history) <= len(original_chat_history):
-            return []
-        candidates = latest_chat_history[len(original_chat_history) :]
-        return [message for message in candidates if cls._should_keep_replyer_history_message(message)]
-
-    def _build_rich_reply_checker_user_message(
-        self,
-        *,
-        generated_reply: str,
-        new_messages: List[LLMContextMessage],
-    ) -> str:
-        sections = [
-            "你现在是 replyer 输出检查器。你拥有和 replyer 相同的聊天上下文，但最终任务不同。",
-            "你可以看到 replyer 刚刚生成、尚未发送的回复，请选择接下来要做的事。",
-            f"replyer 生成的回复：\n{generated_reply.strip()}",
-        ]
-        if new_messages:
-            rendered_new_messages = "\n".join(self._format_checker_new_message(message) for message in new_messages)
-            sections.append(
-                "replyer 生成回复之后，聊天里又出现了新消息。请把这些新消息当成最新 user message 提示：\n"
-                f"{rendered_new_messages}"
-            )
-        sections.append(
-            "你只能选择以下动作之一：\n"
-            "1. 插入表情包：使用 <emoji 情绪或描述>，例如 <emoji happy>。\n"
-            "2. 插入图片：使用 <pic msg_id=消息编号 index=图片序号>；也可以使用 "
-            "<pic media_index=tool_result:call_id:item_index index=0>。图片定位语义与 send_image 工具一致。\n"
-            "3. 插入 at：使用 <at msg_id>，表示 at 这条消息的发送者。\n"
-            "4. 分成多条消息发送：在两个组件之间使用 <split>，表示从这里切到下一条消息。\n"
-            "5. 不做改动直接发送：只输出 <send>。"
-        )
-        sections.append(
-            "如果要保留 replyer 原文本并插入元素，用 <text> 表示原文本。"
-            "例如 <text><pic msg_id=abc index=0>，或 <at abc><text><emoji 开心>。"
-            "如果希望拆成多条消息，例如先发文字再发表情，可以输出 <text><split><emoji 开心>。"
-            "不要输出解释、理由、自然语言前后缀或代码块，只输出格式化结果。"
-        )
-        return "\n\n".join(sections)
-
-    async def check_rich_reply_output(
-        self,
-        *,
-        generated_reply: str,
-        chat_history: List[LLMContextMessage],
-        latest_chat_history: Optional[List[LLMContextMessage]],
-        reply_message: Optional[SessionMessage],
-        reply_reason: str,
-        expression_habits: str = "",
-        stream_id: Optional[str] = None,
-        reply_tool_args: Optional[Dict[str, Any]] = None,
-    ) -> RichReplyCheckResult:
-        """在 replyer 生成文本后，用同上下文检查是否需要插入富回复元素。"""
-
-        filtered_history = [message for message in chat_history if self._should_keep_replyer_history_message(message)]
-        new_messages = self._extract_checker_new_messages(chat_history, latest_chat_history)
-        preview_chat_id = self._resolve_session_id(stream_id)
-        checker_model = self._llm_client_cls(
-            task_name=str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer",
-            request_type=f"{self.request_type}.checker",
-            session_id=preview_chat_id,
-        )
-
-        request_messages: List[Message] = []
-        prompt_preview = ""
-
-        async def message_factory(_client: object, model_info: Optional[ModelInfo] = None) -> List[Message]:
-            nonlocal request_messages, prompt_preview
-            built_messages = self._build_request_messages(
-                chat_history=filtered_history,
-                reply_message=reply_message,
-                reply_reason=reply_reason or "",
-                expression_habits=expression_habits,
-                stream_id=stream_id,
-                enable_visual_message=self._resolve_enable_visual_message(model_info),
-                reply_tool_args=reply_tool_args,
-            )
-            checker_user_message = self._build_rich_reply_checker_user_message(
-                generated_reply=generated_reply,
-                new_messages=new_messages,
-            )
-            if built_messages:
-                built_messages[-1] = MessageBuilder().set_role(RoleType.User).add_text_content(checker_user_message).build()
-            else:
-                built_messages.append(
-                    MessageBuilder().set_role(RoleType.User).add_text_content(checker_user_message).build()
-                )
-            request_messages = limit_latest_images_in_messages(
-                built_messages,
-                max_image_num=global_config.visual.max_image_num,
-            )
-            prompt_preview = PromptCLIVisualizer.build_prompt_dump_text(request_messages)
-            return request_messages
-
-        generation_result = await checker_model.generate_response_with_messages(
-            message_factory=message_factory,
-            options=LLMGenerationOptions(),
-        )
-        output_text = (generation_result.response or "").strip()
-        normalized_output = output_text.lower()
-        if normalized_output == "<send>" or not output_text:
-            action: Literal["send", "rewrite"] = "send"
-            output_text = "<send>"
-        else:
-            action = "rewrite"
-
-        return RichReplyCheckResult(
-            action=action,
-            output_text=output_text,
-            request_prompt=prompt_preview,
-            request_messages=PromptCLIVisualizer.build_structured_message_payload(
-                request_messages,
-                keep_base64=False,
-            ),
-            request_message_count=len(request_messages),
-            reasoning_text=generation_result.reasoning or "",
-            model_name=generation_result.model_name or "",
-            prompt_tokens=generation_result.prompt_tokens,
-            completion_tokens=generation_result.completion_tokens,
-            total_tokens=generation_result.total_tokens,
-        )
 
     async def _invoke_before_model_request_hook(
         self,
