@@ -117,6 +117,19 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             import_write_blocked_provider=self.import_task_manager.is_write_blocked,
         )
 
+        vector_pools_status = self._vector_pools_status()
+        configured_pool_mode = str(vector_pools_status.get("configured_mode", "single"))
+        effective_pool_mode = str(vector_pools_status.get("effective_mode", "single"))
+        pool_mode_label = (
+            effective_pool_mode
+            if configured_pool_mode == effective_pool_mode
+            else f"{effective_pool_mode}(configured={configured_pool_mode})"
+        )
+        logger.info(
+            "[sdk] 向量存储初始化完成: "
+            f"dim={self.embedding_dimension}, mode=SQ8, vector_pools={pool_mode_label}"
+        )
+
         self._mark_startup_self_check_deferred()
 
         self._initialized = True
