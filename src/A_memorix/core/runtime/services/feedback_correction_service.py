@@ -293,9 +293,6 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 "task": self._build_feedback_task_detail(task),
                 "result": task.get("rollback_result") if isinstance(task.get("rollback_result"), dict) else {},
             }
-        if rollback_status == "running":
-            return {"success": False, "error": "该反馈纠错任务正在回退中", "task": self._build_feedback_task_detail(task)}
-
         query_tool_id = str(task.get("query_tool_id", "") or "").strip()
         rollback_plan = task.get("rollback_plan") if isinstance(task.get("rollback_plan"), dict) else {}
         if not rollback_plan:
@@ -1145,6 +1142,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
 
         stale_paragraph_map: Dict[str, List[str]] = {}
         stale_paragraph_hashes: List[str] = []
+        previous_stale_marks: Dict[tuple[str, str], Optional[Dict[str, Any]]] = {}
         episode_rebuild_sources: List[str] = []
         profile_refresh_person_ids: List[str] = []
         rollback_plan: Dict[str, Any] = {}
@@ -1195,6 +1193,15 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
 
         applied = forget_success if decision_type == "reject" else (forget_success and ingest_success)
         if applied:
+            candidate_stale_map = self.metadata_store.get_paragraph_hashes_by_relation_hashes(relation_hashes)
+            previous_stale_marks = {
+                (paragraph_hash, relation_hash): self.metadata_store.get_paragraph_stale_relation_mark(
+                    paragraph_hash=paragraph_hash,
+                    relation_hash=relation_hash,
+                )
+                for relation_hash, paragraph_hashes in candidate_stale_map.items()
+                for paragraph_hash in paragraph_hashes
+            }
             stale_paragraph_map = self._mark_feedback_stale_paragraphs(
                 task_id=task_id,
                 query_tool_id=query_tool_id,
@@ -1294,6 +1301,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                         "source_type": "feedback_correction",
                         "source_id": str(task_id),
                         "source_operation_id": f"feedback_correction:{task_id}:{paragraph_hash}:{relation_hash}",
+                        "previous_mark": previous_stale_marks.get((paragraph_hash, relation_hash)),
                     }
                     for relation_hash, paragraph_hashes in stale_paragraph_map.items()
                     for paragraph_hash in (paragraph_hashes or [])
@@ -1363,7 +1371,10 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             return
 
         assert self.metadata_store is not None
-        self.metadata_store.mark_feedback_task_running(task_id)
+        running_task = self.metadata_store.mark_feedback_task_running(task_id)
+        if running_task is None:
+            return
+        task = running_task
 
         decision_payload: Dict[str, Any] = {}
         session_id = str(task.get("session_id", "") or "").strip()

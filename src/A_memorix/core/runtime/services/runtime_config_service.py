@@ -74,7 +74,7 @@ class MemoryRuntimeConfigService(KernelServiceBase):
             self._runtime_bundle = runtime_bundle
             self.retriever = runtime_bundle.retriever
             self.threshold_filter = runtime_bundle.threshold_filter
-            self.sparse_index = runtime_bundle.sparse_index or self.sparse_index
+            self.sparse_index = runtime_bundle.sparse_index
             self._refresh_runtime_dependents(preserve_managers=True)
             self._apply_runtime_sparse_mode()
             return {

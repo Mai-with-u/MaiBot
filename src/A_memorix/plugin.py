@@ -31,6 +31,7 @@ class AMemorixPlugin(MaiBotPlugin):
         self._plugin_root = repo_root()
         self._plugin_config: Dict[str, Any] = {}
         self._kernel: Optional[SDKMemoryKernel] = None
+        self._kernel_shutdown_error = ""
 
     def set_plugin_config(self, config: Dict[str, Any]) -> None:
         """更新下一次内核初始化使用的配置，不在同步入口关闭活动内核。"""
@@ -40,8 +41,14 @@ class AMemorixPlugin(MaiBotPlugin):
         """等待内核后台任务退出并释放资源，成功后再清除实例引用。"""
         if self._kernel is None:
             return
-        await self._kernel.shutdown()
-        self._kernel = None
+        try:
+            await self._kernel.shutdown()
+        except Exception as exc:
+            self._kernel_shutdown_error = str(exc)
+            raise
+        else:
+            self._kernel = None
+            self._kernel_shutdown_error = ""
 
     async def on_load(self):
         await self._get_kernel()
@@ -60,9 +67,14 @@ class AMemorixPlugin(MaiBotPlugin):
             await self._shutdown_kernel()
 
     async def _get_kernel(self) -> SDKMemoryKernel:
+        if self._kernel_shutdown_error:
+            raise RuntimeError(
+                f"A_Memorix 上次停机未完成，拒绝复用旧内核: {self._kernel_shutdown_error}"
+            )
         if self._kernel is None:
-            self._kernel = SDKMemoryKernel(plugin_root=self._plugin_root, config=self._plugin_config)
-            await self._kernel.initialize()
+            kernel = SDKMemoryKernel(plugin_root=self._plugin_root, config=self._plugin_config)
+            await kernel.initialize()
+            self._kernel = kernel
         return self._kernel
 
     async def _dispatch_admin_tool(self, method_name: str, action: str, **kwargs):

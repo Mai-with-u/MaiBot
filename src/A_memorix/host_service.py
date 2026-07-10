@@ -85,6 +85,8 @@ class AMemorixHostService:
         self._startup_error_stage = ""
         self._startup_started_at: Optional[float] = None
         self._startup_finished_at: Optional[float] = None
+        self._startup_queue_pending_count = 0
+        self._startup_queue_cache_loaded = False
         self._config_cache: Dict[str, Any] | None = None
         self._reload_callback_registered = False
 
@@ -238,42 +240,8 @@ class AMemorixHostService:
                 else {},
             )
 
-        if component_name == "ingest_summary":
-            return await kernel.ingest_summary(
-                external_id=str(payload.get("external_id", "") or ""),
-                chat_id=str(payload.get("chat_id", "") or ""),
-                text=str(payload.get("text", "") or ""),
-                participants=list(payload.get("participants") or []),
-                time_start=payload.get("time_start"),
-                time_end=payload.get("time_end"),
-                tags=list(payload.get("tags") or []),
-                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
-                respect_filter=bool(payload.get("respect_filter", True)),
-                user_id=str(payload.get("user_id", "") or "").strip(),
-                group_id=str(payload.get("group_id", "") or "").strip(),
-            )
-
-        if component_name == "ingest_text":
-            relations = payload.get("relations") if isinstance(payload.get("relations"), list) else []
-            entities = payload.get("entities") if isinstance(payload.get("entities"), list) else []
-            return await kernel.ingest_text(
-                external_id=str(payload.get("external_id", "") or ""),
-                source_type=str(payload.get("source_type", "") or ""),
-                text=str(payload.get("text", "") or ""),
-                chat_id=str(payload.get("chat_id", "") or ""),
-                person_ids=list(payload.get("person_ids") or []),
-                participants=list(payload.get("participants") or []),
-                timestamp=payload.get("timestamp"),
-                time_start=payload.get("time_start"),
-                time_end=payload.get("time_end"),
-                tags=list(payload.get("tags") or []),
-                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
-                entities=entities,
-                relations=relations,
-                respect_filter=bool(payload.get("respect_filter", True)),
-                user_id=str(payload.get("user_id", "") or "").strip(),
-                group_id=str(payload.get("group_id", "") or "").strip(),
-            )
+        if component_name in {"ingest_summary", "ingest_text"}:
+            return await self._dispatch_ingest_write(kernel, component_name, payload)
 
         if component_name == "get_person_profile":
             return await kernel.get_person_profile(
@@ -325,6 +293,7 @@ class AMemorixHostService:
             return self._kernel
 
     async def _ensure_startup_task(self) -> None:
+        await self._ensure_startup_queue_cache()
         async with self._lock:
             if self._kernel is not None and self._runtime_state == "ready":
                 return
@@ -439,15 +408,18 @@ class AMemorixHostService:
             handle.flush()
             os.fsync(handle.fileno())
 
+    def _append_jsonl_sync(self, path: Path, payload: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        self._ensure_jsonl_append_boundary(path)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
     async def _append_jsonl(self, path: Path, payload: Dict[str, Any]) -> None:
         async with self._queue_lock:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-            self._ensure_jsonl_append_boundary(path)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
+            await asyncio.to_thread(self._append_jsonl_sync, path, payload)
 
     def _read_jsonl(self, path: Path) -> list[Dict[str, Any]]:
         if not path.exists():
@@ -487,8 +459,17 @@ class AMemorixHostService:
         records.sort(key=lambda item: float(item.get("created_at", 0.0) or 0.0))
         return records
 
+    async def _ensure_startup_queue_cache(self) -> None:
+        if self._startup_queue_cache_loaded:
+            return
+        async with self._queue_lock:
+            if self._startup_queue_cache_loaded:
+                return
+            records = await asyncio.to_thread(self._startup_queue_pending_records)
+            self._startup_queue_pending_count = len(records)
+            self._startup_queue_cache_loaded = True
+
     def _startup_status_payload(self) -> Dict[str, Any]:
-        pending_count = len(self._startup_queue_pending_records())
         return {
             "enabled": self.is_enabled(),
             "runtime_ready": self._runtime_state == "ready",
@@ -499,7 +480,7 @@ class AMemorixHostService:
             "error": self._startup_error,
             "startup_started_at": self._startup_started_at,
             "startup_finished_at": self._startup_finished_at,
-            "startup_queue_pending": pending_count,
+            "startup_queue_pending": self._startup_queue_pending_count,
             "data_dir": str(self._runtime_data_dir()),
         }
 
@@ -511,6 +492,7 @@ class AMemorixHostService:
             "created_at": time.time(),
         }
         await self._append_jsonl(self._startup_queue_path(), record)
+        self._startup_queue_pending_count += 1
         return {
             "success": True,
             "queued": True,
@@ -559,7 +541,7 @@ class AMemorixHostService:
             return {**base, "queued": False}
         return {**base, "success": False, "error": message}
 
-    async def _dispatch_queued_write(self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]) -> Any:
+    async def _dispatch_ingest_write(self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]) -> Any:
         if component_name == "ingest_summary":
             return await kernel.ingest_summary(
                 external_id=str(payload.get("external_id", "") or ""),
@@ -596,7 +578,9 @@ class AMemorixHostService:
         raise ValueError(f"不支持的启动队列写入类型: {component_name}")
 
     async def _replay_startup_write_queue(self, kernel: SDKMemoryKernel) -> None:
-        records = self._startup_queue_pending_records()
+        records = await asyncio.to_thread(self._startup_queue_pending_records)
+        self._startup_queue_pending_count = len(records)
+        self._startup_queue_cache_loaded = True
         if not records:
             return
         logger.info(f"A_Memorix 开始回放启动写入队列: pending={len(records)}")
@@ -605,7 +589,7 @@ class AMemorixHostService:
             component_name = str(record.get("component_name", "") or "").strip()
             payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
             try:
-                result = await self._dispatch_queued_write(kernel, component_name, payload)
+                result = await self._dispatch_ingest_write(kernel, component_name, payload)
                 if isinstance(result, dict) and result.get("success") is False:
                     raise RuntimeError(str(result.get("detail") or result.get("error") or result))
                 await self._append_jsonl(
@@ -617,6 +601,7 @@ class AMemorixHostService:
                         "result": result if isinstance(result, dict) else {},
                     },
                 )
+                self._startup_queue_pending_count = max(0, self._startup_queue_pending_count - 1)
             except Exception as exc:
                 await self._append_jsonl(
                     self._startup_queue_failed_path(),

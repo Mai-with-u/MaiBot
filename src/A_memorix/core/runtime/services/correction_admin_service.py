@@ -205,6 +205,12 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             if not fuzzy_modify_cfg_auto_execute_enabled() or confidence < fuzzy_modify_cfg_confirm_threshold():
                 return {"success": False, "error": "需要用户确认后才能执行", "requires_confirmation": True}
 
+        claimed_plan = self.metadata_store.claim_fuzzy_modify_plan(token)
+        if claimed_plan is None:
+            latest = self.metadata_store.get_fuzzy_modify_plan(token)
+            return {"success": False, "error": "修改计划正在执行或状态已变化", "plan": latest}
+        plan_record = claimed_plan
+
         previous_execution = plan_record.get("execution") if isinstance(plan_record.get("execution"), dict) else {}
         attempt_started_at = time.time()
         executing_payload = {
@@ -413,7 +419,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
 
         if relation_hashes:
             self.metadata_store.mark_relations_inactive(relation_hashes, inactive_since=time.time())
-        if restored_targets:
+        if relation_hashes or restored_targets:
             self._rebuild_graph_from_metadata()
             self._persist()
         rollback_success = not restore_failures
@@ -573,7 +579,11 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             for item in candidates
             if str(item.get("hash", "") or "").strip()
         }
-        confidence = min(1.0, max(0.0, float(payload.get("confidence", 0.0) or 0.0)))
+        try:
+            confidence = float(payload.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = min(1.0, max(0.0, confidence))
         max_targets = fuzzy_modify_cfg_max_targets()
         operations: List[Dict[str, Any]] = []
         for raw in payload.get("operations") or []:
@@ -677,12 +687,17 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             obj = str(row.get("object", "") or "").strip()
             if not (subject and predicate and obj):
                 continue
+            raw_confidence = row.get("confidence", 1.0)
+            try:
+                confidence = float(1.0 if raw_confidence is None else raw_confidence)
+            except (TypeError, ValueError):
+                confidence = 1.0
             relations.append(
                 {
                     "subject": subject,
                     "predicate": predicate,
                     "object": obj,
-                    "confidence": min(1.0, max(0.0, float(row.get("confidence", 1.0) or 1.0))),
+                    "confidence": min(1.0, max(0.0, confidence)),
                     "metadata": row.get("metadata") if isinstance(row.get("metadata"), dict) else {},
                 }
             )

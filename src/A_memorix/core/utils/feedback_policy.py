@@ -73,7 +73,7 @@ def feedback_cfg_batch_size() -> int:
 
 
 def feedback_cfg_auto_apply_threshold() -> float:
-    value = float(getattr(_integration_config(), "feedback_correction_auto_apply_threshold", 0.85) or 0.85)
+    value = float(getattr(_integration_config(), "feedback_correction_auto_apply_threshold", 0.85))
     return min(1.0, max(0.0, value))
 
 
@@ -134,7 +134,7 @@ def fuzzy_modify_cfg_auto_execute_enabled() -> bool:
 
 
 def fuzzy_modify_cfg_confirm_threshold() -> float:
-    return float(getattr(_integration_config(), "fuzzy_modify_confirm_threshold", 0.85) or 0.85)
+    return float(getattr(_integration_config(), "fuzzy_modify_confirm_threshold", 0.85))
 
 
 def fuzzy_modify_cfg_candidate_limit() -> int:
