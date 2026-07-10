@@ -7,15 +7,19 @@
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
+from src.common.logger import get_logger
+
 import os
 
 try:
     import ahocorasick_rs  # type: ignore
 
     HAS_AHOCORASICK_RS = True
-except Exception:
+except ImportError:
     ahocorasick_rs = None
     HAS_AHOCORASICK_RS = False
+
+logger = get_logger("A_Memorix.Matcher")
 
 
 class AhoCorasick:
@@ -45,7 +49,7 @@ class AhoCorasick:
             try:
                 return max(1, int(raw_value))
             except ValueError:
-                pass
+                logger.warning(f"忽略无效的原生匹配阈值: {raw_value}")
         return 3000
 
     def add_pattern(self, pattern: str):
@@ -133,8 +137,9 @@ class AhoCorasick:
                     (int(end) - 1, self._native_patterns[int(pattern_index)])
                     for pattern_index, _start, end in matches
                 ]
-            except Exception:
-                pass
+            except (IndexError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning(f"原生匹配器查询失败，切换到 Python 实现: {exc}")
+                self._native_matcher = None
 
         self._build_python_matcher()
         state = 0
@@ -160,8 +165,9 @@ class AhoCorasick:
                 for pattern in self._native_matcher.find_matches_as_strings(text):  # type: ignore[attr-defined]
                     stats[str(pattern)] = stats.get(str(pattern), 0) + 1
                 return stats
-            except Exception:
-                pass
+            except (IndexError, RuntimeError, TypeError, ValueError) as exc:
+                logger.warning(f"原生匹配器统计失败，切换到 Python 实现: {exc}")
+                self._native_matcher = None
 
         results = self.search(text)
         stats = {}

@@ -738,10 +738,7 @@ class SummaryImporter:
                     )
                     # 写入图数据库（写入 relation_hashes，确保后续可按关系精确修剪）
                     self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                    try:
-                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                    except Exception:
-                        pass
+                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
         logger.info(f"总结导入完成: hash={hash_value[:8]}")
         return hash_value

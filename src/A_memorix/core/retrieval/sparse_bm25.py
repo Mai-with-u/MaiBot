@@ -658,12 +658,12 @@ class SparseBM25Index:
             try:
                 if self.config.shrink_memory_on_unload:
                     self.metadata_store.shrink_memory(conn=self._conn)
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning(f"SparseBM25Index 释放 SQLite 缓存失败: {exc}")
             try:
                 self._conn.close()
-            except Exception:
-                pass
+            except sqlite3.Error as exc:
+                logger.warning(f"SparseBM25Index 关闭连接失败: {exc}")
         self._conn = None
         self._loaded = False
         logger.info("SparseBM25Index unloaded")

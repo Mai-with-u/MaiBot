@@ -297,10 +297,7 @@ class LPMMConverter:
                     continue
                 imported_hashes.add(rel_hash)
                 self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
-                try:
-                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                except Exception:
-                    pass
+                self.metadata_store.set_relation_vector_state(rel_hash, "none")
                 imported += 1
 
         return imported

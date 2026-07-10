@@ -211,13 +211,13 @@ def _guess_vector_dimension(config_doc: Dict[str, Any], vectors_dir: Path) -> in
             dim = int(meta.get("dimension", 0))
             if dim > 0:
                 return dim
-        except Exception:
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
     try:
         dim_cfg = int(_get_nested(config_doc, ("embedding", "dimension"), 1024))
         if dim_cfg > 0:
             return dim_cfg
-    except Exception:
+    except (TypeError, ValueError):
         pass
     return 1024
 
@@ -779,8 +779,8 @@ def _verify_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
     finally:
         try:
             store.close()
-        except Exception:
-            pass
+        except Exception as close_exc:
+            checks.append(CheckItem("CP-09", "warning", f"metadata close failed: {close_exc}"))
 
     has_error = any(c.level == "error" for c in checks)
     return {

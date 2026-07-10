@@ -1464,10 +1464,7 @@ class GraphStore:
         
         # 如果都在增量模式，确保是LIL
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
-             try:
-                 self._adjacency = self._adjacency.tolil()
-             except Exception:
-                 pass
+            self._adjacency = self._adjacency.tolil()
 
     @property
     def num_nodes(self) -> int:

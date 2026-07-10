@@ -102,8 +102,8 @@ def _disable_unavailable_gemini_provider() -> None:
     try:
         from google import genai  # type: ignore  # noqa: F401
         return
-    except Exception:
-        pass
+    except ImportError:
+        logger.info("未安装 google-genai，迁移时禁用 Gemini provider")
 
     from src.config.config import model_config as loaded_model_config
 
@@ -288,7 +288,7 @@ def _safe_float(value: Any, default: float) -> float:
         return value.timestamp()
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         pass
 
     text = str(value or "").strip()
@@ -1250,16 +1250,16 @@ class MigrationRunner:
                 if not isinstance(parsed, list):
                     self._warn_list_field_coerced(row_id, field_name, f"JSON 类型为 {type(parsed).__name__}")
                 return self._normalize_list_field_items(parsed)
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.debug(f"列表字段不是 JSON，继续兼容解析: row={row_id}, field={field_name}")
 
             try:
                 parsed_literal = ast.literal_eval(text)
                 if isinstance(parsed_literal, (list, tuple, set, dict)):
                     self._warn_list_field_coerced(row_id, field_name, "使用 Python literal 兼容解析")
                     return self._normalize_list_field_items(parsed_literal)
-            except Exception:
-                pass
+            except (SyntaxError, ValueError):
+                logger.debug(f"列表字段不是 Python literal，继续分隔符解析: row={row_id}, field={field_name}")
 
             separators = [",", "，", "、", ";", "；", "\n"]
             for sep in separators:
@@ -1881,7 +1881,7 @@ class MigrationRunner:
             if self.metadata_store is not None:
                 self.metadata_store.close()
         except Exception:
-            pass
+            logger.exception("关闭 A_Memorix 迁移目标存储失败")
         self.source_db.close()
 
 

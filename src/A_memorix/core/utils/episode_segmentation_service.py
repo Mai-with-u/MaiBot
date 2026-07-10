@@ -124,8 +124,8 @@ class EpisodeSegmentationService:
             data = json.loads(raw)
             if isinstance(data, dict):
                 return data
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            logger.debug("Episode 分段响应不是完整 JSON，继续尝试提取对象片段")
 
         start = raw.find("{")
         end = raw.rfind("}")

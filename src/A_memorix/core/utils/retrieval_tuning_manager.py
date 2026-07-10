@@ -150,14 +150,14 @@ def _safe_json_loads(text: str) -> Optional[Any]:
                 break
     try:
         return json.loads(raw)
-    except Exception:
-        pass
+    except json.JSONDecodeError:
+        logger.debug("检索调优响应不是完整 JSON，继续提取对象片段")
     s = raw.find("{")
     e = raw.rfind("}")
     if s >= 0 and e > s:
         try:
             return json.loads(raw[s : e + 1])
-        except Exception:
+        except json.JSONDecodeError:
             return None
     return None
 

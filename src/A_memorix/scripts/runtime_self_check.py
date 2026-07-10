@@ -128,8 +128,8 @@ async def _main_async(args: argparse.Namespace) -> int:
         if plugin.metadata_store is not None:
             try:
                 plugin.metadata_store.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"warning: metadata store close failed: {exc}", file=sys.stderr)
         if temp_dir_ctx is not None:
             temp_dir_ctx.cleanup()
 

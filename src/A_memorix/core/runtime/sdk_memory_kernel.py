@@ -74,7 +74,7 @@ from ..utils.runtime_self_check import run_embedding_runtime_self_check  # noqa:
 from ..utils.search_execution_service import SearchExecutionRequest, SearchExecutionResult, SearchExecutionService  # noqa: F401
 from ..utils.summary_importer import SummaryImporter
 from ..utils.web_import_manager import ImportTaskManager
-from .kernel_compat import install_kernel_compat_methods
+from .kernel_compat import KernelCompatibilityMixin
 from .models import KernelSearchRequest, _NormalizedSearchTimeWindow
 from .runtime_facade import KernelRuntimeFacade
 from .search_runtime_initializer import SearchRuntimeBundle, build_search_runtime  # noqa: F401
@@ -85,7 +85,7 @@ DUAL_VECTOR_AUTO_MIGRATION_INITIAL_DELAY_SECONDS = 5.0
 DUAL_VECTOR_AUTO_MIGRATION_LOCK_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0)
 
 
-class SDKMemoryKernel:
+class SDKMemoryKernel(KernelCompatibilityMixin):
     def __init__(self, *, plugin_root: Path, config: Optional[Dict[str, Any]] = None) -> None:
         self.plugin_root = Path(plugin_root).resolve()
         self.config = config or {}
@@ -1692,5 +1692,3 @@ class SDKMemoryKernel:
             refresh=refresh,
             limit=limit,
         )
-
-install_kernel_compat_methods(SDKMemoryKernel)

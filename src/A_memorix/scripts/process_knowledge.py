@@ -645,12 +645,9 @@ Chat paragraph:
         self.graph_store.add_nodes([entity_name])
         try:
             emb = await self.embedding_manager.encode(entity_name)
-            try:
-                self.vector_store.add(emb.reshape(1, -1), [hash_value])
-            except ValueError:
-                pass
-        except Exception:
-            pass
+            self.vector_store.add(emb.reshape(1, -1), [hash_value])
+        except (RuntimeError, ValueError) as exc:
+            logger.warning(f"实体向量写入失败: entity={entity_name}, hash={hash_value}, error={exc}")
         return hash_value
 
     async def import_json_data(self, data: Dict, filename: str = "script_import", progress_callback=None):
@@ -761,10 +758,7 @@ Chat paragraph:
                             metadata=rel_meta if isinstance(rel_meta, dict) else {},
                         )
                         self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                        try:
-                            self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                        except Exception:
-                            pass
+                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
                 if progress_callback:
                     progress_callback(1)
@@ -815,10 +809,7 @@ Chat paragraph:
                         metadata=rel_meta if isinstance(rel_meta, dict) else {},
                     )
                     self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
-                    try:
-                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                    except Exception:
-                        pass
+                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
         if warning_count > 0:
             logger.warning(f"脚本导入完成，跳过异常项 {warning_count} 条")

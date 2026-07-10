@@ -301,8 +301,6 @@ async def ensure_runtime_self_check(
         else plugin_or_config.get("graph_vector_store"),
         sample_text=sample_text,
     )
-    try:
+    if not isinstance(plugin_or_config, dict):
         plugin_or_config._runtime_self_check_report = report
-    except Exception:
-        pass
     return report
