@@ -25,6 +25,8 @@ logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryIngestService(KernelServiceBase):
+    """协调段落元数据、向量、实体关系和后续派生任务的写入。"""
+
     async def _write_paragraph_vector_or_enqueue(
         self,
         *,
@@ -32,6 +34,11 @@ class MemoryIngestService(KernelServiceBase):
         content: str,
         context: str = "",
     ) -> Dict[str, Any]:
+        """写入段落向量，并按配置决定失败时是否进入回填队列。
+
+        ``success`` 表示主写入流程可以继续，不代表向量已经落库；调用方必须结合
+        ``vector_written`` 和 ``queued`` 判断当前向量状态。
+        """
         token = str(paragraph_hash or "").strip()
         text = str(content or "").strip()
         if not token or not text:
@@ -121,6 +128,11 @@ class MemoryIngestService(KernelServiceBase):
         user_id: str = "",
         group_id: str = "",
     ) -> Dict[str, Any]:
+        """写入已有摘要，或在正文为空时先从聊天流生成摘要。
+
+        聊天过滤在初始化前执行。已有正文最终复用 ``ingest_text()``，保证摘要与
+        普通文本使用相同的幂等、向量写入和派生任务语义。
+        """
         external_token = str(external_id or "").strip() or compute_hash(f"chat_summary:{chat_id}:{text}")
         if self._is_chat_filtered(
             respect_filter=respect_filter,
@@ -188,6 +200,12 @@ class MemoryIngestService(KernelServiceBase):
         user_id: str = "",
         group_id: str = "",
     ) -> Dict[str, Any]:
+        """按 ``external_id`` 幂等写入一条文本记忆及其派生数据。
+
+        写入顺序为段落元数据、段落向量、实体与关系、外部幂等映射，随后再入队
+        Episode 和人物画像任务。SQLite、向量库与图存储不构成单一事务；向量失败
+        仅在配置允许时转入回填队列，其余异常会直接暴露给调用方。
+        """
         content = normalize_text(text)
         external_token = str(external_id or "").strip() or compute_hash(f"{source_type}:{chat_id}:{content}")
         if self._is_chat_filtered(
@@ -296,6 +314,11 @@ class MemoryIngestService(KernelServiceBase):
         return payload
 
     async def process_episode_pending_batch(self, *, limit: int = 20, max_retry: int = 3) -> Dict[str, Any]:
+        """领取一批 Episode 待处理段落，并统一回写行级与来源级状态。
+
+        每条记录必须明确进入完成或失败状态；未返回结果的记录会记为失败，避免
+        ``running`` 状态长期残留。批次结束后才持久化派生存储。
+        """
         await self.initialize()
         assert self.metadata_store is not None
         assert self.episode_service is not None

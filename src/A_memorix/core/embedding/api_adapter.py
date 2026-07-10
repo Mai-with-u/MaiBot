@@ -116,7 +116,7 @@ class EmbeddingAPIAdapter:
             return ""
 
     def get_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Dict[str, Any]:
-        """Return a compact fingerprint for the vector space used by this adapter."""
+        """返回当前适配器所用向量空间的精简指纹。"""
         effective_dimension = max(1, int(dimension or self.get_embedding_dimension()))
         model_token = str(self._last_success_model_name or "").strip()
         provider_token = str(self._last_success_provider_name or "").strip()

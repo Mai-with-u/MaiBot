@@ -1,4 +1,4 @@
-"""Episode hybrid retrieval service."""
+"""Episode 混合检索服务。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ logger = get_logger("A_Memorix.EpisodeRetrievalService")
 
 
 class EpisodeRetrievalService:
-    """Hybrid episode retrieval backed by lexical rows and evidence projection."""
+    """结合词法记录与证据投影的 Episode 混合检索。"""
 
     _RRF_K = 60.0
     _BRANCH_WEIGHTS = {

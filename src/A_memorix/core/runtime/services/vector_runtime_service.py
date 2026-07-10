@@ -552,6 +552,13 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         include_relations: Optional[bool] = None,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
+        """在持有向量重建锁时重建全部有效对象的向量。
+
+        单池模式会原地清理并重建；双池模式先写入独立构建目录，只有编码无失败且
+        向量数量校验通过后才切换目录和 ready manifest。重建期间 embedding 保持
+        降级状态，完成后重新组装检索运行时并通过自检决定是否解除持久化阻断。
+        ``dry_run`` 只统计目标数量，不修改运行时和磁盘状态。
+        """
         if self.metadata_store is None or self.vector_store is None or self.embedding_manager is None:
             return {"success": False, "error": "runtime_components_missing"}
 

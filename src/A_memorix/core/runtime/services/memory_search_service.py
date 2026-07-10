@@ -14,7 +14,15 @@ from .base import KernelServiceBase
 
 
 class MemorySearchService(KernelServiceBase):
+    """统一 SDK 检索入口，并在返回前收敛聊天范围和可见性规则。"""
+
     async def search_memory(self, request: KernelSearchRequest) -> Dict[str, Any]:
+        """执行 search、time、hybrid、episode 或 aggregate 检索。
+
+        共享聊天流只扩大候选召回范围，最终结果仍会经过人物、删除状态、聊天范围
+        和检索类型过滤。普通检索交给 ``SearchExecutionService``，Episode 与聚合
+        模式保留各自的执行器，最终统一转换为 SDK 命中结构。
+        """
         if self._is_chat_filtered(
             respect_filter=request.respect_filter,
             stream_id=request.chat_id,

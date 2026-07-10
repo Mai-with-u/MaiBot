@@ -53,8 +53,8 @@ class RetrievalResult:
     hash_value: str
     content: str
     score: float
-    result_type: str  # "paragraph" or "relation"
-    source: str  # "paragraph_search", "relation_search", "fusion"
+    result_type: str  # 结果类型："paragraph" 或 "relation"
+    source: str  # 来源阶段："paragraph_search"、"relation_search" 或 "fusion"
     metadata: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
@@ -243,7 +243,7 @@ class VectorPoolsConfig:
 class FusionConfig:
     """融合配置。"""
 
-    method: str = "weighted_rrf"  # weighted_rrf | alpha_legacy
+    method: str = "weighted_rrf"  # 融合方法：weighted_rrf 或 alpha_legacy
     rrf_k: int = 60
     vector_weight: float = 0.7
     bm25_weight: float = 0.3
@@ -393,7 +393,7 @@ class DualPathRetriever:
             results = await self._retrieve_paragraphs_only(query, top_k, temporal=temporal)
         elif strategy == RetrievalStrategy.REL_ONLY:
             results = await self._retrieve_relations_only(query, top_k, temporal=temporal)
-        else:  # DUAL_PATH
+        else:  # 双路检索（DUAL_PATH）
             results = await self._retrieve_dual_path(
                 query,
                 top_k,
@@ -509,7 +509,7 @@ class DualPathRetriever:
             return True
         if mode == "fallback_only":
             return True
-        # auto
+        # 自动模式（auto）
         if not embedding_ok:
             return True
         if not vector_results:
@@ -890,7 +890,7 @@ class DualPathRetriever:
         sparse_results: List[RetrievalResult],
         graph_results: List[RetrievalResult],
     ) -> List[RetrievalResult]:
-        """Graph-aware relation fusion with semantic + graph + evidence scoring."""
+        """融合语义、图结构和证据评分的图感知关系结果。"""
         vector_norm = self._build_minmax_score_map(vector_results)
         sparse_norm = self._build_minmax_score_map(sparse_results)
         graph_score_map = {
@@ -2057,7 +2057,7 @@ class DualPathRetriever:
                     seen_paragraphs.add(hash_val)
                     seen_items.add(hash_val)
                     deduplicated_results.append(result)
-            else:  # relation
+            else:  # 关系结果（relation）
                 if result.hash_value in preserved_relation_hashes:
                     seen_items.add(result.hash_value)
                     deduplicated_results.append(result)

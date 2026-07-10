@@ -104,7 +104,7 @@ def _scalar_quantize_int8(vector: np.ndarray) -> np.ndarray:
     normalized = (vector - min_val) / (max_val - min_val) * 255
     
     # 映射到 [-128, 127] 并转换为 int8
-    # np.round might return float, minus 128 then cast
+    # np.round 仍返回浮点数，因此先减 128 再转换类型。
     quantized = np.round(normalized - 128.0).astype(np.int8)
 
     # 存储归一化参数（用于反量化）
@@ -136,7 +136,7 @@ def _scalar_dequantize_int8(quantized: np.ndarray) -> np.ndarray:
         return (quantized.astype(np.float32) + 128.0) / 255.0 * 2.0 - 1.0
 
     # 尝试查找参数 (这里只是演示逻辑，实际应从存储中读取)
-    # return (quantized.astype(np.float32) + 128.0) / 255.0 * (max - min) + min
+    # 完整恢复公式：return (quantized.astype(np.float32) + 128.0) / 255.0 * (max - min) + min
     return (quantized.astype(np.float32) + 128.0) / 255.0
 
 

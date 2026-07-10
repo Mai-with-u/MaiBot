@@ -2873,7 +2873,7 @@ class MetadataStore(
         self._conn.commit()
 
     # =========================================================================
-    # V5 Memory System Methods
+    # V5 记忆系统方法
     # =========================================================================
 
     def get_relation_status_batch(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -3187,7 +3187,7 @@ class MetadataStore(
         now = datetime.now().timestamp()
 
         cursor = self._conn.cursor()
-        # Batch update? chunking
+        # 批量更新，数据量增大时可进一步分块。
         chunk_size = 500
         for i in range(0, len(hashes), chunk_size):
             chunk = hashes[i:i+chunk_size]
@@ -3321,7 +3321,7 @@ class MetadataStore(
         self.close()
 
     # =========================================================================
-    # V5 Soft Delete & Garbage Collection
+    # V5 软删除与垃圾回收
     # =========================================================================
 
     def get_entity_gc_candidates(self, isolated_hashes: List[str], retention_seconds: float) -> List[str]:
@@ -3376,7 +3376,7 @@ class MetadataStore(
             # 但 paragraph_entities 表没有 is_deleted 字段(它是关联表). 我们检查关联是否存在。
             # 如果 paragraph 本身 soft deleted, 它的引用应该失效吗？
             # 策略: 只有当 paragraph 也是 active 时，引用才有效。
-            # JOIN paragraphs p ON pe.paragraph_hash = p.hash WHERE p.is_deleted = 0
+            # 有效引用条件：JOIN paragraphs p ON pe.paragraph_hash = p.hash WHERE p.is_deleted = 0
 
             query = f"""
                 SELECT e.hash FROM entities e
@@ -3683,7 +3683,7 @@ class MetadataStore(
 
 
     # =========================================================================
-    # Episode MVP
+    # Episode 最小可用实现（MVP）
     # =========================================================================
 
 

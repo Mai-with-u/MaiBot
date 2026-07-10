@@ -86,6 +86,12 @@ DUAL_VECTOR_AUTO_MIGRATION_LOCK_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0)
 
 
 class SDKMemoryKernel(KernelCompatibilityMixin):
+    """A_Memorix 对宿主暴露的统一运行时入口。
+
+    内核持有存储、检索和后台任务的共享状态，具体业务由各运行时服务完成。
+    活动内核必须通过 ``initialize()`` 和 ``shutdown()`` 管理完整生命周期。
+    """
+
     def __init__(self, *, plugin_root: Path, config: Optional[Dict[str, Any]] = None) -> None:
         self.plugin_root = Path(plugin_root).resolve()
         self.config = config or {}

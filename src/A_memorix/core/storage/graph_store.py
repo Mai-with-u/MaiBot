@@ -349,7 +349,7 @@ class GraphStore:
                  
                  self._total_edges_added += len(edges)
                  
-                 # V5: Update edge hash map
+                 # V5：更新边哈希映射
                  if relation_hashes:
                      for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
                          if r_hash:
@@ -361,7 +361,7 @@ class GraphStore:
                  return len(edges)
              except Exception as e:
                  logger.warning(f"LIL 增量更新失败，回退到通用方法: {e}")
-                 # Fallback to general method below
+                 # 失败时回退到下方通用方法
 
         # 通用方法 (构建 COO 然后合并)
         # 构建边的三元组
@@ -522,7 +522,7 @@ class GraphStore:
             n = len(self._nodes)
             if self.matrix_format == "csr":
                 self._adjacency = csr_matrix((new_data, (new_rows, new_cols)), shape=(n, n))
-            else: # csc
+            else: # 转换为 CSC 格式
                 self._adjacency = csc_matrix((new_data, (new_rows, new_cols)), shape=(n, n))
 
         # 重建关系哈希映射，移除涉及已删除节点的记录并重映射索引。
@@ -1005,7 +1005,7 @@ class GraphStore:
         # 幂迭代法
         p_orig = p.copy()
         for i in range(max_iter):
-            # p_new = alpha * M * p + (1-alpha) * personalization
+            # PageRank 更新公式：p_new = alpha * M * p + (1-alpha) * personalization
             p_new = alpha * (M @ p) + (1 - alpha) * p_orig
             
             # 处理因为悬挂节点导致的概率流失
@@ -1088,7 +1088,7 @@ class GraphStore:
 
 
     # =========================================================================
-    # V5 Memory System Methods (Graph Level)
+    # V5 记忆系统方法（图存储层）
     # =========================================================================
 
     def decay(self, factor: float, min_active_weight: float = 0.0) -> None:
@@ -1108,7 +1108,7 @@ class GraphStore:
         self._adjacency *= factor
         
         # 如果需要处理极小值 (可选，防止下溢，但通常浮点数足够小)
-        # if min_active_weight > 0:
+        # 预留条件：if min_active_weight > 0
         #    ... (复杂操作，暂不需要，由 prune 逻辑处理)
             
         self._adjacency_dirty = True

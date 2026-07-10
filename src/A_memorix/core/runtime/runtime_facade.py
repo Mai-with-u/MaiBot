@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class KernelRuntimeFacade:
+    """向导入、调优等协作组件暴露受控的内核运行时能力。"""
+
     def __init__(self, kernel: SDKMemoryKernel) -> None:
         self._kernel = kernel
         self.config = kernel.config

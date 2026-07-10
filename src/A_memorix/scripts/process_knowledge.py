@@ -62,7 +62,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     sys.exit(0)
@@ -196,7 +196,7 @@ class AutoImporter:
         return True
 
     async def _init_stores(self):
-        # ... (Same as original)
+        # 使用与主运行时一致的存储初始化流程。
         self.embedding_manager = create_embedding_api_adapter(
             batch_size=self.plugin_config.get("embedding", {}).get("batch_size", 32),
             default_dimension=self.plugin_config.get("embedding", {}).get("dimension", 384),
@@ -210,7 +210,7 @@ class AutoImporter:
             dim = self.embedding_manager.default_dimension
             
         q_type_str = str(self.plugin_config.get("embedding", {}).get("quantization_type", "int8") or "int8").lower()
-        # Need to access QuantizationType from storage_module if not imported globally
+        # QuantizationType 通过 storage_module 延迟获取，避免脚本启动阶段提前导入。
         QuantizationType = storage_module.QuantizationType
         if q_type_str != "int8":
             raise ValueError(
@@ -366,7 +366,7 @@ Chat paragraph:
         return normalized
 
     def _determine_strategy(self, filename: str, content: str) -> BaseStrategy:
-        """Layer 1: Global Strategy Routing"""
+        """第一层：全局导入策略路由。"""
         strategy = select_import_strategy(
             content,
             override=self.target_type,
@@ -384,8 +384,8 @@ Chat paragraph:
         return NarrativeStrategy(filename)
 
     def _chunk_rescue(self, chunk: ProcessedChunk, filename: str) -> Optional[BaseStrategy]:
-        """Layer 2: Chunk-level rescue strategies"""
-        # If we are already in Quote strategy, no need to rescue
+        """第二层：分块级策略修正。"""
+        # Quote 分块已经满足目标格式，不再重复修正。
         if chunk.type == StratKnowledgeType.QUOTE:
             return None
 
@@ -434,43 +434,38 @@ Chat paragraph:
                 
                 logger.info(f">>> 开始处理: {filename}")
                 
-                # 1. Strategy Selection
+                # 1. 选择导入策略
                 strategy = self._determine_strategy(filename, content)
                 logger.info(f"  策略: {strategy.__class__.__name__}")
                 
-                # 2. Split (Strategy-Aware)
+                # 2. 按策略分块
                 initial_chunks = strategy.split(content)
                 logger.info(f"  初步分块: {len(initial_chunks)}")
                 
                 processed_data = {"paragraphs": [], "entities": [], "relations": []}
                 
-                # 3. Extract Loop
+                # 3. 逐块抽取
                 resolved_model = await self._select_model()
                 
                 for i, chunk in enumerate(initial_chunks):
                     current_strategy = strategy
-                    # Layer 2: Chunk Rescue
+                    # 第二层：分块级策略修正
                     rescue_strategy = self._chunk_rescue(chunk, filename)
                     if rescue_strategy:
-                        # Re-split? No, just re-process this text as a single chunk using the rescue strategy
-                        # But rescue strategy might want to split it further?
-                        # Simplification: Treat the whole chunk text as one block for the rescue strategy 
-                        # OR create a single chunk object for it.
-                        # Creating a new chunk using rescue strategy logic might be complex if split behavior differs.
-                        # Let's just instantiate a chunk of the new type manually
+                        # 修正后不再重新切分，直接把当前分块作为完整 Quote 交给新策略。
                         chunk.type = StratKnowledgeType.QUOTE
                         chunk.flags.verbatim = True
-                        chunk.flags.requires_llm = False # Quotes don't usually need LLM
+                        chunk.flags.requires_llm = False # Quote 通常不需要 LLM
                         current_strategy = rescue_strategy
                     
-                    # Extraction
+                    # 抽取内容
                     if chunk.flags.requires_llm:
                         result_chunk = await current_strategy.extract(
                             chunk,
                             lambda p: self._llm_call(p, resolved_model),
                         )
                     else:
-                         # For quotes, extract might be just pass through or regex
+                         # QuoteStrategy 通常透传文本，并保留统一抽取接口。
                         result_chunk = await current_strategy.extract(chunk)
                     
                     time_meta = None
@@ -480,7 +475,7 @@ Chat paragraph:
                             resolved_model=resolved_model,
                         )
 
-                    # Normalize Data
+                    # 归一化结果
                     self._normalize_and_aggregate(
                         result_chunk,
                         processed_data,
@@ -489,12 +484,12 @@ Chat paragraph:
                     
                     logger.info(f"  已处理块 {i+1}/{len(initial_chunks)}")
                 
-                # 4. Save Json
+                # 4. 保存 JSON
                 json_path = PROCESSED_DIR / f"{file_path.stem}.json"
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(processed_data, f, ensure_ascii=False, indent=2)
                 
-                # 5. Import to DB
+                # 5. 导入数据库
                 async with self.storage_lock:
                     await self._import_to_db(processed_data)
                     
@@ -521,8 +516,8 @@ Chat paragraph:
         all_data: Dict,
         time_meta: Optional[Dict[str, Any]] = None,
     ):
-        """Convert strategy-specific data to unified generic format for storage."""
-        # Generic fields
+        """将策略特有结果转换为存储层统一格式。"""
+        # 通用字段
         para_item = {
             "content": chunk.chunk.text,
             "source": chunk.source.file,
@@ -536,7 +531,7 @@ Chat paragraph:
         
         data = chunk.data
         
-        # 1. Triples (Factual)
+        # 1. 事实三元组（Factual）
         if "triples" in data:
             for t in data["triples"]:
                 para_item["relations"].append({
@@ -544,26 +539,24 @@ Chat paragraph:
                     "predicate": t.get("predicate"),
                     "object": t.get("object")
                 })
-                # Auto-add entities from triples
+                # 自动收集三元组中的实体。
                 para_item["entities"].extend([t.get("subject"), t.get("object")])
         
-        # 2. Events & Relations (Narrative)
+        # 2. 事件与关系（Narrative）
         if "events" in data:
-            # Store events as content/metadata? Or entities?
-            # For now maybe just keep them in logic, or add as 'Event' entities?
-            # Creating entities for events is good.
+            # 当前将事件作为实体写入，保留既有检索语义。
             para_item["entities"].extend(data["events"])
         
-        if "relations" in data: # Narrative also outputs relations list
+        if "relations" in data: # Narrative 同时输出关系列表
              para_item["relations"].extend(data["relations"])
              for r in data["relations"]:
                  para_item["entities"].extend([r.get("subject"), r.get("object")])
 
-        # 3. Verbatim Entities (Quote)
+        # 3. 逐字实体（Quote）
         if "verbatim_entities" in data:
             para_item["entities"].extend(data["verbatim_entities"])
             
-        # Dedupe per paragraph
+        # 在每个段落内去重。
         para_item["entities"] = list(set([e for e in para_item["entities"] if e]))
 
         if time_meta:
@@ -581,7 +574,7 @@ Chat paragraph:
         before_sleep=_log_before_retry
     )
     async def _llm_call(self, prompt: str, resolved_model: Any) -> Dict:
-        """Generic LLM Caller"""
+        """统一的 LLM 调用入口。"""
         result = await generate_with_resolved_model(
             resolved_model,
             request_type="Script.ProcessKnowledge",
@@ -598,7 +591,7 @@ Chat paragraph:
             try:
                 return json.loads(txt)
             except json.JSONDecodeError:
-                # Fallback: try to find first { and last }
+                # 回退解析：截取首个左花括号到最后一个右花括号。
                 start = txt.find('{')
                 end = txt.rfind('}')
                 if start != -1 and end != -1:
@@ -631,7 +624,7 @@ Chat paragraph:
             return ResolvedLLMModel(task_name=task_name, task_config=task_config)
         raise ValueError("No LLM models")
 
-    # Re-use existing methods
+    # 复用现有写入方法。
     async def _add_entity_with_vector(self, name: str, source_paragraph: Optional[str] = None) -> str:
         # 最后一道守卫：防止旁路把 hash 写入实体名
         entity_name = str(name or "").strip()
@@ -651,7 +644,7 @@ Chat paragraph:
         return hash_value
 
     async def import_json_data(self, data: Dict, filename: str = "script_import", progress_callback=None):
-        """Public import entrypoint for pre-processed JSON payloads."""
+        """预处理 JSON 载荷的公开导入入口。"""
         if not self.storage_lock:
             raise RuntimeError("Importer is not initialized. Call initialize() first.")
 
@@ -667,7 +660,7 @@ Chat paragraph:
             self.graph_store.save()
 
     async def _import_to_db(self, data: Dict, progress_callback=None):
-        # Same logic, but ensure robust
+        # 沿用统一导入逻辑，并逐项记录非法数据。
         warning_count = 0
 
         def append_warning(message: str) -> None:

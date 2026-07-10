@@ -186,6 +186,11 @@ class AMemorixHostService:
         }
 
     async def invoke(self, component_name: str, args: Dict[str, Any] | None = None, *, timeout_ms: int = 30000) -> Any:
+        """将 MaiBot 宿主请求路由到共享 A_Memorix 内核。
+
+        本层负责启动状态、宿主参数适配、共享聊天范围、启动期写入排队和管理命令
+        分发；检索、写入及维护操作的业务语义由内核服务负责。
+        """
         del timeout_ms
         payload = args or {}
         if not self.is_enabled():

@@ -38,8 +38,8 @@ class SparseBM25Config:
     enabled: bool = True
     backend: str = "fts5"
     lazy_load: bool = True
-    mode: str = "auto"  # auto | fallback_only | hybrid
-    tokenizer_mode: str = "jieba"  # jieba | mixed | char_2gram
+    mode: str = "auto"  # 检索模式：auto、fallback_only 或 hybrid
+    tokenizer_mode: str = "jieba"  # 分词方式：jieba、mixed 或 char_2gram
     jieba_user_dict: str = ""
     char_ngram_n: int = 2
     candidate_k: int = 80

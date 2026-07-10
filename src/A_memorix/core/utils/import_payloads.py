@@ -1,4 +1,4 @@
-"""Shared import payload normalization helpers."""
+"""导入载荷共用的归一化辅助工具。"""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ def normalize_paragraph_import_item(
     *,
     default_source: str,
 ) -> Dict[str, Any]:
-    """Normalize one paragraph import item from text/json payloads."""
+    """归一化来自文本或 JSON 载荷的一条段落导入项。"""
 
     if isinstance(item, str):
         content = str(item or "")
@@ -191,6 +191,6 @@ def normalize_paragraph_import_item(
 
 
 def normalize_summary_knowledge_type(value: Any) -> KnowledgeType:
-    """Normalize config-driven summary knowledge type."""
+    """归一化由配置指定的摘要知识类型。"""
 
     return resolve_stored_knowledge_type(value, content="")

@@ -34,7 +34,7 @@ class MetadataFTSMixin:
                 )
             """)
 
-            # insert trigger
+            # 插入触发器（insert trigger）
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS paragraphs_ai
                 AFTER INSERT ON paragraphs
@@ -44,7 +44,7 @@ class MetadataFTSMixin:
                 END
             """)
 
-            # delete trigger
+            # 删除触发器（delete trigger）
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS paragraphs_ad
                 AFTER DELETE ON paragraphs
@@ -54,7 +54,7 @@ class MetadataFTSMixin:
                 END
             """)
 
-            # update trigger
+            # 更新触发器（update trigger）
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS paragraphs_au
                 AFTER UPDATE OF content ON paragraphs

@@ -42,7 +42,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     sys.exit(0)
@@ -336,7 +336,7 @@ class LPMMConverter:
                     logger.info(f"{p_path} 为空，跳过。")
                     continue
 
-                # LPMM Schema: 'hash', 'embedding', 'str'
+                # LPMM 字段结构：'hash'、'embedding'、'str'
                 cols = parquet_file.schema_arrow.names
                 # 兼容性检查
                 content_col = 'str' if 'str' in cols else 'content'

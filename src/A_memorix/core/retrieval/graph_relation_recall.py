@@ -1,4 +1,4 @@
-"""Graph-assisted relation candidate recall for relation-oriented queries."""
+"""面向关系查询的图辅助候选关系召回。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ logger = get_logger("A_Memorix.GraphRelationRecall")
 
 @dataclass
 class GraphRelationRecallConfig:
-    """Configuration for controlled graph relation recall."""
+    """受控图关系召回配置。"""
 
     enabled: bool = True
     candidate_k: int = 24
@@ -30,7 +30,7 @@ class GraphRelationRecallConfig:
 
 @dataclass
 class GraphRelationCandidate:
-    """A graph-derived relation candidate before retriever-side fusion."""
+    """进入检索器融合前，由图结构生成的关系候选。"""
 
     hash_value: str
     subject: str
@@ -59,7 +59,7 @@ class GraphRelationCandidate:
 
 
 class GraphRelationRecallService:
-    """Collect relation candidates from the entity graph in a controlled way."""
+    """按受控策略从实体图中收集关系候选。"""
 
     def __init__(
         self,

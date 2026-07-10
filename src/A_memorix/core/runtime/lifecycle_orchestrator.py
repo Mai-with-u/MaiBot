@@ -1,4 +1,4 @@
-"""Lifecycle bootstrap/teardown helpers extracted from plugin.py."""
+"""从 plugin.py 拆出的生命周期启动与清理辅助逻辑。"""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ async def ensure_initialized(plugin: Any) -> None:
 
 
 def start_background_tasks(plugin: Any) -> None:
-    """Start background tasks idempotently."""
+    """以幂等方式启动后台任务。"""
     if not hasattr(plugin, "_episode_generation_task"):
         plugin._episode_generation_task = None
 
@@ -159,7 +159,7 @@ def start_background_tasks(plugin: Any) -> None:
 
 
 async def cancel_background_tasks(plugin: Any) -> None:
-    """Cancel all background tasks and wait for cleanup."""
+    """取消全部后台任务并等待清理完成。"""
     tasks = [
         ("scheduled_import", plugin._scheduled_import_task),
         ("auto_save", plugin._auto_save_task),
@@ -193,7 +193,7 @@ async def cancel_background_tasks(plugin: Any) -> None:
 
 
 async def initialize_storage_async(plugin: Any) -> None:
-    """Initialize storage components asynchronously."""
+    """异步初始化存储组件。"""
     data_dir_str = plugin.get_config("storage.data_dir", "./data")
     data_dir = resolve_repo_path(data_dir_str, fallback=default_data_dir())
 

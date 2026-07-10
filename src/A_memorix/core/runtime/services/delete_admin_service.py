@@ -372,6 +372,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
         }
 
     async def _build_delete_plan(self, *, mode: str, selector: Any) -> Dict[str, Any]:
+        """解析删除选择器并生成不执行写操作的完整删除计划。
+
+        计划同时收集快照、向量 ID、来源以及因段落或实体失去引用而需要级联处理的
+        关系。预览和正式执行共用该结果，避免两条路径对删除范围作出不同判断。
+        """
         assert self.metadata_store
         act_mode = str(mode or "").strip().lower()
         normalized_selector = self._selector_dict(selector)
@@ -611,6 +616,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
         requested_by: str = "",
         reason: str = "",
     ) -> Dict[str, Any]:
+        """执行删除计划，并记录后续恢复所需的操作快照。
+
+        元数据事务先于关系、向量和图存储处理提交，整个流程不是跨存储原子事务。
+        因此失败响应只表示流程未完整完成，不表示此前阶段一定没有产生变更。
+        """
         assert self.metadata_store
         plan = await self._build_delete_plan(mode=mode, selector=selector)
         if not plan.get("success", False):

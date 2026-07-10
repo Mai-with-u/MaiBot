@@ -271,6 +271,12 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         requested_by: str,
         reason: str,
     ) -> Dict[str, Any]:
+        """依据已落库的回退计划补偿一项已应用的反馈纠错任务。
+
+        状态按 ``running``、``rolled_back`` 或 ``error`` 收敛；已完成回退的任务保持
+        幂等。补偿会恢复被遗忘关系、移除纠正写入和过期标记，并重新入队 Episode
+        与人物画像派生任务，最后重建图和持久化结果。
+        """
         await self.initialize()
         assert self.metadata_store is not None
 
@@ -1026,6 +1032,12 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         decision: Dict[str, Any],
         hit_map: Dict[str, Dict[str, Any]],
     ) -> Dict[str, Any]:
+        """自动应用达到置信度阈值的拒绝或纠正决策。
+
+        流程先遗忘目标关系；纠正决策随后写入替代关系，写入失败时立即按快照恢复
+        原关系。成功后才标记受影响段落、安排 Episode 与人物画像重建，并保存供
+        后续人工回退使用的补偿计划。
+        """
         threshold = feedback_cfg_auto_apply_threshold()
         confidence = float(decision.get("confidence", 0.0) or 0.0)
         if confidence < threshold:

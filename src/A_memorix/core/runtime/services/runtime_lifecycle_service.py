@@ -8,7 +8,14 @@ logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 
 class MemoryRuntimeLifecycleService(KernelServiceBase):
+    """按固定顺序创建和释放存储、检索及后台任务资源。"""
+
     async def initialize(self) -> None:
+        """完成格式迁移、存储装载、检索组装和后台任务启动。
+
+        重复调用不会重建存储，只会刷新运行时稀疏模式并补齐后台任务。
+        ``_initialized`` 仅在所有同步依赖组装完成后置为真。
+        """
         from .. import sdk_memory_kernel as kernel_module
 
         if self._initialized:
@@ -116,6 +123,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         await self._start_background_tasks()
 
     async def shutdown(self) -> None:
+        """先等待后台工作和任务管理器退出，再持久化并释放底层存储。"""
         await self._stop_background_tasks()
         if self.import_task_manager is not None:
             try:
@@ -130,11 +138,13 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         self._close_runtime()
 
     def close(self) -> None:
+        """同步释放非活动内核；活动内核必须使用 ``shutdown()``。"""
         if self._initialized:
             raise RuntimeError("A_Memorix 运行时仍处于活动状态，请先 await shutdown()")
         self._close_runtime()
 
     def _close_runtime(self) -> None:
+        """持久化并释放资源，调用前必须确认没有任务仍会访问存储。"""
         try:
             self._persist()
         finally:

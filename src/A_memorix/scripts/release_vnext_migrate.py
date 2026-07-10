@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-vNext release migration entrypoint for A_Memorix.
+A_Memorix vNext 发布迁移入口。
 
-Subcommands:
-- preflight: detect legacy config/data/schema risks
-- migrate: offline migrate config + vectors + metadata schema + graph edge hash map
-- verify: strict post-migration consistency checks
+子命令：
+- preflight：检测旧配置、数据和 schema 风险
+- migrate：离线迁移配置、向量、元数据 schema 和图边哈希映射
+- verify：执行严格的迁移后完整性检查
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     raise SystemExit(0)

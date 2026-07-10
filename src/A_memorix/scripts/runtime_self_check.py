@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run A_Memorix runtime self-check against real embedding/runtime configuration."""
+"""基于真实 embedding 和运行时配置执行 A_Memorix 自检。"""
 
 from __future__ import annotations
 

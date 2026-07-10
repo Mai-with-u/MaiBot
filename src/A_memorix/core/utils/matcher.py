@@ -28,11 +28,11 @@ class AhoCorasick:
     """
 
     def __init__(self, native_min_patterns: Optional[int] = None):
-        # next_states[state][char] = next_state
+        # 状态转移表：next_states[state][char] = next_state
         self.next_states: List[Dict[str, int]] = [{}]
-        # fail[state] = fail_state
+        # 失败指针：fail[state] = fail_state
         self.fail: List[int] = [0]
-        # output[state] = set of patterns ending at this state
+        # 输出集合：output[state] 保存在该状态结束的模式。
         self.output: List[Set[str]] = [set()]
         self.patterns: Set[str] = set()
         self._native_matcher: Optional[object] = None

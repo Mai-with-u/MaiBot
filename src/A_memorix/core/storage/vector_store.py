@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 import random
-import threading  # Added threading import
+import threading  # 线程同步
 
 import numpy as np
 
@@ -118,7 +118,7 @@ class VectorStore:
         self._total_deleted = 0
         self._bin_count = 0
 
-        # Thread safety lock
+        # 线程安全锁
         self._lock = threading.RLock()
 
         logger.info(f"向量存储初始化: dim={dimension}, mode=SQ8")
@@ -156,11 +156,11 @@ class VectorStore:
 
     @property
     def _int_to_str_map(self) -> Dict[int, str]:
-        """Lazy build volatile map from known hashes"""
-        # Note: This is read-heavy and cached, might need lock if _known_hashes updates concurrently
-        # But add/delete are now locked, so checking len mismatch is somewhat safe-ish for quick dirty cache
+        """按需从已知哈希构建易失的 ID 反查表。"""
+        # 反查表读取频繁，且依赖可变的 _known_hashes；缓存重建必须在锁内完成。
+        # 长度检查只用于发现缓存失效，实际重建仍由锁保护。
         if not hasattr(self, "_cached_map") or len(self._cached_map) != len(self._known_hashes):
-            with self._lock: # Protect cache rebuild
+            with self._lock: # 在锁内重建缓存
                  self._cached_map = {self._generate_id(k): k for k in self._known_hashes}
         return self._cached_map
 
@@ -380,7 +380,7 @@ class VectorStore:
             if str_id:
                 results.append((str_id, float(score)))
 
-        # Sort and trim just in case filtering reduced count
+        # 过滤可能减少结果数量，因此重新排序并截断。
         results.sort(key=lambda x: x[1], reverse=True)
         results = results[:k]
 
@@ -667,12 +667,12 @@ class VectorStore:
                     count += 1
             self._total_deleted += count
 
-            # Check GC
+            # 检查是否需要执行垃圾回收
             self._check_rebuild_needed()
             return count
 
     def _check_rebuild_needed(self):
-        """GC Excution Check"""
+        """检查是否需要执行垃圾回收重建。"""
         if self._bin_count == 0:
             return
         ratio = len(self._deleted_ids) / self._bin_count
@@ -698,7 +698,7 @@ class VectorStore:
 
         new_count = 0
 
-        # 1. Compact Files
+        # 1. 压缩数据文件（Compact Files）
         with open(self._bin_path, "rb") as f_vec, open(self._ids_bin_path, "rb") as f_id, \
              open(tmp_bin, "wb") as w_vec, open(tmp_ids, "wb") as w_id:
             while True:
@@ -720,27 +720,27 @@ class VectorStore:
                     w_id.write(keep_ids.astype('>i8').tobytes())
                     new_count += len(keep_ids)
 
-        # 2. Reset State & Atomic Swap
+        # 2. 重置状态并原子切换文件
         self._bin_count = new_count
 
-        # Close current index
+        # 关闭当前索引
         self._index.reset()
         if self._fallback_index:
-            self._fallback_index.reset() # Also clear fallback
+            self._fallback_index.reset() # 同时清空回退索引
         self._is_trained = False
 
-        # Swap files
+        # 切换数据文件
         shutil.move(str(tmp_bin), str(self._bin_path))
         shutil.move(str(tmp_ids), str(self._ids_bin_path))
 
-        # Reset Tombstones (Critical)
+        # 清空删除标记，这是重建正确性的关键步骤。
         self._deleted_ids.clear()
 
-        # 3. Reload/Rebuild Index (Fresh Train)
-        # We need to re-train because data distribution might have changed significantly after deletion
+        # 3. 重新加载并训练索引
+        # 删除后的数据分布可能明显变化，因此必须重新训练。
         self._init_index()
-        self._init_fallback_index() # Re-init fallback too
-        self._force_train_small_data() # This will train and replay from the NEW compact file
+        self._init_fallback_index() # 同时重新初始化回退索引
+        self._force_train_small_data() # 基于新的压缩文件训练并回放数据
 
         logger.info("Compaction Complete.")
 
@@ -819,7 +819,7 @@ class VectorStore:
             if bin_path.exists() and ids_bin_path.exists():
                 return {"migrated": False, "reason": "bin_exists"}
 
-            # Reset in-memory state to avoid appending to stale runtime buffers.
+            # 重置内存状态，避免继续向旧运行时缓冲区追加数据。
             self._known_hashes.clear()
             self._deleted_ids.clear()
             self._write_buffer_vecs.clear()
@@ -944,5 +944,5 @@ class VectorStore:
         return len(self._known_hashes) - len(self._deleted_ids)
 
     def __contains__(self, hash_value: str) -> bool:
-        """Check if a hash exists in the store"""
+        """检查指定哈希是否存在于向量库中。"""
         return hash_value in self._known_hashes and self._generate_id(hash_value) not in self._deleted_ids
