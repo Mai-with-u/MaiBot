@@ -841,6 +841,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                     self._activate_dual_vector_build_dirs(dual_build_root)
                     self._update_dual_vector_auto_migration_stage("write_manifest")
                     self._write_dual_vector_ready_manifest(stats=stats, migration_stats=migration_stats)
+                    self._cleanup_stale_dual_vector_build_dirs()
                     self._update_dual_vector_auto_migration_stage("reload_dual_stores")
                     activation_ok = self._reload_dual_vector_stores_from_disk()
                     if not activation_ok:
