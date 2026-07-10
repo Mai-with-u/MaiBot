@@ -664,6 +664,7 @@ class MetadataFTSMixin:
         """
         将段落写入（或覆盖）到 FTS 索引。
         """
+        owns_transaction = conn is None
         c = self._resolve_conn(conn)
         cur = c.cursor()
         try:
@@ -680,11 +681,13 @@ class MetadataFTSMixin:
                 "INSERT OR REPLACE INTO paragraphs_fts(rowid, content) VALUES (?, ?)",
                 (rowid, content),
             )
-            c.commit()
+            if owns_transaction:
+                c.commit()
             return True
         except sqlite3.OperationalError as e:
             logger.warning(f"FTS upsert 失败: {e}")
-            c.rollback()
+            if owns_transaction:
+                c.rollback()
             return False
 
     def fts_delete_paragraph(
@@ -695,6 +698,7 @@ class MetadataFTSMixin:
         """
         从 FTS 索引删除段落。
         """
+        owns_transaction = conn is None
         c = self._resolve_conn(conn)
         cur = c.cursor()
         try:
@@ -711,11 +715,13 @@ class MetadataFTSMixin:
                 "INSERT INTO paragraphs_fts(paragraphs_fts, rowid, content) VALUES ('delete', ?, ?)",
                 (rowid, content),
             )
-            c.commit()
+            if owns_transaction:
+                c.commit()
             return True
         except sqlite3.OperationalError as e:
             logger.warning(f"FTS delete 失败: {e}")
-            c.rollback()
+            if owns_transaction:
+                c.rollback()
             return False
 
     def fts_search_bm25(

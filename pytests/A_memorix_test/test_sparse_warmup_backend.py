@@ -175,6 +175,25 @@ def test_tokenized_shadow_index_does_not_commit_outer_transaction(tmp_path: Path
         store.close()
 
 
+def test_primary_fts_delete_does_not_commit_outer_transaction(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        paragraph_hash = store.add_paragraph("primary fts rollback probe 蓝莓曲奇", source="test")
+        assert store.fts_upsert_paragraph(paragraph_hash) is True
+
+        conn = store.get_connection()
+        conn.execute("BEGIN IMMEDIATE")
+        assert store.fts_delete_paragraph(paragraph_hash, conn=conn) is True
+        assert conn.in_transaction is True
+
+        conn.rollback()
+        rows = store.fts_search_bm25("蓝莓曲奇", limit=5)
+        assert {row["hash"] for row in rows} == {paragraph_hash}
+    finally:
+        store.close()
+
+
 def test_sparse_experimental_backend_is_explicitly_not_runtime_ready(tmp_path: Path) -> None:
     store = MetadataStore(data_dir=tmp_path)
     store.connect()

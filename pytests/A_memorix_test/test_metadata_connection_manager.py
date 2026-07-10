@@ -46,6 +46,42 @@ def test_metadata_store_transaction_rolls_back_on_error(tmp_path: Path) -> None:
         store.close()
 
 
+def test_metadata_store_transaction_rolls_back_on_base_exception(tmp_path: Path) -> None:
+    class StopTransaction(BaseException):
+        pass
+
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        with pytest.raises(StopTransaction):
+            with store.transaction(immediate=True) as connection:
+                connection.execute(
+                    "INSERT INTO paragraphs (hash, content, knowledge_type) VALUES (?, ?, ?)",
+                    ("base-exception-hash", "不会提交", "mixed"),
+                )
+                raise StopTransaction
+
+        assert store.get_paragraph("base-exception-hash") is None
+        manager = store._connection_manager
+        assert manager is not None
+        connection = manager.connection()
+        assert connection._managed_transaction_depth == 0
+        assert connection.in_transaction is False
+    finally:
+        store.close()
+
+
+def test_metadata_store_rejects_unmanaged_override_transaction(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    connection = sqlite3.connect(":memory:")
+    store._conn = connection
+    try:
+        with pytest.raises(TypeError, match="不支持受管事务"):
+            store.transaction()
+    finally:
+        store.close()
+
+
 def test_metadata_store_reinitializes_schema_after_switching_data_directory(tmp_path: Path) -> None:
     first_data_dir = tmp_path / "first"
     second_data_dir = tmp_path / "second"

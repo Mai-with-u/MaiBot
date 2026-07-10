@@ -72,6 +72,7 @@ class MetadataEpisodeMixin:
             ) VALUES (?, 'pending', 0, NULL, ?, ?, ?)
             ON CONFLICT(source) DO UPDATE SET
                 status = 'pending',
+                retry_count = 0,
                 last_error = NULL,
                 reason = excluded.reason,
                 requested_at = excluded.requested_at,

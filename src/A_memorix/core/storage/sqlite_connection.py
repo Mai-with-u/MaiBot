@@ -96,7 +96,7 @@ class SQLiteConnectionManager:
         scope_depth = connection.begin_managed_scope()
         try:
             yield connection
-        except Exception:
+        except BaseException:
             self._rollback_scope(connection, savepoint_name, scope_depth)
             raise
         else:
