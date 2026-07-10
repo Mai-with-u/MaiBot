@@ -15,6 +15,18 @@ import pytest
 from src.A_memorix.core.storage.format_migration import run_startup_format_migration
 
 
+def _write_pickle_marker(marker_path: str) -> None:
+    Path(marker_path).write_text("executed", encoding="utf-8")
+
+
+class _PickleSideEffect:
+    def __init__(self, marker_path: Path) -> None:
+        self.marker_path = marker_path
+
+    def __reduce__(self):
+        return _write_pickle_marker, (str(self.marker_path),)
+
+
 def _dump_pickle(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
@@ -474,6 +486,47 @@ def test_startup_format_migration_corrupt_vector_pickle_fails_without_backup(tmp
     assert pkl_path.exists()
     assert not (data_dir / "vectors" / "vectors_metadata.json").exists()
     assert not (data_dir / "vectors" / "vectors_metadata.pkl.bak").exists()
+
+
+def test_startup_format_migration_rejects_pickle_global_from_vector_metadata(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    marker_path = tmp_path / "vector_pickle_executed"
+    pkl_path = data_dir / "vectors" / "vectors_metadata.pkl"
+    _dump_pickle(
+        pkl_path,
+        {
+            "known_hashes": ["vec-1"],
+            "payload": _PickleSideEffect(marker_path),
+        },
+    )
+
+    with pytest.raises(pickle.UnpicklingError, match="不允许的全局对象"):
+        run_startup_format_migration(data_dir)
+
+    assert not marker_path.exists()
+    assert pkl_path.exists()
+
+
+def test_startup_format_migration_rejects_pickle_global_from_sqlite_metadata(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    marker_path = tmp_path / "sqlite_pickle_executed"
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata TEXT)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("paragraph-1", pickle.dumps({"payload": _PickleSideEffect(marker_path)})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(pickle.UnpicklingError, match="不允许的全局对象"):
+        run_startup_format_migration(data_dir)
+
+    assert not marker_path.exists()
 
 
 def test_startup_format_migration_recovers_corrupt_vector_json_from_legacy_pickle(tmp_path: Path) -> None:
