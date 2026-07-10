@@ -8,6 +8,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import time
 import types
 
@@ -73,6 +74,7 @@ MAISAKA_PROMPT_PREVIEW_DIR = (PROJECT_ROOT / "logs" / "maisaka_prompt").resolve(
 _SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
 _PROMPT_VERSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 _LEGACY_CUSTOM_PROMPT_VERSION_ID = "legacy-current"
+_MODEL_CONFIG_VERSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class PromptFileInfo(BaseModel):
@@ -152,6 +154,55 @@ class PromptUpdateRequest(BaseModel):
     version_id: str | None = None
     label: str = ""
     create_version: bool = False
+
+
+class ModelConfigVersionInfo(BaseModel):
+    """模型配置文件副本信息。"""
+
+    id: str
+    label: str
+    created_at: float
+    modified_at: float
+    size: int
+    active: bool = False
+    inner_config_version: str | None = None
+    valid: bool = True
+    error: str | None = None
+
+
+class ModelConfigVersionListResponse(BaseModel):
+    """模型配置文件副本列表响应。"""
+
+    success: bool = True
+    active_version: ModelConfigVersionInfo
+    versions: List[ModelConfigVersionInfo] = Field(default_factory=list)
+
+
+class ModelConfigVersionCreateRequest(BaseModel):
+    """模型配置文件副本创建请求。"""
+
+    label: str = Field(default="", max_length=80, description="副本展示名称")
+
+
+class ModelConfigVersionUpdateRequest(BaseModel):
+    """模型配置文件副本更新请求。"""
+
+    label: str = Field(..., min_length=1, max_length=80, description="副本展示名称")
+
+
+class ModelConfigVersionSwitchRequest(BaseModel):
+    """模型配置文件副本切换请求。"""
+
+    archive_current: bool = Field(default=True, description="切换前是否归档当前启用配置")
+    archive_label: str = Field(default="", max_length=80, description="当前配置归档副本名")
+
+
+class ModelConfigVersionResponse(BaseModel):
+    """单个模型配置文件副本操作响应。"""
+
+    success: bool = True
+    version: ModelConfigVersionInfo
+    message: str = ""
 
 
 class PromptGeneratorChatPrompt(BaseModel):
@@ -370,6 +421,253 @@ def _write_prompt_version_manifest(language: str, filename: str, manifest: Dict[
     manifest_path = _prompt_version_manifest_path(language, filename)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+
+
+def _active_model_config_path() -> Path:
+    """返回当前启用的模型配置文件路径。"""
+
+    return (Path(CONFIG_DIR) / "model_config.toml").resolve()
+
+
+def _model_config_versions_dir() -> Path:
+    """返回模型配置文件副本目录。"""
+
+    return (Path(CONFIG_DIR) / "versions" / "model").resolve()
+
+
+def _model_config_version_manifest_path() -> Path:
+    return _model_config_versions_dir() / "manifest.json"
+
+
+def _safe_model_config_version_id(version_id: str) -> str:
+    """校验模型配置文件副本 ID，避免目录穿越。"""
+
+    normalized_version_id = version_id.strip()
+    if (
+        not normalized_version_id
+        or normalized_version_id in {".", "..", "active"}
+        or not _MODEL_CONFIG_VERSION_ID_PATTERN.fullmatch(normalized_version_id)
+    ):
+        raise HTTPException(status_code=400, detail="无效的模型配置副本 ID")
+    return normalized_version_id
+
+
+def _model_config_version_path(version_id: str) -> Path:
+    normalized_version_id = _safe_model_config_version_id(version_id)
+    versions_dir = _model_config_versions_dir()
+    version_path = (versions_dir / f"{normalized_version_id}.toml").resolve()
+    try:
+        version_path.relative_to(versions_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="模型配置副本路径越界") from exc
+    return version_path
+
+
+def _read_model_version_manifest() -> Dict[str, Any]:
+    manifest_path = _model_config_version_manifest_path()
+    if not manifest_path.exists():
+        return {"active_label": "默认配置", "versions": []}
+
+    try:
+        raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"模型配置副本清单损坏: {manifest_path}") from exc
+
+    if not isinstance(raw_manifest, dict):
+        raise HTTPException(status_code=500, detail=f"模型配置副本清单格式错误: {manifest_path}")
+
+    versions = raw_manifest.get("versions", [])
+    if not isinstance(versions, list):
+        versions = []
+
+    active_label = raw_manifest.get("active_label")
+    return {
+        "active_label": active_label.strip() if isinstance(active_label, str) and active_label.strip() else "默认配置",
+        "versions": [version for version in versions if isinstance(version, dict)],
+    }
+
+
+def _write_model_version_manifest(manifest: Dict[str, Any]) -> None:
+    manifest_path = _model_config_version_manifest_path()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    if not isinstance(manifest.get("active_label"), str) or not manifest["active_label"].strip():
+        manifest["active_label"] = "默认配置"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+
+
+def _get_active_model_config_label() -> str:
+    manifest = _read_model_version_manifest()
+    active_label = manifest.get("active_label")
+    return active_label.strip() if isinstance(active_label, str) and active_label.strip() else "默认配置"
+
+
+def _set_active_model_config_label(label: str) -> None:
+    manifest = _read_model_version_manifest()
+    manifest["active_label"] = label.strip() or "默认配置"
+    _write_model_version_manifest(manifest)
+
+
+def _model_version_metadata_by_id() -> Dict[str, Dict[str, Any]]:
+    return {
+        str(version.get("id")): version
+        for version in _read_model_version_manifest().get("versions", [])
+        if isinstance(version.get("id"), str)
+    }
+
+
+def _upsert_model_version_metadata(version_id: str, label: str, created_at: float | None = None) -> None:
+    manifest = _read_model_version_manifest()
+    versions = manifest.get("versions", [])
+    now = time.time()
+    normalized_label = label.strip() or _default_model_config_version_label()
+    found = False
+
+    for version in versions:
+        if version.get("id") != version_id:
+            continue
+        version["label"] = normalized_label
+        version["created_at"] = float(version.get("created_at") or created_at or now)
+        found = True
+        break
+
+    if not found:
+        versions.append(
+            {
+                "id": version_id,
+                "label": normalized_label,
+                "created_at": float(created_at or now),
+            }
+        )
+
+    manifest["versions"] = versions
+    _write_model_version_manifest(manifest)
+
+
+def _remove_model_version_metadata(version_id: str) -> None:
+    manifest = _read_model_version_manifest()
+    manifest["versions"] = [
+        version for version in manifest.get("versions", []) if version.get("id") != version_id
+    ]
+    _write_model_version_manifest(manifest)
+
+
+def _create_model_config_version_id() -> str:
+    base_version_id = time.strftime("v%Y%m%d%H%M%S")
+    version_id = base_version_id
+    suffix = 2
+    while _model_config_version_path(version_id).exists():
+        version_id = f"{base_version_id}-{suffix}"
+        suffix += 1
+    return version_id
+
+
+def _default_model_config_version_label() -> str:
+    return f"模型配置副本 {time.strftime('%Y-%m-%d %H:%M:%S')}"
+
+
+def _default_model_config_archive_label() -> str:
+    return _get_active_model_config_label()
+
+
+def _read_model_config_version_inner_version(config_path: Path) -> str | None:
+    try:
+        with config_path.open("r", encoding="utf-8") as handle:
+            config_data = tomlkit.load(handle)
+    except Exception:
+        return None
+
+    inner_table = config_data.get("inner")
+    if not isinstance(inner_table, dict):
+        return None
+    inner_version = inner_table.get("version")
+    return inner_version if isinstance(inner_version, str) else None
+
+
+def _validate_model_config_file(config_path: Path) -> None:
+    """校验指定 TOML 文件可作为模型配置加载。"""
+
+    try:
+        with config_path.open("r", encoding="utf-8") as handle:
+            config_data = tomlkit.load(handle)
+        plain_config_data = _coerce_config_numeric_values(_toml_to_plain_dict(config_data), ModelConfig)
+        ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain_config_data))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"模型配置副本无效: {str(exc)}") from exc
+
+
+def _build_model_config_version_info(
+    *,
+    version_id: str,
+    label: str,
+    config_path: Path,
+    created_at: float | None = None,
+    active: bool = False,
+) -> ModelConfigVersionInfo:
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail="模型配置副本文件不存在")
+
+    stat = config_path.stat()
+    valid = True
+    error: str | None = None
+    try:
+        _validate_model_config_file(config_path)
+    except HTTPException as exc:
+        valid = False
+        error = str(exc.detail)
+
+    return ModelConfigVersionInfo(
+        id=version_id,
+        label=label,
+        created_at=float(created_at or stat.st_mtime),
+        modified_at=stat.st_mtime,
+        size=stat.st_size,
+        active=active,
+        inner_config_version=_read_model_config_version_inner_version(config_path),
+        valid=valid,
+        error=error,
+    )
+
+
+def _list_model_config_versions() -> List[ModelConfigVersionInfo]:
+    versions_dir = _model_config_versions_dir()
+    metadata_by_id = _model_version_metadata_by_id()
+    if not versions_dir.exists():
+        return []
+
+    versions: List[ModelConfigVersionInfo] = []
+    for version_path in sorted(versions_dir.glob("*.toml"), key=lambda path: path.stat().st_mtime, reverse=True):
+        version_id = version_path.stem
+        metadata = metadata_by_id.get(version_id, {})
+        versions.append(
+            _build_model_config_version_info(
+                version_id=version_id,
+                label=str(metadata.get("label") or version_id),
+                config_path=version_path,
+                created_at=metadata.get("created_at") if isinstance(metadata.get("created_at"), (int, float)) else None,
+            )
+        )
+
+    return versions
+
+
+def _copy_model_config_to_version(source_path: Path, label: str) -> ModelConfigVersionInfo:
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="当前模型配置文件不存在")
+
+    _validate_model_config_file(source_path)
+    versions_dir = _model_config_versions_dir()
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    version_id = _create_model_config_version_id()
+    version_path = _model_config_version_path(version_id)
+    shutil.copy2(source_path, version_path)
+    created_at = time.time()
+    _upsert_model_version_metadata(version_id, label, created_at)
+    return _build_model_config_version_info(
+        version_id=version_id,
+        label=label.strip() or _default_model_config_version_label(),
+        config_path=version_path,
+        created_at=created_at,
+    )
 
 
 def _create_prompt_version_id(language: str, filename: str) -> str:
@@ -1640,6 +1938,118 @@ async def get_model_config():
     except Exception as e:
         logger.error(f"读取配置文件失败: {e}")
         raise HTTPException(status_code=500, detail=f"读取配置文件失败: {str(e)}") from e
+
+
+@router.get("/model/versions", response_model=ModelConfigVersionListResponse)
+async def list_model_config_versions():
+    """列出模型配置文件副本。"""
+
+    active_path = _active_model_config_path()
+    if not active_path.exists():
+        raise HTTPException(status_code=404, detail="当前模型配置文件不存在")
+
+    active_version = _build_model_config_version_info(
+        version_id="active",
+        label=_get_active_model_config_label(),
+        config_path=active_path,
+        active=True,
+    )
+    return ModelConfigVersionListResponse(
+        active_version=active_version,
+        versions=_list_model_config_versions(),
+    )
+
+
+@router.post("/model/versions", response_model=ModelConfigVersionResponse)
+async def create_model_config_version(request: ModelConfigVersionCreateRequest):
+    """将当前启用的模型配置保存为一个未启用副本。"""
+
+    active_path = _active_model_config_path()
+    version = _copy_model_config_to_version(active_path, request.label)
+    logger.info(f"已创建模型配置副本: {version.id} ({version.label})")
+    return ModelConfigVersionResponse(version=version, message="模型配置副本已创建")
+
+
+@router.patch("/model/versions/{version_id}", response_model=ModelConfigVersionResponse)
+async def update_model_config_version(version_id: str, request: ModelConfigVersionUpdateRequest):
+    """更新模型配置文件副本展示名称。"""
+
+    normalized_version_id = _safe_model_config_version_id(version_id)
+    version_path = _model_config_version_path(normalized_version_id)
+    if not version_path.exists():
+        raise HTTPException(status_code=404, detail="模型配置副本不存在")
+
+    _upsert_model_version_metadata(normalized_version_id, request.label)
+    version = _build_model_config_version_info(
+        version_id=normalized_version_id,
+        label=request.label.strip(),
+        config_path=version_path,
+    )
+    return ModelConfigVersionResponse(version=version, message="模型配置副本已更新")
+
+
+@router.delete("/model/versions/{version_id}")
+async def delete_model_config_version(version_id: str):
+    """删除未启用的模型配置文件副本。"""
+
+    normalized_version_id = _safe_model_config_version_id(version_id)
+    version_path = _model_config_version_path(normalized_version_id)
+    if not version_path.exists():
+        raise HTTPException(status_code=404, detail="模型配置副本不存在")
+
+    version_path.unlink()
+    _remove_model_version_metadata(normalized_version_id)
+    logger.info(f"已删除模型配置副本: {normalized_version_id}")
+    return {"success": True, "message": "模型配置副本已删除"}
+
+
+@router.post("/model/versions/{version_id}/activate", response_model=ModelConfigVersionResponse)
+async def activate_model_config_version(version_id: str, request: ModelConfigVersionSwitchRequest):
+    """切换当前启用的模型配置文件副本。"""
+
+    normalized_version_id = _safe_model_config_version_id(version_id)
+    active_path = _active_model_config_path()
+    version_path = _model_config_version_path(normalized_version_id)
+    if not version_path.exists():
+        raise HTTPException(status_code=404, detail="模型配置副本不存在")
+    if not active_path.exists():
+        raise HTTPException(status_code=404, detail="当前模型配置文件不存在")
+
+    selected_metadata = _model_version_metadata_by_id().get(normalized_version_id, {})
+    selected_label = str(selected_metadata.get("label") or normalized_version_id)
+
+    _validate_model_config_file(version_path)
+    if request.archive_current:
+        archive_label = request.archive_label.strip() or _default_model_config_archive_label()
+        _copy_model_config_to_version(active_path, archive_label)
+
+    temp_path = active_path.with_name(f".{active_path.name}.{normalized_version_id}.tmp")
+    try:
+        shutil.copy2(version_path, temp_path)
+        os.replace(temp_path, active_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+    try:
+        version_path.unlink()
+        _remove_model_version_metadata(normalized_version_id)
+    except OSError as exc:
+        logger.warning(f"模型配置副本已切换，但删除已启用副本文件失败: {version_path}，原因: {exc}")
+
+    _set_active_model_config_label(selected_label)
+
+    if active_path == config_manager.model_config_path.resolve():
+        await config_manager.reload_config(changed_scopes=["model"])
+
+    active_version = _build_model_config_version_info(
+        version_id="active",
+        label=_get_active_model_config_label(),
+        config_path=active_path,
+        active=True,
+    )
+    logger.info(f"已切换模型配置副本: {normalized_version_id}")
+    return ModelConfigVersionResponse(version=active_version, message="模型配置副本已切换")
 
 
 # ===== 配置更新接口 =====

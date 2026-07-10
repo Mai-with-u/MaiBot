@@ -16,6 +16,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "image": ("#5f87d7", None, False),
     "image_cache_cleanup": ("#5f87d7", None, False),
     "emoji": ("#ffaf00", None, False),  # 橙黄色，偏向橙色
+    "update_notice": ("#daaf10", None, False),
     "emoji_cache_cleanup": ("#ffaf00", None, False),  # 与表情包模块保持一致
     # 核心模块
     "main": ("#ffffff", None, True),  # 亮白色 + 粗体 (主程序)
@@ -35,6 +36,7 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "chat_stream": ("#00ffff", None, False),
     "message_storage": ("#0087ff", None, False),
     "expressor": ("#d75f00", None, False),
+    "expression_utils":("#d75f00", None, False),
     # jargon相关
     "jargon": ("#ffd700", None, False),  # 金黄色，突出显示
     # 插件系统
@@ -122,22 +124,24 @@ MODULE_ALIASES = {
     "emoji": "表情包",
     "emoji_cache_cleanup": "表情包缓存清理",
     "chat": "所见",
+    "maisaka_turn_scheduler": "读空气",
     "chat_image": "识图",
     "action_manager": "动作",
     "memory_activator": "记忆",
     "tool_use": "工具",
     "expressor": "表达方式",
+    "expression_utils": "表达方式",
     "database_model": "数据库",
-    "memory": "记忆",
-    "memory_retrieval": "回忆",
     "tool_executor": "工具",
     "plugin_manager": "插件",
-    "relationship_builder": "关系",
     "llm_models": "模型",
     "person_info": "人物",
     "chat_stream": "聊天流",
     "planner": "规划器",
     "config": "配置",
+    "chat_manager": "聊天管理器",
+    "A_Memorix.EmbeddingAPIAdapter": "记忆嵌入",
+    "A_Memorix.GraphStore": "记忆图",
     "main": "主程序",
     "plugin_runtime.integration": "IPC插件系统",
     "plugin_runtime.host.supervisor": "插件监督器",

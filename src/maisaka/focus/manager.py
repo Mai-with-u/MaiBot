@@ -31,6 +31,7 @@ class FocusModeManager:
     def __init__(self) -> None:
         self._focused_session_ids_by_scope: dict[str, list[str]] = {}
         self._next_focus_blocked_session_id_by_scope: dict[str, str] = {}
+        self._next_focus_blocked_at_by_scope: dict[str, float] = {}
         self._last_cycle_at_by_session_id: dict[str, float] = {}
         self._last_read_at_by_session_id: dict[str, datetime] = {}
 
@@ -151,6 +152,7 @@ class FocusModeManager:
         if not self.is_enabled():
             self._focused_session_ids_by_scope.clear()
             self._next_focus_blocked_session_id_by_scope.clear()
+            self._next_focus_blocked_at_by_scope.clear()
             return
 
         focused_session_ids: list[str] = []
@@ -173,25 +175,35 @@ class FocusModeManager:
                 scope_session_ids.append(session_id)
         self._focused_session_ids_by_scope = normalized_focused_session_ids_by_scope
 
+        now = time.time()
+        focus_cool_time = self.get_focus_cool_time()
         blocked_session_ids: list[str] = []
         seen_blocked_session_ids: set[str] = set()
-        for session_id in self._next_focus_blocked_session_id_by_scope.values():
+        blocked_at_by_session_id: dict[str, float] = {}
+        for scope_key, session_id in self._next_focus_blocked_session_id_by_scope.items():
             normalized_session_id = self._normalize_session_id(session_id)
             if not normalized_session_id or normalized_session_id in seen_blocked_session_ids:
                 continue
             if not self._is_session_id_focus_allowed(normalized_session_id):
                 continue
+            blocked_at = self._next_focus_blocked_at_by_scope.get(scope_key, now)
+            if now - blocked_at >= focus_cool_time:
+                continue
             blocked_session_ids.append(normalized_session_id)
             seen_blocked_session_ids.add(normalized_session_id)
+            blocked_at_by_session_id[normalized_session_id] = blocked_at
 
         normalized_blocked_session_id_by_scope: dict[str, str] = {}
+        normalized_blocked_at_by_scope: dict[str, float] = {}
         for session_id in blocked_session_ids:
             scope_key = self._resolve_focus_scope_key(session_id)
             if session_id in self._focused_session_ids_by_scope.get(scope_key, []):
                 continue
             if scope_key not in normalized_blocked_session_id_by_scope:
                 normalized_blocked_session_id_by_scope[scope_key] = session_id
+                normalized_blocked_at_by_scope[scope_key] = blocked_at_by_session_id[session_id]
         self._next_focus_blocked_session_id_by_scope = normalized_blocked_session_id_by_scope
+        self._next_focus_blocked_at_by_scope = normalized_blocked_at_by_scope
 
     def _is_session_id_focus_allowed(self, session_id: str) -> bool:
         normalized_session_id = self._normalize_session_id(session_id)
@@ -242,6 +254,7 @@ class FocusModeManager:
 
         focused_session_ids.append(normalized_session_id)
         self._next_focus_blocked_session_id_by_scope.pop(scope_key, None)
+        self._next_focus_blocked_at_by_scope.pop(scope_key, None)
         self._last_cycle_at_by_session_id[normalized_session_id] = time.time()
         return True
 
@@ -264,7 +277,10 @@ class FocusModeManager:
         self._last_cycle_at_by_session_id.pop(normalized_session_id, None)
 
     def release_focus_and_block_next_entry(self, session_id: str) -> bool:
-        """Remove a focused session and prevent it from claiming the next focus slot."""
+        """Remove a focused session and prevent it from claiming the next focus slot.
+
+        The block expires after focus_cool_time, or immediately via unblock_focus_entry.
+        """
 
         normalized_session_id = self._normalize_session_id(session_id)
         if not normalized_session_id:
@@ -279,7 +295,22 @@ class FocusModeManager:
         self.release_focus(normalized_session_id)
         if was_focused:
             self._next_focus_blocked_session_id_by_scope[scope_key] = normalized_session_id
+            self._next_focus_blocked_at_by_scope[scope_key] = time.time()
         return was_focused
+
+    def unblock_focus_entry(self, session_id: str) -> bool:
+        """Lift the idle-exit re-entry block for a session, e.g. when it is explicitly @-summoned."""
+
+        normalized_session_id = self._normalize_session_id(session_id)
+        if not normalized_session_id:
+            return False
+        self._normalize_state()
+        scope_key = self._resolve_focus_scope_key(normalized_session_id)
+        if self._next_focus_blocked_session_id_by_scope.get(scope_key, "") != normalized_session_id:
+            return False
+        self._next_focus_blocked_session_id_by_scope.pop(scope_key, None)
+        self._next_focus_blocked_at_by_scope.pop(scope_key, None)
+        return True
 
     def switch_focus(self, from_session_id: str, to_session_id: str) -> str:
         """Move one focus slot from the current session to another existing session.
@@ -317,6 +348,7 @@ class FocusModeManager:
         self.release_focus(normalized_from_session_id)
         self._focused_session_ids_by_scope.setdefault(from_scope_key, []).append(normalized_to_session_id)
         self._next_focus_blocked_session_id_by_scope.pop(from_scope_key, None)
+        self._next_focus_blocked_at_by_scope.pop(from_scope_key, None)
         self._last_cycle_at_by_session_id[normalized_to_session_id] = time.time()
         self._normalize_state()
         return ""

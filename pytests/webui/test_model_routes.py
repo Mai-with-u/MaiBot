@@ -256,6 +256,108 @@ visual = true
     assert captured["tools"][0]["name"] == model_routes.MODEL_TEST_TOOL_NAME
 
 
+@pytest.mark.asyncio
+async def test_test_model_capability_tests_embedding_task_model_via_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """嵌入任务中的模型应通过嵌入接口测试，而不是对话接口。"""
+    model_routes = load_model_routes(monkeypatch)
+    config_path = tmp_path / "model_config.toml"
+    config_path.write_text(
+        """
+[[models]]
+name = "embed-model"
+model_identifier = "embed-model-id"
+api_provider = "Fake"
+
+[model_task_config.embedding]
+model_list = ["embed-model"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
+
+    captured: dict[str, Any] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, model_name: str):
+            captured["model_name"] = model_name
+
+        async def get_embedding(self, embedding_input: str, **kwargs: Any):
+            captured["embedding_input"] = embedding_input
+            return SimpleNamespace(embedding=[0.1] * 8, model_name="embed-model")
+
+        async def generate_response_with_message_async(self, **kwargs: Any):
+            raise AssertionError("嵌入模型测试不应调用对话接口")
+
+    monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
+
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="embed-model"))
+
+    assert result.success is True
+    assert result.tool_call_ok is False
+    assert result.visual_tested is False
+    assert result.response == "嵌入向量维度: 8"
+    assert captured["model_name"] == "embed-model"
+    assert captured["embedding_input"]
+
+
+@pytest.mark.asyncio
+async def test_test_model_capability_keeps_chat_test_for_non_embedding_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """未配置在嵌入任务中的模型应保持原有对话测试流程。"""
+    model_routes = load_model_routes(monkeypatch)
+    config_path = tmp_path / "model_config.toml"
+    config_path.write_text(
+        """
+[[models]]
+name = "chat-model"
+model_identifier = "chat-model-id"
+api_provider = "Fake"
+
+[model_task_config.embedding]
+model_list = ["other-embed-model"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
+
+    class FakeOrchestrator:
+        def __init__(self, model_name: str):
+            self.model_name = model_name
+
+        async def get_embedding(self, embedding_input: str, **kwargs: Any):
+            raise AssertionError("对话模型测试不应调用嵌入接口")
+
+        async def generate_response_with_message_async(self, **kwargs: Any):
+            return model_routes.LLMResponseResult(
+                response="",
+                model_name="chat-model",
+                tool_calls=[
+                    model_routes.ToolCall(
+                        call_id="call-1",
+                        func_name=model_routes.MODEL_TEST_TOOL_NAME,
+                        args={"status": "ok", "echo": "maibot model test", "saw_image": False},
+                    )
+                ],
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            )
+
+    monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
+
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="chat-model"))
+
+    assert result.success is True
+    assert result.tool_call_ok is True
+
+
 def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -> None:
     """内置视觉测试图应是可被服务商正常解析的有效 PNG。"""
     model_routes = load_model_routes(monkeypatch)

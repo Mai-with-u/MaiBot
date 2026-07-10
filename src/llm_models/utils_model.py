@@ -203,6 +203,66 @@ class LLMOrchestrator:
             limit_bytes - DATA_URI_RETRY_MARGIN_BYTES,
         )
 
+    def _schedule_llm_retry_event(
+        self,
+        *,
+        model_name: str,
+        attempt: int,
+        max_attempts: int,
+        reason: str,
+        retry_interval: float,
+    ) -> None:
+        """异步广播模型重试进度；非聊天上下文没有 session_id 时跳过。"""
+
+        session_id = self._resolve_effective_session_id()
+        if not session_id:
+            return
+
+        try:
+            from src.maisaka.monitor.events import emit_llm_retry
+
+            asyncio.get_running_loop().create_task(
+                emit_llm_retry(
+                    session_id=session_id,
+                    task_name=self.task_name,
+                    request_type=self.request_type,
+                    model_name=model_name,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    reason=reason,
+                    retry_interval=retry_interval,
+                )
+            )
+        except RuntimeError:
+            return
+
+    def _schedule_llm_error_event(
+        self,
+        *,
+        model_name: str,
+        message: str,
+    ) -> None:
+        """异步广播模型最终失败；非聊天上下文没有 session_id 时跳过。"""
+
+        session_id = self._resolve_effective_session_id()
+        if not session_id:
+            return
+
+        try:
+            from src.maisaka.monitor.events import emit_llm_error
+
+            asyncio.get_running_loop().create_task(
+                emit_llm_error(
+                    session_id=session_id,
+                    task_name=self.task_name,
+                    request_type=self.request_type,
+                    model_name=model_name,
+                    message=message,
+                )
+            )
+        except RuntimeError:
+            return
+
     @staticmethod
     def _build_generation_result(
         content: str,
@@ -784,6 +844,7 @@ class LLMOrchestrator:
         """
         retry_remain = retry_limit if retry_limit is not None else api_provider.max_retry
         retry_remain = max(1, retry_remain)
+        max_attempts = retry_remain
         model_info = request.model_info
         original_response_request = request if isinstance(request, ResponseRequest) else None
         active_request: ClientRequest = request
@@ -809,6 +870,13 @@ class LLMOrchestrator:
                 logger.warning(
                     f"任务 '{task_display}' 的模型 '{model_info.name}' 返回空回复(可重试){original_error_info}。剩余重试次数: {retry_remain}"
                 )
+                self._schedule_llm_retry_event(
+                    model_name=model_info.name,
+                    attempt=max_attempts - retry_remain + 1,
+                    max_attempts=max_attempts,
+                    reason="模型返回空回复",
+                    retry_interval=api_provider.retry_interval,
+                )
                 await asyncio.sleep(api_provider.retry_interval)
 
             except NetworkConnectionError as e:
@@ -829,6 +897,13 @@ class LLMOrchestrator:
                     f"  常见原因: 如请求的API正常但APITimeoutError类型错误过多，请尝试调整模型配置中对应API Provider的timeout值\n"
                     f"  其它可能原因: 网络波动、DNS 故障、连接超时、防火墙限制或代理问题\n"
                     f"  剩余重试次数: {retry_remain}"
+                )
+                self._schedule_llm_retry_event(
+                    model_name=model_info.name,
+                    attempt=max_attempts - retry_remain + 1,
+                    max_attempts=max_attempts,
+                    reason="网络错误",
+                    retry_interval=api_provider.retry_interval,
                 )
                 await asyncio.sleep(api_provider.retry_interval)
 
@@ -852,6 +927,13 @@ class LLMOrchestrator:
 
                     logger.warning(
                         f"任务 '{task_display}' 的模型 '{model_info.name}' 遇到可重试的HTTP错误: {str(e)}{original_error_info}。剩余重试次数: {retry_remain}"
+                    )
+                    self._schedule_llm_retry_event(
+                        model_name=model_info.name,
+                        attempt=max_attempts - retry_remain + 1,
+                        max_attempts=max_attempts,
+                        reason=f"HTTP {e.status_code}",
+                        retry_interval=api_provider.retry_interval,
                     )
                     await asyncio.sleep(api_provider.retry_interval)
                     continue
@@ -899,6 +981,13 @@ class LLMOrchestrator:
                 logger.warning(
                     f"任务 '{task_display}' 的模型 '{model_info.name}' 返回内容解析失败(可重试): {str(e)}{original_error_info}。"
                     f"剩余重试次数: {retry_remain}"
+                )
+                self._schedule_llm_retry_event(
+                    model_name=model_info.name,
+                    attempt=max_attempts - retry_remain + 1,
+                    max_attempts=max_attempts,
+                    reason="响应解析失败",
+                    retry_interval=api_provider.retry_interval,
                 )
                 await asyncio.sleep(api_provider.retry_interval)
 
@@ -984,12 +1073,14 @@ class LLMOrchestrator:
         failed_models_this_request: Set[str] = set()
         max_attempts = 1 if str(model_name or "").strip() else len(self.model_for_task.model_list)
         last_exception: Optional[Exception] = None
+        last_model_name = ""
 
         for _ in range(max_attempts):
             model_info, api_provider, client = self._select_model(
                 exclude_models=failed_models_this_request,
                 model_name=model_name,
             )
+            last_model_name = model_info.name
             message_list = []
             if message_factory:
                 parameter_count = len(inspect.signature(message_factory).parameters)
@@ -1057,7 +1148,15 @@ class LLMOrchestrator:
 
         logger.error(f"所有 {max_attempts} 个模型均尝试失败。")
         if last_exception:
+            self._schedule_llm_error_event(
+                model_name=last_model_name,
+                message=str(last_exception),
+            )
             raise last_exception
+        self._schedule_llm_error_event(
+            model_name=last_model_name,
+            message="请求失败，所有可用模型均已尝试失败。",
+        )
         raise RuntimeError("请求失败，所有可用模型均已尝试失败。")
 
     def _build_tool_options(self, tools: List[ToolDefinitionInput] | None) -> List[ToolOption] | None:

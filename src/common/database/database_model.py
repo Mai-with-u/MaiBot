@@ -23,6 +23,8 @@ class JargonCreatedBy(str, Enum):
 
 class Messages(SQLModel, table=True):
     __tablename__ = "mai_messages"  # type: ignore
+    __table_args__ = (Index("ix_mai_messages_platform_message_id", "platform", "message_id"),)
+
     id: Optional[int] = Field(default=None, primary_key=True)  # 自增主键
 
     # 消息元数据
@@ -141,6 +143,26 @@ class ToolRecord(SQLModel, table=True):
     tool_name: str = Field(index=True, max_length=255)  # 工具名称
     tool_reasoning: Optional[str] = Field(default=None)  # 工具调用推理过程
     tool_data: Optional[str] = Field(default=None)  # 工具数据，JSON格式存储
+
+
+class MaisakaMonitorEventRecord(SQLModel, table=True):
+    """麦麦观察事件账本。"""
+
+    __tablename__ = "maisaka_monitor_events"  # type: ignore
+    __table_args__ = (
+        Index("ix_maisaka_monitor_events_session_event", "session_id", "event_id"),
+        Index("ix_maisaka_monitor_events_type_event", "event_type", "event_id"),
+        Index("ix_maisaka_monitor_events_timestamp", "timestamp"),
+        Index("ix_maisaka_monitor_events_created_at", "created_at"),
+    )
+
+    event_id: Optional[int] = Field(default=None, primary_key=True)
+    event_type: str = Field(max_length=100)
+    session_id: str = Field(default="", max_length=255)
+    timestamp: float = Field(sa_column=Column(Float, nullable=False))
+    schema_version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
+    payload_json: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime))
 
 
 class OneTimeMaintenanceTask(SQLModel, table=True):

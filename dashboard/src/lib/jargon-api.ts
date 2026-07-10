@@ -11,6 +11,9 @@ import type {
   JargonCreateResponse,
   JargonDeleteResponse,
   JargonDetailResponse,
+  JargonExportResponse,
+  JargonImportRequest,
+  JargonImportResponse,
   JargonListResponse,
   JargonStatsResponse,
   JargonUpdateRequest,
@@ -63,6 +66,32 @@ export async function getJargonList(params: {
 export async function getJargonDetail(jargonId: number): Promise<JargonDetailResponse> {
   return backendApi.get<JargonDetailResponse>(`${API_BASE}/${jargonId}`, {
     errorMessage: '获取黑话详情失败',
+  })
+}
+
+/**
+ * 导出黑话
+ */
+export async function exportJargons(params: {
+  ids?: number[]
+  include_chat_info?: boolean
+}): Promise<JargonExportResponse> {
+  return backendApi.post<JargonExportResponse>(`${API_BASE}/export`, {
+    body: {
+      ids: params.ids,
+      include_chat_info: params.include_chat_info ?? false,
+    },
+    errorMessage: '导出黑话失败',
+  })
+}
+
+/**
+ * 导入黑话
+ */
+export async function importJargons(data: JargonImportRequest): Promise<JargonImportResponse> {
+  return backendApi.post<JargonImportResponse>(`${API_BASE}/import`, {
+    body: data,
+    errorMessage: '导入黑话失败',
   })
 }
 

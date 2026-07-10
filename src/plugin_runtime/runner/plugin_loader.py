@@ -52,6 +52,7 @@ class PluginMeta:
         self.instance = plugin_instance
         self.manifest = manifest
         self.version = manifest.version
+        self.plugin_type = manifest.plugin_type
         self.capabilities_required = list(manifest.capabilities)
         self.dependencies: List[str] = list(manifest.plugin_dependency_ids)
         self.component_handlers: Dict[str, str] = {}
@@ -67,17 +68,26 @@ class PluginLoader:
     - plugin.py: 插件入口模块（导出 create_plugin 工厂函数）
     """
 
-    def __init__(self, host_version: str = "") -> None:
+    def __init__(
+        self,
+        host_version: str = "",
+        plugin_type_filter: str = "",
+        trusted_plugin_dirs: Optional[List[str]] = None,
+    ) -> None:
         """初始化插件加载器。
 
         Args:
             host_version: Host 版本号，用于 manifest 兼容性校验。
+            plugin_type_filter: manifest plugin_type 过滤模式。
+            trusted_plugin_dirs: 在过滤模式下始终允许加载的插件根目录。
         """
         self._loaded_plugins: Dict[str, PluginMeta] = {}
         self._failed_plugins: Dict[str, str] = {}
         self._manifest_validator = ManifestValidator(host_version=host_version)
         self._compat_hook_installed = False
         self._blocked_plugin_reasons: Dict[str, str] = {}
+        self._plugin_type_filter = str(plugin_type_filter or "").strip().lower()
+        self._trusted_plugin_dirs = [Path(path).resolve() for path in trusted_plugin_dirs or []]
 
     def set_blocked_plugin_reasons(self, blocked_plugin_reasons: Optional[Dict[str, str]] = None) -> None:
         """更新当前加载器持有的拒绝加载插件列表。
@@ -193,12 +203,40 @@ class PluginLoader:
             return None
 
         plugin_id = manifest.id
+        if not self._plugin_type_matches_filter(plugin_dir, manifest):
+            return None
         if blocked_reason := self.get_blocked_plugin_reason(plugin_id):
             self._failed_plugins[plugin_id] = blocked_reason
             logger.warning(f"插件 {plugin_id} 已被 Host 依赖流水线阻止加载: {blocked_reason}")
             return None
 
         return plugin_id, (plugin_dir, manifest, plugin_path)
+
+    def _plugin_type_matches_filter(self, plugin_dir: Path, manifest: PluginManifest) -> bool:
+        """判断候选插件是否符合当前 Runner 的类型过滤模式。"""
+
+        plugin_type = str(manifest.plugin_type or "extension").strip().lower() or "extension"
+        if not self._plugin_type_filter:
+            return True
+
+        if self._plugin_type_filter == "not_adapter":
+            return plugin_type != "adapter"
+
+        if self._plugin_type_filter == "trusted_or_adapter":
+            resolved_plugin_dir = plugin_dir.resolve()
+            if any(self._path_is_relative_to(resolved_plugin_dir, trusted_dir) for trusted_dir in self._trusted_plugin_dirs):
+                return True
+            return plugin_type == "adapter"
+
+        return plugin_type == self._plugin_type_filter
+
+    @staticmethod
+    def _path_is_relative_to(path: Path, parent: Path) -> bool:
+        try:
+            path.relative_to(parent)
+        except ValueError:
+            return False
+        return True
 
     def _read_manifest_id_for_failure(self, plugin_dir: Path) -> Optional[str]:
         """manifest 校验失败时仍按原始插件 ID 记录失败原因。"""

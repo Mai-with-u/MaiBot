@@ -45,6 +45,8 @@ export interface ListItemEditorOptions {
   fieldRows?: string[][]
   /** Hook-local field UI metadata overrides */
   fieldSchemaOverrides?: Record<string, Partial<FieldSchema>>
+  /** 只在列表项编辑器中展示这些字段；未展示字段由后端默认值或 normalizeItems 处理 */
+  visibleFields?: string[]
   /** 后端 schema 暂时缺失时用于维持富编辑器可用的本地子项 schema */
   fallbackNestedSchema?: ConfigSchema
   /** 添加按钮位置 */
@@ -255,15 +257,27 @@ export function createListItemEditorHook(
       [emitItems, items],
     )
 
+    const effectiveEditorSchema = useMemo<ConfigSchema | undefined>(() => {
+      if (!effectiveNestedSchema || !options.visibleFields?.length) {
+        return effectiveNestedSchema
+      }
+
+      const visibleFieldSet = new Set(options.visibleFields)
+      return {
+        ...effectiveNestedSchema,
+        fields: effectiveNestedSchema.fields.filter((field) => visibleFieldSet.has(field.name)),
+      }
+    }, [effectiveNestedSchema])
+
     const renderItemEditor = (item: Record<string, unknown>, index: number) => {
-      if (!effectiveNestedSchema) {
+      if (!effectiveEditorSchema) {
         return null
       }
 
       if (!options.fieldRows?.length) {
         return (
           <DynamicConfigForm
-            schema={effectiveNestedSchema}
+            schema={effectiveEditorSchema}
             values={item}
             onChange={(field, fieldValue) =>
               handleItemFieldChange(index, field, fieldValue)
@@ -279,14 +293,14 @@ export function createListItemEditorHook(
         ...(options.fieldSchemaOverrides?.[field.name] ?? {}),
       })
       const fieldMap = new Map(
-        effectiveNestedSchema.fields.map((field) => [field.name, applyFieldOverride(field)]),
+        effectiveEditorSchema.fields.map((field) => [field.name, applyFieldOverride(field)]),
       )
       const rowFieldNames = new Set(options.fieldRows.flat())
-      const remainingFields = effectiveNestedSchema.fields
+      const remainingFields = effectiveEditorSchema.fields
         .filter((field) => !rowFieldNames.has(field.name))
         .map(applyFieldOverride)
       const buildRowSchema = (fields: FieldSchema[]): ConfigSchema => ({
-        ...effectiveNestedSchema,
+        ...effectiveEditorSchema,
         fields,
         nested: undefined,
       })

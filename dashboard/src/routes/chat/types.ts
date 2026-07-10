@@ -35,6 +35,17 @@ export interface VirtualIdentityConfig {
   groupId: string // 虚拟群 ID，用于持久化历史记录
 }
 
+export interface ChatRuntimeStatus {
+  kind: 'thinking' | 'typing' | 'acting' | 'error'
+  stage?: string
+  detail?: string
+  retry?: {
+    attempt: number
+    maxAttempts: number
+  }
+  updatedAt: number
+}
+
 // 聊天标签页
 export interface ChatTab {
   id: string
@@ -44,12 +55,16 @@ export interface ChatTab {
   messages: ChatMessage[]
   isConnected: boolean
   isTyping: boolean
+  runtimeStatus?: ChatRuntimeStatus | null
   sessionInfo: {
     session_id?: string
     user_id?: string
     user_name?: string
     bot_name?: string
     bot_qq?: string
+    group_id?: string
+    platform?: string
+    virtual_mode?: boolean
   }
 }
 
@@ -132,6 +147,8 @@ export interface WsMessage {
   user_name?: string
   bot_name?: string
   bot_qq?: string
+  platform?: string
+  virtual_mode?: boolean
   sender?: {
     name: string
     user_id?: string

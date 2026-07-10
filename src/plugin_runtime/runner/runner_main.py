@@ -40,8 +40,10 @@ from src.plugin_runtime import (
     ENV_HOST_VERSION,
     ENV_IPC_ADDRESS,
     ENV_PLUGIN_DIRS,
+    ENV_PLUGIN_TYPE_FILTER,
     ENV_RUNNER_GROUP,
     ENV_SESSION_TOKEN,
+    ENV_TRUSTED_PLUGIN_DIRS,
 )
 from src.plugin_runtime.protocol.envelope import (
     BootstrapPluginPayload,
@@ -363,6 +365,8 @@ class PluginRunner:
         external_available_plugins: Optional[Dict[str, str]] = None,
         blocked_plugin_reasons: Optional[Dict[str, str]] = None,
         runner_group: str = "unknown",
+        plugin_type_filter: str = "",
+        trusted_plugin_dirs: Optional[List[str]] = None,
     ) -> None:
         """初始化 Runner。
 
@@ -373,6 +377,8 @@ class PluginRunner:
             external_available_plugins: 视为已满足的外部依赖插件版本映射。
             blocked_plugin_reasons: 需要拒绝加载的插件及原因映射。
             runner_group: 当前 Runner 所属运行时分组名称。
+            plugin_type_filter: manifest plugin_type 过滤模式。
+            trusted_plugin_dirs: 过滤模式下始终信任的插件根目录。
         """
         self._host_address: str = host_address
         self._session_token: str = session_token
@@ -390,7 +396,11 @@ class PluginRunner:
         }
 
         self._rpc_client: RPCClient = RPCClient(host_address, session_token)
-        self._loader: PluginLoader = PluginLoader(host_version=os.getenv(ENV_HOST_VERSION, ""))
+        self._loader: PluginLoader = PluginLoader(
+            host_version=os.getenv(ENV_HOST_VERSION, ""),
+            plugin_type_filter=plugin_type_filter,
+            trusted_plugin_dirs=trusted_plugin_dirs or [],
+        )
         self._loader.set_blocked_plugin_reasons(self._blocked_plugin_reasons)
         self._start_time: float = time.monotonic()
         self._shutting_down: bool = False
@@ -1280,6 +1290,7 @@ class PluginRunner:
         payload = BootstrapPluginPayload(
             plugin_id=meta.plugin_id,
             plugin_version=meta.version,
+            plugin_type=meta.plugin_type if capabilities_required is None or capabilities_required else "extension",
             capabilities_required=capabilities_required
             if capabilities_required is not None
             else list(meta.capabilities_required or []),
@@ -1386,6 +1397,7 @@ class PluginRunner:
         reg_payload = RegisterPluginPayload(
             plugin_id=meta.plugin_id,
             plugin_version=meta.version,
+            plugin_type=meta.plugin_type,
             components=components,
             llm_providers=llm_providers,
             capabilities_required=meta.capabilities_required,
@@ -2380,13 +2392,16 @@ async def _async_main() -> None:
     external_plugin_ids_raw = os.environ.get(ENV_EXTERNAL_PLUGIN_IDS, "")
     session_token = os.environ.pop(ENV_SESSION_TOKEN, "")
     plugin_dirs_str = os.environ.get(ENV_PLUGIN_DIRS, "")
+    plugin_type_filter = os.environ.get(ENV_PLUGIN_TYPE_FILTER, "")
     runner_group = os.environ.get(ENV_RUNNER_GROUP, "unknown")
+    trusted_plugin_dirs_str = os.environ.get(ENV_TRUSTED_PLUGIN_DIRS, "")
 
     if not host_address or not session_token:
         logger.error(f"缺少必要的环境变量: {ENV_IPC_ADDRESS}, {ENV_SESSION_TOKEN}")
         sys.exit(1)
 
     plugin_dirs = [d for d in plugin_dirs_str.split(os.pathsep) if d]
+    trusted_plugin_dirs = [d for d in trusted_plugin_dirs_str.split(os.pathsep) if d]
     try:
         external_plugin_ids = json.loads(external_plugin_ids_raw) if external_plugin_ids_raw else {}
     except json.JSONDecodeError:
@@ -2420,6 +2435,8 @@ async def _async_main() -> None:
         session_token,
         plugin_dirs,
         runner_group=runner_group,
+        plugin_type_filter=plugin_type_filter,
+        trusted_plugin_dirs=trusted_plugin_dirs,
         **runner_kwargs,
     )
     await runner._write_debug_event(

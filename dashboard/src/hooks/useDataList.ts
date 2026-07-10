@@ -3,7 +3,7 @@
  *
  * 把列表页历来各自重复的那组状态（分页三件套、搜索防抖、筛选、多选）连同列表查询一并收编：
  * - 内部包一个列表查询，queryKey 从分页/搜索/筛选状态派生，参数变化自动重新拉取；
- * - 筛选 / 搜索 / 翻页 / 改页大小时自动重置页码并清空选中集（避免跨页残留导致误删）；
+ * - 默认在筛选 / 搜索 / 翻页 / 改页大小时自动重置页码并清空选中集（避免跨页残留导致误删）；
  * - 搜索可配置防抖（受控输入 + 内部防抖值驱动查询）；
  * - 对话框与具体渲染（表格 / 卡片）留在各页面，不进本 hook。
  *
@@ -37,6 +37,8 @@ export interface UseDataListConfig<TItem, TFilters, TId> {
   queryFn: (params: DataListQueryParams<TFilters>) => Promise<{ items: TItem[]; total: number }>
   /** 透传给底层 useQuery 的部分选项（如条件列表的 enabled、覆盖 staleTime） */
   queryOptions?: { enabled?: boolean; staleTime?: number }
+  /** 参数变化时是否保留选中项，默认 false 表示清空选中。 */
+  preserveSelectionOnParamsChange?: boolean
 }
 
 export interface UseDataListResult<TItem, TFilters, TId> {
@@ -77,7 +79,12 @@ export interface UseDataListResult<TItem, TFilters, TId> {
 export function useDataList<TItem, TFilters, TId = string>(
   config: UseDataListConfig<TItem, TFilters, TId>,
 ): UseDataListResult<TItem, TFilters, TId> {
-  const { domain, initialPageSize = 20, searchDebounceMs = 0 } = config
+  const {
+    domain,
+    initialPageSize = 20,
+    preserveSelectionOnParamsChange = false,
+    searchDebounceMs = 0,
+  } = config
 
   const [page, setPageRaw] = useState(1)
   const [pageSize, setPageSizeRaw] = useState(initialPageSize)
@@ -120,52 +127,64 @@ export function useDataList<TItem, TFilters, TId = string>(
   const goToPage = useCallback(
     (n: number) => {
       setPageRaw(Math.min(Math.max(1, Math.trunc(n)), totalPages))
-      clearSelection()
+      if (!preserveSelectionOnParamsChange) {
+        clearSelection()
+      }
     },
-    [totalPages, clearSelection],
+    [totalPages, clearSelection, preserveSelectionOnParamsChange],
   )
 
   const setSearchInput = useCallback(
     (value: string) => {
       setSearchInputRaw(value)
       setPageRaw(1)
-      clearSelection()
+      if (!preserveSelectionOnParamsChange) {
+        clearSelection()
+      }
     },
-    [clearSelection],
+    [clearSelection, preserveSelectionOnParamsChange],
   )
 
   const setPageSize = useCallback(
     (n: number) => {
       setPageSizeRaw(n)
       setPageRaw(1)
-      clearSelection()
+      if (!preserveSelectionOnParamsChange) {
+        clearSelection()
+      }
     },
-    [clearSelection],
+    [clearSelection, preserveSelectionOnParamsChange],
   )
 
   const setFilter = useCallback(
     <K extends keyof TFilters>(key: K, value: TFilters[K]) => {
       setFilters((prev) => ({ ...prev, [key]: value }))
       setPageRaw(1)
-      clearSelection()
+      if (!preserveSelectionOnParamsChange) {
+        clearSelection()
+      }
     },
-    [clearSelection],
+    [clearSelection, preserveSelectionOnParamsChange],
   )
 
   const updateFilters = useCallback(
     (updater: (filters: TFilters) => TFilters) => {
       setFilters((prev) => updater(prev))
       setPageRaw(1)
-      clearSelection()
+      if (!preserveSelectionOnParamsChange) {
+        clearSelection()
+      }
     },
-    [clearSelection],
+    [clearSelection, preserveSelectionOnParamsChange],
   )
 
   const resetFilters = useCallback(() => {
     setFilters(initialFiltersRef.current)
     setPageRaw(1)
-    clearSelection()
-  }, [clearSelection])
+    if (!preserveSelectionOnParamsChange) {
+      clearSelection()
+    }
+  }, [clearSelection, preserveSelectionOnParamsChange])
 
   // 多选：toggleAll 针对当前页可见项
   const { getId } = config

@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
 import { RenderMessageContent } from './MessageRenderer'
-import type { ChatMessage } from './types'
+import type { ChatMessage, ChatRuntimeStatus } from './types'
 
 interface MessageListProps {
   messages: ChatMessage[]
@@ -19,6 +19,7 @@ interface MessageListProps {
   botQq?: string
   userName: string
   language: string
+  runtimeStatus?: ChatRuntimeStatus | null
 }
 
 interface BubbleAvatarProps {
@@ -74,6 +75,71 @@ function EmptyState({ botName }: { botName: string }) {
   )
 }
 
+function RuntimeStatusIndicator({
+  botDisplayName,
+  status,
+}: {
+  botDisplayName: string
+  status: ChatRuntimeStatus
+}) {
+  const { t } = useTranslation()
+  const errorDetail = status.kind === 'error' ? (status.detail || '').replace(/\s+/g, ' ').trim() : ''
+  const visibleErrorDetail =
+    errorDetail.length > 120 ? `${errorDetail.slice(0, 120)}...` : errorDetail
+  const retryText = status.retry
+    ? t('chat.activity.retrySuffix', {
+        attempt: status.retry.attempt,
+        max: status.retry.maxAttempts,
+      })
+    : ''
+  const label = t(`chat.activity.${status.kind}`, {
+    bot: botDisplayName,
+    retry: retryText,
+  })
+  const displayText =
+    visibleErrorDetail && status.kind === 'error' ? `${label}: ${visibleErrorDetail}` : label
+
+  return (
+    <div className="mt-3 flex w-full items-end gap-2 sm:gap-3">
+      <BubbleAvatar type="bot" visible={false} />
+      <div
+        className={cn(
+          'flex max-w-[80%] items-center gap-2 rounded-2xl rounded-bl-md px-3.5 py-2 text-xs sm:max-w-[70%]',
+          status.kind === 'error'
+            ? 'border border-destructive/30 bg-destructive/10 text-destructive'
+            : 'bg-muted/70 text-muted-foreground'
+        )}
+        role="status"
+        aria-live="polite"
+      >
+        <span className="flex h-4 items-center gap-1" aria-hidden="true">
+          <span
+            className={cn(
+              'h-1.5 w-1.5 animate-pulse rounded-full',
+              status.kind === 'error' ? 'bg-destructive/80' : 'bg-primary/70'
+            )}
+          />
+          <span
+            className={cn(
+              'h-1.5 w-1.5 animate-pulse rounded-full [animation-delay:150ms]',
+              status.kind === 'error' ? 'bg-destructive/70' : 'bg-primary/60'
+            )}
+          />
+          <span
+            className={cn(
+              'h-1.5 w-1.5 animate-pulse rounded-full [animation-delay:300ms]',
+              status.kind === 'error' ? 'bg-destructive/60' : 'bg-primary/50'
+            )}
+          />
+        </span>
+        <span className="min-w-0 truncate" title={errorDetail || undefined}>
+          {displayText}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 /**
  * 聊天消息列表：支持连续同发送者消息分组、富文本与系统/错误信息样式。
  */
@@ -84,6 +150,7 @@ export function MessageList({
   botQq,
   userName,
   language,
+  runtimeStatus,
 }: MessageListProps) {
   const { t } = useTranslation()
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -100,7 +167,7 @@ export function MessageList({
       top: viewport.scrollHeight,
       behavior: 'smooth',
     })
-  }, [messages])
+  }, [messages, runtimeStatus])
 
   const scrollToMessage = useCallback((messageId: string) => {
     const viewport = viewportRef.current
@@ -265,6 +332,9 @@ export function MessageList({
               </div>
             )
           })}
+          {runtimeStatus && (
+            <RuntimeStatusIndicator botDisplayName={botDisplayName} status={runtimeStatus} />
+          )}
           <div ref={endRef} />
           {/* 用于读屏 / 避免悬空 */}
           <span className="sr-only" aria-live="polite">

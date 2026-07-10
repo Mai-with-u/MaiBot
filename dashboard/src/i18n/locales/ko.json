@@ -92,6 +92,13 @@
       "errorFallback": "오류가 발생했습니다",
       "thinking": "생각 중..."
     },
+    "activity": {
+      "acting": "{{bot}} 행동 중{{retry}}",
+      "error": "{{bot}} 오류 발생{{retry}}",
+      "retrySuffix": " {{attempt}}/{{max}}",
+      "thinking": "{{bot}} 생각 중{{retry}}",
+      "typing": "{{bot}} 입력 중{{retry}}"
+    },
     "composer": {
       "hint": "Enter 전송 · Shift + Enter 줄바꿈"
     },
@@ -502,6 +509,10 @@
         "title": "기본 정보와 성격",
         "description": "닉네임, 성격, 답변 스타일을 설정합니다"
       },
+      "customToken": {
+        "title": "로그인 Token 설정",
+        "description": "이번 실행에서 생성된 랜덤 Token을 고정 사용자 지정 Token으로 바꿉니다"
+      },
       "botBasic": {
         "title": "Bot 기본 설정",
         "description": "봇의 기본 정보를 설정합니다"
@@ -539,7 +550,8 @@
       "enterBaseUrl": "API Base URL을 입력해 주세요",
       "enterApiKey": "API Key를 입력해 주세요",
       "enterPlannerModelIdentifier": "planner 모델 식별자를 입력해 주세요",
-      "enterReplyerModelIdentifier": "replyer 모델 식별자를 입력해 주세요"
+      "enterReplyerModelIdentifier": "replyer 모델 식별자를 입력해 주세요",
+      "customTokenInvalid": "Token이 요구 사항을 충족하지 않습니다: {{failedRules}}"
     },
     "toast": {
       "loadFailedTitle": "설정 불러오기에 실패했습니다",
@@ -552,6 +564,8 @@
       "completeSuccessDescription": "{{appName}} 설정이 저장되고 적용되었습니다.",
       "completeFailedTitle": "설정 완료에 실패했습니다",
       "skipFailedTitle": "설정 마법사 건너뛰기에 실패했습니다",
+      "customTokenSuccessTitle": "Token이 업데이트되었습니다",
+      "customTokenSuccessDescription": "새 사용자 지정 Token으로 다시 로그인한 뒤 설정을 계속해 주세요.",
       "unknownError": "알 수 없는 오류"
     },
     "actions": {
@@ -559,6 +573,7 @@
       "next": "다음",
       "skip": "마법사 건너뛰기",
       "complete": "설정 완료",
+      "saveToken": "Token 저장",
       "saving": "저장 중...",
       "completing": "완료 중..."
     },
@@ -584,6 +599,16 @@
       }
     },
     "forms": {
+      "customToken": {
+        "noticeTitle": "현재 실행 시 생성된 랜덤 Token을 사용 중입니다",
+        "noticeDescription": "랜덤 Token은 다음 실행 때 변경됩니다. 고정 사용자 지정 Token을 설정하고 앞으로 WebUI 로그인에 사용하세요.",
+        "label": "사용자 지정 Token *",
+        "placeholder": "안전하게 보관할 수 있는 Token을 입력하세요",
+        "description": "저장하면 현재 로그인이 만료되며 새 Token으로 다시 로그인해야 합니다.",
+        "requirements": "Token 요구 사항",
+        "show": "Token 표시",
+        "hide": "Token 숨기기"
+      },
       "botBasic": {
         "platform": {
           "label": "플랫폼 *",

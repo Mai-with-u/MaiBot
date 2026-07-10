@@ -871,10 +871,7 @@ export function KnowledgeBasePage() {
               </Button>
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="space-y-1.5 lg:max-w-sm">
-                  <div className="text-primary text-[11px] font-medium tracking-[0.18em] uppercase">
-                    快速开始
-                  </div>
-                  <h2 className="text-lg leading-tight font-semibold">先从这三件事入手</h2>
+                  <h2 className="text-lg leading-tight font-semibold">快速开始：先从这三件事入手</h2>
                   <p className="text-muted-foreground text-sm">
                     不知道该做什么？挑一个最常用的入口，下面的标签页里有更详细的设置。
                   </p>
