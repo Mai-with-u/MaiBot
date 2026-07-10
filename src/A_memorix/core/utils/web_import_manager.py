@@ -2784,6 +2784,7 @@ class ImportTaskManager:
         switched = False
         rollback_info: Dict[str, Any] = {"attempted": True, "restored": False, "error": ""}
         moved_items: List[Tuple[Path, Path]] = []
+        installed_items: List[Path] = []
         try:
             for name in ("vectors", "graph", "metadata"):
                 src_current = target_dir / name
@@ -2795,19 +2796,33 @@ class ImportTaskManager:
                     shutil.move(str(src_current), str(dst_backup))
                     moved_items.append((dst_backup, src_current))
                 shutil.move(str(src_new), str(src_current))
+                installed_items.append(src_current)
             switched = True
         except Exception as switch_err:
             rollback_info["error"] = str(switch_err)
-            # 尝试回滚
-            for src_backup, dst_original in moved_items:
-                if src_backup.exists() and not dst_original.exists():
+            restore_errors: List[str] = []
+            # 先移走已安装的新目录，再逐项恢复旧目录，避免新旧内容混合。
+            for installed_path in reversed(installed_items):
+                if not installed_path.exists():
+                    continue
+                failed_new_path = backup_dir / f"{installed_path.name}.failed_new"
+                try:
+                    shutil.move(str(installed_path), str(failed_new_path))
+                except OSError as restore_exc:
+                    restore_errors.append(str(restore_exc))
+                    logger.error(f"隔离切换失败目录失败: path={installed_path}, error={restore_exc}")
+            for src_backup, dst_original in reversed(moved_items):
+                if src_backup.exists():
                     try:
                         shutil.move(str(src_backup), str(dst_original))
                     except OSError as restore_exc:
+                        restore_errors.append(str(restore_exc))
                         logger.error(
                             f"恢复转换备份失败: source={src_backup}, target={dst_original}, error={restore_exc}"
                         )
-            rollback_info["restored"] = True
+            rollback_info["restored"] = not restore_errors
+            if restore_errors:
+                rollback_info["error"] = f"{switch_err}; rollback: {'; '.join(restore_errors)}"
             async with self._lock:
                 t = self._tasks.get(task_id)
                 if t:
@@ -3657,7 +3672,6 @@ class ImportTaskManager:
             )
             self.plugin.graph_store.add_edges([(subject_token, object_token)], relation_hashes=[rel_hash])
             if not write_vector:
-                self.plugin.metadata_store.set_relation_vector_state(rel_hash, "none")
                 return rel_hash
             target_store = self._graph_vector_store()
             vector_id = self._graph_vector_id("relation", rel_hash)

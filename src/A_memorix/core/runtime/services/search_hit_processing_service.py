@@ -665,11 +665,12 @@ class MemorySearchHitProcessingService(KernelServiceBase):
             linked_hashes: List[str] = []
             for relation in linked_relations:
                 linked_hash = str(relation.get("hash", "") or "").strip()
-                if not linked_hash or linked_hash in seen_relation_hashes:
+                if not linked_hash:
                     continue
-                seen_relation_hashes.add(linked_hash)
-                relation_hashes.append(linked_hash)
                 linked_hashes.append(linked_hash)
+                if linked_hash not in seen_relation_hashes:
+                    seen_relation_hashes.add(linked_hash)
+                    relation_hashes.append(linked_hash)
             if linked_hashes:
                 paragraph_relation_cache[item_hash] = linked_hashes
 

@@ -1009,95 +1009,195 @@ class MemoryGraphAdminService(KernelServiceBase):
         if source == target:
             return {"success": True, "renamed": False, "old_name": source, "new_name": target}
 
-        conn = self.metadata_store.get_connection()
-        cursor = conn.cursor()
         old_hash = compute_hash(source.lower())
         target_hash = compute_hash(target.lower())
-
-        cursor.execute(
-            """
-            SELECT hash, name, vector_index, appearance_count, created_at, metadata
-            FROM entities
-            WHERE hash = ?
-               OR LOWER(TRIM(name)) = LOWER(TRIM(?))
-            LIMIT 1
-            """,
-            (old_hash, source),
-        )
-        old_row = cursor.fetchone()
-        if old_row is None:
-            return {"success": False, "error": "原节点不存在"}
-
-        cursor.execute(
-            """
-            SELECT hash, appearance_count
-            FROM entities
-            WHERE hash = ?
-               OR LOWER(TRIM(name)) = LOWER(TRIM(?))
-            LIMIT 1
-            """,
-            (target_hash, target),
-        )
-        target_row = cursor.fetchone()
-
+        old_relation_hashes: List[str] = []
+        relation_hash_map: Dict[str, str] = {}
+        resolved_target_hash = target_hash
+        old_entity_hash = old_hash
         try:
-            cursor.execute("BEGIN IMMEDIATE")
-            if target_row is None:
+            with self.metadata_store.transaction(immediate=True) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO entities (hash, name, vector_index, appearance_count, created_at, metadata, is_deleted, deleted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
-                    """,
-                    (
-                        target_hash,
-                        target,
-                        old_row["vector_index"],
-                        old_row["appearance_count"],
-                        old_row["created_at"],
-                        old_row["metadata"],
-                    ),
-                )
-                resolved_target_hash = target_hash
-            else:
-                resolved_target_hash = str(target_row["hash"] or "").strip()
-                cursor.execute(
-                    """
-                    UPDATE entities
-                    SET name = ?,
-                        appearance_count = COALESCE(appearance_count, 0) + ?,
-                        is_deleted = 0,
-                        deleted_at = NULL
+                    SELECT *
+                    FROM entities
                     WHERE hash = ?
+                       OR LOWER(TRIM(name)) = LOWER(TRIM(?))
+                    LIMIT 1
                     """,
-                    (
-                        target,
-                        int(old_row["appearance_count"] or 0),
-                        resolved_target_hash,
-                    ),
+                    (old_hash, source),
                 )
+                old_row = cursor.fetchone()
+                if old_row is None:
+                    return {"success": False, "error": "原节点不存在"}
+                old_entity_hash = str(old_row["hash"] or "").strip()
+                old_entity_name = str(old_row["name"] or "").strip()
 
-            cursor.execute(
-                "UPDATE OR IGNORE paragraph_entities SET entity_hash = ? WHERE entity_hash = ?",
-                (resolved_target_hash, old_row["hash"]),
-            )
-            cursor.execute("DELETE FROM paragraph_entities WHERE entity_hash = ?", (old_row["hash"],))
-            cursor.execute(
-                "UPDATE relations SET subject = ? WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))",
-                (target, old_row["name"]),
-            )
-            cursor.execute(
-                "UPDATE relations SET object = ? WHERE LOWER(TRIM(object)) = LOWER(TRIM(?))",
-                (target, old_row["name"]),
-            )
-            cursor.execute("DELETE FROM entities WHERE hash = ?", (old_row["hash"],))
-            conn.commit()
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM entities
+                    WHERE hash = ?
+                       OR LOWER(TRIM(name)) = LOWER(TRIM(?))
+                    LIMIT 1
+                    """,
+                    (target_hash, target),
+                )
+                target_row = cursor.fetchone()
+
+                if target_row is not None and str(target_row["hash"] or "").strip() == old_entity_hash:
+                    resolved_target_hash = old_entity_hash
+                    cursor.execute(
+                        """
+                        UPDATE entities
+                        SET name = ?, vector_index = NULL, is_deleted = 0, deleted_at = NULL
+                        WHERE hash = ?
+                        """,
+                        (target, old_entity_hash),
+                    )
+                elif target_row is None:
+                    cursor.execute(
+                        """
+                        INSERT INTO entities (
+                            hash, name, vector_index, appearance_count, created_at, metadata, is_deleted, deleted_at
+                        ) VALUES (?, ?, NULL, ?, ?, ?, 0, NULL)
+                        """,
+                        (
+                            target_hash,
+                            target,
+                            old_row["appearance_count"],
+                            old_row["created_at"],
+                            old_row["metadata"],
+                        ),
+                    )
+                    resolved_target_hash = target_hash
+                else:
+                    resolved_target_hash = str(target_row["hash"] or "").strip()
+                    cursor.execute(
+                        """
+                        UPDATE entities
+                        SET name = ?,
+                            appearance_count = COALESCE(appearance_count, 0) + ?,
+                            is_deleted = 0,
+                            deleted_at = NULL
+                        WHERE hash = ?
+                        """,
+                        (target, int(old_row["appearance_count"] or 0), resolved_target_hash),
+                    )
+
+                if resolved_target_hash != old_entity_hash:
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO paragraph_entities (paragraph_hash, entity_hash, mention_count)
+                        SELECT paragraph_hash, ?, mention_count
+                        FROM paragraph_entities
+                        WHERE entity_hash = ?
+                        """,
+                        (resolved_target_hash, old_entity_hash),
+                    )
+                    cursor.execute("DELETE FROM paragraph_entities WHERE entity_hash = ?", (old_entity_hash,))
+
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM relations
+                    WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))
+                       OR LOWER(TRIM(object)) = LOWER(TRIM(?))
+                    """,
+                    (old_entity_name, old_entity_name),
+                )
+                affected_relations = cursor.fetchall()
+                for relation_row in affected_relations:
+                    relation_data = dict(relation_row)
+                    old_relation_hash = str(relation_data["hash"] or "").strip()
+                    relation_subject = str(relation_data.get("subject", "") or "").strip()
+                    relation_object = str(relation_data.get("object", "") or "").strip()
+                    if relation_subject.lower() == old_entity_name.lower():
+                        relation_subject = target
+                    if relation_object.lower() == old_entity_name.lower():
+                        relation_object = target
+                    new_relation_hash = self.metadata_store.compute_relation_hash(
+                        relation_subject,
+                        str(relation_data.get("predicate", "") or "").strip(),
+                        relation_object,
+                    )
+                    relation_data.update(
+                        {
+                            "hash": new_relation_hash,
+                            "subject": relation_subject,
+                            "object": relation_object,
+                            "vector_index": None,
+                            "vector_state": "none",
+                            "vector_updated_at": None,
+                            "vector_error": None,
+                            "vector_retry_count": 0,
+                        }
+                    )
+                    old_relation_hashes.append(old_relation_hash)
+                    relation_hash_map[old_relation_hash] = new_relation_hash
+
+                    if new_relation_hash == old_relation_hash:
+                        cursor.execute(
+                            """
+                            UPDATE relations
+                            SET subject = ?, object = ?, vector_index = NULL,
+                                vector_state = 'none', vector_updated_at = NULL,
+                                vector_error = NULL, vector_retry_count = 0
+                            WHERE hash = ?
+                            """,
+                            (relation_subject, relation_object, old_relation_hash),
+                        )
+                        continue
+
+                    columns = list(relation_data)
+                    placeholders = ",".join("?" for _ in columns)
+                    cursor.execute(
+                        f"INSERT OR IGNORE INTO relations ({','.join(columns)}) VALUES ({placeholders})",
+                        tuple(relation_data[column] for column in columns),
+                    )
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO paragraph_relations (paragraph_hash, relation_hash)
+                        SELECT paragraph_hash, ? FROM paragraph_relations WHERE relation_hash = ?
+                        """,
+                        (new_relation_hash, old_relation_hash),
+                    )
+                    cursor.execute("DELETE FROM relations WHERE hash = ?", (old_relation_hash,))
+
+                    cursor.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'graph_edge_relation_map'"
+                    )
+                    if cursor.fetchone() is not None:
+                        cursor.execute(
+                            "UPDATE OR IGNORE graph_edge_relation_map SET relation_hash = ? WHERE relation_hash = ?",
+                            (new_relation_hash, old_relation_hash),
+                        )
+                        cursor.execute(
+                            "DELETE FROM graph_edge_relation_map WHERE relation_hash = ?",
+                            (old_relation_hash,),
+                        )
+
+                if resolved_target_hash != old_entity_hash:
+                    cursor.execute("DELETE FROM entities WHERE hash = ?", (old_entity_hash,))
         except Exception as exc:
-            conn.rollback()
             return {"success": False, "error": f"rename failed: {exc}"}
 
+        self.metadata_store.rebuild_relation_hash_aliases()
+        self._delete_vectors_by_type(
+            entity_hashes=[old_entity_hash],
+            relation_hashes=old_relation_hashes,
+        )
         self._rebuild_graph_from_metadata()
         self._persist()
-        return {"success": True, "renamed": True, "old_name": source, "new_name": target}
+        return {
+            "success": True,
+            "renamed": True,
+            "old_name": source,
+            "new_name": target,
+            "entity_hash": resolved_target_hash,
+            "relation_hash_map": relation_hash_map,
+        }
 
     def _update_edge_weight(
         self,

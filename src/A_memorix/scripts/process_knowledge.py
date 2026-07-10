@@ -728,7 +728,8 @@ Chat paragraph:
                     await self._add_entity_with_vector(s, source_paragraph=h_val)
                     await self._add_entity_with_vector(o, source_paragraph=h_val)
 
-                    confidence = float(rel.get("confidence", 1.0) or 1.0) if isinstance(rel, dict) else 1.0
+                    confidence_value = rel.get("confidence", 1.0) if isinstance(rel, dict) else 1.0
+                    confidence = float(1.0 if confidence_value is None else confidence_value)
                     rel_meta = rel.get("metadata", {}) if isinstance(rel, dict) else {}
                     write_vector = self._should_write_relation_vectors()
                     if self.relation_write_service is not None:
@@ -751,7 +752,6 @@ Chat paragraph:
                             metadata=rel_meta if isinstance(rel_meta, dict) else {},
                         )
                         self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
                 if progress_callback:
                     progress_callback(1)
@@ -775,11 +775,8 @@ Chat paragraph:
                 await self._add_entity_with_vector(subject)
                 await self._add_entity_with_vector(obj)
 
-                confidence = (
-                    float(raw_relation.get("confidence", 1.0) or 1.0)
-                    if isinstance(raw_relation, dict)
-                    else 1.0
-                )
+                confidence_value = raw_relation.get("confidence", 1.0) if isinstance(raw_relation, dict) else 1.0
+                confidence = float(1.0 if confidence_value is None else confidence_value)
                 rel_meta = raw_relation.get("metadata", {}) if isinstance(raw_relation, dict) else {}
                 write_vector = self._should_write_relation_vectors()
                 if self.relation_write_service is not None:
@@ -802,7 +799,6 @@ Chat paragraph:
                         metadata=rel_meta if isinstance(rel_meta, dict) else {},
                     )
                     self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
-                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
         if warning_count > 0:
             logger.warning(f"脚本导入完成，跳过异常项 {warning_count} 条")

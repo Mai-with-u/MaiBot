@@ -10,6 +10,8 @@ from src.A_memorix.core.retrieval import RetrievalResult
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from src.A_memorix.core.runtime.services import memory_maintenance_service
+from src.A_memorix.core.storage.graph_store import GraphStore
+from src.A_memorix.core.storage.metadata_store import MetadataStore
 from src.A_memorix.core.utils import profile_policy
 
 
@@ -48,6 +50,52 @@ async def test_graph_admin_delete_node_uses_kernel_patched_delete_action(monkeyp
     assert result["success"] is True
     assert result["deleted"] is True
     assert result["marker"] == "kernel-patched"
+
+
+def test_graph_admin_rename_rehashes_relations_and_invalidates_vectors(tmp_path: Path) -> None:
+    metadata_store = MetadataStore(data_dir=tmp_path / "metadata")
+    metadata_store.connect()
+    try:
+        paragraph_hash = metadata_store.add_paragraph("Alice 喜欢 Bob", source="test")
+        old_entity_hash = metadata_store.add_entity("Alice", vector_index=12, source_paragraph=paragraph_hash)
+        metadata_store.add_entity("Bob", source_paragraph=paragraph_hash)
+        old_relation_hash = metadata_store.add_relation(
+            "Alice",
+            "喜欢",
+            "Bob",
+            vector_index=34,
+            source_paragraph=paragraph_hash,
+        )
+        deleted_vector_ids: list[str] = []
+        vector_store = SimpleNamespace(
+            delete=lambda ids: deleted_vector_ids.extend(ids) or len(ids),
+        )
+        kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+        kernel.metadata_store = metadata_store
+        kernel.graph_store = GraphStore(data_dir=tmp_path / "graph")
+        kernel.vector_store = vector_store  # type: ignore[assignment]
+        kernel._persist = lambda: None  # type: ignore[method-assign]
+
+        result = kernel._rename_node("Alice", "Carol")
+
+        assert result["success"] is True
+        new_relation_hash = metadata_store.compute_relation_hash("Carol", "喜欢", "Bob")
+        assert metadata_store.get_relation(old_relation_hash) is None
+        relation = metadata_store.get_relation(new_relation_hash)
+        assert relation is not None
+        assert relation["subject"] == "Carol"
+        assert relation["vector_index"] is None
+        assert relation["vector_state"] == "none"
+        assert metadata_store.get_entity(old_entity_hash) is None
+        new_entity = metadata_store.get_entity(result["entity_hash"])
+        assert new_entity is not None
+        assert new_entity["vector_index"] is None
+        paragraph_relations = metadata_store.get_paragraph_relations(paragraph_hash)
+        assert [item["hash"] for item in paragraph_relations] == [new_relation_hash]
+        assert old_entity_hash in deleted_vector_ids
+        assert old_relation_hash in deleted_vector_ids
+    finally:
+        metadata_store.close()
 
 
 @pytest.mark.asyncio
@@ -366,6 +414,32 @@ async def test_runtime_config_service_apply_tuning_uses_kernel_patched_runtime_b
     assert calls[0][0] == "build"
     assert calls[0][1]["owner_tag"] == "sdk_kernel_tuning_apply"
     assert calls[1:] == [("refresh", True), ("sparse", None)]
+
+
+@pytest.mark.asyncio
+async def test_runtime_config_service_clears_sparse_index_when_rebuild_disables_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.sparse_index = object()  # type: ignore[assignment]
+    monkeypatch.setattr(
+        kernel_module,
+        "build_search_runtime",
+        lambda **kwargs: SimpleNamespace(
+            ready=True,
+            error="",
+            retriever="retriever",
+            threshold_filter="threshold",
+            sparse_index=None,
+        ),
+    )
+    monkeypatch.setattr(kernel, "_refresh_runtime_dependents", lambda **kwargs: None)
+    monkeypatch.setattr(kernel, "_apply_runtime_sparse_mode", lambda: None)
+
+    result = await kernel._runtime_config_service.apply_retrieval_tuning_profile({}, validate=True)
+
+    assert result["success"] is True
+    assert kernel.sparse_index is None
 
 
 def test_chat_filter_service_uses_kernel_patched_filter_boundary(
@@ -1846,6 +1920,36 @@ async def test_request_dedup_service_shares_inflight_request() -> None:
     assert first_result == (False, {"success": True})
     assert second_result == (True, {"success": True})
     assert calls == 1
+    assert kernel._request_dedup_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_request_dedup_waiter_cancellation_does_not_cancel_shared_request() -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def executor() -> dict[str, Any]:
+        started.set()
+        await release.wait()
+        return {"success": True}
+
+    owner = asyncio.create_task(
+        kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
+    )
+    await started.wait()
+    waiter = asyncio.create_task(
+        kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
+    )
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert "same-request" in kernel._request_dedup_tasks
+    release.set()
+    assert await owner == (False, {"success": True})
+    await asyncio.sleep(0)
     assert kernel._request_dedup_tasks == {}
 
 
