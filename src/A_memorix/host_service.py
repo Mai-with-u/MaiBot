@@ -361,7 +361,11 @@ class AMemorixHostService:
                     self._startup_finished_at = time.time()
         except asyncio.CancelledError:
             if kernel is not None:
-                kernel.close()
+                shutdown = getattr(kernel, "shutdown", None)
+                if callable(shutdown):
+                    await shutdown()
+                else:
+                    kernel.close()
             if self._kernel is kernel:
                 self._kernel = None
             self._runtime_state = "stopped"
@@ -370,7 +374,11 @@ class AMemorixHostService:
             raise
         except Exception as exc:
             if kernel is not None:
-                kernel.close()
+                shutdown = getattr(kernel, "shutdown", None)
+                if callable(shutdown):
+                    await shutdown()
+                else:
+                    kernel.close()
             set_runtime_kernel(None)
             async with self._lock:
                 self._kernel = None

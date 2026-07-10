@@ -127,9 +127,14 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                 await self.retrieval_tuning_manager.shutdown()
             except Exception as exc:
                 logger.warning(f"关闭调优任务管理器失败: {exc}")
-        self.close()
+        self._close_runtime()
 
     def close(self) -> None:
+        if self._initialized:
+            raise RuntimeError("A_Memorix 运行时仍处于活动状态，请先 await shutdown()")
+        self._close_runtime()
+
+    def _close_runtime(self) -> None:
         try:
             self._persist()
         finally:

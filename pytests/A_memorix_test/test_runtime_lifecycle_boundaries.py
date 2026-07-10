@@ -225,6 +225,52 @@ async def test_runtime_lifecycle_shutdown_preserves_cleanup_semantics(
     }
 
 
+def test_runtime_lifecycle_close_rejects_initialized_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class FakeMetadataStore:
+        def close(self) -> None:
+            events.append("metadata_close")
+
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config={})
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel._initialized = True
+    monkeypatch.setattr(kernel, "_persist", lambda: events.append("persist"))
+
+    with pytest.raises(RuntimeError, match=r"await shutdown\(\)"):
+        kernel.close()
+
+    assert events == []
+    assert kernel._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_plugin_config_update_awaits_kernel_shutdown() -> None:
+    from src.A_memorix.plugin import AMemorixPlugin
+
+    events: list[str] = []
+
+    class FakeKernel:
+        async def shutdown(self) -> None:
+            events.append("shutdown")
+
+        def close(self) -> None:
+            raise AssertionError("配置更新不应同步关闭运行时")
+
+    plugin = object.__new__(AMemorixPlugin)
+    plugin._plugin_config = {"old": True}
+    plugin._kernel = FakeKernel()  # type: ignore[assignment]
+
+    await plugin.on_config_update("self", {"new": True}, "test-version")
+
+    assert events == ["shutdown"]
+    assert plugin._plugin_config == {"new": True}
+    assert plugin._kernel is None
+
+
 @pytest.mark.asyncio
 async def test_search_execution_once_preserves_request_semantics(
     tmp_path: Path,
