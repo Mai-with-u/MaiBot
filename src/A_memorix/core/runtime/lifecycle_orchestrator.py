@@ -199,7 +199,7 @@ async def initialize_storage_async(plugin: Any) -> None:
 
     logger.info(f"A_Memorix 数据存储路径: {data_dir}")
     data_dir.mkdir(parents=True, exist_ok=True)
-    run_startup_format_migration(data_dir)
+    await asyncio.to_thread(run_startup_format_migration, data_dir)
 
     plugin.embedding_manager = create_embedding_api_adapter(
         batch_size=plugin.get_config("embedding.batch_size", 32),

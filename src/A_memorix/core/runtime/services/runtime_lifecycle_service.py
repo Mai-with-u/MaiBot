@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import List
+
 from src.common.logger import get_logger
 
 from .base import KernelServiceBase
@@ -138,16 +140,21 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
     async def shutdown(self) -> None:
         """先等待后台工作和任务管理器退出，再持久化并释放底层存储。"""
         await self._stop_background_tasks()
+        shutdown_errors: List[Exception] = []
         if self.import_task_manager is not None:
             try:
                 await self.import_task_manager.shutdown()
             except Exception as exc:
-                logger.warning(f"关闭导入任务管理器失败: {exc}")
+                shutdown_errors.append(exc)
+                logger.exception(f"关闭导入任务管理器失败: {exc}")
         if self.retrieval_tuning_manager is not None:
             try:
                 await self.retrieval_tuning_manager.shutdown()
             except Exception as exc:
-                logger.warning(f"关闭调优任务管理器失败: {exc}")
+                shutdown_errors.append(exc)
+                logger.exception(f"关闭调优任务管理器失败: {exc}")
+        if shutdown_errors:
+            raise RuntimeError("A_Memorix 任务管理器未能安全退出，底层存储保持打开") from shutdown_errors[0]
         self._close_runtime()
 
     def close(self) -> None:

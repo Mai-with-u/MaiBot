@@ -112,6 +112,33 @@ def test_fuzzy_modify_plan_and_superseded_metadata(tmp_path):
         store.close()
 
 
+def test_fuzzy_modify_plan_claim_uses_execution_lease(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        plan = store.create_fuzzy_modify_plan(
+            request_text="测试并发领取",
+            scope="person_profile",
+            plan={"operations": []},
+        )
+
+        claimed = store.claim_fuzzy_modify_plan(plan["plan_id"], stale_after_seconds=60.0)
+        assert claimed is not None
+        assert claimed["status"] == "executing"
+        assert store.claim_fuzzy_modify_plan(plan["plan_id"], stale_after_seconds=60.0) is None
+
+        store.get_connection().execute(
+            "UPDATE memory_fuzzy_modify_plans SET updated_at = 0 WHERE plan_id = ?",
+            (plan["plan_id"],),
+        )
+        store.get_connection().commit()
+        reclaimed = store.claim_fuzzy_modify_plan(plan["plan_id"], stale_after_seconds=60.0)
+        assert reclaimed is not None
+        assert reclaimed["status"] == "executing"
+    finally:
+        store.close()
+
+
 def test_stale_mark_rollback_restores_previous_source(tmp_path):
     store = MetadataStore(data_dir=tmp_path)
     store.connect()

@@ -94,6 +94,7 @@ async def test_apply_feedback_decision_resolves_paragraph_targets(monkeypatch: p
     forgotten_hashes: list[str] = []
     ingested_payloads: list[Dict[str, Any]] = []
     stale_marks: list[Dict[str, Any]] = []
+    paragraph_lookup_calls: list[list[str]] = []
     episode_sources: list[str] = []
     profile_refresh_ids: list[str] = []
 
@@ -123,12 +124,12 @@ async def test_apply_feedback_decision_resolves_paragraph_targets(monkeypatch: p
             str(hash_value): {"is_inactive": str(hash_value) in forgotten_hashes}
             for hash_value in hashes
         },
-        get_paragraph_hashes_by_relation_hashes=lambda hashes: {
-            "relation-1": ["paragraph-1"]
-        }
-        if "relation-1" in hashes
-        else {},
-        upsert_paragraph_stale_relation_mark=lambda **kwargs: stale_marks.append(kwargs) or kwargs,
+            get_paragraph_hashes_by_relation_hashes=lambda hashes: (
+                paragraph_lookup_calls.append(list(hashes))
+                or ({"relation-1": ["paragraph-1"]} if "relation-1" in hashes else {})
+            ),
+            get_paragraph_stale_relation_mark=lambda **kwargs: None,
+            upsert_paragraph_stale_relation_mark=lambda **kwargs: stale_marks.append(kwargs) or kwargs,
         enqueue_episode_source_rebuild=lambda source, reason="": episode_sources.append(source) or True,
         enqueue_person_profile_refresh=lambda **kwargs: profile_refresh_ids.append(kwargs["person_id"]) or kwargs,
         get_paragraph=lambda paragraph_hash: {"hash": "paragraph-1", "source": "chat_feedback_test_seed:session-1"}
@@ -193,6 +194,7 @@ async def test_apply_feedback_decision_resolves_paragraph_targets(monkeypatch: p
     assert "chat_summary:session-1" in payload["episode_rebuild_sources"]
     assert payload["profile_refresh_person_ids"] == ["person-1"]
     assert stale_marks[0]["paragraph_hash"] == "paragraph-1"
+    assert paragraph_lookup_calls == [["relation-1"]]
     assert {item["action_type"] for item in action_logs} == {
         "forget_relation",
         "ingest_correction",
@@ -485,6 +487,13 @@ async def test_fuzzy_modify_execute_recovers_stale_executing_plan(monkeypatch: p
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
     kernel.metadata_store = SimpleNamespace(
         get_fuzzy_modify_plan=lambda plan_id: {
+            "plan_id": plan_id,
+            "status": "executing",
+            "confidence": 1.0,
+            "execution": {"attempt": {"status": "executing", "started_at": 1.0}},
+            "plan": {"operations": []},
+        },
+        claim_fuzzy_modify_plan=lambda plan_id: {
             "plan_id": plan_id,
             "status": "executing",
             "confidence": 1.0,

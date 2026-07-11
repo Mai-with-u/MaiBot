@@ -654,19 +654,22 @@ class SparseBM25Index:
 
     def unload(self) -> None:
         """卸载 BM25 连接并尽量释放内存。"""
-        if self._conn is not None:
-            try:
+        conn = self._conn
+        try:
+            if conn is not None:
                 if self.config.shrink_memory_on_unload:
-                    self.metadata_store.shrink_memory(conn=self._conn)
-            except sqlite3.Error as exc:
-                logger.warning(f"SparseBM25Index 释放 SQLite 缓存失败: {exc}")
-            try:
-                self._conn.close()
-            except sqlite3.Error as exc:
-                logger.warning(f"SparseBM25Index 关闭连接失败: {exc}")
-        self._conn = None
-        self._loaded = False
-        logger.info("SparseBM25Index unloaded")
+                    self.metadata_store.shrink_memory(conn=conn)
+        except sqlite3.Error as exc:
+            logger.warning(f"SparseBM25Index 释放 SQLite 缓存失败: {exc}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error as exc:
+                    logger.warning(f"SparseBM25Index 关闭连接失败: {exc}")
+            self._conn = None
+            self._loaded = False
+            logger.info("SparseBM25Index unloaded")
 
     def stats(self) -> Dict[str, Any]:
         backend_stats = self._backend.stats(self._conn if self.loaded else None)

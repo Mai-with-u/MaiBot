@@ -84,7 +84,12 @@ class MetadataSchemaMixin:
                 try:
                     cursor.execute(sql)
                 except sqlite3.OperationalError as e:
-                    logger.warning(f"Schema迁移失败 (memory_feedback_tasks.{col}): {e}")
+                    cursor.execute("PRAGMA table_info(memory_feedback_tasks)")
+                    current_columns = {row[1] for row in cursor.fetchall()}
+                    if col not in current_columns:
+                        raise RuntimeError(
+                            f"Schema迁移失败 (memory_feedback_tasks.{col})"
+                        ) from e
 
     def _ensure_paragraph_stale_relation_mark_columns(self, cursor: sqlite3.Cursor) -> None:
         """补齐段落陈旧关系标记的来源追踪列。"""
@@ -100,7 +105,12 @@ class MetadataSchemaMixin:
                 try:
                     cursor.execute(sql)
                 except sqlite3.OperationalError as e:
-                    logger.warning(f"Schema迁移失败 (paragraph_stale_relation_marks.{col}): {e}")
+                    cursor.execute("PRAGMA table_info(paragraph_stale_relation_marks)")
+                    current_columns = {row[1] for row in cursor.fetchall()}
+                    if col not in current_columns:
+                        raise RuntimeError(
+                            f"Schema迁移失败 (paragraph_stale_relation_marks.{col})"
+                        ) from e
 
     def _ensure_fuzzy_modify_plan_tables(self, cursor: sqlite3.Cursor) -> None:
         """补齐模糊修改计划表，用于预览、确认、执行和追溯。"""

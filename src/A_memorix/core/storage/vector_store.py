@@ -6,12 +6,13 @@
 
 import hashlib
 import json
+import os
+import random
 import shutil
+import threading  # 线程同步
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
-import random
-import threading  # 线程同步
 
 import numpy as np
 
@@ -107,6 +108,9 @@ class VectorStore:
 
         self._known_hashes: Set[str] = set()
         self._deleted_ids: Set[int] = set()
+        self._known_hashes_revision = 0
+        self._cached_map_revision = -1
+        self._cached_map: Dict[int, str] = {}
 
         self._reservoir_buffer: List[np.ndarray] = []
         self._seen_count_for_reservoir = 0
@@ -155,13 +159,61 @@ class VectorStore:
         return self.data_dir / "vectors_ids.bin"
 
     @property
+    def _compaction_journal_path(self) -> Path:
+        return self.data_dir / "vectors_compaction.json"
+
+    @property
+    def _bin_backup_path(self) -> Path:
+        return self.data_dir / "vectors.bin.compaction.bak"
+
+    @property
+    def _ids_backup_path(self) -> Path:
+        return self.data_dir / "vectors_ids.bin.compaction.bak"
+
+    def _invalidate_id_map(self) -> None:
+        self._known_hashes_revision += 1
+
+    def _vector_pair_matches(self, bin_path: Path, ids_path: Path, *, expected_count: Optional[int] = None) -> bool:
+        if not bin_path.exists() or not ids_path.exists():
+            return False
+        vector_item_size = self.dimension * 2
+        bin_size = bin_path.stat().st_size
+        ids_size = ids_path.stat().st_size
+        if bin_size % vector_item_size != 0 or ids_size % 8 != 0:
+            return False
+        vector_count = bin_size // vector_item_size
+        id_count = ids_size // 8
+        return vector_count == id_count and (expected_count is None or vector_count == expected_count)
+
+    def _recover_interrupted_compaction_unlocked(self) -> None:
+        """根据持久化日志完成或回滚被中断的双文件切换。"""
+        journal_path = self._compaction_journal_path
+        if not journal_path.exists():
+            return
+
+        journal = _read_json_object(journal_path)
+        expected_count = int(journal["expected_count"])
+        if self._vector_pair_matches(self._bin_path, self._ids_bin_path, expected_count=expected_count):
+            self._bin_backup_path.unlink(missing_ok=True)
+            self._ids_backup_path.unlink(missing_ok=True)
+            journal_path.unlink()
+            return
+
+        if not self._vector_pair_matches(self._bin_backup_path, self._ids_backup_path):
+            raise RuntimeError("向量压缩被中断，且找不到可恢复的一致备份")
+        os.replace(self._bin_backup_path, self._bin_path)
+        os.replace(self._ids_backup_path, self._ids_bin_path)
+        journal_path.unlink()
+
+    @property
     def _int_to_str_map(self) -> Dict[int, str]:
         """按需从已知哈希构建易失的 ID 反查表。"""
-        # 反查表读取频繁，且依赖可变的 _known_hashes；缓存重建必须在锁内完成。
-        # 长度检查只用于发现缓存失效，实际重建仍由锁保护。
-        if not hasattr(self, "_cached_map") or len(self._cached_map) != len(self._known_hashes):
+        # 反查表读取频繁，且依赖可变的 _known_hashes；版本号可以识别等量替换。
+        if self._cached_map_revision != self._known_hashes_revision:
             with self._lock: # 在锁内重建缓存
-                 self._cached_map = {self._generate_id(k): k for k in self._known_hashes}
+                if self._cached_map_revision != self._known_hashes_revision:
+                    self._cached_map = {self._generate_id(k): k for k in self._known_hashes}
+                    self._cached_map_revision = self._known_hashes_revision
         return self._cached_map
 
     def add(self, vectors: np.ndarray, ids: List[str]) -> int:
@@ -187,6 +239,8 @@ class VectorStore:
 
             if not processed_vecs:
                 return 0
+
+            self._invalidate_id_map()
 
             batch_vecs = np.array(processed_vecs, dtype=np.float32)
             batch_ids = np.array(processed_int_ids, dtype=np.int64)
@@ -689,6 +743,9 @@ class VectorStore:
         """实际 GC 重建逻辑。"""
         logger.info("Starting Compaction (GC)...")
 
+        self._recover_interrupted_compaction_unlocked()
+        self._flush_write_buffer_unlocked()
+
         tmp_bin = self.data_dir / "vectors.bin.tmp"
         tmp_ids = self.data_dir / "vectors_ids.bin.tmp"
 
@@ -720,7 +777,24 @@ class VectorStore:
                     w_id.write(keep_ids.astype('>i8').tobytes())
                     new_count += len(keep_ids)
 
-        # 2. 重置状态并原子切换文件
+        if not self._vector_pair_matches(tmp_bin, tmp_ids, expected_count=new_count):
+            raise RuntimeError("向量压缩临时文件不一致，已拒绝切换")
+
+        # 2. 通过日志和成对备份切换文件；进程中断后会整体完成或整体回滚。
+        self._bin_backup_path.unlink(missing_ok=True)
+        self._ids_backup_path.unlink(missing_ok=True)
+        shutil.copy2(self._bin_path, self._bin_backup_path)
+        shutil.copy2(self._ids_bin_path, self._ids_backup_path)
+        _write_json_object(self._compaction_journal_path, {"expected_count": new_count})
+        os.replace(tmp_bin, self._bin_path)
+        os.replace(tmp_ids, self._ids_bin_path)
+        if not self._vector_pair_matches(self._bin_path, self._ids_bin_path, expected_count=new_count):
+            self._recover_interrupted_compaction_unlocked()
+            raise RuntimeError("向量压缩文件切换失败，已恢复原始文件")
+
+        self._bin_backup_path.unlink(missing_ok=True)
+        self._ids_backup_path.unlink(missing_ok=True)
+        self._compaction_journal_path.unlink()
         self._bin_count = new_count
 
         # 关闭当前索引
@@ -729,12 +803,16 @@ class VectorStore:
             self._fallback_index.reset() # 同时清空回退索引
         self._is_trained = False
 
-        # 切换数据文件
-        shutil.move(str(tmp_bin), str(self._bin_path))
-        shutil.move(str(tmp_ids), str(self._ids_bin_path))
-
-        # 清空删除标记，这是重建正确性的关键步骤。
+        # 已删除哈希必须同时移出成员集合，之后才能重新写入同名向量。
+        deleted_hashes = {
+            hash_value
+            for hash_value in self._known_hashes
+            if self._generate_id(hash_value) in self._deleted_ids
+        }
+        self._known_hashes.difference_update(deleted_hashes)
         self._deleted_ids.clear()
+        if deleted_hashes:
+            self._invalidate_id_map()
 
         # 3. 重新加载并训练索引
         # 删除后的数据分布可能明显变化，因此必须重新训练。
@@ -822,6 +900,7 @@ class VectorStore:
             # 重置内存状态，避免继续向旧运行时缓冲区追加数据。
             self._known_hashes.clear()
             self._deleted_ids.clear()
+            self._invalidate_id_map()
             self._write_buffer_vecs.clear()
             self._write_buffer_ids.clear()
             self._init_index()
@@ -838,6 +917,7 @@ class VectorStore:
             if not data_dir:
                 data_dir = self.data_dir
             data_dir = Path(data_dir)
+            self._recover_interrupted_compaction_unlocked()
 
             npy_path = data_dir / "vectors.npy"
             idx_path = data_dir / "vectors.index"
@@ -860,6 +940,7 @@ class VectorStore:
                 logger.warning("Index IDMap2 version mismatch (L2 Norm), forcing rebuild...")
                 self._known_hashes = set(meta.get("ids", [])) | set(meta.get("known_hashes", []))
                 self._deleted_ids = set(meta.get("deleted_ids", []))
+                self._invalidate_id_map()
                 self._init_index()
                 self._force_train_small_data()
                 return
@@ -868,6 +949,7 @@ class VectorStore:
             self._vector_norm = meta.get("vector_norm", "l2")
             self._deleted_ids = set(meta.get("deleted_ids", []))
             self._known_hashes = set(meta.get("known_hashes", []))
+            self._invalidate_id_map()
 
             if self._is_trained:
                 if idx_path.exists():
@@ -933,6 +1015,7 @@ class VectorStore:
             self._init_index()
             self._known_hashes.clear()
             self._deleted_ids.clear()
+            self._invalidate_id_map()
             self._bin_count = 0
             logger.info("VectorStore cleared.")
 

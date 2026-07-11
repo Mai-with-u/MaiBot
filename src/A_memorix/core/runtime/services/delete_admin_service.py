@@ -634,6 +634,20 @@ class MemoryDeleteAdminService(KernelServiceBase):
         relation_hashes = tokens((plan.get("target_hashes") or {}).get("relations"))
         requested_source_tokens = tokens((plan.get("target_hashes") or {}).get("sources"))
         matched_source_tokens = tokens((plan.get("target_hashes") or {}).get("matched_sources"))
+        operation = self.metadata_store.create_delete_operation(
+            mode=act_mode,
+            selector=plan.get("selector"),
+            items=plan.get("items", []),
+            reason=reason,
+            requested_by=requested_by,
+            summary={
+                "counts": plan.get("counts", {}),
+                "sources": plan.get("sources", []),
+                "vector_ids": plan.get("vector_ids", []),
+                "state": "prepared",
+            },
+        )
+        operation_id = str(operation.get("operation_id", "") or "")
 
         try:
             if paragraph_hashes:
@@ -660,25 +674,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
 
             conn.commit()
 
-            deleted_relations = self.metadata_store.backup_and_delete_relations(relation_hashes)
+            self.metadata_store.backup_and_delete_relations(relation_hashes)
             deleted_vectors = self._delete_vectors_by_type(
                 paragraph_hashes=paragraph_hashes,
                 entity_hashes=entity_hashes,
                 relation_hashes=relation_hashes,
-            )
-
-            operation = self.metadata_store.create_delete_operation(
-                mode=act_mode,
-                selector=plan.get("selector"),
-                items=plan.get("items", []),
-                reason=reason,
-                requested_by=requested_by,
-                summary={
-                    "counts": plan.get("counts", {}),
-                    "sources": plan.get("sources", []),
-                    "vector_ids": plan.get("vector_ids", []),
-                    "deleted_relation_rows": deleted_relations,
-                },
             )
 
             if plan.get("sources"):
@@ -687,7 +687,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
             self._persist()
             return self._build_standard_delete_result(
                 mode=act_mode,
-                operation_id=str(operation.get("operation_id", "") or ""),
+                operation_id=operation_id,
                 counts=plan.get("counts", {}),
                 sources=plan.get("sources", []),
                 deleted_entity_count=len(entity_hashes),
@@ -702,7 +702,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
         except Exception as exc:
             conn.rollback()
             logger.warning(f"delete_admin execute 失败: {exc}")
-            return self._build_standard_delete_result(mode=act_mode, error=str(exc))
+            return self._build_standard_delete_result(mode=act_mode, operation_id=operation_id, error=str(exc))
 
     async def _invalidate_import_manifest_for_sources(self, result: Dict[str, Any]) -> None:
         if not isinstance(result, dict) or not result.get("success"):
@@ -849,13 +849,18 @@ class MemoryDeleteAdminService(KernelServiceBase):
             "restored_relations": restored_relations.get("restored_hashes", []),
             "sources": sources,
         }
-        self.metadata_store.mark_delete_operation_restored(str(operation.get("operation_id", "") or ""), summary=summary)
+        relation_failures = restored_relations.get("failures", [])
+        if not relation_failures:
+            self.metadata_store.mark_delete_operation_restored(
+                str(operation.get("operation_id", "") or ""),
+                summary=summary,
+            )
         return {
-            "success": True,
+            "success": not relation_failures,
             "operation_id": str(operation.get("operation_id", "") or ""),
             **summary,
             "restored_relation_count": restored_relations.get("restored_count", 0),
-            "relation_failures": restored_relations.get("failures", []),
+            "relation_failures": relation_failures,
         }
 
     async def _purge_deleted_memory(self, *, grace_hours: Optional[float], limit: int) -> Dict[str, Any]:

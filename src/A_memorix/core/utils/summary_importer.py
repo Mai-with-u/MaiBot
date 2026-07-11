@@ -336,14 +336,16 @@ class SummaryImporter:
                     logger.warning(f"总结模型选择器 '{selector}' 的任务 '{task_name}' 不存在，已跳过")
                     continue
 
-                if base_cfg is None:
-                    base_cfg = task_cfg
-                    base_task_name = task_name
-
                 if not model_name or model_name.lower() == "auto":
+                    if base_cfg is None:
+                        base_cfg = task_cfg
+                        base_task_name = task_name
                     continue
 
                 if model_name in task_cfg.model_list:
+                    if base_cfg is None:
+                        base_cfg = task_cfg
+                        base_task_name = task_name
                     logger.info(
                         f"总结模型选择器 '{selector}' 已定位到任务 '{task_name}'；"
                         "当前 LLM 服务按任务候选列表执行，不单独覆盖具体模型。"
@@ -738,7 +740,6 @@ class SummaryImporter:
                     )
                     # 写入图数据库（写入 relation_hashes，确保后续可按关系精确修剪）
                     self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                    self.metadata_store.set_relation_vector_state(rel_hash, "none")
 
         logger.info(f"总结导入完成: hash={hash_value[:8]}")
         return hash_value

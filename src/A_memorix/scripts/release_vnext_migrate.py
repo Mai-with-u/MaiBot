@@ -191,7 +191,9 @@ def _graph_edge_hash_map_size(data_dir: Path) -> int:
         try:
             if _sqlite_table_exists(conn, "graph_edge_relation_map"):
                 row = conn.execute("SELECT COUNT(*) FROM graph_edge_relation_map").fetchone()
-                return int(row[0] or 0) if row else 0
+                sqlite_count = int(row[0] or 0) if row else 0
+                if sqlite_count > 0:
+                    return sqlite_count
         finally:
             conn.close()
 

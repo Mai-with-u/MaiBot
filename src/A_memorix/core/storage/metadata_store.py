@@ -1245,7 +1245,8 @@ class MetadataStore(
             # 2. 查找相关关系 (Subject 或 Object 为该实体)
             cursor.execute("""
                 SELECT hash FROM relations
-                WHERE subject = ? OR object = ?
+                WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))
+                   OR LOWER(TRIM(object)) = LOWER(TRIM(?))
             """, (entity_name, entity_name))
 
             relation_hashes = [r[0] for r in cursor.fetchall()]
@@ -1957,6 +1958,37 @@ class MetadataStore(
         )
         self._conn.commit()
         if cursor.rowcount <= 0:
+            return None
+        return self.get_fuzzy_modify_plan(token)
+
+    def claim_fuzzy_modify_plan(
+        self,
+        plan_id: str,
+        *,
+        stale_after_seconds: float = 300.0,
+    ) -> Optional[Dict[str, Any]]:
+        """原子领取待执行计划，并只回收超过租约的 executing 计划。"""
+        token = str(plan_id or "").strip()
+        if not token:
+            return None
+        now = datetime.now().timestamp()
+        stale_before = now - max(1.0, float(stale_after_seconds))
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            UPDATE memory_fuzzy_modify_plans
+            SET status = 'executing',
+                updated_at = ?
+            WHERE plan_id = ?
+              AND (
+                    status IN ('awaiting_confirmation', 'failed')
+                    OR (status = 'executing' AND updated_at <= ?)
+                  )
+            """,
+            (now, token, stale_before),
+        )
+        self._conn.commit()
+        if int(cursor.rowcount or 0) <= 0:
             return None
         return self.get_fuzzy_modify_plan(token)
 
@@ -3074,16 +3106,26 @@ class MetadataStore(
             cols_str = ",".join(columns)
             values = list(data.values())
 
-            cursor.execute(f"""
-                INSERT OR REPLACE INTO relations ({cols_str})
+            update_columns = [column for column in columns if column != "hash"]
+            update_sql = ", ".join(
+                f"{column} = excluded.{column}"
+                for column in update_columns
+            )
+            cursor.execute(
+                f"""
+                INSERT INTO relations ({cols_str})
                 VALUES ({placeholders})
-            """, values)
+                ON CONFLICT(hash) DO UPDATE SET {update_sql}
+                """,
+                values,
+            )
 
             # 3. 从备份表删除
             cursor.execute("DELETE FROM deleted_relations WHERE hash = ?", (hash_value,))
 
             self._conn.commit()
-            return self._row_to_dict(row, "relation") # 使用助手函数将原始行转换为字典
+            restored = self.get_relation(hash_value)
+            return restored
 
         except Exception as e:
             logger.error(f"恢复关系失败: {hash_value} - {e}")

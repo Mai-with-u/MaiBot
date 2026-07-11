@@ -278,6 +278,7 @@ class MemoryIngestService(KernelServiceBase):
 
         stored_relations: List[str] = []
         for row in [dict(item) for item in (relations or []) if isinstance(item, dict)]:
+            confidence_value = row.get("confidence", 1.0)
             subject = str(row.get("subject", "") or "").strip()
             predicate = str(row.get("predicate", "") or "").strip()
             obj = str(row.get("object", "") or "").strip()
@@ -287,7 +288,7 @@ class MemoryIngestService(KernelServiceBase):
                 subject=subject,
                 predicate=predicate,
                 obj=obj,
-                confidence=float(row.get("confidence", 1.0) or 1.0),
+                confidence=float(1.0 if confidence_value is None else confidence_value),
                 source_paragraph=paragraph_hash,
                 metadata=row.get("metadata") if isinstance(row.get("metadata"), dict) else {"external_id": external_token, "source_type": source_type},
                 write_vector=self.relation_vectors_enabled,
@@ -339,7 +340,23 @@ class MemoryIngestService(KernelServiceBase):
         if pending_hashes:
             self.metadata_store.mark_episode_pending_running(pending_hashes)
 
-        result = await self.episode_service.process_pending_rows(pending_rows)
+        try:
+            result = await self.episode_service.process_pending_rows(pending_rows)
+        except Exception as exc:
+            error = f"episode processing failed: {exc}"
+            for hash_value in pending_hashes:
+                try:
+                    self.metadata_store.mark_episode_pending_failed(hash_value, error)
+                except Exception as mark_exc:
+                    logger.warning(
+                        f"回写 Episode 待处理项失败状态异常: hash={hash_value}, error={mark_exc}"
+                    )
+            for source in source_to_hashes:
+                try:
+                    self.metadata_store.mark_episode_source_failed(source, error)
+                except Exception as mark_exc:
+                    logger.warning(f"回写 Episode 来源失败状态异常: source={source}, error={mark_exc}")
+            raise
         done_hashes = [str(item or "").strip() for item in result.get("done_hashes", []) if str(item or "").strip()]
         failed_hashes = {
             str(hash_value or "").strip(): str(error or "").strip()

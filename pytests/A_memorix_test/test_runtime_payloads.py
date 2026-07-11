@@ -19,6 +19,7 @@ from src.A_memorix.core.utils.runtime_payloads import (
 
 def test_runtime_payload_tokens_keep_order_and_drop_empty_duplicates() -> None:
     assert tokens([" Alice ", "", None, "Alice", "Bob", 42]) == ["Alice", "Bob", "42"]
+    assert tokens("active") == ["active"]
     assert merge_tokens(["Alice", "Bob"], ["Bob", "Carol"], None) == ["Alice", "Bob", "Carol"]
     assert argument_tokens("Alice") == ["Alice"]
     assert merge_argument_tokens(["Alice"], "Bob", ["Alice", "Carol"]) == ["Alice", "Bob", "Carol"]

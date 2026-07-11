@@ -107,7 +107,7 @@ class MemoryV5AdminService(KernelServiceBase):
         if not token:
             return []
         if len(token) == 64 and all(ch in "0123456789abcdef" for ch in token.lower()):
-            return [token]
+            return [token] if self.metadata_store.get_relation(token) is not None else []
         hashes = self.metadata_store.search_relation_hashes_by_text(token, limit=10)
         if hashes:
             return hashes
@@ -123,7 +123,7 @@ class MemoryV5AdminService(KernelServiceBase):
         if not token:
             return []
         if len(token) == 64 and all(ch in "0123456789abcdef" for ch in token.lower()):
-            return [token]
+            return [token] if self.metadata_store.get_deleted_relation(token) is not None else []
         return self.metadata_store.search_deleted_relation_hashes_by_text(token, limit=10)
 
     def _memory_v5_status(self, *, target: str = "", limit: int = 50) -> Dict[str, Any]:

@@ -39,6 +39,8 @@ def safe_json_loads(raw: Any) -> Dict[str, Any]:
 
 
 def tokens(values: Optional[Iterable[Any]]) -> List[str]:
+    if isinstance(values, str):
+        values = [values]
     result: List[str] = []
     seen = set()
     for item in values or []:

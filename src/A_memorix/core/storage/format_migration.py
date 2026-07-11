@@ -488,19 +488,8 @@ def run_startup_format_migration(data_dir: Path) -> Dict[str, Any]:
             _ensure_migration_table(conn)
             if _migration_record_exists(conn) and not _legacy_pickle_exists(data_dir):
                 summary["sqlite"] = {"updated": 0, "reason": "already_applied"}
-                summary["vectors"] = [
-                    {"migrated": False, "reason": "legacy_missing", "path": str(path.parent)}
-                    for path in _legacy_pickle_paths(data_dir)[:3]
-                ]
-                summary["graph"] = {"migrated": False, "reason": "legacy_missing"}
-                conn.commit()
-                summary["finished_at"] = time.time()
-                logger.info(
-                    "A_Memorix 存储格式迁移快速跳过: "
-                    f"duration={summary['finished_at'] - started_at:.2f}s"
-                )
-                return summary
-            summary["sqlite"] = _migrate_sqlite_metadata(conn)
+            else:
+                summary["sqlite"] = _migrate_sqlite_metadata(conn)
         else:
             summary["sqlite"] = {"updated": 0, "reason": "metadata_db_missing"}
         for relative in ("vectors", "vectors/paragraph", "vectors/graph"):

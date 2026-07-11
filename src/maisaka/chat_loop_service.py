@@ -31,7 +31,6 @@ from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.services.llm_service import LLMServiceClient
 
-from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.context.history import normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (

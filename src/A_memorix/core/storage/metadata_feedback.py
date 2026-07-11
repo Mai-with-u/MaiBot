@@ -197,6 +197,7 @@ class MetadataFeedbackMixin:
         *,
         limit: int = 20,
         now: Optional[float] = None,
+        lease_seconds: float = 300.0,
     ) -> List[Dict[str, Any]]:
         safe_limit = max(1, int(limit))
         now_ts = optional_float(now)
@@ -209,15 +210,23 @@ class MetadataFeedbackMixin:
             SELECT *
             FROM memory_feedback_tasks
             WHERE due_at <= ?
-              AND status IN ('pending', 'running')
+              AND (
+                    status = 'pending'
+                    OR (status = 'running' AND updated_at <= ?)
+                  )
             ORDER BY due_at ASC, id ASC
             LIMIT ?
             """,
-            (now_ts, safe_limit),
+            (now_ts, now_ts - max(1.0, float(lease_seconds)), safe_limit),
         )
         return [self._feedback_task_row_to_dict(row) for row in cursor.fetchall()]
 
-    def mark_feedback_task_running(self, task_id: int) -> Optional[Dict[str, Any]]:
+    def mark_feedback_task_running(
+        self,
+        task_id: int,
+        *,
+        lease_seconds: float = 300.0,
+    ) -> Optional[Dict[str, Any]]:
         if int(task_id or 0) <= 0:
             return None
         now = datetime.now().timestamp()
@@ -229,11 +238,16 @@ class MetadataFeedbackMixin:
                 attempt_count = COALESCE(attempt_count, 0) + 1,
                 updated_at = ?
             WHERE id = ?
-              AND status IN ('pending', 'running')
+              AND (
+                    status = 'pending'
+                    OR (status = 'running' AND updated_at <= ?)
+                  )
             """,
-            (now, int(task_id)),
+            (now, int(task_id), now - max(1.0, float(lease_seconds))),
         )
         self._conn.commit()
+        if int(cursor.rowcount or 0) <= 0:
+            return None
         cursor.execute(
             """
             SELECT *
@@ -298,6 +312,7 @@ class MetadataFeedbackMixin:
         task_id: int,
         requested_by: str = "",
         reason: str = "",
+        lease_seconds: float = 300.0,
     ) -> Optional[Dict[str, Any]]:
         if int(task_id or 0) <= 0:
             return None
@@ -314,7 +329,13 @@ class MetadataFeedbackMixin:
                 updated_at = ?
             WHERE id = ?
               AND LOWER(COALESCE(status, '')) = 'applied'
-              AND LOWER(COALESCE(rollback_status, 'none')) IN ('none', 'error')
+              AND (
+                    LOWER(COALESCE(rollback_status, 'none')) IN ('none', 'error')
+                    OR (
+                        LOWER(COALESCE(rollback_status, 'none')) = 'running'
+                        AND updated_at <= ?
+                    )
+                  )
             """,
             (
                 str(requested_by or "").strip() or None,
@@ -322,6 +343,7 @@ class MetadataFeedbackMixin:
                 now,
                 now,
                 int(task_id),
+                now - max(1.0, float(lease_seconds)),
             ),
         )
         self._conn.commit()

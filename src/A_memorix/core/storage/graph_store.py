@@ -11,7 +11,9 @@ from typing import Optional, Union, Tuple, List, Dict, Set, Any
 import asyncio
 import contextlib
 import json
+import shutil
 import sqlite3
+import uuid
 
 import numpy as np
 
@@ -193,6 +195,73 @@ class GraphStore:
             conn.close()
         return edge_hash_map
 
+    def _prepare_snapshot(
+        self,
+        data_dir: Path,
+        metadata: Dict[str, Any],
+    ) -> str:
+        """写入不可变图快照，返回尚未激活的 generation。"""
+        snapshots_root = data_dir / "graph_snapshots"
+        snapshots_root.mkdir(parents=True, exist_ok=True)
+        generation = f"graph-{uuid.uuid4().hex}"
+        temporary_dir = snapshots_root / f".{generation}.tmp"
+        snapshot_dir = snapshots_root / generation
+        temporary_dir.mkdir(parents=True)
+        snapshot_metadata = {
+            **metadata,
+            "snapshot_generation": generation,
+            "has_adjacency": self._adjacency is not None,
+            "edge_hash_map": self._serialize_edge_hash_map(),
+        }
+        if self._adjacency is not None:
+            with (temporary_dir / "graph_adjacency.npz").open("wb") as handle:
+                save_npz(handle, self._adjacency)
+        _write_json_object(temporary_dir / "graph_metadata.json", snapshot_metadata)
+        temporary_dir.replace(snapshot_dir)
+        return generation
+
+    @staticmethod
+    def _activate_snapshot(data_dir: Path, generation: str) -> None:
+        _write_json_object(
+            data_dir / "graph_snapshot.json",
+            {"generation": generation, "schema_version": 1},
+        )
+
+    @staticmethod
+    def _cleanup_old_snapshots(data_dir: Path, active_generation: str) -> None:
+        snapshots_root = data_dir / "graph_snapshots"
+        if not snapshots_root.exists():
+            return
+        generations = sorted(
+            (
+                path
+                for path in snapshots_root.iterdir()
+                if path.is_dir() and not path.name.startswith(".")
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        keep = {active_generation}
+        keep.update(path.name for path in generations[:2])
+        for path in generations:
+            if path.name not in keep:
+                shutil.rmtree(path)
+
+    @staticmethod
+    def _resolve_snapshot_paths(data_dir: Path) -> Tuple[Path, Path, bool]:
+        pointer_path = data_dir / "graph_snapshot.json"
+        if not pointer_path.exists():
+            return data_dir / "graph_metadata.json", data_dir / "graph_adjacency.npz", False
+        pointer = _read_json_object(pointer_path)
+        generation = str(pointer.get("generation", "") or "").strip()
+        if not generation or Path(generation).name != generation or not generation.startswith("graph-"):
+            raise RuntimeError("图快照指针包含非法 generation")
+        snapshot_dir = data_dir / "graph_snapshots" / generation
+        metadata_path = snapshot_dir / "graph_metadata.json"
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"图快照元数据不存在: {metadata_path}")
+        return metadata_path, snapshot_dir / "graph_adjacency.npz", True
+
     def _canonicalize(self, node: str) -> str:
         """规范化节点名称 (用于去重和内部索引)"""
         if not node:
@@ -309,6 +378,13 @@ class GraphStore:
         if not edges:
             return 0
 
+        if weights is not None and len(weights) != len(edges):
+            raise ValueError(f"边数量与权重数量不匹配: {len(edges)} vs {len(weights)}")
+        if relation_hashes is not None and len(relation_hashes) != len(edges):
+            raise ValueError(
+                f"边数量与关系哈希数量不匹配: {len(edges)} vs {len(relation_hashes)}"
+            )
+
         # 确保所有节点存在
         nodes_to_add = set()
         for src, tgt in edges:
@@ -325,9 +401,6 @@ class GraphStore:
         # 处理权重
         if weights is None:
             weights = [1.0] * len(edges)
-
-        if len(weights) != len(edges):
-            raise ValueError(f"边数量与权重数量不匹配: {len(edges)} vs {len(weights)}")
 
         # 如果仅仅是添加边且处于增量模式 (LIL)，直接更新
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
@@ -348,10 +421,12 @@ class GraphStore:
                  self._adjacency[rows, cols] = weights
                  
                  self._total_edges_added += len(edges)
+                 self._adjacency_dirty = True
+                 self._saliency_cache = None
                  
                  # V5：更新边哈希映射
                  if relation_hashes:
-                     for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
+                     for (src, tgt), r_hash in zip(edges, relation_hashes, strict=True):
                          if r_hash:
                              s_idx = self._node_to_idx[self._canonicalize(src)]
                              t_idx = self._node_to_idx[self._canonicalize(tgt)]
@@ -398,10 +473,11 @@ class GraphStore:
 
         self._total_edges_added += len(edges)
         self._adjacency_dirty = True  # 标记脏位
+        self._saliency_cache = None
         
         # V5: 更新边哈希映射 (Edge Hash Map)
         if relation_hashes:
-            for (src, tgt), r_hash in zip(edges, relation_hashes, strict=False):
+            for (src, tgt), r_hash in zip(edges, relation_hashes, strict=True):
                 if r_hash:
                     try:
                         s_idx = self._node_to_idx[self._canonicalize(src)]
@@ -1160,16 +1236,12 @@ class GraphStore:
         if self._adjacency is None:
             return []
             
-        # 获取所有非零元素
-        rows, cols = self._adjacency.nonzero()
-        data = self._adjacency.data
-        
-        low_weight_indices = np.where(data < threshold)[0]
-        
+        # COO 的 row、col、data 始终逐项对齐，CSR、CSC 与显式零值都不会错位。
+        coordinates = self._adjacency.tocoo(copy=False)
         results = []
-        for idx in low_weight_indices:
-            r = rows[idx]
-            c = cols[idx]
+        for r, c, weight in zip(coordinates.row, coordinates.col, coordinates.data, strict=True):
+            if weight >= threshold:
+                continue
             src = self._nodes[r]
             tgt = self._nodes[c]
             results.append((src, tgt))
@@ -1237,6 +1309,7 @@ class GraphStore:
         self._edge_hash_map.clear()
         self._adjacency_T = None
         self._adjacency_dirty = True
+        self._saliency_cache = None
         self._total_nodes_added = 0
         self._total_edges_added = 0
         self._total_nodes_deleted = 0
@@ -1259,17 +1332,6 @@ class GraphStore:
         data_dir = Path(data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        # 保存邻接矩阵
-        matrix_path = data_dir / "graph_adjacency.npz"
-        if self._adjacency is not None:
-            with atomic_write(matrix_path, "wb") as f:
-                save_npz(f, self._adjacency)
-            logger.debug(f"保存邻接矩阵: {matrix_path}")
-        elif matrix_path.exists():
-            matrix_path.unlink()
-            logger.debug(f"删除陈旧邻接矩阵: {matrix_path}")
-
-        # 保存元数据
         metadata = {
             "nodes": self._nodes,
             "node_to_idx": self._node_to_idx,
@@ -1281,12 +1343,33 @@ class GraphStore:
             "total_edges_deleted": self._total_edges_deleted,
             "schema_version": 1,
         }
+
+        # 快照目录先完整落盘，兼容文件与 SQLite 镜像写完后再原子切换指针。
+        generation = self._prepare_snapshot(data_dir, metadata)
+
+        # 保存兼容邻接矩阵镜像
+        matrix_path = data_dir / "graph_adjacency.npz"
+        if self._adjacency is not None:
+            with atomic_write(matrix_path, "wb") as f:
+                save_npz(f, self._adjacency)
+            logger.debug(f"保存邻接矩阵: {matrix_path}")
+        elif matrix_path.exists():
+            matrix_path.unlink()
+            logger.debug(f"删除陈旧邻接矩阵: {matrix_path}")
+
+        # 保存兼容元数据与 SQLite 边映射镜像
         if not self._save_edge_hash_map(data_dir):
             metadata["edge_hash_map"] = self._serialize_edge_hash_map()
 
         metadata_path = data_dir / "graph_metadata.json"
         _write_json_object(metadata_path, metadata)
         logger.debug(f"保存元数据: {metadata_path}")
+
+        self._activate_snapshot(data_dir, generation)
+        try:
+            self._cleanup_old_snapshots(data_dir, generation)
+        except OSError as exc:
+            logger.warning(f"清理旧图快照失败，当前快照已成功激活: {exc}")
 
         logger.info(f"图存储已保存到: {data_dir}")
 
@@ -1307,8 +1390,8 @@ class GraphStore:
         if not data_dir.exists():
             raise FileNotFoundError(f"数据目录不存在: {data_dir}")
 
-        # 加载元数据
-        metadata_path = data_dir / "graph_metadata.json"
+        # 优先加载原子快照；旧数据目录没有指针时继续读取兼容文件。
+        metadata_path, matrix_path, snapshot_active = self._resolve_snapshot_paths(data_dir)
         if not metadata_path.exists():
             raise FileNotFoundError(f"元数据文件不存在: {metadata_path}")
 
@@ -1337,7 +1420,11 @@ class GraphStore:
         self._total_edges_deleted = metadata["total_edges_deleted"]
         
         # 恢复 V5 边哈希映射 (Restore V5 edge hash map)
-        self._edge_hash_map = defaultdict(set, self._load_edge_hash_map(data_dir))
+        self._edge_hash_map = (
+            defaultdict(set)
+            if snapshot_active
+            else defaultdict(set, self._load_edge_hash_map(data_dir))
+        )
         edge_map_data = metadata.get("edge_hash_map", {})
         if not self._edge_hash_map and isinstance(edge_map_data, dict):
             for k, v in edge_map_data.items():
@@ -1351,7 +1438,6 @@ class GraphStore:
                 self._edge_hash_map[key] = set(v if isinstance(v, (list, tuple, set)) else [v])
 
         # 加载邻接矩阵
-        matrix_path = data_dir / "graph_adjacency.npz"
         if matrix_path.exists():
             self._adjacency = load_npz(str(matrix_path))
 
@@ -1362,6 +1448,10 @@ class GraphStore:
                 self._adjacency = self._adjacency.tocsr()
 
             logger.debug(f"加载邻接矩阵: {matrix_path}, shape={self._adjacency.shape}")
+        elif snapshot_active and bool(metadata.get("has_adjacency", False)):
+            raise FileNotFoundError(f"图快照邻接矩阵不存在: {matrix_path}")
+        else:
+            self._adjacency = None
 
         # 检查维度不匹配并修复
         if self._adjacency is not None:

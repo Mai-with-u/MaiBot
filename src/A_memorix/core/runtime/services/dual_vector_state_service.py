@@ -173,8 +173,21 @@ class MemoryDualVectorStateService(KernelServiceBase):
         backup_paragraph = backup_root / "paragraph"
         backup_graph = backup_root / "graph"
         backup_root.mkdir(parents=True, exist_ok=True)
+        activation_journal = backup_root / "activation.json"
         paragraph_dst = self._paragraph_vector_dir()
         graph_dst = self._graph_vector_dir()
+        activation_journal.write_text(
+            json.dumps(
+                {
+                    "status": "prepared",
+                    "build_root": str(build_root),
+                    "had_paragraph": paragraph_dst.exists(),
+                    "had_graph": graph_dst.exists(),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
         try:
             if paragraph_dst.exists():
                 shutil.move(str(paragraph_dst), str(backup_paragraph))
@@ -183,7 +196,17 @@ class MemoryDualVectorStateService(KernelServiceBase):
             shutil.move(str(paragraph_src), str(paragraph_dst))
             shutil.move(str(graph_src), str(graph_dst))
             shutil.rmtree(build_root, ignore_errors=True)
-            shutil.rmtree(backup_root, ignore_errors=True)
+            activation_journal.write_text(
+                json.dumps(
+                    {
+                        "status": "activated",
+                        "had_paragraph": backup_paragraph.exists(),
+                        "had_graph": backup_graph.exists(),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
         except Exception:
             if paragraph_dst.exists():
                 shutil.rmtree(paragraph_dst, ignore_errors=True)
@@ -193,16 +216,66 @@ class MemoryDualVectorStateService(KernelServiceBase):
                 shutil.move(str(backup_paragraph), str(paragraph_dst))
             if backup_graph.exists():
                 shutil.move(str(backup_graph), str(graph_dst))
+            shutil.rmtree(backup_root, ignore_errors=True)
             raise
 
     def _cleanup_stale_dual_vector_build_dirs(self) -> None:
         vectors_root = self._vectors_root()
         if not vectors_root.exists():
             return
+        backup_dirs = sorted(
+            (
+                child
+                for child in vectors_root.iterdir()
+                if child.is_dir() and child.name.startswith("dual_backup_")
+            ),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        unresolved_backup = False
+        for backup_root in backup_dirs:
+            journal_path = backup_root / "activation.json"
+            if not journal_path.exists():
+                unresolved_backup = True
+                logger.error(f"发现缺少激活日志的双池备份，已保留供人工恢复: {backup_root}")
+                continue
+            if self._dual_vector_ready():
+                shutil.rmtree(backup_root, ignore_errors=True)
+                continue
+            try:
+                journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                status = str(journal.get("status", "") or "").strip().lower()
+                if status == "activated":
+                    shutil.rmtree(backup_root, ignore_errors=True)
+                    logger.warning("检测到已完成但尚未清理的双池激活，已保留当前目录并清理旧备份")
+                    continue
+                if status != "prepared":
+                    raise RuntimeError(f"双池激活日志状态无效: {status or 'missing'}")
+                had_paragraph = bool(journal.get("had_paragraph", True))
+                had_graph = bool(journal.get("had_graph", True))
+                interrupted_root = backup_root / "interrupted_new"
+                interrupted_root.mkdir(parents=True, exist_ok=True)
+                for name, destination, existed_before in (
+                    ("paragraph", self._paragraph_vector_dir(), had_paragraph),
+                    ("graph", self._graph_vector_dir(), had_graph),
+                ):
+                    if destination.exists():
+                        shutil.move(str(destination), str(interrupted_root / name))
+                    backup_path = backup_root / name
+                    if existed_before:
+                        if not backup_path.exists():
+                            raise RuntimeError(f"双池备份缺少目录: {backup_path}")
+                        shutil.move(str(backup_path), str(destination))
+                shutil.rmtree(backup_root, ignore_errors=True)
+                logger.warning("检测到未完成的双池激活，已恢复切换前目录")
+            except Exception as exc:
+                unresolved_backup = True
+                logger.error(f"恢复双池激活备份失败，已保留现场: backup={backup_root}, error={exc}")
+
+        if unresolved_backup:
+            return
         for child in vectors_root.iterdir():
             if child.is_dir() and child.name.startswith("dual_build_"):
-                shutil.rmtree(child, ignore_errors=True)
-            elif child.is_dir() and child.name.startswith("dual_backup_"):
                 shutil.rmtree(child, ignore_errors=True)
 
     def _make_vector_store(self, data_dir: Path, *, dimension: Optional[int] = None) -> VectorStore:

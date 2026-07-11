@@ -46,6 +46,42 @@ def test_metadata_store_transaction_rolls_back_on_error(tmp_path: Path) -> None:
         store.close()
 
 
+def test_metadata_store_transaction_rolls_back_on_base_exception(tmp_path: Path) -> None:
+    class StopTransaction(BaseException):
+        pass
+
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        with pytest.raises(StopTransaction):
+            with store.transaction(immediate=True) as connection:
+                connection.execute(
+                    "INSERT INTO paragraphs (hash, content, knowledge_type) VALUES (?, ?, ?)",
+                    ("base-exception-hash", "不会提交", "mixed"),
+                )
+                raise StopTransaction
+
+        assert store.get_paragraph("base-exception-hash") is None
+        manager = store._connection_manager
+        assert manager is not None
+        connection = manager.connection()
+        assert connection._managed_transaction_depth == 0
+        assert connection.in_transaction is False
+    finally:
+        store.close()
+
+
+def test_metadata_store_rejects_unmanaged_override_transaction(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    connection = sqlite3.connect(":memory:")
+    store._conn = connection
+    try:
+        with pytest.raises(TypeError, match="不支持受管事务"):
+            store.transaction()
+    finally:
+        store.close()
+
+
 def test_metadata_store_reinitializes_schema_after_switching_data_directory(tmp_path: Path) -> None:
     first_data_dir = tmp_path / "first"
     second_data_dir = tmp_path / "second"
@@ -168,3 +204,28 @@ def test_metadata_store_closed_manager_cannot_create_new_connections(tmp_path: P
     assert manager.connection_count == 0
     with pytest.raises(RuntimeError, match="连接管理器已关闭"):
         manager.connection()
+
+
+@pytest.mark.parametrize("operation", ["upsert", "delete"])
+def test_fts_paragraph_write_preserves_unmanaged_outer_transaction(
+    operation: str,
+    tmp_path: Path,
+) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        paragraph_hash = store.add_paragraph("FTS 外部事务测试")
+        connection = store.get_connection()
+        connection.execute("BEGIN")
+        connection.execute("UPDATE paragraphs SET content = ? WHERE hash = ?", ("事务内内容", paragraph_hash))
+
+        if operation == "upsert":
+            assert store.fts_upsert_paragraph(paragraph_hash) is True
+        else:
+            assert store.fts_delete_paragraph(paragraph_hash) is True
+
+        assert connection.in_transaction is True
+        connection.rollback()
+        assert store.get_paragraph(paragraph_hash)["content"] == "FTS 外部事务测试"
+    finally:
+        store.close()

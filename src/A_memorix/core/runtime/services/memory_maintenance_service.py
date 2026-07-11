@@ -14,24 +14,25 @@ logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 class MemoryMaintenanceService(KernelServiceBase):
     async def _memory_maintenance_loop(self) -> None:
-        try:
-            while not self._background_stopping:
-                interval_hours = max(1.0 / 60.0, float(self._cfg("memory.base_decay_interval_hours", 1.0) or 1.0))
+        while not self._background_stopping:
+            interval_value = self._cfg("memory.base_decay_interval_hours", 1.0)
+            interval_hours = max(1.0 / 60.0, float(1.0 if interval_value is None else interval_value))
+            try:
                 await asyncio.sleep(max(60.0, interval_hours * 3600.0))
                 if self._background_stopping:
                     break
                 if not bool(self._cfg("memory.enabled", True)):
                     continue
                 await self._run_memory_maintenance_cycle(interval_hours=interval_hours)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(f"memory_maintenance loop 异常: {exc}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"memory_maintenance cycle 异常，将在下一周期重试: {exc}")
 
     async def _run_memory_maintenance_cycle(self, *, interval_hours: float) -> None:
         assert self.graph_store is not None
         assert self.metadata_store is not None
-        half_life = float(self._cfg("memory.half_life_hours", 24.0) or 24.0)
+        half_life = float(self._cfg("memory.half_life_hours", 24.0))
         if half_life > 0:
             factor = 0.5 ** (float(interval_hours) / half_life)
             self.graph_store.decay(factor)
@@ -44,8 +45,8 @@ class MemoryMaintenanceService(KernelServiceBase):
     async def _process_freeze_and_prune(self) -> None:
         assert self.metadata_store is not None
         assert self.graph_store is not None
-        prune_threshold = max(0.0, float(self._cfg("memory.prune_threshold", 0.1) or 0.1))
-        freeze_duration = max(0.0, float(self._cfg("memory.freeze_duration_hours", 24.0) or 24.0)) * 3600.0
+        prune_threshold = max(0.0, float(self._cfg("memory.prune_threshold", 0.1)))
+        freeze_duration = max(0.0, float(self._cfg("memory.freeze_duration_hours", 24.0))) * 3600.0
         now = time.time()
 
         low_edges = self.graph_store.get_low_weight_edges(prune_threshold)
@@ -91,9 +92,9 @@ class MemoryMaintenanceService(KernelServiceBase):
         orphan_cfg = self._cfg("memory.orphan", {}) or {}
         if not bool(orphan_cfg.get("enable_soft_delete", True)):
             return
-        entity_retention = max(0.0, float(orphan_cfg.get("entity_retention_days", 7.0) or 7.0)) * 86400.0
-        paragraph_retention = max(0.0, float(orphan_cfg.get("paragraph_retention_days", 7.0) or 7.0)) * 86400.0
-        grace_period = max(0.0, float(orphan_cfg.get("sweep_grace_hours", 24.0) or 24.0)) * 3600.0
+        entity_retention = max(0.0, float(orphan_cfg.get("entity_retention_days", 7.0))) * 86400.0
+        paragraph_retention = max(0.0, float(orphan_cfg.get("paragraph_retention_days", 7.0))) * 86400.0
+        grace_period = max(0.0, float(orphan_cfg.get("sweep_grace_hours", 24.0))) * 3600.0
 
         isolated = self.graph_store.get_isolated_nodes(include_inactive=True)
         if isolated:
