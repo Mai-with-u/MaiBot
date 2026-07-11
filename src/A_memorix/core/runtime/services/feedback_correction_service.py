@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import asyncio
 import json
@@ -100,13 +100,18 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         query_tool_id: str,
         relation_hashes: Sequence[str],
         reason: str,
+        paragraph_map: Optional[Dict[str, List[str]]] = None,
     ) -> Dict[str, List[str]]:
         if self.metadata_store is None or not feedback_cfg_paragraph_mark_enabled():
             return {}
 
         relation_tokens = tokens(relation_hashes)
-        paragraph_map = self.metadata_store.get_paragraph_hashes_by_relation_hashes(relation_tokens)
-        for relation_hash, paragraph_hashes in paragraph_map.items():
+        resolved_paragraph_map = (
+            paragraph_map
+            if paragraph_map is not None
+            else self.metadata_store.get_paragraph_hashes_by_relation_hashes(relation_tokens)
+        )
+        for relation_hash, paragraph_hashes in resolved_paragraph_map.items():
             for paragraph_hash in paragraph_hashes:
                 self.metadata_store.upsert_paragraph_stale_relation_mark(
                     paragraph_hash=paragraph_hash,
@@ -118,7 +123,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     source_id=str(task_id),
                     source_operation_id=f"feedback_correction:{task_id}:{paragraph_hash}:{relation_hash}",
                 )
-        return paragraph_map
+        return resolved_paragraph_map
 
     def _enqueue_feedback_episode_rebuilds(
         self,
@@ -1142,7 +1147,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
 
         stale_paragraph_map: Dict[str, List[str]] = {}
         stale_paragraph_hashes: List[str] = []
-        previous_stale_marks: Dict[tuple[str, str], Optional[Dict[str, Any]]] = {}
+        previous_stale_marks: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
         episode_rebuild_sources: List[str] = []
         profile_refresh_person_ids: List[str] = []
         rollback_plan: Dict[str, Any] = {}
@@ -1207,6 +1212,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 query_tool_id=query_tool_id,
                 relation_hashes=relation_hashes,
                 reason=str(decision.get("reason", "") or "") or "feedback_correction",
+                paragraph_map=candidate_stale_map,
             )
             stale_paragraph_hashes = merge_tokens(
                 *[

@@ -1568,6 +1568,44 @@ async def test_source_admin_delete_actions_use_kernel_patched_boundaries(
 
 
 @pytest.mark.asyncio
+async def test_episode_batch_preserves_processing_error_when_failure_marking_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_failures: list[tuple[str, str]] = []
+
+    class FakeMetadataStore:
+        def fetch_episode_pending_batch(self, *, limit: int, max_retry: int) -> list[dict[str, str]]:
+            return [{"paragraph_hash": "paragraph-1", "source": "source-1"}]
+
+        def mark_episode_pending_running(self, hashes: list[str]) -> None:
+            assert hashes == ["paragraph-1"]
+
+        def mark_episode_pending_failed(self, hash_value: str, error: str) -> None:
+            raise RuntimeError(f"mark failed: {hash_value}: {error}")
+
+        def mark_episode_source_failed(self, source: str, error: str) -> None:
+            source_failures.append((source, error))
+
+    class FakeEpisodeService:
+        async def process_pending_rows(self, rows: list[dict[str, str]]) -> dict[str, Any]:
+            raise ValueError("primary episode failure")
+
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.episode_service = FakeEpisodeService()  # type: ignore[assignment]
+
+    async def fake_initialize() -> None:
+        return None
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+
+    with pytest.raises(ValueError, match="primary episode failure"):
+        await kernel._ingest_service.process_episode_pending_batch()
+
+    assert source_failures == [("source-1", "episode processing failed: primary episode failure")]
+
+
+@pytest.mark.asyncio
 async def test_memory_maintenance_cycle_uses_kernel_patched_phase_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1609,6 +1647,30 @@ async def test_memory_maintenance_cycle_uses_kernel_patched_phase_boundaries(
     assert calls == ["freeze", "orphan"]
     assert kernel._last_maintenance_at == 123.0
     assert persist_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("configured_interval", "expected_sleep"), [(None, 3600.0), (0, 60.0)])
+async def test_memory_maintenance_loop_handles_none_without_overwriting_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_interval: float | None,
+    expected_sleep: float,
+) -> None:
+    kernel = SDKMemoryKernel(
+        plugin_root=Path.cwd(),
+        config={"memory": {"base_decay_interval_hours": configured_interval}},
+    )
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        kernel._background_stopping = True
+
+    monkeypatch.setattr(memory_maintenance_service.asyncio, "sleep", fake_sleep)
+
+    await kernel._maintenance_service._memory_maintenance_loop()
+
+    assert sleep_calls == [expected_sleep]
 
 
 @pytest.mark.asyncio

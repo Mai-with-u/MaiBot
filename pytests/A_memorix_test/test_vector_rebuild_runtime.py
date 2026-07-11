@@ -603,6 +603,43 @@ async def test_dual_initialize_without_ready_manifest_falls_back_to_single_pool(
     await dual_kernel.shutdown()
 
 
+def test_dual_cleanup_keeps_activated_directories_when_ready_manifest_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path / "plugin_root",
+        config=_dual_kernel_config(data_dir, 8),
+    )
+    vectors_root = data_dir / "vectors"
+    paragraph_dir = vectors_root / "paragraph"
+    graph_dir = vectors_root / "graph"
+    paragraph_dir.mkdir(parents=True)
+    graph_dir.mkdir(parents=True)
+    (paragraph_dir / "current.txt").write_text("new paragraph", encoding="utf-8")
+    (graph_dir / "current.txt").write_text("new graph", encoding="utf-8")
+
+    backup_root = vectors_root / "dual_backup_1"
+    backup_paragraph = backup_root / "paragraph"
+    backup_graph = backup_root / "graph"
+    backup_paragraph.mkdir(parents=True)
+    backup_graph.mkdir(parents=True)
+    (backup_paragraph / "old.txt").write_text("old paragraph", encoding="utf-8")
+    (backup_graph / "old.txt").write_text("old graph", encoding="utf-8")
+    (backup_root / "activation.json").write_text(
+        json.dumps({"status": "activated", "had_paragraph": True, "had_graph": True}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kernel, "_dual_vector_ready", lambda **kwargs: False)
+
+    kernel._dual_vector_state_service._cleanup_stale_dual_vector_build_dirs()
+
+    assert (paragraph_dir / "current.txt").read_text(encoding="utf-8") == "new paragraph"
+    assert (graph_dir / "current.txt").read_text(encoding="utf-8") == "new graph"
+    assert not backup_root.exists()
+
+
 @pytest.mark.asyncio
 async def test_default_dual_mode_starts_auto_migration_without_blocking_initialize(
     monkeypatch: pytest.MonkeyPatch,

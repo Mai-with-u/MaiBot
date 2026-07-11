@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import asyncio
 import pytest
 
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
@@ -263,12 +264,47 @@ async def test_plugin_config_update_awaits_kernel_shutdown() -> None:
     plugin = object.__new__(AMemorixPlugin)
     plugin._plugin_config = {"old": True}
     plugin._kernel = FakeKernel()  # type: ignore[assignment]
+    plugin._kernel_lock = asyncio.Lock()
 
     await plugin.on_config_update("self", {"new": True}, "test-version")
 
     assert events == ["shutdown"]
     assert plugin._plugin_config == {"new": True}
     assert plugin._kernel is None
+
+
+@pytest.mark.asyncio
+async def test_plugin_concurrent_get_kernel_initializes_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.A_memorix import plugin as plugin_module
+
+    initialize_started = asyncio.Event()
+    allow_initialize = asyncio.Event()
+    created_kernels: list[Any] = []
+
+    class FakeKernel:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+            created_kernels.append(self)
+
+        async def initialize(self) -> None:
+            initialize_started.set()
+            await allow_initialize.wait()
+
+    monkeypatch.setattr(plugin_module, "SDKMemoryKernel", FakeKernel)
+    plugin = plugin_module.AMemorixPlugin()
+
+    first_task = asyncio.create_task(plugin._get_kernel())
+    await initialize_started.wait()
+    second_task = asyncio.create_task(plugin._get_kernel())
+    await asyncio.sleep(0)
+
+    assert len(created_kernels) == 1
+
+    allow_initialize.set()
+    first_kernel, second_kernel = await asyncio.gather(first_task, second_task)
+
+    assert first_kernel is second_kernel
+    assert created_kernels == [first_kernel]
 
 
 @pytest.mark.asyncio

@@ -664,8 +664,8 @@ class MetadataFTSMixin:
         """
         将段落写入（或覆盖）到 FTS 索引。
         """
-        owns_transaction = conn is None
         c = self._resolve_conn(conn)
+        owns_transaction = not c.in_transaction
         cur = c.cursor()
         try:
             cur.execute(
@@ -698,8 +698,8 @@ class MetadataFTSMixin:
         """
         从 FTS 索引删除段落。
         """
-        owns_transaction = conn is None
         c = self._resolve_conn(conn)
+        owns_transaction = not c.in_transaction
         cur = c.cursor()
         try:
             cur.execute(

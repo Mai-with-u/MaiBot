@@ -204,3 +204,28 @@ def test_metadata_store_closed_manager_cannot_create_new_connections(tmp_path: P
     assert manager.connection_count == 0
     with pytest.raises(RuntimeError, match="连接管理器已关闭"):
         manager.connection()
+
+
+@pytest.mark.parametrize("operation", ["upsert", "delete"])
+def test_fts_paragraph_write_preserves_unmanaged_outer_transaction(
+    operation: str,
+    tmp_path: Path,
+) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        paragraph_hash = store.add_paragraph("FTS 外部事务测试")
+        connection = store.get_connection()
+        connection.execute("BEGIN")
+        connection.execute("UPDATE paragraphs SET content = ? WHERE hash = ?", ("事务内内容", paragraph_hash))
+
+        if operation == "upsert":
+            assert store.fts_upsert_paragraph(paragraph_hash) is True
+        else:
+            assert store.fts_delete_paragraph(paragraph_hash) is True
+
+        assert connection.in_transaction is True
+        connection.rollback()
+        assert store.get_paragraph(paragraph_hash)["content"] == "FTS 外部事务测试"
+    finally:
+        store.close()

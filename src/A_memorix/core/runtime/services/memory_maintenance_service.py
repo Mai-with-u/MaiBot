@@ -15,7 +15,8 @@ logger = get_logger("A_Memorix.SDKMemoryKernel")
 class MemoryMaintenanceService(KernelServiceBase):
     async def _memory_maintenance_loop(self) -> None:
         while not self._background_stopping:
-            interval_hours = max(1.0 / 60.0, float(self._cfg("memory.base_decay_interval_hours", 1.0)))
+            interval_value = self._cfg("memory.base_decay_interval_hours", 1.0)
+            interval_hours = max(1.0 / 60.0, float(1.0 if interval_value is None else interval_value))
             try:
                 await asyncio.sleep(max(60.0, interval_hours * 3600.0))
                 if self._background_stopping:

@@ -244,6 +244,13 @@ class MemoryDualVectorStateService(KernelServiceBase):
                 continue
             try:
                 journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                status = str(journal.get("status", "") or "").strip().lower()
+                if status == "activated":
+                    shutil.rmtree(backup_root, ignore_errors=True)
+                    logger.warning("检测到已完成但尚未清理的双池激活，已保留当前目录并清理旧备份")
+                    continue
+                if status != "prepared":
+                    raise RuntimeError(f"双池激活日志状态无效: {status or 'missing'}")
                 had_paragraph = bool(journal.get("had_paragraph", True))
                 had_graph = bool(journal.get("had_graph", True))
                 interrupted_root = backup_root / "interrupted_new"

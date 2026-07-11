@@ -345,9 +345,17 @@ class MemoryIngestService(KernelServiceBase):
         except Exception as exc:
             error = f"episode processing failed: {exc}"
             for hash_value in pending_hashes:
-                self.metadata_store.mark_episode_pending_failed(hash_value, error)
+                try:
+                    self.metadata_store.mark_episode_pending_failed(hash_value, error)
+                except Exception as mark_exc:
+                    logger.warning(
+                        f"回写 Episode 待处理项失败状态异常: hash={hash_value}, error={mark_exc}"
+                    )
             for source in source_to_hashes:
-                self.metadata_store.mark_episode_source_failed(source, error)
+                try:
+                    self.metadata_store.mark_episode_source_failed(source, error)
+                except Exception as mark_exc:
+                    logger.warning(f"回写 Episode 来源失败状态异常: source={source}, error={mark_exc}")
             raise
         done_hashes = [str(item or "").strip() for item in result.get("done_hashes", []) if str(item or "").strip()]
         failed_hashes = {

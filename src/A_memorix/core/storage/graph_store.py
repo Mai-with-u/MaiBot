@@ -1366,7 +1366,10 @@ class GraphStore:
         logger.debug(f"保存元数据: {metadata_path}")
 
         self._activate_snapshot(data_dir, generation)
-        self._cleanup_old_snapshots(data_dir, generation)
+        try:
+            self._cleanup_old_snapshots(data_dir, generation)
+        except OSError as exc:
+            logger.warning(f"清理旧图快照失败，当前快照已成功激活: {exc}")
 
         logger.info(f"图存储已保存到: {data_dir}")
 

@@ -164,3 +164,23 @@ def test_graph_store_failed_mirror_save_does_not_activate_partial_snapshot(
 
     assert active_after == active_before
     assert reloaded.num_edges == 1
+
+
+def test_graph_store_cleanup_failure_does_not_mask_activated_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "graph"
+    store = GraphStore(data_dir=data_dir)
+    store.add_edges([("Alice", "Bob")], relation_hashes=["rel-1"])
+
+    def fail_cleanup(_data_dir: Path, _generation: str) -> None:
+        raise OSError("forced cleanup failure")
+
+    monkeypatch.setattr(store, "_cleanup_old_snapshots", fail_cleanup)
+
+    store.save()
+
+    reloaded = GraphStore(data_dir=data_dir)
+    reloaded.load()
+    assert reloaded.num_edges == 1

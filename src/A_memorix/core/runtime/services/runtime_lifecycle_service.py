@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import List
+
 from src.common.logger import get_logger
 
 from .base import KernelServiceBase
@@ -138,7 +140,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
     async def shutdown(self) -> None:
         """先等待后台工作和任务管理器退出，再持久化并释放底层存储。"""
         await self._stop_background_tasks()
-        shutdown_errors: list[BaseException] = []
+        shutdown_errors: List[Exception] = []
         if self.import_task_manager is not None:
             try:
                 await self.import_task_manager.shutdown()
