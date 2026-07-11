@@ -113,7 +113,7 @@ def _build_test_config(data_dir: Path) -> Dict[str, Any]:
         },
         "threshold": {
             "percentile": 70.0,
-            "min_results": 1,
+            "min_results": 20,
         },
         "web": {
             "tuning": {
@@ -193,7 +193,13 @@ def _wait_for_tuning_task_terminal(client: TestClient, task_id: str, *, timeout_
     raise AssertionError(f"调优任务超时: task_id={task_id}, last_payload={last_payload}")
 
 
-def _wait_for_query_hit(client: TestClient, query: str, *, timeout_seconds: float = 30.0) -> Dict[str, Any]:
+def _wait_for_query_hit(
+    client: TestClient,
+    query: str,
+    *,
+    expected_content: str = "",
+    timeout_seconds: float = 30.0,
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -205,7 +211,11 @@ def _wait_for_query_hit(client: TestClient, query: str, *, timeout_seconds: floa
         )
         last_payload = payload
         hits = payload.get("hits") or []
-        if isinstance(hits, list) and len(hits) > 0:
+        if isinstance(hits, list) and any(
+            isinstance(item, dict)
+            and (not expected_content or expected_content in str(item.get("content", "") or ""))
+            for item in hits
+        ):
             return payload
         sleep(0.2)
     raise AssertionError(f"检索命中超时: query={query}, last_payload={last_payload}")
@@ -442,7 +452,7 @@ def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dic
         seed_task = _wait_for_import_task_terminal(client, seed_task_id)
         assert str(seed_task.get("status", "") or "") in {"completed", "completed_with_errors"}, seed_task
 
-        _wait_for_query_hit(client, unique_token, timeout_seconds=45.0)
+        _wait_for_query_hit(client, unique_token, expected_content=unique_token, timeout_seconds=45.0)
 
         yield {
             "client": client,
@@ -478,7 +488,12 @@ def test_retrieval_module_end_to_end_queries_seeded_data(integration_state: Dict
     client = integration_state["client"]
     unique_token = integration_state["unique_token"]
 
-    aggregate_payload = _wait_for_query_hit(client, unique_token, timeout_seconds=45.0)
+    aggregate_payload = _wait_for_query_hit(
+        client,
+        unique_token,
+        expected_content=unique_token,
+        timeout_seconds=45.0,
+    )
     hits = aggregate_payload.get("hits") or []
     joined_content = "\n".join(str(item.get("content", "") or "") for item in hits if isinstance(item, dict))
     assert unique_token in joined_content
@@ -559,10 +574,17 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
     assert runtime_retrieval.get("top_k_final") == applied_retrieval.get("top_k_final")
     assert runtime_retrieval.get("fusion") == applied_retrieval.get("fusion")
 
-    probe_payload = _wait_for_query_hit(client, probe_query, timeout_seconds=45.0)
+    probe_payload = _wait_for_query_hit(
+        client,
+        probe_query,
+        expected_content=probe_phrase,
+        timeout_seconds=45.0,
+    )
     probe_hits = probe_payload.get("hits") or []
     joined_probe_content = "\n".join(str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict))
     assert probe_phrase in joined_probe_content
+
+    _assert_response_ok(client.post("/api/webui/memory/retrieval_tuning/profile/rollback"))
 
 
 def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dict[str, Any]) -> None:
@@ -708,7 +730,12 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
     source_item = _wait_for_source_paragraph_count(client, source_name, min_count=2, timeout_seconds=45.0)
     assert _source_paragraph_count(source_item) == 2
 
-    relation_query_payload = _wait_for_query_hit(client, access_code, timeout_seconds=45.0)
+    relation_query_payload = _wait_for_query_hit(
+        client,
+        access_code,
+        expected_content=access_code,
+        timeout_seconds=45.0,
+    )
     relation_hits = [
         item
         for item in (relation_query_payload.get("hits") or [])
@@ -719,6 +746,7 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
     paragraph_query_payload = _wait_for_query_hit(
         client,
         f"{person_name} {location_name} {device_name}",
+        expected_content=location_name,
         timeout_seconds=45.0,
     )
     paragraph_hits = [
@@ -726,7 +754,10 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
         for item in (paragraph_query_payload.get("hits") or [])
         if isinstance(item, dict)
         and str(item.get("type", "") or "") == "paragraph"
-        and person_name in str(item.get("content", "") or "")
+        and all(
+            token in str(item.get("content", "") or "")
+            for token in (person_name, location_name, device_name)
+        )
     ]
     assert paragraph_hits, paragraph_query_payload
 
@@ -815,7 +846,12 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
         )
     )
     _wait_for_source_paragraph_count(client, source_name, min_count=2, timeout_seconds=45.0)
-    restored_query = _wait_for_query_hit(client, access_code, timeout_seconds=45.0)
+    restored_query = _wait_for_query_hit(
+        client,
+        access_code,
+        expected_content=access_code,
+        timeout_seconds=45.0,
+    )
     assert any(
         access_code in str(item.get("content", "") or "")
         for item in (restored_query.get("hits") or [])
