@@ -963,7 +963,7 @@ class BehaviorLearner:
         for (candidate, matched_segment, candidate_scene_start), write_result in zip(
             write_plans,
             write_results,
-            strict=True,
+            strict=False,
         ):
             if write_result.path is None:
                 skipped_reason = write_result.skipped_reason or "未知原因"
