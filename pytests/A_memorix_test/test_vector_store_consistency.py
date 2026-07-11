@@ -17,6 +17,17 @@ def _vector() -> np.ndarray:
     return np.asarray([[1.0, 0.0]], dtype=np.float32)
 
 
+def _orthogonal_vectors() -> np.ndarray:
+    return np.eye(4, dtype=np.float32)
+
+
+def _assert_unique_search_results(store: VectorStore, *, expected_count: int) -> None:
+    ids, _scores = store.search(_orthogonal_vectors()[0], k=expected_count)
+
+    assert len(ids) == expected_count
+    assert len(set(ids)) == expected_count
+
+
 def test_vector_id_map_cache_detects_equal_size_membership_change(tmp_path: Path) -> None:
     store = VectorStore(dimension=2, data_dir=tmp_path / "vectors")
     store._known_hashes = {"old"}
@@ -59,3 +70,61 @@ def test_vector_compaction_journal_restores_consistent_backup(tmp_path: Path) ->
     assert store._bin_path.read_bytes() == original_bin
     assert store._ids_bin_path.read_bytes() == original_ids
     assert not store._compaction_journal_path.exists()
+
+
+def test_untrained_search_flushes_each_vector_to_fallback_once(tmp_path: Path) -> None:
+    store = VectorStore(dimension=4, data_dir=tmp_path / "vectors")
+    ids = ["vector-1", "vector-2", "vector-3", "vector-4"]
+
+    assert store.add(_orthogonal_vectors(), ids) == 4
+    assert store._fallback_index.ntotal == 0
+
+    _assert_unique_search_results(store, expected_count=4)
+
+    assert store._fallback_index.ntotal == 4
+    assert store._bin_count == 4
+
+
+def test_untrained_save_and_repeated_search_do_not_grow_fallback(tmp_path: Path) -> None:
+    store = VectorStore(dimension=4, data_dir=tmp_path / "vectors")
+    ids = ["vector-1", "vector-2", "vector-3", "vector-4"]
+    store.add(_orthogonal_vectors(), ids)
+
+    store.save()
+    assert store._fallback_index.ntotal == 4
+    assert store._bin_count == 4
+
+    store.save()
+    _assert_unique_search_results(store, expected_count=4)
+
+    assert store._fallback_index.ntotal == 4
+    assert store._bin_count == 4
+
+
+def test_buffer_threshold_and_search_do_not_duplicate_untrained_vector(tmp_path: Path) -> None:
+    store = VectorStore(dimension=2, data_dir=tmp_path / "vectors", buffer_size=1)
+
+    assert store.add(_vector(), ["vector-1"]) == 1
+    assert store._fallback_index.ntotal == 1
+
+    ids, _scores = store.search(_vector()[0], k=1)
+
+    assert ids == ["vector-1"]
+    assert store._fallback_index.ntotal == 1
+    assert store._bin_count == 1
+
+
+def test_training_transition_keeps_one_index_entry_per_vector(tmp_path: Path) -> None:
+    store = VectorStore(dimension=4, data_dir=tmp_path / "vectors")
+    store.min_train_threshold = 4
+    ids = ["vector-1", "vector-2", "vector-3", "vector-4"]
+    store.add(_orthogonal_vectors(), ids)
+
+    summary = store.warmup_index(force_train=True)
+
+    assert summary["ok"] is True
+    assert summary["trained"] is True
+    assert summary["index_ntotal"] == 4
+    assert summary["fallback_ntotal"] == 0
+    _assert_unique_search_results(store, expected_count=4)
+    assert store._index.ntotal == 4

@@ -249,9 +249,8 @@ class VectorStore:
                 self._flush_write_buffer_unlocked()
 
             if not self._is_trained:
-                # 双写到回退索引
-                self._fallback_index.add_with_ids(batch_vecs, batch_ids)
-
+                # 未训练阶段由 flush 统一写入回退索引。这里提前写入会导致
+                # 同一批向量在后续 search/save 刷新缓冲区时重复入索引。
                 self._update_reservoir(batch_vecs)
                 # 这里的 TRAIN_SIZE 取默认 10k，或者根据当前数据量动态判断
                 if len(self._reservoir_buffer) >= 10000:
