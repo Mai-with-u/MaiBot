@@ -55,15 +55,9 @@ class PosteriorGraphConfig:
         self.grounded_confidence_threshold = _clip_score(self.grounded_confidence_threshold)
         self.incidental_confidence_threshold = _clip_score(self.incidental_confidence_threshold)
         self.min_query_token_coverage = _clip_score(self.min_query_token_coverage)
-        self.incidental_query_relevance_threshold = _clip_score(
-            self.incidental_query_relevance_threshold
-        )
-        self.incidental_core_overlap_threshold = _clip_score(
-            self.incidental_core_overlap_threshold
-        )
-        self.incidental_specificity_threshold = _clip_score(
-            self.incidental_specificity_threshold
-        )
+        self.incidental_query_relevance_threshold = _clip_score(self.incidental_query_relevance_threshold)
+        self.incidental_core_overlap_threshold = _clip_score(self.incidental_core_overlap_threshold)
+        self.incidental_specificity_threshold = _clip_score(self.incidental_specificity_threshold)
         self.query_weight = max(0.0, float(self.query_weight))
         self.novelty_weight = max(0.0, float(self.novelty_weight))
         self.complementarity_weight = max(0.0, float(self.complementarity_weight))
@@ -109,11 +103,7 @@ def _tokenize_for_competition(text: str, *, max_tokens: int) -> List[str]:
     tokens: List[str] = []
     for chunk in _TOKEN_PATTERN.findall(normalized):
         if _is_cjk_chunk(chunk):
-            tokens.extend(
-                item.strip().lower()
-                for item in jieba.lcut_for_search(chunk)
-                if item.strip()
-            )
+            tokens.extend(item.strip().lower() for item in jieba.lcut_for_search(chunk) if item.strip())
         else:
             tokens.append(chunk)
 
@@ -177,9 +167,7 @@ def _build_query_profile(
     text = str(query or "")
     tokens = set(_tokenize_for_competition(text, max_tokens=max_tokens))
     entities = {
-        str(name or "").strip().lower()
-        for name in retriever._extract_entities(text).keys()
-        if str(name or "").strip()
+        str(name or "").strip().lower() for name in retriever._extract_entities(text).keys() if str(name or "").strip()
     }
     return _CompetitionProfile(text=text, tokens=tokens, entities=entities)
 
@@ -551,9 +539,7 @@ def _competition_merge(
     if replaceable_slots <= 0:
         return ranked[:top_k]
 
-    core_paragraph_hashes = {
-        item.hash_value for item in core_results if item.result_type == "paragraph"
-    }
+    core_paragraph_hashes = {item.hash_value for item in core_results if item.result_type == "paragraph"}
     selected_hashes = {item.hash_value for item in core_results}
     filtered_graph_results: List[RetrievalResult] = []
     for item in graph_results:
@@ -672,8 +658,7 @@ def apply_posterior_graph_gate(
         max_tokens=cfg.max_candidate_tokens,
     )
     core_profiles = [
-        _build_candidate_profile(retriever, item, max_tokens=cfg.max_candidate_tokens)
-        for item in core_results
+        _build_candidate_profile(retriever, item, max_tokens=cfg.max_candidate_tokens) for item in core_results
     ]
     need_for_graph, need_reason = _need_for_graph(
         query_profile=query_profile,
@@ -689,11 +674,7 @@ def apply_posterior_graph_gate(
     if grounded_seeds and need_for_graph:
         seed_type = "grounded"
         seed_names = grounded_seeds
-    elif (
-        not grounded_seeds
-        and incidental_seeds
-        and rag_confidence < float(cfg.incidental_confidence_threshold)
-    ):
+    elif not grounded_seeds and incidental_seeds and rag_confidence < float(cfg.incidental_confidence_threshold):
         seed_type = "incidental"
         seed_names = incidental_seeds
 

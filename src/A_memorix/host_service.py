@@ -541,7 +541,9 @@ class AMemorixHostService:
             return {**base, "queued": False}
         return {**base, "success": False, "error": message}
 
-    async def _dispatch_ingest_write(self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]) -> Any:
+    async def _dispatch_ingest_write(
+        self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]
+    ) -> Any:
         if component_name == "ingest_summary":
             return await kernel.ingest_summary(
                 external_id=str(payload.get("external_id", "") or ""),

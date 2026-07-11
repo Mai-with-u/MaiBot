@@ -154,9 +154,7 @@ class SQLiteConnectionManager:
 
     def _prune_inactive_connections_locked(self, owner_thread: Thread) -> int:
         inactive_threads = [
-            thread
-            for thread in self._connections
-            if thread is not owner_thread and not thread.is_alive()
+            thread for thread in self._connections if thread is not owner_thread and not thread.is_alive()
         ]
         for thread in inactive_threads:
             self._connections.pop(thread).close()

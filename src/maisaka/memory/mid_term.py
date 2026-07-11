@@ -163,9 +163,7 @@ async def build_mid_term_memory_message(
     )
     summary_payload = _parse_summary_response(result.response)
     if summary_payload is None:
-        logger.warning(
-            f"{log_prefix} 聊天回想解析失败，已跳过本次插入: response={_truncate(result.response, 300)}"
-        )
+        logger.warning(f"{log_prefix} 聊天回想解析失败，已跳过本次插入: response={_truncate(result.response, 300)}")
         return None
 
     recall_cue_embeddings = await _build_recall_cue_embeddings(
@@ -753,12 +751,7 @@ def _get_mid_term_memory_payload(message: LLMContextMessage) -> dict[str, Any]:
 
 
 def _resolve_payload_summary(payload: dict[str, Any]) -> str:
-    return str(
-        payload.get("summary")
-        or payload.get("long_summary")
-        or payload.get("brief")
-        or ""
-    ).strip()
+    return str(payload.get("summary") or payload.get("long_summary") or payload.get("brief") or "").strip()
 
 
 def _extract_recall_cue_texts(payload: dict[str, Any]) -> list[str]:
@@ -897,8 +890,7 @@ def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
         return 0.0
 
     dot_product = sum(
-        float(left_value) * float(right_value)
-        for left_value, right_value in zip(left, right, strict=True)
+        float(left_value) * float(right_value) for left_value, right_value in zip(left, right, strict=True)
     )
     left_norm = sqrt(sum(float(value) * float(value) for value in left))
     right_norm = sqrt(sum(float(value) * float(value) for value in right))

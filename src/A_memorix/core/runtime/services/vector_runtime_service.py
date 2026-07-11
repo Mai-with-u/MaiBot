@@ -118,7 +118,13 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 continue
             encode_items.append((paragraph_hash, content))
 
-        done_count, failed_count, last_error, encoded_done_hashes, failed_hashes = await self._encode_and_add_rebuild_vectors(
+        (
+            done_count,
+            failed_count,
+            last_error,
+            encoded_done_hashes,
+            failed_hashes,
+        ) = await self._encode_and_add_rebuild_vectors(
             items=encode_items,
             batch_size=safe_limit,
             vector_store=target_store,
@@ -911,7 +917,9 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         if rebuild_success:
             self._vector_persist_blocked_until_rebuild = False
             self._vector_rebuild_source_dimension = None
-        self._update_dual_vector_auto_migration_stage("persist", rebuild_success=rebuild_success, errors=list(errors[:5]))
+        self._update_dual_vector_auto_migration_stage(
+            "persist", rebuild_success=rebuild_success, errors=list(errors[:5])
+        )
         self._persist(force_vectors=rebuild_success)
         return {
             "success": rebuild_success,
@@ -1068,4 +1076,3 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             return result
 
         return {"success": False, "error": f"不支持的 runtime action: {act}"}
-

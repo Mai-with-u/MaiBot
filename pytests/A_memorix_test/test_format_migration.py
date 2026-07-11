@@ -222,9 +222,7 @@ def _assert_migrated_data_usable(data_dir: Path, db_path: Path) -> None:
     try:
         row = conn.execute("SELECT metadata FROM paragraphs WHERE hash = 'paragraph-recover'").fetchone()
         assert json.loads(row[0])["chat_id"] == "chat-recover"
-        edge_rows = conn.execute(
-            "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
-        ).fetchall()
+        edge_rows = conn.execute("SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map").fetchall()
         assert edge_rows == [(0, 1, "rel-recover")]
         migration_row = conn.execute(
             "SELECT summary_json FROM storage_format_migrations WHERE version = ?",
@@ -296,9 +294,7 @@ def test_startup_format_migration_converts_pickle_storage(tmp_path: Path) -> Non
     try:
         row = conn.execute("SELECT metadata FROM paragraphs WHERE hash = 'paragraphs-1'").fetchone()
         assert json.loads(row[0])["chat_id"] == "chat-1"
-        edge_rows = conn.execute(
-            "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
-        ).fetchall()
+        edge_rows = conn.execute("SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map").fetchall()
         assert edge_rows == [(0, 1, "rel-1")]
     finally:
         conn.close()
@@ -412,9 +408,7 @@ def test_startup_format_migration_recovers_after_process_kill_before_commit(tmp_
     try:
         row = conn.execute("SELECT metadata FROM paragraphs WHERE hash = 'paragraph-kill'").fetchone()
         assert json.loads(row[0])["chat_id"] == "chat-kill"
-        edge_rows = conn.execute(
-            "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
-        ).fetchall()
+        edge_rows = conn.execute("SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map").fetchall()
         assert edge_rows == [(0, 1, "rel-kill")]
         migration_row = conn.execute(
             "SELECT summary_json FROM storage_format_migrations WHERE version = ?",
@@ -598,9 +592,7 @@ def test_startup_format_migration_recovers_incomplete_graph_json_from_backup(tmp
 
     conn = sqlite3.connect(str(db_path))
     try:
-        edge_rows = conn.execute(
-            "SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map"
-        ).fetchall()
+        edge_rows = conn.execute("SELECT src_idx, dst_idx, relation_hash FROM graph_edge_relation_map").fetchall()
         assert edge_rows == [(0, 1, "rel-bak")]
     finally:
         conn.close()

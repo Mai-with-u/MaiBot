@@ -73,9 +73,7 @@ class AMemorixPlugin(MaiBotPlugin):
     async def _get_kernel(self) -> SDKMemoryKernel:
         async with self._kernel_lock:
             if self._kernel_shutdown_error:
-                raise RuntimeError(
-                    f"A_Memorix 上次停机未完成，拒绝复用旧内核: {self._kernel_shutdown_error}"
-                )
+                raise RuntimeError(f"A_Memorix 上次停机未完成，拒绝复用旧内核: {self._kernel_shutdown_error}")
             if self._kernel is None:
                 kernel = SDKMemoryKernel(plugin_root=self._plugin_root, config=self._plugin_config)
                 await kernel.initialize()

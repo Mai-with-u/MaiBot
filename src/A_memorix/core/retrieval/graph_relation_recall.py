@@ -96,11 +96,7 @@ class GraphRelationRecallService:
                 seen_hashes=seen_hashes,
                 out=candidates,
             )
-            if (
-                len(candidates) < 3
-                and self.config.allow_two_hop_pair
-                and len(candidates) < self.config.candidate_k
-            ):
+            if len(candidates) < 3 and self.config.allow_two_hop_pair and len(candidates) < self.config.candidate_k:
                 self._collect_two_hop_pair_candidates(
                     seed_a=seeds[0],
                     seed_b=seeds[1],

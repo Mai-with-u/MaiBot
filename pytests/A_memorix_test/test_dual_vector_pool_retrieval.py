@@ -195,6 +195,7 @@ async def test_dual_graph_evidence_truncates_by_score_after_type_normalization()
     high_c_evidence = by_hash["p-high-c"].metadata["evidence_items"][0]
     assert high_a_evidence["normalized_score"] == pytest.approx(1.0)
     assert high_c_evidence["normalized_score"] == pytest.approx((0.8 - 0.3) / (0.9 - 0.3))
-    assert by_hash["p-high-a"].metadata["score_breakdown"]["graph_evidence"] >= (
-        by_hash["p-high-c"].metadata["score_breakdown"]["graph_evidence"]
+    assert (
+        by_hash["p-high-a"].metadata["score_breakdown"]["graph_evidence"]
+        >= (by_hash["p-high-c"].metadata["score_breakdown"]["graph_evidence"])
     )

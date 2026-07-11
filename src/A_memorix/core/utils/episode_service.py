@@ -202,12 +202,12 @@ class EpisodeService:
 
             flush()
 
-        groups.sort(
-            key=lambda g: self._paragraph_anchor(g["paragraphs"][0]) if g.get("paragraphs") else 0.0
-        )
+        groups.sort(key=lambda g: self._paragraph_anchor(g["paragraphs"][0]) if g.get("paragraphs") else 0.0)
         return groups
 
-    def _compute_time_meta(self, paragraphs: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float], Optional[str], float]:
+    def _compute_time_meta(
+        self, paragraphs: List[Dict[str, Any]]
+    ) -> Tuple[Optional[float], Optional[float], Optional[str], float]:
         starts: List[float] = []
         ends: List[float] = []
         granularity_priority = {
@@ -364,7 +364,9 @@ class EpisodeService:
             }
 
         source = str(group.get("source", "") or "").strip()
-        group_hashes = [str(p.get("hash", "") or "").strip() for p in paragraphs if str(p.get("hash", "") or "").strip()]
+        group_hashes = [
+            str(p.get("hash", "") or "").strip() for p in paragraphs if str(p.get("hash", "") or "").strip()
+        ]
         group_start, group_end, _, _ = self._compute_time_meta(paragraphs)
 
         fallback_used = False
@@ -380,16 +382,14 @@ class EpisodeService:
             )
             episodes = list(llm_result.get("episodes") or [])
             segmentation_model = str(llm_result.get("segmentation_model", "") or "").strip() or "auto"
-            segmentation_version = str(llm_result.get("segmentation_version", "") or "").strip() or EpisodeSegmentationService.SEGMENTATION_VERSION
+            segmentation_version = (
+                str(llm_result.get("segmentation_version", "") or "").strip()
+                or EpisodeSegmentationService.SEGMENTATION_VERSION
+            )
             if not episodes:
                 raise ValueError("llm_empty_episodes")
         except Exception as e:
-            logger.warning(
-                "Episode segmentation fallback: "
-                f"source={source} "
-                f"size={len(group_hashes)} "
-                f"err={e}"
-            )
+            logger.warning(f"Episode segmentation fallback: source={source} size={len(group_hashes)} err={e}")
             episodes = [self._build_fallback_episode(group)]
             fallback_used = True
 
@@ -453,8 +453,7 @@ class EpisodeService:
                     or ("fallback_rule" if fallback_used else segmentation_model)
                 ),
                 "segmentation_version": (
-                    str(episode.get("segmentation_version", "") or "").strip()
-                    or segmentation_version
+                    str(episode.get("segmentation_version", "") or "").strip() or segmentation_version
                 ),
             }
             stored_payloads.append(payload)

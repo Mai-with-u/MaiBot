@@ -110,31 +110,34 @@ async def test_apply_feedback_decision_resolves_paragraph_targets(monkeypatch: p
         ),
     )
     kernel.metadata_store = SimpleNamespace(
-        get_paragraph_relations=lambda paragraph_hash: [
-            {
-                "hash": "relation-1",
-                "subject": "测试用户",
-                "predicate": "最喜欢的颜色是",
-                "object": "蓝色",
-            }
-        ]
-        if paragraph_hash == "paragraph-1"
-        else [],
+        get_paragraph_relations=lambda paragraph_hash: (
+            [
+                {
+                    "hash": "relation-1",
+                    "subject": "测试用户",
+                    "predicate": "最喜欢的颜色是",
+                    "object": "蓝色",
+                }
+            ]
+            if paragraph_hash == "paragraph-1"
+            else []
+        ),
         get_relation_status_batch=lambda hashes: {
-            str(hash_value): {"is_inactive": str(hash_value) in forgotten_hashes}
-            for hash_value in hashes
+            str(hash_value): {"is_inactive": str(hash_value) in forgotten_hashes} for hash_value in hashes
         },
-            get_paragraph_hashes_by_relation_hashes=lambda hashes: (
-                paragraph_lookup_calls.append(list(hashes))
-                or ({"relation-1": ["paragraph-1"]} if "relation-1" in hashes else {})
-            ),
-            get_paragraph_stale_relation_mark=lambda **kwargs: None,
-            upsert_paragraph_stale_relation_mark=lambda **kwargs: stale_marks.append(kwargs) or kwargs,
+        get_paragraph_hashes_by_relation_hashes=lambda hashes: (
+            paragraph_lookup_calls.append(list(hashes))
+            or ({"relation-1": ["paragraph-1"]} if "relation-1" in hashes else {})
+        ),
+        get_paragraph_stale_relation_mark=lambda **kwargs: None,
+        upsert_paragraph_stale_relation_mark=lambda **kwargs: stale_marks.append(kwargs) or kwargs,
         enqueue_episode_source_rebuild=lambda source, reason="": episode_sources.append(source) or True,
         enqueue_person_profile_refresh=lambda **kwargs: profile_refresh_ids.append(kwargs["person_id"]) or kwargs,
-        get_paragraph=lambda paragraph_hash: {"hash": "paragraph-1", "source": "chat_feedback_test_seed:session-1"}
-        if paragraph_hash == "paragraph-1"
-        else None,
+        get_paragraph=lambda paragraph_hash: (
+            {"hash": "paragraph-1", "source": "chat_feedback_test_seed:session-1"}
+            if paragraph_hash == "paragraph-1"
+            else None
+        ),
         append_feedback_action_log=lambda **kwargs: action_logs.append(kwargs),
     )
     kernel._apply_v5_relation_action = lambda *, action, hashes, strength=1.0: (  # type: ignore[method-assign]
@@ -271,8 +274,22 @@ async def test_feedback_task_rollback_restores_snapshots_and_requeues_followups(
     deleted_marks: list[tuple[str, str]] = []
     deleted_paragraphs: list[str] = []
     relation_statuses: Dict[str, Dict[str, Any]] = {
-        "rel-old": {"is_inactive": True, "weight": 0.0, "is_pinned": False, "protected_until": 0.0, "last_reinforced": None, "inactive_since": 1.0},
-        "rel-new": {"is_inactive": False, "weight": 1.0, "is_pinned": False, "protected_until": 0.0, "last_reinforced": None, "inactive_since": None},
+        "rel-old": {
+            "is_inactive": True,
+            "weight": 0.0,
+            "is_pinned": False,
+            "protected_until": 0.0,
+            "last_reinforced": None,
+            "inactive_since": 1.0,
+        },
+        "rel-new": {
+            "is_inactive": False,
+            "weight": 1.0,
+            "is_pinned": False,
+            "protected_until": 0.0,
+            "last_reinforced": None,
+            "inactive_since": None,
+        },
     }
     current_task: Dict[str, Any] = {
         "id": 1,
@@ -330,31 +347,31 @@ async def test_feedback_task_rollback_restores_snapshots_and_requeues_followups(
 
     metadata_store = SimpleNamespace(
         get_feedback_task_by_id=lambda task_id: current_task if int(task_id) == 1 else None,
-        mark_feedback_task_rollback_running=lambda **kwargs: current_task.update({"rollback_status": "running"}) or current_task,
-        finalize_feedback_task_rollback=lambda **kwargs: current_task.update(
-            {
-                "rollback_status": kwargs["rollback_status"],
-                "rollback_result": kwargs.get("rollback_result") or {},
-                "rollback_error": kwargs.get("rollback_error", ""),
-            }
-        )
-        or current_task,
+        mark_feedback_task_rollback_running=lambda **kwargs: (
+            current_task.update({"rollback_status": "running"}) or current_task
+        ),
+        finalize_feedback_task_rollback=lambda **kwargs: (
+            current_task.update(
+                {
+                    "rollback_status": kwargs["rollback_status"],
+                    "rollback_result": kwargs.get("rollback_result") or {},
+                    "rollback_error": kwargs.get("rollback_error", ""),
+                }
+            )
+            or current_task
+        ),
         get_relation_status_batch=lambda hashes: {
-            hash_value: dict(relation_statuses[hash_value])
-            for hash_value in hashes
-            if hash_value in relation_statuses
+            hash_value: dict(relation_statuses[hash_value]) for hash_value in hashes if hash_value in relation_statuses
         },
-        restore_relation_status_from_snapshot=lambda hash_value, snapshot: relation_statuses.update(
-            {hash_value: dict(snapshot)}
-        )
-        or dict(snapshot),
+        restore_relation_status_from_snapshot=lambda hash_value, snapshot: (
+            relation_statuses.update({hash_value: dict(snapshot)}) or dict(snapshot)
+        ),
         append_feedback_action_log=lambda **kwargs: action_logs.append(kwargs),
         mark_as_deleted=lambda hashes, type_: deleted_paragraphs.extend(list(hashes)) or len(list(hashes)),
         get_paragraph=lambda paragraph_hash: {"hash": paragraph_hash, "source": "chat_summary:session-1"},
         get_connection=lambda: _Conn(),
         delete_external_memory_refs_by_paragraphs=lambda hashes: [
-            {"paragraph_hash": str(hash_value), "external_id": f"external:{hash_value}"}
-            for hash_value in hashes
+            {"paragraph_hash": str(hash_value), "external_id": f"external:{hash_value}"} for hash_value in hashes
         ],
         update_relations_protection=lambda hashes, **kwargs: None,
         mark_relations_inactive=lambda hashes, inactive_since=None: [
@@ -368,23 +385,26 @@ async def test_feedback_task_rollback_restores_snapshots_and_requeues_followups(
             )
             for hash_value in hashes
         ],
-        rollback_paragraph_stale_relation_mark=lambda **kwargs: deleted_marks.append(
-            (kwargs["paragraph_hash"], kwargs["relation_hash"])
-        ) or {
-            "success": True,
-            "action": "deleted",
-            "paragraph_hash": kwargs["paragraph_hash"],
-            "relation_hash": kwargs["relation_hash"],
-        },
-        enqueue_episode_source_rebuild=lambda source, reason='': queued_sources.append(source) or True,
+        rollback_paragraph_stale_relation_mark=lambda **kwargs: (
+            deleted_marks.append((kwargs["paragraph_hash"], kwargs["relation_hash"]))
+            or {
+                "success": True,
+                "action": "deleted",
+                "paragraph_hash": kwargs["paragraph_hash"],
+                "relation_hash": kwargs["relation_hash"],
+            }
+        ),
+        enqueue_episode_source_rebuild=lambda source, reason="": queued_sources.append(source) or True,
         enqueue_person_profile_refresh=lambda **kwargs: queued_profiles.append(kwargs["person_id"]) or kwargs,
         list_feedback_action_logs=lambda task_id: action_logs if int(task_id) == 1 else [],
     )
 
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
     kernel.metadata_store = metadata_store
+
     async def _noop_initialize() -> None:
         return None
+
     kernel.initialize = _noop_initialize  # type: ignore[method-assign]
     kernel._rebuild_graph_from_metadata = lambda: None  # type: ignore[method-assign]
     kernel._persist = lambda: None  # type: ignore[method-assign]
@@ -462,8 +482,9 @@ def test_fuzzy_modify_superseded_change_type_matches_operation() -> None:
     kernel = SDKMemoryKernel(plugin_root=Path("."), config={})
     kernel.metadata_store = SimpleNamespace(
         get_paragraph=lambda hash_value: {"hash": hash_value, "metadata": previous_metadata},
-        update_paragraph_metadata=lambda hash_value, patch, merge=True: updated_metadata.update(patch)
-        or {**previous_metadata, **updated_metadata},
+        update_paragraph_metadata=lambda hash_value, patch, merge=True: (
+            updated_metadata.update(patch) or {**previous_metadata, **updated_metadata}
+        ),
         get_paragraph_relations=lambda paragraph_hash: [],
         get_paragraph_entities=lambda paragraph_hash: [],
         get_relation_status_batch=lambda hashes: {},
@@ -500,8 +521,9 @@ async def test_fuzzy_modify_execute_recovers_stale_executing_plan(monkeypatch: p
             "execution": {"attempt": {"status": "executing", "started_at": 1.0}},
             "plan": {"operations": []},
         },
-        update_fuzzy_modify_plan=lambda plan_id, **kwargs: plan_updates.append({"plan_id": plan_id, **kwargs})
-        or {"plan_id": plan_id, **kwargs},
+        update_fuzzy_modify_plan=lambda plan_id, **kwargs: (
+            plan_updates.append({"plan_id": plan_id, **kwargs}) or {"plan_id": plan_id, **kwargs}
+        ),
     )
 
     async def fake_apply(**kwargs: Any) -> dict[str, Any]:
@@ -529,8 +551,9 @@ async def test_fuzzy_modify_rollback_reports_delete_failure(monkeypatch: pytest.
         },
         get_paragraph=lambda hash_value: {"hash": hash_value},
         get_relation=lambda hash_value: None,
-        update_fuzzy_modify_plan=lambda plan_id, **kwargs: plan_updates.append({"plan_id": plan_id, **kwargs})
-        or {"plan_id": plan_id, **kwargs},
+        update_fuzzy_modify_plan=lambda plan_id, **kwargs: (
+            plan_updates.append({"plan_id": plan_id, **kwargs}) or {"plan_id": plan_id, **kwargs}
+        ),
     )
 
     async def fake_execute_delete_action(**kwargs):

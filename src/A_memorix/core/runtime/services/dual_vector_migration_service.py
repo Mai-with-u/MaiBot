@@ -44,8 +44,7 @@ class MemoryDualVectorMigrationService(KernelServiceBase):
             counts = payload.get("counts")
             if isinstance(counts, dict):
                 total = sum(
-                    _coerce_non_negative_int(counts.get(key), 0)
-                    for key in ("paragraphs", "entities", "relations")
+                    _coerce_non_negative_int(counts.get(key), 0) for key in ("paragraphs", "entities", "relations")
                 )
 
         processed_keys = (

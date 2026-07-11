@@ -426,10 +426,7 @@ class MetadataProfileMixin:
         )
         return [
             item
-            for item in (
-                self._person_profile_refresh_row_to_dict(row)
-                for row in cursor.fetchall()
-            )
+            for item in (self._person_profile_refresh_row_to_dict(row) for row in cursor.fetchall())
             if item is not None
         ]
 
@@ -586,10 +583,7 @@ class MetadataProfileMixin:
         )
         return [
             item
-            for item in (
-                self._person_profile_refresh_row_to_dict(row)
-                for row in cursor.fetchall()
-            )
+            for item in (self._person_profile_refresh_row_to_dict(row) for row in cursor.fetchall())
             if item is not None
         ]
 

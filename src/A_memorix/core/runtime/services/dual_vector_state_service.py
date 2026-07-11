@@ -56,10 +56,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
         dimension = int(expected_dimension or self._current_embedding_status_dimension() or 0)
         manifest_dimension = int(manifest.get("dimension", 0) or 0)
         if dimension > 0 and manifest_dimension not in {0, dimension}:
-            logger.warning(
-                "双池 ready manifest 维度不匹配: "
-                f"manifest={manifest_dimension}, expected={dimension}"
-            )
+            logger.warning(f"双池 ready manifest 维度不匹配: manifest={manifest_dimension}, expected={dimension}")
             return False
         paragraph_count = int(manifest.get("paragraph_vectors", 0) or 0)
         graph_count = int(manifest.get("graph_vectors", 0) or 0)
@@ -224,11 +221,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
         if not vectors_root.exists():
             return
         backup_dirs = sorted(
-            (
-                child
-                for child in vectors_root.iterdir()
-                if child.is_dir() and child.name.startswith("dual_backup_")
-            ),
+            (child for child in vectors_root.iterdir() if child.is_dir() and child.name.startswith("dual_backup_")),
             key=lambda path: path.name,
             reverse=True,
         )
@@ -339,10 +332,9 @@ class MemoryDualVectorStateService(KernelServiceBase):
             logger.warning(f"双池 ready manifest 自愈失败，加载向量池异常: {exc}")
             return False
 
-        if (
-            not self._stored_vectors_compatible_with_current_embedding(paragraph_store)
-            or not self._stored_vectors_compatible_with_current_embedding(graph_store)
-        ):
+        if not self._stored_vectors_compatible_with_current_embedding(
+            paragraph_store
+        ) or not self._stored_vectors_compatible_with_current_embedding(graph_store):
             logger.warning("双池 ready manifest 缺失且向量池指纹无法确认或不匹配，保持单池降级")
             return False
 

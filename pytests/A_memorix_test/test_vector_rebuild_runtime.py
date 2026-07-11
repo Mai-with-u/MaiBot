@@ -415,7 +415,9 @@ async def test_dual_rebuild_reencodes_when_single_pool_fingerprint_mismatches(
     await first_kernel.initialize()
     assert first_kernel.metadata_store is not None
     paragraph_hash = first_kernel.metadata_store.add_paragraph("需要重编码的段落", source="test")
-    result = await first_kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=2, include_relations=False)
+    result = await first_kernel.memory_runtime_admin(
+        action="rebuild_all_vectors", batch_size=2, include_relations=False
+    )
     assert result["success"] is True
     assert paragraph_hash in first_kernel.vector_store
     await first_kernel.shutdown()
@@ -429,7 +431,9 @@ async def test_dual_rebuild_reencodes_when_single_pool_fingerprint_mismatches(
     )
     await second_kernel.initialize()
     try:
-        result = await second_kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=2, include_relations=False)
+        result = await second_kernel.memory_runtime_admin(
+            action="rebuild_all_vectors", batch_size=2, include_relations=False
+        )
         assert result["success"] is True
         assert result["migration"]["paragraphs"]["copied"] == 0
         assert result["migration"]["paragraphs"]["encoded"] == 1
@@ -701,7 +705,9 @@ async def test_dual_auto_migration_switches_to_dual_when_rebuild_succeeds(
     assert single_kernel.metadata_store is not None
     paragraph_hash = single_kernel.metadata_store.add_paragraph("自动迁移段落", source="test")
     entity_hash = single_kernel.metadata_store.add_entity("自动迁移实体")
-    rebuild = await single_kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=2, include_relations=False)
+    rebuild = await single_kernel.memory_runtime_admin(
+        action="rebuild_all_vectors", batch_size=2, include_relations=False
+    )
     assert rebuild["success"] is True
     await single_kernel.shutdown()
 
@@ -1462,9 +1468,7 @@ async def test_dual_migration_cleans_legacy_single_pool_files(
     eh = kernel.metadata_store.add_entity("旧池实体")
     rh = kernel.metadata_store.add_relation("用户", "喜欢", "旧池关系")
 
-    kernel.vector_store.add(
-        np.eye(3, fake_embedding_manager.default_dimension, dtype=np.float32), [ph, eh, rh]
-    )
+    kernel.vector_store.add(np.eye(3, fake_embedding_manager.default_dimension, dtype=np.float32), [ph, eh, rh])
     kernel.vector_store.save()
 
     result = await kernel.memory_runtime_admin(action="rebuild_all_vectors", batch_size=2)
@@ -1566,8 +1570,12 @@ async def test_filter_current_effective_hits_expired_paragraph(tmp_path: Path) -
 
     hits = [
         {"hash": "p-active", "type": "paragraph", "content": "", "metadata": {}},
-        {"hash": "p-expired", "type": "paragraph", "content": "",
-         "metadata": {"memory_change": {"valid_to": 1.0, "change_type": "superseded"}}},
+        {
+            "hash": "p-expired",
+            "type": "paragraph",
+            "content": "",
+            "metadata": {"memory_change": {"valid_to": 1.0, "change_type": "superseded"}},
+        },
     ]
     filtered = kernel._filter_current_effective_hits(hits)
     assert len(filtered) == 1

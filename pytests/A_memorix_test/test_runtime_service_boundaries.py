@@ -1643,7 +1643,7 @@ async def test_memory_maintenance_cycle_uses_kernel_patched_phase_boundaries(
 
     await kernel._run_memory_maintenance_cycle(interval_hours=2.0)
 
-    assert graph_store.decay_factors == [0.5 ** 0.5]
+    assert graph_store.decay_factors == [0.5**0.5]
     assert calls == ["freeze", "orphan"]
     assert kernel._last_maintenance_at == 123.0
     assert persist_calls == 1
@@ -1967,9 +1967,7 @@ async def test_request_dedup_service_shares_inflight_request() -> None:
         await release.wait()
         return {"success": True}
 
-    first_task = asyncio.create_task(
-        kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
-    )
+    first_task = asyncio.create_task(kernel._request_dedup_service.execute_request_with_dedup("same-request", executor))
     await started.wait()
     second_task = asyncio.create_task(
         kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
@@ -1996,13 +1994,9 @@ async def test_request_dedup_waiter_cancellation_does_not_cancel_shared_request(
         await release.wait()
         return {"success": True}
 
-    owner = asyncio.create_task(
-        kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
-    )
+    owner = asyncio.create_task(kernel._request_dedup_service.execute_request_with_dedup("same-request", executor))
     await started.wait()
-    waiter = asyncio.create_task(
-        kernel._request_dedup_service.execute_request_with_dedup("same-request", executor)
-    )
+    waiter = asyncio.create_task(kernel._request_dedup_service.execute_request_with_dedup("same-request", executor))
     await asyncio.sleep(0)
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):

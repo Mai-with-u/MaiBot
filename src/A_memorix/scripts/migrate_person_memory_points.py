@@ -41,7 +41,9 @@ def _parse_memory_points(raw_value: Any) -> List[Dict[str, Any]]:
             content = text
             weight = "1.0"
         if content:
-            items.append({"index": index, "category": category or "其他", "content": content, "weight": weight or "1.0"})
+            items.append(
+                {"index": index, "category": category or "其他", "content": content, "weight": weight or "1.0"}
+            )
     return items
 
 

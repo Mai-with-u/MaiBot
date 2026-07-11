@@ -29,10 +29,7 @@ class MemorySummaryService(KernelServiceBase):
         success = bool(getattr(import_result, "success", False))
         detail = str(getattr(import_result, "detail", "") or "")
         paragraph_hash = str(getattr(import_result, "paragraph_hash", "") or "").strip()
-        source = (
-            str(getattr(import_result, "source", "") or "").strip()
-            or build_source("chat_summary", chat_id, [])
-        )
+        source = str(getattr(import_result, "source", "") or "").strip() or build_source("chat_summary", chat_id, [])
         stored_ids: List[str] = []
         episode_pending_ids: List[str] = []
         if success:

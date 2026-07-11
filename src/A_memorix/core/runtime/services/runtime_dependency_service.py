@@ -76,8 +76,8 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
     def _persist(self, *, force_vectors: bool = False) -> None:
         from .. import sdk_memory_kernel as kernel_module
 
-        rebuild_required = False if force_vectors else bool(
-            self._vector_rebuild_status().get("vector_rebuild_required", False)
+        rebuild_required = (
+            False if force_vectors else bool(self._vector_rebuild_status().get("vector_rebuild_required", False))
         )
         if self.vector_store is not None and not self._dual_vector_pools_enabled():
             if rebuild_required:

@@ -55,30 +55,22 @@ def test_ngram_incremental_physical_delete_paths(tmp_path: Path) -> None:
 
         assert store.delete_paragraph(direct_hash)
         assert _ngram_meta_count(store) == 3
-        assert direct_hash not in {
-            row["hash"] for row in store.ngram_search_paragraphs(["直接"], limit=10)
-        }
+        assert direct_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["直接"], limit=10)}
 
         cleanup = store.delete_paragraph_atomic(atomic_hash)
         assert cleanup["paragraph_hash"] == atomic_hash
         assert _ngram_meta_count(store) == 2
-        assert atomic_hash not in {
-            row["hash"] for row in store.ngram_search_paragraphs(["原子"], limit=10)
-        }
+        assert atomic_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["原子"], limit=10)}
 
         assert store.physically_delete_paragraphs([batch_hash]) == 1
         assert _ngram_meta_count(store) == 1
-        assert batch_hash not in {
-            row["hash"] for row in store.ngram_search_paragraphs(["批量"], limit=10)
-        }
+        assert batch_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["批量"], limit=10)}
 
         assert store.mark_as_deleted([soft_then_physical_hash], "paragraph") == 1
         assert _ngram_meta_count(store) == 0
         assert store.physically_delete_paragraphs([soft_then_physical_hash]) == 1
         assert _ngram_meta_count(store) == 0
-        assert soft_then_physical_hash not in {
-            row["hash"] for row in store.ngram_search_paragraphs(["软删"], limit=10)
-        }
+        assert soft_then_physical_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["软删"], limit=10)}
     finally:
         store.close()
 

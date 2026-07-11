@@ -58,7 +58,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
             )
         if act == "get_operation":
             operation = self.metadata_store.get_delete_operation(str(kwargs.get("operation_id", "") or "").strip())
-            return {"success": operation is not None, "operation": operation, "error": "" if operation is not None else "operation 不存在"}
+            return {
+                "success": operation is not None,
+                "operation": operation,
+                "error": "" if operation is not None else "operation 不存在",
+            }
         if act == "list_operations":
             items = self.metadata_store.list_delete_operations(
                 limit=max(1, int(kwargs.get("limit", 50) or 50)),
@@ -137,7 +141,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
             for row in matches:
                 if not include_deleted and bool(row.get("is_deleted", 0)):
                     continue
-                rows.append(self.metadata_store._row_to_dict(row, "entity") if hasattr(self.metadata_store, "_row_to_dict") else row)
+                rows.append(
+                    self.metadata_store._row_to_dict(row, "entity")
+                    if hasattr(self.metadata_store, "_row_to_dict")
+                    else row
+                )
         dedup: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             token = str(row.get("hash", "") or "").strip()
@@ -431,7 +439,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
             snapshot = self._snapshot_paragraph_item(paragraph_hash)
             append_item(snapshot)
             vector_ids.append(paragraph_hash)
-            paragraph = (snapshot or {}).get("payload", {}).get("paragraph") if isinstance((snapshot or {}).get("payload"), dict) else {}
+            paragraph = (
+                (snapshot or {}).get("payload", {}).get("paragraph")
+                if isinstance((snapshot or {}).get("payload"), dict)
+                else {}
+            )
             source = str((paragraph or {}).get("source", "") or "").strip()
             if source:
                 sources.append(source)
@@ -503,9 +515,13 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 append_entity_row(row)
             target_hashes["entities"] = list(entity_hashes)
             counts["entities"] = len(entity_hashes)
-            entity_names = [str(row.get("name", "") or "").strip() for row in entity_rows if str(row.get("name", "") or "").strip()]
+            entity_names = [
+                str(row.get("name", "") or "").strip() for row in entity_rows if str(row.get("name", "") or "").strip()
+            ]
             for entity_name in entity_names:
-                for relation in self.metadata_store.get_relations(subject=entity_name) + self.metadata_store.get_relations(object=entity_name):
+                for relation in self.metadata_store.get_relations(
+                    subject=entity_name
+                ) + self.metadata_store.get_relations(object=entity_name):
                     append_relation_hash(str(relation.get("hash", "") or "").strip())
             target_hashes["relations"] = list(relation_hashes)
             counts["relations"] = len(relation_hashes)
@@ -515,12 +531,16 @@ class MemoryDeleteAdminService(KernelServiceBase):
             counts["requested_sources"] = len(source_tokens)
             matched_source_tokens: List[str] = []
 
-            for row in self._resolve_entity_targets({"hashes": normalized_selector.get("entity_hashes")}, include_deleted=False):
+            for row in self._resolve_entity_targets(
+                {"hashes": normalized_selector.get("entity_hashes")}, include_deleted=False
+            ):
                 append_entity_row(row)
             target_hashes["entities"] = list(entity_hashes)
             counts["entities"] = len(entity_hashes)
 
-            for row in self._resolve_paragraph_targets({"hashes": normalized_selector.get("paragraph_hashes")}, include_deleted=False):
+            for row in self._resolve_paragraph_targets(
+                {"hashes": normalized_selector.get("paragraph_hashes")}, include_deleted=False
+            ):
                 append_paragraph_row(row)
 
             for source in source_tokens:
@@ -555,7 +575,9 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 if str(row.get("name", "") or "").strip()
             ]
             for entity_name in entity_names:
-                for relation in self.metadata_store.get_relations(subject=entity_name) + self.metadata_store.get_relations(object=entity_name):
+                for relation in self.metadata_store.get_relations(
+                    subject=entity_name
+                ) + self.metadata_store.get_relations(object=entity_name):
                     append_relation_hash(str(relation.get("hash", "") or "").strip())
 
             for relation_hash in tokens(paragraph_relation_candidates):
@@ -569,9 +591,14 @@ class MemoryDeleteAdminService(KernelServiceBase):
 
         sources = tokens(sources)
         vector_ids = tokens(vector_ids)
-        primary_count = counts.get(f"{act_mode}s", 0) if act_mode not in {"source", "mixed"} else counts.get("matched_sources", 0)
+        primary_count = (
+            counts.get(f"{act_mode}s", 0) if act_mode not in {"source", "mixed"} else counts.get("matched_sources", 0)
+        )
         success = (
-            primary_count > 0 or counts.get("paragraphs", 0) > 0 or counts.get("relations", 0) > 0 or counts.get("entities", 0) > 0
+            primary_count > 0
+            or counts.get("paragraphs", 0) > 0
+            or counts.get("relations", 0) > 0
+            or counts.get("entities", 0) > 0
             if act_mode != "source"
             else (counts.get("matched_sources", 0) > 0 and counts.get("paragraphs", 0) > 0)
         )
@@ -682,7 +709,9 @@ class MemoryDeleteAdminService(KernelServiceBase):
             )
 
             if plan.get("sources"):
-                self.metadata_store._enqueue_episode_source_rebuilds(list(plan.get("sources") or []), reason="delete_admin_execute")
+                self.metadata_store._enqueue_episode_source_rebuilds(
+                    list(plan.get("sources") or []), reason="delete_admin_execute"
+                )
             self._rebuild_graph_from_metadata()
             self._persist()
             return self._build_standard_delete_result(
@@ -697,7 +726,9 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 deleted_vector_count=int(deleted_vectors or 0),
                 requested_source_count=len(requested_source_tokens),
                 matched_source_count=len(matched_source_tokens),
-                error="" if (entity_hashes or relation_hashes or paragraph_hashes or matched_source_tokens) else "未命中可删除内容",
+                error=""
+                if (entity_hashes or relation_hashes or paragraph_hashes or matched_source_tokens)
+                else "未命中可删除内容",
             )
         except Exception as exc:
             conn.rollback()
@@ -787,7 +818,9 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 await self._ensure_paragraph_vector(paragraph_row)
                 restored_paragraphs.append(hash_value)
 
-        restored_relations = await self._restore_relation_hashes(list(relation_payloads.keys()), payloads=relation_payloads, rebuild_graph=False, persist=False)
+        restored_relations = await self._restore_relation_hashes(
+            list(relation_payloads.keys()), payloads=relation_payloads, rebuild_graph=False, persist=False
+        )
 
         conn = self.metadata_store.get_connection()
         cursor = conn.cursor()
@@ -866,9 +899,13 @@ class MemoryDeleteAdminService(KernelServiceBase):
     async def _purge_deleted_memory(self, *, grace_hours: Optional[float], limit: int) -> Dict[str, Any]:
         assert self.metadata_store
         orphan_cfg = self._cfg("memory.orphan", {}) or {}
-        grace = float(grace_hours) if grace_hours is not None else max(
-            1.0,
-            float(orphan_cfg.get("sweep_grace_hours", 24.0) or 24.0),
+        grace = (
+            float(grace_hours)
+            if grace_hours is not None
+            else max(
+                1.0,
+                float(orphan_cfg.get("sweep_grace_hours", 24.0) or 24.0),
+            )
         )
         cutoff = time.time() - grace * 3600.0
         deleted_relation_hashes = self.metadata_store.purge_deleted_relations(cutoff_time=cutoff, limit=limit)
@@ -903,4 +940,3 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 "entities": len(entity_hashes),
             },
         }
-

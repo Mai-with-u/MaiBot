@@ -181,9 +181,9 @@ class EpisodeRetrievalService:
                     payload.pop("matched_relation_count", None)
                     payload["_fusion_score"] = 0.0
                     bucket[episode_id] = payload
-                bucket[episode_id]["_fusion_score"] = float(
-                    bucket[episode_id].get("_fusion_score", 0.0)
-                ) + weight / (self._RRF_K + float(rank))
+                bucket[episode_id]["_fusion_score"] = float(bucket[episode_id].get("_fusion_score", 0.0)) + weight / (
+                    self._RRF_K + float(rank)
+                )
 
         out = list(bucket.values())
         out.sort(

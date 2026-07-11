@@ -115,7 +115,9 @@ class MemoryMaintenanceService(KernelServiceBase):
 
         dead_entities = self.metadata_store.sweep_deleted_items("entity", grace_period)
         if dead_entities:
-            entity_hashes = [str(item[0] or "").strip() for item in dead_entities if item and str(item[0] or "").strip()]
+            entity_hashes = [
+                str(item[0] or "").strip() for item in dead_entities if item and str(item[0] or "").strip()
+            ]
             entity_names = [str(item[1] or "").strip() for item in dead_entities if item and str(item[1] or "").strip()]
             if entity_names:
                 self.graph_store.delete_nodes(entity_names)

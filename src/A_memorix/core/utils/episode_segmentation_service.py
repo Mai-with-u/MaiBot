@@ -193,8 +193,7 @@ class EpisodeSegmentationService:
             f"source={source_text}\n"
             f"window_start={window_start}\n"
             f"window_end={window_end}\n"
-            "paragraphs:\n"
-            + "\n\n".join(rows)
+            "paragraphs:\n" + "\n\n".join(rows)
         )
 
     def _normalize_episodes(

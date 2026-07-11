@@ -42,9 +42,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
         matrix_format = str(self._cfg("graph.sparse_matrix_format", "csr") or "csr").strip().lower()
         graph_format = (
-            kernel_module.SparseMatrixFormat.CSC
-            if matrix_format == "csc"
-            else kernel_module.SparseMatrixFormat.CSR
+            kernel_module.SparseMatrixFormat.CSC if matrix_format == "csc" else kernel_module.SparseMatrixFormat.CSR
         )
 
         self.vector_store = self._make_vector_store(self._vectors_root(), dimension=provisional_dimension)
@@ -81,10 +79,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                     f"duration_ms={float(warmup_summary.get('duration_ms', 0.0)):.2f}"
                 )
             else:
-                logger.warning(
-                    "[sdk] 稀疏索引预热失败，后续检索将按需重试: "
-                    f"{warmup_summary.get('error', 'unknown')}"
-                )
+                logger.warning(f"[sdk] 稀疏索引预热失败，后续检索将按需重试: {warmup_summary.get('error', 'unknown')}")
 
         if not skip_vector_load and self.vector_store.has_data():
             self.vector_store.load()
@@ -128,8 +123,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             else f"{effective_pool_mode}(configured={configured_pool_mode})"
         )
         logger.info(
-            "[sdk] 向量存储初始化完成: "
-            f"dim={self.embedding_dimension}, mode=SQ8, vector_pools={pool_mode_label}"
+            f"[sdk] 向量存储初始化完成: dim={self.embedding_dimension}, mode=SQ8, vector_pools={pool_mode_label}"
         )
 
         self._mark_startup_self_check_deferred()
