@@ -274,7 +274,7 @@ class HeuristicMemoryInjector:
             if isinstance(person_ids, list):
                 person_id = next((str(item).strip() for item in person_ids if str(item).strip()), "")
         if not person_id and source.startswith(_SOURCE_PERSON_FACT_PREFIX):
-            person_id = source[len(_SOURCE_PERSON_FACT_PREFIX):].strip()
+            person_id = source[len(_SOURCE_PERSON_FACT_PREFIX) :].strip()
 
         if hit.hit_type == "episode":
             episode_source = str(metadata.get("source") or "").strip()
@@ -296,7 +296,7 @@ class HeuristicMemoryInjector:
         if chat_id:
             return chat_id
         if source.startswith(_SOURCE_CHAT_SUMMARY_PREFIX):
-            return source[len(_SOURCE_CHAT_SUMMARY_PREFIX):].strip()
+            return source[len(_SOURCE_CHAT_SUMMARY_PREFIX) :].strip()
         return ""
 
     def _is_chat_memory_allowed(self, source_session_id: str, current_session: BotChatSession) -> bool:

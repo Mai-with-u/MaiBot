@@ -174,7 +174,9 @@ class MemoryProfileAdminService(KernelServiceBase):
         )
         return self._build_person_profile_response(profile, requested_person_id=person_id, limit=limit)
 
-    async def refresh_person_profile(self, person_id: str, limit: int = 10, *, mark_active: bool = True) -> Dict[str, Any]:
+    async def refresh_person_profile(
+        self, person_id: str, limit: int = 10, *, mark_active: bool = True
+    ) -> Dict[str, Any]:
         await self.initialize()
         assert self.person_profile_service
         if mark_active:
@@ -231,7 +233,12 @@ class MemoryProfileAdminService(KernelServiceBase):
 
         if act == "process_pending":
             result = await self._process_feedback_profile_refresh_batch(
-                limit=max(1, int(kwargs.get("limit", feedback_cfg_reconcile_batch_size()) or feedback_cfg_reconcile_batch_size()))
+                limit=max(
+                    1,
+                    int(
+                        kwargs.get("limit", feedback_cfg_reconcile_batch_size()) or feedback_cfg_reconcile_batch_size()
+                    ),
+                )
             )
             return {"success": True, **result}
 
@@ -352,7 +359,9 @@ class MemoryProfileAdminService(KernelServiceBase):
             "confidence": None,
             "correction_mode": "delete_paragraph",
             "deletable": bool(hash_value) and not is_deleted,
-            "not_deletable_reason": "" if hash_value and not is_deleted else ("证据已删除" if is_deleted else "缺少段落 hash"),
+            "not_deletable_reason": ""
+            if hash_value and not is_deleted
+            else ("证据已删除" if is_deleted else "缺少段落 hash"),
             "raw": item,
         }
 
@@ -401,7 +410,9 @@ class MemoryProfileAdminService(KernelServiceBase):
 
         return evidence
 
-    def _profile_evidence_response(self, profile: Dict[str, Any], *, requested_person_id: str, limit: int) -> Dict[str, Any]:
+    def _profile_evidence_response(
+        self, profile: Dict[str, Any], *, requested_person_id: str, limit: int
+    ) -> Dict[str, Any]:
         if not bool(profile.get("success")):
             return {
                 "success": False,
@@ -442,8 +453,12 @@ class MemoryProfileAdminService(KernelServiceBase):
             force_refresh=force_refresh,
             source_note="sdk_memory_kernel.memory_profile_admin.evidence",
         )
-        requested_person_id = str(profile.get("person_id", "") or person_id or "").strip() if isinstance(profile, dict) else person_id
-        return self._profile_evidence_response(profile if isinstance(profile, dict) else {}, requested_person_id=requested_person_id, limit=limit)
+        requested_person_id = (
+            str(profile.get("person_id", "") or person_id or "").strip() if isinstance(profile, dict) else person_id
+        )
+        return self._profile_evidence_response(
+            profile if isinstance(profile, dict) else {}, requested_person_id=requested_person_id, limit=limit
+        )
 
     async def _profile_correct_evidence_admin(
         self,
@@ -479,7 +494,9 @@ class MemoryProfileAdminService(KernelServiceBase):
             if str(item.get("hash", "") or "").strip() != normalized_hash:
                 continue
             item_type = str(item.get("evidence_type", "") or "").strip().lower()
-            if normalized_type == item_type or (normalized_type == "paragraph" and item_type in {"person_fact", "chat_summary"}):
+            if normalized_type == item_type or (
+                normalized_type == "paragraph" and item_type in {"person_fact", "chat_summary"}
+            ):
                 matched = item
                 break
         if matched is None:
@@ -526,5 +543,3 @@ class MemoryProfileAdminService(KernelServiceBase):
             "refreshed_evidence": refreshed_evidence,
             "error": str(delete_result.get("error", "") or ""),
         }
-
-

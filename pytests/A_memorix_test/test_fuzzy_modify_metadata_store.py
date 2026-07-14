@@ -104,10 +104,13 @@ def test_fuzzy_modify_plan_and_superseded_metadata(tmp_path):
             previous_mark=None,
         )
         assert rollback["action"] == "deleted"
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=paragraph_hash,
-            relation_hash=relation_hash,
-        ) is None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is None
+        )
     finally:
         store.close()
 
@@ -325,10 +328,13 @@ def test_fuzzy_modify_paragraph_cascade_ignores_superseded_other_support(tmp_pat
         assert cascade["relations_marked_inactive"][0]["relation_hash"] == relation_hash
         assert cascade["relations_marked_stale"] == []
         assert store.get_relation_status_batch([relation_hash])[relation_hash]["is_inactive"] is True
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=old_paragraph_hash,
-            relation_hash=relation_hash,
-        ) is None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=old_paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is None
+        )
     finally:
         store.close()
 
@@ -355,10 +361,13 @@ def test_fuzzy_modify_paragraph_cascade_skips_pinned_relation(tmp_path):
         cascade = result["cascade"]
         assert cascade["relations_skipped"][0]["action"] == "skipped_protected"
         assert store.get_relation_status_batch([relation_hash])[relation_hash]["is_inactive"] is False
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=paragraph_hash,
-            relation_hash=relation_hash,
-        ) is None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is None
+        )
     finally:
         store.close()
 
@@ -385,10 +394,13 @@ def test_fuzzy_modify_paragraph_cascade_skips_temporarily_protected_relation(tmp
         cascade = result["cascade"]
         assert cascade["relations_skipped"][0]["reason"] == "relation_is_temporarily_protected"
         assert store.get_relation_status_batch([relation_hash])[relation_hash]["is_inactive"] is False
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=paragraph_hash,
-            relation_hash=relation_hash,
-        ) is None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is None
+        )
     finally:
         store.close()
 
@@ -410,7 +422,9 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
             request_text="小明不喜欢咖啡",
             scope="person_profile",
             target_person_id="person-1",
-            plan={"operations": [{"action": "mark_superseded", "target_type": "paragraph", "hash": old_paragraph_hash}]},
+            plan={
+                "operations": [{"action": "mark_superseded", "target_type": "paragraph", "hash": old_paragraph_hash}]
+            },
             preview={"candidates": [{"hash": old_paragraph_hash}]},
             confidence=1.0,
             requested_by="pytest",
@@ -434,18 +448,24 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
             execution={"stored_ids": [], "superseded_targets": [superseded]},
             executed_at=1001.0,
         )
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=old_paragraph_hash,
-            relation_hash=relation_hash,
-        ) is not None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=old_paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is not None
+        )
 
         rollback = await kernel._rollback_fuzzy_modify_action(plan_id=plan["plan_id"], requested_by="pytest")
 
         assert rollback["success"] is True
-        assert store.get_paragraph_stale_relation_mark(
-            paragraph_hash=old_paragraph_hash,
-            relation_hash=relation_hash,
-        ) is None
+        assert (
+            store.get_paragraph_stale_relation_mark(
+                paragraph_hash=old_paragraph_hash,
+                relation_hash=relation_hash,
+            )
+            is None
+        )
         restored = store.get_paragraph(old_paragraph_hash)
         assert restored is not None
         assert restored["metadata"] == {"source_type": "person_fact", "keep": True}

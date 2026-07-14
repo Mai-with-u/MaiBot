@@ -56,7 +56,9 @@ def _assert_fixture_matches_current_design_constraints(dataset: dict) -> None:
         assert len(stream_text) >= 1000
         assert stream["start_time"] < stream["end_time"]
 
-    assert any(item["expected_check_outcome"] == "should_trigger_topic_check_and_pass_bot_gate" for item in runtime_positive)
+    assert any(
+        item["expected_check_outcome"] == "should_trigger_topic_check_and_pass_bot_gate" for item in runtime_positive
+    )
     assert any(
         item["expected_check_outcome"] == "should_trigger_topic_check_but_be_discarded_without_bot_message"
         for item in runtime_negative

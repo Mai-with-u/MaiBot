@@ -2,8 +2,8 @@
 
 # 存储模块（已实现）
 from .storage import (
-    VectorStore, 
-    GraphStore, 
+    VectorStore,
+    GraphStore,
     MetadataStore,
     ImportStrategy,
     KnowledgeType,
@@ -46,7 +46,7 @@ from .utils import (
 )
 
 __all__ = [
-# 存储（Storage）
+    # 存储（Storage）
     "VectorStore",
     "GraphStore",
     "MetadataStore",
@@ -58,10 +58,10 @@ __all__ = [
     "select_import_strategy",
     "should_extract_relations",
     "get_type_display_name",
-# 嵌入（Embedding）
+    # 嵌入（Embedding）
     "EmbeddingAPIAdapter",
     "create_embedding_api_adapter",
-# 检索（Retrieval）
+    # 检索（Retrieval）
     "DualPathRetriever",
     "RetrievalStrategy",
     "RetrievalResult",

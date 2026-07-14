@@ -22,6 +22,7 @@ import tomlkit
 
 from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR, resolve_repo_path
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="A_Memorix vNext release migration tool")
     parser.add_argument(
@@ -238,9 +239,11 @@ def _preflight_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
     config_doc = _read_toml(config_path)
     tool_mode = str(_get_nested(config_doc, ("routing", "tool_search_mode"), "forward") or "").strip().lower()
     summary_model = _get_nested(config_doc, ("summarization", "model_name"), ["auto"])
-    summary_knowledge_type = str(
-        _get_nested(config_doc, ("summarization", "default_knowledge_type"), "narrative") or "narrative"
-    ).strip().lower()
+    summary_knowledge_type = (
+        str(_get_nested(config_doc, ("summarization", "default_knowledge_type"), "narrative") or "narrative")
+        .strip()
+        .lower()
+    )
     quantization = str(_get_nested(config_doc, ("embedding", "quantization_type"), "int8") or "").strip().lower()
 
     facts["routing.tool_search_mode"] = tool_mode
@@ -349,8 +352,7 @@ def _preflight_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
                 version = int(row[0]) if row and row[0] is not None else 0
                 facts["schema_version"] = version
                 runtime_auto_migratable = (
-                    version < SCHEMA_VERSION
-                    and version >= RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION
+                    version < SCHEMA_VERSION and version >= RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION
                 )
                 facts["schema_runtime_auto_migratable"] = runtime_auto_migratable
                 if version != SCHEMA_VERSION:
@@ -656,9 +658,11 @@ def _verify_impl(config_path: Path, data_dir: Path) -> Dict[str, Any]:
     summary_model = _get_nested(config_doc, ("summarization", "model_name"), ["auto"])
     if not isinstance(summary_model, list) or any(not isinstance(x, str) for x in summary_model):
         checks.append(CheckItem("CP-11", "error", "summarization.model_name must be List[str]"))
-    summary_knowledge_type = str(
-        _get_nested(config_doc, ("summarization", "default_knowledge_type"), "narrative") or "narrative"
-    ).strip().lower()
+    summary_knowledge_type = (
+        str(_get_nested(config_doc, ("summarization", "default_knowledge_type"), "narrative") or "narrative")
+        .strip()
+        .lower()
+    )
     if summary_knowledge_type not in {item.value for item in KnowledgeType}:
         checks.append(
             CheckItem("CP-13", "error", f"invalid summarization.default_knowledge_type: {summary_knowledge_type}")

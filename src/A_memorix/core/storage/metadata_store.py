@@ -115,11 +115,6 @@ class MetadataStore(
         except Exception as e:
             logger.warning(f"初始化 FTS schema 失败，将跳过 BM25 检索: {e}")
 
-
-
-
-
-
     def close(self) -> None:
         """关闭数据库连接"""
         if self._connection_override is not None:
@@ -152,13 +147,6 @@ class MetadataStore(
             raise RuntimeError("MetadataStore 未连接数据库")
         return self._connection_manager.transaction(immediate=immediate)
 
-
-
-
-
-
-
-
     def _resolve_conn(self, conn: Optional[sqlite3.Connection] = None) -> sqlite3.Connection:
         """解析可用连接。"""
         resolved = conn or self._conn
@@ -173,11 +161,6 @@ class MetadataStore(
         if self.data_dir is None:
             raise RuntimeError("MetadataStore 未配置 data_dir")
         return Path(self.data_dir) / self.db_name
-
-
-
-
-
 
     def add_paragraph(
         self,
@@ -212,7 +195,8 @@ class MetadataStore(
 
         cursor = self._conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO paragraphs
                 (
                     hash, content, vector_index, created_at, updated_at, metadata, source, word_count,
@@ -220,22 +204,24 @@ class MetadataStore(
                     knowledge_type
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                hash_value,
-                content,
-                vector_index,
-                now,
-                now,
-                self._encode_metadata(metadata),
-                source,
-                word_count,
-                normalized_time.get("event_time"),
-                normalized_time.get("event_time_start"),
-                normalized_time.get("event_time_end"),
-                normalized_time.get("time_granularity"),
-                normalized_time.get("time_confidence", 1.0),
-                resolved_knowledge_type.value,
-            ))
+            """,
+                (
+                    hash_value,
+                    content,
+                    vector_index,
+                    now,
+                    now,
+                    self._encode_metadata(metadata),
+                    source,
+                    word_count,
+                    normalized_time.get("event_time"),
+                    normalized_time.get("event_time_start"),
+                    normalized_time.get("event_time_end"),
+                    normalized_time.get("time_granularity"),
+                    normalized_time.get("time_confidence", 1.0),
+                    resolved_knowledge_type.value,
+                ),
+            )
             self._upsert_paragraph_ngram_if_ready(
                 hash_value,
                 content,
@@ -317,17 +303,20 @@ class MetadataStore(
         # 此时 INSERT OR IGNORE 会忽略。
 
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO entities
                 (hash, name, vector_index, appearance_count, created_at, metadata)
                 VALUES (?, ?, ?, 1, ?, ?)
-            """, (
-                hash_value,
-                name,
-                vector_index,
-                now,
-                self._encode_metadata(metadata),
-            ))
+            """,
+                (
+                    hash_value,
+                    name,
+                    vector_index,
+                    now,
+                    self._encode_metadata(metadata),
+                ),
+            )
 
             logger.debug(f"添加实体: {name} ({hash_value[:8]})")
             self._conn.commit()
@@ -344,11 +333,14 @@ class MetadataStore(
             self.revive_if_deleted(entity_hashes=[hash_value])
 
             # 2. 更新计数
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE entities
                 SET appearance_count = appearance_count + 1
                 WHERE hash = ?
-            """, (hash_value,))
+            """,
+                (hash_value,),
+            )
             self._conn.commit()
 
             logger.debug(f"实体已存在(复活/计数+1): {name}")
@@ -394,21 +386,24 @@ class MetadataStore(
 
         cursor = self._conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO relations
                 (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                hash_value,
-                subject,  # 原始拼写
-                predicate,
-                obj,
-                vector_index,
-                confidence,
-                now,
-                source_paragraph, # 这里的 source_paragraph 仅作为 "首次发现地" 记录，也可留空
-                self._encode_metadata(metadata),
-            ))
+            """,
+                (
+                    hash_value,
+                    subject,  # 原始拼写
+                    predicate,
+                    obj,
+                    vector_index,
+                    confidence,
+                    now,
+                    source_paragraph,  # 这里的 source_paragraph 仅作为 "首次发现地" 记录，也可留空
+                    self._encode_metadata(metadata),
+                ),
+            )
             self._conn.commit()
 
             if cursor.rowcount > 0:
@@ -437,7 +432,7 @@ class MetadataStore(
         o_canon = self._canonicalize_name(obj)
 
         if not all([s_canon, p_canon, o_canon]):
-             raise ValueError("Relation components cannot be empty")
+            raise ValueError("Relation components cannot be empty")
 
         # 2. 计算组合哈希
         # 公式: md5(s|p|o)
@@ -455,11 +450,14 @@ class MetadataStore(
         cursor = self._conn.cursor()
         try:
             # 使用 INSERT OR IGNORE 避免重复报错
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO paragraph_relations
                 (paragraph_hash, relation_hash)
                 VALUES (?, ?)
-            """, (paragraph_hash, relation_hash))
+            """,
+                (paragraph_hash, relation_hash),
+            )
             self._conn.commit()
             self._enqueue_episode_source_rebuilds(
                 self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
@@ -481,19 +479,25 @@ class MetadataStore(
         cursor = self._conn.cursor()
         try:
             # 首先尝试插入
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT OR IGNORE INTO paragraph_entities
                 (paragraph_hash, entity_hash, mention_count)
                 VALUES (?, ?, ?)
-            """, (paragraph_hash, entity_hash, mention_count))
+            """,
+                (paragraph_hash, entity_hash, mention_count),
+            )
 
             if cursor.rowcount == 0:
                 # 如果已存在 (IGNORE生效)，则更新计数
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE paragraph_entities
                     SET mention_count = mention_count + ?
                     WHERE paragraph_hash = ? AND entity_hash = ?
-                """, (mention_count, paragraph_hash, entity_hash))
+                """,
+                    (mention_count, paragraph_hash, entity_hash),
+                )
 
             self._conn.commit()
             self._enqueue_episode_source_rebuilds(
@@ -515,9 +519,12 @@ class MetadataStore(
             段落信息字典，不存在则返回None
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM paragraphs WHERE hash = ?
-        """, (hash_value,))
+        """,
+            (hash_value,),
+        )
         row = cursor.fetchone()
 
         if row:
@@ -679,9 +686,12 @@ class MetadataStore(
             实体信息字典，不存在则返回None
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM entities WHERE hash = ?
-        """, (hash_value,))
+        """,
+            (hash_value,),
+        )
         row = cursor.fetchone()
 
         if row:
@@ -826,11 +836,14 @@ class MetadataStore(
             关系列表
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT r.* FROM relations r
             JOIN paragraph_relations pr ON r.hash = pr.relation_hash
             WHERE pr.paragraph_hash = ?
-        """, (paragraph_hash,))
+        """,
+            (paragraph_hash,),
+        )
 
         return [self._row_to_dict(row, "relation") for row in cursor.fetchall()]
 
@@ -883,12 +896,15 @@ class MetadataStore(
             实体列表
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT e.*, pe.mention_count
             FROM entities e
             JOIN paragraph_entities pe ON e.hash = pe.entity_hash
             WHERE pe.paragraph_hash = ?
-        """, (paragraph_hash,))
+        """,
+            (paragraph_hash,),
+        )
 
         return [self._row_to_dict(row, "entity") for row in cursor.fetchall()]
 
@@ -940,12 +956,15 @@ class MetadataStore(
 
         cursor = self._conn.cursor()
         # 2. 直接使用 Hash 查询中间表，完全避开 Name 匹配
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT p.*
             FROM paragraphs p
             JOIN paragraph_entities pe ON p.hash = pe.paragraph_hash
             WHERE pe.entity_hash = ?
-        """, (entity_hash,))
+        """,
+            (entity_hash,),
+        )
 
         return [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
 
@@ -1076,12 +1095,15 @@ class MetadataStore(
             段落列表
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT p.*
             FROM paragraphs p
             JOIN paragraph_relations pr ON p.hash = pr.paragraph_hash
             WHERE pr.relation_hash = ?
-        """, (relation_hash,))
+        """,
+            (relation_hash,),
+        )
 
         return [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
 
@@ -1150,20 +1172,18 @@ class MetadataStore(
 
         results = []
         for row in cursor.fetchall():
-            results.append({
-                "source": row[0],
-                "count": row[1],
-                "last_updated": row[2]
-            })
+            results.append({"source": row[0], "count": row[1], "last_updated": row[2]})
         return results
-
 
     def search_paragraphs_by_content(self, content_query: str) -> List[Dict[str, Any]]:
         """按内容模糊搜索段落"""
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM paragraphs WHERE content LIKE ?
-        """, (f"%{content_query}%",))
+        """,
+            (f"%{content_query}%",),
+        )
         return [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
 
     def delete_paragraph(self, hash_value: str) -> bool:
@@ -1188,9 +1208,12 @@ class MetadataStore(
             count_delta=-1 if was_active else 0,
         )
         self.fts_delete_tokenized_paragraph(hash_value)
-        cursor.execute("""
+        cursor.execute(
+            """
             DELETE FROM paragraphs WHERE hash = ?
-        """, (hash_value,))
+        """,
+            (hash_value,),
+        )
         self._conn.commit()
 
         deleted = cursor.rowcount > 0
@@ -1243,11 +1266,14 @@ class MetadataStore(
 
         try:
             # 2. 查找相关关系 (Subject 或 Object 为该实体)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT hash FROM relations
                 WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))
                    OR LOWER(TRIM(object)) = LOWER(TRIM(?))
-            """, (entity_name, entity_name))
+            """,
+                (entity_name, entity_name),
+            )
 
             relation_hashes = [r[0] for r in cursor.fetchall()]
 
@@ -1256,18 +1282,24 @@ class MetadataStore(
 
                 # 3. 删除这些关系与段落的关联
                 # SQLite 不支持直接 DELETE ... WHERE ... IN (...) 的列表参数，需要拼接占位符
-                placeholders = ','.join(['?'] * len(relation_hashes))
+                placeholders = ",".join(["?"] * len(relation_hashes))
 
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     DELETE FROM paragraph_relations
                     WHERE relation_hash IN ({placeholders})
-                """, relation_hashes)
+                """,
+                    relation_hashes,
+                )
 
                 # 4. 删除关系本体
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     DELETE FROM relations
                     WHERE hash IN ({placeholders})
-                """, relation_hashes)
+                """,
+                    relation_hashes,
+                )
 
                 logger.info("相关关系已级联删除")
 
@@ -1297,9 +1329,12 @@ class MetadataStore(
             是否成功删除
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             DELETE FROM relations WHERE hash = ?
-        """, (hash_value,))
+        """,
+            (hash_value,),
+        )
         self._conn.commit()
 
         deleted = cursor.rowcount > 0
@@ -1323,7 +1358,7 @@ class MetadataStore(
             raise ValueError(f"无效 vector_state: {state}")
 
         now = datetime.now().timestamp()
-        err_text = (str(error).strip() if error is not None else None)
+        err_text = str(error).strip() if error is not None else None
         if err_text:
             err_text = err_text[:500]
         clear_error = state_norm in {"none", "pending", "ready"}
@@ -1364,15 +1399,8 @@ class MetadataStore(
         """
         根据向量状态列出关系，用于回填任务。
         """
-        normalized_states = [
-            str(s or "").strip().lower()
-            for s in (states or [])
-            if str(s or "").strip()
-        ]
-        normalized_states = [
-            s for s in normalized_states
-            if s in {"none", "pending", "ready", "failed"}
-        ]
+        normalized_states = [str(s or "").strip().lower() for s in (states or []) if str(s or "").strip()]
+        normalized_states = [s for s in normalized_states if s in {"none", "pending", "ready", "failed"}]
         if not normalized_states:
             return []
 
@@ -1446,11 +1474,14 @@ class MetadataStore(
         }
 
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             UPDATE {table_map[item_type]}
             SET vector_index = ?
             WHERE hash = ?
-        """, (vector_index, hash_value))
+        """,
+            (vector_index, hash_value),
+        )
         self._conn.commit()
 
         return cursor.rowcount > 0
@@ -1465,11 +1496,14 @@ class MetadataStore(
             raise ValueError(f"类型 {item_type} 不支持设置永久性")
 
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             UPDATE {table_map[item_type]}
             SET is_permanent = ?
             WHERE hash = ?
-        """, (1 if is_permanent else 0, hash_value))
+        """,
+            (1 if is_permanent else 0, hash_value),
+        )
         self._conn.commit()
 
         if cursor.rowcount > 0:
@@ -1488,11 +1522,14 @@ class MetadataStore(
 
         now = datetime.now().timestamp()
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             UPDATE {table_map[item_type]}
             SET last_accessed = ?, access_count = access_count + 1
             WHERE hash = ?
-        """, (now, hash_value))
+        """,
+            (now, hash_value),
+        )
         self._conn.commit()
         return cursor.rowcount > 0
 
@@ -1673,7 +1710,9 @@ class MetadataStore(
         if not tokens:
             return
 
-        preferred_scalar = str(patch.get(scalar_key) or merged.get(scalar_key) or base.get(scalar_key) or tokens[0]).strip()
+        preferred_scalar = str(
+            patch.get(scalar_key) or merged.get(scalar_key) or base.get(scalar_key) or tokens[0]
+        ).strip()
         merged[scalar_key] = preferred_scalar
         merged[list_key] = tokens
 
@@ -1999,11 +2038,7 @@ class MetadataStore(
         statuses: Optional[Sequence[str]] = None,
         scope: str = "",
     ) -> List[Dict[str, Any]]:
-        normalized_statuses = [
-            str(item or "").strip()
-            for item in (statuses or [])
-            if str(item or "").strip()
-        ]
+        normalized_statuses = [str(item or "").strip() for item in (statuses or []) if str(item or "").strip()]
         where: List[str] = []
         params: List[Any] = []
         if normalized_statuses:
@@ -2329,9 +2364,7 @@ class MetadataStore(
         )
         stats["person_profile_refresh_pending_count"] = cursor.fetchone()[0]
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM person_profile_refresh_queue WHERE status = 'failed'"
-        )
+        cursor.execute("SELECT COUNT(*) FROM person_profile_refresh_queue WHERE status = 'failed'")
         stats["person_profile_refresh_failed_count"] = cursor.fetchone()[0]
 
         # 总词数
@@ -2602,9 +2635,7 @@ class MetadataStore(
 
         cursor.execute("SELECT hash FROM relations")
         hashes = [str(r[0]) for r in cursor.fetchall()]
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='deleted_relations'"
-        )
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='deleted_relations'")
         has_deleted_relations = cursor.fetchone() is not None
         if has_deleted_relations:
             cursor.execute("SELECT hash FROM deleted_relations")
@@ -2748,9 +2779,7 @@ class MetadataStore(
 
     def get_schema_version(self) -> int:
         cursor = self._conn.cursor()
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
-        )
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
         if cursor.fetchone() is None:
             return 0
         cursor.execute("SELECT MAX(version) FROM schema_migrations")
@@ -2800,14 +2829,11 @@ class MetadataStore(
             cursor.execute("SELECT hash, source, is_deleted FROM paragraphs WHERE hash = ?", (paragraph_hash,))
             paragraph_row = cursor.fetchone()
             paragraph_was_active = bool(
-                paragraph_row
-                and (paragraph_row["is_deleted"] is None or int(paragraph_row["is_deleted"]) == 0)
+                paragraph_row and (paragraph_row["is_deleted"] is None or int(paragraph_row["is_deleted"]) == 0)
             )
             if paragraph_row:
                 cleanup_plan["vector_id_to_remove"] = paragraph_hash
-                cleanup_plan["episode_sources_to_rebuild"] = self._dedupe_episode_sources(
-                    [paragraph_row["source"]]
-                )
+                cleanup_plan["episode_sources_to_rebuild"] = self._dedupe_episode_sources([paragraph_row["source"]])
 
             # 3. [主删除] 删除段落 (触发 CASCADE 删 paragraph_relations)
             self._delete_paragraph_ngrams_if_ready(
@@ -2822,8 +2848,7 @@ class MetadataStore(
             orphaned_hashes = []
             for rel_hash in candidate_relations:
                 count = cursor.execute(
-                    "SELECT count(*) FROM paragraph_relations WHERE relation_hash = ?",
-                    (rel_hash,)
+                    "SELECT count(*) FROM paragraph_relations WHERE relation_hash = ?", (rel_hash,)
                 ).fetchone()[0]
 
                 if count == 0:
@@ -2842,7 +2867,7 @@ class MetadataStore(
                               AND LOWER(TRIM(object)) = LOWER(TRIM(?))
                               AND hash != ?
                             """,
-                            (s_val, o_val, rel_hash)
+                            (s_val, o_val, rel_hash),
                         ).fetchone()[0]
                         if sibling_count == 0:
                             cleanup_plan["edges_to_remove"].append((s_val, o_val))
@@ -2851,7 +2876,7 @@ class MetadataStore(
 
             # 5. [DB清理] 删除孤儿关系记录
             if orphaned_hashes:
-                placeholders = ','.join(['?'] * len(orphaned_hashes))
+                placeholders = ",".join(["?"] * len(orphaned_hashes))
                 cursor.execute(f"DELETE FROM relations WHERE hash IN ({placeholders})", orphaned_hashes)
 
             self._conn.commit()
@@ -2869,25 +2894,29 @@ class MetadataStore(
             logger.error(f"DB Transaction failed: {e}")
             raise e
 
-
     def clear_all(self) -> None:
         """清空所有表数据"""
         cursor = self._conn.cursor()
         tables = [
-            "paragraphs", "entities", "relations",
-            "paragraph_relations", "paragraph_entities",
-            "episodes", "episode_paragraphs",
-            "episode_rebuild_sources", "episode_pending_paragraphs",
+            "paragraphs",
+            "entities",
+            "relations",
+            "paragraph_relations",
+            "paragraph_entities",
+            "episodes",
+            "episode_paragraphs",
+            "episode_rebuild_sources",
+            "episode_pending_paragraphs",
             "paragraph_vector_backfill",
-            "memory_feedback_tasks", "memory_feedback_action_logs",
-            "paragraph_stale_relation_marks", "person_profile_refresh_queue",
+            "memory_feedback_tasks",
+            "memory_feedback_action_logs",
+            "paragraph_stale_relation_marks",
+            "person_profile_refresh_queue",
         ]
         for table in tables:
             cursor.execute(f"DELETE FROM {table}")
         self._conn.commit()
         logger.info("元数据存储所有表已清空")
-
-
 
     def update_relation_timestamp(self, hash_value: str, access_count_delta: int = 1) -> None:
         """更新关系的访问时间和计数"""
@@ -2896,12 +2925,15 @@ class MetadataStore(
         # 同时更新 last_accessed (旧) 和 last_reinforced (V5)
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE relations
             SET last_accessed = ?,
                 access_count = access_count + ?
             WHERE hash = ?
-        """, (now, access_count_delta, hash_value))
+        """,
+            (now, access_count_delta, hash_value),
+        )
         self._conn.commit()
 
     # =========================================================================
@@ -2924,11 +2956,14 @@ class MetadataStore(
 
         placeholders = ",".join(["?"] * len(hashes))
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT hash, is_inactive, confidence, is_pinned, protected_until, last_reinforced, inactive_since
             FROM relations
             WHERE hash IN ({placeholders})
-        """, hashes)
+        """,
+            hashes,
+        )
 
         result = {}
         for row in cursor.fetchall():
@@ -2938,7 +2973,7 @@ class MetadataStore(
                 "is_pinned": bool(row["is_pinned"]),
                 "protected_until": row["protected_until"],
                 "last_reinforced": row["last_reinforced"],
-                "inactive_since": row["inactive_since"]
+                "inactive_since": row["inactive_since"],
             }
         return result
 
@@ -2957,20 +2992,26 @@ class MetadataStore(
         cursor = self._conn.cursor()
 
         if boost_weight is not None:
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 UPDATE relations
                 SET is_inactive = 0,
                     inactive_since = NULL,
                     confidence = MAX(confidence, ?)
                 WHERE hash IN ({placeholders})
-            """, (boost_weight, *hashes))
+            """,
+                (boost_weight, *hashes),
+            )
         else:
-             cursor.execute(f"""
+            cursor.execute(
+                f"""
                 UPDATE relations
                 SET is_inactive = 0,
                     inactive_since = NULL
                 WHERE hash IN ({placeholders})
-            """, hashes)
+            """,
+                hashes,
+            )
 
         self._conn.commit()
 
@@ -2979,7 +3020,7 @@ class MetadataStore(
         hashes: List[str],
         protected_until: Optional[float] = None,
         is_pinned: Optional[bool] = None,
-        last_reinforced: Optional[float] = None
+        last_reinforced: Optional[float] = None,
     ) -> None:
         """
         批量更新关系保护状态
@@ -3009,11 +3050,14 @@ class MetadataStore(
         params.extend(hashes)
 
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             UPDATE relations
             SET {sql_set}
             WHERE hash IN ({placeholders})
-        """, params)
+        """,
+            params,
+        )
         self._conn.commit()
 
     def get_prune_candidates(self, cutoff_time: float, limit: int = 1000) -> List[str]:
@@ -3025,12 +3069,15 @@ class MetadataStore(
             limit: 限制数量
         """
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT hash FROM relations
             WHERE is_inactive = 1
             AND inactive_since < ?
             LIMIT ?
-        """, (cutoff_time, limit))
+        """,
+            (cutoff_time, limit),
+        )
         return [row[0] for row in cursor.fetchall()]
 
     def backup_and_delete_relations(self, hashes: List[str]) -> int:
@@ -3049,7 +3096,8 @@ class MetadataStore(
         cursor = self._conn.cursor()
         try:
             # 1. 备份
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 INSERT OR REPLACE INTO deleted_relations
                 (hash, subject, predicate, object, vector_index, confidence, created_at,
                  vector_state, vector_updated_at, vector_error, vector_retry_count,
@@ -3062,13 +3110,18 @@ class MetadataStore(
                  is_inactive, inactive_since, is_pinned, protected_until, last_reinforced, ?
                 FROM relations
                 WHERE hash IN ({placeholders})
-            """, (now, *hashes))
+            """,
+                (now, *hashes),
+            )
 
             # 2. 删除 (级联删除会自动处理 paragraph_relations 关联)
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 DELETE FROM relations
                 WHERE hash IN ({placeholders})
-            """, hashes)
+            """,
+                hashes,
+            )
 
             deleted_count = cursor.rowcount
             self._conn.commit()
@@ -3107,10 +3160,7 @@ class MetadataStore(
             values = list(data.values())
 
             update_columns = [column for column in columns if column != "hash"]
-            update_sql = ", ".join(
-                f"{column} = excluded.{column}"
-                for column in update_columns
-            )
+            update_sql = ", ".join(f"{column} = excluded.{column}" for column in update_columns)
             cursor.execute(
                 f"""
                 INSERT INTO relations ({cols_str})
@@ -3181,14 +3231,15 @@ class MetadataStore(
         now = datetime.now().timestamp()
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT hash FROM relations
             WHERE is_pinned = 1 OR protected_until > ?
-        """, (now,))
+        """,
+            (now,),
+        )
 
         return [row[0] for row in cursor.fetchall()]
-
-
 
     def get_deleted_relations(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取回收站中的关系记录"""
@@ -3196,14 +3247,14 @@ class MetadataStore(
         cursor.execute("SELECT * FROM deleted_relations ORDER BY deleted_at DESC LIMIT ?", (limit,))
         data = []
         for row in cursor.fetchall():
-             d = dict(row)
-             # 是否需要解码元数据？是的，与普通行相同
-             if "metadata" in d and d["metadata"]:
-                 try:
-                     d["metadata"] = self._decode_metadata(d["metadata"])
-                 except Exception:
-                     d["metadata"] = {}
-             data.append(d)
+            d = dict(row)
+            # 是否需要解码元数据？是的，与普通行相同
+            if "metadata" in d and d["metadata"]:
+                try:
+                    d["metadata"] = self._decode_metadata(d["metadata"])
+                except Exception:
+                    d["metadata"] = {}
+            data.append(d)
         return data
 
     def get_deleted_relation(self, hash_value: str) -> Optional[Dict[str, Any]]:
@@ -3216,10 +3267,10 @@ class MetadataStore(
 
         d = dict(row)
         if "metadata" in d and d["metadata"]:
-             try:
-                 d["metadata"] = self._decode_metadata(d["metadata"])
-             except Exception:
-                 d["metadata"] = {}
+            try:
+                d["metadata"] = self._decode_metadata(d["metadata"])
+            except Exception:
+                d["metadata"] = {}
         return d
 
     def reinforce_relations(self, hashes: List[str]) -> None:
@@ -3232,7 +3283,7 @@ class MetadataStore(
         # 批量更新，数据量增大时可进一步分块。
         chunk_size = 500
         for i in range(0, len(hashes), chunk_size):
-            chunk = hashes[i:i+chunk_size]
+            chunk = hashes[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             sql = f"""
                 UPDATE relations
@@ -3252,7 +3303,7 @@ class MetadataStore(
         cursor = self._conn.cursor()
         chunk_size = 500
         for i in range(0, len(hashes), chunk_size):
-            chunk = hashes[i:i+chunk_size]
+            chunk = hashes[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             sql = f"""
                 UPDATE relations
@@ -3263,12 +3314,7 @@ class MetadataStore(
 
         self._conn.commit()
 
-    def protect_relations(
-        self,
-        hashes: List[str],
-        is_pinned: bool = False,
-        ttl_seconds: float = 0
-    ) -> None:
+    def protect_relations(self, hashes: List[str], is_pinned: bool = False, ttl_seconds: float = 0) -> None:
         """
         设置保护状态
         """
@@ -3280,7 +3326,7 @@ class MetadataStore(
         cursor = self._conn.cursor()
         chunk_size = 500
         for i in range(0, len(hashes), chunk_size):
-            chunk = hashes[i:i+chunk_size]
+            chunk = hashes[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
 
             # 由于 is_pinned 和 protected_until 是分开的，如果请求固定（pin），我们会同时更新这两项，
@@ -3408,7 +3454,7 @@ class MetadataStore(
 
         # 分批处理 IN 查询
         for i in range(0, len(normalized_hashes), batch_size):
-            batch = normalized_hashes[i:i+batch_size]
+            batch = normalized_hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
 
             # 使用 NOT EXISTS 子查询检查引用
@@ -3491,16 +3537,19 @@ class MetadataStore(
         count = 0
         batch_size = 900
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i+batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
 
             # 幂等更新: 只更那些 is_deleted=0 的
             cursor = self._conn.cursor()
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 UPDATE {table}
                 SET is_deleted = 1, deleted_at = ?
                 WHERE is_deleted = 0 AND hash IN ({placeholders})
-            """, [now] + batch)
+            """,
+                [now] + batch,
+            )
             changed = cursor.rowcount
             count += changed
             if type_ == "paragraph" and changed > 0:
@@ -3539,11 +3588,14 @@ class MetadataStore(
         cols = "hash, name" if type_ == "entity" else "hash, '' as name"
 
         cursor = self._conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT {cols} FROM {table}
             WHERE is_deleted = 1
             AND deleted_at < ?
-        """, (cutoff,))
+        """,
+            (cutoff,),
+        )
 
         return [(row[0], row[1]) for row in cursor.fetchall()]
 
@@ -3555,7 +3607,7 @@ class MetadataStore(
         count = 0
         batch_size = 900
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i+batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
 
             cursor = self._conn.cursor()
@@ -3573,15 +3625,18 @@ class MetadataStore(
         active_delete_count = 0
         batch_size = 900
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i+batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
             cursor = self._conn.cursor()
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT hash
                 FROM paragraphs
                 WHERE (is_deleted IS NULL OR is_deleted = 0)
                   AND hash IN ({placeholders})
-            """, batch)
+            """,
+                batch,
+            )
             active_batch = [str(row["hash"]) for row in cursor.fetchall()]
             active_delete_count += len(active_batch)
         self._delete_paragraph_ngrams_if_ready(
@@ -3593,7 +3648,7 @@ class MetadataStore(
 
         count = 0
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i+batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
 
             cursor = self._conn.cursor()
@@ -3620,36 +3675,45 @@ class MetadataStore(
         if entity_hashes:
             batch_size = 900
             for i in range(0, len(entity_hashes), batch_size):
-                batch = entity_hashes[i:i+batch_size]
+                batch = entity_hashes[i : i + batch_size]
                 placeholders = ",".join(["?"] * len(batch))
 
                 cursor = self._conn.cursor()
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     UPDATE entities
                     SET is_deleted = 0, deleted_at = NULL
                     WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """, batch)
+                """,
+                    batch,
+                )
                 count += cursor.rowcount
 
         if paragraph_hashes:
             touched_sources = self._get_sources_for_paragraph_hashes(paragraph_hashes, include_deleted=True)
             batch_size = 900
             for i in range(0, len(paragraph_hashes), batch_size):
-                batch = paragraph_hashes[i:i+batch_size]
+                batch = paragraph_hashes[i : i + batch_size]
                 placeholders = ",".join(["?"] * len(batch))
 
                 cursor = self._conn.cursor()
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     SELECT hash, content
                     FROM paragraphs
                     WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """, batch)
+                """,
+                    batch,
+                )
                 revive_rows = cursor.fetchall()
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     UPDATE paragraphs
                     SET is_deleted = 0, deleted_at = NULL
                     WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """, batch)
+                """,
+                    batch,
+                )
                 changed = cursor.rowcount
                 count += changed
                 if changed > 0:
@@ -3693,84 +3757,30 @@ class MetadataStore(
         result = {}
         batch_size = 900
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i+batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
 
             cursor = self._conn.cursor()
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT hash, is_deleted, deleted_at
                 FROM entities
                 WHERE hash IN ({placeholders})
-            """, batch)
+            """,
+                batch,
+            )
 
             for row in cursor.fetchall():
-                result[row[0]] = {
-                    "is_deleted": bool(row[1]),
-                    "deleted_at": row[2]
-                }
+                result[row[0]] = {"is_deleted": bool(row[1]), "deleted_at": row[2]}
         return result
 
     # =========================================================================
     # Person Profile (问题3) - Switches / Active Set / Snapshots
     # =========================================================================
 
-
-
-
-
-
-
-
-
-
-
     # =========================================================================
     # Episode 最小可用实现（MVP）
     # =========================================================================
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def get_deleted_entities(self, limit: int = 50) -> List[Dict[str, Any]]:
         """获取已软删除的实体 (回收站用)"""
@@ -3778,22 +3788,27 @@ class MetadataStore(
             return []
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT hash, name, deleted_at
             FROM entities
             WHERE is_deleted = 1
             ORDER BY deleted_at DESC
             LIMIT ?
-        """, (limit,))
+        """,
+            (limit,),
+        )
 
         items = []
         for row in cursor.fetchall():
-            items.append({
-                "hash": row[0],
-                "name": row[1],
-                "type": "entity", # 标记为实体
-                "deleted_at": row[2]
-            })
+            items.append(
+                {
+                    "hash": row[0],
+                    "name": row[1],
+                    "type": "entity",  # 标记为实体
+                    "deleted_at": row[2],
+                }
+            )
         return items
 
     def __repr__(self) -> str:

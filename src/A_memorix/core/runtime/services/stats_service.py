@@ -16,7 +16,9 @@ class MemoryStatsService(KernelServiceBase):
         )[0]["c"]
         backfill = self._paragraph_vector_backfill_counts()
         episode_rebuild_summary = self.metadata_store.get_episode_source_rebuild_summary()
-        episode_rebuild_counts = episode_rebuild_summary.get("counts", {}) if isinstance(episode_rebuild_summary, dict) else {}
+        episode_rebuild_counts = (
+            episode_rebuild_summary.get("counts", {}) if isinstance(episode_rebuild_summary, dict) else {}
+        )
         return {
             "paragraphs": int(stats.get("paragraph_count", 0) or 0),
             "relations": int(stats.get("relation_count", 0) or 0),

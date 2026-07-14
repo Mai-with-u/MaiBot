@@ -76,7 +76,9 @@ class LPMMConverter:
                         }
                     )
 
-            entities = [str(item or "").strip() for item in doc.get("extracted_entities", []) or [] if str(item or "").strip()]
+            entities = [
+                str(item or "").strip() for item in doc.get("extracted_entities", []) or [] if str(item or "").strip()
+            ]
             all_entities.update(entities)
             for relation in relations:
                 if relation["subject"]:

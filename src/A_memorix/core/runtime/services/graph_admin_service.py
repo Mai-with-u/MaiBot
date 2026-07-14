@@ -522,7 +522,9 @@ class MemoryGraphAdminService(KernelServiceBase):
         )
         return rows
 
-    def _build_relation_summary(self, row: Dict[str, Any], paragraph_hashes: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    def _build_relation_summary(
+        self, row: Dict[str, Any], paragraph_hashes: Optional[Sequence[str]] = None
+    ) -> Dict[str, Any]:
         relation_hash = str(row.get("hash", "") or "").strip()
         hashes = [str(item or "").strip() for item in (paragraph_hashes or []) if str(item or "").strip()]
         if not hashes and relation_hash:
@@ -601,7 +603,9 @@ class MemoryGraphAdminService(KernelServiceBase):
         nodes: Dict[str, Dict[str, Any]] = {}
         edges: List[Dict[str, Any]] = []
         edge_keys: set[tuple[str, str, str]] = set()
-        relation_hash_set = {str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()}
+        relation_hash_set = {
+            str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()
+        }
 
         def add_node(node_id: str, *, node_type: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
             if not node_id or node_id in nodes:
@@ -786,7 +790,9 @@ class MemoryGraphAdminService(KernelServiceBase):
         if not relation_rows and entity_row is None:
             return {"success": False, "error": f"未找到节点: {resolved_name}"}
 
-        relation_hashes = [str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()]
+        relation_hashes = [
+            str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()
+        ]
         direct_paragraph_rows = self.metadata_store.get_paragraphs_by_entity(resolved_name)
         relation_paragraph_hashes = self._query_distinct_paragraph_hashes_for_relations(relation_hashes)
         relation_paragraph_rows = self._load_paragraph_rows(relation_paragraph_hashes)
@@ -796,7 +802,9 @@ class MemoryGraphAdminService(KernelServiceBase):
             if paragraph_hash and not bool(row.get("is_deleted", 0)):
                 paragraph_rows_map[paragraph_hash] = row
         paragraph_rows = list(paragraph_rows_map.values())
-        paragraph_rows.sort(key=lambda row: (float(row.get("updated_at", 0) or 0), float(row.get("created_at", 0) or 0)), reverse=True)
+        paragraph_rows.sort(
+            key=lambda row: (float(row.get("updated_at", 0) or 0), float(row.get("created_at", 0) or 0)), reverse=True
+        )
         paragraph_rows = paragraph_rows[:paragraph_limit]
 
         relation_summaries = []
@@ -824,7 +832,9 @@ class MemoryGraphAdminService(KernelServiceBase):
                 "type": "entity",
                 "content": resolved_name,
                 "hash": str(entity_row.get("hash", "") or "") if isinstance(entity_row, dict) else "",
-                "appearance_count": int(entity_row.get("appearance_count", 0) or 0) if isinstance(entity_row, dict) else 0,
+                "appearance_count": int(entity_row.get("appearance_count", 0) or 0)
+                if isinstance(entity_row, dict)
+                else 0,
             },
             "relations": relation_summaries,
             "paragraphs": paragraph_summaries,
@@ -859,13 +869,17 @@ class MemoryGraphAdminService(KernelServiceBase):
         if not relation_rows:
             return {"success": False, "error": f"未找到边: {source_name} -> {target_name}"}
 
-        relation_hashes = [str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()]
+        relation_hashes = [
+            str(row.get("hash", "") or "").strip() for row in relation_rows if str(row.get("hash", "") or "").strip()
+        ]
         paragraph_hashes = self._query_distinct_paragraph_hashes_for_relations(relation_hashes, limit=paragraph_limit)
         paragraph_rows = self._load_paragraph_rows(paragraph_hashes)
         relation_summaries = [
             self._build_relation_summary(
                 row,
-                paragraph_hashes=self._query_distinct_paragraph_hashes_for_relations([str(row.get("hash", "") or "").strip()]),
+                paragraph_hashes=self._query_distinct_paragraph_hashes_for_relations(
+                    [str(row.get("hash", "") or "").strip()]
+                ),
             )
             for row in relation_rows
         ]
@@ -882,7 +896,9 @@ class MemoryGraphAdminService(KernelServiceBase):
             "edge": {
                 "source": source_name,
                 "target": target_name,
-                "weight": float(self.graph_store.get_edge_weight(source_name, target_name)) if self.graph_store is not None else 0.0,
+                "weight": float(self.graph_store.get_edge_weight(source_name, target_name))
+                if self.graph_store is not None
+                else 0.0,
                 "relation_hashes": relation_hashes,
                 "predicates": predicates,
                 "relation_count": len(relation_hashes),
@@ -1238,4 +1254,3 @@ class MemoryGraphAdminService(KernelServiceBase):
             "subject": subject,
             "object": obj,
         }
-

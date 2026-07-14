@@ -18,12 +18,7 @@ def extract_entities(query: str, graph_store: Any) -> List[str]:
         return []
 
     # 保持该启发式规则与历史兼容行为一致。
-    tokens = (
-        text.replace("?", " ")
-        .replace("!", " ")
-        .replace(".", " ")
-        .split()
-    )
+    tokens = text.replace("?", " ").replace("!", " ").replace(".", " ").split()
     if not tokens:
         return []
 

@@ -154,7 +154,9 @@ async def test_host_service_global_memory_sharing_uses_global_search_scope(
 
 
 @pytest.mark.asyncio
-async def test_host_service_dispatches_memory_correction_and_legacy_fuzzy_modify(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_host_service_dispatches_memory_correction_and_legacy_fuzzy_modify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake_kernel = _FakeKernel()
     service = _ready_service(fake_kernel)
 
@@ -627,7 +629,14 @@ async def test_host_service_replay_skips_done_invalid_and_unknown_records(
         + "\n"
         + json.dumps({"record_id": "unknown", "component_name": "unknown", "payload": {}, "created_at": 2.0})
         + "\n"
-        + json.dumps({"record_id": "valid", "component_name": "ingest_text", "payload": {"external_id": "valid"}, "created_at": 3.0})
+        + json.dumps(
+            {
+                "record_id": "valid",
+                "component_name": "ingest_text",
+                "payload": {"external_id": "valid"},
+                "created_at": 3.0,
+            }
+        )
         + "\n",
         encoding="utf-8",
     )

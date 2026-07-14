@@ -157,7 +157,9 @@ def _wait_for_runtime_ready(client: TestClient, *, timeout_seconds: float = 30.0
     raise AssertionError(f"A_Memorix 运行时初始化超时: last_payload={last_payload}")
 
 
-def _wait_for_import_task_terminal(client: TestClient, task_id: str, *, timeout_seconds: float = IMPORT_TIMEOUT_SECONDS) -> Dict[str, Any]:
+def _wait_for_import_task_terminal(
+    client: TestClient, task_id: str, *, timeout_seconds: float = IMPORT_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -175,7 +177,9 @@ def _wait_for_import_task_terminal(client: TestClient, task_id: str, *, timeout_
     raise AssertionError(f"导入任务超时: task_id={task_id}, last_payload={last_payload}")
 
 
-def _wait_for_tuning_task_terminal(client: TestClient, task_id: str, *, timeout_seconds: float = TUNING_TIMEOUT_SECONDS) -> Dict[str, Any]:
+def _wait_for_tuning_task_terminal(
+    client: TestClient, task_id: str, *, timeout_seconds: float = TUNING_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -212,8 +216,7 @@ def _wait_for_query_hit(
         last_payload = payload
         hits = payload.get("hits") or []
         if isinstance(hits, list) and any(
-            isinstance(item, dict)
-            and (not expected_content or expected_content in str(item.get("content", "") or ""))
+            isinstance(item, dict) and (not expected_content or expected_content in str(item.get("content", "") or ""))
             for item in hits
         ):
             return payload
@@ -256,9 +259,7 @@ def _wait_for_source_paragraph_count(
         if item:
             last_item = dict(item)
         sleep(0.2)
-    raise AssertionError(
-        f"等待来源段落计数超时: source={source_name}, min_count={min_count}, last_item={last_item}"
-    )
+    raise AssertionError(f"等待来源段落计数超时: source={source_name}, min_count={min_count}, last_item={last_item}")
 
 
 def _create_multitype_upload_task(client: TestClient) -> str:
@@ -298,8 +299,18 @@ def _create_multitype_upload_task(client: TestClient) -> str:
     files = [
         ("files", ("integration-notes.txt", "Alice 在测试环境记录了一条长期记忆。".encode("utf-8"), "text/plain")),
         ("files", ("integration-diary.md", "# 日志\nBob 与 Alice 讨论了导图。".encode("utf-8"), "text/markdown")),
-        ("files", ("integration-structured.json", json.dumps(structured_json, ensure_ascii=False).encode("utf-8"), "application/json")),
-        ("files", ("integration-extra.json", json.dumps(extra_json, ensure_ascii=False).encode("utf-8"), "application/json")),
+        (
+            "files",
+            (
+                "integration-structured.json",
+                json.dumps(structured_json, ensure_ascii=False).encode("utf-8"),
+                "application/json",
+            ),
+        ),
+        (
+            "files",
+            ("integration-extra.json", json.dumps(extra_json, ensure_ascii=False).encode("utf-8"), "application/json"),
+        ),
     ]
 
     response = client.post(
@@ -506,7 +517,9 @@ def test_retrieval_module_end_to_end_queries_seeded_data(integration_state: Dict
     )
     graph_items = graph_payload.get("items") or []
     assert isinstance(graph_items, list)
-    assert any(str(item.get("type", "") or "") == "entity" for item in graph_items if isinstance(item, dict)), graph_items
+    assert any(str(item.get("type", "") or "") == "entity" for item in graph_items if isinstance(item, dict)), (
+        graph_items
+    )
 
 
 def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[str, Any]) -> None:
@@ -536,7 +549,7 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
     assert str(task.get("status", "") or "") == "completed", task
     assert isinstance(task.get("recommended"), bool)
 
-    split_stats = ((task.get("query_set_stats") or {}).get("split") or {})
+    split_stats = (task.get("query_set_stats") or {}).get("split") or {}
     assert split_stats.get("strategy") == "category_balanced_holdout", task
     assert int(split_stats.get("train", 0) or 0) > 0, task
     assert int(split_stats.get("holdout", 0) or 0) > 0, task
@@ -581,7 +594,9 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
         timeout_seconds=45.0,
     )
     probe_hits = probe_payload.get("hits") or []
-    joined_probe_content = "\n".join(str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict))
+    joined_probe_content = "\n".join(
+        str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict)
+    )
     assert probe_phrase in joined_probe_content
 
     _assert_response_ok(client.post("/api/webui/memory/retrieval_tuning/profile/rollback"))
@@ -631,9 +646,7 @@ def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dic
     )
     after_delete_hits = after_delete_payload.get("hits") or []
     after_delete_text = "\n".join(
-        str(item.get("content", "") or "")
-        for item in after_delete_hits
-        if isinstance(item, dict)
+        str(item.get("content", "") or "") for item in after_delete_hits if isinstance(item, dict)
     )
     assert unique_token not in after_delete_text
     assert int(execute_payload.get("deleted_paragraph_count", 0) or 0) >= 1, execute_payload
@@ -658,11 +671,7 @@ def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dic
         )
     )
     operation_items = operations_payload.get("items") or []
-    operation_ids = {
-        str(item.get("operation_id", "") or "")
-        for item in operation_items
-        if isinstance(item, dict)
-    }
+    operation_ids = {str(item.get("operation_id", "") or "") for item in operation_items if isinstance(item, dict)}
     assert operation_id in operation_ids
 
     operation_detail_payload = _assert_response_ok(client.get(f"/api/webui/memory/delete/operations/{operation_id}"))
@@ -695,10 +704,7 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
                 ],
             },
             {
-                "content": (
-                    f"次日 {person_name} 将 {device_name} 交给巡检组，"
-                    f"巡检确认口令仍为 {access_code}。"
-                ),
+                "content": (f"次日 {person_name} 将 {device_name} 交给巡检组，巡检确认口令仍为 {access_code}。"),
                 "source": source_name,
                 "entities": [person_name, device_name, "巡检组", access_code],
                 "relations": [
@@ -754,10 +760,7 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
         for item in (paragraph_query_payload.get("hits") or [])
         if isinstance(item, dict)
         and str(item.get("type", "") or "") == "paragraph"
-        and all(
-            token in str(item.get("content", "") or "")
-            for token in (person_name, location_name, device_name)
-        )
+        and all(token in str(item.get("content", "") or "") for token in (person_name, location_name, device_name))
     ]
     assert paragraph_hits, paragraph_query_payload
 
@@ -776,11 +779,7 @@ def test_real_api_business_flow_import_query_graph_delete_restore(integration_st
 
     detail_graph = paragraph_detail.get("evidence_graph") or paragraph_detail
     detail_nodes = detail_graph.get("nodes") or []
-    detail_node_contents = {
-        str(item.get("content", "") or "")
-        for item in detail_nodes
-        if isinstance(item, dict)
-    }
+    detail_node_contents = {str(item.get("content", "") or "") for item in detail_nodes if isinstance(item, dict)}
     assert person_name in detail_node_contents
     assert location_name in detail_node_contents
     assert device_name in detail_node_contents

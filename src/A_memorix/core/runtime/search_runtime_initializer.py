@@ -111,9 +111,7 @@ def _resolve_runtime_components(plugin_config: Optional[dict]) -> SearchRuntimeB
         sparse_index=_get_config_value(plugin_config, "sparse_index"),
     )
 
-    missing_required = any(
-        getattr(bundle, key) is None for key in _REQUIRED_COMPONENT_KEYS
-    )
+    missing_required = any(getattr(bundle, key) is None for key in _REQUIRED_COMPONENT_KEYS)
     if not missing_required:
         if bundle.paragraph_vector_store is None:
             bundle.paragraph_vector_store = bundle.vector_store
@@ -174,18 +172,10 @@ def build_search_runtime(
 
     sparse_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.sparse", {}) or {})
     fusion_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.fusion", {}) or {})
-    relation_intent_cfg_raw = _safe_dict(
-        _get_config_value(plugin_config, "retrieval.search.relation_intent", {}) or {}
-    )
-    graph_recall_cfg_raw = _safe_dict(
-        _get_config_value(plugin_config, "retrieval.search.graph_recall", {}) or {}
-    )
-    posterior_graph_cfg_raw = _safe_dict(
-        _get_config_value(plugin_config, "retrieval.search.posterior_graph", {}) or {}
-    )
-    vector_pools_cfg_raw = _safe_dict(
-        _get_config_value(plugin_config, "retrieval.vector_pools", {}) or {}
-    )
+    relation_intent_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.search.relation_intent", {}) or {})
+    graph_recall_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.search.graph_recall", {}) or {})
+    posterior_graph_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.search.posterior_graph", {}) or {})
+    vector_pools_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.vector_pools", {}) or {})
     vector_pools_ready = _resolve_vector_pools_ready(plugin_config)
     if str(vector_pools_cfg_raw.get("mode", "dual") or "dual").strip().lower() == "dual" and not vector_pools_ready:
         vector_pools_cfg_raw = dict(vector_pools_cfg_raw)
@@ -236,18 +226,12 @@ def build_search_runtime(
             alpha=_get_config_value(plugin_config, "retrieval.alpha", 0.5),
             enable_ppr=_get_config_value(plugin_config, "retrieval.enable_ppr", True),
             ppr_alpha=_get_config_value(plugin_config, "retrieval.ppr_alpha", 0.85),
-            ppr_timeout_seconds=_get_config_value(
-                plugin_config, "retrieval.ppr_timeout_seconds", 1.5
-            ),
-            ppr_concurrency_limit=_get_config_value(
-                plugin_config, "retrieval.ppr_concurrency_limit", 4
-            ),
+            ppr_timeout_seconds=_get_config_value(plugin_config, "retrieval.ppr_timeout_seconds", 1.5),
+            ppr_concurrency_limit=_get_config_value(plugin_config, "retrieval.ppr_concurrency_limit", 4),
             ppr_local_enabled=_get_config_value(plugin_config, "retrieval.ppr_local_enabled", True),
             ppr_local_max_nodes=_get_config_value(plugin_config, "retrieval.ppr_local_max_nodes", 256),
             ppr_local_hops=_get_config_value(plugin_config, "retrieval.ppr_local_hops", 2),
-            ppr_local_min_graph_nodes=_get_config_value(
-                plugin_config, "retrieval.ppr_local_min_graph_nodes", 128
-            ),
+            ppr_local_min_graph_nodes=_get_config_value(plugin_config, "retrieval.ppr_local_min_graph_nodes", 128),
             enable_parallel=_get_config_value(plugin_config, "retrieval.enable_parallel", True),
             retrieval_strategy=RetrievalStrategy.DUAL_PATH,
             debug=_resolve_debug_enabled(plugin_config),

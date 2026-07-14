@@ -64,9 +64,7 @@ async def _enqueue_memory_feedback_task(
             query_tool_id=str(saved_record.get("tool_id") or invocation.call_id or "").strip(),
             session_id=str(saved_record.get("session_id") or chat_stream.session_id or "").strip(),
             query_timestamp=saved_record.get("timestamp"),
-            structured_content=normalized_structured_content
-            if isinstance(normalized_structured_content, dict)
-            else {},
+            structured_content=normalized_structured_content if isinstance(normalized_structured_content, dict) else {},
         )
     except Exception:
         logger.exception(f"{log_prefix} 反馈纠错任务入队失败: tool_call_id={invocation.call_id}")

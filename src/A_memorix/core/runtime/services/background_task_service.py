@@ -119,11 +119,7 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 if isinstance(errors, list) and errors:
                     last_error = "; ".join(str(item) for item in errors[:5])
                 else:
-                    last_error = str(
-                        result.get("detail")
-                        or result.get("error")
-                        or "dual_vector_auto_migration_failed"
-                    )
+                    last_error = str(result.get("detail") or result.get("error") or "dual_vector_auto_migration_failed")
                 logger.warning(f"双池后台自动迁移未完成，继续使用单池: {last_error}")
             else:
                 logger.info("双池后台自动迁移完成，已切换到双池检索")

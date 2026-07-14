@@ -53,6 +53,7 @@ class SummaryImportResult:
         yield self.success
         yield self.detail
 
+
 # 默认总结提示词模版
 SUMMARY_PROMPT_TEMPLATE = """
 你是 {bot_name}。{personality_context}
@@ -555,7 +556,9 @@ class SummaryImporter:
                 return SummaryImportResult(False, "未找到可用的总结模型配置")
             task_name_to_use, model_config_to_use = resolved_model
 
-            logger.info(f"正在为流 {stream_id} 执行总结，消息条数: {len(messages)}|总结模型任务: {task_name_to_use}|候选列表: {model_config_to_use.model_list}")
+            logger.info(
+                f"正在为流 {stream_id} 执行总结，消息条数: {len(messages)}|总结模型任务: {task_name_to_use}|候选列表: {model_config_to_use.model_list}"
+            )
 
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
@@ -606,9 +609,7 @@ class SummaryImporter:
             self.vector_store.save()
             self.graph_store.save()
 
-            result_msg = (
-                f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
-            )
+            result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
             return SummaryImportResult(
                 True,
                 result_msg,

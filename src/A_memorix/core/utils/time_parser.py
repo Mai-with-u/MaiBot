@@ -49,9 +49,7 @@ def parse_query_datetime_to_timestamp(value: str, is_end: bool = False) -> float
         dt = datetime.strptime(text, "%Y/%m/%d %H:%M")
         return dt.timestamp()
 
-    raise ValueError(
-        f"时间格式错误: {text}。仅支持 YYYY/MM/DD 或 YYYY/MM/DD HH:mm"
-    )
+    raise ValueError(f"时间格式错误: {text}。仅支持 YYYY/MM/DD 或 YYYY/MM/DD HH:mm")
 
 
 def parse_query_time_range(
@@ -59,16 +57,8 @@ def parse_query_time_range(
     time_to: Optional[str],
 ) -> Tuple[Optional[float], Optional[float]]:
     """解析查询窗口并验证区间。"""
-    ts_from = (
-        parse_query_datetime_to_timestamp(time_from, is_end=False)
-        if time_from
-        else None
-    )
-    ts_to = (
-        parse_query_datetime_to_timestamp(time_to, is_end=True)
-        if time_to
-        else None
-    )
+    ts_from = parse_query_datetime_to_timestamp(time_from, is_end=False) if time_from else None
+    ts_to = parse_query_datetime_to_timestamp(time_to, is_end=True) if time_to else None
 
     if ts_from is not None and ts_to is not None and ts_from > ts_to:
         raise ValueError("time_from 不能晚于 time_to")
@@ -124,10 +114,7 @@ def normalize_time_meta(time_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     )
 
     time_range = time_meta.get("time_range")
-    if (
-        isinstance(time_range, (list, tuple))
-        and len(time_range) == 2
-    ):
+    if isinstance(time_range, (list, tuple)) and len(time_range) == 2:
         if event_start is None:
             event_start = parse_ingest_datetime_to_timestamp(time_range[0], is_end=False)
         if event_end is None:
@@ -167,4 +154,3 @@ def format_timestamp(ts: Optional[float]) -> Optional[str]:
     if ts is None:
         return None
     return datetime.fromtimestamp(ts).strftime("%Y/%m/%d %H:%M")
-

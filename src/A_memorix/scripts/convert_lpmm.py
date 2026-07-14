@@ -23,6 +23,7 @@ import tomlkit
 
 from _bootstrap import DEFAULT_CONFIG_PATH, resolve_repo_path
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="将 LPMM 数据转换为 A_memorix 格式")
     parser.add_argument("--input", "-i", required=True, help="包含 LPMM 数据的输入目录 (parquet, graphml)")
@@ -96,11 +97,11 @@ class LPMMConverter:
         self.batch_size = max(1, int(batch_size))
         self.rebuild_relation_vectors = bool(rebuild_relation_vectors)
         self.allow_unsafe_pickle = bool(allow_unsafe_pickle)
-        
+
         self.vector_dir = output_dir / "vectors"
         self.graph_dir = output_dir / "graph"
         self.metadata_dir = output_dir / "metadata"
-        
+
         self.vector_store = None
         self.graph_store = None
         self.metadata_store = None
@@ -122,7 +123,7 @@ class LPMMConverter:
 
         prefix = f"{p_type}-"
         if raw.startswith(prefix):
-            self.id_mapping[raw[len(prefix):]] = mapped_id
+            self.id_mapping[raw[len(prefix) :]] = mapped_id
         else:
             self.id_mapping[prefix + raw] = mapped_id
 
@@ -130,26 +131,21 @@ class LPMMConverter:
         """将图节点 ID 映射到转换后的 A_memorix ID。"""
         node_key = str(node)
         return self.id_mapping.get(node_key, node_key)
-        
+
     def initialize_stores(self):
         """初始化空的 A_memorix 存储"""
         logger.info(f"正在初始化存储于 {self.output_dir}...")
-        
+
         # 初始化 VectorStore (A_memorix 默认使用 INT8 量化)
         self.vector_store = VectorStore(
-            dimension=self.dimension,
-            quantization_type=QuantizationType.INT8,
-            data_dir=self.vector_dir
+            dimension=self.dimension, quantization_type=QuantizationType.INT8, data_dir=self.vector_dir
         )
-        self.vector_store.clear() # 清空旧数据
-        
+        self.vector_store.clear()  # 清空旧数据
+
         # 初始化 GraphStore (使用 CSR 格式)
-        self.graph_store = GraphStore(
-            matrix_format=SparseMatrixFormat.CSR,
-            data_dir=self.graph_dir
-        )
+        self.graph_store = GraphStore(matrix_format=SparseMatrixFormat.CSR, data_dir=self.graph_dir)
         self.graph_store.clear()
-        
+
         # 初始化 MetadataStore
         self.metadata_store = MetadataStore(data_dir=self.metadata_dir)
         self.metadata_store.connect()
@@ -229,13 +225,7 @@ class LPMMConverter:
             else:
                 failed += 1
 
-        logger.info(
-            "关系向量重建完成: "
-            f"total={len(rows)} "
-            f"success={success} "
-            f"skipped={skipped} "
-            f"failed={failed}"
-        )
+        logger.info(f"关系向量重建完成: total={len(rows)} success={success} skipped={skipped} failed={failed}")
 
     @staticmethod
     def _parse_relation_text(text: str) -> Tuple[str, str, str]:
@@ -301,33 +291,30 @@ class LPMMConverter:
                 imported += 1
 
         return imported
-        
+
     def convert_vectors(self):
         """将 Parquet 向量转换为 VectorStore"""
         # LPMM 默认文件名
         parquet_files = {
             "paragraph": self.lpmm_dir / "paragraph.parquet",
             "entity": self.lpmm_dir / "entity.parquet",
-            "relation": self.lpmm_dir / "relation.parquet"
+            "relation": self.lpmm_dir / "relation.parquet",
         }
-        
+
         total_vectors = 0
-        
+
         for p_type, p_path in parquet_files.items():
             # 关系向量在当前脚本中无法保证与 MetadataStore 的关系记录一一对应，
             # 直接导入会污染召回结果（命中后无法反查 relation 元数据）。
             if p_type == "relation":
                 relation_count = self._import_relation_metadata_from_parquet(p_path)
-                logger.warning(
-                    "跳过 relation.parquet 向量导入（保持一致性）；"
-                    f"已导入关系元数据: {relation_count}"
-                )
+                logger.warning(f"跳过 relation.parquet 向量导入（保持一致性）；已导入关系元数据: {relation_count}")
                 continue
 
             if not p_path.exists():
                 logger.warning(f"文件未找到: {p_path}, 跳过 {p_type} 向量。")
                 continue
-                
+
             logger.info(f"正在处理 {p_type} 向量，来源: {p_path}...")
             try:
                 parquet_file = pq.ParquetFile(p_path)
@@ -339,14 +326,14 @@ class LPMMConverter:
                 # LPMM 字段结构：'hash'、'embedding'、'str'
                 cols = parquet_file.schema_arrow.names
                 # 兼容性检查
-                content_col = 'str' if 'str' in cols else 'content'
-                emb_col = 'embedding'
-                hash_col = 'hash'
-                
+                content_col = "str" if "str" in cols else "content"
+                emb_col = "embedding"
+                hash_col = "hash"
+
                 if content_col not in cols or emb_col not in cols:
                     logger.error(f"{p_path} 中缺少必要列 (需包含 {content_col}, {emb_col})。发现: {cols}")
                     continue
-                
+
                 batch_columns = [content_col, emb_col]
                 if hash_col in cols:
                     batch_columns.append(hash_col)
@@ -397,16 +384,16 @@ class LPMMConverter:
                         raw_hash = row[hash_col] if hash_col in df_batch.columns else None
                         if raw_hash is not None and not (isinstance(raw_hash, float) and np.isnan(raw_hash)):
                             self._register_id_mapping(raw_hash, store_id, p_type)
-                        
+
                         # 确保 embedding 是 numpy 数组
                         emb_np = np.array(emb, dtype=np.float32)
                         if emb_np.shape[0] != self.dimension:
                             logger.error(f"维度不匹配: {emb_np.shape[0]} vs {self.dimension}")
                             continue
-                            
+
                         embeddings_list.append(emb_np)
                         ids_list.append(store_id)
-                    
+
                     if embeddings_list:
                         # 分批添加到向量存储
                         vectors_np = np.stack(embeddings_list)
@@ -419,13 +406,11 @@ class LPMMConverter:
                             f"[{p_type}] 批次 {batch_idx}: 已扫描 {processed_rows}/{total_rows}, 已导入 {added_for_type}"
                         )
 
-                logger.info(
-                    f"{p_type} 向量处理完成：总扫描 {processed_rows}，总导入 {added_for_type}"
-                )
-                    
+                logger.info(f"{p_type} 向量处理完成：总扫描 {processed_rows}，总导入 {added_for_type}")
+
             except Exception as e:
                 logger.error(f"处理 {p_path} 时出错: {e}")
-                
+
         # 提交向量存储
         self.vector_store.save()
         logger.info(f"向量转换完成。总向量数: {total_vectors}")
@@ -436,11 +421,11 @@ class LPMMConverter:
         graph_files = [
             self.lpmm_dir / "rag-graph.graphml",
             self.lpmm_dir / "graph.graphml",
-            self.lpmm_dir / "graph_structure.pkl"
+            self.lpmm_dir / "graph_structure.pkl",
         ]
-        
+
         nx_graph = None
-        
+
         for g_path in graph_files:
             if g_path.exists():
                 logger.info(f"发现图文件: {g_path}")
@@ -450,8 +435,7 @@ class LPMMConverter:
                     elif g_path.suffix == ".pkl":
                         if not self.allow_unsafe_pickle:
                             logger.warning(
-                                f"跳过不安全的 pickle 图文件: {g_path}。"
-                                " 如确认来源可信，可添加 --allow-unsafe-pickle。"
+                                f"跳过不安全的 pickle 图文件: {g_path}。 如确认来源可信，可添加 --allow-unsafe-pickle。"
                             )
                             continue
                         with open(g_path, "rb") as f:
@@ -464,47 +448,47 @@ class LPMMConverter:
                     break
                 except Exception as e:
                     logger.error(f"加载 {g_path} 失败: {e}")
-        
+
         if nx_graph is None:
             logger.warning("未找到有效的图文件。跳过图转换。")
             return
 
         logger.info(f"已加载图，包含 {nx_graph.number_of_nodes()} 个节点和 {nx_graph.number_of_edges()} 条边。")
-        
+
         # 1. 添加节点
         # LPMM 节点通常是哈希或带前缀的字符串。
         # 我们需要将它们映射到 A_memorix 格式。
         # 如果 LPMM 使用 "entity-HASH"，则与 A_memorix 匹配。
-        
+
         nodes_to_add = []
         node_attrs = {}
-        
+
         for node, attrs in nx_graph.nodes(data=True):
             # 假设 LPMM 使用一致的命名 "entity-..." 或 "paragraph-..."
             mapped_node = self._map_node_id(node)
             nodes_to_add.append(mapped_node)
             if attrs:
                 node_attrs[mapped_node] = attrs
-        
+
         self.graph_store.add_nodes(nodes_to_add, node_attrs)
-        
+
         # 2. 添加边
         edges_to_add = []
         weights = []
-        
+
         for u, v, data in nx_graph.edges(data=True):
             weight = data.get("weight", 1.0)
             edges_to_add.append((self._map_node_id(u), self._map_node_id(v)))
             weights.append(float(weight))
-            
+
             # 如果可能，将关系同步到 MetadataStore
             # 但图的边并不总是包含关系谓词
             # 如果 LPMM 边数据有 'predicate'，我们可以添加到元数据
             # 通常 LPMM 边是加权和，谓词信息可能在简单图中丢失
-            
+
         if edges_to_add:
             self.graph_store.add_edges(edges_to_add, weights)
-            
+
         self.graph_store.save()
         logger.info("图转换完成。")
 
@@ -522,14 +506,14 @@ class LPMMConverter:
 def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
-    
+
     input_path = resolve_repo_path(args.input)
     output_path = resolve_repo_path(args.output)
-    
+
     if not input_path.exists():
         logger.error(f"输入目录不存在: {input_path}")
         sys.exit(1)
-        
+
     converter = LPMMConverter(
         input_path,
         output_path,
@@ -539,6 +523,7 @@ def main():
         allow_unsafe_pickle=bool(args.allow_unsafe_pickle),
     )
     converter.run()
+
 
 if __name__ == "__main__":
     main()

@@ -229,14 +229,20 @@ class MetadataFTSMixin:
             return
         cur.execute("SELECT COUNT(1) FROM paragraphs WHERE is_deleted IS NULL OR is_deleted = 0")
         para_count = int(cur.fetchone()[0])
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO paragraph_tokenized_fts_meta(key, value) VALUES('paragraph_count', ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value
-        """, (str(para_count),))
-        cur.execute("""
+        """,
+            (str(para_count),),
+        )
+        cur.execute(
+            """
             INSERT INTO paragraph_tokenized_fts_meta(key, value) VALUES('updated_at', ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value
-        """, (str(datetime.now().timestamp()),))
+        """,
+            (str(datetime.now().timestamp()),),
+        )
 
     def ensure_paragraph_tokenized_fts_backfilled(self, conn: Optional[sqlite3.Connection] = None) -> bool:
         """确保预分词段落 FTS5 shadow index 已回填。"""
@@ -281,10 +287,7 @@ class MetadataFTSMixin:
             self._refresh_paragraph_tokenized_fts_meta(c)
             c.commit()
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            logger.info(
-                "paragraph tokenized FTS 回填完成: "
-                f"paragraphs={para_count}, duration_ms={elapsed_ms:.2f}"
-            )
+            logger.info(f"paragraph tokenized FTS 回填完成: paragraphs={para_count}, duration_ms={elapsed_ms:.2f}")
             return True
         except Exception as e:
             logger.warning(f"paragraph tokenized FTS 回填失败: {e}")
@@ -561,7 +564,7 @@ class MetadataFTSMixin:
         cur = c.cursor()
         batch_size = 900
         for i in range(0, len(hashes), batch_size):
-            batch = hashes[i:i + batch_size]
+            batch = hashes[i : i + batch_size]
             placeholders = ",".join(["?"] * len(batch))
             cur.execute(
                 f"DELETE FROM paragraph_ngrams WHERE paragraph_hash IN ({placeholders})",
@@ -632,18 +635,27 @@ class MetadataFTSMixin:
                     batch,
                 )
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO paragraph_ngram_meta(key, value) VALUES('ngram_n', ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """, (str(n),))
-            cur.execute("""
+            """,
+                (str(n),),
+            )
+            cur.execute(
+                """
                 INSERT INTO paragraph_ngram_meta(key, value) VALUES('paragraph_count', ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """, (str(para_count),))
-            cur.execute("""
+            """,
+                (str(para_count),),
+            )
+            cur.execute(
+                """
                 INSERT INTO paragraph_ngram_meta(key, value) VALUES('updated_at', ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """, (str(datetime.now().timestamp()),))
+            """,
+                (str(datetime.now().timestamp()),),
+            )
             c.commit()
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             logger.info(

@@ -26,7 +26,9 @@ class MemoryV5AdminService(KernelServiceBase):
             items = self.metadata_store.get_deleted_relations(limit=max(1, int(limit or 50)))
             return {"success": True, "items": items, "count": len(items)}
 
-        hashes = self._resolve_deleted_relation_hashes(target) if act == "restore" else self._resolve_relation_hashes(target)
+        hashes = (
+            self._resolve_deleted_relation_hashes(target) if act == "restore" else self._resolve_relation_hashes(target)
+        )
         if not hashes:
             return {"success": False, "detail": "未命中可维护关系"}
 
@@ -249,7 +251,9 @@ class MemoryV5AdminService(KernelServiceBase):
             )
         conn.commit()
         statuses = self.metadata_store.get_relation_status_batch(normalized)
-        return {hash_value: float((statuses.get(hash_value) or {}).get("weight", 0.0) or 0.0) for hash_value in normalized}
+        return {
+            hash_value: float((statuses.get(hash_value) or {}).get("weight", 0.0) or 0.0) for hash_value in normalized
+        }
 
     def _apply_v5_relation_action(self, *, action: str, hashes: List[str], strength: float = 1.0) -> Dict[str, Any]:
         assert self.metadata_store
@@ -314,4 +318,3 @@ class MemoryV5AdminService(KernelServiceBase):
             "weights": weights,
             "statuses": statuses,
         }
-

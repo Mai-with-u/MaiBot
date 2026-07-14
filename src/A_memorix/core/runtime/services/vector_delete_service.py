@@ -23,15 +23,8 @@ class MemoryVectorDeleteService(KernelServiceBase):
         paragraph_ids = merge_tokens(paragraph_hashes)
         if self.paragraph_vector_store is not None and paragraph_ids:
             deleted += int(self.paragraph_vector_store.delete(paragraph_ids) or 0)
-        graph_ids = [
-            self._graph_vector_id("entity", hash_value)
-            for hash_value in merge_tokens(entity_hashes)
-        ]
-        graph_ids.extend(
-            self._graph_vector_id("relation", hash_value)
-            for hash_value in merge_tokens(relation_hashes)
-        )
+        graph_ids = [self._graph_vector_id("entity", hash_value) for hash_value in merge_tokens(entity_hashes)]
+        graph_ids.extend(self._graph_vector_id("relation", hash_value) for hash_value in merge_tokens(relation_hashes))
         if self.graph_vector_store is not None and graph_ids:
             deleted += int(self.graph_vector_store.delete(graph_ids) or 0)
         return deleted
-
