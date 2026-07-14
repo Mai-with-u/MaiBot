@@ -51,6 +51,7 @@ import {
 import { Tabs } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
 import {
   deleteChatStream,
   deleteChatStreamPrompt,
@@ -276,6 +277,7 @@ function matchesSearch(chat: ChatStream, query: string): boolean {
     chat.chat_type,
     chat.target_id,
     chat.platform,
+    chat.account_id,
     chat.group_id,
     chat.group_name,
     chat.user_id,
@@ -1293,7 +1295,10 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
     [addDialogGroup]
   )
   const chatNameByTargetKey = useMemo(
-    () => new Map(chats.map((chat) => [targetKey(chatToTarget(chat)), chat.display_name])),
+    () => new Map(chats.map((chat) => [
+      targetKey(chatToTarget(chat)),
+      formatChatDisplayName(chat.display_name, chat.account_id),
+    ])),
     [chats]
   )
   const addDialogChats = useMemo(() => {
@@ -1308,6 +1313,7 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
       }
       return [
         chat.display_name,
+        chat.account_id,
         chat.platform,
         getChatLogicalId(chat),
         chat.user_id,
@@ -1584,10 +1590,12 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
                           <Checkbox
                             checked={checked}
                             onCheckedChange={() => toggleAddDialogChat(target)}
-                            aria-label={`选择 ${chat.display_name}`}
+                            aria-label={`选择 ${formatChatDisplayName(chat.display_name, chat.account_id)}`}
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium">{chat.display_name}</div>
+                            <div className="truncate text-sm font-medium">
+                              {formatChatDisplayName(chat.display_name, chat.account_id)}
+                            </div>
                             <div className="text-muted-foreground truncate font-mono text-xs">
                               {chat.platform}:{getChatLogicalId(chat)}
                             </div>
@@ -2234,7 +2242,7 @@ export function ChatManagementPage() {
                         key={chat.session_id}
                         role="button"
                         tabIndex={0}
-                        aria-label={`查看 ${chat.display_name} 详情`}
+                        aria-label={`查看 ${formatChatDisplayName(chat.display_name, chat.account_id)} 详情`}
                         className="cursor-pointer hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-primary/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
                         onClick={() => setSelectedChat(chat)}
                         onKeyDown={(event) => {
@@ -2253,6 +2261,11 @@ export function ChatManagementPage() {
                                 maxChars={12}
                                 value={chat.display_name}
                               />
+                              {chat.account_id && (
+                                <div className="text-muted-foreground truncate font-mono text-xs">
+                                  {formatChatAccountLabel(chat.account_id)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </TableCell>
@@ -2344,7 +2357,11 @@ export function ChatManagementPage() {
       <Dialog open={selectedChat !== null} onOpenChange={(open) => !open && setSelectedChat(null)}>
         <DialogContent style={{ '--dialog-width': '44rem' } as CSSProperties}>
           <DialogHeader>
-            <DialogTitle>{selectedChat?.display_name || '聊天流详情'}</DialogTitle>
+            <DialogTitle>
+              {selectedChat
+                ? formatChatDisplayName(selectedChat.display_name, selectedChat.account_id)
+                : '聊天流详情'}
+            </DialogTitle>
           </DialogHeader>
           <DialogBody>
             <ChatDetailContent

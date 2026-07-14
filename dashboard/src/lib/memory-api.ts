@@ -405,7 +405,7 @@ export interface MemoryTimelineEventPayload {
 
 export interface MemoryTimelinePayload {
   success: boolean
-  chat: Pick<MemoryImportChatTargetPayload, 'chat_id' | 'chat_name' | 'platform' | 'group_id' | 'user_id' | 'is_group'>
+  chat: Pick<MemoryImportChatTargetPayload, 'chat_id' | 'chat_name' | 'platform' | 'group_id' | 'user_id' | 'account_id' | 'is_group'>
   range: {
     time_start?: number | null
     time_end?: number | null

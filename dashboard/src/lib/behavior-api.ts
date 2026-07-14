@@ -13,6 +13,7 @@ export interface BehaviorChatInfo {
   session_id: string
   display_name: string
   platform: string
+  account_id?: string | null
   chat_type: string
   path_count: number
   cluster_count: number

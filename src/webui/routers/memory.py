@@ -117,6 +117,7 @@ class MemoryTimelineChat(BaseModel):
     platform: Optional[str] = None
     group_id: Optional[str] = None
     user_id: Optional[str] = None
+    account_id: Optional[str] = None
     is_group: bool = False
 
 
@@ -521,10 +522,11 @@ def _timeline_chat_from_session(chat_session: ChatSession) -> MemoryTimelineChat
     return MemoryTimelineChat(
         chat_id=chat_id,
         chat_name=_get_chat_name(chat_session, latest_messages),
-        platform=getattr(chat_session, "platform", None),
-        group_id=getattr(chat_session, "group_id", None),
-        user_id=getattr(chat_session, "user_id", None),
-        is_group=bool(getattr(chat_session, "group_id", None)),
+        platform=chat_session.platform,
+        group_id=chat_session.group_id,
+        user_id=chat_session.user_id,
+        account_id=chat_session.account_id,
+        is_group=bool(chat_session.group_id),
     )
 
 
