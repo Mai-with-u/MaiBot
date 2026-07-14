@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 try:
     import psutil
+
     HAS_PSUTIL = True
 except ImportError:
     HAS_PSUTIL = False
@@ -99,6 +100,7 @@ class MemoryMonitor:
         if not HAS_PSUTIL:
             # 降级方案：使用内置函数
             import sys
+
             return sys.getsizeof(gc.get_objects()) / 1024 / 1024
 
         process = psutil.Process()
@@ -123,10 +125,7 @@ class MemoryMonitor:
 
                 # 检查是否超过阈值
                 if ratio >= self.warning_threshold:
-                    logger.warning(
-                        f"内存使用率过高: {current_mb:.1f}MB / {self.max_memory_mb}MB "
-                        f"({ratio*100:.1f}%)"
-                    )
+                    logger.warning(f"内存使用率过高: {current_mb:.1f}MB / {self.max_memory_mb}MB ({ratio * 100:.1f}%)")
 
                     # 触发回调
                     for callback in self._callbacks:

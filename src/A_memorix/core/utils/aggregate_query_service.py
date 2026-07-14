@@ -329,10 +329,7 @@ class AggregateQueryService:
                     }
                 )
 
-        success = any(
-            bool(branches.get(name, {}).get("success", False))
-            for name in ("search", "time", "episode")
-        )
+        success = any(bool(branches.get(name, {}).get("success", False)) for name in ("search", "time", "episode"))
         mixed_results: Optional[List[Dict[str, Any]]] = None
         if mix:
             mixed_results = self._build_mixed_results(branches=branches, top_k=safe_mix_top_k)

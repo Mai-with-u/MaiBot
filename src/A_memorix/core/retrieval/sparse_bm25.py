@@ -184,9 +184,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
 
     def ensure_loaded(self, conn: sqlite3.Connection) -> bool:
         del conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 仍是实验接口，当前运行时请使用 fts5"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 仍是实验接口，当前运行时请使用 fts5")
 
     def search_paragraphs(
         self,
@@ -197,9 +195,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         del match_query, limit, max_doc_len, conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 尚未接入段落倒排索引实现"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 尚未接入段落倒排索引实现")
 
     def search_relations(
         self,
@@ -211,9 +207,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         del match_query, limit, max_doc_len, include_inactive, conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 尚未接入关系倒排索引实现"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 尚未接入关系倒排索引实现")
 
 
 class SparseBM25Index:
@@ -283,8 +277,7 @@ class SparseBM25Index:
         self._last_load_error = ""
         self._prepare_tokenizer()
         logger.debug(
-            "SparseBM25Index loaded: "
-            f"backend=fts5, tokenizer={self.config.tokenizer_mode}, mode={self.config.mode}"
+            f"SparseBM25Index loaded: backend=fts5, tokenizer={self.config.tokenizer_mode}, mode={self.config.mode}"
         )
         return True
 
@@ -324,11 +317,7 @@ class SparseBM25Index:
 
             probes = [
                 str(item or "").strip()
-                for item in (
-                    sample_queries
-                    if sample_queries is not None
-                    else ("记忆 检索", "关系 证据")
-                )
+                for item in (sample_queries if sample_queries is not None else ("记忆 检索", "关系 证据"))
                 if str(item or "").strip()
             ]
             for probe in probes:
@@ -435,11 +424,7 @@ class SparseBM25Index:
         normalized = [str(token or "").strip() for token in tokens if str(token or "").strip()]
         if not normalized:
             return []
-        informative = [
-            token
-            for token in normalized
-            if not self._is_low_signal_query_token(token)
-        ]
+        informative = [token for token in normalized if not self._is_low_signal_query_token(token)]
         return list(dict.fromkeys(informative or normalized))
 
     def _build_match_query(self, tokens: List[str]) -> str:

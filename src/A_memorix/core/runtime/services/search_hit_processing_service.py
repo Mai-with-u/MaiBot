@@ -68,9 +68,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
             marks_map, status_map = self._load_paragraph_stale_marks([token])
         elif not status_map:
             relation_hashes = tokens(
-                mark.get("relation_hash", "")
-                for mark in marks_map.get(token, [])
-                if isinstance(mark, dict)
+                mark.get("relation_hash", "") for mark in marks_map.get(token, []) if isinstance(mark, dict)
             )
             status_map = self.metadata_store.get_relation_status_batch(relation_hashes) if relation_hashes else {}
 
@@ -386,10 +384,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 paragraph_map=paragraph_map,
                 relation_paragraph_map=relation_paragraph_map,
             )
-            if any(
-                self._retrieval_filter_context_is_current_source(context, current_context)
-                for context in contexts
-            ):
+            if any(self._retrieval_filter_context_is_current_source(context, current_context) for context in contexts):
                 filtered.append(dict(item))
                 continue
             if any(self._retrieval_filter_context_allowed(context) for context in contexts):
@@ -486,7 +481,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         token = str(source or "").strip()
         for prefix in ("chat_summary:", "chat_stream:", "maibot.chat_history:"):
             if token.startswith(prefix):
-                return token[len(prefix):].strip()
+                return token[len(prefix) :].strip()
         return ""
 
     @staticmethod
@@ -707,8 +702,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                     filtered.append(item)
                     continue
                 if any(
-                    not bool((status_map.get(linked_hash) or {}).get("is_inactive"))
-                    for linked_hash in linked_hashes
+                    not bool((status_map.get(linked_hash) or {}).get("is_inactive")) for linked_hash in linked_hashes
                 ):
                     filtered.append(item)
                 continue

@@ -99,13 +99,15 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
     monkeypatch.setattr(
         kernel_module,
         "build_search_runtime",
-        lambda **kwargs: events.append("build_runtime")
-        or SimpleNamespace(
-            ready=True,
-            error="",
-            retriever="runtime-retriever",
-            threshold_filter="runtime-threshold",
-            sparse_index="runtime-sparse-index",
+        lambda **kwargs: (
+            events.append("build_runtime")
+            or SimpleNamespace(
+                ready=True,
+                error="",
+                retriever="runtime-retriever",
+                threshold_filter="runtime-threshold",
+                sparse_index="runtime-sparse-index",
+            )
         ),
     )
     monkeypatch.setattr(kernel_module, "ImportTaskManager", FakeImportTaskManager)
@@ -124,8 +126,10 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
     monkeypatch.setattr(
         kernel,
         "_make_vector_store",
-        lambda data_dir, *, dimension=None: events.append(f"make_vector_store:{Path(data_dir).name}:{dimension}")
-        or FakeVectorStore(Path(data_dir).name),
+        lambda data_dir, *, dimension=None: (
+            events.append(f"make_vector_store:{Path(data_dir).name}:{dimension}")
+            or FakeVectorStore(Path(data_dir).name)
+        ),
     )
     monkeypatch.setattr(kernel, "_dual_vector_pools_config_enabled", lambda: False)
     monkeypatch.setattr(kernel, "_refresh_relation_write_service", lambda: events.append("refresh_relation_write"))

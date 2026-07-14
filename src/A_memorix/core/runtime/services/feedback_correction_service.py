@@ -136,9 +136,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             return []
 
         sources = tokens(
-            row.get("source", "")
-            for row in self._load_paragraph_rows(paragraph_hashes)
-            if isinstance(row, dict)
+            row.get("source", "") for row in self._load_paragraph_rows(paragraph_hashes) if isinstance(row, dict)
         )
         correction_source = self._chat_source(session_id)
         if include_correction_source and correction_source:
@@ -172,20 +170,34 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
     @staticmethod
     def _feedback_affected_counts(task: Dict[str, Any]) -> Dict[str, int]:
         decision_payload = task.get("decision_payload") if isinstance(task.get("decision_payload"), dict) else {}
-        apply_result = decision_payload.get("apply_result") if isinstance(decision_payload.get("apply_result"), dict) else {}
+        apply_result = (
+            decision_payload.get("apply_result") if isinstance(decision_payload.get("apply_result"), dict) else {}
+        )
         rollback_plan = task.get("rollback_plan") if isinstance(task.get("rollback_plan"), dict) else {}
-        corrected_write = rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+        corrected_write = (
+            rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+        )
         return {
-            "relations": len(list(apply_result.get("relation_hashes") or rollback_plan.get("forgotten_relations") or [])),
-            "stale_paragraphs": len(list(apply_result.get("stale_paragraph_hashes") or rollback_plan.get("stale_marks") or [])),
-            "episode_sources": len(list(apply_result.get("episode_rebuild_sources") or rollback_plan.get("episode_sources") or [])),
-            "profile_person_ids": len(list(apply_result.get("profile_refresh_person_ids") or rollback_plan.get("profile_person_ids") or [])),
+            "relations": len(
+                list(apply_result.get("relation_hashes") or rollback_plan.get("forgotten_relations") or [])
+            ),
+            "stale_paragraphs": len(
+                list(apply_result.get("stale_paragraph_hashes") or rollback_plan.get("stale_marks") or [])
+            ),
+            "episode_sources": len(
+                list(apply_result.get("episode_rebuild_sources") or rollback_plan.get("episode_sources") or [])
+            ),
+            "profile_person_ids": len(
+                list(apply_result.get("profile_refresh_person_ids") or rollback_plan.get("profile_person_ids") or [])
+            ),
             "correction_paragraphs": len(list(corrected_write.get("paragraph_hashes") or [])),
             "corrected_relations": len(list(corrected_write.get("corrected_relations") or [])),
         }
 
     def _build_feedback_rollback_plan_summary(self, rollback_plan: Dict[str, Any]) -> Dict[str, Any]:
-        corrected_write = rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+        corrected_write = (
+            rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+        )
         return {
             "forgotten_relations": list(rollback_plan.get("forgotten_relations") or []),
             "corrected_write": corrected_write,
@@ -226,7 +238,9 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         detail.update(
             {
                 "query_snapshot": task.get("query_snapshot") if isinstance(task.get("query_snapshot"), dict) else {},
-                "decision_payload": task.get("decision_payload") if isinstance(task.get("decision_payload"), dict) else {},
+                "decision_payload": task.get("decision_payload")
+                if isinstance(task.get("decision_payload"), dict)
+                else {},
                 "rollback_plan_summary": self._build_feedback_rollback_plan_summary(
                     task.get("rollback_plan") if isinstance(task.get("rollback_plan"), dict) else {}
                 ),
@@ -313,14 +327,20 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     return {
                         "success": False,
                         "error": "该反馈纠错任务正在回退中",
-                        "task": self._build_feedback_task_detail(latest_task) if isinstance(latest_task, dict) else None,
+                        "task": self._build_feedback_task_detail(latest_task)
+                        if isinstance(latest_task, dict)
+                        else None,
                     }
                 if latest_status == "rolled_back":
                     return {
                         "success": True,
                         "already_rolled_back": True,
-                        "task": self._build_feedback_task_detail(latest_task) if isinstance(latest_task, dict) else None,
-                        "result": (latest_task or {}).get("rollback_result") if isinstance((latest_task or {}).get("rollback_result"), dict) else {},
+                        "task": self._build_feedback_task_detail(latest_task)
+                        if isinstance(latest_task, dict)
+                        else None,
+                        "result": (latest_task or {}).get("rollback_result")
+                        if isinstance((latest_task or {}).get("rollback_result"), dict)
+                        else {},
                     }
                 return {
                     "success": False,
@@ -359,7 +379,9 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     "success": True,
                     "already_rolled_back": True,
                     "task": self._build_feedback_task_detail(latest_task) if isinstance(latest_task, dict) else None,
-                    "result": (latest_task or {}).get("rollback_result") if isinstance((latest_task or {}).get("rollback_result"), dict) else {},
+                    "result": (latest_task or {}).get("rollback_result")
+                    if isinstance((latest_task or {}).get("rollback_result"), dict)
+                    else {},
                 }
             return {
                 "success": False,
@@ -379,7 +401,11 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             "warnings": [],
         }
         try:
-            forgotten_relations = rollback_plan.get("forgotten_relations") if isinstance(rollback_plan.get("forgotten_relations"), list) else []
+            forgotten_relations = (
+                rollback_plan.get("forgotten_relations")
+                if isinstance(rollback_plan.get("forgotten_relations"), list)
+                else []
+            )
             for item in forgotten_relations:
                 if not isinstance(item, dict):
                     continue
@@ -403,12 +429,22 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     reason=reason,
                 )
 
-            corrected_write = rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+            corrected_write = (
+                rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
+            )
             correction_paragraph_hashes = tokens(corrected_write.get("paragraph_hashes"))
             deleted_paragraphs = self._soft_delete_feedback_correction_paragraphs(correction_paragraph_hashes)
             result["deleted_correction_paragraph_hashes"] = deleted_paragraphs.get("deleted_hashes", [])
-            paragraph_rows = deleted_paragraphs.get("paragraph_rows") if isinstance(deleted_paragraphs.get("paragraph_rows"), dict) else {}
-            deleted_external_refs = deleted_paragraphs.get("deleted_external_refs") if isinstance(deleted_paragraphs.get("deleted_external_refs"), list) else []
+            paragraph_rows = (
+                deleted_paragraphs.get("paragraph_rows")
+                if isinstance(deleted_paragraphs.get("paragraph_rows"), dict)
+                else {}
+            )
+            deleted_external_refs = (
+                deleted_paragraphs.get("deleted_external_refs")
+                if isinstance(deleted_paragraphs.get("deleted_external_refs"), list)
+                else []
+            )
             deleted_ref_map: Dict[str, List[Dict[str, Any]]] = {}
             for ref in deleted_external_refs:
                 if not isinstance(ref, dict):
@@ -424,13 +460,19 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     action_type="rollback_delete_correction_paragraph",
                     target_hash=paragraph_hash,
                     before_payload={
-                        "paragraph": paragraph_rows.get(paragraph_hash) if isinstance(paragraph_rows.get(paragraph_hash), dict) else {},
+                        "paragraph": paragraph_rows.get(paragraph_hash)
+                        if isinstance(paragraph_rows.get(paragraph_hash), dict)
+                        else {},
                         "external_refs": deleted_ref_map.get(paragraph_hash, []),
                     },
                     reason=reason,
                 )
 
-            corrected_relations = corrected_write.get("corrected_relations") if isinstance(corrected_write.get("corrected_relations"), list) else []
+            corrected_relations = (
+                corrected_write.get("corrected_relations")
+                if isinstance(corrected_write.get("corrected_relations"), list)
+                else []
+            )
             for item in corrected_relations:
                 if not isinstance(item, dict):
                     continue
@@ -442,7 +484,9 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     snapshot = item.get("before_status") if isinstance(item.get("before_status"), dict) else {}
                     after_status = self.metadata_store.restore_relation_status_from_snapshot(relation_hash, snapshot)
                 else:
-                    self.metadata_store.update_relations_protection([relation_hash], protected_until=0.0, is_pinned=False)
+                    self.metadata_store.update_relations_protection(
+                        [relation_hash], protected_until=0.0, is_pinned=False
+                    )
                     self.metadata_store.mark_relations_inactive([relation_hash], inactive_since=time.time())
                     after_status = self.metadata_store.get_relation_status_batch([relation_hash]).get(relation_hash)
                 if after_status is None:
@@ -459,7 +503,9 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     reason=reason,
                 )
 
-            stale_marks_raw = rollback_plan.get("stale_marks") if isinstance(rollback_plan.get("stale_marks"), list) else []
+            stale_marks_raw = (
+                rollback_plan.get("stale_marks") if isinstance(rollback_plan.get("stale_marks"), list) else []
+            )
             stale_mark_rollbacks: List[Dict[str, Any]] = []
             for item in stale_marks_raw:
                 if not isinstance(item, dict):
@@ -478,11 +524,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                     expected_source_type=str(item.get("source_type", "") or "feedback_correction"),
                     expected_source_id=str(item.get("source_id", "") or task_id),
                     expected_source_operation_id=source_operation_id,
-                    previous_mark=(
-                        item.get("previous_mark")
-                        if isinstance(item.get("previous_mark"), dict)
-                        else None
-                    ),
+                    previous_mark=(item.get("previous_mark") if isinstance(item.get("previous_mark"), dict) else None),
                 )
                 stale_mark_rollbacks.append(rollback_mark)
             result["cleared_stale_mark_count"] = sum(
@@ -536,7 +578,11 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 rollback_status="rolled_back",
                 rollback_result=result,
             )
-            return {"success": True, "result": result, "task": self._build_feedback_task_detail(final_task or running_task)}
+            return {
+                "success": True,
+                "result": result,
+                "task": self._build_feedback_task_detail(final_task or running_task),
+            }
         except Exception as exc:
             logger.warning(f"反馈纠错回退失败: task_id={task_id} err={exc}", exc_info=True)
             self.metadata_store.append_feedback_action_log(
@@ -572,7 +618,9 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
 
         rows = self.metadata_store.fetch_person_profile_refresh_batch(
             limit=max(1, int(limit or 1)),
-            max_retry=profile_policy.person_profile_refresh_max_retry(self._cfg) if max_retry is None else max(0, int(max_retry)),
+            max_retry=profile_policy.person_profile_refresh_max_retry(self._cfg)
+            if max_retry is None
+            else max(0, int(max_retry)),
             debounce_seconds=max(0.0, float(debounce_seconds or 0.0)),
             retry_backoff_seconds=max(0.0, float(retry_backoff_seconds or 0.0)),
         )
@@ -815,11 +863,11 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             f"反馈消息: {json.dumps(feedback_messages, ensure_ascii=False)}\n\n"
             "输出 JSON schema:\n"
             "{"
-            "\"decision\":\"confirm|reject|correct|supplement|none\","
-            "\"confidence\":0.0,"
-            "\"target_hashes\":[\"命中列表中的 hash\"],"
-            "\"corrected_relations\":[{\"subject\":\"\",\"predicate\":\"\",\"object\":\"\",\"confidence\":1.0}],"
-            "\"reason\":\"\""
+            '"decision":"confirm|reject|correct|supplement|none",'
+            '"confidence":0.0,'
+            '"target_hashes":["命中列表中的 hash"],'
+            '"corrected_relations":[{"subject":"","predicate":"","object":"","confidence":1.0}],'
+            '"reason":""'
             "}\n"
             "约束:\n"
             "1. 只有当反馈明确指向错误时才输出 reject/correct。\n"
@@ -865,9 +913,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         else:
             target_hashes_candidates = []
         target_hashes = [
-            str(item or "").strip()
-            for item in target_hashes_candidates
-            if str(item or "").strip() in valid_hashes
+            str(item or "").strip() for item in target_hashes_candidates if str(item or "").strip() in valid_hashes
         ]
 
         corrected_relations: List[Dict[str, Any]] = []
@@ -992,10 +1038,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             if item.get("subject") and item.get("predicate") and item.get("object")
         )
         external_id = compute_hash(
-            "feedback_correction:"
-            + query_tool_id
-            + ":"
-            + json.dumps(relation_rows, ensure_ascii=False, sort_keys=True)
+            "feedback_correction:" + query_tool_id + ":" + json.dumps(relation_rows, ensure_ascii=False, sort_keys=True)
         )
         payload = await self.ingest_text(
             external_id=external_id,
@@ -1058,9 +1101,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             }
 
         target_hashes = [
-            str(item or "").strip()
-            for item in (decision.get("target_hashes") or [])
-            if str(item or "").strip()
+            str(item or "").strip() for item in (decision.get("target_hashes") or []) if str(item or "").strip()
         ]
         relation_hashes = self._resolve_feedback_relation_hashes(
             target_hashes=target_hashes,
@@ -1073,9 +1114,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             }
 
         corrected_relations = [
-            dict(item)
-            for item in (decision.get("corrected_relations") or [])
-            if isinstance(item, dict)
+            dict(item) for item in (decision.get("corrected_relations") or []) if isinstance(item, dict)
         ]
         if decision_type == "correct" and not corrected_relations:
             return {
@@ -1439,7 +1478,11 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 return
 
             hit_briefs = self._build_feedback_hit_briefs(hits_raw)
-            hit_map = {str(item.get("hash", "") or "").strip(): item for item in hit_briefs if str(item.get("hash", "") or "").strip()}
+            hit_map = {
+                str(item.get("hash", "") or "").strip(): item
+                for item in hit_briefs
+                if str(item.get("hash", "") or "").strip()
+            }
             raw_decision = await self._classify_feedback(
                 query_tool_id=query_tool_id,
                 query_text=str(structured.get("query", "") or ""),
@@ -1515,4 +1558,3 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             raise
         except Exception as exc:
             logger.warning(f"feedback_correction loop 异常: {exc}")
-

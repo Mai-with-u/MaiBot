@@ -33,11 +33,7 @@ class MetadataEpisodeMixin:
         *,
         include_deleted: bool = True,
     ) -> List[str]:
-        normalized_hashes = [
-            str(item or "").strip()
-            for item in (hashes or [])
-            if str(item or "").strip()
-        ]
+        normalized_hashes = [str(item or "").strip() for item in (hashes or []) if str(item or "").strip()]
         if not normalized_hashes:
             return []
 
@@ -51,7 +47,7 @@ class MetadataEpisodeMixin:
             f"""
             SELECT DISTINCT TRIM(source) AS source
             FROM paragraphs
-            WHERE {' AND '.join(conditions)}
+            WHERE {" AND ".join(conditions)}
             """,
             tuple(normalized_hashes),
         )
@@ -78,10 +74,7 @@ class MetadataEpisodeMixin:
                 requested_at = excluded.requested_at,
                 updated_at = excluded.updated_at
             """,
-            [
-                (source, reason_text, now, now)
-                for source in normalized_sources
-            ],
+            [(source, reason_text, now, now) for source in normalized_sources],
         )
         self._conn.commit()
         return len(normalized_sources)
@@ -316,7 +309,9 @@ class MetadataEpisodeMixin:
         rows = [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
         if not exclude_stale:
             return rows
-        paragraph_hashes = [str(row.get("hash", "") or "").strip() for row in rows if str(row.get("hash", "") or "").strip()]
+        paragraph_hashes = [
+            str(row.get("hash", "") or "").strip() for row in rows if str(row.get("hash", "") or "").strip()
+        ]
         marks_by_paragraph = self.get_paragraph_stale_relation_marks_batch(paragraph_hashes) if paragraph_hashes else {}
         relation_hashes: List[str] = []
         seen = set()
@@ -407,8 +402,7 @@ class MetadataEpisodeMixin:
                 (token,),
             )
             existing_created_at = {
-                str(row["episode_id"]): self._as_optional_float(row["created_at"])
-                for row in cursor.fetchall()
+                str(row["episode_id"]): self._as_optional_float(row["created_at"]) for row in cursor.fetchall()
             }
 
             cursor.execute(
@@ -421,9 +415,7 @@ class MetadataEpisodeMixin:
                 title = str(raw_payload.get("title", "") or "").strip()
                 summary = str(raw_payload.get("summary", "") or "").strip()
                 evidence_ids = [
-                    str(item).strip()
-                    for item in (raw_payload.get("evidence_ids") or [])
-                    if str(item).strip()
+                    str(item).strip() for item in (raw_payload.get("evidence_ids") or []) if str(item).strip()
                 ]
                 evidence_ids = list(dict.fromkeys(evidence_ids))
                 if not title or not summary or not evidence_ids:
@@ -446,15 +438,9 @@ class MetadataEpisodeMixin:
                     episode_id = compute_hash(seed)
 
                 participants = [
-                    str(item).strip()
-                    for item in (raw_payload.get("participants") or [])
-                    if str(item).strip()
+                    str(item).strip() for item in (raw_payload.get("participants") or []) if str(item).strip()
                 ][:16]
-                keywords = [
-                    str(item).strip()
-                    for item in (raw_payload.get("keywords") or [])
-                    if str(item).strip()
-                ][:20]
+                keywords = [str(item).strip() for item in (raw_payload.get("keywords") or []) if str(item).strip()][:20]
                 paragraph_count = raw_payload.get("paragraph_count", len(evidence_ids))
                 try:
                     paragraph_count = max(0, int(paragraph_count))
@@ -585,7 +571,7 @@ class MetadataEpisodeMixin:
         chunk_size = 500
         uniq = list(dict.fromkeys([str(h).strip() for h in hashes if str(h).strip()]))
         for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i:i + chunk_size]
+            chunk = uniq[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             cursor.execute(
                 f"""
@@ -607,7 +593,7 @@ class MetadataEpisodeMixin:
         chunk_size = 500
         uniq = list(dict.fromkeys([str(h).strip() for h in hashes if str(h).strip()]))
         for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i:i + chunk_size]
+            chunk = uniq[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             cursor.execute(
                 f"""
@@ -735,7 +721,7 @@ class MetadataEpisodeMixin:
             return
         chunk_size = 500
         for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i:i + chunk_size]
+            chunk = uniq[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             cursor.execute(
                 f"""
@@ -759,7 +745,7 @@ class MetadataEpisodeMixin:
             return
         chunk_size = 500
         for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i:i + chunk_size]
+            chunk = uniq[i : i + chunk_size]
             placeholders = ",".join(["?"] * len(chunk))
             cursor.execute(
                 f"""

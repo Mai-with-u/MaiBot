@@ -22,10 +22,9 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
     monkeypatch.setattr(
         kernel,
         "is_chat_enabled",
-        lambda *, stream_id, group_id=None, user_id=None: events.append(
-            ("chat_enabled", (stream_id, group_id, user_id))
-        )
-        or True,
+        lambda *, stream_id, group_id=None, user_id=None: (
+            events.append(("chat_enabled", (stream_id, group_id, user_id))) or True
+        ),
     )
     monkeypatch.setattr(kernel, "_is_embedding_degraded", lambda: False)
     monkeypatch.setattr(kernel, "_dual_vector_pools_enabled", lambda: True)

@@ -53,7 +53,11 @@ class MemoryImportTuningAdminService(KernelServiceBase):
                 offset=max(0, int(kwargs.get("offset", 0) or 0)),
                 limit=max(1, int(kwargs.get("limit", 50) or 50)),
             )
-            return {"success": payload is not None, **(payload or {}), "error": "" if payload is not None else "任务或文件不存在"}
+            return {
+                "success": payload is not None,
+                **(payload or {}),
+                "error": "" if payload is not None else "任务或文件不存在",
+            }
         if act == "cancel":
             task = await manager.cancel_task(str(kwargs.get("task_id", "") or ""))
             return {"success": task is not None, "task": task, "error": "" if task is not None else "任务不存在"}
@@ -87,11 +91,7 @@ class MemoryImportTuningAdminService(KernelServiceBase):
             if isinstance(profile_raw, dict):
                 profile_payload: Dict[str, Any] = dict(profile_raw)
             else:
-                profile_payload = {
-                    key: value
-                    for key, value in kwargs.items()
-                    if key not in {"reason", "profile"}
-                }
+                profile_payload = {key: value for key, value in kwargs.items() if key not in {"reason", "profile"}}
             return {
                 "success": True,
                 **await manager.apply_profile(
@@ -130,7 +130,11 @@ class MemoryImportTuningAdminService(KernelServiceBase):
                 offset=max(0, int(kwargs.get("offset", 0) or 0)),
                 limit=max(1, int(kwargs.get("limit", 50) or 50)),
             )
-            return {"success": payload is not None, **(payload or {}), "error": "" if payload is not None else "任务不存在"}
+            return {
+                "success": payload is not None,
+                **(payload or {}),
+                "error": "" if payload is not None else "任务不存在",
+            }
         if act == "cancel":
             task = await manager.cancel_task(str(kwargs.get("task_id", "") or ""))
             return {"success": task is not None, "task": task, "error": "" if task is not None else "任务不存在"}
@@ -143,6 +147,12 @@ class MemoryImportTuningAdminService(KernelServiceBase):
                 ),
             }
         if act == "get_report":
-            report = await manager.get_report(str(kwargs.get("task_id", "") or ""), fmt=str(kwargs.get("format", "md") or "md"))
-            return {"success": report is not None, "report": report, "error": "" if report is not None else "任务不存在"}
+            report = await manager.get_report(
+                str(kwargs.get("task_id", "") or ""), fmt=str(kwargs.get("format", "md") or "md")
+            )
+            return {
+                "success": report is not None,
+                "report": report,
+                "error": "" if report is not None else "任务不存在",
+            }
         return {"success": False, "error": f"不支持的 tuning action: {act}"}

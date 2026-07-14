@@ -101,6 +101,7 @@ def _disable_unavailable_gemini_provider() -> None:
     global model_config
     try:
         from google import genai  # type: ignore  # noqa: F401
+
         return
     except ImportError:
         logger.info("未安装 google-genai，迁移时禁用 Gemini provider")
@@ -687,7 +688,9 @@ class SourceDB:
             conditions.append("1=0")
 
         if selection.time_from_ts is not None and selection.time_to_ts is not None:
-            conditions.append(f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ? AND {_sqlite_timestamp_expr(schema.start_time_expr)} <= ?)")
+            conditions.append(
+                f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ? AND {_sqlite_timestamp_expr(schema.start_time_expr)} <= ?)"
+            )
             params.extend([selection.time_from_ts, selection.time_to_ts])
         elif selection.time_from_ts is not None:
             conditions.append(f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ?)")
@@ -719,8 +722,7 @@ class SourceDB:
             f"GROUP BY {schema.chat_id_expr} ORDER BY c DESC LIMIT 30"
         )
         distribution = [
-            (_normalize_name(row["chat_id"]), int(row["c"]))
-            for row in conn.execute(dist_sql, tuple(params)).fetchall()
+            (_normalize_name(row["chat_id"]), int(row["c"])) for row in conn.execute(dist_sql, tuple(params)).fetchall()
         ]
 
         sample_sql = f"SELECT {self._select_clause(include_content_fields=False)} FROM chat_history {where_sql} ORDER BY id ASC LIMIT ?"
@@ -1286,12 +1288,7 @@ class MigrationRunner:
         participants_text = "、".join(participants) if participants else ""
         keywords_text = "、".join(keywords_top) if keywords_top else ""
 
-        content = (
-            f"话题：{theme}\n"
-            f"概括：{summary}\n"
-            f"参与者：{participants_text}\n"
-            f"关键词：{keywords_text}"
-        ).strip()
+        content = (f"话题：{theme}\n概括：{summary}\n参与者：{participants_text}\n关键词：{keywords_text}").strip()
 
         paragraph_hash = compute_hash(normalize_text(content))
         source = f"maibot.chat_history:{chat_id}"
@@ -1375,9 +1372,7 @@ class MigrationRunner:
                     self._append_bad_row(row, str(e))
                     max_errors = int(self.args.max_errors or 0)
                     if max_errors > 0 and self.stats["bad_rows"] > max_errors:
-                        raise MigrationError(
-                            f"坏行数量超过上限 max_errors={self.args.max_errors}，已中止。"
-                        ) from e
+                        raise MigrationError(f"坏行数量超过上限 max_errors={self.args.max_errors}，已中止。") from e
                     continue
 
                 self.stats["valid_rows"] += 1
@@ -1723,9 +1718,7 @@ class MigrationRunner:
             if emb_arr.ndim == 1:
                 emb_arr = emb_arr.reshape(1, -1)
             if emb_arr.shape[0] != len(chunk_ids):
-                logger.warning(
-                    f"embedding 返回数量异常: expected={len(chunk_ids)}, got={emb_arr.shape[0]}，跳过该批次"
-                )
+                logger.warning(f"embedding 返回数量异常: expected={len(chunk_ids)}, got={emb_arr.shape[0]}，跳过该批次")
                 continue
 
             valid_vectors = []

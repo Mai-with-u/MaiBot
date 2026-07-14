@@ -125,9 +125,7 @@ class SearchExecutionService:
         query_type: str,
         top_k_raw: Optional[Any],
     ) -> Tuple[bool, int, str]:
-        temporal_default_top_k = int(
-            _get_config_value(plugin_config, "retrieval.temporal.default_top_k", 10)
-        )
+        temporal_default_top_k = int(_get_config_value(plugin_config, "retrieval.temporal.default_top_k", 10))
         default_top_k = temporal_default_top_k if query_type in {"time", "hybrid"} else 10
         if top_k_raw is None:
             return True, max(1, min(50, default_top_k)), ""
@@ -172,9 +170,7 @@ class SearchExecutionService:
             allow_created_fallback=bool(
                 _get_config_value(plugin_config, "retrieval.temporal.allow_created_fallback", True)
             ),
-            candidate_multiplier=int(
-                _get_config_value(plugin_config, "retrieval.temporal.candidate_multiplier", 8)
-            ),
+            candidate_multiplier=int(_get_config_value(plugin_config, "retrieval.temporal.candidate_multiplier", 8)),
             max_scan=int(_get_config_value(plugin_config, "retrieval.temporal.max_scan", 1000)),
         )
         return True, temporal, ""
@@ -235,9 +231,7 @@ class SearchExecutionService:
                 error="search/hybrid 模式必须提供 query",
             )
 
-        top_k_ok, top_k, top_k_error = SearchExecutionService._resolve_top_k(
-            plugin_config, query_type, request.top_k
-        )
+        top_k_ok, top_k, top_k_error = SearchExecutionService._resolve_top_k(plugin_config, query_type, request.top_k)
         if not top_k_ok:
             return SearchExecutionResult(success=False, error=top_k_error)
 
@@ -253,21 +247,13 @@ class SearchExecutionService:
             return SearchExecutionResult(success=False, error=temporal_error)
 
         plugin_instance = SearchExecutionService._resolve_plugin_instance(plugin_config)
-        if (
-            enforce_chat_filter
-            and plugin_instance is not None
-            and hasattr(plugin_instance, "is_chat_enabled")
-        ):
+        if enforce_chat_filter and plugin_instance is not None and hasattr(plugin_instance, "is_chat_enabled"):
             if not plugin_instance.is_chat_enabled(
                 stream_id=request.stream_id,
                 group_id=request.group_id,
                 user_id=request.user_id,
             ):
-                logger.info(
-                    "检索请求被聊天过滤拦截: "
-                    f"caller={request.caller}, "
-                    f"stream_id={request.stream_id}"
-                )
+                logger.info(f"检索请求被聊天过滤拦截: caller={request.caller}, stream_id={request.stream_id}")
                 return SearchExecutionResult(
                     success=True,
                     query_type=query_type,
@@ -322,15 +308,9 @@ class SearchExecutionService:
                 if should_apply_threshold:
                     retrieved = threshold_filter.filter(retrieved)
 
-                if (
-                    reinforce_access
-                    and plugin_instance is not None
-                    and hasattr(plugin_instance, "reinforce_access")
-                ):
+                if reinforce_access and plugin_instance is not None and hasattr(plugin_instance, "reinforce_access"):
                     relation_hashes = [
-                        item.hash_value
-                        for item in retrieved
-                        if getattr(item, "result_type", "") == "relation"
+                        item.hash_value for item in retrieved if getattr(item, "result_type", "") == "relation"
                     ]
                     if relation_hashes:
                         await plugin_instance.reinforce_access(relation_hashes)
@@ -366,9 +346,7 @@ class SearchExecutionService:
                     )
                     if fallback_triggered:
                         logger.info(
-                            "metric.smart_fallback_triggered_count=1 "
-                            f"caller={request.caller} "
-                            f"added={fallback_added}"
+                            f"metric.smart_fallback_triggered_count=1 caller={request.caller} added={fallback_added}"
                         )
 
                 dedup_enabled = bool(
@@ -381,10 +359,7 @@ class SearchExecutionService:
                 if dedup_enabled:
                     retrieved, removed_count = apply_safe_content_dedup(list(retrieved))
                     if removed_count > 0:
-                        logger.info(
-                            f"metric.safe_dedup_removed_count={removed_count} "
-                            f"caller={request.caller}"
-                        )
+                        logger.info(f"metric.safe_dedup_removed_count={removed_count} caller={request.caller}")
 
                 elapsed_ms = (time.time() - started_at) * 1000.0
                 return {"results": retrieved, "elapsed_ms": elapsed_ms}
@@ -398,8 +373,7 @@ class SearchExecutionService:
             bypass_request_dedup = str(request.caller or "").strip().lower() == "retrieval_tuning"
             if (
                 not bypass_request_dedup
-                and
-                plugin_instance is not None
+                and plugin_instance is not None
                 and hasattr(plugin_instance, "execute_request_with_dedup")
             ):
                 dedup_hit, payload = await plugin_instance.execute_request_with_dedup(

@@ -10,9 +10,7 @@ class ConnectionTransaction:
 
     def __init__(self, connection: sqlite3.Connection, *, immediate: bool = False) -> None:
         if not isinstance(connection, ManagedSQLiteConnection):
-            raise TypeError(
-                "外部 SQLite 连接不支持受管事务；请注入 ManagedSQLiteConnection"
-            )
+            raise TypeError("外部 SQLite 连接不支持受管事务；请注入 ManagedSQLiteConnection")
         self.connection = connection
         self.immediate = immediate
         self._savepoint_name: Optional[str] = None

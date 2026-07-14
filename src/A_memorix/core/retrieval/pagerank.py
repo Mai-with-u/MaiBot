@@ -87,11 +87,7 @@ class PersonalizedPageRank:
         self._total_iterations = 0
         self._convergence_history: List[int] = []
 
-        logger.debug(
-            f"PersonalizedPageRank 初始化: "
-            f"alpha={self.config.alpha}, "
-            f"max_iter={self.config.max_iter}"
-        )
+        logger.debug(f"PersonalizedPageRank 初始化: alpha={self.config.alpha}, max_iter={self.config.max_iter}")
 
         # 缓存 Aho-Corasick 匹配器
         self._ac_matcher: Optional[AhoCorasick] = None
@@ -139,8 +135,7 @@ class PersonalizedPageRank:
         self._total_computations += 1
 
         logger.debug(
-            f"PPR计算完成: {len(scores)} 个节点, "
-            f"personalization_nodes={len(personalization) if personalization else 0}"
+            f"PPR计算完成: {len(scores)} 个节点, personalization_nodes={len(personalization) if personalization else 0}"
         )
 
         return scores
@@ -163,7 +158,7 @@ class PersonalizedPageRank:
         results = []
 
         for i, personalization in enumerate(personalization_list):
-            logger.debug(f"计算第 {i+1}/{len(personalization_list)} 个PPR")
+            logger.debug(f"计算第 {i + 1}/{len(personalization_list)} 个PPR")
             scores = self.compute(personalization=personalization, normalize=normalize)
             results.append(scores)
 
@@ -365,11 +360,7 @@ class PersonalizedPageRank:
         Returns:
             统计信息字典
         """
-        avg_iterations = (
-            self._total_iterations / self._total_computations
-            if self._total_computations > 0
-            else 0
-        )
+        avg_iterations = self._total_iterations / self._total_computations if self._total_computations > 0 else 0
 
         return {
             "config": {
@@ -425,7 +416,7 @@ class PersonalizedPageRank:
         # 执行匹配
         query_lower = query.lower()
         stats = self._ac_matcher.find_all(query_lower)
-        
+
         # 转换回原始的大小写（这里简化为从 all_nodes 中找，或者 AC 存原始值）
         # 为了简单，AC 中 add_pattern 存的是小写
         # 我们需要一个映射：小写 -> 原始
@@ -447,11 +438,7 @@ class PersonalizedPageRank:
         return self._total_iterations / self._total_computations
 
     def __repr__(self) -> str:
-        return (
-            f"PersonalizedPageRank("
-            f"alpha={self.config.alpha}, "
-            f"computations={self._total_computations})"
-        )
+        return f"PersonalizedPageRank(alpha={self.config.alpha}, computations={self._total_computations})"
 
 
 def create_ppr_from_graph(

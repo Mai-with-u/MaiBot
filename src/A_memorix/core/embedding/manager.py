@@ -14,6 +14,7 @@ import numpy as np
 
 try:
     from sentence_transformers import SentenceTransformer
+
     HAS_SENTENCE_TRANSFORMERS = True
 except ImportError:
     HAS_SENTENCE_TRANSFORMERS = False
@@ -59,10 +60,7 @@ class EmbeddingManager:
             num_workers: 工作线程数
         """
         if not HAS_SENTENCE_TRANSFORMERS:
-            raise ImportError(
-                "sentence-transformers 未安装，请安装: "
-                "pip install sentence-transformers"
-            )
+            raise ImportError("sentence-transformers 未安装，请安装: pip install sentence-transformers")
 
         self.config = config
         self.cache_dir = Path(cache_dir) if cache_dir else None
@@ -83,8 +81,7 @@ class EmbeddingManager:
         self._cache_misses = 0
 
         logger.info(
-            f"EmbeddingManager 初始化: model={config.model_name}, "
-            f"dim={config.dimension}, workers={num_workers}"
+            f"EmbeddingManager 初始化: model={config.model_name}, dim={config.dimension}, workers={num_workers}"
         )
 
     def load_model(self) -> None:
@@ -211,10 +208,7 @@ class EmbeddingManager:
 
         # 分批
         batch_size = batch_size or self.config.batch_size
-        batches = [
-            texts[i:i + batch_size]
-            for i in range(0, len(texts), batch_size)
-        ]
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
         # 多线程生成
         all_embeddings = []
@@ -358,10 +352,7 @@ class EmbeddingManager:
 
         with self._cache_lock:
             with np.load(cache_path, allow_pickle=False) as data:
-                self._embedding_cache = {
-                    str(key): np.asarray(data[key], dtype=np.float32)
-                    for key in data.files
-                }
+                self._embedding_cache = {str(key): np.asarray(data[key], dtype=np.float32) for key in data.files}
 
             logger.info(f"缓存已加载: {cache_path} ({len(self._embedding_cache)} 条)")
 
@@ -471,8 +462,6 @@ class EmbeddingManager:
             f"loaded={self.is_model_loaded}, "
             f"cache={len(self._embedding_cache)})"
         )
-
-
 
 
 def create_embedding_manager_from_config(

@@ -79,7 +79,9 @@ class MemoryEpisodeAdminService(KernelServiceBase):
             if not sources and bool(kwargs.get("all", False)):
                 sources = self.metadata_store.list_episode_sources_for_rebuild()
                 if not sources:
-                    sources = [str(row.get("source", "") or "").strip() for row in self.metadata_store.get_all_sources()]
+                    sources = [
+                        str(row.get("source", "") or "").strip() for row in self.metadata_store.get_all_sources()
+                    ]
             if not sources:
                 return {"success": False, "error": "未提供可重建的 source"}
             result = await self.rebuild_episodes_for_sources(sources)
@@ -93,4 +95,3 @@ class MemoryEpisodeAdminService(KernelServiceBase):
             return {"success": True, **result}
 
         return {"success": False, "error": f"不支持的 episode action: {act}"}
-

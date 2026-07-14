@@ -24,9 +24,7 @@ class MetadataSchemaMixin:
     def _assert_schema_compatible(self, db_existed: bool) -> None:
         """运行时执行 post-1.0 自动迁移；legacy/vNext 仍要求离线迁移。"""
         cursor = self._conn.cursor()
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
-        )
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
         has_version_table = cursor.fetchone() is not None
         if not has_version_table:
             if db_existed:
@@ -87,9 +85,7 @@ class MetadataSchemaMixin:
                     cursor.execute("PRAGMA table_info(memory_feedback_tasks)")
                     current_columns = {row[1] for row in cursor.fetchall()}
                     if col not in current_columns:
-                        raise RuntimeError(
-                            f"Schema迁移失败 (memory_feedback_tasks.{col})"
-                        ) from e
+                        raise RuntimeError(f"Schema迁移失败 (memory_feedback_tasks.{col})") from e
 
     def _ensure_paragraph_stale_relation_mark_columns(self, cursor: sqlite3.Cursor) -> None:
         """补齐段落陈旧关系标记的来源追踪列。"""
@@ -108,9 +104,7 @@ class MetadataSchemaMixin:
                     cursor.execute("PRAGMA table_info(paragraph_stale_relation_marks)")
                     current_columns = {row[1] for row in cursor.fetchall()}
                     if col not in current_columns:
-                        raise RuntimeError(
-                            f"Schema迁移失败 (paragraph_stale_relation_marks.{col})"
-                        ) from e
+                        raise RuntimeError(f"Schema迁移失败 (paragraph_stale_relation_marks.{col})") from e
 
     def _ensure_fuzzy_modify_plan_tables(self, cursor: sqlite3.Cursor) -> None:
         """补齐模糊修改计划表，用于预览、确认、执行和追溯。"""
@@ -684,7 +678,10 @@ class MetadataSchemaMixin:
         self._ensure_fuzzy_modify_plan_tables(cursor)
         self._create_performance_indexes()
         # 新版 schema 包含完整字段，直接写入版本信息
-        cursor.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (SCHEMA_VERSION, datetime.now().timestamp()))
+        cursor.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (SCHEMA_VERSION, datetime.now().timestamp()),
+        )
         self._conn.commit()
         logger.debug("数据库表结构初始化完成")
 
@@ -1186,17 +1183,11 @@ class MetadataSchemaMixin:
         columns = {row[1] for row in cursor.fetchall()}
 
         if "event_time" in columns:
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_paragraphs_event_time ON paragraphs(event_time)"
-            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_paragraphs_event_time ON paragraphs(event_time)")
         if "event_time_start" in columns:
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_paragraphs_event_start ON paragraphs(event_time_start)"
-            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_paragraphs_event_start ON paragraphs(event_time_start)")
         if "event_time_end" in columns:
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_paragraphs_event_end ON paragraphs(event_time_end)"
-            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_paragraphs_event_end ON paragraphs(event_time_end)")
 
     def _create_performance_indexes(self) -> None:
         """创建热点查询使用的补充索引。"""

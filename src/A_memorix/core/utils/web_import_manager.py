@@ -948,9 +948,7 @@ class ImportTaskManager:
             if malformed_keys:
                 preview = ", ".join(malformed_keys[:5])
                 extra = "" if len(malformed_keys) <= 5 else f" ... (+{len(malformed_keys) - 5})"
-                result["warnings"].append(
-                    f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}"
-                )
+                result["warnings"].append(f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}")
 
         return result
 
@@ -1063,7 +1061,9 @@ class ImportTaskManager:
             "name": file_record.name,
             "source_path": file_record.source_path or "",
             "source_kind": file_record.source_kind,
-            "sources": self._dedupe_sources(getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)),
+            "sources": self._dedupe_sources(
+                getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)
+            ),
         }
         self._save_manifest(manifest)
 
@@ -1253,7 +1253,9 @@ class ImportTaskManager:
             raise ValueError("start_id 不能大于 end_id")
 
         read_batch_size = _parse_optional_positive_int(payload.get("read_batch_size"), "read_batch_size") or 2000
-        commit_window_rows = _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        commit_window_rows = (
+            _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        )
         embed_batch_size = _parse_optional_positive_int(payload.get("embed_batch_size"), "embed_batch_size") or 256
         entity_embed_batch_size = (
             _parse_optional_positive_int(payload.get("entity_embed_batch_size"), "entity_embed_batch_size") or 512
@@ -1745,7 +1747,9 @@ class ImportTaskManager:
                 return None
             return task.to_detail(include_chunks=include_chunks)
 
-    async def get_chunks(self, task_id: str, file_id: str, offset: int = 0, limit: int = 50) -> Optional[Dict[str, Any]]:
+    async def get_chunks(
+        self, task_id: str, file_id: str, offset: int = 0, limit: int = 50
+    ) -> Optional[Dict[str, Any]]:
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -1802,9 +1806,7 @@ class ImportTaskManager:
             has_non_retryable = False
             for chunk in failed_chunks:
                 failed_at = str(chunk.failed_at or "").strip().lower()
-                retryable = bool(chunk.retryable) or (
-                    file_obj.input_mode == "text" and failed_at == "extracting"
-                )
+                retryable = bool(chunk.retryable) or (file_obj.input_mode == "text" and failed_at == "extracting")
                 if retryable:
                     try:
                         retry_indexes.append(int(chunk.index))
@@ -2187,8 +2189,7 @@ class ImportTaskManager:
             file_semaphore = asyncio.Semaphore(task.params["file_concurrency"])
             chunk_semaphore = asyncio.Semaphore(task.params["chunk_concurrency"])
             jobs = [
-                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore))
-                for f in task.files
+                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore)) for f in task.files
             ]
             await asyncio.gather(*jobs, return_exceptions=True)
 
@@ -2199,10 +2200,7 @@ class ImportTaskManager:
                 return
             self._recompute_task_progress(task)
             has_failed = any(
-                (f.status == "failed")
-                or (f.failed_chunks > 0)
-                or bool(str(f.error or "").strip())
-                for f in task.files
+                (f.status == "failed") or (f.failed_chunks > 0) or bool(str(f.error or "").strip()) for f in task.files
             )
             has_cancelled = any(f.status == "cancelled" for f in task.files)
             has_completed = any(f.status == "completed" for f in task.files)
@@ -3044,10 +3042,7 @@ class ImportTaskManager:
             if not selected_chunks:
                 raise RuntimeError("失败分块重试索引无效，未匹配到可执行分块")
             logger.info(
-                "重试任务按失败分块执行: "
-                f"file={file_record.name} "
-                f"selected={len(selected_chunks)} "
-                f"total={len(chunks)}"
+                f"重试任务按失败分块执行: file={file_record.name} selected={len(selected_chunks)} total={len(chunks)}"
             )
 
         await self._register_chunks(task_id, file_record.file_id, selected_chunks)
@@ -3106,6 +3101,7 @@ class ImportTaskManager:
                 f.progress = 1.0
             f.updated_at = _now()
             self._recompute_task_progress(task)
+
     async def _process_text_chunk(
         self,
         task_id: str,
@@ -3316,9 +3312,7 @@ class ImportTaskManager:
                     default_source=f"web_import:{filename}",
                 )
             except ImportPayloadValidationError as exc:
-                warnings.append(
-                    f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})"
-                )
+                warnings.append(f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})")
                 continue
             units.append(
                 {
@@ -3339,9 +3333,7 @@ class ImportTaskManager:
             name = normalize_entity_import_item(e)
             if not name:
                 raw = str(e or "").strip()
-                warnings.append(
-                    f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})"
-                )
+                warnings.append(f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})")
                 continue
             units.append(
                 {
@@ -3364,9 +3356,7 @@ class ImportTaskManager:
                     )
                 else:
                     raw = str(r or "").strip()
-                warnings.append(
-                    f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})"
-                )
+                warnings.append(f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})")
                 continue
             units.append(
                 {
@@ -3972,7 +3962,10 @@ JSON schema:
             f.current_step = step
             f.updated_at = _now()
             task.updated_at = _now()
-            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {"queued", "preparing"}:
+            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {
+                "queued",
+                "preparing",
+            }:
                 task.status = "running"
                 task.current_step = "running"
 

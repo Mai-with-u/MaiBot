@@ -290,7 +290,9 @@ class MemoryIngestService(KernelServiceBase):
                 obj=obj,
                 confidence=float(1.0 if confidence_value is None else confidence_value),
                 source_paragraph=paragraph_hash,
-                metadata=row.get("metadata") if isinstance(row.get("metadata"), dict) else {"external_id": external_token, "source_type": source_type},
+                metadata=row.get("metadata")
+                if isinstance(row.get("metadata"), dict)
+                else {"external_id": external_token, "source_type": source_type},
                 write_vector=self.relation_vectors_enabled,
             )
             self.metadata_store.link_paragraph_relation(paragraph_hash, result.hash_value)
@@ -324,12 +326,18 @@ class MemoryIngestService(KernelServiceBase):
         assert self.metadata_store is not None
         assert self.episode_service is not None
 
-        pending_rows = self.metadata_store.fetch_episode_pending_batch(limit=max(1, int(limit)), max_retry=max(1, int(max_retry)))
+        pending_rows = self.metadata_store.fetch_episode_pending_batch(
+            limit=max(1, int(limit)), max_retry=max(1, int(max_retry))
+        )
         if not pending_rows:
             return {"processed": 0, "episode_count": 0, "fallback_count": 0, "failed": 0}
 
         source_to_hashes: Dict[str, List[str]] = {}
-        pending_hashes = [str(row.get("paragraph_hash", "") or "").strip() for row in pending_rows if str(row.get("paragraph_hash", "") or "").strip()]
+        pending_hashes = [
+            str(row.get("paragraph_hash", "") or "").strip()
+            for row in pending_rows
+            if str(row.get("paragraph_hash", "") or "").strip()
+        ]
         for row in pending_rows:
             paragraph_hash = str(row.get("paragraph_hash", "") or "").strip()
             source = str(row.get("source", "") or "").strip()
@@ -348,9 +356,7 @@ class MemoryIngestService(KernelServiceBase):
                 try:
                     self.metadata_store.mark_episode_pending_failed(hash_value, error)
                 except Exception as mark_exc:
-                    logger.warning(
-                        f"回写 Episode 待处理项失败状态异常: hash={hash_value}, error={mark_exc}"
-                    )
+                    logger.warning(f"回写 Episode 待处理项失败状态异常: hash={hash_value}, error={mark_exc}")
             for source in source_to_hashes:
                 try:
                     self.metadata_store.mark_episode_source_failed(source, error)
@@ -369,22 +375,26 @@ class MemoryIngestService(KernelServiceBase):
         for hash_value, error in failed_hashes.items():
             self.metadata_store.mark_episode_pending_failed(hash_value, error)
 
-        untouched = [hash_value for hash_value in pending_hashes if hash_value not in set(done_hashes) and hash_value not in failed_hashes]
+        untouched = [
+            hash_value
+            for hash_value in pending_hashes
+            if hash_value not in set(done_hashes) and hash_value not in failed_hashes
+        ]
         for hash_value in untouched:
-            self.metadata_store.mark_episode_pending_failed(hash_value, "episode processing finished without explicit status")
+            self.metadata_store.mark_episode_pending_failed(
+                hash_value, "episode processing finished without explicit status"
+            )
 
         for source, paragraph_hashes in source_to_hashes.items():
             counts = self.metadata_store.get_episode_pending_status_counts(source)
             if counts.get("failed", 0) > 0:
                 source_error = next(
-                    (
-                        failed_hashes.get(hash_value)
-                        for hash_value in paragraph_hashes
-                        if failed_hashes.get(hash_value)
-                    ),
+                    (failed_hashes.get(hash_value) for hash_value in paragraph_hashes if failed_hashes.get(hash_value)),
                     "episode pending source contains failed rows",
                 )
-                self.metadata_store.mark_episode_source_failed(source, str(source_error or "episode pending source contains failed rows"))
+                self.metadata_store.mark_episode_source_failed(
+                    source, str(source_error or "episode pending source contains failed rows")
+                )
             elif counts.get("pending", 0) == 0 and counts.get("running", 0) == 0:
                 self.metadata_store.mark_episode_source_done(source)
 
@@ -464,4 +474,3 @@ class MemoryIngestService(KernelServiceBase):
             item_hash=str(entity.get("hash", "") or ""),
             text=str(entity.get("name", "") or ""),
         )
-

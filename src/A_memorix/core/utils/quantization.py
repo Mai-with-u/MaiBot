@@ -15,9 +15,10 @@ logger = get_logger("A_Memorix.Quantization")
 
 class QuantizationType(Enum):
     """量化类型枚举"""
+
     FLOAT32 = "float32"  # 无量化
-    INT8 = "int8"        # 标量量化（8位整数）
-    PQ = "pq"            # 乘积量化（Product Quantization）
+    INT8 = "int8"  # 标量量化（8位整数）
+    PQ = "pq"  # 乘积量化（Product Quantization）
 
 
 def quantize_vector(
@@ -102,7 +103,7 @@ def _scalar_quantize_int8(vector: np.ndarray) -> np.ndarray:
 
     # 归一化到 [0, 255]
     normalized = (vector - min_val) / (max_val - min_val) * 255
-    
+
     # 映射到 [-128, 127] 并转换为 int8
     # np.round 仍返回浮点数，因此先减 128 再转换类型。
     quantized = np.round(normalized - 128.0).astype(np.int8)
@@ -276,9 +277,7 @@ def estimate_compression_stats(
     }
 
 
-def _product_quantize(
-    vector: np.ndarray, m: int = 8, k: int = 256
-) -> Tuple[np.ndarray, np.ndarray]:
+def _product_quantize(vector: np.ndarray, m: int = 8, k: int = 256) -> Tuple[np.ndarray, np.ndarray]:
     """
     乘积量化 (PQ) 简化实现
 
@@ -311,10 +310,10 @@ def _product_quantize(
             linspace = np.zeros(k)
         else:
             linspace = np.linspace(sub_min, sub_max, k)
-        
+
         for j in range(k):
-             centroids[i, j, :] = linspace[j]
-        
+            centroids[i, j, :] = linspace[j]
+
         # 编码：这里简化为取子空间均值找最接近的 centroid
         sub_mean = np.mean(sub_vec)
         code = np.argmin(np.abs(linspace - sub_mean))

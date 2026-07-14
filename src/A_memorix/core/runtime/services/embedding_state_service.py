@@ -92,9 +92,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
             else None
         )
         if ready_manifest is not None:
-            manifest_fingerprint = self._normalize_embedding_fingerprint(
-                ready_manifest.get("embedding_fingerprint")
-            )
+            manifest_fingerprint = self._normalize_embedding_fingerprint(ready_manifest.get("embedding_fingerprint"))
             if manifest_fingerprint is not None:
                 return manifest_fingerprint
 
@@ -128,9 +126,8 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         store.save(embedding_fingerprint=current_fingerprint)
         logger.warning("旧向量库缺少 embedding 指纹且维度匹配，已写入当前模型指纹以复用旧向量")
         stamped_fingerprint = self._stored_embedding_fingerprint(store)
-        return (
-            stamped_fingerprint is not None
-            and str(stamped_fingerprint.get("hash", "") or "") == str(current_fingerprint.get("hash", "") or "")
+        return stamped_fingerprint is not None and str(stamped_fingerprint.get("hash", "") or "") == str(
+            current_fingerprint.get("hash", "") or ""
         )
 
     @staticmethod

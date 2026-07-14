@@ -46,10 +46,7 @@ class MemorySearchService(KernelServiceBase):
             return {
                 "summary": "",
                 "hits": [],
-                "error": (
-                    f"不支持的检索模式: {mode}（仅支持 search/time/hybrid/episode/aggregate，"
-                    "semantic 已移除）"
-                ),
+                "error": (f"不支持的检索模式: {mode}（仅支持 search/time/hybrid/episode/aggregate，semantic 已移除）"),
             }
         try:
             time_window = self._normalize_search_time_window(request.time_start, request.time_end)
@@ -151,7 +148,13 @@ class MemorySearchService(KernelServiceBase):
         )
         hits = [self._retrieval_result_hit(item) for item in result.results] if result.success else []
         hits = self._filter_hits_by_chat_scope(hits, request.chat_id, shared_chat_ids)
-        return {"success": result.success, "results": hits, "count": len(hits), "query_type": "search", "error": result.error}
+        return {
+            "success": result.success,
+            "results": hits,
+            "count": len(hits),
+            "query_type": "search",
+            "error": result.error,
+        }
 
     async def _aggregate_time(
         self,
@@ -174,7 +177,13 @@ class MemorySearchService(KernelServiceBase):
         )
         hits = [self._retrieval_result_hit(item) for item in result.results] if result.success else []
         hits = self._filter_hits_by_chat_scope(hits, request.chat_id, shared_chat_ids)
-        return {"success": result.success, "results": hits, "count": len(hits), "query_type": "time", "error": result.error}
+        return {
+            "success": result.success,
+            "results": hits,
+            "count": len(hits),
+            "query_type": "time",
+            "error": result.error,
+        }
 
     async def _aggregate_episode(
         self,

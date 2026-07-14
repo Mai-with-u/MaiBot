@@ -532,7 +532,13 @@ def test_same_content_from_different_streams_keeps_same_hash_for_idempotency(tmp
     }
 
     row1 = _Row(id=1, chat_id="stream-a", **base)
-    row2 = _Row(id=2, chat_id="stream-b", start_time=1800000000, end_time=1800000100, **{k: v for k, v in base.items() if k not in {"start_time", "end_time"}})
+    row2 = _Row(
+        id=2,
+        chat_id="stream-b",
+        start_time=1800000000,
+        end_time=1800000100,
+        **{k: v for k, v in base.items() if k not in {"start_time", "end_time"}},
+    )
 
     assert runner._map_row(row1).paragraph_hash == runner._map_row(row2).paragraph_hash
 

@@ -40,8 +40,7 @@ def _dual_vector_ready(data_dir: Path, *, expected_dimension: int) -> bool:
     manifest_dimension = int(payload.get("dimension", 0) or 0)
     if manifest_dimension not in {0, int(expected_dimension)}:
         logger.warning(
-            "双池 ready manifest 维度不匹配: "
-            f"manifest={manifest_dimension}, expected={int(expected_dimension)}"
+            f"双池 ready manifest 维度不匹配: manifest={manifest_dimension}, expected={int(expected_dimension)}"
         )
         return False
     return (data_dir / "vectors" / "paragraph").exists() and (data_dir / "vectors" / "graph").exists()
@@ -105,15 +104,13 @@ def start_background_tasks(plugin: Any) -> None:
     ):
         plugin._scheduled_import_task = asyncio.create_task(plugin._scheduled_import_loop())
 
-    if (
-        plugin.get_config("advanced.enable_auto_save", True)
-        and (plugin._auto_save_task is None or plugin._auto_save_task.done())
+    if plugin.get_config("advanced.enable_auto_save", True) and (
+        plugin._auto_save_task is None or plugin._auto_save_task.done()
     ):
         plugin._auto_save_task = asyncio.create_task(plugin._auto_save_loop())
 
-    if (
-        plugin.get_config("person_profile.enabled", True)
-        and (plugin._person_profile_refresh_task is None or plugin._person_profile_refresh_task.done())
+    if plugin.get_config("person_profile.enabled", True) and (
+        plugin._person_profile_refresh_task is None or plugin._person_profile_refresh_task.done()
     ):
         plugin._person_profile_refresh_task = asyncio.create_task(plugin._person_profile_refresh_loop())
 
@@ -124,10 +121,7 @@ def start_background_tasks(plugin: Any) -> None:
     if (
         callable(profile_queue_loop)
         and plugin.get_config("person_profile.enabled", True)
-        and (
-            plugin._person_profile_refresh_queue_task is None
-            or plugin._person_profile_refresh_queue_task.done()
-        )
+        and (plugin._person_profile_refresh_queue_task is None or plugin._person_profile_refresh_queue_task.done())
     ):
         plugin._person_profile_refresh_queue_task = asyncio.create_task(profile_queue_loop())
 
@@ -141,8 +135,10 @@ def start_background_tasks(plugin: Any) -> None:
     else:
         rv_enabled = False
         rv_backfill = False
-    if rv_enabled and rv_backfill and (
-        plugin._relation_vector_backfill_task is None or plugin._relation_vector_backfill_task.done()
+    if (
+        rv_enabled
+        and rv_backfill
+        and (plugin._relation_vector_backfill_task is None or plugin._relation_vector_backfill_task.done())
     ):
         plugin._relation_vector_backfill_task = asyncio.create_task(plugin._relation_vector_backfill_loop())
 
@@ -243,9 +239,7 @@ async def initialize_storage_async(plugin: Any) -> None:
     plugin.graph_vector_store.min_train_threshold = plugin.get_config("embedding.min_train_threshold", 40)
     vector_pools_cfg = plugin.get_config("retrieval.vector_pools", {}) or {}
     vector_pool_mode = (
-        str(vector_pools_cfg.get("mode", "dual") if isinstance(vector_pools_cfg, dict) else "dual")
-        .strip()
-        .lower()
+        str(vector_pools_cfg.get("mode", "dual") if isinstance(vector_pools_cfg, dict) else "dual").strip().lower()
     )
     dual_vector_ready = vector_pool_mode == "dual" and _dual_vector_ready(
         data_dir,
@@ -255,9 +249,7 @@ async def initialize_storage_async(plugin: Any) -> None:
         logger.warning("双池配置已开启，但 ready manifest 不可用，当前按单池检索与写入运行")
     _set_runtime_vector_pools_ready(plugin, dual_vector_ready)
     logger.info(
-        "向量存储初始化完成（"
-        f"维度: {detected_dimension}, "
-        f"训练阈值: {plugin.vector_store.min_train_threshold}）"
+        f"向量存储初始化完成（维度: {detected_dimension}, 训练阈值: {plugin.vector_store.min_train_threshold}）"
     )
 
     matrix_format_str = plugin.get_config("graph.sparse_matrix_format", "csr")
@@ -322,10 +314,7 @@ async def initialize_storage_async(plugin: Any) -> None:
                 f"duration_ms={float(warmup_summary.get('duration_ms', 0.0)):.2f}"
             )
         else:
-            logger.warning(
-                "稀疏索引预热失败，后续检索将按需重试: "
-                f"{warmup_summary.get('error', 'unknown')}"
-            )
+            logger.warning(f"稀疏索引预热失败，后续检索将按需重试: {warmup_summary.get('error', 'unknown')}")
 
     if plugin.vector_store.has_data():
         try:
@@ -356,10 +345,7 @@ async def initialize_storage_async(plugin: Any) -> None:
                 f"duration_ms={float(warmup_summary.get('duration_ms', 0.0)):.2f}"
             )
         else:
-            logger.warning(
-                "向量索引预热失败，继续启用 sparse 降级路径: "
-                f"{warmup_summary.get('error', 'unknown')}"
-            )
+            logger.warning(f"向量索引预热失败，继续启用 sparse 降级路径: {warmup_summary.get('error', 'unknown')}")
     except Exception as e:
         logger.warning(f"向量索引预热异常，继续启用 sparse 降级路径: {e}")
     if dual_vector_ready:

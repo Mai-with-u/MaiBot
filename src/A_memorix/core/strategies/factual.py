@@ -4,6 +4,7 @@ import re
 
 from .base import BaseStrategy, ProcessedChunk, KnowledgeType, SourceInfo, ChunkContext
 
+
 class FactualStrategy(BaseStrategy):
     DEFAULT_TARGET_SIZE = 1200
 
@@ -13,33 +14,33 @@ class FactualStrategy(BaseStrategy):
 
     def split(self, text: str) -> List[ProcessedChunk]:
         # 结构感知切分
-        lines = text.split('\n')
+        lines = text.split("\n")
         chunks = []
         current_chunk_lines = []
         current_len = 0
         target_size = self.target_size
-        
+
         for line in lines:
             # 判断是否应当切分
             # 若当前行为列表项/定义/表格行，则尽量不切分
             is_structure = self._is_structural_line(line)
-            
+
             current_len += len(line) + 1
             current_chunk_lines.append(line)
-            
+
             # 达到目标长度且不在紧凑结构块内时切分（过长时强制切分）
             if current_len >= target_size and not is_structure:
-                 chunks.append(self._create_chunk(current_chunk_lines, len(chunks)))
-                 current_chunk_lines = []
-                 current_len = 0
-            elif current_len >= target_size * 2: # 超长时强制切分
-                 chunks.append(self._create_chunk(current_chunk_lines, len(chunks)))
-                 current_chunk_lines = []
-                 current_len = 0
+                chunks.append(self._create_chunk(current_chunk_lines, len(chunks)))
+                current_chunk_lines = []
+                current_len = 0
+            elif current_len >= target_size * 2:  # 超长时强制切分
+                chunks.append(self._create_chunk(current_chunk_lines, len(chunks)))
+                current_chunk_lines = []
+                current_len = 0
 
         if current_chunk_lines:
             chunks.append(self._create_chunk(current_chunk_lines, len(chunks)))
-            
+
         return chunks
 
     def _is_structural_line(self, line: str) -> bool:
@@ -47,13 +48,13 @@ class FactualStrategy(BaseStrategy):
         if not line:
             return False
         # 列表项
-        if re.match(r'^[\-\*]\s+', line) or re.match(r'^\d+\.\s+', line):
+        if re.match(r"^[\-\*]\s+", line) or re.match(r"^\d+\.\s+", line):
             return True
         # 定义项（术语: 定义）
-        if re.match(r'^[^：:]+[：:].+', line):
+        if re.match(r"^[^：:]+[：:].+", line):
             return True
         # 表格行（按 markdown 语法假设）
-        if line.startswith('|') and line.endswith('|'):
+        if line.startswith("|") and line.endswith("|"):
             return True
         return False
 
@@ -63,15 +64,11 @@ class FactualStrategy(BaseStrategy):
             type=KnowledgeType.FACTUAL,
             source=SourceInfo(
                 file=self.filename,
-                offset_start=0, # 简化处理：真实偏移跟踪需要额外状态
+                offset_start=0,  # 简化处理：真实偏移跟踪需要额外状态
                 offset_end=0,
-                checksum=self.calculate_checksum(text)
+                checksum=self.calculate_checksum(text),
             ),
-            chunk=ChunkContext(
-                chunk_id=f"{self.filename}_{index}",
-                index=index,
-                text=text
-            )
+            chunk=ChunkContext(chunk_id=f"{self.filename}_{index}", index=index, text=text),
         )
 
     async def extract(self, chunk: ProcessedChunk, llm_func=None) -> ProcessedChunk:
@@ -100,7 +97,7 @@ Return ONLY valid JSON:
 }}
 """
         result = await llm_func(prompt)
-        
+
         # 结果保持原样存入 data，后续统一归一化流程会处理
         # vector_store 侧期望关系字段为 subject/predicate/object 映射形式
         chunk.data = result

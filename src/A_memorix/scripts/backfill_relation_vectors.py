@@ -23,6 +23,7 @@ import tomlkit
 
 from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR, resolve_repo_path
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="关系向量一次性回填")
     parser.add_argument(
@@ -211,9 +212,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 limit=max(1, limit),
                 max_retry=max(1, max_retry),
             )
-            ready_missing_rows = [
-                row for row in ready_rows if str(row.get("hash", "")) not in vector_store
-            ]
+            ready_missing_rows = [row for row in ready_rows if str(row.get("hash", "")) not in vector_store]
             added_ready_missing = len(ready_missing_rows)
             if ready_missing_rows:
                 dedup: Dict[str, Dict[str, Any]] = {}

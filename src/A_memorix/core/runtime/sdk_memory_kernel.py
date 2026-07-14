@@ -218,22 +218,18 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
     def _cfg(self, key: str, default: Any = None) -> Any:
         current: Any = self.config
-        if (
-            key
-            in {
-                "storage",
-                "embedding",
-                "retrieval",
-                "graph",
-                "episode",
-                "web",
-                "advanced",
-                "threshold",
-                "summarization",
-                "person_profile",
-            }
-            and isinstance(current, dict)
-        ):
+        if key in {
+            "storage",
+            "embedding",
+            "retrieval",
+            "graph",
+            "episode",
+            "web",
+            "advanced",
+            "threshold",
+            "summarization",
+            "person_profile",
+        } and isinstance(current, dict):
             return current.get(key, default)
         for part in key.split("."):
             if isinstance(current, dict) and part in current:
@@ -899,7 +895,9 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             limit=limit,
         )
 
-    async def refresh_person_profile(self, person_id: str, limit: int = 10, *, mark_active: bool = True) -> Dict[str, Any]:
+    async def refresh_person_profile(
+        self, person_id: str, limit: int = 10, *, mark_active: bool = True
+    ) -> Dict[str, Any]:
         service = self._profile_admin_service
         return await type(service).refresh_person_profile(
             service,
@@ -1492,7 +1490,9 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         return resolve_knowledge_type(source_type)
 
     @staticmethod
-    def _time_meta(timestamp: Optional[float], time_start: Optional[float], time_end: Optional[float]) -> Dict[str, Any]:
+    def _time_meta(
+        timestamp: Optional[float], time_start: Optional[float], time_end: Optional[float]
+    ) -> Dict[str, Any]:
         return time_meta(timestamp, time_start, time_end)
 
     @classmethod
@@ -1648,7 +1648,9 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._profile_admin_service
         return type(service)._build_profile_evidence_items(service, profile)
 
-    def _profile_evidence_response(self, profile: Dict[str, Any], *, requested_person_id: str, limit: int) -> Dict[str, Any]:
+    def _profile_evidence_response(
+        self, profile: Dict[str, Any], *, requested_person_id: str, limit: int
+    ) -> Dict[str, Any]:
         service = self._profile_admin_service
         return type(service)._profile_evidence_response(
             service,

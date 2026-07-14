@@ -225,10 +225,7 @@ async def run_embedding_runtime_self_check(
         )
 
     if encoded_dimension != expected_dimension:
-        msg = (
-            "embedding 真实输出维度与当前向量存储不一致: "
-            f"expected={expected_dimension}, encoded={encoded_dimension}"
-        )
+        msg = f"embedding 真实输出维度与当前向量存储不一致: expected={expected_dimension}, encoded={encoded_dimension}"
         logger.error(msg)
         return _build_report(
             ok=False,

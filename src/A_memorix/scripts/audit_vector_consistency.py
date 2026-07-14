@@ -19,6 +19,7 @@ from typing import Any, Dict, Set
 
 from _bootstrap import DEFAULT_DATA_DIR, resolve_repo_path
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="审计 A_Memorix 向量一致性")
     parser.add_argument(
@@ -103,9 +104,7 @@ def run_audit(data_dir: Path) -> Dict[str, Any]:
         ent_vector_hits = len(entity_hashes & live_vector_hashes)
         rel_vector_hits = len(relation_hashes & live_vector_hashes)
 
-        orphan_vector_hashes = sorted(
-            live_vector_hashes - paragraph_hashes - entity_hashes - relation_hashes
-        )
+        orphan_vector_hashes = sorted(live_vector_hashes - paragraph_hashes - entity_hashes - relation_hashes)
 
         relation_rows = metadata_store.get_relations()
         ready_but_missing = 0
@@ -195,8 +194,7 @@ def main() -> int:
         print(f"json_out: {out_path}")
 
     has_anomaly = (
-        result["orphans"]["vector_only_count"] > 0
-        or result["consistency_checks"]["ready_but_missing_vector"] > 0
+        result["orphans"]["vector_only_count"] > 0 or result["consistency_checks"]["ready_but_missing_vector"] > 0
     )
     if args.strict and has_anomaly:
         return 1

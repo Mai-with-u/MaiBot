@@ -17,8 +17,7 @@ def test_profile_evidence_type_from_source_falls_back_to_source_prefix() -> None
 
 def test_profile_relation_content_formats_complete_relation() -> None:
     assert (
-        profile_relation_content({"subject": "Alice", "predicate": "喜欢", "object": "绿茶"})
-        == "Alice -[喜欢]-> 绿茶"
+        profile_relation_content({"subject": "Alice", "predicate": "喜欢", "object": "绿茶"}) == "Alice -[喜欢]-> 绿茶"
     )
     assert profile_relation_content({"subject": "Alice", "object": "绿茶"}) == "Alice 绿茶"
 

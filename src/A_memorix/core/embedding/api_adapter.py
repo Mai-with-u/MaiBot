@@ -122,9 +122,7 @@ class EmbeddingAPIAdapter:
         provider_token = str(self._last_success_provider_name or "").strip()
         source = "observed" if model_token else "configured"
         candidate_names = [
-            str(item or "").strip()
-            for item in self._resolve_candidate_model_names()
-            if str(item or "").strip()
+            str(item or "").strip() for item in self._resolve_candidate_model_names() if str(item or "").strip()
         ]
         if not model_token:
             model_token = str(self.model_name or "auto").strip() or "auto"
@@ -289,9 +287,7 @@ class EmbeddingAPIAdapter:
 
                 should_include_dimension = self._should_include_dimension(dimensions, include_dimension)
                 requested_dimension = (
-                    self._resolve_canonical_dimension(dimensions)
-                    if should_include_dimension
-                    else None
+                    self._resolve_canonical_dimension(dimensions) if should_include_dimension else None
                 )
                 extra_params = self._build_request_extra_params(
                     api_provider=api_provider,
@@ -404,7 +400,9 @@ class EmbeddingAPIAdapter:
         start_time = time.time()
         if dimensions is None or self.dimension_request_mode == "never":
             target_dim = int(await self._detect_dimension())
-            requested_dimension = None if self.dimension_request_mode != "always" else self._resolve_canonical_dimension()
+            requested_dimension = (
+                None if self.dimension_request_mode != "always" else self._resolve_canonical_dimension()
+            )
         else:
             target_dim = self._resolve_canonical_dimension(dimensions)
             requested_dimension = target_dim
@@ -492,10 +490,7 @@ class EmbeddingAPIAdapter:
                     )
                     return batch_index, vector
 
-            tasks = [
-                encode_with_semaphore(text, index, offset + index)
-                for index, text in uncached_items
-            ]
+            tasks = [encode_with_semaphore(text, index, offset + index) for index, text in uncached_items]
             results = await asyncio.gather(*tasks)
             normalized_results: List[Tuple[int, np.ndarray]] = []
             for batch_index, vector in results:

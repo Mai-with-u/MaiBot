@@ -4,6 +4,7 @@ import re
 
 from .base import BaseStrategy, ProcessedChunk, KnowledgeType, SourceInfo, ChunkContext
 
+
 class NarrativeStrategy(BaseStrategy):
     DEFAULT_WINDOW_SIZE = 1600
     DEFAULT_OVERLAP = 400
@@ -17,17 +18,17 @@ class NarrativeStrategy(BaseStrategy):
     def split(self, text: str) -> List[ProcessedChunk]:
         scenes = self._split_into_scenes(text)
         chunks = []
-        
+
         for scene_idx, (scene_text, scene_title) in enumerate(scenes):
-             scene_chunks = self._sliding_window(
-                 scene_text,
-                 scene_title,
-                 scene_idx,
-                 window_size=self.window_size,
-                 overlap=self.overlap,
-             )
-             chunks.extend(scene_chunks)
-             
+            scene_chunks = self._sliding_window(
+                scene_text,
+                scene_title,
+                scene_idx,
+                window_size=self.window_size,
+                overlap=self.overlap,
+            )
+            chunks.extend(scene_chunks)
+
         return chunks
 
     def _split_into_scenes(self, text: str) -> List[tuple[str, str]]:
@@ -35,18 +36,18 @@ class NarrativeStrategy(BaseStrategy):
         # 简单启发式：按 markdown 标题或特定分隔符切分
         # 该正则匹配以 #、Chapter 或 *** / === 开头的分隔行
         # 该正则匹配以 #、Chapter 或 *** / === 开头的分隔行
-        scene_pattern_str = r'^(?:#{1,6}\s+.*|Chapter\s+\d+|^\*{3,}$|^={3,}$)'
-        
+        scene_pattern_str = r"^(?:#{1,6}\s+.*|Chapter\s+\d+|^\*{3,}$|^={3,}$)"
+
         # 保留分隔符，以便识别场景起点
         parts = re.split(f"({scene_pattern_str})", text, flags=re.MULTILINE)
-        
+
         scenes = []
         current_scene_title = "Start"
         current_scene_content = []
-        
+
         if parts and parts[0].strip() == "":
             parts = parts[1:]
-            
+
         for part in parts:
             if re.match(scene_pattern_str, part, re.MULTILINE):
                 # 先保存上一段场景
@@ -56,17 +57,19 @@ class NarrativeStrategy(BaseStrategy):
                 current_scene_title = part.strip()
             else:
                 current_scene_content.append(part)
-                
+
         if current_scene_content:
-             scenes.append(("".join(current_scene_content), current_scene_title))
-             
+            scenes.append(("".join(current_scene_content), current_scene_title))
+
         # 若未识别到场景，则把全文视作单一场景
         if not scenes:
             scenes = [(text, "Whole Text")]
 
         return scenes
 
-    def _sliding_window(self, text: str, scene_id: str, scene_idx: int, window_size=800, overlap=200) -> List[ProcessedChunk]:
+    def _sliding_window(
+        self, text: str, scene_id: str, scene_idx: int, window_size=800, overlap=200
+    ) -> List[ProcessedChunk]:
         chunks = []
         if len(text) <= window_size:
             chunks.append(self._create_chunk(text, scene_id, scene_idx, 0, 0))
@@ -77,23 +80,23 @@ class NarrativeStrategy(BaseStrategy):
         while start < len(text):
             end = min(start + window_size, len(text))
             chunk_text = text[start:end]
-            
+
             # 尽量对齐到最近换行，避免生硬截断句子
             # 仅在未到文本尾部时进行回退
             if end < len(text):
-                last_newline = chunk_text.rfind('\n')
-                if last_newline > window_size // 2: # 仅在回退距离可接受时启用
+                last_newline = chunk_text.rfind("\n")
+                if last_newline > window_size // 2:  # 仅在回退距离可接受时启用
                     end = start + last_newline + 1
                     chunk_text = text[start:end]
-            
+
             chunks.append(self._create_chunk(chunk_text, scene_id, scene_idx, local_idx, start))
-            
+
             if end < len(text):
                 start += max(1, len(chunk_text) - overlap)
             else:
                 start += len(chunk_text)
             local_idx += 1
-            
+
         return chunks
 
     def _create_chunk(self, text: str, scene_id: str, scene_idx: int, local_idx: int, offset: int) -> ProcessedChunk:
@@ -103,14 +106,14 @@ class NarrativeStrategy(BaseStrategy):
                 file=self.filename,
                 offset_start=offset,
                 offset_end=offset + len(text),
-                checksum=self.calculate_checksum(text)
+                checksum=self.calculate_checksum(text),
             ),
             chunk=ChunkContext(
                 chunk_id=f"{self.filename}_{scene_idx}_{local_idx}",
                 index=local_idx,
                 text=text,
-                context={"scene_id": scene_id}
-            )
+                context={"scene_id": scene_id},
+            ),
         )
 
     async def extract(self, chunk: ProcessedChunk, llm_func=None) -> ProcessedChunk:
@@ -127,7 +130,7 @@ Language constraints:
 - JSON keys must stay exactly as: events, relations, subject, predicate, object.
 
 Scene:
-{chunk.chunk.context.get('scene_id')}
+{chunk.chunk.context.get("scene_id")}
 
 Text:
 {chunk.chunk.text}

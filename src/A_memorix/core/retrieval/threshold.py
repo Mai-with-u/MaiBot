@@ -19,9 +19,9 @@ class ThresholdMethod(Enum):
     """阈值计算方法"""
 
     PERCENTILE = "percentile"  # 百分位数
-    STD_DEV = "std_dev"        # 标准差
+    STD_DEV = "std_dev"  # 标准差
     GAP_DETECTION = "gap_detection"  # 跳变检测
-    ADAPTIVE = "adaptive"      # 自适应（综合多种方法）
+    ADAPTIVE = "adaptive"  # 自适应（综合多种方法）
 
 
 @dataclass
@@ -136,24 +136,18 @@ class DynamicThresholdFilter:
         self._threshold_history.append(threshold)
 
         # 应用阈值过滤
-        filtered_results = [
-            r for r in results
-            if r.score >= threshold
-        ]
+        filtered_results = [r for r in results if r.score >= threshold]
 
         # 确保至少保留min_results个结果
         if len(filtered_results) < self.config.min_results:
             # 按分数排序，取前min_results个
             sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
-            filtered_results = sorted_results[:self.config.min_results]
+            filtered_results = sorted_results[: self.config.min_results]
             threshold = filtered_results[-1].score if filtered_results else 0.0
 
         self._total_filtered += len(results) - len(filtered_results)
 
-        logger.info(
-            f"过滤完成: {len(results)} -> {len(filtered_results)} "
-            f"(threshold={threshold:.3f})"
-        )
+        logger.info(f"过滤完成: {len(results)} -> {len(filtered_results)} (threshold={threshold:.3f})")
 
         if return_threshold:
             return filtered_results, threshold
@@ -267,10 +261,7 @@ class DynamicThresholdFilter:
         # 阈值为跳变后的分数
         threshold = float(sorted_scores[max_gap_idx + 1])
 
-        logger.debug(
-            f"跳变检测阈值: {threshold:.3f} "
-            f"(gap={gaps[max_gap_idx]:.3f}, idx={max_gap_idx})"
-        )
+        logger.debug(f"跳变检测阈值: {threshold:.3f} (gap={gaps[max_gap_idx]:.3f}, idx={max_gap_idx})")
         return threshold
 
     def _auto_adjust_threshold(
@@ -303,10 +294,7 @@ class DynamicThresholdFilter:
         # 如果差异过大（>0.2），向历史平均靠拢
         if abs(diff) > 0.2:
             adjusted_threshold = avg_threshold + diff * 0.5  # 向中间靠拢50%
-            logger.debug(
-                f"阈值调整: {threshold:.3f} -> {adjusted_threshold:.3f} "
-                f"(历史平均={avg_threshold:.3f})"
-            )
+            logger.debug(f"阈值调整: {threshold:.3f} -> {adjusted_threshold:.3f} (历史平均={avg_threshold:.3f})")
             return adjusted_threshold
 
         return threshold
@@ -338,10 +326,7 @@ class DynamicThresholdFilter:
                 if result.score >= min_confidence:
                     filtered.append(result)
 
-        logger.info(
-            f"置信度过滤: {len(results)} -> {len(filtered)} "
-            f"(min_confidence={min_confidence})"
-        )
+        logger.info(f"置信度过滤: {len(results)} -> {len(filtered)} (min_confidence={min_confidence})")
 
         return filtered
 
@@ -388,10 +373,7 @@ class DynamicThresholdFilter:
                 selected.append(result)
                 selected_hashes.append(result.hash_value)
 
-        logger.info(
-            f"多样性过滤: {len(results)} -> {len(selected)} "
-            f"(similarity_threshold={similarity_threshold})"
-        )
+        logger.info(f"多样性过滤: {len(results)} -> {len(selected)} (similarity_threshold={similarity_threshold})")
 
         return selected
 
@@ -402,11 +384,7 @@ class DynamicThresholdFilter:
         Returns:
             统计信息字典
         """
-        filter_rate = (
-            self._total_filtered / self._total_processed
-            if self._total_processed > 0
-            else 0.0
-        )
+        filter_rate = self._total_filtered / self._total_processed if self._total_processed > 0 else 0.0
 
         stats = {
             "config": {
@@ -422,8 +400,7 @@ class DynamicThresholdFilter:
                 "total_processed": self._total_processed,
                 "total_filtered": self._total_filtered,
                 "filter_rate": filter_rate,
-                "avg_threshold": float(np.mean(self._threshold_history))
-                if self._threshold_history else 0.0,
+                "avg_threshold": float(np.mean(self._threshold_history)) if self._threshold_history else 0.0,
                 "threshold_count": len(self._threshold_history),
             },
         }

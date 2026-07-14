@@ -295,9 +295,7 @@ class TestCollectDualGraphEvidence:
         cfg = VectorPoolsConfig(entity_expand_per_hit=2)
         retriever = _make_retriever(cfg)
         # 图谱池返回 entity:e1 / entity:e2，解析后 hash 为 e1 / e2
-        retriever.graph_vector_store = _make_fake_graph_vector_store(
-            [("entity:e1", 0.9), ("entity:e2", 0.5)]
-        )
+        retriever.graph_vector_store = _make_fake_graph_vector_store([("entity:e1", 0.9), ("entity:e2", 0.5)])
         meta = _make_fake_meta()
         meta.get_relations_by_hashes = MagicMock(return_value={})
         meta.get_entities_by_hashes.return_value = {
@@ -333,9 +331,7 @@ class TestCollectDualGraphEvidence:
         """图谱向量池中 relation:xxx ID 应展开并加权。"""
         cfg = VectorPoolsConfig(relation_expand_per_hit=3)
         retriever = _make_retriever(cfg)
-        retriever.graph_vector_store = _make_fake_graph_vector_store(
-            [("relation:r1", 0.8)]
-        )
+        retriever.graph_vector_store = _make_fake_graph_vector_store([("relation:r1", 0.8)])
         meta = _make_fake_meta()
         meta.get_relations_by_hashes = MagicMock(
             return_value={
@@ -476,16 +472,28 @@ class TestAddCandidateScore:
         candidates: Dict[str, RetrievalResult] = {}
         paragraph = {"hash": "p-max", "content": "测试", "word_count": 1}
         retriever._add_candidate_score(
-            candidates, paragraph,
-            score_key="semantic", score=0.3, source="src", temporal=None,
+            candidates,
+            paragraph,
+            score_key="semantic",
+            score=0.3,
+            source="src",
+            temporal=None,
         )
         retriever._add_candidate_score(
-            candidates, paragraph,
-            score_key="semantic", score=0.9, source="src", temporal=None,
+            candidates,
+            paragraph,
+            score_key="semantic",
+            score=0.9,
+            source="src",
+            temporal=None,
         )
         retriever._add_candidate_score(
-            candidates, paragraph,
-            score_key="semantic", score=0.6, source="src", temporal=None,
+            candidates,
+            paragraph,
+            score_key="semantic",
+            score=0.6,
+            source="src",
+            temporal=None,
         )
         candidate = candidates["p-max"]
         score_meta = retriever._candidate_score_meta(candidate)
@@ -496,12 +504,20 @@ class TestAddCandidateScore:
         candidates: Dict[str, RetrievalResult] = {}
         paragraph = {"hash": "p-sparse", "content": "测试", "word_count": 1}
         retriever._add_candidate_score(
-            candidates, paragraph,
-            score_key="sparse", score=0.4, source="src1", temporal=None,
+            candidates,
+            paragraph,
+            score_key="sparse",
+            score=0.4,
+            source="src1",
+            temporal=None,
         )
         retriever._add_candidate_score(
-            candidates, paragraph,
-            score_key="sparse", score=0.7, source="src2", temporal=None,
+            candidates,
+            paragraph,
+            score_key="sparse",
+            score=0.7,
+            source="src2",
+            temporal=None,
         )
         candidate = candidates["p-sparse"]
         score_meta = retriever._candidate_score_meta(candidate)

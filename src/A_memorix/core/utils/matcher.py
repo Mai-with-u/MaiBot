@@ -126,7 +126,7 @@ class AhoCorasick:
     def search(self, text: str) -> List[Tuple[int, str]]:
         """
         在文本中搜索所有模式
-        
+
         Returns:
             [(结束索引, 匹配到的模式), ...]
         """
@@ -134,8 +134,7 @@ class AhoCorasick:
             try:
                 matches = self._native_matcher.find_matches_as_indexes(text)  # type: ignore[attr-defined]
                 return [
-                    (int(end) - 1, self._native_patterns[int(pattern_index)])
-                    for pattern_index, _start, end in matches
+                    (int(end) - 1, self._native_patterns[int(pattern_index)]) for pattern_index, _start, end in matches
                 ]
             except (IndexError, RuntimeError, TypeError, ValueError) as exc:
                 logger.warning(f"原生匹配器查询失败，切换到 Python 实现: {exc}")
@@ -155,7 +154,7 @@ class AhoCorasick:
     def find_all(self, text: str) -> Dict[str, int]:
         """
         查找并统计所有模式出现次数
-        
+
         Returns:
             {模式: 出现次数}
         """

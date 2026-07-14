@@ -43,7 +43,10 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 person_id=str(kwargs.get("person_id", "") or "").strip(),
                 person_keyword=str(kwargs.get("person_keyword", "") or kwargs.get("keyword", "") or "").strip(),
                 chat_id=str(kwargs.get("chat_id", "") or "").strip(),
-                limit=max(1, int(kwargs.get("limit", fuzzy_modify_cfg_candidate_limit()) or fuzzy_modify_cfg_candidate_limit())),
+                limit=max(
+                    1,
+                    int(kwargs.get("limit", fuzzy_modify_cfg_candidate_limit()) or fuzzy_modify_cfg_candidate_limit()),
+                ),
                 requested_by=str(kwargs.get("requested_by", "") or "webui").strip(),
                 reason=str(kwargs.get("reason", "") or "").strip(),
             )
@@ -313,7 +316,12 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                     execution={**execution, "rollback": rollback_result},
                     reason=reason if reason else None,
                 )
-                return {"success": False, "plan": updated, "rollback": rollback_result, "error": rollback_result["error"]}
+                return {
+                    "success": False,
+                    "plan": updated,
+                    "rollback": rollback_result,
+                    "error": rollback_result["error"],
+                }
 
         restored_targets: List[Dict[str, Any]] = []
         restore_failures: List[Dict[str, str]] = []
@@ -374,9 +382,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                         expected_source_id=str(snapshot.get("source_id", "") or token),
                         expected_source_operation_id=str(snapshot.get("source_operation_id", "") or ""),
                         previous_mark=(
-                            snapshot.get("previous_mark")
-                            if isinstance(snapshot.get("previous_mark"), dict)
-                            else None
+                            snapshot.get("previous_mark") if isinstance(snapshot.get("previous_mark"), dict) else None
                         ),
                     )
                     action = str(rollback_mark.get("action", "") or "").strip()
@@ -401,7 +407,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 if updated is not None:
                     restored_targets.append({"target_type": target_type, "hash": hash_value})
                 else:
-                    restore_failures.append({"target_type": target_type, "hash": hash_value, "error": "目标段落不存在或已删除"})
+                    restore_failures.append(
+                        {"target_type": target_type, "hash": hash_value, "error": "目标段落不存在或已删除"}
+                    )
                 continue
             if target_type == "relation" and hash_value:
                 updated = self.metadata_store.update_relation_metadata(hash_value, previous_metadata, merge=False)
@@ -619,7 +627,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 operation: Dict[str, Any] = {
                     "action": "ingest_text",
                     "text": text,
-                    "source_type": str(raw.get("source_type", "") or ("person_fact" if person_id else "memory")).strip(),
+                    "source_type": str(
+                        raw.get("source_type", "") or ("person_fact" if person_id else "memory")
+                    ).strip(),
                     "chat_id": str(raw.get("chat_id", "") or chat_id).strip(),
                     "person_ids": merge_argument_tokens(raw.get("person_ids"), [person_id]),
                     "participants": argument_tokens(raw.get("participants")),
@@ -745,7 +755,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         counts = {
             "relations": len(relations),
             "relations_mark_inactive": sum(1 for item in relations if item.get("action") == "mark_inactive"),
-            "relations_mark_stale_evidence": sum(1 for item in relations if item.get("action") == "mark_stale_evidence"),
+            "relations_mark_stale_evidence": sum(
+                1 for item in relations if item.get("action") == "mark_stale_evidence"
+            ),
             "relations_skipped_protected": sum(1 for item in relations if item.get("action") == "skipped_protected"),
             "entities": len(entities),
         }
@@ -960,7 +972,9 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             for item in operations
             if item.get("action") == "mark_superseded" and str(item.get("hash", "") or "").strip()
         ]
-        for index, operation in enumerate([item for item in operations if item.get("action") == "ingest_text"], start=1):
+        for index, operation in enumerate(
+            [item for item in operations if item.get("action") == "ingest_text"], start=1
+        ):
             op_reason = str(operation.get("reason", "") or reason or plan.get("request_text", "") or "").strip()
             metadata = {
                 "memory_change": {
@@ -1047,14 +1061,16 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         valid_to = optional_float(operation.get("valid_to")) or changed_at
         reason = str(operation.get("reason", "") or default_reason or "").strip()
         patch = {
-                "memory_change": {
-                    "change_id": change_id,
-                    "change_type": "mark_superseded",
+            "memory_change": {
+                "change_id": change_id,
+                "change_type": "mark_superseded",
                 "changed_at": changed_at,
                 "changed_by": changed_by,
                 "reason": reason,
                 "valid_to": valid_to,
-                "superseded_by_hashes": [str(item or "").strip() for item in replacement_hashes if str(item or "").strip()],
+                "superseded_by_hashes": [
+                    str(item or "").strip() for item in replacement_hashes if str(item or "").strip()
+                ],
             }
         }
         if target_type == "paragraph":
@@ -1131,4 +1147,3 @@ class MemoryCorrectionAdminService(KernelServiceBase):
     @staticmethod
     def _fuzzy_modify_cfg_allow_global_scope() -> bool:
         return fuzzy_modify_cfg_allow_global_scope()
-

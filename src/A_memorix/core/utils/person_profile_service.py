@@ -4,6 +4,7 @@
 主链路：
 person_id -> 用户名/别名 -> 图谱关系 + 向量证据 -> 证据总结画像 -> 快照版本化存储
 """
+
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -183,9 +184,7 @@ class PersonProfileService:
 
         try:
             with get_db_session(auto_commit=False) as session:
-                record = session.exec(
-                    select(PersonInfo.person_id).where(PersonInfo.person_id == key).limit(1)
-                ).first()
+                record = session.exec(select(PersonInfo.person_id).where(PersonInfo.person_id == key).limit(1)).first()
                 if record:
                     return str(record)
 
@@ -203,9 +202,7 @@ class PersonProfileService:
                     return str(record)
 
                 record = session.exec(
-                    select(PersonInfo.person_id)
-                    .where(PersonInfo.group_cardname.contains(key))
-                    .limit(1)
+                    select(PersonInfo.person_id).where(PersonInfo.group_cardname.contains(key)).limit(1)
                 ).first()
                 if record:
                     return str(record)
@@ -309,9 +306,7 @@ class PersonProfileService:
         recovered_aliases, recovered_primary_name = self._recover_aliases_from_memory(person_id)
         try:
             with get_db_session(auto_commit=False) as session:
-                record = session.exec(
-                    select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)
-                ).first()
+                record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
                     return recovered_aliases, recovered_primary_name or person_id, memory_traits
             person_name = str(getattr(record, "person_name", "") or "").strip()
@@ -359,11 +354,7 @@ class PersonProfileService:
 
         relations = list(relation_by_hash.values())
         if person_id:
-            relations = [
-                rel
-                for rel in relations
-                if self._is_relation_bound_to_person(rel, person_id=person_id)
-            ]
+            relations = [rel for rel in relations if self._is_relation_bound_to_person(rel, person_id=person_id)]
         relations.sort(key=lambda item: float(item.get("confidence", 0.0)), reverse=True)
         relations = relations[: max(1, int(limit))]
 
@@ -419,9 +410,7 @@ class PersonProfileService:
 
         source = f"person_fact:{token}"
         paragraphs = [
-            row
-            for row in self.metadata_store.get_paragraphs_by_source(source)
-            if not bool(row.get("is_deleted", 0))
+            row for row in self.metadata_store.get_paragraphs_by_source(source) if not bool(row.get("is_deleted", 0))
         ]
         paragraphs.sort(
             key=lambda item: float(item.get("updated_at") or item.get("created_at") or 0.0),
@@ -895,11 +884,16 @@ class PersonProfileService:
             return "stable_facts"
         if cls._looks_uncertain_or_temporary(content):
             return "uncertain_notes"
-        if any(token in content for token in ("身份", "职业", "工作", "学生", "老师", "作者", "画师", "设定", "角色", "来自")):
+        if any(
+            token in content
+            for token in ("身份", "职业", "工作", "学生", "老师", "作者", "画师", "设定", "角色", "来自")
+        ):
             return "identity_settings"
         if any(token in content for token in ("关系", "朋友", "同事", "群友", "主人", "搭档", "称呼", "叫", "认识")):
             return "relationship_settings"
-        if any(token in content for token in ("喜欢", "讨厌", "偏好", "习惯", "不喜欢", "希望", "雷点", "介意", "更愿意")):
+        if any(
+            token in content for token in ("喜欢", "讨厌", "偏好", "习惯", "不喜欢", "希望", "雷点", "介意", "更愿意")
+        ):
             return "interaction_preferences"
         return "stable_facts"
 
@@ -1084,8 +1078,4 @@ class PersonProfileService:
         text = build_profile_injection_text(text)
         if not text:
             return ""
-        return (
-            "【人物画像-内部参考】\n"
-            f"{text}\n"
-            "仅供内部推理，不要向用户逐字复述。"
-        )
+        return f"【人物画像-内部参考】\n{text}\n仅供内部推理，不要向用户逐字复述。"
