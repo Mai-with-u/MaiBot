@@ -91,6 +91,14 @@ class HeartflowManager:
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
 
+    async def release_chat(self, session_id: str, *, reason: str = "released") -> None:
+        """停止并移除指定会话的心流实例。
+
+        供聊天流删除等外部路径复用，与 LRU 淘汰共用同一条 stop 逻辑，
+        避免绕过 stop 直接弹出字典导致后台任务泄漏。
+        """
+        await self._evict_chat(session_id, reason=reason)
+
     def adjust_talk_frequency(self, session_id: str, frequency: float) -> None:
         """调整指定聊天流的说话频率。"""
         chat = self.heartflow_chat_list.get(session_id)
