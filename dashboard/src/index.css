@@ -115,6 +115,27 @@
   }
 }
 
+@keyframes toast-countdown {
+  from {
+    transform: scaleX(1);
+  }
+
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.toast-progress {
+  animation-name: toast-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+[data-dashboard-toast="true"]:hover .toast-progress,
+[data-dashboard-toast="true"]:focus-within .toast-progress {
+  animation-play-state: paused;
+}
+
 @keyframes future-retro-gear-rotate {
   to {
     transform: rotate(360deg);
