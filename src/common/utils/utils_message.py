@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 logger = get_logger("message_utils")
 
 
-# 串行化 store_message_to_db / update_message_id 的 SQLite 写入：
+# 串行化 store_message_to_db / store_sent_message_to_db / update_message_id 的 SQLite 写入：
 # 底层 SQLite WAL 仅允许单写，busy_timeout 1s。bot 进程不只一个 event loop
 # （bot.py 主 loop、WebUI 在另一个线程的独立 loop、临时 asyncio.run 调用等），
 # 因此 lock 必须是进程级的 threading.Lock 而不是 asyncio.Lock；后者只能互斥
@@ -230,6 +230,30 @@ class MessageUtils:
         本体里持有，本方法仅做 `to_thread` 透传。
         """
         await asyncio.to_thread(MessageUtils.store_message_to_db, message)
+
+    @staticmethod
+    def store_sent_message_to_db(message: "SessionMessage") -> None:
+        """存储 bot 已发送的消息到数据库。
+
+        与 `store_message_to_db` 的差别是不做图片组件落盘（发送侧组件
+        不携带待持久化的二进制数据）；写入同样必须持有
+        `_DB_WRITE_THREAD_LOCK`，参见锁注释。
+        """
+        from src.common.database.database import get_db_session
+
+        with _DB_WRITE_THREAD_LOCK:
+            with get_db_session() as session:
+                MessageUtils.fill_reply_frequency_if_available(message)
+                session.add(message.to_db_instance())
+
+    @staticmethod
+    async def store_sent_message_to_db_async(message: "SessionMessage") -> None:
+        """异步存储 bot 已发送的消息。
+
+        把同步 SQLAlchemy session 移出事件循环；锁逻辑在
+        `store_sent_message_to_db` 本体里持有，本方法仅做 `to_thread` 透传。
+        """
+        await asyncio.to_thread(MessageUtils.store_sent_message_to_db, message)
 
     @staticmethod
     def fill_reply_frequency_if_available(message: "SessionMessage") -> None:
