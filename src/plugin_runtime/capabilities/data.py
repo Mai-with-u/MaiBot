@@ -537,6 +537,17 @@ class RuntimeDataCapabilityMixin:
                     limit=args.get("limit", 0),
                 )
 
+            # 插件通过 get_recent 拿到的消息是序列化 dict，需要反序列化为 SessionMessage
+            if isinstance(messages, list):
+                from src.plugin_runtime.host.message_utils import PluginMessageUtils
+
+                messages = [
+                    PluginMessageUtils._build_session_message_from_dict(message)
+                    if isinstance(message, dict)
+                    else message
+                    for message in messages
+                ]
+
             readable = message_service.build_readable_messages(
                 messages=messages,
                 replace_bot_name=args.get("replace_bot_name", True),
