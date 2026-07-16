@@ -219,7 +219,13 @@ class MCPConnection:
                 )
             )
         else:
-            self._http_client = await self._exit_stack.enter_async_context(self._build_http_client())
+            # 新版 streamable_http_client 不再接收 headers 参数，必须通过 httpx 客户端注入。
+            # ModelScope 等服务要求 Accept 同时包含 application/json 与 text/event-stream。
+            self._http_client = await self._exit_stack.enter_async_context(
+                self._build_http_client(
+                    headers={"Accept": "application/json, text/event-stream"},
+                )
+            )
             read_stream, write_stream, session_id_getter = await self._exit_stack.enter_async_context(
                 streamable_http_client(
                     url=self.config.url,
