@@ -90,7 +90,6 @@ def run_runner_process():
 
     while True:
         logger.info(t("startup.launching_script", script_file=script_file))
-        logger.info(t("startup.compiling_shaders"))
 
         # 启动子进程 (Worker)
         # 使用 sys.executable 确保使用相同的 Python 解释器

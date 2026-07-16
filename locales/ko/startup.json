@@ -6,7 +6,6 @@
   "startup.brain_external_world_failed": "브레인 및 외부 세계 시작 실패: {error}",
   "startup.chat_manager_initialized": "채팅 관리자 초기화 완료",
   "startup.child_process_force_kill": "자식 프로세스가 응답하지 않아 강제 종료 중...",
-  "startup.compiling_shaders": "셰이더 컴파일 중: 1/114514",
   "startup.dev_branch_warning": "경고: Dev 브랜치가 불안정한 개발 상태입니다. 플러그인 및 WebUI가 정상적으로 작동하지 않을 수 있습니다!",
   "startup.easter_egg": "수년 후, AI 총살대 앞에 선 장삼은 2023년 회의에서 인공지능에 대해 논의하던 그 오후를 떠올리게 될 것이다",
   "startup.emoji_manager_initialized": "이모지 관리자 초기화 완료",

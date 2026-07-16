@@ -6,7 +6,6 @@
   "startup.brain_external_world_failed": "ブレインと外部世界の起動に失敗しました: {error}",
   "startup.chat_manager_initialized": "チャットマネージャーの初期化が完了しました",
   "startup.child_process_force_kill": "子プロセスが応答しないため、強制終了します...",
-  "startup.compiling_shaders": "シェーダーをコンパイル中: 1/114514",
   "startup.dev_branch_warning": "警告: Devブランチは不安定な開発状態です。プラグインおよびWebUIが正常に動作しない場合があります！",
   "startup.easter_egg": "何年も後、AIの銃殺隊の前に立たされた時、張三は2023年のあの午後、会議で人工知能について議論していたことを思い出すだろう",
   "startup.emoji_manager_initialized": "絵文字マネージャーの初期化が完了しました",
