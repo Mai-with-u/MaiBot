@@ -8,7 +8,6 @@ from rich.traceback import install
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import calculate_typing_time, truncate_message
 from src.common.data_models.message_component_data_model import ReplyComponent
-from src.common.database.database import get_db_session
 from src.common.logger import get_logger
 from src.common.message_server.api import get_global_api
 from src.common.utils.utils_message import MessageUtils
@@ -354,9 +353,9 @@ class UniversalMessageSender:
             #         message.processed_plain_text = modified_message.plain_text
 
             if storage_message:
-                with get_db_session() as db_session:
-                    MessageUtils.fill_reply_frequency_if_available(message)
-                    db_session.add(message.to_db_instance())
+                # 必须走 MessageUtils 的串行写入路径：直接同步写库会绕过
+                # 进程级写锁并阻塞事件循环，DB 争用时消息已发出但落库失败。
+                await MessageUtils.store_sent_message_to_db_async(message)
 
             try:
                 from src.services.memory_flow_service import memory_automation_service

@@ -29,6 +29,7 @@ from src.common.database.database_model import (
     ToolRecord,
 )
 from src.common.logger import get_logger
+from src.common.runtime_loop import run_on_main_loop
 from src.common.utils.utils_config import (
     BehaviorConfigUtils,
     ChatConfigUtils,
@@ -1097,14 +1098,23 @@ def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
     }
 
 
-def _release_deleted_chat_runtime(session_id: str) -> None:
-    """移除运行期缓存，避免定时保存把已删除聊天流重新写回数据库。"""
+async def _release_deleted_chat_runtime(session_id: str) -> None:
+    """在主循环上停止心流实例并移除运行期缓存。
 
-    core_chat_manager.sessions.pop(session_id, None)
-    heartflow_manager.heartflow_chat_list.pop(session_id, None)
+    一是避免定时保存把已删除聊天流重新写回数据库；二是这些对象归主循环
+    持有，直接在 WebUI 线程弹出会留下仍在运行的后台任务（幽灵 runtime），
+    并与主循环的字典写入竞态，因此统一投递到主循环，并复用
+    heartflow_manager 的淘汰路径完成 stop。
+    """
+
+    async def _stop_and_release() -> None:
+        core_chat_manager.sessions.pop(session_id, None)
+        await heartflow_manager.release_chat(session_id, reason="webui_delete")
+
+    await run_on_main_loop(_stop_and_release())
 
 
-def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
+async def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
     """删除聊天流及所有直接归属该 session_id 的数据库记录。"""
 
     with get_db_session() as session:
@@ -1132,7 +1142,7 @@ def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
             total_deleted += deleted_count
             items.append({"key": key, "label": label, "count": deleted_count})
 
-    _release_deleted_chat_runtime(session_id)
+    await _release_deleted_chat_runtime(session_id)
     logger.warning(
         "已删除聊天流及关联数据: "
         f"session_id={session_id} total_deleted={total_deleted} items={items}"
@@ -1313,7 +1323,7 @@ async def delete_chat_session(session_id: str) -> Dict[str, object]:
     if not normalized_session_id:
         raise HTTPException(status_code=400, detail="缺少聊天流 session_id")
 
-    return _delete_chat_session_scope(normalized_session_id)
+    return await _delete_chat_session_scope(normalized_session_id)
 
 
 @router.put("/sessions/{session_id}/talk-frequency")

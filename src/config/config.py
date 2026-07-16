@@ -9,6 +9,7 @@ import tomlkit
 
 from src.common.i18n import t
 from src.common.logger import get_logger
+from src.common.runtime_loop import run_on_main_loop
 from src.common.version import read_project_version
 
 from .config_base import AttributeData, ConfigBase, Field
@@ -426,6 +427,22 @@ class ConfigManager:
         if not normalized_scopes:
             logger.debug("配置热重载未命中有效范围，已跳过")
             return True
+
+        # WebUI 运行在独立线程的第二事件循环上，也会触发热重载；asyncio.Lock
+        # 只能互斥同一个 loop 内的协程，跨 loop 争用时要么抛 RuntimeError 要么
+        # 完全失去互斥。统一投递到主循环执行，保证重载与回调串行化，且回调
+        # （如对主循环 asyncio.Event 的 set）总是在其所属的事件循环上运行。
+        return await run_on_main_loop(self._reload_config_on_main_loop(normalized_scopes))
+
+    async def _reload_config_on_main_loop(self, normalized_scopes: tuple[str, ...]) -> bool:
+        """在主循环上串行执行配置热重载。
+
+        Args:
+            normalized_scopes: 已规范化的配置变更范围。
+
+        Returns:
+            bool: 是否重载成功。
+        """
 
         async with self._reload_lock:
             try:
