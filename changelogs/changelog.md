@@ -2,6 +2,10 @@
 
 测试版更新日志见 [changelog_dev.md](changelog_dev.md)。
 
+# [1.1.0] - 2026-7-17
+
+
+
 # [1.0.12] - 2026-7-9
 
 ## MaiSaka

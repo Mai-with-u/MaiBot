@@ -23,6 +23,7 @@ services:
       # 监听地址和端口会用于生成或迁移 ./docker-config/mmc/bot_config.toml 的 maim_message 与 webui 配置段
       - ./docker-config/mmc:/MaiMBot/config # 持久化bot配置文件
       - ./data/MaiMBot:/MaiMBot/data # 共享目录
+      - ./data/MaiMBot-plugin-data:/MaiMBot/data/plugins # 插件持久数据目录，与插件源码目录隔离
       - ./data/MaiMBot/emoji:/data/emoji # 持久化表情包
       - ./data/MaiMBot/plugins:/MaiMBot/plugins # 插件目录
       - ./data/MaiMBot/logs:/MaiMBot/logs # 日志目录

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MaiBot"
-version = "1.0.12"
+version = "1.1.0"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
 requires-python = ">=3.12"
 dependencies = [
