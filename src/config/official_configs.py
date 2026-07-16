@@ -214,6 +214,26 @@ class PersonalityConfig(ConfigBase):
     )
     """麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。"""
 
+    behavior_style: str = Field(
+        default=(
+            "先观察聊天上下文和他人的反应，再决定是否参与。只在被提及、对话题感兴趣或确实能推进聊天时行动，"
+            "不需要回应每条消息；不适合参与时保持安静。"
+        ),
+        json_schema_extra={
+            "label": {
+                "zh_CN": "行为风格",
+                "en_US": "Behavior style",
+                "ja_JP": "行動スタイル",
+            },
+            "x-widget": "textarea",
+            "x-icon": "compass",
+            "x-textarea-min-height": 40,
+            "x-textarea-rows": 1,
+            "x-description-display": "icon",
+        },
+    )
+    """Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。"""
+
     reply_style: str = Field(
         default="你的风格平淡简短。可以参考贴吧，知乎和微博的回复风格。不浮夸不长篇大论，不要过分修辞和复杂句。尽量回复的简短一些，平淡一些",
         json_schema_extra={

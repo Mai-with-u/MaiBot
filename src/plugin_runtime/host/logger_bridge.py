@@ -1,14 +1,29 @@
+from typing import Optional
+
 import logging as stdlib_logging
+
 from src.plugin_runtime.protocol.errors import ErrorCode
 from src.plugin_runtime.protocol.envelope import Envelope, LogBatchPayload
+
+
 class RunnerLogBridge:
     """将 Runner 进程上报的批量日志重放到主进程的 Logger 中。
 
     Runner 通过 ``runner.log_batch`` IPC 事件批量到达。
     每条 LogEntry 被重建为一个真实的 :class:`logging.LogRecord` 并直接
-    调用 ``logging.getLogger(entry.logger_name).handle(record)``，
-    从而接入主进程已配置好的 structlog Handler 链。
+    Runner 内部日志可按运行时分组重命名后接入主进程已配置好的
+    structlog Handler 链；插件自身日志保留原始 Logger 名称。
     """
+
+    def __init__(self, runtime_logger_name: Optional[str] = None) -> None:
+        """初始化 Runner 日志桥接器。
+
+        Args:
+            runtime_logger_name: Runner 内部运行时日志在 Host 侧使用的 Logger 名称。
+                插件自身日志仍保留原始 Logger 名称。
+        """
+
+        self._runtime_logger_name = runtime_logger_name
 
     async def handle_log_batch(self, envelope: Envelope) -> Envelope:
         """IPC 事件处理器：解析批量日志并重放到主进程 Logger。
@@ -25,9 +40,13 @@ class RunnerLogBridge:
             return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
 
         for entry in batch.entries:
+            logger_name = entry.logger_name
+            if self._runtime_logger_name is not None and logger_name.startswith("plugin_runtime."):
+                logger_name = self._runtime_logger_name
+
             # 重建一个与原始日志尽量相符的 LogRecord
             record = stdlib_logging.LogRecord(
-                name=entry.logger_name,
+                name=logger_name,
                 level=entry.level,
                 pathname="<runner>",
                 lineno=0,
@@ -40,6 +59,6 @@ class RunnerLogBridge:
             if entry.exception_text:
                 record.exc_text = entry.exception_text
 
-            stdlib_logging.getLogger(entry.logger_name).handle(record)
+            stdlib_logging.getLogger(logger_name).handle(record)
 
         return envelope.make_response(payload={"accepted": True, "count": len(batch.entries)})

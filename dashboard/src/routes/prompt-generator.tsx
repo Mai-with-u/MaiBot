@@ -578,7 +578,7 @@ export function PromptGeneratorPage() {
                   <Textarea
                     value={sourceText}
                     onChange={(event) => setSourceText(event.target.value)}
-                    placeholder="可以粘贴角色卡、几句人设、说话风格描述、群聊要求，模型会拆成 personality / reply_style / chat prompt。"
+                    placeholder="可以粘贴角色卡、几句人设、行为偏好、说话风格或群聊要求，模型会拆成人格、行为风格、表达方式与聊天 Prompt。"
                     className="min-h-[380px]"
                     maxLength={20000}
                   />

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from src.config.config import Config
 from src.config.config_base import AttributeData, ConfigBase, Field
-from src.config.official_configs import AMemorixConfig, ChatConfig, MessageReceiveConfig
+from src.config.official_configs import AMemorixConfig, ChatConfig, MessageReceiveConfig, PersonalityConfig
 from src.webui.dependencies import require_auth
 from src.webui.config_schema import (
     AMEMORIX_ADVANCED_FIELD_PATHS,
@@ -78,6 +78,15 @@ def test_nested_model_schema():
     assert "description" in talk_value
     assert talk_value.get("x-widget") == "slider"
     assert talk_value.get("minValue") == 0
+
+
+def test_personality_schema_exposes_behavior_style():
+    """核心设置需要从官方配置架构读取独立的行为风格字段。"""
+    schema = ConfigSchemaGenerator.generate_schema(PersonalityConfig)
+    behavior_style = next(field for field in schema["fields"] if field["name"] == "behavior_style")
+
+    assert behavior_style["label"]["zh_CN"] == "行为风格"
+    assert behavior_style.get("x-widget") == "textarea"
 
 
 def test_config_subtab_metadata_is_exposed():
