@@ -72,6 +72,23 @@ def _normalize_chat_scope(raw_value: Any) -> ComponentChatScope:
     return "all"
 
 
+def _flatten_extension_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """将 SDK `model_dump` 产生的嵌套 `metadata` 提升到顶层。
+
+    maibot-plugin-sdk 序列化组件信息时，会把 `core_tool` 等扩展字段放在
+    `metadata["metadata"]` 下。若不展平，宿主只读顶层时这些声明会失效。
+    """
+
+    normalized = dict(metadata)
+    nested = normalized.pop("metadata", None)
+    if not isinstance(nested, dict):
+        return normalized
+    for key, value in nested.items():
+        if key not in normalized:
+            normalized[key] = value
+    return normalized
+
+
 class StatusDict(TypedDict):
     total: int
     action: int
@@ -669,7 +686,7 @@ class ComponentRegistry:
 
         try:
             normalized_type = self._normalize_component_type(component_type)
-            normalized_metadata = dict(metadata)
+            normalized_metadata = _flatten_extension_metadata(dict(metadata))
             if normalized_type == ComponentTypes.ACTION:
                 normalized_metadata = self._convert_action_metadata_to_tool_metadata(name, normalized_metadata)
                 component = ToolEntry(
