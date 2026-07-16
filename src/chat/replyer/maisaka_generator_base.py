@@ -52,6 +52,10 @@ from .maisaka_expression_selector import maisaka_expression_selector
 logger = get_logger("replyer")
 
 REPLYER_MAX_HOOK_RETRIES = 3
+REPLYER_LEAKED_TOOL_MARKUP_PATTERN = re.compile(
+    r"<tool[_\s]?(?:use|call|result)\b",
+    re.IGNORECASE,
+)
 TOOL_RESULT_MEDIA_SOURCE_KIND = "tool_result_media"
 DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 
@@ -873,10 +877,18 @@ class BaseMaisakaReplyGenerator:
         )
 
     @staticmethod
+    def _contains_leaked_tool_markup(text: str) -> bool:
+        """判断回复文本是否泄漏了工具调用 XML/标记。"""
+
+        return bool(text and REPLYER_LEAKED_TOOL_MARKUP_PATTERN.search(text))
+
+    @staticmethod
     def _is_replyer_filtered_history_message(message: LLMContextMessage) -> bool:
         """判断 replyer 侧需要过滤掉的非真实聊天上下文。"""
 
         if isinstance(message, (ReferenceMessage, ToolResultMessage)):
+            return True
+        if isinstance(message, AssistantMessage) and message.tool_calls:
             return True
         if isinstance(message, SessionBackedMessage) and message.source_kind == TOOL_RESULT_MEDIA_SOURCE_KIND:
             return True
@@ -1159,6 +1171,17 @@ class BaseMaisakaReplyGenerator:
             matched_regex_pattern = str(after_response_kwargs.get("matched_regex_pattern") or "").strip()
             matched_regex_description = str(after_response_kwargs.get("matched_regex_description") or "").strip()
             retry_reason = str(after_response_kwargs.get("retry_reason") or "").strip()
+            if self._contains_leaked_tool_markup(response_text):
+                # 模型偶发把 <tool_use> 写进 content；禁止把工具调用结构发给用户。
+                retry_requested = True
+                if not matched_regex:
+                    matched_regex = "leaked_tool_markup"
+                if not matched_regex_pattern:
+                    matched_regex_pattern = REPLYER_LEAKED_TOOL_MARKUP_PATTERN.pattern
+                if not matched_regex_description:
+                    matched_regex_description = "回复文本泄漏了工具调用标记"
+                if not retry_reason:
+                    retry_reason = "回复中包含工具调用 XML/标记，只能输出给用户看的自然语言"
             if retry_requested and retry_count < REPLYER_MAX_HOOK_RETRIES:
                 reason_parts = []
                 if matched_regex:
@@ -1197,13 +1220,21 @@ class BaseMaisakaReplyGenerator:
                 )
                 continue
             if retry_requested:
-                logger.warning(
-                    f"Maisaka 回复器已达到重生成上限，将使用最后一次回复: "
-                    f"session={preview_chat_id} retry={retry_count}/{REPLYER_MAX_HOOK_RETRIES} "
-                    f"rule={matched_regex or 'unknown'} "
-                    f"pattern={matched_regex_pattern or 'unknown'} "
-                    f"response={self._normalize_content(response_text, limit=300)!r}"
-                )
+                if self._contains_leaked_tool_markup(response_text):
+                    logger.warning(
+                        "Maisaka 回复器已达到重生成上限，且最终回复仍含工具调用标记，已丢弃: "
+                        f"session={preview_chat_id} retry={retry_count}/{REPLYER_MAX_HOOK_RETRIES} "
+                        f"response={self._normalize_content(response_text, limit=300)!r}"
+                    )
+                    response_text = ""
+                else:
+                    logger.warning(
+                        f"Maisaka 回复器已达到重生成上限，将使用最后一次回复: "
+                        f"session={preview_chat_id} retry={retry_count}/{REPLYER_MAX_HOOK_RETRIES} "
+                        f"rule={matched_regex or 'unknown'} "
+                        f"pattern={matched_regex_pattern or 'unknown'} "
+                        f"response={self._normalize_content(response_text, limit=300)!r}"
+                    )
             break
 
         result.success = bool(response_text)
