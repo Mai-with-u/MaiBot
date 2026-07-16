@@ -418,8 +418,9 @@ export function isPluginCompatible(
     const maxVersion = parseVersionTuple(pluginMaxVersion)
     const isHigherThanMax = compareVersionTuple(currentVersion, maxVersion) > 0
 
-    // 与运行时 manifest 校验保持一致：同一主版本内高于声明上限时，以兼容模式允许。
-    if (isHigherThanMax && currentVersion[0] !== maxVersion[0]) {
+    // 与运行时 manifest 校验保持一致：仅修订号高于声明上限时，以兼容模式允许。
+    const isSameMajorMinor = currentVersion[0] === maxVersion[0] && currentVersion[1] === maxVersion[1]
+    if (isHigherThanMax && !isSameMajorMinor) {
       return false
     }
   }
