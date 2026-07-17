@@ -626,6 +626,12 @@ class MaisakaChatLoopService:
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
+            # personality 默认值与官方文档均建议使用第二人称（如「你是一个大二女大学生」），
+            # 而下方会在昵称后接「是」，直接拼接会得到「{bot_name}是你是…」这类重复「是」。
+            # 拼接前去掉开头的「你」，避免这种情况；Replyer 侧独立成行使用，不受影响。
+            if prompt_personality.startswith("你是"):
+                prompt_personality = prompt_personality[1:]
+
             if prompt_personality.startswith("是"):
                 identity_line = f"{bot_name}{prompt_personality}"
             else:
