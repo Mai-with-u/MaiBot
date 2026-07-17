@@ -267,13 +267,29 @@ class ComponentQueryService:
         )
 
     @staticmethod
+    def _read_tool_metadata_value(entry: "ToolEntry", key: str, default: Any = None) -> Any:
+        """读取工具元数据字段，兼容 SDK model_dump 后的嵌套 ``metadata``。
+
+        ``@Tool(core_tool=True)`` 经 SDK ``collect_components()`` 序列化后常为
+        ``{"metadata": {"core_tool": true}, ...}``，顶层没有 ``core_tool``。
+        """
+
+        metadata = entry.metadata or {}
+        if key in metadata and metadata.get(key) is not None:
+            return metadata.get(key)
+        nested = metadata.get("metadata")
+        if isinstance(nested, dict) and key in nested and nested.get(key) is not None:
+            return nested.get(key)
+        return default
+
+    @staticmethod
     def _get_tool_visibility(entry: "ToolEntry") -> str:
         """读取插件工具面向 LLM 的可见性声明。"""
 
-        raw_visibility = str(entry.metadata.get("visibility") or "").strip().lower()
+        raw_visibility = str(ComponentQueryService._read_tool_metadata_value(entry, "visibility") or "").strip().lower()
         if raw_visibility in {"visible", "deferred", "hidden"}:
             return raw_visibility
-        if bool(entry.metadata.get("core_tool", False)):
+        if bool(ComponentQueryService._read_tool_metadata_value(entry, "core_tool", False)):
             return "visible"
         return "deferred"
 
