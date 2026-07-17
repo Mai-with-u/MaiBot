@@ -91,6 +91,15 @@ class HeartflowManager:
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
 
+    async def clear_chat_history_context(self, session_id: str) -> bool:
+        """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""
+
+        if session_id not in self.heartflow_chat_list:
+            return False
+
+        await self._evict_chat(session_id, reason="clear_context_command")
+        return True
+
     def adjust_talk_frequency(self, session_id: str, frequency: float) -> None:
         """调整指定聊天流的说话频率。"""
         chat = self.heartflow_chat_list.get(session_id)

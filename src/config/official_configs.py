@@ -4993,6 +4993,20 @@ class DebugConfig(ConfigBase):
     )
     """在日志或界面中显示麦麦的思考过程。"""
 
+    enable_clear_context_command: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用 /clear 指令",
+                "en_US": "Enable /clear command",
+                "ja_JP": "/clear コマンドを有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "eraser",
+        },
+    )
+    """允许使用 /clear 清空当前聊天流的 Maisaka 短期历史上下文。"""
+
     enable_reply_effect_tracking: bool = Field(
         default=False,
         json_schema_extra={
