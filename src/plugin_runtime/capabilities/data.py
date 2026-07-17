@@ -523,7 +523,8 @@ class RuntimeDataCapabilityMixin:
             return {"success": False, "error": str(e)}
 
     async def _cap_message_build_readable(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
-        from src.services import message_service 
+        from src.plugin_runtime.host.message_utils import PluginMessageUtils
+        from src.services import message_service
 
         try:
             messages = args.get("messages")
@@ -537,8 +538,16 @@ class RuntimeDataCapabilityMixin:
                     limit=args.get("limit", 0),
                 )
 
+            # get_recent 等能力返回的是序列化 dict；build_readable_messages 需要 SessionMessage。
+            normalized_messages = []
+            for item in messages or []:
+                if isinstance(item, dict):
+                    normalized_messages.append(PluginMessageUtils._build_session_message_from_dict(item))
+                else:
+                    normalized_messages.append(item)
+
             readable = message_service.build_readable_messages(
-                messages=messages,
+                messages=normalized_messages,
                 replace_bot_name=args.get("replace_bot_name", True),
                 timestamp_mode=args.get("timestamp_mode", "relative"),
                 truncate=args.get("truncate", False),
