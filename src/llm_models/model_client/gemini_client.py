@@ -278,6 +278,14 @@ def _extract_response_json_schema(response_format: RespFormat) -> Dict[str, obje
     return cast(Dict[str, object], schema_payload)
 
 
+def _append_content_if_non_empty(contents: List[ContentUnion], content: Content) -> None:
+    """仅在 Content 含有有效 parts 时追加，避免 Gemini 因空 parts 报错。"""
+    if content.parts:
+        contents.append(content)
+    else:
+        logger.debug("跳过 parts 为空的 Gemini Content（role=%s）", content.role)
+
+
 def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | None]:
     """将内部统一消息列表转换为 Gemini 内容结构。
 
@@ -288,7 +296,7 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
         Tuple[ContentListUnion, str | None]: `contents` 与可选的 `system_instruction`。
 
     Raises:
-        ValueError: 当消息结构无法映射到 Gemini 内容模型时抛出。
+        ValueError: 当消息结构无法映射到 Gemini 内容模型，或有效对话内容为空时抛出。
     """
     contents: List[ContentUnion] = []
     system_instruction_chunks: List[str] = []
@@ -303,7 +311,10 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
             continue
 
         if message.role == RoleType.User:
-            contents.append(Content(role="user", parts=_build_non_tool_parts(message)))
+            _append_content_if_non_empty(
+                contents,
+                Content(role="user", parts=_build_non_tool_parts(message)),
+            )
             continue
 
         if message.role == RoleType.Assistant:
@@ -317,7 +328,10 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
                         )
                     )
                     tool_name_by_call_id[tool_call.call_id] = tool_call.func_name
-            contents.append(Content(role="model", parts=assistant_parts))
+            _append_content_if_non_empty(
+                contents,
+                Content(role="model", parts=assistant_parts),
+            )
             continue
 
         if message.role == RoleType.Tool:
@@ -337,12 +351,25 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
                     response=_normalize_function_response_payload(message),
                 )
             )
-            contents.append(Content(role="tool", parts=[function_response_part]))
+            _append_content_if_non_empty(
+                contents,
+                Content(role="tool", parts=[function_response_part]),
+            )
             continue
 
         raise ValueError(f"不支持的消息角色: {message.role}")
 
     system_instruction = "\n\n".join(chunk for chunk in system_instruction_chunks if chunk.strip()) or None
+
+    # Gemini 要求 contents 至少包含一条带 parts 的消息；仅有 system_instruction 时 API 会直接报错。
+    # 在仅有 system 消息的场景下，补一条最小 user 占位，保证请求可提交。
+    if not contents:
+        if system_instruction:
+            logger.debug("仅有 system 消息，补充最小 user 内容以满足 Gemini contents 非空要求")
+            contents.append(Content(role="user", parts=[Part.from_text(text="请根据系统指令继续。")]))
+        else:
+            raise ValueError("Gemini 请求的 contents 不能为空，至少需要一条 user/assistant/tool 消息")
+
     return contents, system_instruction
 
 
