@@ -301,9 +301,23 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
     contents: List[ContentUnion] = []
     system_instruction_chunks: List[str] = []
     tool_name_by_call_id: Dict[str, str] = {}
+    # Gemini 要求同一轮并行 function call 的全部 function response 放在同一条 Content 的 parts 中；
+    # 若拆成多条 Content，会报 “number of function response parts is equal to ...”。
+    pending_tool_response_parts: List[Part] = []
+
+    def flush_pending_tool_responses() -> None:
+        nonlocal pending_tool_response_parts
+        if not pending_tool_response_parts:
+            return
+        _append_content_if_non_empty(
+            contents,
+            Content(role="tool", parts=list(pending_tool_response_parts)),
+        )
+        pending_tool_response_parts = []
 
     for message in messages:
         if message.role == RoleType.System:
+            flush_pending_tool_responses()
             system_text = message.get_text_content().strip()
             if not system_text:
                 raise ValueError("Gemini 的 system message 必须为非空文本")
@@ -311,6 +325,7 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
             continue
 
         if message.role == RoleType.User:
+            flush_pending_tool_responses()
             _append_content_if_non_empty(
                 contents,
                 Content(role="user", parts=_build_non_tool_parts(message)),
@@ -318,6 +333,7 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
             continue
 
         if message.role == RoleType.Assistant:
+            flush_pending_tool_responses()
             assistant_parts = _build_non_tool_parts(message)
             if message.tool_calls:
                 for tool_call_index, tool_call in enumerate(message.tool_calls):
@@ -344,21 +360,20 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
                     "且消息中未携带 tool_name"
                 )
             tool_name_by_call_id[message.tool_call_id] = tool_name
-            function_response_part = Part(
-                function_response=FunctionResponse(
-                    id=message.tool_call_id,
-                    name=tool_name,
-                    response=_normalize_function_response_payload(message),
+            pending_tool_response_parts.append(
+                Part(
+                    function_response=FunctionResponse(
+                        id=message.tool_call_id,
+                        name=tool_name,
+                        response=_normalize_function_response_payload(message),
+                    )
                 )
-            )
-            _append_content_if_non_empty(
-                contents,
-                Content(role="tool", parts=[function_response_part]),
             )
             continue
 
         raise ValueError(f"不支持的消息角色: {message.role}")
 
+    flush_pending_tool_responses()
     system_instruction = "\n\n".join(chunk for chunk in system_instruction_chunks if chunk.strip()) or None
 
     # Gemini 要求 contents 至少包含一条带 parts 的消息；仅有 system_instruction 时 API 会直接报错。
