@@ -717,7 +717,18 @@ class ExpressionVectorIndex:
             for cluster_index in range(cluster_count):
                 member_vectors = normalized_vectors[labels == cluster_index]
                 if len(member_vectors) == 0:
-                    farthest_index = int(np.argmin(np.max(normalized_vectors @ centroids.T, axis=1)))
+                    similarities = np.max(normalized_vectors @ centroids.T, axis=1)
+                    candidate_scores = similarities.astype(np.float64, copy=True)
+                    # 避免抢走其他簇的唯一成员，否则修完当前空簇会把前一个簇再变空。
+                    for other_cluster in range(cluster_count):
+                        if other_cluster == cluster_index:
+                            continue
+                        other_members = np.flatnonzero(labels == other_cluster)
+                        if len(other_members) == 1:
+                            candidate_scores[other_members[0]] = np.inf
+                    farthest_index = int(np.argmin(candidate_scores))
+                    if not np.isfinite(candidate_scores[farthest_index]):
+                        farthest_index = int(np.argmin(similarities))
                     centroids[cluster_index] = normalized_vectors[farthest_index]
                     labels[farthest_index] = cluster_index
                     continue
@@ -726,6 +737,25 @@ class ExpressionVectorIndex:
                 if norm <= 0:
                     raise ValueError(f"表达向量索引聚类 {cluster_index} 中心向量为零")
                 centroids[cluster_index] = centroid / norm
+
+        # 收敛后仍可能残留空簇：再做一轮不抢唯一成员的兜底分配。
+        for cluster_index in range(cluster_count):
+            if np.any(labels == cluster_index):
+                continue
+            similarities = np.max(normalized_vectors @ centroids.T, axis=1)
+            candidate_scores = similarities.astype(np.float64, copy=True)
+            for other_cluster in range(cluster_count):
+                if other_cluster == cluster_index:
+                    continue
+                other_members = np.flatnonzero(labels == other_cluster)
+                if len(other_members) == 1:
+                    candidate_scores[other_members[0]] = np.inf
+            farthest_index = int(np.argmin(candidate_scores))
+            if not np.isfinite(candidate_scores[farthest_index]):
+                farthest_index = int(np.argmin(similarities))
+            labels[farthest_index] = cluster_index
+            centroids[cluster_index] = normalized_vectors[farthest_index]
+
         return labels
 
     @staticmethod
@@ -734,13 +764,23 @@ class ExpressionVectorIndex:
         labels: np.ndarray,
         cluster_count: int,
     ) -> np.ndarray:
-        """根据 k-means 标签计算中心向量。"""
+        """根据 k-means 标签计算中心向量。
+
+        空簇不直接抛错：优先取与已有中心最远的样本，否则回退到首个向量，
+        与 `_rebuild_cluster_centers` 的容错策略保持一致。
+        """
 
         centers: List[np.ndarray] = []
         for cluster_id in range(cluster_count):
             member_vectors = normalized_vectors[labels == cluster_id]
             if len(member_vectors) == 0:
-                raise ValueError(f"表达向量索引聚类 {cluster_id} 没有成员")
+                if centers:
+                    existing = np.vstack(centers)
+                    farthest_index = int(np.argmin(np.max(normalized_vectors @ existing.T, axis=1)))
+                    centers.append(normalized_vectors[farthest_index].astype(np.float32))
+                else:
+                    centers.append(normalized_vectors[0].astype(np.float32))
+                continue
             center = member_vectors.mean(axis=0)
             norm = float(np.linalg.norm(center))
             if norm <= 0:
