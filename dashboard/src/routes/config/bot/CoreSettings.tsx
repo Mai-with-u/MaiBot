@@ -1,5 +1,3 @@
-import { Compass, MessageCircle, Sparkles, UserRound, type LucideIcon } from 'lucide-react'
-
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
@@ -17,7 +15,6 @@ interface CoreSettingCardProps {
   description: string
   eyebrow: string
   field: CoreSettingField
-  icon: LucideIcon
   onChange: (field: CoreSettingField, value: string) => void
   placeholder: string
   title: string
@@ -47,7 +44,6 @@ function CoreSettingCard({
   description,
   eyebrow,
   field,
-  icon: Icon,
   onChange,
   placeholder,
   title,
@@ -64,21 +60,16 @@ function CoreSettingCard({
       )}
     >
       <div className={cn('absolute top-5 bottom-5 left-0 w-1 rounded-r-full', accentClassName)} />
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-muted-foreground mb-1 text-[0.68rem] font-bold tracking-[0.14em] uppercase">
-            {eyebrow}
-          </div>
-          <label
-            htmlFor={`core-setting-${field}`}
-            className="text-xl font-black tracking-tight sm:text-2xl"
-          >
-            {title}
-          </label>
+      <div className="mb-3 min-w-0">
+        <div className="text-muted-foreground mb-1 text-[0.68rem] font-bold tracking-[0.14em] uppercase">
+          {eyebrow}
         </div>
-        <div className={cn('text-primary-foreground rounded-xl p-2.5', accentClassName)}>
-          <Icon className="h-4 w-4" />
-        </div>
+        <label
+          htmlFor={`core-setting-${field}`}
+          className="text-xl font-black tracking-tight sm:text-2xl"
+        >
+          {title}
+        </label>
       </div>
       <p
         id={descriptionId}
@@ -141,33 +132,13 @@ export function CoreSettings({
           <span>
             <strong className="text-foreground">行为风格</strong> 决定怎么做
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Sparkles className="text-primary h-3.5 w-3.5" />
-            自动保存
-          </span>
+          <span>自动保存</span>
         </div>
       </header>
 
       <div className="relative mt-4 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,2fr)_2.25rem_minmax(17rem,1fr)]">
         <div className="relative min-w-0 px-3 pt-8 pb-3 sm:px-5 sm:pt-9 sm:pb-4">
-          <svg
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full"
-            preserveAspectRatio="none"
-            viewBox="0 0 1000 360"
-          >
-            <path
-              d="M38 62 C98 15 240 27 360 31 C521 37 664 10 846 35 C956 50 980 128 961 237 C946 322 829 346 684 331 C526 315 417 354 245 333 C100 315 26 267 34 171 C38 124 17 91 38 62 Z"
-              fill="hsl(var(--muted) / 0.13)"
-              stroke="hsl(var(--border))"
-              strokeDasharray="9 9"
-              strokeWidth="2"
-              vectorEffect="non-scaling-stroke"
-            />
-          </svg>
-
-          <div className="bg-background text-foreground absolute top-0 left-7 z-20 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm">
-            <MessageCircle className="text-primary h-3.5 w-3.5" />
+          <div className="bg-background text-foreground absolute top-0 left-7 z-20 inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm">
             说话 · replyer
           </div>
 
@@ -177,7 +148,6 @@ export function CoreSettings({
               description="身份与长期性格。只交给 replyer，确保每次回复都像她自己。"
               eyebrow="replyer · 我是谁"
               field="personality"
-              icon={UserRound}
               onChange={updateCoreSetting}
               placeholder="例如：你是一个正在网上和群友聊天的大学生……"
               title="人格配置"
@@ -189,7 +159,6 @@ export function CoreSettings({
               description="句子长短、语气与措辞。只约束 replyer 最终说出口的内容。"
               eyebrow="replyer · 怎么说"
               field="reply_style"
-              icon={MessageCircle}
               onChange={updateCoreSetting}
               placeholder="例如：平淡简短，使用自然口语，不长篇大论……"
               title="表达方式"
@@ -219,8 +188,7 @@ export function CoreSettings({
         </div>
 
         <div className="relative min-w-0 px-1 pt-8 pb-3 sm:px-3 sm:pt-9 sm:pb-4">
-          <div className="bg-background text-foreground absolute top-0 left-5 z-20 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm">
-            <Compass className="text-primary h-3.5 w-3.5" />
+          <div className="bg-background text-foreground absolute top-0 left-5 z-20 inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm">
             行动 · planner
           </div>
           <CoreSettingCard
@@ -228,7 +196,6 @@ export function CoreSettings({
             description="何时参与、如何观察与选择动作。只交给 planner，不再读取人格。"
             eyebrow="planner · 怎么做"
             field="behavior_style"
-            icon={Compass}
             onChange={updateCoreSetting}
             placeholder="例如：只在被提及或确实能推进话题时参与……"
             title="行为风格"

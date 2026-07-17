@@ -34,6 +34,7 @@ from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 from src.maisaka.browser_tool import BrowserActionToolProvider
 from src.maisaka.builtin_tool.provider import MaisakaBuiltinToolProvider
 from src.maisaka.context.history import drop_leading_orphan_tool_results
+from src.maisaka.context.clear_context import select_messages_after_latest_clear_marker
 from src.maisaka.context.messages import (
     AssistantMessage,
     LLMContextMessage,
@@ -319,12 +320,12 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 session_id=self.session_id,
                 limit=self._get_context_restore_limit(),
                 limit_mode="latest",
-                filter_command=True,
             )
         except Exception as exc:
             logger.warning(f"{self.log_prefix} 恢复最近上下文失败: {exc}", exc_info=True)
             return
 
+        recent_messages = select_messages_after_latest_clear_marker(recent_messages)
         restored_user_messages: list[SessionMessage] = []
         restored_history: list[LLMContextMessage] = []
         for message in recent_messages:
