@@ -569,6 +569,9 @@ class LLMOrchestrator:
     ) -> Optional[float]:
         """解析响应请求最终使用的温度参数。
 
+        优先级与配置说明一致：模型级 ``temperature`` / ``extra_params.temperature``
+        覆盖任务或调用方显式传入的温度；都未设置时回退到任务默认温度。
+
         Args:
             model_info: 当前模型信息。
             temperature: 调用方显式传入的温度。
@@ -576,12 +579,12 @@ class LLMOrchestrator:
         Returns:
             Optional[float]: 最终生效的温度参数。
         """
-        if temperature is not None:
-            return temperature
         if model_info.temperature is not None:
             return model_info.temperature
         if "temperature" in model_info.extra_params:
             return model_info.extra_params["temperature"]
+        if temperature is not None:
+            return temperature
         return self.model_for_task.temperature
 
     def _resolve_effective_max_tokens(
@@ -591,6 +594,9 @@ class LLMOrchestrator:
     ) -> Optional[int]:
         """解析响应请求最终使用的最大输出 token 数。
 
+        优先级与配置说明一致：模型级 ``max_tokens`` / ``extra_params.max_tokens``
+        覆盖任务或调用方显式传入的值；都未设置时回退到任务默认值。
+
         Args:
             model_info: 当前模型信息。
             max_tokens: 调用方显式传入的最大 token 数。
@@ -598,12 +604,12 @@ class LLMOrchestrator:
         Returns:
             Optional[int]: 最终生效的最大 token 数。
         """
-        if max_tokens is not None:
-            return max_tokens
         if model_info.max_tokens is not None:
             return model_info.max_tokens
         if "max_tokens" in model_info.extra_params:
             return model_info.extra_params["max_tokens"]
+        if max_tokens is not None:
+            return max_tokens
         return self.model_for_task.max_tokens
 
     def _build_response_request(
