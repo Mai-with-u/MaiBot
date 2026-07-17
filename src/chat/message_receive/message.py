@@ -357,37 +357,51 @@ class SessionMessage(MaiMessage):
         return content
 
     async def process_at_component(self, component: AtComponent) -> str:
-        # 如果已经有昵称或备注了，直接使用
-        if component.target_user_cardname:
-            return f"@{component.target_user_cardname}"
-        elif component.target_user_nickname:
-            return f"@{component.target_user_nickname}"
+        """将 @ 组件渲染为可读文本。
+
+        必须以 ``target_user_id`` 为准查询人物信息。适配器偶发会给未知/已退群 QQ
+        附带错误昵称；若优先信任这些字段，会把 @ 显示成无关群成员的名字。
+        """
+
         from src.common.utils.system_utils import is_bot_self
+        from src.common.utils.utils_person import PersonUtils
         from src.config.config import global_config
 
-        if is_bot_self(self.platform, component.target_user_id):
+        target_user_id = str(component.target_user_id or "").strip()
+
+        if target_user_id and is_bot_self(self.platform, target_user_id):
             bot_nickname = global_config.bot.nickname.strip()
             if bot_nickname:
                 component.target_user_nickname = bot_nickname
                 component.target_user_cardname = bot_nickname
                 return f"@{bot_nickname}"
 
-        from src.common.utils.utils_person import PersonUtils
+        if target_user_id and (
+            person_info := PersonUtils.get_person_info_by_user_id_and_platform(target_user_id, self.platform)
+        ):
+            # 仅在 DB 记录的 user_id 一致时采用人物信息，避免脏数据串名。
+            if str(getattr(person_info, "user_id", "") or "").strip() == target_user_id:
+                component.target_user_nickname = person_info.user_nickname or component.target_user_nickname
+                if self.message_info.group_info and person_info.group_cardname_list:
+                    for group_card in person_info.group_cardname_list:
+                        if group_card.group_id == self.message_info.group_info.group_id:
+                            component.target_user_cardname = group_card.group_cardname
+                            break
+                if component.target_user_cardname:
+                    return f"@{component.target_user_cardname}"
+                if component.target_user_nickname:
+                    return f"@{component.target_user_nickname}"
+                if person_info.user_nickname:
+                    return f"@{person_info.user_nickname}"
 
-        # 查询用户信息
-        if person_info := PersonUtils.get_person_info_by_user_id_and_platform(component.target_user_id, self.platform):
-            component.target_user_nickname = component.target_user_nickname or person_info.user_nickname
-            if self.message_info.group_info and person_info.group_cardname_list:
-                for group_card in person_info.group_cardname_list:
-                    if group_card.group_id == self.message_info.group_info.group_id:
-                        component.target_user_cardname = group_card.group_cardname
-                        break
-        if component.target_user_cardname:  # 优先使用群备注
+        # 未知用户：保留原始 QQ，不使用可能被适配器填错的昵称。
+        if target_user_id:
+            return f"@{target_user_id}"
+        if component.target_user_cardname:
             return f"@{component.target_user_cardname}"
-        elif component.target_user_nickname:  # 其次使用昵称
+        if component.target_user_nickname:
             return f"@{component.target_user_nickname}"
-        else:  # 最后使用用户ID
-            return f"@{component.target_user_id}"
+        return "@未知用户"
 
     async def process_voice_component(
         self,
