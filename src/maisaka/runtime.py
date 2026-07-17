@@ -832,16 +832,26 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             logger.debug(f"{self.log_prefix} 广播收到消息到监控面板失败: {exc}")
 
     async def register_message(self, message: SessionMessage) -> None:
-        """缓存一条新消息并唤醒主循环。"""
+        """缓存一条新消息并唤醒主循环。
+
+        机器人自身回声仍会进入 ``message_cache``（供后续回合一并消费），
+        但不得打断 Planner，也不得单独触发新一轮调度，否则在高频阈值下
+        会反复回复同一条用户消息（见 #1861 / #1854）。
+        """
         if self._running:
             self._ensure_background_tasks_running()
         received_at = time.time()
         self._last_message_received_at = received_at
         self._record_external_message_interval(message, received_at)
-        self._update_message_trigger_state(message)
         self.message_cache.append(message)
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
+
+        user_info = message.message_info.user_info
+        if is_bot_self(message.platform, user_info.user_id):
+            return
+
+        self._update_message_trigger_state(message)
         if self._is_reply_effect_tracking_enabled():
             asyncio.create_task(self._reply_effect_tracker.observe_user_message(message))
         if not self._should_continue_after_focus_gate(message):
@@ -1036,10 +1046,38 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             return max(1, int(ceil(1.0 / (effective_frequency * effective_frequency))))
         return max(1, int(ceil(1.0 / effective_frequency)))
 
+    def _iter_pending_messages(self) -> list[SessionMessage]:
+        """返回尚未进入内部循环的缓存消息。"""
+        return list(self.message_cache[self._last_processed_index :])
+
+    def _iter_pending_external_messages(self) -> list[SessionMessage]:
+        """返回尚未处理的外部（非机器人自身）消息。"""
+        return [
+            message
+            for message in self._iter_pending_messages()
+            if not is_bot_self(message.platform, message.message_info.user_info.user_id)
+        ]
+
     def _get_pending_message_count(self) -> int:
-        """统计当前尚未进入内部循环的新消息数量。"""
-        pending_messages = self.message_cache[self._last_processed_index :]
-        return len(pending_messages)
+        """统计尚未进入内部循环、且需要驱动调度的外部消息数量。
+
+        机器人自身回声不计入，避免刚发出的回复把 pending 顶到阈值并再次触发 Planner。
+        """
+        return len(self._iter_pending_external_messages())
+
+    def _consume_bot_only_pending_messages(self) -> bool:
+        """若 pending 仅含机器人自身回声，则推进消费指针并返回 True。"""
+        pending_messages = self._iter_pending_messages()
+        if not pending_messages:
+            return False
+        if self._iter_pending_external_messages():
+            return False
+        self._last_processed_index = len(self.message_cache)
+        logger.debug(
+            f"{self.log_prefix} 仅有机器人自身回声 pending，已推进消费指针: "
+            f"数量={len(pending_messages)}"
+        )
+        return True
 
     def _prune_recent_external_message_intervals(self, now: Optional[float] = None) -> None:
         """仅保留最近 30 分钟内的外部消息间隔记录。"""

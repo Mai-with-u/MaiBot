@@ -81,6 +81,10 @@ class MessageTurnScheduler:
         if runtime._message_turn_scheduled:
             return
 
+        # 仅有机器人自身回声时推进指针，避免占用 pending 并误触发 Planner。
+        if runtime._consume_bot_only_pending_messages():
+            return
+
         pending_count = runtime._get_pending_message_count()
         if pending_count <= 0:
             return
@@ -110,7 +114,7 @@ class MessageTurnScheduler:
         schedule_detail = f"[频率: {formatted_frequency}][{pending_count}/{trigger_threshold} 消息]"
         if is_reply_necessity_trigger_enabled():
             if self.should_trigger_by_reply_necessity(
-                pending_messages=runtime.message_cache[runtime._last_processed_index :],
+                pending_messages=runtime._iter_pending_external_messages(),
                 trigger_threshold=trigger_threshold,
                 formatted_frequency=formatted_frequency,
                 pending_count=pending_count,
