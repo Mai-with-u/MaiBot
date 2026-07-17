@@ -560,7 +560,12 @@ class LLMOrchestrator:
             )
         if not embedding:
             raise RuntimeError("获取embedding失败")
-        return LLMEmbeddingResult(embedding=embedding, model_name=model_info.name)
+        return LLMEmbeddingResult(
+            embedding=embedding,
+            model_name=model_info.name,
+            model_identifier=model_info.model_identifier,
+            api_provider=model_info.api_provider,
+        )
 
     def _resolve_effective_temperature(
         self,

@@ -25,7 +25,7 @@ VECTOR_CLUSTER_WEIGHT = 0.1
 VECTOR_LEXICAL_WEIGHT = 0.2
 VECTOR_DIVERSITY_LAMBDA = 0.85
 EMBEDDING_PROFILE_CACHE_SECONDS = 600.0
-EMBEDDING_PROFILE_VERSION = 1
+EMBEDDING_PROFILE_VERSION = 2
 LEGACY_EMBEDDING_PROFILE_MARKER = "__legacy_unmarked__"
 HISTORY_BACKFILL_BATCH_SIZE = 200
 HISTORY_BACKFILL_MIN_INTERVAL_SECONDS = 10.0
@@ -45,6 +45,8 @@ class ExpressionEmbeddingProfile:
 
     marker: str
     model_name: str
+    model_identifier: str
+    api_provider: str
     dimension: int
 
 
@@ -108,12 +110,6 @@ def expression_embedding_text(situation: str, style: str) -> str:
     return f"情景：{normalize_text(situation)}\n风格：{normalize_text(style)}"
 
 
-def _quantize_embedding_for_profile(embedding: Sequence[float]) -> List[float]:
-    """把探针向量压成稳定可 hash 的小数表示。"""
-
-    return [round(float(value), 6) for value in embedding]
-
-
 def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> ExpressionEmbeddingProfile:
     """根据固定探针 embedding 结果生成当前 embedding profile。"""
 
@@ -122,10 +118,20 @@ def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> Expres
             f"embedding profile 探针数量异常: results={len(results)}, probes={len(EMBEDDING_PROFILE_PROBE_TEXTS)}"
         )
 
-    model_names = {normalize_text(result.model_name) for result in results if normalize_text(result.model_name)}
-    if len(model_names) != 1:
+    model_names = {normalize_text(result.model_name) for result in results}
+    if len(model_names) != 1 or not all(model_names):
         raise ValueError(f"embedding profile 探针命中模型不一致: {sorted(model_names)}")
     model_name = next(iter(model_names))
+
+    model_identifiers = {normalize_text(result.model_identifier) for result in results}
+    if len(model_identifiers) != 1 or not all(model_identifiers):
+        raise ValueError(f"embedding profile 探针命中模型标识不一致: {sorted(model_identifiers)}")
+    model_identifier = next(iter(model_identifiers))
+
+    api_providers = {normalize_text(result.api_provider) for result in results}
+    if len(api_providers) != 1 or not all(api_providers):
+        raise ValueError(f"embedding profile 探针命中 Provider 不一致: {sorted(api_providers)}")
+    api_provider = next(iter(api_providers))
 
     dimensions = {len(result.embedding) for result in results}
     if len(dimensions) != 1:
@@ -137,17 +143,18 @@ def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> Expres
     payload = {
         "version": EMBEDDING_PROFILE_VERSION,
         "model_name": model_name,
+        "model_identifier": model_identifier,
+        "api_provider": api_provider,
         "dimension": dimension,
-        "probes": [
-            {
-                "text": probe_text,
-                "embedding": _quantize_embedding_for_profile(result.embedding),
-            }
-            for probe_text, result in zip(EMBEDDING_PROFILE_PROBE_TEXTS, results, strict=True)
-        ],
     }
     marker = sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    return ExpressionEmbeddingProfile(marker=marker, model_name=model_name, dimension=dimension)
+    return ExpressionEmbeddingProfile(
+        marker=marker,
+        model_name=model_name,
+        model_identifier=model_identifier,
+        api_provider=api_provider,
+        dimension=dimension,
+    )
 
 
 def resolve_project_path(raw_path: str) -> Path:
@@ -269,7 +276,8 @@ class ExpressionVectorIndex:
             self._profile_cache = (time.monotonic(), profile)
             logger.info(
                 f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
-                f"model={profile.model_name} dimension={profile.dimension}"
+                f"model={profile.model_name} identifier={profile.model_identifier} "
+                f"provider={profile.api_provider} dimension={profile.dimension}"
             )
             return profile
 
@@ -281,11 +289,21 @@ class ExpressionVectorIndex:
         usage: str,
     ) -> None:
         result_model_name = normalize_text(result.model_name)
+        result_model_identifier = normalize_text(result.model_identifier)
+        result_api_provider = normalize_text(result.api_provider)
         result_dimension = len(result.embedding)
-        if result_model_name != profile.model_name or result_dimension != profile.dimension:
+        if (
+            result_model_name != profile.model_name
+            or result_model_identifier != profile.model_identifier
+            or result_api_provider != profile.api_provider
+            or result_dimension != profile.dimension
+        ):
             raise ValueError(
                 f"{usage} embedding profile 与当前标定不一致: "
                 f"result_model={result_model_name!r}, profile_model={profile.model_name!r}, "
+                f"result_identifier={result_model_identifier!r}, "
+                f"profile_identifier={profile.model_identifier!r}, "
+                f"result_provider={result_api_provider!r}, profile_provider={profile.api_provider!r}, "
                 f"result_dimension={result_dimension}, profile_dimension={profile.dimension}"
             )
 
