@@ -1197,7 +1197,7 @@ class EmojiManager:
                         logger.debug(f"[emoji_maintenance] Emoji not registered, keep file: {emoji_file.name}")
 
             try:
-                self.check_emoji_file_integrity()
+                await asyncio.to_thread(self.check_emoji_file_integrity)
             except Exception as e:
                 logger.error(f"[emoji_maintenance] Maintenance task failed: {e}")
 

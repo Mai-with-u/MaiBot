@@ -1857,8 +1857,7 @@ class PluginRunnerSupervisor:
                 continue
 
             try:
-                response = await self._rpc_server.send_request("plugin.health", timeout_ms=timeout_ms)
-                health = HealthPayload.model_validate(response.payload)
+                health = await self._request_runner_health(timeout_ms)
                 if not health.healthy:
                     restarted = await self._restart_runner(reason="health_check_unhealthy")
                     if not restarted:
@@ -1882,6 +1881,34 @@ class PluginRunnerSupervisor:
                     if self._should_keep_health_loop_after_restart_failure():
                         continue
                     return
+
+    async def _request_runner_health(self, timeout_ms: int) -> HealthPayload:
+        """请求 Runner 健康状态，并对宿主失速造成的超时做一次快速复核。
+
+        Host 事件循环被同步任务阻塞时，RPC 响应处理和超时回调会在恢复后竞争
+        调度。首次超时后立即复核，可以区分瞬时的宿主失速与持续的 Runner 故障，
+        避免直接误杀仍然存活的 Runner。
+
+        Args:
+            timeout_ms: 首次健康检查的超时时间，单位毫秒。
+
+        Returns:
+            HealthPayload: Runner 返回的健康状态。
+        """
+        try:
+            response = await self._rpc_server.send_request("plugin.health", timeout_ms=timeout_ms)
+        except RPCError as exc:
+            if exc.code is not ErrorCode.E_TIMEOUT:
+                raise
+
+            retry_timeout_ms = min(timeout_ms, 5000)
+            logger.warning(
+                "Runner 健康检查超时，使用 %sms 快速复核以排除 Host 事件循环失速",
+                retry_timeout_ms,
+            )
+            response = await self._rpc_server.send_request("plugin.health", timeout_ms=retry_timeout_ms)
+
+        return HealthPayload.model_validate(response.payload)
 
     def _should_keep_health_loop_after_restart_failure(self) -> bool:
         """判断重启失败后健康检查循环是否应继续等待下一次尝试。"""
