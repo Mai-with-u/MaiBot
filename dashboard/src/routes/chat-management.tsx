@@ -516,7 +516,7 @@ function formatFrequencySummary(label: string): string {
   if (!Number.isFinite(numericValue)) {
     return label
   }
-  return numericValue.toFixed(2)
+  return numericValue.toFixed(3)
 }
 
 function FrequencySummaryItem({
@@ -654,7 +654,7 @@ function TalkFrequencyRuleEditor({
           type="number"
           min={0}
           max={1}
-          step={0.01}
+          step={0.001}
           value={value}
           onChange={(event) => setValue(clampTalkFrequencyValue(Number(event.target.value)))}
         />
@@ -887,12 +887,12 @@ function TalkFrequencyTimelineRule({
           value={[value]}
           min={0}
           max={1}
-          step={0.01}
+          step={0.001}
           onValueChange={(values) => setValue(clampTalkFrequencyValue(values[0] ?? 0))}
           data-dashboard-slider="config"
-          data-dashboard-slider-value-format="fixed-2"
+          data-dashboard-slider-value-format="fixed-3"
         />
-        <span className="w-10 text-right font-mono text-xs tabular-nums">{value.toFixed(2)}</span>
+        <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(3)}</span>
       </div>
       <div className="flex justify-end gap-2">
         <Button
