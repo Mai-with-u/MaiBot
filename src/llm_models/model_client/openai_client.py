@@ -173,11 +173,16 @@ def _extract_reasoning_content(message_part: Any, reasoning_key: str) -> str | N
     """从 OpenAI 兼容响应对象中读取原生推理内容。
 
     不同兼容服务商对推理字段命名并不完全一致。这里集中处理字段访问，
-    避免解析路径里散落 provider 特判；具体字段名由 provider 决定。
+    避免解析路径里散落 provider 特判；优先读取 provider 指定字段，
+    读取不到时再尝试兼容 ``reasoning`` 字段。
     """
     native_reasoning = getattr(message_part, reasoning_key, None)
     if isinstance(native_reasoning, str) and native_reasoning:
         return native_reasoning
+
+    fallback_reasoning = getattr(message_part, "reasoning", None)
+    if isinstance(fallback_reasoning, str) and fallback_reasoning:
+        return fallback_reasoning
     return None
 
 
@@ -1057,7 +1062,7 @@ class _OpenAIStreamAccumulator:
             APIResponse: 累积完成的响应对象。
 
         Raises:
-            EmptyResponseException: 当响应中既无可见内容也无工具调用时抛出。
+            EmptyResponseException: 当响应中既无正文、推理内容也无工具调用时抛出。
             RespParseException: 当工具调用结构不完整时抛出。
         """
         response = APIResponse()
@@ -1103,7 +1108,7 @@ class _OpenAIStreamAccumulator:
         response.raw_data = {"model": self.model_name} if self.model_name else None
         _apply_xml_tool_call_fallback(response, self.tool_argument_parse_mode, response.raw_data)
 
-        if not response.content and not response.tool_calls:
+        if not response.content and not response.reasoning_content and not response.tool_calls:
             raise EmptyResponseException(response.raw_data)
 
         return response
@@ -1189,7 +1194,7 @@ def _default_normal_response_parser(
         Tuple[APIResponse, UsageTuple | None]: 解析后的响应与 usage 统计。
 
     Raises:
-        EmptyResponseException: 当 choices 为空或响应内容为空时抛出。
+        EmptyResponseException: 当 choices 为空，或响应中既无正文、推理内容也无工具调用时抛出。
     """
     choices = getattr(resp, "choices", None)
     if not choices:
@@ -1251,7 +1256,7 @@ def _default_normal_response_parser(
     _log_length_truncation(finish_reason, getattr(resp, "model", None))
     _apply_xml_tool_call_fallback(api_response, tool_argument_parse_mode, resp)
 
-    if not api_response.content and not api_response.tool_calls:
+    if not api_response.content and not api_response.reasoning_content and not api_response.tool_calls:
         raise EmptyResponseException(resp)
 
     return api_response, usage_record
