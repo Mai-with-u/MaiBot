@@ -5,7 +5,7 @@ import type {
   MaimaiVersion,
   MarketplaceSortKey,
   PluginInfo,
-  PluginLoadProgress,
+  PluginProgressById,
   PluginStatsData,
 } from './types'
 import { getPluginType } from './types'
@@ -38,7 +38,7 @@ interface MarketplaceTabProps {
   gitStatus: GitStatus | null
   maimaiVersion: MaimaiVersion | null
   pluginStats: Record<string, PluginStatsData>
-  loadProgress: PluginLoadProgress | null
+  pluginProgressById: PluginProgressById
   likingPluginIds: Set<string>
   onInstall: (plugin: PluginInfo) => void
   onLike: (plugin: PluginInfo) => void
@@ -179,7 +179,7 @@ export function MarketplaceTab({
   gitStatus,
   maimaiVersion,
   pluginStats,
-  loadProgress,
+  pluginProgressById,
   likingPluginIds,
   onInstall,
   onLike,
@@ -317,6 +317,9 @@ export function MarketplaceTab({
     (plugin) => !surprisePluginIds.has(getPluginIdentity(plugin))
   )
   const displayPlugins = [...surprisePlugins, ...mainPlugins]
+  const isAnyPluginInstalling = Object.values(pluginProgressById).some(
+    (progress) => progress.operation === 'install' && progress.stage === 'loading'
+  )
 
   const renderPluginCard = (plugin: PluginInfo) => (
     <PluginCard
@@ -325,7 +328,8 @@ export function MarketplaceTab({
       gitStatus={gitStatus}
       maimaiVersion={maimaiVersion}
       pluginStats={pluginStats}
-      loadProgress={loadProgress}
+      loadProgress={pluginProgressById[plugin.id] ?? null}
+      isAnyPluginInstalling={isAnyPluginInstalling}
       likingPluginIds={likingPluginIds}
       onInstall={onInstall}
       onLike={onLike}
