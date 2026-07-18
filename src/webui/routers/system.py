@@ -24,7 +24,7 @@ import time
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
-from src.common.update_notice import get_pending_update_notice, mark_update_notice_seen
+from src.common.update_notice import build_debug_update_notice, get_pending_update_notice, mark_update_notice_seen
 from src.common.utils.image_path import (
     StoredImagePathError,
     resolve_stored_image_path,
@@ -1488,11 +1488,13 @@ async def get_maibot_status():
 
 
 @router.get("/update-notice", response_model=UpdateNoticeResponse)
-async def get_update_notice() -> UpdateNoticeResponse:
+async def get_update_notice(force: bool = False) -> UpdateNoticeResponse:
     """获取当前 WebUI 是否需要弹出更新公告。"""
 
     try:
         notice = get_pending_update_notice("webui", current_version=MMC_VERSION)
+        if notice is None and force:
+            notice = build_debug_update_notice(MMC_VERSION)
         if notice is None:
             return UpdateNoticeResponse(pending=False, current_version=MMC_VERSION)
         incompatible_plugins = await collect_update_incompatible_plugins(

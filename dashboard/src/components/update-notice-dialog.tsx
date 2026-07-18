@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { preparePluginUpdateManagementView } from '@/lib/plugin-market-navigation'
+import { getSetting } from '@/lib/settings-manager'
 import {
   ackUpdateNotice,
   getUpdateNotice,
@@ -55,6 +56,7 @@ function getUpdateStatus(plugin: IncompatiblePluginNotice) {
 
 export function UpdateNoticeDialog() {
   const navigate = useNavigate()
+  const alwaysShowUpdateNotice = getSetting('alwaysShowUpdateNotice')
   const [notice, setNotice] = useState<UpdateNoticeResponse | null>(null)
   const [stage, setStage] = useState<NoticeStage>(null)
   const ackedRef = useRef(false)
@@ -64,7 +66,7 @@ export function UpdateNoticeDialog() {
 
     async function loadNotice() {
       try {
-        const response = await getUpdateNotice()
+        const response = await getUpdateNotice(alwaysShowUpdateNotice)
         if (cancelled || !response.pending) {
           return
         }
@@ -81,7 +83,7 @@ export function UpdateNoticeDialog() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [alwaysShowUpdateNotice])
 
   const acknowledgeNoticeSequence = useCallback(async () => {
     if (ackedRef.current) {
@@ -99,12 +101,12 @@ export function UpdateNoticeDialog() {
   }, [])
 
   const finishUpdateNotice = useCallback(() => {
-    if ((notice?.incompatible_plugins?.length ?? 0) > 0) {
+    if (alwaysShowUpdateNotice || (notice?.incompatible_plugins?.length ?? 0) > 0) {
       setStage('compatibility')
       return
     }
     void acknowledgeNoticeSequence()
-  }, [acknowledgeNoticeSequence, notice])
+  }, [acknowledgeNoticeSequence, alwaysShowUpdateNotice, notice])
 
   const openPluginManagement = useCallback(async () => {
     preparePluginUpdateManagementView()
@@ -157,11 +159,18 @@ export function UpdateNoticeDialog() {
           <DialogHeader>
             <DialogTitle>插件兼容性提醒</DialogTitle>
             <DialogDescription>
-              以下插件在 MaiBot 更新到 v{notice.current_version} 后不再兼容，请更新插件或暂时停用。
+              {incompatiblePlugins.length > 0
+                ? `以下插件在 MaiBot 更新到 v${notice.current_version} 后不再兼容，请更新插件或暂时停用。`
+                : `已完成 MaiBot v${notice.current_version} 的插件兼容性检查。`}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[min(65vh,36rem)]">
             <div className="space-y-3 pr-1">
+              {incompatiblePlugins.length === 0 && (
+                <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+                  当前版本未检测到因主程序更新而失去兼容性的已安装插件。
+                </div>
+              )}
               {incompatiblePlugins.map((plugin) => {
                 const status = getUpdateStatus(plugin)
                 const StatusIcon = status.icon
@@ -189,13 +198,22 @@ export function UpdateNoticeDialog() {
             </div>
           </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => void acknowledgeNoticeSequence()}>
-              稍后处理
-            </Button>
-            <Button type="button" onClick={() => void openPluginManagement()}>
-              前往插件管理
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            {incompatiblePlugins.length > 0 ? (
+              <>
+                <Button type="button" variant="outline" onClick={() => void acknowledgeNoticeSequence()}>
+                  稍后处理
+                </Button>
+                <Button type="button" onClick={() => void openPluginManagement()}>
+                  前往插件管理
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </>
+            ) : (
+              <Button type="button" onClick={() => void acknowledgeNoticeSequence()}>
+                <Check className="h-4 w-4" />
+                知道了
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

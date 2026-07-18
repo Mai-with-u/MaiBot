@@ -190,6 +190,38 @@ def build_update_notice(
     return UpdateNotice(current_version=current_version, from_version=from_version, versions=[], content=content)
 
 
+def build_debug_update_notice(
+    current_version: str,
+    changelog_path: Path = _CHANGELOG_PATH,
+) -> UpdateNotice:
+    """构造用于 WebUI 调试的当前版本公告，并以相邻旧版本作为兼容性检查起点。"""
+
+    entries = [
+        entry
+        for entry in parse_changelog_entries(changelog_path)
+        if not _is_version_newer(entry.version, current_version)
+    ]
+    entries.sort(key=lambda entry: _version_key(entry.version), reverse=True)
+
+    if not entries:
+        return UpdateNotice(
+            current_version=current_version,
+            from_version="0.0.0",
+            versions=[],
+            content=f"# 当前 MaiBot 版本 v{current_version}\n\n未找到可展示的更新日志条目。",
+        )
+
+    latest_entry = entries[0]
+    from_version = entries[1].version if len(entries) > 1 else "0.0.0"
+    content = f"# 当前 MaiBot 版本 v{current_version}\n\n{latest_entry.markdown}"
+    return UpdateNotice(
+        current_version=current_version,
+        from_version=from_version,
+        versions=[latest_entry.version],
+        content=content,
+    )
+
+
 def get_pending_update_notice(
     channel: NoticeChannel,
     current_version: str | None = None,

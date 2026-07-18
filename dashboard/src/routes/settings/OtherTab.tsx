@@ -29,6 +29,7 @@ export function OtherTab() {
   const [dataSyncInterval, setDataSyncInterval] = useState(() => getSetting('dataSyncInterval'))
   const [enableAvatarFetch, setEnableAvatarFetch] = useState(() => getSetting('enableAvatarFetch'))
   const [enableFocusCompanion, setEnableFocusCompanion] = useState(() => getSetting('enableFocusCompanion'))
+  const [alwaysShowUpdateNotice, setAlwaysShowUpdateNotice] = useState(() => getSetting('alwaysShowUpdateNotice'))
   const [storageUsage, setStorageUsage] = useState(() => getStorageUsage())
   
   // 导入/导出状态
@@ -82,6 +83,11 @@ export function OtherTab() {
   const handleFocusCompanionChange = (checked: boolean) => {
     setEnableFocusCompanion(checked)
     setSetting('enableFocusCompanion', checked)
+  }
+
+  const handleAlwaysShowUpdateNoticeChange = (checked: boolean) => {
+    setAlwaysShowUpdateNotice(checked)
+    setSetting('alwaysShowUpdateNotice', checked)
   }
 
   // 清除日志缓存
@@ -155,6 +161,7 @@ export function OtherTab() {
           setDataSyncInterval(getSetting('dataSyncInterval'))
           setEnableAvatarFetch(getSetting('enableAvatarFetch'))
           setEnableFocusCompanion(getSetting('enableFocusCompanion'))
+          setAlwaysShowUpdateNotice(getSetting('alwaysShowUpdateNotice'))
           refreshStorageUsage()
           
           toast({
@@ -204,6 +211,7 @@ export function OtherTab() {
     setDataSyncInterval(DEFAULT_SETTINGS.dataSyncInterval)
     setEnableAvatarFetch(DEFAULT_SETTINGS.enableAvatarFetch)
     setEnableFocusCompanion(DEFAULT_SETTINGS.enableFocusCompanion)
+    setAlwaysShowUpdateNotice(DEFAULT_SETTINGS.alwaysShowUpdateNotice)
     refreshStorageUsage()
     toast({
       title: t('settings.other.resetDone'),
@@ -538,6 +546,22 @@ export function OtherTab() {
             <p className="text-xs sm:text-sm text-muted-foreground">
               {t('settings.other.devToolsDesc')}
             </p>
+          </div>
+          <div className="flex items-start justify-between gap-4 rounded-lg bg-muted/50 p-3 sm:p-4">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="always-show-update-notice" className="text-sm font-medium">
+                {t('settings.other.alwaysShowUpdateNotice')}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.other.alwaysShowUpdateNoticeDesc')}
+              </p>
+            </div>
+            <Switch
+              id="always-show-update-notice"
+              checked={alwaysShowUpdateNotice}
+              onCheckedChange={handleAlwaysShowUpdateNoticeChange}
+              aria-label={t('settings.other.alwaysShowUpdateNotice')}
+            />
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>

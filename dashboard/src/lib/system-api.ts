@@ -68,9 +68,10 @@ export interface UpdateNoticeAckResponse {
   version: string
 }
 
-export async function getUpdateNotice(): Promise<UpdateNoticeResponse> {
+export async function getUpdateNotice(force = false): Promise<UpdateNoticeResponse> {
   return backendApi.get<UpdateNoticeResponse>('/api/webui/system/update-notice', {
     errorMessage: '获取更新公告失败',
+    query: { force: force ? true : undefined },
   })
 }
 
