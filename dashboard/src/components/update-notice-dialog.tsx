@@ -14,7 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { preparePluginUpdateManagementView } from '@/lib/plugin-market-navigation'
 import { getSetting } from '@/lib/settings-manager'
 import {
   ackUpdateNotice,
@@ -109,9 +108,8 @@ export function UpdateNoticeDialog() {
   }, [acknowledgeNoticeSequence, alwaysShowUpdateNotice, notice])
 
   const openPluginManagement = useCallback(async () => {
-    preparePluginUpdateManagementView()
     await acknowledgeNoticeSequence()
-    await navigate({ to: '/plugins' })
+    await navigate({ to: '/plugin-config' })
   }, [acknowledgeNoticeSequence, navigate])
 
   if (!notice) {

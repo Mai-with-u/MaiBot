@@ -36,10 +36,7 @@ import {
   recordPluginDownload,
   type PluginStatsData,
 } from '@/lib/plugin-stats'
-import {
-  PLUGIN_MARKET_SHOW_UPDATES_EVENT,
-  PLUGIN_MARKET_VIEW_STATE_KEY,
-} from '@/lib/plugin-market-navigation'
+import { PLUGIN_MARKET_VIEW_STATE_KEY } from '@/lib/plugin-market-navigation'
 
 import { InstallDialog } from './InstallDialog'
 import { MarketplaceTab } from './MarketplaceTab'
@@ -197,17 +194,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       } satisfies PluginMarketplaceViewState)
     )
   }, [marketplaceSortBy, pluginTypeFilter, searchQuery, showInstalledPlugins])
-
-  useEffect(() => {
-    const showPluginUpdates = () => {
-      setSearchQuery('')
-      setPluginTypeFilter('all')
-      setMarketplaceSortBy('default')
-      setShowInstalledPlugins(true)
-    }
-    window.addEventListener(PLUGIN_MARKET_SHOW_UPDATES_EVENT, showPluginUpdates)
-    return () => window.removeEventListener(PLUGIN_MARKET_SHOW_UPDATES_EVENT, showPluginUpdates)
-  }, [])
 
   useEffect(() => {
     const viewport = scrollViewportRef.current
