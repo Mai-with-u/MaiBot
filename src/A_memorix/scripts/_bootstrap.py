@@ -15,7 +15,7 @@ for _path in (SRC_ROOT, PROJECT_ROOT, PLUGIN_ROOT):
     if _path_str not in sys.path:
         sys.path.insert(0, _path_str)
 
-from A_memorix.paths import config_path, default_data_dir, resolve_repo_path
+from A_memorix.paths import config_path, default_data_dir, resolve_repo_path as resolve_repo_path  # noqa: E402
 
 DEFAULT_CONFIG_PATH = config_path()
 DEFAULT_DATA_DIR = default_data_dir()

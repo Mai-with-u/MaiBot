@@ -948,9 +948,7 @@ class ImportTaskManager:
             if malformed_keys:
                 preview = ", ".join(malformed_keys[:5])
                 extra = "" if len(malformed_keys) <= 5 else f" ... (+{len(malformed_keys) - 5})"
-                result["warnings"].append(
-                    f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}"
-                )
+                result["warnings"].append(f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}")
 
         return result
 
@@ -1063,7 +1061,9 @@ class ImportTaskManager:
             "name": file_record.name,
             "source_path": file_record.source_path or "",
             "source_kind": file_record.source_kind,
-            "sources": self._dedupe_sources(getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)),
+            "sources": self._dedupe_sources(
+                getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)
+            ),
         }
         self._save_manifest(manifest)
 
@@ -1253,7 +1253,9 @@ class ImportTaskManager:
             raise ValueError("start_id 不能大于 end_id")
 
         read_batch_size = _parse_optional_positive_int(payload.get("read_batch_size"), "read_batch_size") or 2000
-        commit_window_rows = _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        commit_window_rows = (
+            _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        )
         embed_batch_size = _parse_optional_positive_int(payload.get("embed_batch_size"), "embed_batch_size") or 256
         entity_embed_batch_size = (
             _parse_optional_positive_int(payload.get("entity_embed_batch_size"), "entity_embed_batch_size") or 512
@@ -1745,7 +1747,9 @@ class ImportTaskManager:
                 return None
             return task.to_detail(include_chunks=include_chunks)
 
-    async def get_chunks(self, task_id: str, file_id: str, offset: int = 0, limit: int = 50) -> Optional[Dict[str, Any]]:
+    async def get_chunks(
+        self, task_id: str, file_id: str, offset: int = 0, limit: int = 50
+    ) -> Optional[Dict[str, Any]]:
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -1802,9 +1806,7 @@ class ImportTaskManager:
             has_non_retryable = False
             for chunk in failed_chunks:
                 failed_at = str(chunk.failed_at or "").strip().lower()
-                retryable = bool(chunk.retryable) or (
-                    file_obj.input_mode == "text" and failed_at == "extracting"
-                )
+                retryable = bool(chunk.retryable) or (file_obj.input_mode == "text" and failed_at == "extracting")
                 if retryable:
                     try:
                         retry_indexes.append(int(chunk.index))
@@ -2051,9 +2053,9 @@ class ImportTaskManager:
             try:
                 await worker
             except asyncio.CancelledError:
-                pass
+                logger.debug("Web 导入工作线程已取消")
             except Exception:
-                pass
+                logger.exception("Web 导入工作线程关闭异常")
 
         self._cleanup_temp_root()
 
@@ -2187,8 +2189,7 @@ class ImportTaskManager:
             file_semaphore = asyncio.Semaphore(task.params["file_concurrency"])
             chunk_semaphore = asyncio.Semaphore(task.params["chunk_concurrency"])
             jobs = [
-                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore))
-                for f in task.files
+                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore)) for f in task.files
             ]
             await asyncio.gather(*jobs, return_exceptions=True)
 
@@ -2199,10 +2200,7 @@ class ImportTaskManager:
                 return
             self._recompute_task_progress(task)
             has_failed = any(
-                (f.status == "failed")
-                or (f.failed_chunks > 0)
-                or bool(str(f.error or "").strip())
-                for f in task.files
+                (f.status == "failed") or (f.failed_chunks > 0) or bool(str(f.error or "").strip()) for f in task.files
             )
             has_cancelled = any(f.status == "cancelled" for f in task.files)
             has_completed = any(f.status == "completed" for f in task.files)
@@ -2402,12 +2400,16 @@ class ImportTaskManager:
         try:
             process.terminate()
             await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_terminate_seconds"])
-        except Exception:
+        except ProcessLookupError:
+            logger.debug("迁移子进程已在终止前退出")
+        except asyncio.TimeoutError:
             try:
                 process.kill()
                 await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_kill_seconds"])
-            except Exception:
-                pass
+            except ProcessLookupError:
+                logger.debug("迁移子进程已在强制终止前退出")
+            except asyncio.TimeoutError:
+                logger.error("迁移子进程强制终止超时")
 
     async def _reload_stores_after_external_migration(self) -> None:
         async with self._storage_lock:
@@ -2569,9 +2571,11 @@ class ImportTaskManager:
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         for old in dirs[keep:]:
             try:
-                shutil.rmtree(old, ignore_errors=True)
-            except Exception:
-                pass
+                shutil.rmtree(old)
+            except FileNotFoundError:
+                logger.debug(f"旧转换目录已不存在: {old}")
+            except OSError as exc:
+                logger.warning(f"清理旧转换目录失败: path={old}, error={exc}")
 
     def _verify_convert_output(self, output_dir: Path) -> Dict[str, Any]:
         vectors = output_dir / "vectors"
@@ -2778,6 +2782,7 @@ class ImportTaskManager:
         switched = False
         rollback_info: Dict[str, Any] = {"attempted": True, "restored": False, "error": ""}
         moved_items: List[Tuple[Path, Path]] = []
+        installed_items: List[Path] = []
         try:
             for name in ("vectors", "graph", "metadata"):
                 src_current = target_dir / name
@@ -2789,17 +2794,33 @@ class ImportTaskManager:
                     shutil.move(str(src_current), str(dst_backup))
                     moved_items.append((dst_backup, src_current))
                 shutil.move(str(src_new), str(src_current))
+                installed_items.append(src_current)
             switched = True
         except Exception as switch_err:
             rollback_info["error"] = str(switch_err)
-            # 尝试回滚
-            for src_backup, dst_original in moved_items:
-                if src_backup.exists() and not dst_original.exists():
+            restore_errors: List[str] = []
+            # 先移走已安装的新目录，再逐项恢复旧目录，避免新旧内容混合。
+            for installed_path in reversed(installed_items):
+                if not installed_path.exists():
+                    continue
+                failed_new_path = backup_dir / f"{installed_path.name}.failed_new"
+                try:
+                    shutil.move(str(installed_path), str(failed_new_path))
+                except OSError as restore_exc:
+                    restore_errors.append(str(restore_exc))
+                    logger.error(f"隔离切换失败目录失败: path={installed_path}, error={restore_exc}")
+            for src_backup, dst_original in reversed(moved_items):
+                if src_backup.exists():
                     try:
                         shutil.move(str(src_backup), str(dst_original))
-                    except Exception:
-                        pass
-            rollback_info["restored"] = True
+                    except OSError as restore_exc:
+                        restore_errors.append(str(restore_exc))
+                        logger.error(
+                            f"恢复转换备份失败: source={src_backup}, target={dst_original}, error={restore_exc}"
+                        )
+            rollback_info["restored"] = not restore_errors
+            if restore_errors:
+                rollback_info["error"] = f"{switch_err}; rollback: {'; '.join(restore_errors)}"
             async with self._lock:
                 t = self._tasks.get(task_id)
                 if t:
@@ -2880,7 +2901,7 @@ class ImportTaskManager:
             try:
                 store.close()
             except Exception:
-                pass
+                logger.exception(f"关闭临时迁移存储失败: target_dir={target_dir}")
 
         async with self._lock:
             t = self._tasks.get(task_id)
@@ -3021,10 +3042,7 @@ class ImportTaskManager:
             if not selected_chunks:
                 raise RuntimeError("失败分块重试索引无效，未匹配到可执行分块")
             logger.info(
-                "重试任务按失败分块执行: "
-                f"file={file_record.name} "
-                f"selected={len(selected_chunks)} "
-                f"total={len(chunks)}"
+                f"重试任务按失败分块执行: file={file_record.name} selected={len(selected_chunks)} total={len(chunks)}"
             )
 
         await self._register_chunks(task_id, file_record.file_id, selected_chunks)
@@ -3083,6 +3101,7 @@ class ImportTaskManager:
                 f.progress = 1.0
             f.updated_at = _now()
             self._recompute_task_progress(task)
+
     async def _process_text_chunk(
         self,
         task_id: str,
@@ -3293,9 +3312,7 @@ class ImportTaskManager:
                     default_source=f"web_import:{filename}",
                 )
             except ImportPayloadValidationError as exc:
-                warnings.append(
-                    f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})"
-                )
+                warnings.append(f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})")
                 continue
             units.append(
                 {
@@ -3316,9 +3333,7 @@ class ImportTaskManager:
             name = normalize_entity_import_item(e)
             if not name:
                 raw = str(e or "").strip()
-                warnings.append(
-                    f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})"
-                )
+                warnings.append(f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})")
                 continue
             units.append(
                 {
@@ -3341,9 +3356,7 @@ class ImportTaskManager:
                     )
                 else:
                     raw = str(r or "").strip()
-                warnings.append(
-                    f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})"
-                )
+                warnings.append(f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})")
                 continue
             units.append(
                 {
@@ -3503,7 +3516,7 @@ class ImportTaskManager:
         imported_sources = getattr(file_record, "imported_sources", None)
         if imported_sources is None:
             imported_sources = []
-            setattr(file_record, "imported_sources", imported_sources)
+            file_record.imported_sources = imported_sources
         if source_text not in imported_sources:
             imported_sources.append(source_text)
 
@@ -3649,10 +3662,6 @@ class ImportTaskManager:
             )
             self.plugin.graph_store.add_edges([(subject_token, object_token)], relation_hashes=[rel_hash])
             if not write_vector:
-                try:
-                    self.plugin.metadata_store.set_relation_vector_state(rel_hash, "none")
-                except Exception:
-                    pass
                 return rel_hash
             target_store = self._graph_vector_store()
             vector_id = self._graph_vector_id("relation", rel_hash)
@@ -3953,7 +3962,10 @@ JSON schema:
             f.current_step = step
             f.updated_at = _now()
             task.updated_at = _now()
-            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {"queued", "preparing"}:
+            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {
+                "queued",
+                "preparing",
+            }:
                 task.status = "running"
                 task.current_step = "running"
 

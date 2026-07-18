@@ -44,6 +44,7 @@ class BehaviorChatInfo(BaseModel):
     session_id: str
     display_name: str
     platform: str = ""
+    account_id: Optional[str] = None
     chat_type: str = ""
     path_count: int = 0
     cluster_count: int = 0
@@ -596,6 +597,7 @@ async def list_behavior_chats() -> dict[str, Any]:
             session_id=row[0] or "",
             display_name=_chat_display_name(chat_sessions.get(row[0]), row[0]),
             platform=str(chat_sessions[row[0]].platform) if row[0] in chat_sessions else "",
+            account_id=chat_sessions[row[0]].account_id if row[0] in chat_sessions else None,
             chat_type=_chat_type_of(chat_sessions.get(row[0])),
             path_count=int(row[1] or 0),
             cluster_count=cluster_count_by_session.get(row[0], 0),

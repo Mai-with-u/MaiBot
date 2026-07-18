@@ -20,7 +20,9 @@ async def test_store_person_memory_from_answer_writes_person_fact(monkeypatch):
         return SimpleNamespace(success=True, detail="", stored_ids=["p1"])
 
     session = SimpleNamespace(platform="qq", user_id="10001", group_id="", session_id="session-1")
-    monkeypatch.setattr(person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session))
+    monkeypatch.setattr(
+        person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session)
+    )
     monkeypatch.setattr(person_info_module, "get_person_id_by_person_name", lambda person_name: "person-1")
     monkeypatch.setattr(person_info_module, "Person", FakePerson)
     monkeypatch.setattr(person_info_module.memory_service, "ingest_text", fake_ingest_text)
@@ -55,7 +57,9 @@ async def test_store_person_memory_from_answer_prefers_explicit_person_id(monkey
         return SimpleNamespace(success=True, detail="", stored_ids=["p1"])
 
     session = SimpleNamespace(platform="qq", user_id="10001", group_id="group-1", session_id="session-1")
-    monkeypatch.setattr(person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session))
+    monkeypatch.setattr(
+        person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session)
+    )
     monkeypatch.setattr(person_info_module, "get_person_id_by_person_name", lambda person_name: "wrong-person")
     monkeypatch.setattr(person_info_module, "Person", FakePerson)
     monkeypatch.setattr(person_info_module.memory_service, "ingest_text", fake_ingest_text)
@@ -89,7 +93,9 @@ async def test_store_person_memory_from_answer_skips_unknown_person(monkeypatch)
         return SimpleNamespace(success=True, detail="", stored_ids=["p1"])
 
     session = SimpleNamespace(platform="qq", user_id="10001", group_id="", session_id="session-1")
-    monkeypatch.setattr(person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session))
+    monkeypatch.setattr(
+        person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session)
+    )
     monkeypatch.setattr(person_info_module, "get_person_id_by_person_name", lambda person_name: "person-1")
     monkeypatch.setattr(person_info_module, "Person", FakePerson)
     monkeypatch.setattr(person_info_module.memory_service, "ingest_text", fake_ingest_text)

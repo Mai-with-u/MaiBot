@@ -1,14 +1,16 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List
 import hashlib
+
 
 class KnowledgeType(str, Enum):
     NARRATIVE = "narrative"
     FACTUAL = "factual"
     QUOTE = "quote"
     MIXED = "mixed"
+
 
 @dataclass
 class SourceInfo:
@@ -17,6 +19,7 @@ class SourceInfo:
     offset_end: int
     checksum: str = ""
 
+
 @dataclass
 class ChunkContext:
     chunk_id: str
@@ -24,17 +27,19 @@ class ChunkContext:
     context: Dict[str, Any] = field(default_factory=dict)
     text: str = ""
 
+
 @dataclass
 class ChunkFlags:
     verbatim: bool = False
     requires_llm: bool = True
+
 
 @dataclass
 class ProcessedChunk:
     type: KnowledgeType
     source: SourceInfo
     chunk: ChunkContext
-    data: Dict[str, Any] = field(default_factory=dict) # triples、events、verbatim_entities
+    data: Dict[str, Any] = field(default_factory=dict)  # 数据字段：triples、events、verbatim_entities
     flags: ChunkFlags = field(default_factory=ChunkFlags)
 
     def to_dict(self) -> Dict:
@@ -44,20 +49,18 @@ class ProcessedChunk:
                 "file": self.source.file,
                 "offset_start": self.source.offset_start,
                 "offset_end": self.source.offset_end,
-                "checksum": self.source.checksum
+                "checksum": self.source.checksum,
             },
             "chunk": {
                 "text": self.chunk.text,
                 "chunk_id": self.chunk.chunk_id,
                 "index": self.chunk.index,
-                "context": self.chunk.context
+                "context": self.chunk.context,
             },
             "data": self.data,
-            "flags": {
-                "verbatim": self.flags.verbatim,
-                "requires_llm": self.flags.requires_llm
-            }
+            "flags": {"verbatim": self.flags.verbatim, "requires_llm": self.flags.requires_llm},
         }
+
 
 class BaseStrategy(ABC):
     def __init__(self, filename: str):

@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import {
@@ -427,14 +428,14 @@ export function LegacyExpressionImportDialog({
                           )}
                           {group.matched_sessions.map((session) => (
                             <SelectItem key={`matched-${session.session_id}`} value={session.session_id}>
-                              {session.chat_name}
+                              {formatChatDisplayName(session.chat_name, session.account_id)}
                             </SelectItem>
                           ))}
                           {targetChatList
                             .filter((chat) => !group.matched_sessions.some((session) => session.session_id === chat.chat_id))
                             .map((chat) => (
                             <SelectItem key={chat.chat_id} value={chat.chat_id}>
-                              {chat.chat_name}
+                              {formatChatDisplayName(chat.chat_name, chat.account_id)}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -573,7 +574,7 @@ export function ExpressionCreateDialog({
                 {chatList.map((chat) => (
                   <SelectItem key={chat.chat_id} value={chat.chat_id}>
                     <span className="truncate" style={{ wordBreak: 'keep-all' }}>
-                      {chat.chat_name}
+                      {formatChatDisplayName(chat.chat_name, chat.account_id)}
                       {chat.is_group && <span className="text-muted-foreground ml-1">(群聊)</span>}
                     </span>
                   </SelectItem>
@@ -697,7 +698,7 @@ export function ExpressionEditDialog({
                 {chatList.map((chat) => (
                   <SelectItem key={chat.chat_id} value={chat.chat_id}>
                     <span className="truncate" style={{ wordBreak: 'keep-all' }}>
-                      {chat.chat_name}
+                      {formatChatDisplayName(chat.chat_name, chat.account_id)}
                       {chat.is_group && <span className="text-muted-foreground ml-1">(群聊)</span>}
                     </span>
                   </SelectItem>

@@ -8,6 +8,7 @@ import traceback
 from maim_message import MessageBase
 
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
+from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.common.logger import get_logger
 from src.common.utils.utils_message import MessageUtils
 from src.common.utils.utils_session import SessionUtils
@@ -19,6 +20,7 @@ from src.plugin_runtime.hook_payloads import deserialize_session_message, serial
 from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
+from src.maisaka.context.clear_context import is_clear_context_command, mark_clear_context_command
 
 from .chat_manager import chat_manager
 from .image_receive_compressor import process_received_images_in_message
@@ -339,6 +341,33 @@ class ChatBot:
             logger.error(f"处理命令时出错: {e}")
             return False, None, True  # 出错时继续处理消息
 
+    async def _process_clear_context_command(self, message: SessionMessage) -> bool:
+        """处理内置 ``/clear`` 指令并清空当前聊天流的 Maisaka 上下文。"""
+
+        if not global_config.debug.enable_clear_context_command:
+            return False
+        if not is_clear_context_command(message.processed_plain_text):
+            return False
+
+        mark_clear_context_command(message)
+        await MessageUtils.store_message_to_db_async(message)
+        had_runtime = await heartflow_manager.clear_chat_history_context(message.session_id)
+
+        from src.services.send_service import text_to_stream
+
+        sent = await text_to_stream(
+            "已清空当前聊天的 Maisaka 历史上下文。",
+            message.session_id,
+            storage_message=False,
+        )
+        if not sent:
+            logger.warning(f"Maisaka 历史上下文已清空，但确认消息发送失败: session_id={message.session_id}")
+        logger.info(
+            f"已通过 /clear 清空 Maisaka 历史上下文: "
+            f"session_id={message.session_id} 运行时是否存在={had_runtime}"
+        )
+        return True
+
     @staticmethod
     def _mark_command_message(message: SessionMessage, intercept_message_level: int) -> None:
         """标记消息已经被命令链消费。
@@ -581,6 +610,11 @@ class ChatBot:
             )  # 确保会话存在
 
             # message.update_chat_stream(chat)
+
+            # 调试用内置指令需要先写入持久化清理边界，再停止当前运行时，
+            # 避免并发消息或进程重启重新带回清理前的短期上下文。
+            if await self._process_clear_context_command(message):
+                return
 
             # 命令处理 - 使用新插件系统检查并处理命令。
             # 命令处理器内部自行决定是否回复消息，这里只负责流程分发与拦截。

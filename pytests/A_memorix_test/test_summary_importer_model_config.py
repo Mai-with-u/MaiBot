@@ -121,6 +121,26 @@ def test_resolve_summary_model_config_rejects_legacy_string_selector(monkeypatch
         importer._resolve_summary_model_config()
 
 
+def test_resolve_summary_model_config_skips_task_with_invalid_model(monkeypatch):
+    monkeypatch.setattr(llm_api, "get_available_models", _fake_available_models)
+    importer = SummaryImporter(
+        vector_store=None,
+        graph_store=None,
+        metadata_store=None,
+        embedding_manager=None,
+        plugin_config={
+            "summarization": {
+                "model_name": ["memory:not-a-memory-model", "utils:utils-model"],
+            }
+        },
+    )
+
+    resolved = importer._resolve_summary_model_config()
+
+    assert resolved is not None
+    assert resolved.model_list == ["utils-model"]
+
+
 def test_summary_importer_normalizes_llm_entities_and_relations():
     assert _normalize_entity_items(["Alice", {"name": "地图"}, ["bad"], "Alice"]) == ["Alice", "地图"]
     assert _normalize_entity_items("Alice") == []

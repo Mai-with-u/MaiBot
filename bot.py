@@ -90,7 +90,6 @@ def run_runner_process():
 
     while True:
         logger.info(t("startup.launching_script", script_file=script_file))
-        logger.info(t("startup.compiling_shaders"))
 
         # 启动子进程 (Worker)
         # 使用 sys.executable 确保使用相同的 Python 解释器
@@ -143,7 +142,7 @@ if os.environ.get("MAIBOT_WORKER_PROCESS") != "1":
 # 不过由于是不同进程，每个进程仍会初始化一次，这是预期的行为
 
 require_legacy_upgrade_confirmation(Path(script_dir))
-emit_terminal_update_notice_if_needed()
+asyncio.run(emit_terminal_update_notice_if_needed())
 
 logger.info(t("startup.worker_dir_set", script_dir=script_dir))
 

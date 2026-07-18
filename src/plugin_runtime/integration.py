@@ -72,6 +72,11 @@ _EVENT_TYPE_MAP: Dict[str, str] = {
     "after_send": "after_send",
 }
 
+_RUNTIME_GROUP_DESCRIPTIONS: Dict[str, str] = {
+    "builtin": "核心插件（内置插件与适配器）",
+    "third_party": "扩展插件（第三方扩展）",
+}
+
 
 @dataclass(frozen=True)
 class DependencySyncState:
@@ -615,7 +620,15 @@ class PluginRuntimeManager(
             config_manager.register_reload_callback(self._config_reload_callback)
             self._config_reload_callback_registered = True
             self._started = True
-            logger.info(f"插件运行时已启动 — 内置: {builtin_dirs or '无'}, 第三方: {third_party_dirs or '无'}")
+            started_group_names = {supervisor.group_name for supervisor in started_supervisors}
+            runtime_descriptions = [
+                description
+                for group_name, description in _RUNTIME_GROUP_DESCRIPTIONS.items()
+                if group_name in started_group_names
+            ]
+            logger.info(
+                f"已启动 {len(started_supervisors)} 个独立插件运行时：{'；'.join(runtime_descriptions)}"
+            )
         except Exception as e:
             logger.error(f"插件运行时启动失败: {e}", exc_info=True)
             await self._stop_plugin_file_watcher()

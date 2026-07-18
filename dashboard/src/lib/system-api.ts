@@ -42,6 +42,24 @@ export interface UpdateNoticeResponse {
   from_version: string | null
   versions: string[]
   content: string
+  incompatible_plugins: IncompatiblePluginNotice[]
+}
+
+export type PluginUpdateCheckStatus =
+  | 'checking'
+  | 'available'
+  | 'unavailable'
+  | 'not_found'
+  | 'check_failed'
+
+export interface IncompatiblePluginNotice {
+  plugin_id: string
+  name: string
+  installed_version: string
+  host_min_version: string
+  host_max_version: string
+  update_status: PluginUpdateCheckStatus
+  update_version: string | null
 }
 
 export interface UpdateNoticeAckResponse {

@@ -36,6 +36,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { getChatStreams, resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import { getBotConfigCached } from '@/lib/config-api'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import type { FieldHookComponent } from '@/lib/field-hooks'
@@ -481,7 +482,7 @@ const chatStreamTypeLabel = (chatType: string) => {
 
 const chatStreamSelectLabel = (chat: ChatStream) => {
   const targetId = chatStreamTargetId(chat)
-  const name = chat.display_name || targetId || chat.session_id
+  const name = formatChatDisplayName(chat.display_name || targetId || chat.session_id, chat.account_id)
   return `${name} · ${chatStreamTypeLabel(chat.chat_type)} · ${chat.platform}:${targetId}`
 }
 
@@ -751,7 +752,9 @@ function ResolvedChatTargetInfo({ chat }: { chat: ChatStream }) {
         {avatarUrl && <AvatarImage src={avatarUrl} alt={`${chat.display_name} 的头像`} />}
         <AvatarFallback className="text-[10px]">{fallbackText}</AvatarFallback>
       </Avatar>
-      <span className="min-w-0 truncate text-foreground">{chat.display_name}</span>
+      <span className="min-w-0 truncate text-foreground">
+        {formatChatDisplayName(chat.display_name, chat.account_id)}
+      </span>
       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
         {chat.platform}:{chat.target_id}
       </span>
@@ -914,6 +917,7 @@ function SharedMemoryChatStreamSelect({
     if (!normalizedSearch) return true
     return [
       chat.display_name,
+      chat.account_id,
       chat.platform,
       chatStreamTargetId(chat),
       chatStreamTypeLabel(chat.chat_type),

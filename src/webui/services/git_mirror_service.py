@@ -400,6 +400,7 @@ class GitMirrorService:
         file_path: str,
         mirror_id: Optional[str] = None,
         custom_url: Optional[str] = None,
+        report_progress: bool = True,
     ) -> Dict[str, Any]:
         """
         获取 GitHub 仓库的 Raw 文件内容
@@ -411,6 +412,7 @@ class GitMirrorService:
             file_path: 文件路径
             mirror_id: 指定的镜像源 ID
             custom_url: 自定义完整 URL（如果提供，将忽略其他参数）
+            report_progress: 是否广播插件市场加载进度
 
         Returns:
             Dict 包含:
@@ -452,7 +454,7 @@ class GitMirrorService:
         # 依次尝试每个镜像源
         for index, mirror in enumerate(mirrors_to_try, 1):
             # 推送进度：正在尝试第 N 个镜像源
-            if _update_progress:
+            if report_progress and _update_progress:
                 try:
                     progress = 30 + int((index - 1) / total_mirrors * 40)  # 30% - 70%
                     await _update_progress(
@@ -469,7 +471,7 @@ class GitMirrorService:
 
             if result["success"]:
                 # 成功，推送进度
-                if _update_progress:
+                if report_progress and _update_progress:
                     try:
                         await _update_progress(
                             stage="loading",
@@ -485,7 +487,7 @@ class GitMirrorService:
             # 失败，记录日志并推送失败信息
             logger.warning(f"镜像源 {mirror['id']} 失败: {result.get('error')}")
 
-            if _update_progress and index < total_mirrors:
+            if report_progress and _update_progress and index < total_mirrors:
                 try:
                     await _update_progress(
                         stage="loading",

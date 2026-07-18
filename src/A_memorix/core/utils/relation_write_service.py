@@ -161,7 +161,6 @@ class RelationWriteService:
         self.graph_store.add_edges([(subject, obj)], relation_hashes=[rel_hash])
 
         if not write_vector:
-            self.metadata_store.set_relation_vector_state(rel_hash, "none")
             return RelationWriteResult(
                 hash_value=rel_hash,
                 vector_written=False,

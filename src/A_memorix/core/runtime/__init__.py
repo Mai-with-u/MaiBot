@@ -1,4 +1,4 @@
-"""SDK runtime exports for A_Memorix."""
+"""A_Memorix 的 SDK 运行时导出。"""
 
 from __future__ import annotations
 

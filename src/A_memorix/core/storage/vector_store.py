@@ -4,20 +4,21 @@
 基于Faiss的高效向量存储与检索，支持SQ8量化、Append-Only磁盘存储和内存映射。
 """
 
-import os
-import pickle
 import hashlib
+import json
+import os
+import random
 import shutil
+import threading  # 线程同步
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
-import random
-import threading  # Added threading import
 
 import numpy as np
 
 try:
     import faiss
+
     HAS_FAISS = True
 except ImportError:
     HAS_FAISS = False
@@ -27,6 +28,20 @@ from ..utils.quantization import QuantizationType
 from ..utils.io import atomic_write, atomic_save_path
 
 logger = get_logger("A_Memorix.VectorStore")
+
+
+def _read_json_object(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise TypeError(f"JSON 元数据必须是对象: {path}")
+    return payload
+
+
+def _write_json_object(path: Path, payload: Dict[str, Any]) -> None:
+    with atomic_write(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
 
 
 class VectorStore:
@@ -67,14 +82,12 @@ class VectorStore:
             self.data_dir.mkdir(parents=True, exist_ok=True)
         if quantization_type != QuantizationType.INT8:
             raise ValueError(
-                "vNext 仅支持 quantization_type=int8(SQ8)。"
-                " 请更新配置并执行 scripts/release_vnext_migrate.py migrate。"
+                "vNext 仅支持 quantization_type=int8(SQ8)。 请更新配置并执行 scripts/release_vnext_migrate.py migrate。"
             )
         normalized_index_type = str(index_type or "sq8").strip().lower()
         if normalized_index_type not in {"sq8", "int8"}:
             raise ValueError(
-                "vNext 仅支持 index_type=sq8。"
-                " 请更新配置并执行 scripts/release_vnext_migrate.py migrate。"
+                "vNext 仅支持 index_type=sq8。 请更新配置并执行 scripts/release_vnext_migrate.py migrate。"
             )
         self.quantization_type = QuantizationType.INT8
         self.index_type = "sq8"
@@ -94,6 +107,9 @@ class VectorStore:
 
         self._known_hashes: Set[str] = set()
         self._deleted_ids: Set[int] = set()
+        self._known_hashes_revision = 0
+        self._cached_map_revision = -1
+        self._cached_map: Dict[int, str] = {}
 
         self._reservoir_buffer: List[np.ndarray] = []
         self._seen_count_for_reservoir = 0
@@ -105,7 +121,7 @@ class VectorStore:
         self._total_deleted = 0
         self._bin_count = 0
 
-        # Thread safety lock
+        # 线程安全锁
         self._lock = threading.RLock()
 
         logger.debug(f"向量存储实例已创建: dim={dimension}, mode=SQ8, data_dir={self.data_dir}")
@@ -113,9 +129,7 @@ class VectorStore:
     def _init_index(self):
         """初始化空的 Faiss 索引"""
         quantizer = faiss.IndexScalarQuantizer(
-            self.dimension,
-            faiss.ScalarQuantizer.QT_8bit,
-            faiss.METRIC_INNER_PRODUCT
+            self.dimension, faiss.ScalarQuantizer.QT_8bit, faiss.METRIC_INNER_PRODUCT
         )
         self._index = faiss.IndexIDMap2(quantizer)
         self._is_trained = False
@@ -142,13 +156,61 @@ class VectorStore:
         return self.data_dir / "vectors_ids.bin"
 
     @property
+    def _compaction_journal_path(self) -> Path:
+        return self.data_dir / "vectors_compaction.json"
+
+    @property
+    def _bin_backup_path(self) -> Path:
+        return self.data_dir / "vectors.bin.compaction.bak"
+
+    @property
+    def _ids_backup_path(self) -> Path:
+        return self.data_dir / "vectors_ids.bin.compaction.bak"
+
+    def _invalidate_id_map(self) -> None:
+        self._known_hashes_revision += 1
+
+    def _vector_pair_matches(self, bin_path: Path, ids_path: Path, *, expected_count: Optional[int] = None) -> bool:
+        if not bin_path.exists() or not ids_path.exists():
+            return False
+        vector_item_size = self.dimension * 2
+        bin_size = bin_path.stat().st_size
+        ids_size = ids_path.stat().st_size
+        if bin_size % vector_item_size != 0 or ids_size % 8 != 0:
+            return False
+        vector_count = bin_size // vector_item_size
+        id_count = ids_size // 8
+        return vector_count == id_count and (expected_count is None or vector_count == expected_count)
+
+    def _recover_interrupted_compaction_unlocked(self) -> None:
+        """根据持久化日志完成或回滚被中断的双文件切换。"""
+        journal_path = self._compaction_journal_path
+        if not journal_path.exists():
+            return
+
+        journal = _read_json_object(journal_path)
+        expected_count = int(journal["expected_count"])
+        if self._vector_pair_matches(self._bin_path, self._ids_bin_path, expected_count=expected_count):
+            self._bin_backup_path.unlink(missing_ok=True)
+            self._ids_backup_path.unlink(missing_ok=True)
+            journal_path.unlink()
+            return
+
+        if not self._vector_pair_matches(self._bin_backup_path, self._ids_backup_path):
+            raise RuntimeError("向量压缩被中断，且找不到可恢复的一致备份")
+        os.replace(self._bin_backup_path, self._bin_path)
+        os.replace(self._ids_backup_path, self._ids_bin_path)
+        journal_path.unlink()
+
+    @property
     def _int_to_str_map(self) -> Dict[int, str]:
-        """Lazy build volatile map from known hashes"""
-        # Note: This is read-heavy and cached, might need lock if _known_hashes updates concurrently
-        # But add/delete are now locked, so checking len mismatch is somewhat safe-ish for quick dirty cache
-        if not hasattr(self, "_cached_map") or len(self._cached_map) != len(self._known_hashes):
-            with self._lock: # Protect cache rebuild
-                 self._cached_map = {self._generate_id(k): k for k in self._known_hashes}
+        """按需从已知哈希构建易失的 ID 反查表。"""
+        # 反查表读取频繁，且依赖可变的 _known_hashes；版本号可以识别等量替换。
+        if self._cached_map_revision != self._known_hashes_revision:
+            with self._lock:  # 在锁内重建缓存
+                if self._cached_map_revision != self._known_hashes_revision:
+                    self._cached_map = {self._generate_id(k): k for k in self._known_hashes}
+                    self._cached_map_revision = self._known_hashes_revision
         return self._cached_map
 
     def add(self, vectors: np.ndarray, ids: List[str]) -> int:
@@ -175,6 +237,8 @@ class VectorStore:
             if not processed_vecs:
                 return 0
 
+            self._invalidate_id_map()
+
             batch_vecs = np.array(processed_vecs, dtype=np.float32)
             batch_ids = np.array(processed_int_ids, dtype=np.int64)
 
@@ -191,7 +255,7 @@ class VectorStore:
                 self._update_reservoir(batch_vecs)
                 # 这里的 TRAIN_SIZE 取默认 10k，或者根据当前数据量动态判断
                 if len(self._reservoir_buffer) >= 10000:
-                    logger.info(f"训练样本达到上限，开始训练...")
+                    logger.info("训练样本达到上限，开始训练...")
                     self._train_and_replay_unlocked()
 
             self._total_added += len(batch_ids)
@@ -213,7 +277,7 @@ class VectorStore:
         with open(self._bin_path, "ab") as f:
             f.write(vecs_fp16.tobytes())
 
-        ids_bytes = batch_ids.astype('>i8').tobytes()
+        ids_bytes = batch_ids.astype(">i8").tobytes()
         with open(self._ids_bin_path, "ab") as f:
             f.write(ids_bytes)
 
@@ -265,10 +329,12 @@ class VectorStore:
             replay_count = self._replay_vectors_to_index()
             # 只有当 replay 成功且数据量一致时，才释放回退索引
             if self._index.ntotal >= self._bin_count:
-                logger.info(f"Replay successful ({self._index.ntotal}/{self._bin_count}). Releasing fallback index.")
+                logger.info(f"Replay successful ({replay_count}/{self._bin_count}). Releasing fallback index.")
                 self._fallback_index.reset()
             else:
-                logger.warning(f"Replay count mismatch: {self._index.ntotal} vs {self._bin_count}. Keeping fallback index.")
+                logger.warning(
+                    f"Replay count mismatch: {self._index.ntotal} vs {self._bin_count}. Keeping fallback index."
+                )
         except Exception as e:
             logger.error(f"Replay failed: {e}. Keeping fallback index as backup.")
 
@@ -281,6 +347,7 @@ class VectorStore:
         id_item_size = 8
         chunk_size = 10000
 
+        replay_count = 0
         with open(self._bin_path, "rb") as f_vec, open(self._ids_bin_path, "rb") as f_id:
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
@@ -293,7 +360,7 @@ class VectorStore:
                 batch_fp32 = batch_fp16.astype(np.float32)
                 faiss.normalize_L2(batch_fp32)
 
-                batch_ids = np.frombuffer(id_data, dtype='>i8').astype(np.int64)
+                batch_ids = np.frombuffer(id_data, dtype=">i8").astype(np.int64)
 
                 valid_mask = [id_ not in self._deleted_ids for id_ in batch_ids]
                 if not all(valid_mask):
@@ -302,6 +369,9 @@ class VectorStore:
 
                 if len(batch_ids) > 0:
                     self._index.add_with_ids(batch_fp32, batch_ids)
+                    replay_count += len(batch_ids)
+
+        return replay_count
 
     def search(
         self,
@@ -315,19 +385,13 @@ class VectorStore:
             query_local = query_local.reshape(1, -1)
         elif query_local.ndim == 2:
             if query_local.shape[0] != 1:
-                raise ValueError(
-                    f"query embedding must have shape (D,) or (1, D), got {tuple(query_local.shape)}"
-                )
+                raise ValueError(f"query embedding must have shape (D,) or (1, D), got {tuple(query_local.shape)}")
             got_dim = int(query_local.shape[1])
         else:
-            raise ValueError(
-                f"query embedding must have shape (D,) or (1, D), got {tuple(query_local.shape)}"
-            )
+            raise ValueError(f"query embedding must have shape (D,) or (1, D), got {tuple(query_local.shape)}")
 
         if got_dim != self.dimension:
-            raise ValueError(
-                f"query embedding dimension mismatch: expected={self.dimension} got={got_dim}"
-            )
+            raise ValueError(f"query embedding dimension mismatch: expected={self.dimension} got={got_dim}")
         if not np.all(np.isfinite(query_local)):
             raise ValueError("query embedding contains non-finite values")
 
@@ -350,8 +414,9 @@ class VectorStore:
         ids = ids[0]
 
         results = []
-        for id_val, score in zip(ids, dists):
-            if id_val == -1: continue
+        for id_val, score in zip(ids, dists, strict=True):
+            if id_val == -1:
+                continue
             if filter_deleted and id_val in self._deleted_ids:
                 continue
 
@@ -359,7 +424,7 @@ class VectorStore:
             if str_id:
                 results.append((str_id, float(score)))
 
-        # Sort and trim just in case filtering reduced count
+        # 过滤可能减少结果数量，因此重新排序并截断。
         results.sort(key=lambda x: x[1], reverse=True)
         results = results[:k]
 
@@ -370,11 +435,7 @@ class VectorStore:
 
     def get_vectors(self, ids: Sequence[str]) -> Dict[str, np.ndarray]:
         """按字符串 ID 读取已持久化向量，用于无 embedding 的池间迁移。"""
-        return {
-            key: vector
-            for batch in self.iter_vectors_by_ids(ids)
-            for key, vector in batch.items()
-        }
+        return {key: vector for batch in self.iter_vectors_by_ids(ids) for key, vector in batch.items()}
 
     def iter_vectors_by_ids(
         self,
@@ -383,11 +444,7 @@ class VectorStore:
         batch_size: int = 1024,
     ) -> Iterator[Dict[str, np.ndarray]]:
         """按字符串 ID 分批读取持久化向量，避免迁移时把全部向量集中留在内存。"""
-        requested_ids = [
-            str(item or "").strip()
-            for item in ids
-            if str(item or "").strip()
-        ]
+        requested_ids = [str(item or "").strip() for item in ids if str(item or "").strip()]
         if not requested_ids:
             return
 
@@ -524,11 +581,7 @@ class VectorStore:
                     self._bootstrap_fallback_from_disk()
 
                 min_train = max(1, int(getattr(self, "min_train_threshold", self.DEFAULT_MIN_TRAIN)))
-                needs_train = (
-                    bool(force_train)
-                    and self._bin_count >= min_train
-                    and not self._is_trained
-                )
+                needs_train = bool(force_train) and self._bin_count >= min_train and not self._is_trained
                 if needs_train:
                     self._force_train_small_data()
 
@@ -588,12 +641,13 @@ class VectorStore:
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
                 id_data = f_id.read(chunk_size * id_item_size)
-                if not vec_data: break
+                if not vec_data:
+                    break
 
                 batch_fp16 = np.frombuffer(vec_data, dtype=np.float16).reshape(-1, self.dimension)
                 batch_fp32 = batch_fp16.astype(np.float32)
                 faiss.normalize_L2(batch_fp32)
-                batch_ids = np.frombuffer(id_data, dtype='>i8').astype(np.int64)
+                batch_ids = np.frombuffer(id_data, dtype=">i8").astype(np.int64)
 
                 valid_mask = [id_ not in self._deleted_ids for id_ in batch_ids]
                 if any(valid_mask):
@@ -615,7 +669,8 @@ class VectorStore:
         with open(self._bin_path, "rb") as f:
             while len(self._reservoir_buffer) < self.TRAIN_SIZE:
                 data = f.read(chunk_size * vec_item_size)
-                if not data: break
+                if not data:
+                    break
                 fp16 = np.frombuffer(data, dtype=np.float16).reshape(-1, self.dimension)
                 fp32 = fp16.astype(np.float32)
                 faiss.normalize_L2(fp32)
@@ -637,20 +692,21 @@ class VectorStore:
                 if int_id not in self._deleted_ids:
                     self._deleted_ids.add(int_id)
                     if self._index.is_trained:
-                         self._index.remove_ids(np.array([int_id], dtype=np.int64))
+                        self._index.remove_ids(np.array([int_id], dtype=np.int64))
                     # 同步从 fallback 移除
                     if self._fallback_index.ntotal > 0:
-                         self._fallback_index.remove_ids(np.array([int_id], dtype=np.int64))
+                        self._fallback_index.remove_ids(np.array([int_id], dtype=np.int64))
                     count += 1
             self._total_deleted += count
 
-            # Check GC
+            # 检查是否需要执行垃圾回收
             self._check_rebuild_needed()
             return count
 
     def _check_rebuild_needed(self):
-        """GC Excution Check"""
-        if self._bin_count == 0: return
+        """检查是否需要执行垃圾回收重建。"""
+        if self._bin_count == 0:
+            return
         ratio = len(self._deleted_ids) / self._bin_count
         if ratio > 0.3 and len(self._deleted_ids) > 1000:
             logger.info(f"Triggering GC/Rebuild (deleted ratio: {ratio:.2f})")
@@ -665,6 +721,9 @@ class VectorStore:
         """实际 GC 重建逻辑。"""
         logger.info("Starting Compaction (GC)...")
 
+        self._recover_interrupted_compaction_unlocked()
+        self._flush_write_buffer_unlocked()
+
         tmp_bin = self.data_dir / "vectors.bin.tmp"
         tmp_ids = self.data_dir / "vectors_ids.bin.tmp"
 
@@ -674,16 +733,21 @@ class VectorStore:
 
         new_count = 0
 
-        # 1. Compact Files
-        with open(self._bin_path, "rb") as f_vec, open(self._ids_bin_path, "rb") as f_id, \
-             open(tmp_bin, "wb") as w_vec, open(tmp_ids, "wb") as w_id:
+        # 1. 压缩数据文件（Compact Files）
+        with (
+            open(self._bin_path, "rb") as f_vec,
+            open(self._ids_bin_path, "rb") as f_id,
+            open(tmp_bin, "wb") as w_vec,
+            open(tmp_ids, "wb") as w_id,
+        ):
             while True:
                 vec_data = f_vec.read(chunk_size * vec_item_size)
                 id_data = f_id.read(chunk_size * id_item_size)
-                if not vec_data: break
+                if not vec_data:
+                    break
 
                 batch_fp16 = np.frombuffer(vec_data, dtype=np.float16).reshape(-1, self.dimension)
-                batch_ids = np.frombuffer(id_data, dtype='>i8').astype(np.int64)
+                batch_ids = np.frombuffer(id_data, dtype=">i8").astype(np.int64)
 
                 keep_mask = [id_ not in self._deleted_ids for id_ in batch_ids]
 
@@ -692,29 +756,49 @@ class VectorStore:
                     keep_ids = batch_ids[keep_mask]
 
                     w_vec.write(keep_vecs.tobytes())
-                    w_id.write(keep_ids.astype('>i8').tobytes())
+                    w_id.write(keep_ids.astype(">i8").tobytes())
                     new_count += len(keep_ids)
 
-        # 2. Reset State & Atomic Swap
+        if not self._vector_pair_matches(tmp_bin, tmp_ids, expected_count=new_count):
+            raise RuntimeError("向量压缩临时文件不一致，已拒绝切换")
+
+        # 2. 通过日志和成对备份切换文件；进程中断后会整体完成或整体回滚。
+        self._bin_backup_path.unlink(missing_ok=True)
+        self._ids_backup_path.unlink(missing_ok=True)
+        shutil.copy2(self._bin_path, self._bin_backup_path)
+        shutil.copy2(self._ids_bin_path, self._ids_backup_path)
+        _write_json_object(self._compaction_journal_path, {"expected_count": new_count})
+        os.replace(tmp_bin, self._bin_path)
+        os.replace(tmp_ids, self._ids_bin_path)
+        if not self._vector_pair_matches(self._bin_path, self._ids_bin_path, expected_count=new_count):
+            self._recover_interrupted_compaction_unlocked()
+            raise RuntimeError("向量压缩文件切换失败，已恢复原始文件")
+
+        self._bin_backup_path.unlink(missing_ok=True)
+        self._ids_backup_path.unlink(missing_ok=True)
+        self._compaction_journal_path.unlink()
         self._bin_count = new_count
 
-        # Close current index
+        # 关闭当前索引
         self._index.reset()
-        if self._fallback_index: self._fallback_index.reset() # Also clear fallback
+        if self._fallback_index:
+            self._fallback_index.reset()  # 同时清空回退索引
         self._is_trained = False
 
-        # Swap files
-        shutil.move(str(tmp_bin), str(self._bin_path))
-        shutil.move(str(tmp_ids), str(self._ids_bin_path))
-
-        # Reset Tombstones (Critical)
+        # 已删除哈希必须同时移出成员集合，之后才能重新写入同名向量。
+        deleted_hashes = {
+            hash_value for hash_value in self._known_hashes if self._generate_id(hash_value) in self._deleted_ids
+        }
+        self._known_hashes.difference_update(deleted_hashes)
         self._deleted_ids.clear()
+        if deleted_hashes:
+            self._invalidate_id_map()
 
-        # 3. Reload/Rebuild Index (Fresh Train)
-        # We need to re-train because data distribution might have changed significantly after deletion
+        # 3. 重新加载并训练索引
+        # 删除后的数据分布可能明显变化，因此必须重新训练。
         self._init_index()
-        self._init_fallback_index() # Re-init fallback too
-        self._force_train_small_data() # This will train and replay from the NEW compact file
+        self._init_fallback_index()  # 同时重新初始化回退索引
+        self._force_train_small_data()  # 基于新的压缩文件训练并回放数据
 
         logger.info("Compaction Complete.")
 
@@ -736,11 +820,10 @@ class VectorStore:
             self._flush_write_buffer_unlocked()
 
             previous_embedding_fingerprint: Optional[Dict[str, Any]] = None
-            meta_path = data_dir / "vectors_metadata.pkl"
+            meta_path = data_dir / "vectors_metadata.json"
             if embedding_fingerprint is None and meta_path.exists():
                 try:
-                    with open(meta_path, "rb") as f:
-                        previous_meta = pickle.load(f)
+                    previous_meta = _read_json_object(meta_path)
                 except Exception as exc:
                     logger.warning(f"读取旧向量元数据失败，跳过 embedding 指纹继承: {exc}")
                 else:
@@ -761,14 +844,14 @@ class VectorStore:
                 "vector_norm": self._vector_norm,
                 "deleted_ids": list(self._deleted_ids),
                 "known_hashes": list(self._known_hashes),
+                "schema_version": 1,
             }
             if isinstance(embedding_fingerprint, dict) and embedding_fingerprint:
                 meta["embedding_fingerprint"] = dict(embedding_fingerprint)
             elif previous_embedding_fingerprint is not None:
                 meta["embedding_fingerprint"] = previous_embedding_fingerprint
 
-            with atomic_write(meta_path, "wb") as f:
-                pickle.dump(meta, f)
+            _write_json_object(meta_path, meta)
 
             logger.debug("VectorStore saved.")
 
@@ -785,18 +868,19 @@ class VectorStore:
             idx_path = target_dir / "vectors.index"
             bin_path = target_dir / "vectors.bin"
             ids_bin_path = target_dir / "vectors_ids.bin"
-            meta_path = target_dir / "vectors_metadata.pkl"
+            meta_path = target_dir / "vectors_metadata.json"
 
             if not npy_path.exists():
                 return {"migrated": False, "reason": "npy_missing"}
             if not meta_path.exists():
-                raise RuntimeError("legacy vectors.npy migration requires vectors_metadata.pkl")
+                raise RuntimeError("legacy vectors.npy migration requires vectors_metadata.json")
             if bin_path.exists() and ids_bin_path.exists():
                 return {"migrated": False, "reason": "bin_exists"}
 
-            # Reset in-memory state to avoid appending to stale runtime buffers.
+            # 重置内存状态，避免继续向旧运行时缓冲区追加数据。
             self._known_hashes.clear()
             self._deleted_ids.clear()
+            self._invalidate_id_map()
             self._write_buffer_vecs.clear()
             self._write_buffer_ids.clear()
             self._init_index()
@@ -810,8 +894,10 @@ class VectorStore:
 
     def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
         with self._lock:
-            if not data_dir: data_dir = self.data_dir
+            if not data_dir:
+                data_dir = self.data_dir
             data_dir = Path(data_dir)
+            self._recover_interrupted_compaction_unlocked()
 
             npy_path = data_dir / "vectors.npy"
             idx_path = data_dir / "vectors.index"
@@ -823,18 +909,18 @@ class VectorStore:
                     " 请先执行 scripts/release_vnext_migrate.py migrate。"
                 )
 
-            meta_path = data_dir / "vectors_metadata.pkl"
+            meta_path = data_dir / "vectors_metadata.json"
             if not meta_path.exists():
                 logger.warning("No metadata found, initialized empty.")
                 return
 
-            with open(meta_path, "rb") as f:
-                meta = pickle.load(f)
+            meta = _read_json_object(meta_path)
 
             if meta.get("vector_norm") != "l2":
                 logger.warning("Index IDMap2 version mismatch (L2 Norm), forcing rebuild...")
                 self._known_hashes = set(meta.get("ids", [])) | set(meta.get("known_hashes", []))
                 self._deleted_ids = set(meta.get("deleted_ids", []))
+                self._invalidate_id_map()
                 self._init_index()
                 self._force_train_small_data()
                 return
@@ -843,6 +929,7 @@ class VectorStore:
             self._vector_norm = meta.get("vector_norm", "l2")
             self._deleted_ids = set(meta.get("deleted_ids", []))
             self._known_hashes = set(meta.get("known_hashes", []))
+            self._invalidate_id_map()
 
             if self._is_trained:
                 if idx_path.exists():
@@ -853,9 +940,9 @@ class VectorStore:
                             self._init_index()
                             self._force_train_small_data()
                     except Exception as e:
-                         logger.error(f"Failed to load index: {e}. Rebuilding...")
-                         self._init_index()
-                         self._force_train_small_data()
+                        logger.error(f"Failed to load index: {e}. Rebuilding...")
+                        self._init_index()
+                        self._force_train_small_data()
                 else:
                     logger.warning("Index file missing despite metadata indicating trained. Rebuilding from bin...")
                     self._init_index()
@@ -874,12 +961,11 @@ class VectorStore:
         except Exception:
             arr = np.load(npy_path)
 
-        meta_path = data_dir / "vectors_metadata.pkl"
+        meta_path = data_dir / "vectors_metadata.json"
         old_ids = []
         if meta_path.exists():
-            with open(meta_path, "rb") as f:
-                m = pickle.load(f)
-                old_ids = m.get("ids", [])
+            m = _read_json_object(meta_path)
+            old_ids = m.get("ids", [])
 
         if len(arr) != len(old_ids):
             logger.error(f"Migration mismatch: arr {len(arr)} != ids {len(old_ids)}")
@@ -889,8 +975,8 @@ class VectorStore:
 
         chunk = 1000
         for i in range(0, len(arr), chunk):
-            sub_arr = arr[i : i+chunk]
-            sub_ids = old_ids[i : i+chunk]
+            sub_arr = arr[i : i + chunk]
+            sub_ids = old_ids[i : i + chunk]
             self.add(sub_arr, sub_ids)
 
         if not self._is_trained:
@@ -909,16 +995,17 @@ class VectorStore:
             self._init_index()
             self._known_hashes.clear()
             self._deleted_ids.clear()
+            self._invalidate_id_map()
             self._bin_count = 0
             logger.info("VectorStore cleared.")
 
     def has_data(self) -> bool:
-        return (self.data_dir / "vectors_metadata.pkl").exists()
+        return (self.data_dir / "vectors_metadata.json").exists()
 
     @property
     def num_vectors(self) -> int:
         return len(self._known_hashes) - len(self._deleted_ids)
 
     def __contains__(self, hash_value: str) -> bool:
-        """Check if a hash exists in the store"""
+        """检查指定哈希是否存在于向量库中。"""
         return hash_value in self._known_hashes and self._generate_id(hash_value) not in self._deleted_ids

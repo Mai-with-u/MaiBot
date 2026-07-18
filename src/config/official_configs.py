@@ -214,6 +214,26 @@ class PersonalityConfig(ConfigBase):
     )
     """麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。"""
 
+    behavior_style: str = Field(
+        default=(
+            "先观察聊天上下文和他人的反应，再决定是否参与。只在被提及、对话题感兴趣或确实能推进聊天时行动，"
+            "不需要回应每条消息；不适合参与时保持安静。"
+        ),
+        json_schema_extra={
+            "label": {
+                "zh_CN": "行为风格",
+                "en_US": "Behavior style",
+                "ja_JP": "行動スタイル",
+            },
+            "x-widget": "textarea",
+            "x-icon": "compass",
+            "x-textarea-min-height": 40,
+            "x-textarea-rows": 1,
+            "x-description-display": "icon",
+        },
+    )
+    """Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。"""
+
     reply_style: str = Field(
         default="你的风格平淡简短。可以参考贴吧，知乎和微博的回复风格。不浮夸不长篇大论，不要过分修辞和复杂句。尽量回复的简短一些，平淡一些",
         json_schema_extra={
@@ -1018,6 +1038,90 @@ class AttentionDriftConfig(ConfigBase):
     """控制短句、吐槽、语气词等短反应在漂移风格中的使用方式。"""
 
 
+class ExperimentalBrowserConfig(ConfigBase):
+    """实验性网页浏览能力配置。"""
+
+    __ui_label__ = "网页浏览"
+
+    enabled: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用网页浏览",
+                "en_US": "Enable web browsing",
+                "ja_JP": "ウェブ閲覧を有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "globe-2",
+        },
+    )
+    """允许麦麦按需启动隔离浏览器，并通过页面动作票据浏览公开网页。"""
+
+    session_timeout_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "浏览会话超时秒数",
+                "en_US": "Browser session timeout",
+                "ja_JP": "閲覧セッションのタイムアウト",
+            },
+            "x-widget": "number",
+            "x-icon": "timer",
+        },
+    )
+    """浏览器会话无操作多久后自动关闭。"""
+
+    navigation_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "页面导航超时秒数",
+                "en_US": "Navigation timeout",
+                "ja_JP": "ページ遷移のタイムアウト",
+            },
+            "x-widget": "number",
+            "x-icon": "clock",
+        },
+    )
+    """打开网页或等待页面跳转的最长时间。"""
+
+    max_page_text_length: int = Field(
+        default=6000,
+        ge=1000,
+        le=20000,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "单页正文最大字符数",
+                "en_US": "Maximum page text length",
+                "ja_JP": "ページ本文の最大文字数",
+            },
+            "x-widget": "number",
+            "x-icon": "text",
+        },
+    )
+    """单次页面观察最多返回多少正文字符。"""
+
+    max_actions: int = Field(
+        default=20,
+        ge=5,
+        le=40,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "单页最大动作数",
+                "en_US": "Maximum page actions",
+                "ja_JP": "ページごとの最大アクション数",
+            },
+            "x-widget": "number",
+            "x-icon": "list-tree",
+        },
+    )
+    """每次仅向模型披露当前页面中排序靠前的少量语义动作。"""
+
+
 class ExperimentalConfig(ConfigBase):
     """实验性功能配置类"""
 
@@ -1070,6 +1174,9 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
+
+    browser: ExperimentalBrowserConfig = Field(default_factory=ExperimentalBrowserConfig)
+    """动作票据式网页浏览实验能力。"""
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
@@ -4885,6 +4992,20 @@ class DebugConfig(ConfigBase):
         },
     )
     """在日志或界面中显示麦麦的思考过程。"""
+
+    enable_clear_context_command: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用 /clear 指令",
+                "en_US": "Enable /clear command",
+                "ja_JP": "/clear コマンドを有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "eraser",
+        },
+    )
+    """允许使用 /clear 清空当前聊天流的 Maisaka 短期历史上下文。"""
 
     enable_reply_effect_tracking: bool = Field(
         default=False,

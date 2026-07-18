@@ -1904,7 +1904,7 @@ class MaisakaReasoningEngine:
             history_content = "执行成功" if result.success else "执行失败"
 
         summary_prefix = "[成功]" if result.success else "[失败]"
-        normalized_content = self._truncate_tool_record_text(history_content, max_length=200)
+        normalized_content = self._truncate_tool_record_text(history_content, max_length=2000)
         return f"- {tool_call.func_name}{source_text} {summary_prefix}: {normalized_content}"
 
     @staticmethod

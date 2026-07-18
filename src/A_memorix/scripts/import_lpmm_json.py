@@ -21,9 +21,9 @@ from typing import Any, Dict, List
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-console = Console()
-
 import _bootstrap  # noqa: F401
+
+console = Console()
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -45,7 +45,7 @@ try:
     from src.common.logger import get_logger
 except ImportError as exc:  # pragma: no cover - script bootstrap
     print(f"导入模块失败，请确认 PYTHONPATH 与工作区结构: {exc}")
-    raise SystemExit(1)
+    raise SystemExit(1) from exc
 
 
 logger = get_logger("A_Memorix.LPMMImport")
@@ -76,7 +76,9 @@ class LPMMConverter:
                         }
                     )
 
-            entities = [str(item or "").strip() for item in doc.get("extracted_entities", []) or [] if str(item or "").strip()]
+            entities = [
+                str(item or "").strip() for item in doc.get("extracted_entities", []) or [] if str(item or "").strip()
+            ]
             all_entities.update(entities)
             for relation in relations:
                 if relation["subject"]:
@@ -144,8 +146,8 @@ async def main() -> None:
 
                 task_id = progress.add_task(f"Importing {json_file.name}", total=total_items)
 
-                def update_progress(step: int = 1) -> None:
-                    progress.advance(task_id, advance=step)
+                def update_progress(step: int = 1, current_task_id=task_id) -> None:
+                    progress.advance(current_task_id, advance=step)
 
                 await importer.import_json_data(
                     memorix_data,

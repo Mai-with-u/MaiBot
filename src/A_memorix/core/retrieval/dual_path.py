@@ -32,8 +32,8 @@ class RetrievalStrategy(Enum):
     """检索策略"""
 
     PARA_ONLY = "paragraph_only"  # 仅段落检索
-    REL_ONLY = "relation_only"   # 仅关系检索
-    DUAL_PATH = "dual_path"      # 双路检索（推荐）
+    REL_ONLY = "relation_only"  # 仅关系检索
+    DUAL_PATH = "dual_path"  # 双路检索（推荐）
 
 
 @dataclass
@@ -53,8 +53,8 @@ class RetrievalResult:
     hash_value: str
     content: str
     score: float
-    result_type: str  # "paragraph" or "relation"
-    source: str  # "paragraph_search", "relation_search", "fusion"
+    result_type: str  # 结果类型："paragraph" 或 "relation"
+    source: str  # 来源阶段："paragraph_search"、"relation_search" 或 "fusion"
     metadata: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
@@ -89,7 +89,7 @@ class DualPathRetrieverConfig:
         retrieval_strategy: 检索策略
         debug: 是否启用调试模式（打印搜索结果原文）
     """
- 
+
     top_k_paragraphs: int = 20
     top_k_relations: int = 10
     top_k_final: int = 10
@@ -234,16 +234,14 @@ class VectorPoolsConfig:
             0.0,
             float(relation_intent.get("graph_weight", self.relation_intent_graph_weight)),
         )
-        self.return_relation_items = bool(
-            relation_intent.get("return_relation_items", self.return_relation_items)
-        )
+        self.return_relation_items = bool(relation_intent.get("return_relation_items", self.return_relation_items))
 
 
 @dataclass
 class FusionConfig:
     """融合配置。"""
 
-    method: str = "weighted_rrf"  # weighted_rrf | alpha_legacy
+    method: str = "weighted_rrf"  # 融合方法：weighted_rrf 或 alpha_legacy
     rrf_k: int = 60
     vector_weight: float = 0.7
     bm25_weight: float = 0.3
@@ -393,7 +391,7 @@ class DualPathRetriever:
             results = await self._retrieve_paragraphs_only(query, top_k, temporal=temporal)
         elif strategy == RetrievalStrategy.REL_ONLY:
             results = await self._retrieve_relations_only(query, top_k, temporal=temporal)
-        else:  # DUAL_PATH
+        else:  # 双路检索（DUAL_PATH）
             results = await self._retrieve_dual_path(
                 query,
                 top_k,
@@ -407,7 +405,7 @@ class DualPathRetriever:
         if self.config.debug:
             logger.info("[DEBUG] 检索结果内容原文:")
             for i, res in enumerate(results):
-                logger.info(f"  {i+1}. [{res.result_type}] (Score: {res.score:.4f}) {res.content}")
+                logger.info(f"  {i + 1}. [{res.result_type}] (Score: {res.score:.4f}) {res.content}")
 
         return results
 
@@ -509,7 +507,7 @@ class DualPathRetriever:
             return True
         if mode == "fallback_only":
             return True
-        # auto
+        # 自动模式（auto）
         if not embedding_ok:
             return True
         if not vector_results:
@@ -550,10 +548,7 @@ class DualPathRetriever:
         hi = max(vals)
         if hi - lo < 1e-12:
             return {r.hash_value: 1.0 for r in results}
-        return {
-            r.hash_value: (float(r.score) - lo) / (hi - lo)
-            for r in results
-        }
+        return {r.hash_value: (float(r.score) - lo) / (hi - lo) for r in results}
 
     @staticmethod
     def _clone_retrieval_result(item: RetrievalResult) -> RetrievalResult:
@@ -768,10 +763,7 @@ class DualPathRetriever:
         sparse_rows = self._filter_sparse_paragraph_rows(sparse_rows)
         hash_values = [str(row.get("hash", "") or "") for row in sparse_rows]
         scores = [float(row.get("score", 0.0)) for row in sparse_rows]
-        bm25_scores = {
-            str(row.get("hash", "") or ""): float(row.get("bm25_score", 0.0))
-            for row in sparse_rows
-        }
+        bm25_scores = {str(row.get("hash", "") or ""): float(row.get("bm25_score", 0.0)) for row in sparse_rows}
         results = self._build_paragraph_results_from_ids(
             hash_values,
             scores,
@@ -825,9 +817,7 @@ class DualPathRetriever:
 
         if removed_count > 0:
             logger.debug(
-                "sparse_paragraph_tail_pruned=1 "
-                f"removed_count={removed_count} "
-                f"kept_count={len(filtered_rows)}"
+                f"sparse_paragraph_tail_pruned=1 removed_count={removed_count} kept_count={len(filtered_rows)}"
             )
         return filtered_rows
 
@@ -848,10 +838,7 @@ class DualPathRetriever:
         rows = self.sparse_index.search_relations(query=query, k=candidate_k)
         hash_values = [str(row.get("hash", "") or "") for row in rows]
         scores = [float(row.get("score", 0.0)) for row in rows]
-        bm25_scores = {
-            str(row.get("hash", "") or ""): float(row.get("bm25_score", 0.0))
-            for row in rows
-        }
+        bm25_scores = {str(row.get("hash", "") or ""): float(row.get("bm25_score", 0.0)) for row in rows}
         results = self._build_relation_results_from_ids(
             hash_values,
             scores,
@@ -890,7 +877,7 @@ class DualPathRetriever:
         sparse_results: List[RetrievalResult],
         graph_results: List[RetrievalResult],
     ) -> List[RetrievalResult]:
-        """Graph-aware relation fusion with semantic + graph + evidence scoring."""
+        """融合语义、图结构和证据评分的图感知关系结果。"""
         vector_norm = self._build_minmax_score_map(vector_results)
         sparse_norm = self._build_minmax_score_map(sparse_results)
         graph_score_map = {
@@ -923,7 +910,9 @@ class DualPathRetriever:
         ]
         support_counts = {
             hash_value: len(paragraphs)
-            for hash_value, paragraphs in self.metadata_store.get_paragraphs_by_relation_hashes(missing_support_hashes).items()
+            for hash_value, paragraphs in self.metadata_store.get_paragraphs_by_relation_hashes(
+                missing_support_hashes
+            ).items()
         }
         for item in out:
             meta = item.metadata if isinstance(item.metadata, dict) else {}
@@ -1027,7 +1016,7 @@ class DualPathRetriever:
     ) -> List[RetrievalResult]:
         """
         仅检索关系 (通过实体枢纽 Entity-Pivot)
-        
+
         策略:
         1. 检索向量库中的 Top-K 实体 (Entity)
         2. 通过图结构/元数据扩展出与实体关联的关系 (Relation)
@@ -1100,8 +1089,7 @@ class DualPathRetriever:
                 source="relation_search (via entity)",
                 temporal=temporal,
                 extra_metadata_by_hash={
-                    hash_value: {"pivot_entity": pivot}
-                    for hash_value, pivot in relation_pivots.items()
+                    hash_value: {"pivot_entity": pivot} for hash_value, pivot in relation_pivots.items()
                 },
             )
 
@@ -1160,9 +1148,7 @@ class DualPathRetriever:
             0,
             int(relation_intent.get("preserve_top_relations", 0)),
         )
-        pair_predicate_rerank_enabled = bool(
-            relation_intent.get("pair_predicate_rerank_enabled", False)
-        )
+        pair_predicate_rerank_enabled = bool(relation_intent.get("pair_predicate_rerank_enabled", False))
         pair_predicate_limit = max(
             1,
             int(
@@ -1589,9 +1575,7 @@ class DualPathRetriever:
             scores_by_type.setdefault(item_type, []).append(float(raw_score))
 
         bounds_by_type = {
-            item_type: (min(scores), max(scores))
-            for item_type, scores in scores_by_type.items()
-            if scores
+            item_type: (min(scores), max(scores)) for item_type, scores in scores_by_type.items() if scores
         }
         normalized_items: List[Tuple[str, str, float, float]] = []
         for item_type, hash_value, raw_score in parsed_items:
@@ -1683,7 +1667,9 @@ class DualPathRetriever:
                     continue
                 if temporal and not self._is_temporal_match(paragraph, temporal):
                     continue
-                order = item_index * max(1, max(cfg.relation_expand_per_hit, cfg.entity_expand_per_hit)) + paragraph_index
+                order = (
+                    item_index * max(1, max(cfg.relation_expand_per_hit, cfg.entity_expand_per_hit)) + paragraph_index
+                )
                 expanded_entries.append((float(evidence_score), order, paragraph, dict(evidence)))
 
         expanded_entries.sort(key=lambda item: (-item[0], item[1]))
@@ -1805,15 +1791,8 @@ class DualPathRetriever:
             score_meta = self._candidate_score_meta(item)
             semantic_score = float(score_meta.get("semantic", 0.0) or 0.0)
             sparse_score = float(score_meta.get("sparse", 0.0) or 0.0)
-            graph_score = float(
-                score_meta.get("graph_evidence", self._aggregate_graph_evidence_score(item))
-                or 0.0
-            )
-            final_score = (
-                semantic_weight * semantic_score
-                + sparse_weight * sparse_score
-                + graph_weight * graph_score
-            )
+            graph_score = float(score_meta.get("graph_evidence", self._aggregate_graph_evidence_score(item)) or 0.0)
+            final_score = semantic_weight * semantic_score + sparse_weight * sparse_score + graph_weight * graph_score
             score_meta.update(
                 {
                     "semantic": semantic_score,
@@ -1863,7 +1842,9 @@ class DualPathRetriever:
         rel_candidates: List[RetrievalResult] = []
         paragraph_map = self.metadata_store.get_paragraphs_by_hashes(ids)
         relation_map = self.metadata_store.get_relations_by_hashes(ids, include_inactive=False)
-        relation_time_meta = self._best_supporting_time_meta_batch(list(relation_map.keys()), temporal) if temporal else {}
+        relation_time_meta = (
+            self._best_supporting_time_meta_batch(list(relation_map.keys()), temporal) if temporal else {}
+        )
         seen_para = set()
         seen_rel = set()
 
@@ -2032,9 +2013,7 @@ class DualPathRetriever:
         preserved_relation_hashes = set()
         if preserve_top_relations > 0 and rel_results:
             rel_ranked = sorted(rel_results, key=lambda x: x.score, reverse=True)
-            preserved_relation_hashes = {
-                item.hash_value for item in rel_ranked[:preserve_top_relations]
-            }
+            preserved_relation_hashes = {item.hash_value for item in rel_ranked[:preserve_top_relations]}
 
         # 合并结果
         all_results = para_results + rel_results
@@ -2057,7 +2036,7 @@ class DualPathRetriever:
                     seen_paragraphs.add(hash_val)
                     seen_items.add(hash_val)
                     deduplicated_results.append(result)
-            else:  # relation
+            else:  # 关系结果（relation）
                 if result.hash_value in preserved_relation_hashes:
                     seen_items.add(result.hash_value)
                     deduplicated_results.append(result)
@@ -2187,21 +2166,14 @@ class DualPathRetriever:
         try:
             ppr_scores = await self._get_cached_ppr_scores(entities, timeout_s=ppr_timeout_s)
         except asyncio.TimeoutError:
-            logger.warning(
-                "metric.ppr_timeout_skip_count=1 "
-                f"timeout_s={ppr_timeout_s} "
-                f"entities={len(entities)}"
-            )
+            logger.warning(f"metric.ppr_timeout_skip_count=1 timeout_s={ppr_timeout_s} entities={len(entities)}")
             return results
         except Exception as e:
             logger.warning(f"PPR 重排序失败，回退原排序: {e}")
             return results
 
         # 调整结果分数
-        ppr_scores_by_name = {
-            str(name).strip().lower(): float(score)
-            for name, score in ppr_scores.items()
-        }
+        ppr_scores_by_name = {str(name).strip().lower(): float(score) for name, score in ppr_scores.items()}
         paragraph_entity_map = self.metadata_store.get_paragraph_entities_by_hashes(
             [result.hash_value for result in results if result.result_type == "paragraph"]
         )
@@ -2330,20 +2302,13 @@ class DualPathRetriever:
         node_set = set(nodes)
         adjacency: Dict[str, List[str]] = {}
         for node in nodes:
-            adjacency[node] = [
-                neighbor
-                for neighbor in self.graph_store.get_neighbors(node)
-                if neighbor in node_set
-            ]
+            adjacency[node] = [neighbor for neighbor in self.graph_store.get_neighbors(node) if neighbor in node_set]
 
         total_seed_weight = sum(seeds.get(node, 0.0) for node in nodes)
         if total_seed_weight <= 0.0:
             return {}
 
-        personalization = {
-            node: float(seeds.get(node, 0.0)) / total_seed_weight
-            for node in nodes
-        }
+        personalization = {node: float(seeds.get(node, 0.0)) / total_seed_weight for node in nodes}
         scores = dict(personalization)
         alpha = float(self.config.ppr_alpha)
         tol = float(self._ppr.config.tol)
@@ -2351,10 +2316,7 @@ class DualPathRetriever:
         min_iterations = int(self._ppr.config.min_iterations)
 
         for iteration in range(max_iter):
-            next_scores = {
-                node: (1.0 - alpha) * personalization.get(node, 0.0)
-                for node in nodes
-            }
+            next_scores = {node: (1.0 - alpha) * personalization.get(node, 0.0) for node in nodes}
             dangling_mass = 0.0
             for node, score in scores.items():
                 neighbors = adjacency.get(node, [])
@@ -2366,7 +2328,9 @@ class DualPathRetriever:
                     next_scores[neighbor] = next_scores.get(neighbor, 0.0) + share
             if dangling_mass > 0.0:
                 for node in nodes:
-                    next_scores[node] = next_scores.get(node, 0.0) + alpha * dangling_mass * personalization.get(node, 0.0)
+                    next_scores[node] = next_scores.get(node, 0.0) + alpha * dangling_mass * personalization.get(
+                        node, 0.0
+                    )
 
             diff = sum(abs(next_scores.get(node, 0.0) - scores.get(node, 0.0)) for node in nodes)
             scores = next_scores
@@ -2458,11 +2422,11 @@ class DualPathRetriever:
         event_end = paragraph.get("event_time_end")
 
         if event_start is not None or event_end is not None:
-            effective_start = event_start if event_start is not None else (
-                event_time if event_time is not None else event_end
+            effective_start = (
+                event_start if event_start is not None else (event_time if event_time is not None else event_end)
             )
-            effective_end = event_end if event_end is not None else (
-                event_time if event_time is not None else event_start
+            effective_end = (
+                event_end if event_end is not None else (event_time if event_time is not None else event_start)
             )
             return effective_start, effective_end, "event_time_range"
 
@@ -2618,11 +2582,7 @@ class DualPathRetriever:
         if not temporal:
             return results
 
-        missing_hashes = [
-            result.hash_value
-            for result in results
-            if result.metadata.get("time_meta") is None
-        ]
+        missing_hashes = [result.hash_value for result in results if result.metadata.get("time_meta") is None]
         batch_time_meta = self._best_supporting_time_meta_batch(missing_hashes, temporal)
         filtered: List[RetrievalResult] = []
         for result in results:

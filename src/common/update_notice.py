@@ -258,7 +258,7 @@ def mark_update_notice_seen(
     _write_json_state(state, state_path)
 
 
-def emit_terminal_update_notice_if_needed() -> None:
+async def emit_terminal_update_notice_if_needed() -> None:
     notice = get_pending_update_notice("terminal")
     if notice is None:
         return
@@ -269,4 +269,22 @@ def emit_terminal_update_notice_if_needed() -> None:
         f"{notice.content}\n"
         f"{'=' * 48}"
     )
+
+    from src.plugin_runtime.update_compatibility_notice import (
+        collect_update_incompatible_plugins,
+        format_terminal_compatibility_notice,
+    )
+
+    incompatible_plugins = await collect_update_incompatible_plugins(
+        notice.from_version,
+        notice.current_version,
+    )
+    if incompatible_plugins:
+        logger.warning(
+            format_terminal_compatibility_notice(
+                notice.from_version,
+                notice.current_version,
+                incompatible_plugins,
+            )
+        )
     mark_update_notice_seen("terminal", notice.current_version)

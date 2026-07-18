@@ -246,13 +246,7 @@ def test_narrative_split_progresses_with_high_overlap_and_newline_backoff() -> N
     )
     assert isinstance(narrative, NarrativeStrategy)
 
-    text = (
-        "第一段内容" * 30
-        + "\n"
-        + "第二段内容" * 30
-        + "\n"
-        + "第三段内容" * 30
-    )
+    text = "第一段内容" * 30 + "\n" + "第二段内容" * 30 + "\n" + "第三段内容" * 30
 
     chunks = narrative.split(text)
     offsets = [chunk.source.offset_start for chunk in chunks]
@@ -471,7 +465,11 @@ async def test_paragraph_vector_write_is_idempotent_after_concurrent_encode() ->
 
     assert manager.plugin.vector_store.ids == ["paragraph-same"]
     assert manager.plugin.vector_store.add_count == 1
-    assert {result["detail"] for result in results} <= {"", "vector_already_exists_after_encode", "vector_already_exists"}
+    assert {result["detail"] for result in results} <= {
+        "",
+        "vector_already_exists_after_encode",
+        "vector_already_exists",
+    }
 
 
 @pytest.mark.asyncio

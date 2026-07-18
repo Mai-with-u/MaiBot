@@ -30,7 +30,6 @@ from ..embedding import EmbeddingAPIAdapter
 from .model_routing import (
     find_text_generation_task_for_model,
     get_text_generation_model_tasks,
-    pick_text_generation_task,
 )
 from .relation_write_service import RelationWriteService
 from .runtime_self_check import ensure_runtime_self_check, run_embedding_runtime_self_check
@@ -53,6 +52,7 @@ class SummaryImportResult:
     def __iter__(self) -> Iterator[bool | str]:
         yield self.success
         yield self.detail
+
 
 # 默认总结提示词模版
 SUMMARY_PROMPT_TEMPLATE = """
@@ -259,16 +259,14 @@ class SummaryImporter:
         if raw_value is None:
             return ["auto"]
         if isinstance(raw_value, list):
+            if any(not isinstance(item, str) for item in raw_value):
+                raise ValueError(
+                    "summarization.model_name 必须为 List[str]。 请执行 scripts/release_vnext_migrate.py migrate。"
+                )
             selectors = [str(x).strip() for x in raw_value if str(x).strip()]
             return selectors or ["auto"]
-        if isinstance(raw_value, str):
-            selector = raw_value.strip()
-            if selector:
-                logger.warning("summarization.model_name 建议使用 List[str]，当前字符串配置已兼容处理。")
-                return [selector]
-            return ["auto"]
         raise ValueError(
-            "summarization.model_name 必须为 List[str] 或 str。 请执行 scripts/release_vnext_migrate.py migrate。"
+            "summarization.model_name 必须为 List[str]。 请执行 scripts/release_vnext_migrate.py migrate。"
         )
 
     def _pick_default_summary_task(
@@ -276,12 +274,14 @@ class SummaryImporter:
     ) -> Tuple[Optional[str], Optional[TaskConfig]]:
         """
         选择总结默认任务，避免错误落到 embedding/voice/vlm 等非文本生成任务。
-        优先级：memory > utils > planner > tool_use > replyer > 其他文本生成任务。
+        优先级：memory > utils > planner > tool_use。
         """
-        return pick_text_generation_task(
-            available_tasks,
-            preferred=("memory", "utils", "planner", "tool_use", "replyer"),
-        )
+        for task_name in ("memory", "utils", "planner", "tool_use"):
+            task_cfg = available_tasks.get(task_name)
+            model_list = getattr(task_cfg, "model_list", []) if task_cfg is not None else []
+            if any(str(model_name).strip() for model_name in (model_list or [])):
+                return task_name, task_cfg
+        return None, None
 
     @staticmethod
     def _current_model_dict() -> Dict[str, Any]:
@@ -291,14 +291,13 @@ class SummaryImporter:
             logger.warning(f"读取当前模型字典失败: {exc}")
             return {}
 
-    def _resolve_summary_model_config(self) -> Optional[Tuple[str, TaskConfig]]:
+    def _resolve_summary_model_task(self) -> Optional[Tuple[str, TaskConfig]]:
         """
         解析 summarization.model_name 为 (task_name, TaskConfig)。
         支持：
-        - "auto"
-        - "replyer"（任务名）
-        - "some-model-name"（具体模型名）
         - ["utils:model1", "utils:model2", "replyer"]（数组混合语法）
+        - ["auto"]
+        - ["some-model-name"]（具体模型名）
         """
         available_tasks = get_text_generation_model_tasks(llm_api)
         if not available_tasks:
@@ -338,14 +337,16 @@ class SummaryImporter:
                     logger.warning(f"总结模型选择器 '{selector}' 的任务 '{task_name}' 不存在，已跳过")
                     continue
 
-                if base_cfg is None:
-                    base_cfg = task_cfg
-                    base_task_name = task_name
-
                 if not model_name or model_name.lower() == "auto":
+                    if base_cfg is None:
+                        base_cfg = task_cfg
+                        base_task_name = task_name
                     continue
 
                 if model_name in task_cfg.model_list:
+                    if base_cfg is None:
+                        base_cfg = task_cfg
+                        base_task_name = task_name
                     logger.info(
                         f"总结模型选择器 '{selector}' 已定位到任务 '{task_name}'；"
                         "当前 LLM 服务按任务候选列表执行，不单独覆盖具体模型。"
@@ -384,10 +385,6 @@ class SummaryImporter:
                 if base_cfg is None:
                     base_cfg = default_task_cfg
                     base_task_name = default_task_name
-            else:
-                base_task_name, first_cfg = next(iter(available_tasks.items()))
-                if base_cfg is None:
-                    base_cfg = first_cfg
 
         if base_cfg is None or not base_task_name:
             return None
@@ -402,6 +399,12 @@ class SummaryImporter:
             selection_strategy=template_cfg.selection_strategy,
             hard_timeout=template_cfg.hard_timeout,
         )
+
+    def _resolve_summary_model_config(self) -> Optional[TaskConfig]:
+        resolved = self._resolve_summary_model_task()
+        if resolved is None:
+            return None
+        return resolved[1]
 
     def _summary_review_count(self, metadata: Optional[Dict[str, Any]]) -> int:
         raw_value: Any = None
@@ -548,12 +551,14 @@ class SummaryImporter:
                 chat_history=chat_history_text,
             )
 
-            resolved_model = self._resolve_summary_model_config()
+            resolved_model = self._resolve_summary_model_task()
             if resolved_model is None:
                 return SummaryImportResult(False, "未找到可用的总结模型配置")
             task_name_to_use, model_config_to_use = resolved_model
 
-            logger.info(f"正在为流 {stream_id} 执行总结，消息条数: {len(messages)}|总结模型任务: {task_name_to_use}|候选列表: {model_config_to_use.model_list}")
+            logger.info(
+                f"正在为流 {stream_id} 执行总结，消息条数: {len(messages)}|总结模型任务: {task_name_to_use}|候选列表: {model_config_to_use.model_list}"
+            )
 
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
@@ -604,9 +609,7 @@ class SummaryImporter:
             self.vector_store.save()
             self.graph_store.save()
 
-            result_msg = (
-                f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
-            )
+            result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
             return SummaryImportResult(
                 True,
                 result_msg,
@@ -738,10 +741,6 @@ class SummaryImporter:
                     )
                     # 写入图数据库（写入 relation_hashes，确保后续可按关系精确修剪）
                     self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
-                    try:
-                        self.metadata_store.set_relation_vector_state(rel_hash, "none")
-                    except Exception:
-                        pass
 
         logger.info(f"总结导入完成: hash={hash_value[:8]}")
         return hash_value

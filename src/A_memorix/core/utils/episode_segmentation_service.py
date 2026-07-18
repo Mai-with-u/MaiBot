@@ -124,8 +124,8 @@ class EpisodeSegmentationService:
             data = json.loads(raw)
             if isinstance(data, dict):
                 return data
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            logger.debug("Episode 分段响应不是完整 JSON，继续尝试提取对象片段")
 
         start = raw.find("{")
         end = raw.rfind("}")
@@ -193,8 +193,7 @@ class EpisodeSegmentationService:
             f"source={source_text}\n"
             f"window_start={window_start}\n"
             f"window_end={window_end}\n"
-            "paragraphs:\n"
-            + "\n\n".join(rows)
+            "paragraphs:\n" + "\n\n".join(rows)
         )
 
     def _normalize_episodes(

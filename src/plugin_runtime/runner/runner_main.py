@@ -431,7 +431,7 @@ class PluginRunner:
             self._plugin_dirs,
             extra_available=self._external_available_plugins,
         )
-        logger.info(f"已加载 {len(plugins)} 个插件")
+        logger.debug(f"已加载 {len(plugins)} 个插件")
 
         # 4. 注入 PluginContext + 调用 on_load 生命周期钩子
         failed_plugin_reasons: Dict[str, str] = dict(self._loader.failed_plugins)
@@ -487,10 +487,10 @@ class PluginRunner:
                 await asyncio.sleep(1.0)
 
         # 6. 卸载 IPC 日志 Handler 并刷空剩余缓冲，然后断开连接
-        logger.info("Runner 开始关停")
+        logger.debug("Runner 开始关停")
         await self._uninstall_log_handler()
         await self._rpc_client.disconnect()
-        logger.info("Runner 已退出")
+        logger.debug("Runner 已退出")
 
     def _install_log_handler(self) -> None:
         """握手完成后将 RunnerIPCLogHandler 安装到 logging.root。
@@ -1419,7 +1419,7 @@ class PluginRunner:
             response_payload = response.payload if isinstance(response.payload, dict) else {}
             if not bool(response_payload.get("accepted", True)):
                 raise RuntimeError(str(response_payload.get("reason", "插件注册失败")))
-            logger.info(f"插件 {meta.plugin_id} 注册完成")
+            logger.debug(f"插件 {meta.plugin_id} 注册完成")
             return True
         except Exception as e:
             logger.error(f"插件 {meta.plugin_id} 注册失败: {e}")
@@ -1546,7 +1546,7 @@ class PluginRunner:
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.FAILED
         if not self._is_plugin_enabled(plugin_config):
-            logger.info(f"插件 {meta.plugin_id} 已在配置中禁用，跳过激活")
+            logger.debug(f"插件 {meta.plugin_id} 已在配置中禁用，跳过激活")
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.INACTIVE
 
@@ -2198,13 +2198,13 @@ class PluginRunner:
 
     async def _handle_prepare_shutdown(self, envelope: Envelope) -> Envelope:
         """处理准备关停"""
-        logger.info("收到 prepare_shutdown 信号")
+        logger.debug("收到 prepare_shutdown 信号")
         await self._dump_inflight_debug("prepare_shutdown")
         return envelope.make_response(payload={"acknowledged": True})
 
     async def _handle_shutdown(self, envelope: Envelope) -> Envelope:
         """处理关停 — 调用所有插件的 on_unload 后退出"""
-        logger.info("收到 shutdown 信号，开始调用 on_unload")
+        logger.debug("收到 shutdown 信号，开始调用 on_unload")
         await self._dump_inflight_debug("shutdown")
         for plugin_id in list(self._loader.list_plugins()):
             meta = self._loader.get_plugin(plugin_id)

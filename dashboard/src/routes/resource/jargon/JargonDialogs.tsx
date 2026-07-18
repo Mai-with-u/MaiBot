@@ -36,6 +36,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 
 import { createJargon, importJargons, updateJargon } from '@/lib/jargon-api'
@@ -268,7 +269,7 @@ export function JargonDetailDialog({
                 <Label>聊天</Label>
                 <MultiSelect
                   options={chatList.map((chat) => ({
-                    label: chat.chat_name,
+                    label: formatChatDisplayName(chat.chat_name, chat.account_id),
                     value: chat.session_id,
                   }))}
                   selected={formData.session_ids || []}
@@ -476,7 +477,7 @@ export function JargonCreateDialog({
               </Label>
               <MultiSelect
                 options={chatList.map((chat) => ({
-                  label: chat.chat_name,
+                  label: formatChatDisplayName(chat.chat_name, chat.account_id),
                   value: chat.session_id,
                 }))}
                 selected={formData.session_ids || []}
@@ -649,7 +650,7 @@ export function JargonImportDialog({
               <Label>导入目标</Label>
               <MultiSelect
                 options={chatList.map((chat) => ({
-                  label: chat.chat_name,
+                  label: formatChatDisplayName(chat.chat_name, chat.account_id),
                   value: chat.session_id,
                 }))}
                 selected={targetSessionIds}

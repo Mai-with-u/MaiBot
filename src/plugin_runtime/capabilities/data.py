@@ -10,6 +10,7 @@ import time
 from src.common.logger import get_logger
 
 if TYPE_CHECKING:
+    from src.chat.message_receive.message import SessionMessage
     from src.chat.message_receive.chat_manager import BotChatSession
     from src.common.data_models.image_data_model import MaiEmoji
 
@@ -397,6 +398,21 @@ class RuntimeDataCapabilityMixin:
                 result.append(str(msg))
         return result
 
+    @staticmethod
+    def _deserialize_messages(messages: Any) -> List["SessionMessage"]:
+        """将插件传入的消息字典列表还原为主程序消息对象。"""
+        from src.plugin_runtime.host.message_utils import PluginMessageUtils
+
+        if not isinstance(messages, list):
+            raise TypeError("messages 必须是消息字典列表")
+
+        result: List["SessionMessage"] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                raise TypeError(f"messages[{index}] 必须是消息字典")
+            result.append(PluginMessageUtils._build_session_message_from_dict(message))
+        return result
+
     async def _cap_message_get_by_id(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:
         from src.services import message_service
 
@@ -536,6 +552,8 @@ class RuntimeDataCapabilityMixin:
                     end_time=float(args.get("end_time", 0.0)),
                     limit=args.get("limit", 0),
                 )
+            else:
+                messages = self._deserialize_messages(messages)
 
             readable = message_service.build_readable_messages(
                 messages=messages,

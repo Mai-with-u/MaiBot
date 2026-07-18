@@ -543,7 +543,7 @@ class PluginLoader:
                     if create_plugin is not None:
                         instance = create_plugin()
                         self._validate_sdk_plugin_contract(plugin_id, instance)
-                        logger.info(f"插件 {plugin_id} v{manifest.version} 加载成功")
+                        logger.debug(f"插件 {plugin_id} v{manifest.version} 加载成功")
                         return PluginMeta(
                             plugin_id=plugin_id,
                             plugin_dir=str(plugin_dir),

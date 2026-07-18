@@ -401,6 +401,21 @@ def _first_existing_bool(item: dict[str, Any], keys: tuple[str, ...], default: b
     return default
 
 
+def _copy_personality_to_behavior_style(data: dict[str, Any]) -> list[str]:
+    """8.14.29: 首次拆分 Planner 行为风格时，沿用用户原有的人格配置。"""
+
+    personality = _as_dict(data.get("personality"))
+    if personality is None or "behavior_style" in personality:
+        return []
+
+    original_personality = personality.get("personality")
+    if not isinstance(original_personality, str):
+        return []
+
+    personality["behavior_style"] = original_personality
+    return ["personality.behavior_style"]
+
+
 BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
     ConfigUpgradeHook(
         target_version="8.10.11",
@@ -436,6 +451,11 @@ BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
         target_version="8.14.19",
         config_names=("bot_config.toml",),
         migrate=_split_chat_config_sections,
+    ),
+    ConfigUpgradeHook(
+        target_version="8.14.29",
+        config_names=("bot_config.toml",),
+        migrate=_copy_personality_to_behavior_style,
     ),
 )
 MODEL_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = ()

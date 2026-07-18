@@ -252,13 +252,7 @@ async def handle_tool(
     primary_hit_count = len(result.hits)
 
     # 方案2：人物过滤未命中时，降级到关键词检索，避免直接“空结果”。
-    if (
-        result.success
-        and person_id
-        and not result.filtered
-        and not result.hits
-        and clean_query
-    ):
+    if result.success and person_id and not result.filtered and not result.hits and clean_query:
         fallback_applied = True
         fallback_reason = "person_filter_miss"
         fallback_query = clean_query
@@ -283,10 +277,7 @@ async def handle_tool(
             if fallback_result.success:
                 result = fallback_result
             else:
-                logger.warning(
-                    f"{runtime.log_prefix} 关键词降级检索失败，回退原结果: "
-                    f"error={fallback_result.error}"
-                )
+                logger.warning(f"{runtime.log_prefix} 关键词降级检索失败，回退原结果: error={fallback_result.error}")
         except Exception as exc:
             logger.warning(f"{runtime.log_prefix} 关键词降级检索异常，回退原结果: {exc}")
 
@@ -322,10 +313,7 @@ async def handle_tool(
 
     content = _build_success_content(result, limit=limit)
     if fallback_applied:
-        content = (
-            "提示：人物定向检索未命中，已自动降级为关键词检索。\n"
-            f"{content}"
-        )
+        content = f"提示：人物定向检索未命中，已自动降级为关键词检索。\n{content}"
     metadata: Dict[str, Any] = with_memory_feedback_task()
     replyer_memory_reference = _build_replyer_memory_reference(structured_content)
     if replyer_memory_reference:

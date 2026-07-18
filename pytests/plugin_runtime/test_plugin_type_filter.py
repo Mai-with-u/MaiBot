@@ -22,7 +22,7 @@ def _write_plugin_with_type_key(root: Path, name: str, plugin_type: str, type_ke
                 "author": {"name": "MaiBot", "url": "https://example.com"},
                 "license": "GPL-v3.0-or-later",
                 "urls": {"repository": "https://example.com/repo"},
-                "host_application": {"min_version": "1.0.0", "max_version": "1.0.99"},
+                "host_application": {"min_version": "1.0.0", "max_version": "1.1.99"},
                 "sdk": {"min_version": "2.0.0", "max_version": "2.99.99"},
                 "dependencies": [],
                 "capabilities": [],

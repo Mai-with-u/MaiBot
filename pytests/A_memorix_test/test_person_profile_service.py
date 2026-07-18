@@ -114,10 +114,7 @@ async def test_person_profile_keeps_chat_summary_as_recent_interaction_not_stabl
     profile_text = payload["profile_text"]
     sections = parse_profile_sections(profile_text)
     stable_sections = "\n".join(
-        sections["身份设定"]
-        + sections["关系设定"]
-        + sections["稳定了解"]
-        + sections["相处偏好"]
+        sections["身份设定"] + sections["关系设定"] + sections["稳定了解"] + sections["相处偏好"]
     )
 
     assert profile_text.startswith("# 人物画像")
