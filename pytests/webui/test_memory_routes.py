@@ -1011,6 +1011,57 @@ def test_memory_config_update_routes(client: TestClient, monkeypatch):
     assert raw_response.json() == {"success": True, "config_path": "config/bot_config.toml"}
 
 
+def test_memory_config_update_rejects_invalid_semantic_value(client: TestClient, monkeypatch):
+    async def fake_update_config(config):
+        assert config == {"memory": {"half_life_hours": 0}}
+        raise ValueError("half_life_hours 必须大于等于 0.1")
+
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_config", fake_update_config)
+
+    response = client.put(
+        "/api/webui/memory/config",
+        json={"config": {"memory": {"half_life_hours": 0}}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "配置数据验证失败: half_life_hours 必须大于等于 0.1"
+
+
+def test_memory_config_raw_rejects_invalid_semantic_value(client: TestClient, monkeypatch):
+    raw_config = "[a_memorix.memory]\nhalf_life_hours = 0\n"
+
+    async def fake_update_raw_config(config: str):
+        assert config == raw_config
+        raise ValueError("half_life_hours 必须大于等于 0.1")
+
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_raw_config", fake_update_raw_config)
+
+    response = client.put("/api/webui/memory/config/raw", json={"config": raw_config})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "配置数据验证失败: half_life_hours 必须大于等于 0.1"
+
+
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("/api/webui/memory/config", {"config": {"plugin": {"enabled": False}}}),
+        ("/api/webui/memory/config/raw", {"config": "[a_memorix.plugin]\nenabled = false\n"}),
+    ],
+)
+def test_memory_config_update_reports_reload_failure(client: TestClient, monkeypatch, path: str, payload):
+    async def fail_update(*args, **kwargs):
+        raise RuntimeError("A_Memorix 配置重载失败，已恢复写入前的配置")
+
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_config", fail_update)
+    monkeypatch.setattr(memory_router_module.a_memorix_host_service, "update_raw_config", fail_update)
+
+    response = client.put(path, json=payload)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "A_Memorix 配置重载失败，已恢复写入前的配置"
+
+
 def test_memory_config_raw_rejects_invalid_toml(client: TestClient):
     response = client.put("/api/webui/memory/config/raw", json={"config": "[plugin\nenabled = true"})
 
@@ -1248,18 +1299,48 @@ def test_delete_execute_route_supports_mixed_mode(client: TestClient, monkeypatc
     assert response.json()["operation_id"] == "op-mixed-1"
 
 
-def test_episode_process_pending_route(client: TestClient, monkeypatch):
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/webui/memory/episodes/process-pending",
+        "/api/episodes/process_pending",
+    ],
+)
+def test_episode_process_pending_route(client: TestClient, monkeypatch, path: str):
     async def fake_episode_admin(*, action: str, **kwargs):
-        assert action == "process_pending"
+        assert action == "process_sources"
         assert kwargs == {"limit": 7, "max_retry": 4}
         return {"success": True, "processed": 3}
 
     monkeypatch.setattr(memory_router_module.memory_service, "episode_admin", fake_episode_admin)
 
-    response = client.post("/api/webui/memory/episodes/process-pending", json={"limit": 7, "max_retry": 4})
+    response = client.post(path, json={"limit": 7, "max_retry": 4})
 
     assert response.status_code == 200
     assert response.json() == {"success": True, "processed": 3}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/webui/memory/episodes/process-pending",
+        "/api/episodes/process_pending",
+    ],
+)
+def test_episode_process_pending_route_rejects_zero_attempt_budget(client: TestClient, monkeypatch, path: str):
+    called = False
+
+    async def fake_episode_admin(*, action: str, **kwargs):
+        nonlocal called
+        called = True
+        return {"success": True}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "episode_admin", fake_episode_admin)
+
+    response = client.post(path, json={"limit": 7, "max_retry": 0})
+
+    assert response.status_code == 422
+    assert called is False
 
 
 def test_import_list_route_includes_settings(client: TestClient, monkeypatch):

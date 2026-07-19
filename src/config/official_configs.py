@@ -2175,6 +2175,19 @@ class AMemorixEmbeddingConfig(ConfigBase):
     )
     """是否缓存向量化结果"""
 
+    runtime_train_threshold: int = Field(
+        default=256,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "运行期向量训练阈值",
+                "en_US": "Runtime vector training threshold",
+                "ja_JP": "実行時ベクトル学習しきい値",
+            },
+        },
+    )
+    """未训练向量池在运行期间触发 SQ8 后台训练所需的最少向量数"""
+
     quantization_type: Literal["int8"] = Field(
         default="int8",
         json_schema_extra={
@@ -2830,7 +2843,7 @@ class AMemorixThresholdConfig(ConfigBase):
     """A_Memorix 阈值过滤配置"""
 
     min_threshold: float = Field(
-        default=0.3,
+        default=0.29,
         ge=0.0,
         le=1.0,
         json_schema_extra={
@@ -2872,7 +2885,7 @@ class AMemorixThresholdConfig(ConfigBase):
     """动态阈值百分位"""
 
     min_results: int = Field(
-        default=3,
+        default=4,
         ge=1,
         json_schema_extra={
             "label": {
@@ -2884,18 +2897,10 @@ class AMemorixThresholdConfig(ConfigBase):
     )
     """最小保留条数"""
 
-    enable_auto_adjust: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "自动调整阈值",
-                "en_US": "Auto-adjust threshold",
-                "ja_JP": "しきい値を自動調整",
-            },
-        },
-    )
-    """是否启用自动阈值调整"""
-
+    def model_post_init(self, context: Optional[dict] = None) -> None:
+        if self.min_threshold >= self.max_threshold:
+            raise ValueError("min_threshold 必须小于 max_threshold")
+        return super().model_post_init(context)
 
 class AMemorixRetrievalSubtypeFilterConfig(ConfigBase):
     """A_Memorix 跨聊天流检索结果分类型过滤配置"""
@@ -3060,31 +3065,70 @@ class AMemorixEpisodeConfig(ConfigBase):
     )
     """是否启用自动生成"""
 
-    pending_batch_size: int = Field(
-        default=50,
+    source_poll_interval_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务轮询间隔",
+                "en_US": "Source task polling interval",
+                "ja_JP": "ソースタスクのポーリング間隔",
+            },
+        },
+    )
+    """来源级 Episode 任务轮询间隔秒数"""
+
+    source_batch_size: int = Field(
+        default=20,
         ge=1,
         json_schema_extra={
             "label": {
-                "zh_CN": "待处理批量",
-                "en_US": "Pending batch size",
-                "ja_JP": "保留中バッチサイズ",
+                "zh_CN": "来源任务批量",
+                "en_US": "Source task batch size",
+                "ja_JP": "ソースタスクのバッチサイズ",
             },
         },
     )
-    """待处理批大小"""
+    """单轮领取的来源任务数"""
 
-    pending_max_retry: int = Field(
+    source_max_retry: int = Field(
         default=3,
-        ge=0,
+        ge=1,
         json_schema_extra={
             "label": {
-                "zh_CN": "待处理重试",
-                "en_US": "Pending max retries",
-                "ja_JP": "保留中最大リトライ",
+                "zh_CN": "来源任务最大尝试次数",
+                "en_US": "Source task max attempts",
+                "ja_JP": "ソースタスクの最大試行回数",
             },
         },
     )
-    """待处理最大重试次数"""
+    """每个来源版本的最大尝试次数，包含首次尝试"""
+
+    source_lease_seconds: float = Field(
+        default=1800.0,
+        ge=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务租约时长",
+                "en_US": "Source task lease duration",
+                "ja_JP": "ソースタスクのリース時間",
+            },
+        },
+    )
+    """来源任务租约时长秒数"""
+
+    source_max_wait_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务最大防抖等待",
+                "en_US": "Source task maximum debounce wait",
+                "ja_JP": "ソースタスクの最大デバウンス待機時間",
+            },
+        },
+    )
+    """来源持续写入时允许的最大防抖等待秒数"""
 
     max_paragraphs_per_call: int = Field(
         default=20,
@@ -3346,8 +3390,8 @@ class AMemorixMemoryEvolutionConfig(ConfigBase):
 
     prune_threshold: float = Field(
         default=0.1,
-        ge=0.0,
-        le=1.0,
+        gt=0.0,
+        lt=1.0,
         json_schema_extra={
             "label": {
                 "zh_CN": "裁剪阈值",
@@ -3370,6 +3414,93 @@ class AMemorixMemoryEvolutionConfig(ConfigBase):
         },
     )
     """冻结时长小时数"""
+
+    revive_threshold: float = Field(
+        default=0.15,
+        gt=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "恢复阈值",
+                "en_US": "Revival threshold",
+                "ja_JP": "復帰しきい値",
+            },
+        },
+    )
+    """冻结关系恢复为活跃状态的保留强度阈值"""
+
+    access_reinforcement_alpha: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "访问加强系数",
+                "en_US": "Access reinforcement factor",
+                "ja_JP": "アクセス強化係数",
+            },
+        },
+    )
+    """记忆被最终采用时的饱和加强系数"""
+
+    access_reinforcement_cooldown_minutes: float = Field(
+        default=60.0,
+        ge=0.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "访问加强冷却时间",
+                "en_US": "Access reinforcement cooldown",
+                "ja_JP": "アクセス強化クールダウン",
+            },
+        },
+    )
+    """同一关系两次访问加强之间的最短分钟数，0表示不限制"""
+
+    explicit_reinforcement_alpha: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "显式加强系数",
+                "en_US": "Explicit reinforcement factor",
+                "ja_JP": "明示的強化係数",
+            },
+        },
+    )
+    """用户显式加强或独立新证据的饱和加强系数"""
+
+    weaken_alpha: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "弱化系数",
+                "en_US": "Weakening factor",
+                "ja_JP": "弱化係数",
+            },
+        },
+    )
+    """显式弱化事件的比例系数"""
+
+    lifecycle_batch_size: int = Field(
+        default=1000,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "生命周期批量",
+                "en_US": "Lifecycle batch size",
+                "ja_JP": "ライフサイクルのバッチサイズ",
+            },
+        },
+    )
+    """单轮处理的到期关系数量"""
+
+    def model_post_init(self, context: Optional[dict] = None) -> None:
+        if self.revive_threshold <= self.prune_threshold:
+            raise ValueError("revive_threshold 必须大于 prune_threshold")
+        return super().model_post_init(context)
 
 
 class AMemorixAdvancedConfig(ConfigBase):

@@ -3,6 +3,7 @@ from typing import get_args, get_origin
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pytest import raises
 
 from src.config.config import Config
 from src.config.config_base import AttributeData, ConfigBase, Field
@@ -285,6 +286,14 @@ def test_a_memorix_visibility_policy_marks_and_filters_fields():
     assert _schema_field(web_import_schema, "max_files_per_task")["advanced"] is True
     assert "max_queue_size" not in _field_names(web_import_schema)
 
+    episode_schema = schema["nested"]["episode"]
+    assert _schema_field(episode_schema, "source_max_retry")["minValue"] == 1
+
+
+def test_a_memorix_source_attempt_budget_rejects_zero():
+    with raises(ValueError, match="source_max_retry"):
+        AMemorixConfig(episode={"source_max_retry": 0})
+
 
 def test_a_memorix_visibility_policy_classifies_all_official_fields():
     """新增 A_Memorix 官方字段时，必须明确进入 basic、advanced 或 excluded。"""
@@ -309,7 +318,11 @@ def test_a_memorix_excluded_fields_are_still_loaded_by_official_model():
         attribute_data,
         {
             "storage": {"data_dir": "data/custom-a-memorix"},
-            "embedding": {"dimension": 1536, "quantization_type": "int8"},
+            "embedding": {
+                "dimension": 1536,
+                "quantization_type": "int8",
+                "runtime_train_threshold": 512,
+            },
             "retrieval": {
                 "alpha": 0.4,
                 "fusion": {"method": "alpha_legacy", "rrf_k": 42},
@@ -322,6 +335,7 @@ def test_a_memorix_excluded_fields_are_still_loaded_by_official_model():
     assert attribute_data.redundant_attributes == []
     assert config.storage.data_dir == "data/custom-a-memorix"
     assert config.embedding.dimension == 1536
+    assert config.embedding.runtime_train_threshold == 512
     assert config.retrieval.alpha == 0.4
     assert config.retrieval.fusion.method == "alpha_legacy"
     assert config.retrieval.vector_pools.mode == "single"

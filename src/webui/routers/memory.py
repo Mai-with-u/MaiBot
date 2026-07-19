@@ -1804,7 +1804,7 @@ async def _episode_status(limit: int) -> dict:
 
 async def _episode_process_pending(payload: EpisodeProcessPendingRequest) -> dict:
     return await memory_service.episode_admin(
-        action="process_pending",
+        action="process_sources",
         limit=payload.limit,
         max_retry=payload.max_retry,
     )
@@ -2073,7 +2073,12 @@ async def _memory_config_get_raw() -> dict:
 
 
 async def _memory_config_update(payload: MemoryConfigUpdateRequest) -> dict:
-    return await a_memorix_host_service.update_config(payload.config)
+    try:
+        return await a_memorix_host_service.update_config(payload.config)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"配置数据验证失败: {exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 async def _memory_config_update_raw(payload: MemoryRawConfigUpdateRequest) -> dict:
@@ -2081,7 +2086,12 @@ async def _memory_config_update_raw(payload: MemoryRawConfigUpdateRequest) -> di
         tomlkit.loads(payload.config)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"TOML 格式错误: {exc}") from exc
-    return await a_memorix_host_service.update_raw_config(payload.config)
+    try:
+        return await a_memorix_host_service.update_raw_config(payload.config)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"配置数据验证失败: {exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 async def _maintenance_recycle_bin(limit: int) -> dict:
