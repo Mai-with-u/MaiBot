@@ -467,6 +467,19 @@ class ChatBot:
         self._mark_command_message(message, intercept_message_level=1)
         await self._store_intercepted_command_message(message)
 
+        remote_offline_command = command == "/offline" and not message_is_local_operator
+        if remote_offline_command:
+            sent = await text_to_stream(
+                "正在关闭全部适配器插件；操作结果将记录在主程序日志中。恢复适配器请使用本地控制台 /online。",
+                message.session_id,
+                storage_message=False,
+            )
+            if not sent:
+                logger.warning(
+                    f"适配器关闭前确认消息发送失败，已取消执行: session_id={message.session_id}"
+                )
+                return True
+
         runtime_manager = self._get_runtime_manager()
         if command == "/offline":
             result = await runtime_manager.take_adapters_offline()
@@ -494,14 +507,18 @@ class ChatBot:
             )
             response = f"{response} 失败详情：{failure_details}"
 
-        sent = await text_to_stream(
-            response,
-            message.session_id,
-            storage_message=False,
+        if not remote_offline_command:
+            sent = await text_to_stream(
+                response,
+                message.session_id,
+                storage_message=False,
+            )
+            if not sent:
+                logger.warning(f"适配器运行状态已变更，但确认消息发送失败: session_id={message.session_id}")
+        logger.info(
+            f"已执行适配器管理指令 {command}: "
+            f"source={'local_console' if message_is_local_operator else message.platform} result={response}"
         )
-        if not sent:
-            logger.warning(f"适配器运行状态已变更，但确认消息发送失败: session_id={message.session_id}")
-        logger.info(f"已执行本地终端指令 {command}: {response}")
         return True
 
     @staticmethod

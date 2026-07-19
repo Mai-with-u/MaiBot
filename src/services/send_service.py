@@ -39,7 +39,7 @@ from src.common.data_models.message_component_data_model import (
 from src.common.logger import get_logger
 from src.common.utils.utils_message import MessageUtils
 from src.config.config import global_config
-from src.platform_io import DeliveryBatch, get_platform_io_manager
+from src.platform_io import DeliveryBatch, DriverKind, get_platform_io_manager
 from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
@@ -912,7 +912,11 @@ async def _send_via_platform_io(
         if storage_message:
             await _store_sent_message(message)
         await _notify_memory_automation_on_message_sent(message)
-        if show_log:
+        should_log_delivery = show_log and any(
+            receipt.driver_kind != DriverKind.LOCAL
+            for receipt in delivery_batch.sent_receipts
+        )
+        if should_log_delivery:
             successful_driver_ids = [receipt.driver_id or "unknown" for receipt in delivery_batch.sent_receipts]
             logger.info(
                 f"已通过 Platform IO 将消息发往平台 '{route_key.platform}' "
