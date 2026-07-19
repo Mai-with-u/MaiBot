@@ -15,6 +15,7 @@ interface PluginCardProps {
   maimaiVersion: MaimaiVersion | null
   pluginStats: Record<string, PluginStatsData>
   loadProgress: PluginLoadProgress | null
+  isAnyPluginInstalling?: boolean
   likingPluginIds: Set<string>
   onInstall: (plugin: PluginInfo) => void
   onLike: (plugin: PluginInfo) => void
@@ -33,6 +34,7 @@ export function PluginCard({
   maimaiVersion,
   pluginStats,
   loadProgress,
+  isAnyPluginInstalling = false,
   likingPluginIds,
   onInstall,
   onLike,
@@ -53,7 +55,8 @@ export function PluginCard({
   const isInstalling = loadProgress?.operation === 'install'
     && loadProgress.stage === 'loading'
     && loadProgress?.plugin_id === plugin.id
-  const isAnyPluginInstalling = loadProgress?.operation === 'install' && loadProgress.stage === 'loading'
+  const isPluginOperating = loadProgress?.stage === 'loading'
+    && loadProgress.operation !== 'fetch'
   const progressDetail = loadProgress ? getPluginProgressDetail(loadProgress) : null
 
   return (
@@ -165,26 +168,42 @@ export function PluginCard({
               <Button 
                 size="sm"
                 className="w-full sm:w-auto"
-                disabled={!gitStatus?.installed || (maimaiVersion !== null && !checkPluginCompatibility(plugin))}
+                disabled={
+                  !gitStatus?.installed
+                  || isPluginOperating
+                  || (maimaiVersion !== null && !checkPluginCompatibility(plugin))
+                }
                 title={
                   !gitStatus?.installed
                     ? 'Git 未安装'
+                    : isPluginOperating
+                      ? '插件操作进行中'
                     : (maimaiVersion !== null && !checkPluginCompatibility(plugin))
                       ? (getIncompatibleReason(plugin) ?? '插件与当前麦麦版本不兼容')
                       : undefined
                 }
                 onClick={() => onUpdate(plugin)}
               >
-                <RefreshCw className="h-4 w-4 mr-1" />
-                更新
+                {isPluginOperating ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1 h-4 w-4" />
+                )}
+                {isPluginOperating ? '更新中' : '更新'}
               </Button>
             ) : (
               <Button 
                 variant="destructive" 
                 size="sm"
                 className="w-full sm:w-auto"
-                disabled={!gitStatus?.installed}
-                title={!gitStatus?.installed ? 'Git 未安装' : undefined}
+                disabled={!gitStatus?.installed || isPluginOperating}
+                title={
+                  !gitStatus?.installed
+                    ? 'Git 未安装'
+                    : isPluginOperating
+                      ? '插件操作进行中'
+                      : undefined
+                }
                 onClick={() => onUninstall(plugin)}
               >
                 <Trash2 className="h-4 w-4 mr-1" />

@@ -238,8 +238,8 @@ class ClientRegistry:
         """初始化注册表并绑定配置重载回调。"""
         self.client_registry: Dict[str, ClientProviderRegistration] = {}
         """APIProvider.client_type -> Provider 注册信息映射表。"""
-        self.client_instance_cache: Dict[str, BaseClient] = {}
-        """APIProvider.name -> BaseClient的映射表"""
+        self.client_instance_cache: Dict[Tuple[asyncio.AbstractEventLoop | None, str], BaseClient] = {}
+        """(事件循环, APIProvider.name) -> BaseClient 的映射表。"""
         self._owner_client_types: Dict[str, Set[str]] = {}
         """插件 ID -> 该插件拥有的 client_type 集合。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
@@ -421,13 +421,22 @@ class ClientRegistry:
         if not normalized_client_type:
             return
 
-        stale_provider_names = [
-            provider_name
-            for provider_name, client in self.client_instance_cache.items()
+        stale_cache_keys = [
+            cache_key
+            for cache_key, client in self.client_instance_cache.items()
             if client.api_provider.client_type == normalized_client_type
         ]
-        for provider_name in stale_provider_names:
-            self.client_instance_cache.pop(provider_name, None)
+        for cache_key in stale_cache_keys:
+            self.client_instance_cache.pop(cache_key, None)
+
+    @staticmethod
+    def _get_client_cache_key(api_provider: APIProvider) -> Tuple[asyncio.AbstractEventLoop | None, str]:
+        """生成按事件循环隔离的客户端缓存键。"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        return loop, api_provider.name
 
     def get_client_class_instance(self, api_provider: APIProvider, force_new: bool = False) -> BaseClient:
         """获取注册的 API 客户端实例。
@@ -449,13 +458,14 @@ class ClientRegistry:
                 return registration.factory(api_provider)
             raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
 
-        # 正常的缓存逻辑
-        if api_provider.name not in self.client_instance_cache:
+        # 异步 HTTP 客户端绑定创建它的事件循环，同一循环内按 Provider 复用。
+        cache_key = self._get_client_cache_key(api_provider)
+        if cache_key not in self.client_instance_cache:
             if registration := self.client_registry.get(api_provider.client_type):
-                self.client_instance_cache[api_provider.name] = registration.factory(api_provider)
+                self.client_instance_cache[cache_key] = registration.factory(api_provider)
             else:
                 raise KeyError(f"'{api_provider.client_type}' 类型的 Client 未注册")
-        return self.client_instance_cache[api_provider.name]
+        return self.client_instance_cache[cache_key]
 
     def clear_client_instance_cache(self) -> None:
         """清空客户端实例缓存。"""

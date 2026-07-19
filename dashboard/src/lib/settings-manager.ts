@@ -15,6 +15,9 @@ export const STORAGE_KEYS = {
   ENABLE_ANIMATIONS: 'maibot-animations',
   ENABLE_AVATAR_FETCH: 'maibot-enable-avatar-fetch',
   ENABLE_FOCUS_COMPANION: 'maibot-enable-focus-companion',
+
+  // 调试设置
+  ALWAYS_SHOW_UPDATE_NOTICE: 'maibot-always-show-update-notice',
   
   // 性能与存储设置
   LOG_CACHE_SIZE: 'maibot-log-cache-size',
@@ -43,6 +46,9 @@ export const DEFAULT_SETTINGS = {
   enableAnimations: true,
   enableAvatarFetch: true,
   enableFocusCompanion: false,
+
+  // 调试
+  alwaysShowUpdateNotice: false,
   
   // 性能与存储
   logCacheSize: 1000,
@@ -115,6 +121,7 @@ export function getAllSettings(): Settings {
     enableAnimations: getSetting('enableAnimations'),
     enableAvatarFetch: getSetting('enableAvatarFetch'),
     enableFocusCompanion: getSetting('enableFocusCompanion'),
+    alwaysShowUpdateNotice: getSetting('alwaysShowUpdateNotice'),
     logCacheSize: getSetting('logCacheSize'),
     logAutoScroll: getSetting('logAutoScroll'),
     logLevelFilter: getSetting('logLevelFilter'),
@@ -289,6 +296,7 @@ function getStorageKey(settingKey: keyof Settings): string {
     enableAnimations: STORAGE_KEYS.ENABLE_ANIMATIONS,
     enableAvatarFetch: STORAGE_KEYS.ENABLE_AVATAR_FETCH,
     enableFocusCompanion: STORAGE_KEYS.ENABLE_FOCUS_COMPANION,
+    alwaysShowUpdateNotice: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_NOTICE,
     logCacheSize: STORAGE_KEYS.LOG_CACHE_SIZE,
     logAutoScroll: STORAGE_KEYS.LOG_AUTO_SCROLL,
     logLevelFilter: STORAGE_KEYS.LOG_LEVEL_FILTER,

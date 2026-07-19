@@ -10,6 +10,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Tuple, cast
 
 from src.common.logger import get_logger
+from src.core.local_operator import is_local_operator
 from src.core.tooling import (
     ToolContentItem,
     ToolAvailabilityContext,
@@ -507,12 +508,19 @@ class ComponentQueryService:
             message_info = getattr(message, "message_info", None)
             group_info = getattr(message_info, "group_info", None)
             user_info = getattr(message_info, "user_info", None)
+            message_is_local_operator = False
+            if message is not None:
+                message_is_local_operator = is_local_operator(
+                    message.platform,
+                    message.message_info.additional_config,
+                )
             invoke_args: Dict[str, Any] = {
                 "text": str(getattr(message, "processed_plain_text", "") or ""),
                 "stream_id": str(getattr(message, "session_id", "") or ""),
                 "group_id": str(getattr(group_info, "group_id", "") or ""),
                 "platform": str(getattr(message, "platform", "") or ""),
                 "user_id": str(getattr(user_info, "user_id", "") or ""),
+                "is_local_operator": message_is_local_operator,
                 "matched_groups": matched_groups if isinstance(matched_groups, dict) else {},
             }
             if message is not None:

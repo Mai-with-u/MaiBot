@@ -814,8 +814,7 @@ class LLMOrchestrator:
 
         model_info = TempMethodsLLMUtils.get_model_info_by_name(selected_model_name)
         api_provider = TempMethodsLLMUtils.get_provider_by_name(model_info.api_provider)
-        force_new_client = self.request_type == "embedding"
-        client = client_registry.get_client_class_instance(api_provider, force_new=force_new_client)
+        client = client_registry.get_client_class_instance(api_provider)
         logger.debug(f"选择请求模型: {model_info.name} (策略: {strategy})")
         total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
         self.model_usage[model_info.name] = (total_tokens, penalty, usage_penalty + 1)

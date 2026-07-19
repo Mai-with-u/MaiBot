@@ -6,7 +6,6 @@
   "startup.brain_external_world_failed": "启动大脑和外部世界失败: {error}",
   "startup.chat_manager_initialized": "聊天管理器初始化成功",
   "startup.child_process_force_kill": "子进程未响应，强制关闭...",
-  "startup.compiling_shaders": "正在编译着色器：1/114514",
   "startup.dev_branch_warning": "警告：Dev 进入不稳定开发状态，任何插件与 WebUI 均可能无法正常工作！",
   "startup.easter_egg": "多年以后，面对AI行刑队，张三将会回想起他2023年在会议上讨论人工智能的那个下午",
   "startup.emoji_manager_initialized": "表情包管理器初始化成功",

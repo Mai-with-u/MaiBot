@@ -338,6 +338,7 @@ class LegacyExpressionMatchOption(BaseModel):
 
     session_id: str
     chat_name: str
+    account_id: Optional[str] = None
 
 
 class LegacyExpressionGroupPreview(BaseModel):
@@ -813,6 +814,7 @@ def resolve_legacy_group_preview(
                     LegacyExpressionMatchOption(
                         session_id=session.session_id,
                         chat_name=get_chat_name(session.session_id, db_session),
+                        account_id=session.account_id,
                     )
                     for session in matched_sessions
                 ]
@@ -889,6 +891,7 @@ class ChatInfo(BaseModel):
     chat_id: str
     chat_name: str
     platform: Optional[str] = None
+    account_id: Optional[str] = None
     is_group: bool = False
     use_expression: bool = True
     enable_learning: bool = True
@@ -902,6 +905,7 @@ def build_chat_info(chat_id: str, db_session: Any, chat_session: Optional[ChatSe
         chat_id=chat_id,
         chat_name=get_chat_name(chat_id, db_session),
         platform=chat_session.platform if chat_session else None,
+        account_id=chat_session.account_id if chat_session else None,
         is_group=bool(chat_session and chat_session.group_id),
         use_expression=use_expression,
         enable_learning=enable_learning,

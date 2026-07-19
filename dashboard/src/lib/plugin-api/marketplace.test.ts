@@ -13,8 +13,12 @@ function maimaiVersion(version: string, major: number, minor: number, patch: num
 }
 
 describe('isPluginCompatible', () => {
-  it('允许同一主版本内高于插件声明的最大版本', () => {
-    expect(isPluginCompatible('1.0.0', '1.4.0', maimaiVersion('1.5.2', 1, 5, 2))).toBe(true)
+  it('允许仅修订号高于插件声明的最大版本', () => {
+    expect(isPluginCompatible('1.0.0', '1.4.0', maimaiVersion('1.4.2', 1, 4, 2))).toBe(true)
+  })
+
+  it('拒绝跨次版本高于插件声明的最大版本', () => {
+    expect(isPluginCompatible('1.0.0', '1.4.9', maimaiVersion('1.5.0', 1, 5, 0))).toBe(false)
   })
 
   it('拒绝跨主版本高于插件声明的最大版本', () => {

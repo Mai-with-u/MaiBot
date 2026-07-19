@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import {
   getMemoryTimeline,
   type MemoryImportChatTargetPayload,
@@ -106,7 +107,7 @@ function formatMemoryTime(timestamp?: number | null): string {
 function formatChatTarget(target: MemoryImportChatTargetPayload): string {
   const suffix = target.is_group ? '群聊' : '私聊'
   const platform = target.platform ? ` · ${target.platform}` : ''
-  return `${target.chat_name || target.chat_id} (${suffix}${platform})`
+  return `${formatChatDisplayName(target.chat_name || target.chat_id, target.account_id)} (${suffix}${platform})`
 }
 
 function getDefaultTimelineChatId(targets: MemoryImportChatTargetPayload[]): string {
@@ -430,7 +431,9 @@ export function MemoryTimelineManager({
               变动摘要
             </CardTitle>
             <CardDescription>
-              {selectedChat ? selectedChat.chat_name : '未选择聊天流'} · {payload?.summary.total ?? 0} 条事件
+              {selectedChat
+                ? formatChatDisplayName(selectedChat.chat_name, selectedChat.account_id)
+                : '未选择聊天流'} · {payload?.summary.total ?? 0} 条事件
             </CardDescription>
           </CardHeader>
           <CardContent>

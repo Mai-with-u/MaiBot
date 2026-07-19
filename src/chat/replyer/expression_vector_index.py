@@ -678,6 +678,34 @@ class ExpressionVectorIndex:
         return max(2, min(80, sample_count))
 
     @staticmethod
+    def _repair_empty_cluster_labels(
+        labels: np.ndarray,
+        similarities: np.ndarray,
+        cluster_count: int,
+    ) -> np.ndarray:
+        """从成员充足的簇中迁移最不匹配的样本，确保每个簇都有成员。"""
+
+        repaired_labels = labels.copy()
+        member_counts = np.bincount(repaired_labels, minlength=cluster_count)
+        assigned_similarities = similarities[np.arange(repaired_labels.shape[0]), repaired_labels]
+
+        for empty_cluster_id in np.flatnonzero(member_counts == 0):
+            donor_candidates = np.flatnonzero(member_counts[repaired_labels] > 1)
+            if donor_candidates.size == 0:
+                raise ValueError("表达向量索引无法为所有聚类分配成员")
+
+            # 只从至少有两个成员的簇迁移，并优先选择最不匹配原中心的样本。
+            donor_index = int(
+                donor_candidates[np.argmin(assigned_similarities[donor_candidates])]
+            )
+            source_cluster_id = int(repaired_labels[donor_index])
+            repaired_labels[donor_index] = int(empty_cluster_id)
+            member_counts[source_cluster_id] -= 1
+            member_counts[empty_cluster_id] += 1
+
+        return repaired_labels
+
+    @staticmethod
     def _run_kmeans(
         normalized_vectors: np.ndarray,
         *,
@@ -688,6 +716,10 @@ class ExpressionVectorIndex:
         """在归一化向量上执行确定性 cosine k-means。"""
 
         sample_count = normalized_vectors.shape[0]
+        if cluster_count > sample_count:
+            raise ValueError(
+                f"表达向量索引聚类数量超过样本数量: clusters={cluster_count}, samples={sample_count}"
+            )
         if cluster_count <= 1 or sample_count <= 1:
             return np.zeros(sample_count, dtype=np.int32)
 
@@ -710,22 +742,27 @@ class ExpressionVectorIndex:
         centroids = normalized_vectors[centroid_indices].copy()
         labels = np.full(sample_count, -1, dtype=np.int32)
         for _ in range(max_iter):
-            next_labels = np.argmax(normalized_vectors @ centroids.T, axis=1).astype(np.int32)
-            if np.array_equal(next_labels, labels):
-                break
+            similarities = normalized_vectors @ centroids.T
+            next_labels = np.argmax(similarities, axis=1).astype(np.int32)
+            next_labels = ExpressionVectorIndex._repair_empty_cluster_labels(
+                next_labels,
+                similarities,
+                cluster_count,
+            )
+            next_centroids = ExpressionVectorIndex._build_cluster_centers_from_labels(
+                normalized_vectors,
+                next_labels,
+                cluster_count,
+            )
+            converged = np.array_equal(next_labels, labels)
             labels = next_labels
-            for cluster_index in range(cluster_count):
-                member_vectors = normalized_vectors[labels == cluster_index]
-                if len(member_vectors) == 0:
-                    farthest_index = int(np.argmin(np.max(normalized_vectors @ centroids.T, axis=1)))
-                    centroids[cluster_index] = normalized_vectors[farthest_index]
-                    labels[farthest_index] = cluster_index
-                    continue
-                centroid = member_vectors.mean(axis=0)
-                norm = float(np.linalg.norm(centroid))
-                if norm <= 0:
-                    raise ValueError(f"表达向量索引聚类 {cluster_index} 中心向量为零")
-                centroids[cluster_index] = centroid / norm
+            centroids = next_centroids
+            if converged:
+                break
+
+        member_counts = np.bincount(labels, minlength=cluster_count)
+        if np.any(member_counts == 0):
+            raise ValueError(f"表达向量索引聚类结果存在空簇: counts={member_counts.tolist()}")
         return labels
 
     @staticmethod

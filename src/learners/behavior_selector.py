@@ -9,6 +9,8 @@ from src.common.utils.utils_config import BehaviorConfigUtils
 
 from .behavior_pattern_maintenance import behavior_pattern_maintenance
 from .behavior_pattern_store import (
+    LEARNING_OBSERVED,
+    LEARNING_SELF_REFLECTION,
     behavior_pattern_to_dict,
     list_behavior_patterns_for_sessions,
     mark_behavior_pattern_selected,
@@ -49,14 +51,6 @@ class BehaviorPatternSelector:
         if scenario_profile.tag_clusters:
             lines.append(f"场景标签：{scenario_profile.tag_cluster_text()}")
         return "\n".join(lines) if lines else "无可用场景画像。"
-
-    @staticmethod
-    def _format_priority_label(index: int, total_count: int) -> str:
-        if index <= 1:
-            return "高"
-        if total_count <= 2 or index <= 2:
-            return "中"
-        return "低"
 
     def _can_use_behaviors(self, session_id: str) -> bool:
         try:
@@ -249,29 +243,53 @@ class BehaviorPatternSelector:
         behaviors: list[dict[str, Any]],
         scenario_profile: BehaviorScenarioProfile,
     ) -> str:
-        reference_items: list[str] = []
-        total_count = len(behaviors)
-        for index, behavior in enumerate(behaviors, start=1):
+        self_reflection_items: list[str] = []
+        observed_behavior_items: list[str] = []
+        for behavior in behaviors:
             behavior_id = behavior.get("id")
             action = str(behavior.get("action") or "").strip()
             outcome = str(behavior.get("outcome") or "").strip()
-            priority_label = BehaviorPatternSelector._format_priority_label(index, total_count)
-            reference_items.append(
-                f"{index}.\n"
-                f"behavior_id：{behavior_id}\n"
-                f"优先级：{priority_label}\n"
-                f"行为：{action}\n"
-                f"预期结果：{outcome}"
+            learning_type = str(behavior.get("learning_type") or "").strip()
+            if learning_type == LEARNING_SELF_REFLECTION:
+                self_reflection_items.append(
+                    f"{len(self_reflection_items) + 1}.\n"
+                    f"behavior_id：{behavior_id}\n"
+                    f"麦麦过去采用的做法：{action}\n"
+                    f"当时观察到的结果：{outcome}"
+                )
+                continue
+            if learning_type == LEARNING_OBSERVED:
+                observed_behavior_items.append(
+                    f"{len(observed_behavior_items) + 1}.\n"
+                    f"behavior_id：{behavior_id}\n"
+                    f"观察到的互动方式：{action}\n"
+                    f"观察到的后续变化：{outcome}"
+                )
+                continue
+            logger.warning(
+                "跳过学习类型未知的行为表现参考: "
+                f"behavior_id={behavior_id} learning_type={learning_type or '[空]'}"
             )
 
         scenario_text = BehaviorPatternSelector._build_compact_scenario_text(scenario_profile)
-        return (
-            "以下是基于本轮 planner 已裁切上下文召回的行为表现参考，不是强制任务；"
-            "只有在当前情境自然匹配时才采纳。\n"
-            f"当前场景画像：\n{scenario_text}\n\n"
-            "候选行为表现：\n"
-            f"{chr(10).join(reference_items)}"
-        )
+        reference_sections = [
+            "以下是根据当前场景召回的过往互动经验。请结合当前上下文、人物关系和可用工具，"
+            "自然地吸收其中合适的部分，无需复现原做法或预设相同结果。",
+            f"当前场景画像：\n{scenario_text}",
+        ]
+        if self_reflection_items:
+            reference_sections.append(
+                "麦麦的过往经验：\n"
+                "这些做法由麦麦在相似场景中采用过，可结合当前情况调整或组合。\n"
+                f"{chr(10).join(self_reflection_items)}"
+            )
+        if observed_behavior_items:
+            reference_sections.append(
+                "其他人的互动经验：\n"
+                "这些做法来自他人或群体，可以在适合麦麦当前身份、关系和情境时灵活借鉴。\n"
+                f"{chr(10).join(observed_behavior_items)}"
+            )
+        return "\n\n".join(reference_sections)
 
     async def retrieve_for_planner(
         self,

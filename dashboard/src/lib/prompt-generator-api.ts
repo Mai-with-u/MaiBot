@@ -33,6 +33,7 @@ export interface PromptGeneratorConfigBlock {
 
 export interface PromptGeneratorResult {
   personality: string
+  behavior_style: string
   reply_style: string
   multiple_reply_style: string[]
   group_chat_prompt: string

@@ -63,6 +63,8 @@ from src.plugin_runtime.protocol.envelope import (
     ReloadPluginsPayload,
     ReloadPluginsResultPayload,
     RunnerReadyPayload,
+    UnloadPluginsPayload,
+    UnloadPluginsResultPayload,
     UnregisterPluginPayload,
     ValidatePluginConfigPayload,
     ValidatePluginConfigResultPayload,
@@ -431,7 +433,7 @@ class PluginRunner:
             self._plugin_dirs,
             extra_available=self._external_available_plugins,
         )
-        logger.info(f"已加载 {len(plugins)} 个插件")
+        logger.debug(f"已加载 {len(plugins)} 个插件")
 
         # 4. 注入 PluginContext + 调用 on_load 生命周期钩子
         failed_plugin_reasons: Dict[str, str] = dict(self._loader.failed_plugins)
@@ -487,10 +489,10 @@ class PluginRunner:
                 await asyncio.sleep(1.0)
 
         # 6. 卸载 IPC 日志 Handler 并刷空剩余缓冲，然后断开连接
-        logger.info("Runner 开始关停")
+        logger.debug("Runner 开始关停")
         await self._uninstall_log_handler()
         await self._rpc_client.disconnect()
-        logger.info("Runner 已退出")
+        logger.debug("Runner 已退出")
 
     def _install_log_handler(self) -> None:
         """握手完成后将 RunnerIPCLogHandler 安装到 logging.root。
@@ -1245,6 +1247,7 @@ class PluginRunner:
         self._rpc_client.register_method("plugin.validate_config", self._handle_validate_plugin_config)
         self._rpc_client.register_method("plugin.reload", self._handle_reload_plugin)
         self._rpc_client.register_method("plugin.reload_batch", self._handle_reload_plugins)
+        self._rpc_client.register_method("plugin.unload_batch", self._handle_unload_plugins)
 
     @staticmethod
     def _resolve_component_handler_name(meta: PluginMeta, component_name: str) -> str:
@@ -1419,7 +1422,7 @@ class PluginRunner:
             response_payload = response.payload if isinstance(response.payload, dict) else {}
             if not bool(response_payload.get("accepted", True)):
                 raise RuntimeError(str(response_payload.get("reason", "插件注册失败")))
-            logger.info(f"插件 {meta.plugin_id} 注册完成")
+            logger.debug(f"插件 {meta.plugin_id} 注册完成")
             return True
         except Exception as e:
             logger.error(f"插件 {meta.plugin_id} 注册失败: {e}")
@@ -1546,7 +1549,7 @@ class PluginRunner:
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.FAILED
         if not self._is_plugin_enabled(plugin_config):
-            logger.info(f"插件 {meta.plugin_id} 已在配置中禁用，跳过激活")
+            logger.debug(f"插件 {meta.plugin_id} 已在配置中禁用，跳过激活")
             self._loader.purge_plugin_modules(meta.plugin_id, meta.plugin_dir)
             return PluginActivationStatus.INACTIVE
 
@@ -1730,6 +1733,43 @@ class PluginRunner:
             unloaded_plugins=batch_result.unloaded_plugins,
             inactive_plugins=batch_result.inactive_plugins,
             failed_plugins=batch_result.failed_plugins,
+        )
+
+    async def _unload_plugins_by_ids(
+        self,
+        plugin_ids: List[str],
+        reason: str,
+    ) -> UnloadPluginsResultPayload:
+        """按依赖安全顺序批量卸载当前已加载的插件。"""
+
+        normalized_plugin_ids = self._normalize_requested_plugin_ids(plugin_ids)
+        loaded_plugin_ids = set(self._loader.list_plugins())
+        failed_plugins = {
+            plugin_id: "插件当前未加载"
+            for plugin_id in normalized_plugin_ids
+            if plugin_id not in loaded_plugin_ids
+        }
+        unload_order = self._build_unload_order(set(normalized_plugin_ids) & loaded_plugin_ids)
+        unloaded_plugins: List[str] = []
+
+        for plugin_id in unload_order:
+            meta = self._loader.get_plugin(plugin_id)
+            if meta is None:
+                failed_plugins[plugin_id] = "无法获取已加载插件元数据"
+                continue
+            try:
+                await self._unload_plugin(meta, reason=reason)
+            except Exception as exc:
+                failed_plugins[plugin_id] = str(exc)
+                logger.error(f"卸载插件 {plugin_id} 失败: {exc}", exc_info=True)
+                continue
+            unloaded_plugins.append(plugin_id)
+
+        return UnloadPluginsResultPayload(
+            success=not failed_plugins and len(unloaded_plugins) == len(normalized_plugin_ids),
+            requested_plugin_ids=normalized_plugin_ids,
+            unloaded_plugins=unloaded_plugins,
+            failed_plugins=failed_plugins,
         )
 
     async def _reload_plugins_by_ids(
@@ -2198,13 +2238,13 @@ class PluginRunner:
 
     async def _handle_prepare_shutdown(self, envelope: Envelope) -> Envelope:
         """处理准备关停"""
-        logger.info("收到 prepare_shutdown 信号")
+        logger.debug("收到 prepare_shutdown 信号")
         await self._dump_inflight_debug("prepare_shutdown")
         return envelope.make_response(payload={"acknowledged": True})
 
     async def _handle_shutdown(self, envelope: Envelope) -> Envelope:
         """处理关停 — 调用所有插件的 on_unload 后退出"""
-        logger.info("收到 shutdown 信号，开始调用 on_unload")
+        logger.debug("收到 shutdown 信号，开始调用 on_unload")
         await self._dump_inflight_debug("shutdown")
         for plugin_id in list(self._loader.list_plugins()):
             meta = self._loader.get_plugin(plugin_id)
@@ -2352,6 +2392,25 @@ class PluginRunner:
                 payload.reason,
                 external_available_plugins=dict(payload.external_available_plugins),
             )
+            return envelope.make_response(payload=result.model_dump())
+
+    async def _handle_unload_plugins(self, envelope: Envelope) -> Envelope:
+        """处理批量插件卸载请求。"""
+
+        try:
+            payload = UnloadPluginsPayload.model_validate(envelope.payload)
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
+        if self._reload_lock.locked():
+            requested_plugin_ids = ", ".join(self._normalize_requested_plugin_ids(payload.plugin_ids)) or "<empty>"
+            return envelope.make_error_response(
+                ErrorCode.E_RELOAD_IN_PROGRESS.value,
+                f"插件 {requested_plugin_ids} 批量卸载请求被拒绝：已有重载或卸载任务正在执行",
+            )
+
+        async with self._reload_lock:
+            result = await self._unload_plugins_by_ids(list(payload.plugin_ids), payload.reason)
             return envelope.make_response(payload=result.model_dump())
 
     async def _handle_reload_plugins(self, envelope: Envelope) -> Envelope:

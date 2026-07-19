@@ -26,19 +26,13 @@ from src.prompt.prompt_manager import prompt_manager  # noqa: E402
 
 
 def main():
-    cli = None
-
     # 加载所有提示词文件
     prompt_manager.load_prompts()
 
     try:
-        cli = BufferCLI()
-        asyncio.run(cli.run())
+        asyncio.run(BufferCLI().run())
     except KeyboardInterrupt:
         console.print("\n[muted]程序已终止[/muted]")
-    finally:
-        if cli and hasattr(cli, "_debug_viewer"):
-            cli._debug_viewer.close()
 
 
 if __name__ == "__main__":

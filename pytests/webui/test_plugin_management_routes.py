@@ -421,3 +421,41 @@ def test_update_non_git_plugin_rolls_back_when_manifest_id_mismatches(client: Te
     assert (plugin_path / "plugin.py").read_text(encoding="utf-8") == "old source"
     assert (plugin_path / "custom.json").read_text(encoding="utf-8") == '{"user": true}'
     assert not (plugin_path / ".git").exists()
+
+
+@pytest.mark.parametrize(
+    ("active_operation", "active_label"),
+    [("install", "安装"), ("uninstall", "卸载"), ("update", "更新")],
+)
+def test_update_rejects_conflicting_operation_for_same_plugin(
+    client: TestClient,
+    active_operation: str,
+    active_label: str,
+):
+    with management_module._reserve_plugin_operation("test.demo", active_operation):
+        response = client.post(
+            "/api/webui/plugins/update",
+            json={
+                "plugin_id": "test.demo",
+                "repository_url": "https://github.com/test/demo",
+                "branch": "main",
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == f"插件 test.demo 正在执行{active_label}操作，请等待完成后重试"
+
+
+def test_plugin_operation_reservation_allows_different_plugins(client: TestClient):
+    with management_module._reserve_plugin_operation("test.demo", "update"):
+        with management_module._reserve_plugin_operation("other.demo", "update"):
+            pass
+
+
+def test_plugin_operation_reservation_releases_after_failure(client: TestClient):
+    with pytest.raises(RuntimeError, match="模拟操作失败"):
+        with management_module._reserve_plugin_operation("test.demo", "update"):
+            raise RuntimeError("模拟操作失败")
+
+    with management_module._reserve_plugin_operation("test.demo", "update"):
+        pass

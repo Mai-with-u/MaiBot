@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import {
   listBehaviorClusters,
   type BehaviorGraphData,
@@ -757,7 +758,7 @@ export function BehaviorLearningPage() {
                   key={chat.session_id || '__global__'}
                   value={chat.session_id || '__global__'}
                 >
-                  {chat.display_name} · {chat.cluster_count} 簇
+                  {formatChatDisplayName(chat.display_name, chat.account_id)} · {chat.cluster_count} 簇
                 </SelectItem>
               ))}
             </SelectContent>
@@ -957,7 +958,7 @@ export function BehaviorLearningPage() {
                       key={chat.session_id || '__global__'}
                       value={chat.session_id || '__global__'}
                     >
-                      {chat.display_name} · {chat.cluster_count} 簇
+                      {formatChatDisplayName(chat.display_name, chat.account_id)} · {chat.cluster_count} 簇
                     </SelectItem>
                   ))}
                 </SelectContent>

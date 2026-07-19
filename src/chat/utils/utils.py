@@ -13,6 +13,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import AtComponent
 from src.common.logger import get_logger
 from src.config.config import global_config
+from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.person_info.person_info import Person
 from src.services.embedding_service import EmbeddingServiceClient
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 logger = get_logger("chat_utils")
 _warned_unconfigured_platforms: set[str] = set()
+WEBUI_BOT_USER_ID = "self"
 
 
 def is_english_letter(char: str) -> bool:
@@ -63,8 +65,14 @@ def get_bot_account(platform: str) -> str:
     if not normalized_platform:
         return ""
 
+    # 本地平台使用保留 ID 表示机器人自身，不依赖任何外部平台账号。
+    if normalized_platform == "webui":
+        return WEBUI_BOT_USER_ID
+    if normalized_platform in LOCAL_PLATFORM_BOT_IDS:
+        return LOCAL_PLATFORM_BOT_IDS[normalized_platform]
+
     qq_account = _get_configured_qq_account()
-    if normalized_platform in {"qq", "webui"}:
+    if normalized_platform == "qq":
         return qq_account
 
     platforms_list = getattr(global_config.bot, "platforms", []) or []
@@ -77,11 +85,13 @@ def get_bot_account(platform: str) -> str:
 
 def get_all_bot_accounts() -> dict[str, str]:
     """获取所有已配置的机器人运行时身份。"""
-    bot_accounts: dict[str, str] = {}
+    bot_accounts: dict[str, str] = {
+        "webui": WEBUI_BOT_USER_ID,
+        **LOCAL_PLATFORM_BOT_IDS,
+    }
     qq_account = _get_configured_qq_account()
     if qq_account:
         bot_accounts["qq"] = qq_account
-        bot_accounts["webui"] = qq_account
 
     platforms_list = getattr(global_config.bot, "platforms", []) or []
     platform_accounts = parse_platform_accounts(platforms_list)

@@ -24,6 +24,7 @@ export interface ChatInfo {
   chat_id: string
   chat_name: string
   platform: string | null
+  account_id?: string | null
   is_group: boolean
   use_expression: boolean
   enable_learning: boolean
@@ -136,6 +137,7 @@ export interface LegacyExpressionGroupPreview {
 export interface LegacyExpressionMatchOption {
   session_id: string
   chat_name: string
+  account_id?: string | null
 }
 
 export interface LegacyExpressionImportPreviewResponse {

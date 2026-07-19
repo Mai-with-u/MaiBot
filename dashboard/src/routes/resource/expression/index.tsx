@@ -41,6 +41,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs } from '@/components/ui/tabs'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 
 import {
   batchDeleteExpressions,
@@ -363,7 +364,7 @@ export function ExpressionManagementPage() {
         return null
       }
       return {
-        label: selectedChat.chat_name,
+        label: formatChatDisplayName(selectedChat.chat_name, selectedChat.account_id),
         useExpression: selectedChat.use_expression ? 'on' : 'off',
         enableLearning: selectedChat.enable_learning ? 'on' : 'off',
       }
@@ -504,12 +505,14 @@ export function ExpressionManagementPage() {
                   browseMode === 'chat'
                     ? chatList.map((chat) => ({
                         id: chat.chat_id,
-                        label: chat.chat_name,
-                        title: `${chat.chat_name} (${chat.chat_id})`,
+                        label: formatChatDisplayName(chat.chat_name, chat.account_id),
+                        title: `${formatChatDisplayName(chat.chat_name, chat.account_id)} (${chat.chat_id})`,
                       }))
                     : browseMode === 'group'
                       ? groups.map((group) => {
-                          const memberNames = group.members.map((member) => member.chat_name).join('、')
+                          const memberNames = group.members
+                            .map((member) => formatChatDisplayName(member.chat_name, member.account_id))
+                            .join('、')
                           return {
                             id: group.index,
                             label: `${group.name}${group.is_global ? '（全局）' : ''}`,

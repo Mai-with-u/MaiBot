@@ -95,7 +95,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
   }, [updateProgress])
 
   const handleConfirmUpdatePlugin = useCallback(async () => {
-    if (!updatingPlugin) return
+    if (!updatingPlugin || updateProgress?.stage === 'loading') return
 
     const repositoryUrl = getPluginRepositoryUrl(updatingPlugin)
     if (!repositoryUrl) {
@@ -158,7 +158,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
     } finally {
       setActingPluginId(null)
     }
-  }, [getPluginRepositoryUrl, onChanged, setActingPluginId, toast, updatingPlugin])
+  }, [getPluginRepositoryUrl, onChanged, setActingPluginId, toast, updateProgress, updatingPlugin])
 
   // ---- 卸载 ----
   const openDeletePluginDialog = useCallback((plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {

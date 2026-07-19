@@ -19,6 +19,7 @@ import {
 import { Tabs } from '@/components/ui/tabs'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 
 import {
   batchDeleteJargons,
@@ -490,8 +491,8 @@ export function JargonManagementPage() {
                 { id: 'all', label: '全部聊天' },
                 ...chatList.map((chat) => ({
                   id: chat.session_id,
-                  label: chat.chat_name,
-                  title: chat.chat_name,
+                  label: formatChatDisplayName(chat.chat_name, chat.account_id),
+                  title: formatChatDisplayName(chat.chat_name, chat.account_id),
                 })),
               ]}
               selectedItemId={filterChatId}

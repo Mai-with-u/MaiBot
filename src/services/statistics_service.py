@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
+import asyncio
+
 from sqlalchemy import desc, func, or_
 from sqlmodel import col, select
 
@@ -219,6 +221,11 @@ def _is_empty_time_series_item(item: Any) -> bool:
 
 async def get_summary_statistics(start_time: datetime, end_time: datetime) -> StatisticsSummary:
     """获取指定时间范围内的摘要统计数据。"""
+    return await asyncio.to_thread(_get_summary_statistics_sync, start_time, end_time)
+
+
+def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> StatisticsSummary:
+    """在线程中同步查询指定时间范围内的摘要统计数据。"""
     summary = StatisticsSummary(
         total_requests=0,
         total_cost=0.0,
@@ -279,6 +286,11 @@ async def get_summary_statistics(start_time: datetime, end_time: datetime) -> St
 
 async def get_model_statistics(start_time: datetime, end_time: datetime | None = None) -> List[ModelStatistics]:
     """获取指定时间范围内的模型统计数据。"""
+    return await asyncio.to_thread(_get_model_statistics_sync, start_time, end_time)
+
+
+def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None = None) -> List[ModelStatistics]:
+    """在线程中同步查询指定时间范围内的模型统计数据。"""
     model_name_expr = func.coalesce(col(ModelUsage.model_assign_name), col(ModelUsage.model_name), "unknown")
     statement = (
         select(
@@ -313,6 +325,11 @@ async def get_model_statistics(start_time: datetime, end_time: datetime | None =
 
 async def get_hourly_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
     """按小时聚合 LLM 请求、费用和 token。"""
+    return await asyncio.to_thread(_get_hourly_statistics_sync, start_time, end_time)
+
+
+def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+    """在线程中同步执行按小时聚合。"""
     hour_expr = func.strftime("%Y-%m-%dT%H:00:00", col(ModelUsage.timestamp))
     statement = (
         select(
@@ -352,6 +369,11 @@ async def get_hourly_statistics(start_time: datetime, end_time: datetime) -> Lis
 
 async def get_daily_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
     """按天聚合 LLM 请求、费用和 token。"""
+    return await asyncio.to_thread(_get_daily_statistics_sync, start_time, end_time)
+
+
+def _get_daily_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
+    """在线程中同步执行按天聚合。"""
     day_expr = func.strftime("%Y-%m-%dT00:00:00", col(ModelUsage.timestamp))
     statement = (
         select(
@@ -395,6 +417,15 @@ async def get_recent_activity(
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
     """获取指定时间范围内最近的 LLM 调用记录。"""
+    return await asyncio.to_thread(_get_recent_activity_sync, start_time, end_time, limit)
+
+
+def _get_recent_activity_sync(
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """在线程中同步查询指定时间范围内最近的 LLM 调用记录。"""
     with get_db_session(auto_commit=False) as session:
         statement = select(ModelUsage)
         if start_time is not None:

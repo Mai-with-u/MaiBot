@@ -407,6 +407,28 @@ class UnregisterPluginPayload(BaseModel):
     """注销原因"""
 
 
+class UnloadPluginsPayload(BaseModel):
+    """批量卸载插件请求载荷。"""
+
+    plugin_ids: List[str] = Field(default_factory=list, description="目标插件 ID 列表")
+    """目标插件 ID 列表"""
+    reason: str = Field(default="manual", description="卸载原因")
+    """卸载原因"""
+
+
+class UnloadPluginsResultPayload(BaseModel):
+    """批量卸载插件结果载荷。"""
+
+    success: bool = Field(description="请求的插件是否全部卸载成功")
+    """请求的插件是否全部卸载成功"""
+    requested_plugin_ids: List[str] = Field(default_factory=list, description="请求卸载的插件 ID")
+    """请求卸载的插件 ID"""
+    unloaded_plugins: List[str] = Field(default_factory=list, description="已卸载的插件 ID")
+    """已卸载的插件 ID"""
+    failed_plugins: Dict[str, str] = Field(default_factory=dict, description="卸载失败原因")
+    """卸载失败原因"""
+
+
 class ReloadPluginPayload(BaseModel):
     """插件重载请求载荷。"""
 
