@@ -1039,23 +1039,9 @@ class AttentionDriftConfig(ConfigBase):
 
 
 class ExperimentalBrowserConfig(ConfigBase):
-    """实验性网页浏览能力配置。"""
+    """暂未开放的实验性网页浏览能力参数。"""
 
     __ui_label__ = "网页浏览"
-
-    enabled: bool = Field(
-        default=False,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "启用网页浏览",
-                "en_US": "Enable web browsing",
-                "ja_JP": "ウェブ閲覧を有効化",
-            },
-            "x-widget": "switch",
-            "x-icon": "globe-2",
-        },
-    )
-    """允许麦麦按需启动隔离浏览器，并通过页面动作票据浏览公开网页。"""
 
     session_timeout_seconds: int = Field(
         default=300,

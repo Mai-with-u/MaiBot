@@ -28,6 +28,8 @@ from .service import (
     get_browser_action_manager,
 )
 
+_BROWSER_FEATURE_ENABLED = False
+
 
 def _build_browser_tool_specs() -> List[ToolSpec]:
     """构建 URL 入口、独立搜索、动作票据执行和关闭能力的工具声明。"""
@@ -174,7 +176,7 @@ def _build_browser_tool_specs() -> List[ToolSpec]:
 
 
 class BrowserActionToolProvider(ToolProvider):
-    """根据实验性配置动态暴露动作票据式网页浏览工具。"""
+    """保留暂未开放的动作票据式网页浏览工具实现。"""
 
     provider_name = "experimental_browser"
     provider_type = "browser"
@@ -189,10 +191,10 @@ class BrowserActionToolProvider(ToolProvider):
         self,
         context: Optional[ToolAvailabilityContext] = None,
     ) -> List[ToolSpec]:
-        """仅在实验性网页浏览开关启用时声明工具。"""
+        """仅在网页浏览功能正式开放时声明工具。"""
 
         del context
-        if not config_manager.get_global_config().experimental.browser.enabled:
+        if not _BROWSER_FEATURE_ENABLED:
             await self._manager.close_owner(self._owner_id)
             return []
         return _build_browser_tool_specs()
@@ -204,8 +206,8 @@ class BrowserActionToolProvider(ToolProvider):
     ) -> ToolExecutionResult:
         """执行浏览会话入口、动作票据或关闭请求。"""
 
-        if not config_manager.get_global_config().experimental.browser.enabled:
-            return self._failure(invocation.tool_name, "实验性网页浏览功能尚未启用。")
+        if not _BROWSER_FEATURE_ENABLED:
+            return self._failure(invocation.tool_name, "网页浏览功能当前版本暂未开放。")
         if context is None or not context.session_id.strip():
             return self._failure(invocation.tool_name, "网页浏览需要绑定真实聊天流，当前缺少 session_id。")
 
