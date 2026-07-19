@@ -105,8 +105,8 @@ async def test_search_execution_does_not_require_enable_ppr_config():
         def __init__(self):
             self.called = False
 
-        async def retrieve(self, *, query, top_k, temporal):
-            del query, top_k, temporal
+        async def retrieve(self, *, query, top_k, temporal, enable_ppr):
+            del query, top_k, temporal, enable_ppr
             self.called = True
             return [
                 RetrievalResult(
@@ -148,7 +148,6 @@ async def test_search_execution_does_not_require_enable_ppr_config():
             enable_ppr=False,
         ),
         enforce_chat_filter=False,
-        reinforce_access=False,
     )
 
     assert result.success is True

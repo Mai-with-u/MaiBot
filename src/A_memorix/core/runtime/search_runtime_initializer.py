@@ -256,12 +256,11 @@ def build_search_runtime(
 
         threshold_config = ThresholdConfig(
             method=ThresholdMethod.ADAPTIVE,
-            min_threshold=_get_config_value(plugin_config, "threshold.min_threshold", 0.3),
+            min_threshold=_get_config_value(plugin_config, "threshold.min_threshold", 0.29),
             max_threshold=_get_config_value(plugin_config, "threshold.max_threshold", 0.95),
             percentile=_get_config_value(plugin_config, "threshold.percentile", 75.0),
             std_multiplier=_get_config_value(plugin_config, "threshold.std_multiplier", 1.5),
-            min_results=_get_config_value(plugin_config, "threshold.min_results", 3),
-            enable_auto_adjust=_get_config_value(plugin_config, "threshold.enable_auto_adjust", True),
+            min_results=_get_config_value(plugin_config, "threshold.min_results", 4),
         )
         runtime.threshold_filter = DynamicThresholdFilter(threshold_config)
         runtime.error = ""

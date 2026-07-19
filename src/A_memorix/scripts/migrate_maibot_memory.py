@@ -1606,6 +1606,9 @@ class MigrationRunner:
                     )
 
             if relation_records:
+                evidence_counts: Dict[str, int] = {}
+                for _, relation_hash in paragraph_relation_links:
+                    evidence_counts[relation_hash] = evidence_counts.get(relation_hash, 0) + 1
                 relation_rows = [
                     (
                         relation_hash,
@@ -1617,14 +1620,22 @@ class MigrationRunner:
                         now_ts,
                         rel[4],
                         rel[5],
+                        1.0,
+                        now_ts,
+                        now_ts,
+                        evidence_counts.get(relation_hash, 0),
+                        0,
+                        now_ts if evidence_counts.get(relation_hash, 0) > 0 else None,
                     )
                     for relation_hash, rel in relation_records.items()
                 ]
                 cursor.executemany(
                     """
                     INSERT OR IGNORE INTO relations
-                    (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata,
+                     retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count,
+                     lifecycle_revision, last_reinforced)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     relation_rows,
                 )

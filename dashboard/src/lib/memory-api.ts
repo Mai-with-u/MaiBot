@@ -1109,8 +1109,8 @@ export interface MemoryEpisodeDetailPayload {
 
 export interface MemoryEpisodeStatusPayload extends Record<string, unknown> {
   success: boolean
-  pending_queue?: number
   counts?: Record<string, number>
+  running?: Array<Record<string, unknown>>
   failed?: Array<Record<string, unknown>>
   error?: string
 }
@@ -1119,6 +1119,12 @@ export interface MemoryEpisodeActionPayload extends Record<string, unknown> {
   success: boolean
   error?: string
   detail?: string
+  processed?: number
+  rebuilt?: number
+  failed?: number
+  unfinished?: number
+  failures?: Array<{ source?: string; error?: string; reason?: string }>
+  unfinished_items?: Array<{ source?: string; error?: string; reason?: string }>
 }
 
 export interface MemoryProfileItemPayload extends Record<string, unknown> {
@@ -1812,7 +1818,12 @@ export async function getMemoryTuningTasks(limit: number = 20): Promise<MemoryTa
   return requestJson<MemoryTaskListPayload>(`/retrieval_tuning/tasks?limit=${limit}`)
 }
 
-export async function createMemoryTuningTask(payload: Record<string, unknown>): Promise<{ success: boolean; task?: MemoryTaskPayload }> {
+export async function createMemoryTuningTask(payload: Record<string, unknown>): Promise<{
+  success: boolean
+  task?: MemoryTaskPayload
+  error?: string
+  message?: string
+}> {
   return requestJson('/retrieval_tuning/tasks', {
     method: 'POST',
     body: payload,
@@ -1822,7 +1833,7 @@ export async function createMemoryTuningTask(payload: Record<string, unknown>): 
 export async function applyBestMemoryTuningProfile(
   taskId: string,
   payload: { persist?: boolean; validate?: boolean } = {},
-): Promise<{ success: boolean; error?: string; persisted?: boolean; runtime_rebuilt?: boolean; validation_passed?: boolean }> {
+): Promise<{ success: boolean; error?: string; message?: string; persisted?: boolean; runtime_rebuilt?: boolean; validation_passed?: boolean }> {
   return requestJson(`/retrieval_tuning/tasks/${encodeURIComponent(taskId)}/apply-best`, {
     method: 'POST',
     body: payload,

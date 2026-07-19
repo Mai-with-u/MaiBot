@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Dict, List
 
 import asyncio
 import numpy as np
@@ -10,9 +10,42 @@ from src.A_memorix.core.retrieval import RetrievalResult
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from src.A_memorix.core.runtime.services import memory_maintenance_service
+from src.A_memorix.core.runtime.services.v5_admin_service import MemoryV5AdminService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
-from src.A_memorix.core.utils import profile_policy
+from src.A_memorix.core.utils.memory_lifecycle_policy import RelationLifecyclePolicy
+
+
+def test_v5_status_skips_relation_removed_after_hash_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MetadataStoreStub:
+        def get_memory_status_summary(self, now: float) -> Dict[str, int]:
+            del now
+            return {}
+
+        def get_relation_status_batch(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
+            assert hashes == ["removed-relation"]
+            return {}
+
+        def get_relation(self, hash_value: str) -> None:
+            assert hash_value == "removed-relation"
+            return None
+
+    kernel = SimpleNamespace(
+        metadata_store=MetadataStoreStub(),
+        _cfg=lambda key, default: default,
+        _last_maintenance_at=None,
+        _maintenance_service=SimpleNamespace(
+            _relation_lifecycle_policy=lambda: RelationLifecyclePolicy(),
+        ),
+    )
+    service = MemoryV5AdminService(kernel)
+    monkeypatch.setattr(service, "_resolve_relation_hashes", lambda target: ["removed-relation"])
+    monkeypatch.setattr(service, "_resolve_deleted_relation_hashes", lambda target: [])
+
+    result = service._memory_v5_status(target="removed-relation")
+
+    assert result["items"] == []
+    assert result["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1046,6 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_persist", lambda *args, **kwargs: None)
-    monkeypatch.setattr(profile_policy, "should_auto_enqueue_episode", lambda config_getter, *, source_type: False)
     monkeypatch.setattr(kernel, "_write_paragraph_vector_or_enqueue", patched_write)
     monkeypatch.setattr(kernel, "_ensure_entity_vector", patched_entity)
 
@@ -1071,7 +1103,7 @@ async def test_profile_admin_uses_kernel_patched_evidence_boundary(
 
 
 @pytest.mark.asyncio
-async def test_episode_admin_uses_kernel_patched_pending_boundary(
+async def test_episode_admin_uses_kernel_patched_source_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
@@ -1081,17 +1113,21 @@ async def test_episode_admin_uses_kernel_patched_pending_boundary(
     async def fake_initialize() -> None:
         return None
 
-    async def fake_process_episode_pending_batch(**kwargs: Any) -> dict[str, Any]:
+    async def fake_process_episode_source_rebuild_batch(**kwargs: Any) -> dict[str, Any]:
         captured.update(kwargs)
         return {"processed": 2, "failed": 0}
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
-    monkeypatch.setattr(kernel, "process_episode_pending_batch", fake_process_episode_pending_batch)
+    monkeypatch.setattr(
+        kernel,
+        "process_episode_source_rebuild_batch",
+        fake_process_episode_source_rebuild_batch,
+    )
 
-    result = await kernel.memory_episode_admin(action="process_pending", limit=3, max_retry=4)
+    result = await kernel.memory_episode_admin(action="process_sources", limit=3, max_retry=4)
 
     assert result == {"success": True, "processed": 2, "failed": 0}
-    assert captured == {"limit": 3, "max_retry": 4}
+    assert captured == {"limit": 3, "max_retry": 4, "max_wait_seconds": 0.0}
 
 
 @pytest.mark.asyncio
@@ -1151,114 +1187,71 @@ async def test_v5_admin_uses_kernel_patched_relation_action_boundary(
 
 
 @pytest.mark.asyncio
-async def test_v5_restore_relation_service_uses_kernel_patched_boundaries(
+async def test_v5_restore_relation_service_routes_to_durable_outbox_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeCursor:
-        def __init__(self) -> None:
-            self.executions: list[tuple[str, tuple[Any, ...]]] = []
-
-        def execute(self, sql: str, params: tuple[Any, ...]) -> None:
-            self.executions.append((sql, params))
-
-    class FakeConnection:
-        def __init__(self) -> None:
-            self.cursor_obj = FakeCursor()
-            self.commit_count = 0
-
-        def cursor(self) -> FakeCursor:
-            return self.cursor_obj
-
-        def commit(self) -> None:
-            self.commit_count += 1
-
-    class FakeMetadataStore:
-        def __init__(self) -> None:
-            self.connection = FakeConnection()
-            self.restored: list[str] = []
-            self.fallback_reads: list[str] = []
-
-        def get_connection(self) -> FakeConnection:
-            return self.connection
-
-        def restore_relation(self, hash_value: str) -> dict[str, Any] | None:
-            self.restored.append(hash_value)
-            if hash_value == "relation-1":
-                return {"subject": "Alice", "predicate": "knows", "object": "Bob"}
-            return None
-
-        def get_relation(self, hash_value: str) -> dict[str, Any] | None:
-            self.fallback_reads.append(hash_value)
-            return None
-
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
-    metadata_store = FakeMetadataStore()
-    kernel.metadata_store = metadata_store  # type: ignore[assignment]
-    vector_calls: list[dict[str, Any]] = []
-    rebuild_calls = 0
-    persist_calls = 0
+    calls: list[dict[str, Any]] = []
 
-    async def fake_ensure_relation_vector(relation: dict[str, Any]) -> bool:
-        vector_calls.append(relation)
-        return True
+    async def fake_restore_deleted_relations(
+        hashes: list[str],
+        *,
+        requested_by: str = "",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "hashes": hashes,
+                "requested_by": requested_by,
+                "reason": reason,
+            }
+        )
+        return {
+            "success": True,
+            "operation_id": "restore-test",
+            "status": "restored",
+            "restored_hashes": ["relation-1"],
+            "restored_count": 1,
+            "failures": [{"hash": "missing-relation", "error": "relation 不存在"}],
+        }
 
-    def fake_rebuild_graph_from_metadata() -> None:
-        nonlocal rebuild_calls
-        rebuild_calls += 1
-
-    def fake_persist() -> None:
-        nonlocal persist_calls
-        persist_calls += 1
-
-    monkeypatch.setattr(kernel, "_ensure_relation_vector", fake_ensure_relation_vector)
-    monkeypatch.setattr(kernel, "_rebuild_graph_from_metadata", fake_rebuild_graph_from_metadata)
-    monkeypatch.setattr(kernel, "_persist", fake_persist)
+    monkeypatch.setattr(
+        kernel._delete_admin_service,
+        "restore_deleted_relations",
+        fake_restore_deleted_relations,
+    )
 
     result = await kernel._v5_admin_service._restore_relation_hashes(
         ["relation-1", "", "missing-relation"],
-        payloads={"relation-1": {"paragraph_hashes": ["paragraph-1", "", "paragraph-2"]}},
+        requested_by="pytest",
+        reason="outbox-boundary",
     )
 
     assert result == {
+        "success": True,
+        "operation_id": "restore-test",
+        "status": "restored",
         "restored_hashes": ["relation-1"],
         "restored_count": 1,
         "failures": [{"hash": "missing-relation", "error": "relation 不存在"}],
     }
-    assert metadata_store.restored == ["relation-1", "missing-relation"]
-    assert metadata_store.fallback_reads == ["missing-relation"]
-    assert [
-        params for sql, params in metadata_store.connection.cursor_obj.executions if "paragraph_relations" in sql
-    ] == [
-        ("paragraph-1", "relation-1"),
-        ("paragraph-2", "relation-1"),
-    ]
-    assert metadata_store.connection.commit_count == 1
-    assert vector_calls == [
+    assert calls == [
         {
-            "subject": "Alice",
-            "predicate": "knows",
-            "object": "Bob",
-            "hash": "relation-1",
+            "hashes": ["relation-1", "", "missing-relation"],
+            "requested_by": "pytest",
+            "reason": "outbox-boundary",
         }
     ]
-    assert rebuild_calls == 1
-    assert persist_calls == 1
 
 
 @pytest.mark.asyncio
 async def test_maintain_memory_uses_v5_service_relation_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeMetadataStore:
-        def __init__(self) -> None:
-            self.reinforced: list[str] = []
-
-        def reinforce_relations(self, hashes: list[str]) -> None:
-            self.reinforced.extend(hashes)
-
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
-    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.metadata_store = object()  # type: ignore[assignment]
     resolve_calls: list[str] = []
+    action_calls: list[dict[str, Any]] = []
 
     async def fake_initialize() -> None:
         return None
@@ -1267,15 +1260,25 @@ async def test_maintain_memory_uses_v5_service_relation_boundary(
         resolve_calls.append(target)
         return ["relation-1", "relation-2"]
 
+    def fake_apply_v5_relation_action(**kwargs: Any) -> dict[str, Any]:
+        action_calls.append(dict(kwargs))
+        return {"success": True, "detail": "reinforce 2 条关系"}
+
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_persist", lambda: None)
     monkeypatch.setattr(kernel, "_resolve_relation_hashes", fake_resolve_relation_hashes)
+    monkeypatch.setattr(kernel, "_apply_v5_relation_action", fake_apply_v5_relation_action)
 
     result = await kernel.maintain_memory(action="reinforce", target="Alice")
 
     assert result == {"success": True, "detail": "reinforce 2 条关系"}
     assert resolve_calls == ["Alice"]
-    assert kernel.metadata_store.reinforced == ["relation-1", "relation-2"]
+    assert action_calls == [
+        {
+            "action": "reinforce",
+            "hashes": ["relation-1", "relation-2"],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1350,8 +1353,6 @@ def test_memory_stats_uses_kernel_patched_backfill_boundary(
                 return [{"c": 6}]
             if "FROM person_profile_snapshots" in sql:
                 return [{"c": 7}]
-            if "FROM episode_pending_paragraphs" in sql:
-                return [{"c": 8}]
             raise AssertionError(f"unexpected sql: {sql}")
 
         def get_episode_source_rebuild_summary(self) -> dict[str, Any]:
@@ -1374,7 +1375,7 @@ def test_memory_stats_uses_kernel_patched_backfill_boundary(
     assert result["relations"] == 4
     assert result["episodes"] == 6
     assert result["profiles"] == 7
-    assert result["episode_pending"] == 8
+    assert "episode_pending" not in result
     assert result["episode_rebuild_pending"] == 30
     assert result["paragraph_vector_backfill_pending"] == 12
     assert result["paragraph_vector_backfill_failed"] == 13
@@ -1412,55 +1413,78 @@ async def test_episode_admin_rebuild_uses_kernel_patched_rebuild_boundary(
 
 
 @pytest.mark.asyncio
-async def test_rebuild_episodes_for_sources_delegates_to_episode_service(
+async def test_episode_admin_reports_superseded_rebuild_as_unfinished(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeMetadataStore:
-        def __init__(self) -> None:
-            self.running: list[str] = []
-            self.done: list[str] = []
-            self.failed: list[dict[str, str]] = []
-
-        def mark_episode_source_running(self, source: str) -> None:
-            self.running.append(source)
-
-        def mark_episode_source_done(self, source: str) -> None:
-            self.done.append(source)
-
-        def mark_episode_source_failed(self, source: str, error: str) -> None:
-            self.failed.append({"source": source, "error": error})
-
-    class FakeEpisodeService:
-        async def rebuild_source(self, source: str) -> dict[str, Any]:
-            if source == "source-fail":
-                raise RuntimeError("rebuild failed")
-            return {"source": source, "episode_count": 2}
-
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
-    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
-    kernel.episode_service = FakeEpisodeService()  # type: ignore[assignment]
-    persist_calls = 0
+    kernel.metadata_store = object()  # type: ignore[assignment]
 
     async def fake_initialize() -> None:
         return None
 
-    def fake_persist() -> None:
-        nonlocal persist_calls
-        persist_calls += 1
+    async def fake_rebuild_episodes_for_sources(sources: list[str]) -> dict[str, Any]:
+        assert sources == ["source-1"]
+        return {
+            "rebuilt": 0,
+            "failed": 0,
+            "failures": [],
+            "unfinished": 1,
+            "unfinished_items": [{"source": "source-1", "reason": "superseded"}],
+            "sources": ["source-1"],
+        }
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
-    monkeypatch.setattr(kernel, "_persist", fake_persist)
+    monkeypatch.setattr(kernel, "rebuild_episodes_for_sources", fake_rebuild_episodes_for_sources)
+
+    result = await kernel.memory_episode_admin(action="rebuild", sources=["source-1"])
+
+    assert result["success"] is False
+    assert result["unfinished"] == 1
+    assert result["unfinished_items"] == [{"source": "source-1", "reason": "superseded"}]
+
+
+@pytest.mark.asyncio
+async def test_rebuild_episodes_for_sources_enqueues_and_uses_source_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeMetadataStore:
+        def __init__(self) -> None:
+            self.enqueued: list[dict[str, Any]] = []
+
+        def enqueue_episode_source_rebuild(self, source: str, **kwargs: Any) -> None:
+            self.enqueued.append({"source": source, **kwargs})
+
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+
+    async def fake_initialize() -> None:
+        return None
+
+    async def fake_process_source_batch(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs == {
+            "sources": ["source-ok", "source-fail"],
+            "limit": 2,
+            "max_wait_seconds": 0.0,
+        }
+        return {
+            "rebuilt": 1,
+            "items": [{"source": "source-ok", "episode_count": 2}],
+            "failures": [{"source": "source-fail", "error": "rebuild failed"}],
+        }
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+    monkeypatch.setattr(kernel, "process_episode_source_rebuild_batch", fake_process_source_batch)
 
     result = await kernel.rebuild_episodes_for_sources(["source-ok", "source-fail"])
 
     assert result["rebuilt"] == 1
     assert result["items"] == [{"source": "source-ok", "episode_count": 2}]
     assert result["failures"] == [{"source": "source-fail", "error": "rebuild failed"}]
-    assert result["sources"] == ["source-ok"]
-    assert kernel.metadata_store.running == ["source-ok", "source-fail"]
-    assert kernel.metadata_store.done == ["source-ok"]
-    assert kernel.metadata_store.failed == [{"source": "source-fail", "error": "rebuild failed"}]
-    assert persist_calls == 1
+    assert result["sources"] == ["source-ok", "source-fail"]
+    assert kernel.metadata_store.enqueued == [
+        {"source": "source-ok", "reason": "episode_admin_rebuild", "debounce_seconds": 0.0},
+        {"source": "source-fail", "reason": "episode_admin_rebuild", "debounce_seconds": 0.0},
+    ]
 
 
 @pytest.mark.asyncio
@@ -1568,26 +1592,43 @@ async def test_source_admin_delete_actions_use_kernel_patched_boundaries(
 
 
 @pytest.mark.asyncio
-async def test_episode_batch_preserves_processing_error_when_failure_marking_also_fails(
+async def test_episode_source_batch_preserves_processing_error_when_failure_marking_also_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_failures: list[tuple[str, str]] = []
-
     class FakeMetadataStore:
-        def fetch_episode_pending_batch(self, *, limit: int, max_retry: int) -> list[dict[str, str]]:
-            return [{"paragraph_hash": "paragraph-1", "source": "source-1"}]
+        def __init__(self) -> None:
+            self.claimed = False
 
-        def mark_episode_pending_running(self, hashes: list[str]) -> None:
-            assert hashes == ["paragraph-1"]
+        def claim_episode_source_rebuild_batch(self, **kwargs: Any) -> list[dict[str, Any]]:
+            del kwargs
+            if self.claimed:
+                return []
+            self.claimed = True
+            return [
+                {
+                    "source": "chat_summary:source-1",
+                    "lease_token": "lease-1",
+                    "claimed_revision": 1,
+                    "retry_count": 0,
+                }
+            ]
 
-        def mark_episode_pending_failed(self, hash_value: str, error: str) -> None:
-            raise RuntimeError(f"mark failed: {hash_value}: {error}")
-
-        def mark_episode_source_failed(self, source: str, error: str) -> None:
-            source_failures.append((source, error))
+        def fail_episode_source_rebuild(self, *args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+            raise RuntimeError("failure marking failed")
 
     class FakeEpisodeService:
-        async def process_pending_rows(self, rows: list[dict[str, str]]) -> dict[str, Any]:
+        @staticmethod
+        def generation_signature() -> dict[str, Any]:
+            return {"generation": "test"}
+
+        @staticmethod
+        def generation_hash(signature: dict[str, Any]) -> str:
+            assert signature == {"generation": "test"}
+            return "generation-test"
+
+        async def plan_source_rebuild(self, source: str, **kwargs: Any) -> dict[str, Any]:
+            del source, kwargs
             raise ValueError("primary episode failure")
 
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
@@ -1599,10 +1640,196 @@ async def test_episode_batch_preserves_processing_error_when_failure_marking_als
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
 
-    with pytest.raises(ValueError, match="primary episode failure"):
-        await kernel._ingest_service.process_episode_pending_batch()
+    result = await kernel._ingest_service.process_episode_source_rebuild_batch()
 
-    assert source_failures == [("source-1", "episode processing failed: primary episode failure")]
+    assert result["failed"] == 1
+    assert result["failures"] == [
+        {"source": "chat_summary:source-1", "error": "primary episode failure"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_episode_source_batch_rejects_zero_attempt_budget() -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+
+    with pytest.raises(ValueError, match="max_retry 必须至少为1"):
+        await kernel._ingest_service.process_episode_source_rebuild_batch(max_retry=0)
+
+
+@pytest.mark.asyncio
+async def test_episode_source_worker_reports_unpublished_cas_result_as_unfinished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeMetadataStore:
+        def __init__(self) -> None:
+            self.claimed = False
+
+        def claim_episode_source_rebuild_batch(self, **kwargs: Any) -> list[dict[str, Any]]:
+            del kwargs
+            if self.claimed:
+                return []
+            self.claimed = True
+            return [
+                {
+                    "source": "chat_summary:source-1",
+                    "lease_token": "lease-1",
+                    "claimed_revision": 1,
+                    "retry_count": 0,
+                }
+            ]
+
+        def publish_episode_source_rebuild(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {
+                "source": "chat_summary:source-1",
+                "published": False,
+                "superseded": True,
+                "episode_count": 0,
+            }
+
+    class FakeEpisodeService:
+        @staticmethod
+        def generation_signature() -> dict[str, Any]:
+            return {"generation": "test"}
+
+        @staticmethod
+        def generation_hash(signature: dict[str, Any]) -> str:
+            assert signature == {"generation": "test"}
+            return "generation-test"
+
+        async def plan_source_rebuild(self, source: str, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            await asyncio.sleep(0)
+            return {
+                "source": source,
+                "payloads": [],
+                "episode_count": 0,
+                "fallback_count": 0,
+            }
+
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.episode_service = FakeEpisodeService()  # type: ignore[assignment]
+
+    async def fake_initialize() -> None:
+        return None
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+
+    result = await kernel._ingest_service.process_episode_source_rebuild_batch(limit=1)
+
+    assert result["rebuilt"] == 0
+    assert result["superseded"] == 1
+    assert result["unfinished"] == 1
+    assert result["unfinished_items"] == [
+        {"source": "chat_summary:source-1", "reason": "superseded"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_episode_source_worker_reports_scoped_source_that_cannot_be_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeMetadataStore:
+        @staticmethod
+        def claim_episode_source_rebuild_batch(**kwargs: Any) -> list[dict[str, Any]]:
+            assert kwargs["sources"] == ["chat_summary:source-1"]
+            return []
+
+    class FakeEpisodeService:
+        @staticmethod
+        def generation_signature() -> dict[str, Any]:
+            return {"generation": "test"}
+
+        @staticmethod
+        def generation_hash(signature: dict[str, Any]) -> str:
+            assert signature == {"generation": "test"}
+            return "generation-test"
+
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.episode_service = FakeEpisodeService()  # type: ignore[assignment]
+
+    async def fake_initialize() -> None:
+        return None
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+
+    result = await kernel._ingest_service.process_episode_source_rebuild_batch(
+        sources=["chat_summary:source-1"],
+        limit=1,
+    )
+
+    assert result["rebuilt"] == 0
+    assert result["unfinished"] == 1
+    assert result["unfinished_items"] == [
+        {"source": "chat_summary:source-1", "reason": "not_claimed"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_episode_source_worker_heartbeat_prevents_live_lease_reclaim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SlowEpisodeService:
+        @staticmethod
+        def generation_signature() -> dict[str, Any]:
+            return {"generation": "heartbeat-test"}
+
+        @staticmethod
+        def generation_hash(signature: dict[str, Any]) -> str:
+            assert signature == {"generation": "heartbeat-test"}
+            return "heartbeat-generation"
+
+        async def plan_source_rebuild(self, source: str, **kwargs: Any) -> dict[str, Any]:
+            del kwargs
+            await asyncio.sleep(1.25)
+            return {
+                "source": source,
+                "payloads": [],
+                "episode_count": 0,
+                "fallback_count": 0,
+                "group_count": 0,
+                "paragraph_count": 0,
+                "generation_hash": "heartbeat-generation",
+            }
+
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    source = "chat_summary:heartbeat-worker"
+    store.enqueue_episode_source_rebuild(source, reason="heartbeat", debounce_seconds=0.0)
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel.metadata_store = store
+    kernel.episode_service = SlowEpisodeService()  # type: ignore[assignment]
+
+    async def fake_initialize() -> None:
+        return None
+
+    monkeypatch.setattr(kernel, "initialize", fake_initialize)
+    monkeypatch.setattr(kernel, "_persist", lambda: None)
+    try:
+        worker = asyncio.create_task(
+            kernel._ingest_service.process_episode_source_rebuild_batch(
+                limit=1,
+                lease_seconds=1.0,
+                max_wait_seconds=0.0,
+            )
+        )
+        await asyncio.sleep(1.05)
+        competing_claim = store.claim_episode_source_rebuild_batch(
+            generation_hash="heartbeat-generation",
+            limit=1,
+            lease_seconds=1.0,
+            max_wait_seconds=0.0,
+        )
+        result = await worker
+
+        assert competing_claim == []
+        assert result["rebuilt"] == 1
+        assert result["unfinished"] == 0
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -1643,7 +1870,7 @@ async def test_memory_maintenance_cycle_uses_kernel_patched_phase_boundaries(
 
     await kernel._run_memory_maintenance_cycle(interval_hours=2.0)
 
-    assert graph_store.decay_factors == [0.5**0.5]
+    assert graph_store.decay_factors == []
     assert calls == ["freeze", "orphan"]
     assert kernel._last_maintenance_at == 123.0
     assert persist_calls == 1
@@ -1674,61 +1901,87 @@ async def test_memory_maintenance_loop_handles_none_without_overwriting_zero(
 
 
 @pytest.mark.asyncio
-async def test_memory_maintenance_freeze_prune_uses_delete_vector_boundary(
+async def test_memory_maintenance_freeze_prune_uses_delete_coordinator_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeGraphStore:
         def __init__(self) -> None:
-            self.thresholds: list[float] = []
-            self.deactivated_edges: list[list[tuple[str, str]]] = []
             self.prune_operations: list[list[tuple[str, str, str]]] = []
-
-        def get_low_weight_edges(self, threshold: float) -> list[tuple[str, str]]:
-            self.thresholds.append(threshold)
-            return [("alice", "bob"), ("pinned", "edge"), ("empty", "edge")]
-
-        def get_relation_hashes_for_edge(self, src: str, tgt: str) -> list[str]:
-            return {
-                ("alice", "bob"): ["relation-active"],
-                ("pinned", "edge"): ["relation-pinned"],
-                ("empty", "edge"): [],
-            }.get((src, tgt), [])
-
-        def deactivate_edges(self, edges: list[tuple[str, str]]) -> None:
-            self.deactivated_edges.append(list(edges))
+            self.save_calls = 0
 
         def prune_relation_hashes(self, operations: list[tuple[str, str, str]]) -> None:
             self.prune_operations.append(list(operations))
 
+        def save(self) -> None:
+            self.save_calls += 1
+
     class FakeMetadataStore:
         def __init__(self) -> None:
-            self.inactive_marks: list[dict[str, Any]] = []
             self.prune_cutoffs: list[float] = []
-            self.backup_deleted: list[list[str]] = []
+            self.projection_claimed = False
 
-        def get_relation_status_batch(self, relation_hashes: list[str]) -> dict[str, dict[str, Any]]:
-            if relation_hashes == ["relation-pinned"]:
-                return {"relation-pinned": {"is_pinned": True, "protected_until": 0.0}}
-            return {relation_hash: {"is_pinned": False, "protected_until": 0.0} for relation_hash in relation_hashes}
+        def evaluate_due_relation_lifecycles(self, **kwargs: Any) -> dict[str, list[dict[str, Any]]]:
+            assert kwargs["now"] == 10_000.0
+            return {
+                "frozen": [
+                    {
+                        "hash": "relation-active",
+                        "subject": "alice",
+                        "object": "bob",
+                    }
+                ],
+                "scheduled": [],
+            }
 
-        def mark_relations_inactive(self, relation_hashes: list[str], *, inactive_since: float) -> None:
-            self.inactive_marks.append(
+        def get_decay_prune_candidate_rows(self, **kwargs: Any) -> list[dict[str, Any]]:
+            self.prune_cutoffs.append(float(kwargs["cutoff_time"]))
+            return [
                 {
-                    "hashes": list(relation_hashes),
-                    "inactive_since": inactive_since,
+                    "hash": "expired-relation",
+                    "subject": "alice",
+                    "object": "bob",
+                    "expected_lifecycle_revision": 3,
+                    "expected_retention_strength": 0.05,
+                    "expected_retention_anchor_at": 0.0,
+                    "expected_inactive_since": 100.0,
+                    "expected_inactive_reason": "decay",
+                    "expected_is_inactive": True,
+                    "expected_is_permanent": False,
+                    "expected_is_pinned": False,
+                    "expected_protected_until": None,
                 }
-            )
+            ]
 
-        def get_prune_candidates(self, cutoff: float) -> list[str]:
-            self.prune_cutoffs.append(cutoff)
-            return ["expired-relation", "missing-relation"]
+        def claim_relation_graph_projection_jobs(self, **kwargs: Any) -> list[dict[str, Any]]:
+            assert int(kwargs["limit"]) > 0
+            if self.projection_claimed:
+                return []
+            self.projection_claimed = True
+            return [
+                {
+                    "relation_hash": "relation-active",
+                    "subject": "alice",
+                    "object": "bob",
+                    "job_revision": 1,
+                    "lease_token": "projection-lease",
+                }
+            ]
 
-        def get_relations_subject_object_map(self, relation_hashes: list[str]) -> dict[str, tuple[str, str]]:
-            assert relation_hashes == ["expired-relation", "missing-relation"]
-            return {"expired-relation": ("alice", "bob")}
+        def count_claimable_relation_graph_projection_jobs(self) -> int:
+            return 0 if self.projection_claimed else 1
 
-        def backup_and_delete_relations(self, relation_hashes: list[str]) -> None:
-            self.backup_deleted.append(list(relation_hashes))
+        def authorize_relation_graph_projection_jobs(
+            self,
+            jobs: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            return [{**jobs[0], "authoritative_active": False}]
+
+        def fail_relation_graph_projection_jobs(self, *args: Any, **kwargs: Any) -> int:
+            del args, kwargs
+            return 0
+
+        def complete_relation_graph_projection_jobs(self, jobs: list[dict[str, Any]]) -> int:
+            return len(jobs)
 
     kernel = SDKMemoryKernel(
         plugin_root=Path.cwd(),
@@ -1738,52 +1991,58 @@ async def test_memory_maintenance_freeze_prune_uses_delete_vector_boundary(
     metadata_store = FakeMetadataStore()
     kernel.graph_store = graph_store  # type: ignore[assignment]
     kernel.metadata_store = metadata_store  # type: ignore[assignment]
-    delete_vector_calls: list[dict[str, Any]] = []
+    delete_calls: list[dict[str, Any]] = []
 
-    def fake_delete_vectors_by_type(**kwargs: Any) -> int:
-        delete_vector_calls.append(kwargs)
-        return 1
+    async def fake_execute_delete_action(**kwargs: Any) -> dict[str, Any]:
+        delete_calls.append(dict(kwargs))
+        return {"success": True}
 
     monkeypatch.setattr(memory_maintenance_service.time, "time", lambda: 10_000.0)
-    monkeypatch.setattr(kernel, "_delete_vectors_by_type", fake_delete_vectors_by_type)
+    monkeypatch.setattr(kernel._delete_admin_service, "_execute_delete_action", fake_execute_delete_action)
 
     await kernel._process_freeze_and_prune()
 
-    assert graph_store.thresholds == [0.2]
-    assert metadata_store.inactive_marks == [
+    assert metadata_store.prune_cutoffs == [2_800.0]
+    assert graph_store.prune_operations == [
+        [("alice", "bob", "relation-active")],
+    ]
+    assert graph_store.save_calls == 1
+    assert delete_calls == [
         {
-            "hashes": ["relation-active"],
-            "inactive_since": 10_000.0,
+            "mode": "relation",
+            "selector": {
+                "hashes": ["expired-relation"],
+                "expected_relation_states": {
+                    "expired-relation": {
+                        "expected_lifecycle_revision": 3,
+                        "expected_retention_strength": 0.05,
+                        "expected_retention_anchor_at": 0.0,
+                        "expected_inactive_since": 100.0,
+                        "expected_inactive_reason": "decay",
+                        "expected_is_inactive": True,
+                        "expected_is_permanent": False,
+                        "expected_is_pinned": False,
+                        "expected_protected_until": None,
+                    }
+                },
+            },
+            "requested_by": "memory_lifecycle",
+            "reason": "lifecycle_decay_archive",
         }
     ]
-    assert graph_store.deactivated_edges == [[("alice", "bob")]]
-    assert metadata_store.prune_cutoffs == [2_800.0]
-    assert graph_store.prune_operations == [[("alice", "bob", "expired-relation")]]
-    assert metadata_store.backup_deleted == [["expired-relation"]]
-    assert delete_vector_calls == [{"relation_hashes": ["expired-relation"]}]
 
 
 @pytest.mark.asyncio
-async def test_memory_maintenance_orphan_gc_uses_delete_vector_boundary() -> None:
+async def test_memory_maintenance_orphan_gc_uses_delete_coordinator_boundary() -> None:
     class FakeGraphStore:
-        def __init__(self) -> None:
-            self.deleted_nodes: list[list[str]] = []
-
         def get_isolated_nodes(self, *, include_inactive: bool) -> list[str]:
             assert include_inactive is True
             return ["orphan-node"]
 
-        def delete_nodes(self, entity_names: list[str]) -> None:
-            self.deleted_nodes.append(list(entity_names))
-
     class FakeMetadataStore:
         def __init__(self) -> None:
             self.entity_gc_requests: list[dict[str, Any]] = []
-            self.paragraph_gc_requests: list[dict[str, Any]] = []
-            self.deleted_marks: list[tuple[list[str], str]] = []
-            self.swept: list[tuple[str, float]] = []
-            self.physical_paragraphs: list[list[str]] = []
-            self.physical_entities: list[list[str]] = []
+            self.expiration_limits: list[int] = []
 
         def get_entity_gc_candidates(self, isolated: list[str], *, retention_seconds: float) -> list[str]:
             self.entity_gc_requests.append(
@@ -1794,26 +2053,9 @@ async def test_memory_maintenance_orphan_gc_uses_delete_vector_boundary() -> Non
             )
             return ["entity-soft-delete"]
 
-        def get_paragraph_gc_candidates(self, *, retention_seconds: float) -> list[str]:
-            self.paragraph_gc_requests.append({"retention_seconds": retention_seconds})
+        def get_expired_paragraph_hashes(self, *, limit: int) -> list[str]:
+            self.expiration_limits.append(limit)
             return ["paragraph-soft-delete"]
-
-        def mark_as_deleted(self, hashes: list[str], item_type: str) -> None:
-            self.deleted_marks.append((list(hashes), item_type))
-
-        def sweep_deleted_items(self, item_type: str, grace_period: float) -> list[tuple[str, ...]]:
-            self.swept.append((item_type, grace_period))
-            if item_type == "paragraph":
-                return [("paragraph-dead",), ("",)]
-            if item_type == "entity":
-                return [("entity-dead", "Entity Name"), ("", "")]
-            return []
-
-        def physically_delete_paragraphs(self, paragraph_hashes: list[str]) -> None:
-            self.physical_paragraphs.append(list(paragraph_hashes))
-
-        def physically_delete_entities(self, entity_hashes: list[str]) -> None:
-            self.physical_entities.append(list(entity_hashes))
 
     kernel = SDKMemoryKernel(
         plugin_root=Path.cwd(),
@@ -1822,7 +2064,6 @@ async def test_memory_maintenance_orphan_gc_uses_delete_vector_boundary() -> Non
                 "orphan": {
                     "enable_soft_delete": True,
                     "entity_retention_days": 2.0,
-                    "paragraph_retention_days": 3.0,
                     "sweep_grace_hours": 4.0,
                 }
             }
@@ -1832,13 +2073,21 @@ async def test_memory_maintenance_orphan_gc_uses_delete_vector_boundary() -> Non
     metadata_store = FakeMetadataStore()
     kernel.graph_store = graph_store  # type: ignore[assignment]
     kernel.metadata_store = metadata_store  # type: ignore[assignment]
-    delete_vector_calls: list[dict[str, Any]] = []
+    delete_calls: list[dict[str, Any]] = []
+    purge_calls: list[dict[str, Any]] = []
 
-    def fake_delete_vectors_by_type(**kwargs: Any) -> int:
-        delete_vector_calls.append(kwargs)
-        return 1
+    async def fake_execute_delete_action(**kwargs: Any) -> dict[str, Any]:
+        delete_calls.append(kwargs)
+        return {"success": True}
 
-    kernel._delete_vectors_by_type = fake_delete_vectors_by_type  # type: ignore[method-assign]
+    async def fake_purge_deleted_memory(**kwargs: Any) -> dict[str, Any]:
+        purge_calls.append(kwargs)
+        return {"success": True}
+
+    kernel._delete_admin_service = SimpleNamespace(  # type: ignore[assignment]
+        _execute_delete_action=fake_execute_delete_action,
+        _purge_deleted_memory=fake_purge_deleted_memory,
+    )
 
     await kernel._orphan_gc_phase()
 
@@ -1848,19 +2097,22 @@ async def test_memory_maintenance_orphan_gc_uses_delete_vector_boundary() -> Non
             "retention_seconds": 172_800.0,
         }
     ]
-    assert metadata_store.paragraph_gc_requests == [{"retention_seconds": 259_200.0}]
-    assert metadata_store.deleted_marks == [
-        (["entity-soft-delete"], "entity"),
-        (["paragraph-soft-delete"], "paragraph"),
+    assert metadata_store.expiration_limits == [1000]
+    assert delete_calls == [
+        {
+            "mode": "entity",
+            "selector": {"hashes": ["entity-soft-delete"]},
+            "requested_by": "memory_maintenance",
+            "reason": "entity_orphan_expired",
+        },
+        {
+            "mode": "paragraph",
+            "selector": {"hashes": ["paragraph-soft-delete"]},
+            "requested_by": "memory_maintenance",
+            "reason": "paragraph_explicit_expiration",
+        },
     ]
-    assert metadata_store.swept == [("paragraph", 14_400.0), ("entity", 14_400.0)]
-    assert metadata_store.physical_paragraphs == [["paragraph-dead"]]
-    assert graph_store.deleted_nodes == [["Entity Name"]]
-    assert metadata_store.physical_entities == [["entity-dead"]]
-    assert delete_vector_calls == [
-        {"paragraph_hashes": ["paragraph-dead"]},
-        {"entity_hashes": ["entity-dead"]},
-    ]
+    assert purge_calls == [{"grace_hours": 4.0, "limit": 1000}]
 
 
 @pytest.mark.asyncio
@@ -1881,10 +2133,12 @@ async def test_background_start_uses_kernel_patched_task_registration(
     assert kernel._background_stopping is False
     assert [name for name, _ in registrations] == [
         "auto_save",
-        "episode_pending",
+        "episode_materialization",
         "embedding_probe",
         "paragraph_vector_backfill",
+        "vector_index_training",
         "memory_maintenance",
+        "storage_cleanup",
         "person_profile_refresh",
         "person_profile_refresh_queue",
         "feedback_correction",
@@ -1892,6 +2146,99 @@ async def test_background_start_uses_kernel_patched_task_registration(
         "dual_vector_auto_migration",
     ]
     assert all(callable(factory) for _, factory in registrations)
+
+
+@pytest.mark.asyncio
+async def test_runtime_vector_training_uses_hidden_threshold_and_persists_trained_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeVectorStore:
+        def __init__(self, count: int) -> None:
+            self.count = count
+            self.trained = False
+            self.thresholds: list[int] = []
+            self.warmup_calls = 0
+
+        def needs_training(self, runtime_threshold: int) -> bool:
+            self.thresholds.append(runtime_threshold)
+            return not self.trained and self.count >= runtime_threshold
+
+        def warmup_index(self, *, force_train: bool) -> dict[str, Any]:
+            assert force_train is True
+            self.warmup_calls += 1
+            self.trained = True
+            return {
+                "ok": True,
+                "trained": True,
+                "bin_count": self.count,
+                "duration_ms": 1.25,
+                "error": None,
+            }
+
+    kernel = SDKMemoryKernel(
+        plugin_root=Path.cwd(),
+        config={"embedding": {"runtime_train_threshold": 256}},
+    )
+    store = FakeVectorStore(count=255)
+    kernel.vector_store = store  # type: ignore[assignment]
+    saved: list[FakeVectorStore] = []
+    monkeypatch.setattr(kernel, "_dual_vector_pools_enabled", lambda: False)
+    monkeypatch.setattr(kernel, "_save_vector_store", lambda value: saved.append(value))
+
+    assert await kernel._train_runtime_vector_indexes_once() == {}
+
+    store.count = 256
+    summary = await kernel._train_runtime_vector_indexes_once()
+
+    assert summary["single"]["trained"] is True
+    assert store.thresholds == [256, 256]
+    assert store.warmup_calls == 1
+    assert saved == [store]
+
+
+@pytest.mark.asyncio
+async def test_runtime_vector_training_targets_effective_dual_pools_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeVectorStore:
+        def __init__(self, name: str, ready: bool) -> None:
+            self.name = name
+            self.ready = ready
+            self.warmup_calls = 0
+
+        def needs_training(self, runtime_threshold: int) -> bool:
+            assert runtime_threshold == 256
+            return self.ready
+
+        def warmup_index(self, *, force_train: bool) -> dict[str, Any]:
+            assert force_train is True
+            self.warmup_calls += 1
+            return {
+                "ok": True,
+                "trained": True,
+                "bin_count": 256,
+                "duration_ms": 1.0,
+                "error": None,
+            }
+
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    legacy_store = FakeVectorStore("legacy", ready=True)
+    paragraph_store = FakeVectorStore("paragraph", ready=True)
+    graph_store = FakeVectorStore("graph", ready=False)
+    kernel.vector_store = legacy_store  # type: ignore[assignment]
+    kernel.paragraph_vector_store = paragraph_store  # type: ignore[assignment]
+    kernel.graph_vector_store = graph_store  # type: ignore[assignment]
+    saved: list[FakeVectorStore] = []
+    monkeypatch.setattr(kernel, "_dual_vector_pools_enabled", lambda: True)
+    monkeypatch.setattr(kernel, "_save_vector_store", lambda value: saved.append(value))
+
+    summary = await kernel._train_runtime_vector_indexes_once()
+
+    assert set(summary) == {"paragraph"}
+    assert legacy_store.warmup_calls == 0
+    assert paragraph_store.warmup_calls == 1
+    assert graph_store.warmup_calls == 0
+    assert saved == [paragraph_store]
 
 
 @pytest.mark.asyncio
@@ -2026,19 +2373,10 @@ async def test_summary_service_uses_payload_source_and_kernel_patched_boundaries
                 source="",
             )
 
-    class FakeMetadataStore:
-        def __init__(self) -> None:
-            self.pending: list[dict[str, Any]] = []
-
-        def enqueue_episode_pending(self, paragraph_hash: str, *, source: str) -> None:
-            self.pending.append({"paragraph_hash": paragraph_hash, "source": source})
-
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
     importer = FakeSummaryImporter()
-    metadata_store = FakeMetadataStore()
     initialize_calls = 0
     persist_calls = 0
-    auto_enqueue_calls: list[str] = []
 
     async def fake_initialize() -> None:
         nonlocal initialize_calls
@@ -2048,16 +2386,9 @@ async def test_summary_service_uses_payload_source_and_kernel_patched_boundaries
         nonlocal persist_calls
         persist_calls += 1
 
-    def fake_should_auto_enqueue_episode(config_getter, *, source_type: str) -> bool:
-        del config_getter
-        auto_enqueue_calls.append(source_type)
-        return True
-
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_persist", fake_persist)
-    monkeypatch.setattr(profile_policy, "should_auto_enqueue_episode", fake_should_auto_enqueue_episode)
     kernel.summary_importer = importer  # type: ignore[assignment]
-    kernel.metadata_store = metadata_store  # type: ignore[assignment]
 
     result = await kernel._summary_service.summarize_chat_stream(
         chat_id="session-1",
@@ -2077,17 +2408,10 @@ async def test_summary_service_uses_payload_source_and_kernel_patched_boundaries
             "metadata": {"kind": "chat_summary"},
         }
     ]
-    assert auto_enqueue_calls == ["chat_summary"]
-    assert metadata_store.pending == [
-        {
-            "paragraph_hash": "summary-hash",
-            "source": "chat_summary:session-1",
-        }
-    ]
     assert persist_calls == 1
     assert result == {
         "success": True,
         "detail": "ok",
+        "episode_source": "chat_summary:session-1",
         "stored_ids": ["summary-hash"],
-        "episode_pending_ids": ["summary-hash"],
     }

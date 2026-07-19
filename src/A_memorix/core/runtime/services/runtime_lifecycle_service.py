@@ -13,6 +13,83 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
     """按固定顺序创建和释放存储、检索及后台任务资源。"""
 
     async def initialize(self) -> None:
+        """持有数据目录独占写者锁后初始化完整运行时。"""
+
+        async with self._runtime_initialization_lock:
+            await self._initialize_serialized()
+
+    async def _initialize_serialized(self) -> None:
+        """串行执行初始化，禁止同一内核的两个协程共享半初始化资源。"""
+
+        if self._initialized:
+            if not self._runtime_writer_lock.held:
+                raise RuntimeError("A_Memorix 活动运行时丢失数据目录写者锁")
+            await self._initialize_with_writer_lock()
+            return
+
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._runtime_writer_lock.acquire()
+        try:
+            await self._initialize_with_writer_lock()
+        except BaseException:
+            try:
+                await self._discard_failed_initialization()
+            finally:
+                self._runtime_writer_lock.release()
+            raise
+
+    async def _discard_failed_initialization(self) -> None:
+        """初始化失败时在写者锁内丢弃半成品，禁止无锁 close 再次落盘。"""
+
+        try:
+            await self._stop_background_tasks()
+        except BaseException as exc:
+            logger.warning(f"初始化失败后的后台任务清理异常: {exc}")
+            for task in self._background_tasks.values():
+                if task is not None and not task.done():
+                    task.cancel()
+            self._background_tasks.clear()
+
+        for manager in (self.import_task_manager, self.retrieval_tuning_manager):
+            if manager is None:
+                continue
+            try:
+                await manager.shutdown()
+            except BaseException as exc:
+                logger.warning(f"初始化失败后的任务管理器清理异常: {exc}")
+
+        if self.metadata_store is not None:
+            try:
+                self.metadata_store.close()
+            except BaseException as exc:
+                logger.warning(f"初始化失败后的元数据连接清理异常: {exc}")
+        self._clear_runtime_references()
+        self._initialized = False
+
+    def _clear_runtime_references(self) -> None:
+        """失效全部运行时引用，防止锁释放后的旧内核继续写存储。"""
+
+        self.embedding_manager = None
+        self.metadata_store = None
+        self.graph_store = None
+        self.vector_store = None
+        self.paragraph_vector_store = None
+        self.graph_vector_store = None
+        self.relation_write_service = None
+        self.sparse_index = None
+        self.retriever = None
+        self.threshold_filter = None
+        self._runtime_bundle = None
+        self.episode_retriever = None
+        self.aggregate_query_service = None
+        self.person_profile_service = None
+        self.episode_segmentation_service = None
+        self.episode_service = None
+        self.summary_importer = None
+        self.import_task_manager = None
+        self.retrieval_tuning_manager = None
+
+    async def _initialize_with_writer_lock(self) -> None:
         """完成格式迁移、存储装载、检索组装和后台任务启动。
 
         重复调用不会重建存储，只会刷新运行时稀疏模式并补齐后台任务。
@@ -61,6 +138,12 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         skip_vector_load = False
         if self.graph_store.has_data():
             self.graph_store.load()
+        projection_service = self._maintenance_service
+        type(projection_service)._reconcile_relation_graph_projection_jobs(
+            projection_service,
+            reset_leases=True,
+            batch_size=10_000,
+        )
 
         sparse_cfg_raw = self._cfg("retrieval.sparse", {}) or {}
         try:
@@ -133,6 +216,13 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
     async def shutdown(self) -> None:
         """先等待后台工作和任务管理器退出，再持久化并释放底层存储。"""
+
+        async with self._runtime_initialization_lock:
+            await self._shutdown_serialized()
+
+    async def _shutdown_serialized(self) -> None:
+        """与初始化互斥地关闭运行时，避免释放半初始化对象的写者锁。"""
+
         await self._stop_background_tasks()
         shutdown_errors: List[Exception] = []
         if self.import_task_manager is not None:
@@ -153,25 +243,46 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
     def close(self) -> None:
         """同步释放非活动内核；活动内核必须使用 ``shutdown()``。"""
+        if self._runtime_initialization_lock.locked():
+            raise RuntimeError("A_Memorix 正在初始化或异步关闭，不能同步 close()")
         if self._initialized:
             raise RuntimeError("A_Memorix 运行时仍处于活动状态，请先 await shutdown()")
         self._close_runtime()
 
     def _close_runtime(self) -> None:
         """持久化并释放资源，调用前必须确认没有任务仍会访问存储。"""
+        has_writable_store = any(
+            store is not None
+            for store in (
+                self.metadata_store,
+                self.graph_store,
+                self.vector_store,
+                self.paragraph_vector_store,
+                self.graph_vector_store,
+            )
+        )
+        if has_writable_store and not self._runtime_writer_lock.held:
+            raise RuntimeError("A_Memorix 存储仍可写，但数据目录写者锁未持有")
+        metadata_store = self.metadata_store
         try:
-            self._persist()
+            if has_writable_store:
+                self._persist()
         finally:
-            if self.metadata_store is not None:
-                self.metadata_store.close()
-            self._initialized = False
-            self._request_dedup_tasks.clear()
-            self._runtime_facade._runtime_self_check_report = {}
-            self._background_tasks.clear()
-            self._active_person_timestamps.clear()
-            self._embedding_degraded = {
-                "active": False,
-                "reason": "",
-                "since": None,
-                "last_check": None,
-            }
+            try:
+                if metadata_store is not None:
+                    metadata_store.close()
+            finally:
+                # persist 或 close 失败时也要先废弃可写引用，再释放跨进程锁。
+                self._clear_runtime_references()
+                self._initialized = False
+                self._request_dedup_tasks.clear()
+                self._runtime_facade._runtime_self_check_report = {}
+                self._background_tasks.clear()
+                self._active_person_timestamps.clear()
+                self._embedding_degraded = {
+                    "active": False,
+                    "reason": "",
+                    "since": None,
+                    "last_check": None,
+                }
+                self._runtime_writer_lock.release()

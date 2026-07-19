@@ -10,7 +10,7 @@ def test_fuzzy_modify_plan_and_superseded_metadata(tmp_path):
     store = MetadataStore(data_dir=tmp_path)
     store.connect()
     try:
-        assert SCHEMA_VERSION == 15
+        assert SCHEMA_VERSION == 21
 
         paragraph_hash = store.add_paragraph(
             "小明喜欢咖啡",

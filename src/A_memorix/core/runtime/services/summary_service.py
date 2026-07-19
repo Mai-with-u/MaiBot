@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ...utils import profile_policy
 from ...utils.runtime_payloads import build_source
 from .base import KernelServiceBase
 
@@ -31,19 +30,12 @@ class MemorySummaryService(KernelServiceBase):
         paragraph_hash = str(getattr(import_result, "paragraph_hash", "") or "").strip()
         source = str(getattr(import_result, "source", "") or "").strip() or build_source("chat_summary", chat_id, [])
         stored_ids: List[str] = []
-        episode_pending_ids: List[str] = []
         if success:
             if not paragraph_hash:
-                raise RuntimeError("聊天摘要导入成功但未返回 paragraph_hash，无法执行 Episode 增量入队")
-            assert self.metadata_store is not None
-            if profile_policy.should_auto_enqueue_episode(self._cfg, source_type="chat_summary"):
-                self.metadata_store.enqueue_episode_pending(paragraph_hash, source=source)
-                episode_pending_ids.append(paragraph_hash)
+                raise RuntimeError("聊天摘要导入成功但未返回 paragraph_hash")
             stored_ids.append(paragraph_hash)
             self._persist()
-        payload = {"success": success, "detail": detail}
+        payload = {"success": success, "detail": detail, "episode_source": source}
         if stored_ids:
             payload["stored_ids"] = stored_ids
-        if episode_pending_ids:
-            payload["episode_pending_ids"] = episode_pending_ids
         return payload

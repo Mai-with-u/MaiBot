@@ -200,11 +200,8 @@ class KernelCompatibilityMixin:
     def _build_graph_edge_detail(self, *args: Any, **kwargs: Any) -> Any:
         return self._graph_admin_service._build_graph_edge_detail(*args, **kwargs)
 
-    def _delete_sources(self, *args: Any, **kwargs: Any) -> Any:
-        return self._graph_admin_service._delete_sources(*args, **kwargs)
-
-    def _apply_cleanup_plan(self, *args: Any, **kwargs: Any) -> Any:
-        return self._graph_admin_service._apply_cleanup_plan(*args, **kwargs)
+    async def _delete_sources(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._graph_admin_service._delete_sources(*args, **kwargs)
 
     def _rebuild_graph_from_metadata(self, *args: Any, **kwargs: Any) -> Any:
         return self._graph_admin_service._rebuild_graph_from_metadata(*args, **kwargs)

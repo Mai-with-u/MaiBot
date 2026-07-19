@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, Optional, Sequence
 
-import time
+from ..utils.memory_lifecycle_policy import RelationLifecycleEvent
 
 if TYPE_CHECKING:
     from ..storage import GraphStore, MetadataStore, VectorStore
@@ -29,13 +29,19 @@ class KernelRuntimeFacade:
         return self._kernel.is_chat_enabled(stream_id=stream_id, group_id=group_id, user_id=user_id)
 
     async def reinforce_access(self, relation_hashes: Sequence[str]) -> None:
-        if self._kernel.metadata_store is None:
+        if self._kernel.metadata_store is None or self._kernel.graph_store is None:
             return
-        hashes = [str(item or "").strip() for item in relation_hashes if str(item or "").strip()]
+        hashes = list(
+            dict.fromkeys(str(item or "").strip() for item in relation_hashes if str(item or "").strip())
+        )
         if not hashes:
             return
-        self._kernel.metadata_store.reinforce_relations(hashes)
-        self._kernel._last_maintenance_at = time.time()
+        service = self._kernel._maintenance_service
+        type(service).apply_relation_lifecycle_event(
+            service,
+            hashes,
+            event=RelationLifecycleEvent.ACCESS,
+        )
 
     async def execute_request_with_dedup(
         self,
@@ -92,6 +98,11 @@ class KernelRuntimeFacade:
 
     def allow_metadata_only_write(self) -> bool:
         return self._kernel._allow_metadata_only_write()
+
+    async def ingest_text(self, **kwargs: Any) -> Dict[str, Any]:
+        """让派生写入统一复用内核的 external ID 幂等入口。"""
+
+        return await self._kernel.ingest_text(**kwargs)
 
     async def write_paragraph_vector_or_enqueue(
         self,

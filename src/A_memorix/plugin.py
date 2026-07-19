@@ -13,6 +13,7 @@ from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 import asyncio
 
+from A_memorix.core.runtime.admin_contracts import AdminContractError, dispatch_admin_command, parse_admin_command
 from A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from A_memorix.paths import repo_root
 
@@ -81,9 +82,12 @@ class AMemorixPlugin(MaiBotPlugin):
             return self._kernel
 
     async def _dispatch_admin_tool(self, method_name: str, action: str, **kwargs):
+        try:
+            command = parse_admin_command(method_name, {"action": action, **kwargs})
+        except AdminContractError as exc:
+            return exc.to_response()
         kernel = await self._get_kernel()
-        handler = getattr(kernel, method_name)
-        return await handler(action=action, **kwargs)
+        return await dispatch_admin_command(kernel, command)
 
     @Tool(
         "search_memory",

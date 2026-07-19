@@ -990,8 +990,7 @@
         "threshold_percentile": "動的しきい値の分位",
         "threshold_min_results": "最小返却数",
         "threshold_min_threshold": "最小しきい値",
-        "threshold_max_threshold": "最大しきい値",
-        "threshold_enable_auto_adjust": "しきい値の自動調整"
+        "threshold_max_threshold": "最大しきい値"
       }
     }
   },

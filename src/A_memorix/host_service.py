@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
 
 import tomlkit
 
@@ -16,6 +17,12 @@ from src.common.utils.utils_config import AMemorixConfigUtils
 from src.config.official_configs import AMemorixConfig
 from src.webui.utils.toml_utils import _update_toml_doc
 
+from .core.runtime.admin_contracts import (
+    AdminContractError,
+    dispatch_admin_command,
+    is_admin_component,
+    parse_admin_command,
+)
 from .paths import default_data_dir, repo_root, resolve_repo_path, schema_path
 from .runtime_registry import set_runtime_kernel
 
@@ -68,15 +75,25 @@ def _strip_internal_config_fields(obj: Any) -> Any:
 def _backup_config_file(path: Path) -> Optional[Path]:
     if not path.exists():
         return None
-    backup_name = f"{path.name}.backup.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    backup_name = f"{path.name}.backup.{datetime.now().strftime('%Y%m%d%H%M%S%f')}.{uuid.uuid4().hex}"
     backup_path = path.parent / backup_name
-    backup_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        with os.fdopen(os.open(backup_path, flags, 0o600), "wb") as handle:
+            handle.write(path.read_bytes())
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(backup_path, stat.S_IMODE(path.stat().st_mode))
+    except Exception:
+        backup_path.unlink(missing_ok=True)
+        raise
     return backup_path
 
 
 class AMemorixHostService:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
+        self._config_update_lock = asyncio.Lock()
         self._queue_lock = asyncio.Lock()
         self._kernel: Optional[SDKMemoryKernel] = None
         self._startup_task: Optional[asyncio.Task] = None
@@ -88,6 +105,7 @@ class AMemorixHostService:
         self._startup_queue_pending_count = 0
         self._startup_queue_cache_loaded = False
         self._config_cache: Dict[str, Any] | None = None
+        self._config_reload_callback_suppressed_task: Optional[asyncio.Task[Any]] = None
         self._reload_callback_registered = False
 
     async def start(self) -> None:
@@ -170,7 +188,7 @@ class AMemorixHostService:
         loaded = tomlkit.loads(raw_config)
         raw_payload = _to_builtin_data(loaded) if isinstance(loaded, dict) else {}
         config_payload = raw_payload.get("a_memorix") if isinstance(raw_payload.get("a_memorix"), dict) else raw_payload
-        path, backup_path = await self._write_config_to_bot_config(config_payload)
+        path, backup_path = await self._write_config_to_bot_config(config_payload, replace=True)
         return {
             "success": True,
             "message": "配置已保存",
@@ -193,7 +211,15 @@ class AMemorixHostService:
         本层负责启动状态、宿主参数适配、共享聊天范围、启动期写入排队和管理命令
         分发；检索、写入及维护操作的业务语义由内核服务负责。
         """
-        del timeout_ms
+        if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
+            raise ValueError("timeout_ms 必须是正整数")
+        try:
+            async with asyncio.timeout(timeout_ms / 1000):
+                return await self._invoke(component_name, args)
+        except TimeoutError as exc:
+            raise TimeoutError(f"A_Memorix 调用超时: component={component_name}, timeout_ms={timeout_ms}") from exc
+
+    async def _invoke(self, component_name: str, args: Dict[str, Any] | None = None) -> Any:
         payload = args or {}
         if not self.is_enabled():
             return self._disabled_response(component_name)
@@ -262,25 +288,13 @@ class AMemorixHostService:
         if component_name == "memory_stats":
             return kernel.memory_stats()
 
-        admin_action_names = {
-            "memory_graph_admin",
-            "memory_source_admin",
-            "memory_episode_admin",
-            "memory_profile_admin",
-            "memory_feedback_admin",
-            "memory_runtime_admin",
-            "memory_import_admin",
-            "memory_tuning_admin",
-            "memory_v5_admin",
-            "memory_delete_admin",
-            "memory_correction_admin",
-            "memory_fuzzy_modify_admin",
-        }
-        if component_name in admin_action_names:
-            kwargs = dict(payload)
-            action = str(kwargs.pop("action", "") or "")
-            result = await getattr(kernel, component_name)(action=action, **kwargs)
-            if component_name == "memory_runtime_admin" and isinstance(result, dict):
+        if is_admin_component(component_name):
+            try:
+                command = parse_admin_command(component_name, payload)
+            except AdminContractError as exc:
+                return exc.to_response()
+            result = await dispatch_admin_command(kernel, command)
+            if command.component_name == "memory_runtime_admin" and isinstance(result, dict):
                 return {**result, **self._startup_status_payload()}
             return result
 
@@ -636,30 +650,172 @@ class AMemorixHostService:
             web_config["import"] = web_config.pop("import_config")
         return payload
 
-    async def _write_config_to_bot_config(self, config: Dict[str, Any]) -> tuple[Path, Optional[Path]]:
+    @staticmethod
+    def _validate_bot_config_dict(config: Dict[str, Any]) -> None:
+        payload = _to_builtin_data(config)
+        if not isinstance(payload, dict):
+            raise TypeError("A_Memorix 配置必须是对象")
+        web_config = payload.get("web")
+        if isinstance(web_config, dict) and "import" in web_config and "import_config" not in web_config:
+            web_config["import_config"] = web_config.pop("import")
+        AMemorixConfig.model_validate(payload)
+
+    @staticmethod
+    def _replace_config_file(path: Path, content: bytes) -> None:
+        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        target_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        try:
+            with os.fdopen(os.open(temp_path, flags, 0o600), "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_path, target_mode)
+            os.replace(temp_path, path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+    async def _write_config_to_bot_config(
+        self,
+        config: Dict[str, Any],
+        *,
+        replace: bool = False,
+    ) -> Tuple[Path, Optional[Path]]:
+        async with self._config_update_lock:
+            return await self._write_config_to_bot_config_locked(config, replace=replace)
+
+    async def _write_config_to_bot_config_locked(
+        self,
+        config: Dict[str, Any],
+        *,
+        replace: bool = False,
+    ) -> Tuple[Path, Optional[Path]]:
         path = self.get_config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        backup_path = _backup_config_file(path)
-        if path.exists():
-            with path.open("r", encoding="utf-8") as handle:
-                doc = tomlkit.load(handle)
+        original_content = path.read_bytes() if path.exists() else None
+        if original_content is not None:
+            doc = tomlkit.loads(original_content.decode("utf-8"))
         else:
             doc = tomlkit.document()
 
         bot_config_payload = self._runtime_dict_to_bot_config_dict(config)
         current = doc.get("a_memorix")
-        if isinstance(current, dict):
+        if replace:
+            doc["a_memorix"] = bot_config_payload
+        elif isinstance(current, dict):
             _update_toml_doc(current, bot_config_payload)
         else:
             doc["a_memorix"] = bot_config_payload
 
-        with path.open("w", encoding="utf-8") as handle:
-            tomlkit.dump(doc, handle)
+        candidate = _to_builtin_data(doc.get("a_memorix", {}))
+        if not isinstance(candidate, dict):
+            raise TypeError("A_Memorix 配置必须是对象")
+        self._validate_bot_config_dict(candidate)
 
-        await _get_config_manager().reload_config(changed_scopes=("bot",))
-        if not self._reload_callback_registered:
-            await self.reload()
+        candidate_content = tomlkit.dumps(doc).encode("utf-8")
+        backup_path = _backup_config_file(path)
+        self._replace_config_file(path, candidate_content)
+
+        config_manager = _get_config_manager()
+        try:
+            persisted_content = await self._reload_stable_config(path, config_manager)
+        except Exception as exc:
+            restored_original = await self._recover_after_failed_reload(
+                path,
+                original_content,
+                candidate_content,
+                config_manager,
+            )
+            if restored_original:
+                raise RuntimeError("A_Memorix 配置重载失败，已恢复写入前的配置") from exc
+            raise RuntimeError("A_Memorix 配置重载失败，检测到其他写入，已保留并重新加载当前配置") from exc
+
+        persisted = self._read_a_memorix_config(persisted_content)
+        persisted_matches = persisted == bot_config_payload if replace else (
+            isinstance(persisted, dict) and self._contains_config_patch(persisted, bot_config_payload)
+        )
+        if not persisted_matches:
+            raise RuntimeError("A_Memorix 配置在保存期间被其他写入覆盖，已保留并重新加载当前配置")
         return path, backup_path
+
+    @staticmethod
+    def _read_file_content(path: Path) -> Optional[bytes]:
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _read_a_memorix_config(content: Optional[bytes]) -> Optional[Dict[str, Any]]:
+        if content is None:
+            return None
+        try:
+            payload = _to_builtin_data(tomlkit.loads(content.decode("utf-8")).get("a_memorix", {}))
+        except (UnicodeDecodeError, tomlkit.exceptions.ParseError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    async def _reload_config_manager(self, config_manager: Any) -> bool:
+        current_task = asyncio.current_task()
+        self._config_reload_callback_suppressed_task = current_task
+        try:
+            return bool(await config_manager.reload_config(changed_scopes=("bot",)))
+        finally:
+            if self._config_reload_callback_suppressed_task is current_task:
+                self._config_reload_callback_suppressed_task = None
+
+    async def _reload_stable_config(self, path: Path, config_manager: Any) -> Optional[bytes]:
+        for _ in range(3):
+            content_before_reload = self._read_file_content(path)
+            if not await self._reload_config_manager(config_manager):
+                raise RuntimeError("配置管理器未能加载配置")
+            content_after_reload = self._read_file_content(path)
+            if content_after_reload != content_before_reload:
+                continue
+            await self.reload()
+            content_after_runtime_reload = self._read_file_content(path)
+            if content_after_runtime_reload == content_after_reload:
+                return content_after_runtime_reload
+        raise RuntimeError("配置在重载期间持续发生变化")
+
+    @staticmethod
+    def _contains_config_patch(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+        for key, expected_value in expected.items():
+            if key not in actual:
+                return False
+            actual_value = actual[key]
+            if isinstance(expected_value, dict):
+                if not isinstance(actual_value, dict) or not AMemorixHostService._contains_config_patch(
+                    actual_value,
+                    expected_value,
+                ):
+                    return False
+            elif actual_value != expected_value:
+                return False
+        return True
+
+    async def _recover_after_failed_reload(
+        self,
+        path: Path,
+        original_content: Optional[bytes],
+        candidate_content: bytes,
+        config_manager: Any,
+    ) -> bool:
+        current_content = self._read_file_content(path)
+        restored_original = current_content == candidate_content
+        if restored_original:
+            if original_content is None:
+                path.unlink(missing_ok=True)
+            else:
+                self._replace_config_file(path, original_content)
+        try:
+            await self._reload_stable_config(path, config_manager)
+        except Exception as exc:
+            if restored_original:
+                raise RuntimeError("已恢复原配置，但配置管理器或 A_Memorix 运行时仍无法重载") from exc
+            raise RuntimeError("检测到其他配置写入，已保留当前文件，但无法完成运行时重载") from exc
+        return restored_original
 
     def register_config_reload_callback(self) -> None:
         if self._reload_callback_registered:
@@ -670,6 +826,9 @@ class AMemorixHostService:
     async def on_config_reload(self, changed_scopes: Sequence[str] | None = None) -> None:
         normalized = {str(scope or "").strip().lower() for scope in (changed_scopes or [])}
         if normalized and "bot" not in normalized:
+            return
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task is self._config_reload_callback_suppressed_task:
             return
         await self.reload()
 

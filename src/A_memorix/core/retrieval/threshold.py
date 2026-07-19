@@ -1,15 +1,17 @@
 """
 动态阈值过滤器
 
-根据检索结果的分布特征自适应调整过滤阈值。
+根据当前检索结果的分布特征自适应计算阈值。
 """
 
-import numpy as np
-from typing import List, Dict, Any, Optional, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 from src.common.logger import get_logger
+
 from .dual_path import RetrievalResult
 
 logger = get_logger("A_Memorix.DynamicThresholdFilter")
@@ -36,16 +38,14 @@ class ThresholdConfig:
         percentile: 百分位数（用于percentile方法）
         std_multiplier: 标准差倍数（用于std_dev方法）
         min_results: 最少保留结果数
-        enable_auto_adjust: 是否自动调整参数
     """
 
     method: ThresholdMethod = ThresholdMethod.ADAPTIVE
-    min_threshold: float = 0.3
+    min_threshold: float = 0.29
     max_threshold: float = 0.95
     percentile: float = 75.0  # 百分位数
     std_multiplier: float = 1.5  # 标准差倍数
-    min_results: int = 3  # 最少保留结果数
-    enable_auto_adjust: bool = True
+    min_results: int = 4  # 最少保留结果数
 
     def __post_init__(self):
         """验证配置"""
@@ -75,8 +75,7 @@ class DynamicThresholdFilter:
     功能：
     - 基于结果分布自适应计算阈值
     - 多种阈值计算方法
-    - 自动参数调整
-    - 统计信息收集
+    - 常量空间统计信息收集
 
     参数：
         config: 阈值配置
@@ -94,10 +93,13 @@ class DynamicThresholdFilter:
         """
         self.config = config or ThresholdConfig()
 
-        # 统计信息
+        # 阈值统计采用常量空间累计，不保存会影响后续请求的历史序列。
         self._total_filtered = 0
         self._total_processed = 0
-        self._threshold_history: List[float] = []
+        self._threshold_count = 0
+        self._threshold_sum = 0.0
+        self._min_threshold_used: Optional[float] = None
+        self._max_threshold_used: Optional[float] = None
 
         logger.debug(
             f"DynamicThresholdFilter 初始化: "
@@ -132,9 +134,6 @@ class DynamicThresholdFilter:
         # 计算阈值
         threshold = self._compute_threshold(scores, results)
 
-        # 记录阈值
-        self._threshold_history.append(threshold)
-
         # 应用阈值过滤
         filtered_results = [r for r in results if r.score >= threshold]
 
@@ -145,6 +144,14 @@ class DynamicThresholdFilter:
             filtered_results = sorted_results[: self.config.min_results]
             threshold = filtered_results[-1].score if filtered_results else 0.0
 
+        # 记录实际使用的阈值，仅用于统计展示。
+        threshold_value = float(threshold)
+        self._threshold_count += 1
+        self._threshold_sum += threshold_value
+        if self._min_threshold_used is None or threshold_value < self._min_threshold_used:
+            self._min_threshold_used = threshold_value
+        if self._max_threshold_used is None or threshold_value > self._max_threshold_used:
+            self._max_threshold_used = threshold_value
         self._total_filtered += len(results) - len(filtered_results)
 
         logger.info(f"过滤完成: {len(results)} -> {len(filtered_results)} (threshold={threshold:.3f})")
@@ -175,11 +182,19 @@ class DynamicThresholdFilter:
         elif self.config.method == ThresholdMethod.GAP_DETECTION:
             threshold = self._gap_detection_threshold(scores)
         else:  # 自适应阈值（ADAPTIVE）
-            # 自适应方法：综合多种方法
+            percentile_threshold = self._percentile_threshold(scores)
+            std_dev_threshold = self._std_dev_threshold(scores)
+            gap_threshold = self._gap_detection_threshold(scores)
+
+            # 跳变检测只描述分数断层，无法判断断层下方是否仍有多跳证据。
+            # 在自适应模式中限制其不高于40分位数，使10条候选通常比中位数方案
+            # 多保留约1条；显式 GAP_DETECTION 模式仍使用原始断层阈值。
+            gap_cap_threshold = float(np.percentile(scores, 40.0))
+            adaptive_gap_threshold = min(gap_threshold, gap_cap_threshold)
             thresholds = [
-                self._percentile_threshold(scores),
-                self._std_dev_threshold(scores),
-                self._gap_detection_threshold(scores),
+                percentile_threshold,
+                std_dev_threshold,
+                adaptive_gap_threshold,
             ]
             # 使用中位数作为最终阈值
             threshold = float(np.median(thresholds))
@@ -190,10 +205,6 @@ class DynamicThresholdFilter:
             self.config.min_threshold,
             self.config.max_threshold,
         )
-
-        # 自动调整
-        if self.config.enable_auto_adjust:
-            threshold = self._auto_adjust_threshold(threshold, scores)
 
         return float(threshold)
 
@@ -252,51 +263,15 @@ class DynamicThresholdFilter:
         if len(sorted_scores) < 2:
             return float(sorted_scores[0]) if len(sorted_scores) > 0 else 0.0
 
-        # 计算相邻分数的差值
-        gaps = np.diff(sorted_scores)
+        # 降序分数的相邻差值为负数，需要显式计算正向下降量。
+        # 阈值取最大断层两端的中点，避免把断层下沿的首个低分结果继续保留。
+        drops = sorted_scores[:-1] - sorted_scores[1:]
+        max_gap_idx = int(np.argmax(drops))
+        upper_score = float(sorted_scores[max_gap_idx])
+        lower_score = float(sorted_scores[max_gap_idx + 1])
+        threshold = (upper_score + lower_score) / 2.0
 
-        # 找到最大的跳变位置
-        max_gap_idx = int(np.argmax(gaps))
-
-        # 阈值为跳变后的分数
-        threshold = float(sorted_scores[max_gap_idx + 1])
-
-        logger.debug(f"跳变检测阈值: {threshold:.3f} (gap={gaps[max_gap_idx]:.3f}, idx={max_gap_idx})")
-        return threshold
-
-    def _auto_adjust_threshold(
-        self,
-        threshold: float,
-        scores: np.ndarray,
-    ) -> float:
-        """
-        自动调整阈值
-
-        基于历史阈值和当前分数分布调整
-
-        Args:
-            threshold: 当前阈值
-            scores: 分数数组
-
-        Returns:
-            调整后的阈值
-        """
-        if not self._threshold_history:
-            return threshold
-
-        # 计算历史阈值的移动平均
-        recent_thresholds = self._threshold_history[-10:]  # 最近10次
-        avg_threshold = float(np.mean(recent_thresholds))
-
-        # 当前阈值与历史平均的差异
-        diff = threshold - avg_threshold
-
-        # 如果差异过大（>0.2），向历史平均靠拢
-        if abs(diff) > 0.2:
-            adjusted_threshold = avg_threshold + diff * 0.5  # 向中间靠拢50%
-            logger.debug(f"阈值调整: {threshold:.3f} -> {adjusted_threshold:.3f} (历史平均={avg_threshold:.3f})")
-            return adjusted_threshold
-
+        logger.debug(f"跳变检测阈值: {threshold:.3f} (gap={drops[max_gap_idx]:.3f}, idx={max_gap_idx})")
         return threshold
 
     def filter_by_confidence(
@@ -394,20 +369,19 @@ class DynamicThresholdFilter:
                 "percentile": self.config.percentile,
                 "std_multiplier": self.config.std_multiplier,
                 "min_results": self.config.min_results,
-                "enable_auto_adjust": self.config.enable_auto_adjust,
             },
             "statistics": {
                 "total_processed": self._total_processed,
                 "total_filtered": self._total_filtered,
                 "filter_rate": filter_rate,
-                "avg_threshold": float(np.mean(self._threshold_history)) if self._threshold_history else 0.0,
-                "threshold_count": len(self._threshold_history),
+                "avg_threshold": self._threshold_sum / self._threshold_count if self._threshold_count else 0.0,
+                "threshold_count": self._threshold_count,
             },
         }
 
-        if self._threshold_history:
-            stats["statistics"]["min_threshold_used"] = float(np.min(self._threshold_history))
-            stats["statistics"]["max_threshold_used"] = float(np.max(self._threshold_history))
+        if self._threshold_count:
+            stats["statistics"]["min_threshold_used"] = float(self._min_threshold_used or 0.0)
+            stats["statistics"]["max_threshold_used"] = float(self._max_threshold_used or 0.0)
 
         return stats
 
@@ -415,7 +389,10 @@ class DynamicThresholdFilter:
         """重置统计信息"""
         self._total_filtered = 0
         self._total_processed = 0
-        self._threshold_history.clear()
+        self._threshold_count = 0
+        self._threshold_sum = 0.0
+        self._min_threshold_used = None
+        self._max_threshold_used = None
         logger.info("统计信息已重置")
 
     def __repr__(self) -> str:

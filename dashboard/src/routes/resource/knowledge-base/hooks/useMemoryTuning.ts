@@ -99,12 +99,15 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
   const submitTuningTask = useCallback(async () => {
     try {
       setCreatingTuning(true)
-      await createMemoryTuningTask({
+      const result = await createMemoryTuningTask({
         objective: tuningObjective,
         intensity: tuningIntensity,
         sample_size: Number(tuningSampleSize),
         top_k_eval: Number(tuningTopKEval),
       })
+      if (!result.success) {
+        throw new Error(result.error ?? result.message ?? '服务端未能创建调优任务')
+      }
       await tasksQuery.refetch()
       toast({ title: '调优任务已创建', description: '新的检索调优任务已经进入队列' })
     } catch (error) {
@@ -125,6 +128,9 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
           persist: persistBestProfile,
           validate: true,
         })
+        if (!result.success) {
+          throw new Error(result.error ?? result.message ?? '服务端未能应用最佳参数')
+        }
         // 应用后刷新 profile + 任务列表，并通知运行时配置重拉
         await Promise.all([profileQuery.refetch(), tasksQuery.refetch(), onRuntimeChanged?.()])
         toast({

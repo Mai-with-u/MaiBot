@@ -207,12 +207,12 @@ class SearchExecutionService:
         plugin_config: Optional[dict],
         request: SearchExecutionRequest,
         enforce_chat_filter: bool = True,
-        reinforce_access: bool = True,
     ) -> SearchExecutionResult:
         """执行一次 search、time 或 hybrid 检索并返回领域结果。
 
-        本层负责参数归一化、聊天过滤、同请求合并、检索执行、阈值处理和访问强化，
-        不负责把 ``RetrievalResult`` 转换为宿主或 SDK 的展示结构。
+        本层负责参数归一化、聊天过滤、同请求合并、检索执行和阈值处理，
+        不负责把 ``RetrievalResult`` 转换为宿主或 SDK 的展示结构，也不产生记忆
+        生命周期副作用。访问加强只能在调用方确认最终采用结果后提交。
         """
         if retriever is None:
             return SearchExecutionResult(success=False, error="知识检索器未初始化")
@@ -278,94 +278,79 @@ class SearchExecutionService:
         )
 
         async def _executor() -> Dict[str, Any]:
-            retriever_config = getattr(retriever, "config", None)
-            has_runtime_ppr_switch = retriever_config is not None and hasattr(retriever_config, "enable_ppr")
-            original_ppr = bool(retriever_config.enable_ppr) if has_runtime_ppr_switch else None
-            if has_runtime_ppr_switch:
-                retriever_config.enable_ppr = bool(request.enable_ppr)
             started_at = time.time()
-            try:
-                retrieved = await retriever.retrieve(
-                    query=query,
-                    top_k=top_k,
-                    temporal=temporal,
-                )
+            retrieved = await retriever.retrieve(
+                query=query,
+                top_k=top_k,
+                temporal=temporal,
+                enable_ppr=bool(request.enable_ppr),
+            )
 
-                should_apply_threshold = bool(request.use_threshold) and threshold_filter is not None
-                if (
-                    query_type == "time"
-                    and not query
-                    and bool(
-                        _get_config_value(
-                            plugin_config,
-                            "retrieval.time.skip_threshold_when_query_empty",
-                            True,
-                        )
-                    )
-                ):
-                    should_apply_threshold = False
-
-                if should_apply_threshold:
-                    retrieved = threshold_filter.filter(retrieved)
-
-                if reinforce_access and plugin_instance is not None and hasattr(plugin_instance, "reinforce_access"):
-                    relation_hashes = [
-                        item.hash_value for item in retrieved if getattr(item, "result_type", "") == "relation"
-                    ]
-                    if relation_hashes:
-                        await plugin_instance.reinforce_access(relation_hashes)
-
-                if query_type == "search":
-                    graph_store = SearchExecutionService._resolve_runtime_component(
-                        plugin_config, plugin_instance, "graph_store"
-                    )
-                    metadata_store = SearchExecutionService._resolve_runtime_component(
-                        plugin_config, plugin_instance, "metadata_store"
-                    )
-                    fallback_enabled = bool(
-                        _get_config_value(
-                            plugin_config,
-                            "retrieval.search.smart_fallback.enabled",
-                            True,
-                        )
-                    )
-                    fallback_threshold = float(
-                        _get_config_value(
-                            plugin_config,
-                            "retrieval.search.smart_fallback.threshold",
-                            0.6,
-                        )
-                    )
-                    retrieved, fallback_triggered, fallback_added = maybe_apply_smart_path_fallback(
-                        query=query,
-                        results=list(retrieved),
-                        graph_store=graph_store,
-                        metadata_store=metadata_store,
-                        enabled=fallback_enabled,
-                        threshold=fallback_threshold,
-                    )
-                    if fallback_triggered:
-                        logger.info(
-                            f"metric.smart_fallback_triggered_count=1 caller={request.caller} added={fallback_added}"
-                        )
-
-                dedup_enabled = bool(
+            should_apply_threshold = bool(request.use_threshold) and threshold_filter is not None
+            if (
+                query_type == "time"
+                and not query
+                and bool(
                     _get_config_value(
                         plugin_config,
-                        "retrieval.search.safe_content_dedup.enabled",
+                        "retrieval.time.skip_threshold_when_query_empty",
                         True,
                     )
                 )
-                if dedup_enabled:
-                    retrieved, removed_count = apply_safe_content_dedup(list(retrieved))
-                    if removed_count > 0:
-                        logger.info(f"metric.safe_dedup_removed_count={removed_count} caller={request.caller}")
+            ):
+                should_apply_threshold = False
 
-                elapsed_ms = (time.time() - started_at) * 1000.0
-                return {"results": retrieved, "elapsed_ms": elapsed_ms}
-            finally:
-                if has_runtime_ppr_switch:
-                    retriever_config.enable_ppr = bool(original_ppr)
+            if should_apply_threshold:
+                retrieved = threshold_filter.filter(retrieved)
+
+            if query_type == "search":
+                graph_store = SearchExecutionService._resolve_runtime_component(
+                    plugin_config, plugin_instance, "graph_store"
+                )
+                metadata_store = SearchExecutionService._resolve_runtime_component(
+                    plugin_config, plugin_instance, "metadata_store"
+                )
+                fallback_enabled = bool(
+                    _get_config_value(
+                        plugin_config,
+                        "retrieval.search.smart_fallback.enabled",
+                        True,
+                    )
+                )
+                fallback_threshold = float(
+                    _get_config_value(
+                        plugin_config,
+                        "retrieval.search.smart_fallback.threshold",
+                        0.6,
+                    )
+                )
+                retrieved, fallback_triggered, fallback_added = maybe_apply_smart_path_fallback(
+                    query=query,
+                    results=list(retrieved),
+                    graph_store=graph_store,
+                    metadata_store=metadata_store,
+                    enabled=fallback_enabled,
+                    threshold=fallback_threshold,
+                )
+                if fallback_triggered:
+                    logger.info(
+                        f"metric.smart_fallback_triggered_count=1 caller={request.caller} added={fallback_added}"
+                    )
+
+            dedup_enabled = bool(
+                _get_config_value(
+                    plugin_config,
+                    "retrieval.search.safe_content_dedup.enabled",
+                    True,
+                )
+            )
+            if dedup_enabled:
+                retrieved, removed_count = apply_safe_content_dedup(list(retrieved))
+                if removed_count > 0:
+                    logger.info(f"metric.safe_dedup_removed_count={removed_count} caller={request.caller}")
+
+            elapsed_ms = (time.time() - started_at) * 1000.0
+            return {"results": retrieved, "elapsed_ms": elapsed_ms}
 
         dedup_hit = False
         try:

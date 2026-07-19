@@ -133,7 +133,7 @@ class MetadataProfileMixin:
             SELECT
                 snapshot_id, person_id, profile_version, profile_text,
                 aliases_json, relation_edges_json, vector_evidence_json, evidence_ids_json,
-                updated_at, expires_at, source_note
+                fact_claim_ids_json, evidence_fingerprint, updated_at, expires_at, source_note
             FROM person_profile_snapshots
             WHERE person_id = ?
             ORDER BY profile_version DESC
@@ -163,9 +163,11 @@ class MetadataProfileMixin:
             "relation_edges": _load_list(row[5]),
             "vector_evidence": _load_list(row[6]),
             "evidence_ids": _load_list(row[7]),
-            "updated_at": row[8],
-            "expires_at": row[9],
-            "source_note": row[10] or "",
+            "fact_claim_ids": _load_list(row[8]),
+            "evidence_fingerprint": str(row[9] or ""),
+            "updated_at": row[10],
+            "expires_at": row[11],
+            "source_note": row[12] or "",
         }
 
     def upsert_person_profile_snapshot(
@@ -176,6 +178,8 @@ class MetadataProfileMixin:
         relation_edges: Optional[List[Dict[str, Any]]] = None,
         vector_evidence: Optional[List[Dict[str, Any]]] = None,
         evidence_ids: Optional[List[str]] = None,
+        fact_claim_ids: Optional[List[str]] = None,
+        evidence_fingerprint: str = "",
         expires_at: Optional[float] = None,
         source_note: str = "",
         updated_at: Optional[float] = None,
@@ -188,6 +192,7 @@ class MetadataProfileMixin:
         relation_edges = relation_edges or []
         vector_evidence = vector_evidence or []
         evidence_ids = evidence_ids or []
+        fact_claim_ids = fact_claim_ids or []
         ts = float(updated_at) if updated_at is not None else datetime.now().timestamp()
 
         cursor = self._conn.cursor()
@@ -209,8 +214,8 @@ class MetadataProfileMixin:
             INSERT INTO person_profile_snapshots (
                 person_id, profile_version, profile_text,
                 aliases_json, relation_edges_json, vector_evidence_json, evidence_ids_json,
-                updated_at, expires_at, source_note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fact_claim_ids_json, evidence_fingerprint, updated_at, expires_at, source_note
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(person_id),
@@ -220,6 +225,8 @@ class MetadataProfileMixin:
                 json.dumps(relation_edges, ensure_ascii=False),
                 json.dumps(vector_evidence, ensure_ascii=False),
                 json.dumps(evidence_ids, ensure_ascii=False),
+                json.dumps(fact_claim_ids, ensure_ascii=False),
+                str(evidence_fingerprint or ""),
                 ts,
                 float(expires_at) if expires_at is not None else None,
                 str(source_note or ""),
@@ -235,10 +242,49 @@ class MetadataProfileMixin:
             "relation_edges": relation_edges,
             "vector_evidence": vector_evidence,
             "evidence_ids": evidence_ids,
+            "fact_claim_ids": fact_claim_ids,
+            "evidence_fingerprint": str(evidence_fingerprint or ""),
             "updated_at": ts,
             "expires_at": expires_at,
             "source_note": source_note,
         }
+
+    def refresh_person_profile_snapshot_cache(
+        self,
+        snapshot_id: int,
+        *,
+        expires_at: Optional[float],
+        source_note: str = "",
+        updated_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """证据未变化时延长快照有效期，不创建新的画像版本。"""
+        ts = float(updated_at) if updated_at is not None else datetime.now().timestamp()
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            UPDATE person_profile_snapshots
+            SET updated_at = ?, expires_at = ?, source_note = ?
+            WHERE snapshot_id = ?
+            """,
+            (
+                ts,
+                float(expires_at) if expires_at is not None else None,
+                str(source_note or ""),
+                int(snapshot_id),
+            ),
+        )
+        if cursor.rowcount != 1:
+            self._conn.rollback()
+            raise ValueError(f"人物画像快照不存在: snapshot_id={snapshot_id}")
+        self._conn.commit()
+        cursor.execute("SELECT person_id FROM person_profile_snapshots WHERE snapshot_id = ?", (int(snapshot_id),))
+        row = cursor.fetchone()
+        if not row:
+            raise RuntimeError(f"人物画像快照刷新后读取失败: snapshot_id={snapshot_id}")
+        latest = self.get_latest_person_profile_snapshot(str(row[0]))
+        if latest is None:
+            raise RuntimeError(f"人物画像快照刷新后人物记录丢失: snapshot_id={snapshot_id}")
+        return latest
 
     def get_person_profile_override(self, person_id: str) -> Optional[Dict[str, Any]]:
         """获取人物画像手工覆盖内容。"""

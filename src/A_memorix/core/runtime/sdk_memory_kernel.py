@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Sequence
 
 import asyncio
@@ -77,6 +78,7 @@ from ..utils.web_import_manager import ImportTaskManager
 from .kernel_compat import KernelCompatibilityMixin
 from .models import KernelSearchRequest, _NormalizedSearchTimeWindow
 from .runtime_facade import KernelRuntimeFacade
+from .runtime_writer_lock import RuntimeWriterLock
 from .search_runtime_initializer import SearchRuntimeBundle, build_search_runtime  # noqa: F401
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -122,9 +124,18 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self._runtime_bundle: Optional[SearchRuntimeBundle] = None
         self._runtime_facade = KernelRuntimeFacade(self)
         self._initialized = False
+        self._runtime_initialization_lock = asyncio.Lock()
         self._last_maintenance_at: Optional[float] = None
         self._request_dedup_tasks: Dict[str, asyncio.Task] = {}
         self._vector_rebuild_lock = asyncio.Lock()
+        # 关系图是整图快照，单个 SDK 内的投影发布必须覆盖领取到 CAS 的完整临界区。
+        self._relation_graph_projection_lock = RLock()
+        # 跨进程只允许一个活动 SDK 写同一数据目录。OS 在进程退出时自动释放锁。
+        self._runtime_writer_lock = RuntimeWriterLock(
+            self.data_dir / ".a_memorix_runtime_writer.lock"
+        )
+        # 删除、恢复和清理 Outbox 会写同一组向量及图文件，必须在单进程写者内线性提交。
+        self._storage_cleanup_lock = asyncio.Lock()
         self._vector_persist_blocked_until_rebuild = False
         self._vector_rebuild_source_dimension: Optional[int] = None
         self._dual_vector_pools_ready = False
@@ -829,12 +840,23 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             group_id=group_id,
         )
 
-    async def process_episode_pending_batch(self, *, limit: int = 20, max_retry: int = 3) -> Dict[str, Any]:
+    async def process_episode_source_rebuild_batch(
+        self,
+        *,
+        sources: Optional[Sequence[str]] = None,
+        limit: int = 20,
+        max_retry: int = 3,
+        lease_seconds: float = 1800.0,
+        max_wait_seconds: float = 60.0,
+    ) -> Dict[str, Any]:
         service = self._ingest_service
-        return await type(service).process_episode_pending_batch(
+        return await type(service).process_episode_source_rebuild_batch(
             service,
+            sources=sources,
             limit=limit,
             max_retry=max_retry,
+            lease_seconds=lease_seconds,
+            max_wait_seconds=max_wait_seconds,
         )
 
     async def search_memory(self, request: KernelSearchRequest) -> Dict[str, Any]:
@@ -1079,9 +1101,17 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._background_task_service
         return await type(service)._auto_save_loop(service)
 
-    async def _episode_pending_loop(self) -> None:
+    async def _vector_index_training_loop(self) -> None:
         service = self._background_task_service
-        return await type(service)._episode_pending_loop(service)
+        return await type(service)._vector_index_training_loop(service)
+
+    async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
+        service = self._background_task_service
+        return await type(service)._train_runtime_vector_indexes_once(service)
+
+    async def _episode_materialization_loop(self) -> None:
+        service = self._background_task_service
+        return await type(service)._episode_materialization_loop(service)
 
     async def _embedding_probe_loop(self) -> None:
         service = self._background_task_service
@@ -1565,10 +1595,6 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     def _fuzzy_modify_cfg_allow_global_scope(self, *args: Any, **kwargs: Any) -> Any:
         return fuzzy_modify_cfg_allow_global_scope()
 
-    def _adjust_relation_confidence(self, hashes: List[str], *, delta: float) -> Dict[str, float]:
-        service = self._v5_admin_service
-        return type(service)._adjust_relation_confidence(service, hashes, delta=delta)
-
     def _apply_v5_relation_action(self, *, action: str, hashes: List[str], strength: float = 1.0) -> Dict[str, Any]:
         service = self._v5_admin_service
         return type(service)._apply_v5_relation_action(service, action=action, hashes=hashes, strength=strength)
@@ -1579,6 +1605,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         item_hash: str,
         text: str,
         vector_store: Optional[VectorStore] = None,
+        before_vector_write: Optional[Callable[[], None]] = None,
     ) -> bool:
         service = self._ingest_service
         return await type(service)._ensure_vector_for_text(
@@ -1586,35 +1613,61 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             item_hash=item_hash,
             text=text,
             vector_store=vector_store,
+            before_vector_write=before_vector_write,
         )
 
-    async def _ensure_relation_vector(self, relation: Dict[str, Any]) -> bool:
+    async def _ensure_relation_vector(
+        self,
+        relation: Dict[str, Any],
+        *,
+        before_vector_write: Optional[Callable[[], None]] = None,
+    ) -> bool:
         service = self._ingest_service
-        return await type(service)._ensure_relation_vector(service, relation)
+        return await type(service)._ensure_relation_vector(
+            service,
+            relation,
+            before_vector_write=before_vector_write,
+        )
 
-    async def _ensure_paragraph_vector(self, paragraph: Dict[str, Any]) -> bool:
+    async def _ensure_paragraph_vector(
+        self,
+        paragraph: Dict[str, Any],
+        *,
+        before_vector_write: Optional[Callable[[], None]] = None,
+    ) -> bool:
         service = self._ingest_service
-        return await type(service)._ensure_paragraph_vector(service, paragraph)
+        return await type(service)._ensure_paragraph_vector(
+            service,
+            paragraph,
+            before_vector_write=before_vector_write,
+        )
 
-    async def _ensure_entity_vector(self, entity: Dict[str, Any]) -> bool:
+    async def _ensure_entity_vector(
+        self,
+        entity: Dict[str, Any],
+        *,
+        before_vector_write: Optional[Callable[[], None]] = None,
+    ) -> bool:
         service = self._ingest_service
-        return await type(service)._ensure_entity_vector(service, entity)
+        return await type(service)._ensure_entity_vector(
+            service,
+            entity,
+            before_vector_write=before_vector_write,
+        )
 
     async def _restore_relation_hashes(
         self,
         hashes: List[str],
         *,
-        payloads: Optional[Dict[str, Dict[str, Any]]] = None,
-        rebuild_graph: bool = True,
-        persist: bool = True,
+        requested_by: str = "",
+        reason: str = "",
     ) -> Dict[str, Any]:
         service = self._v5_admin_service
         return await type(service)._restore_relation_hashes(
             service,
             hashes,
-            payloads=payloads,
-            rebuild_graph=rebuild_graph,
-            persist=persist,
+            requested_by=requested_by,
+            reason=reason,
         )
 
     @staticmethod

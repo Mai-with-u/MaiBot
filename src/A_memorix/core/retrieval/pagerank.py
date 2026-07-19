@@ -92,6 +92,7 @@ class PersonalizedPageRank:
         # 缓存 Aho-Corasick 匹配器
         self._ac_matcher: Optional[AhoCorasick] = None
         self._ac_nodes_count = 0
+        self._ac_node_revision = -1
 
     def compute(
         self,
@@ -405,13 +406,15 @@ class PersonalizedPageRank:
             return []
 
         # 检查是否需要更新 Aho-Corasick 匹配器
-        if self._ac_matcher is None or self._ac_nodes_count != len(all_nodes):
+        node_revision = self.graph_store.node_revision
+        if self._ac_matcher is None or self._ac_node_revision != node_revision:
             self._ac_matcher = AhoCorasick()
             for node in all_nodes:
                 # 统一转为小写进行不区分大小写匹配
                 self._ac_matcher.add_pattern(node.lower())
             self._ac_matcher.build()
             self._ac_nodes_count = len(all_nodes)
+            self._ac_node_revision = node_revision
 
         # 执行匹配
         query_lower = query.lower()

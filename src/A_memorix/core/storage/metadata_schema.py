@@ -5,6 +5,7 @@ import sqlite3
 
 from src.common.logger import get_logger
 
+from .metadata_fact import FACT_SCHEMA_STATEMENTS
 from .knowledge_types import (
     KnowledgeType,
     allowed_knowledge_type_values,
@@ -14,7 +15,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 21
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -56,11 +57,13 @@ class MetadataSchemaMixin:
         self._migrate_schema()
         alias_result = self.rebuild_relation_hash_aliases()
         knowledge_type_result = self.normalize_paragraph_knowledge_types()
+        fact_result = self.backfill_person_fact_claims()
         self.set_schema_version(SCHEMA_VERSION)
         logger.info(
             f"metadata schema 运行时自动迁移完成: {current_version} -> {SCHEMA_VERSION}, "
             f"alias_inserted={int(alias_result.get('inserted', 0) or 0)}, "
-            f"knowledge_normalized={int(knowledge_type_result.get('normalized', 0) or 0)}",
+            f"knowledge_normalized={int(knowledge_type_result.get('normalized', 0) or 0)}, "
+            f"fact_migrated={int(fact_result.get('migrated', 0) or 0)}",
         )
 
     def _ensure_memory_feedback_task_columns(self, cursor: sqlite3.Cursor) -> None:
@@ -105,6 +108,623 @@ class MetadataSchemaMixin:
                     current_columns = {row[1] for row in cursor.fetchall()}
                     if col not in current_columns:
                         raise RuntimeError(f"Schema迁移失败 (paragraph_stale_relation_marks.{col})") from e
+
+    def _ensure_person_profile_snapshot_columns(self, cursor: sqlite3.Cursor) -> None:
+        """补齐人物画像证据版本列。"""
+        cursor.execute("PRAGMA table_info(person_profile_snapshots)")
+        snapshot_columns = {row[1] for row in cursor.fetchall()}
+        if "evidence_fingerprint" not in snapshot_columns:
+            try:
+                cursor.execute("ALTER TABLE person_profile_snapshots ADD COLUMN evidence_fingerprint TEXT")
+            except sqlite3.OperationalError as exc:
+                cursor.execute("PRAGMA table_info(person_profile_snapshots)")
+                current_columns = {row[1] for row in cursor.fetchall()}
+                if "evidence_fingerprint" not in current_columns:
+                    raise RuntimeError(
+                        "Schema迁移失败 (person_profile_snapshots.evidence_fingerprint)"
+                    ) from exc
+        if "fact_claim_ids_json" not in snapshot_columns:
+            cursor.execute("ALTER TABLE person_profile_snapshots ADD COLUMN fact_claim_ids_json TEXT")
+
+    @staticmethod
+    def _ensure_columns(
+        cursor: sqlite3.Cursor,
+        table: str,
+        migrations: Dict[str, str],
+    ) -> None:
+        """严格补齐正式版本字段，失败时直接暴露迁移错误。"""
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing = {str(row[1]) for row in cursor.fetchall()}
+        for column, sql in migrations.items():
+            if column not in existing:
+                cursor.execute(sql)
+        cursor.execute(f"PRAGMA table_info({table})")
+        migrated = {str(row[1]) for row in cursor.fetchall()}
+        missing = sorted(set(migrations) - migrated)
+        if missing:
+            raise RuntimeError(f"Schema迁移失败 ({table}: {', '.join(missing)})")
+
+    def _ensure_lifecycle_columns(self, cursor: sqlite3.Cursor) -> None:
+        """建立关系级生命周期和段落显式过期字段。"""
+        self._ensure_columns(
+            cursor,
+            "paragraphs",
+            {
+                "expires_at": "ALTER TABLE paragraphs ADD COLUMN expires_at REAL",
+                "deletion_reason": "ALTER TABLE paragraphs ADD COLUMN deletion_reason TEXT",
+            },
+        )
+        relation_columns = {
+            "retention_strength": (
+                "ALTER TABLE relations ADD COLUMN retention_strength REAL NOT NULL DEFAULT 1.0"
+            ),
+            "retention_anchor_at": "ALTER TABLE relations ADD COLUMN retention_anchor_at REAL",
+            "next_lifecycle_at": "ALTER TABLE relations ADD COLUMN next_lifecycle_at REAL",
+            "reinforcement_count": (
+                "ALTER TABLE relations ADD COLUMN reinforcement_count INTEGER NOT NULL DEFAULT 0"
+            ),
+            "lifecycle_revision": (
+                "ALTER TABLE relations ADD COLUMN lifecycle_revision INTEGER NOT NULL DEFAULT 0"
+            ),
+            "inactive_reason": "ALTER TABLE relations ADD COLUMN inactive_reason TEXT",
+            "last_access_reinforced_at": (
+                "ALTER TABLE relations ADD COLUMN last_access_reinforced_at REAL"
+            ),
+        }
+        deleted_relation_columns = {
+            key: sql.replace("ALTER TABLE relations", "ALTER TABLE deleted_relations")
+            for key, sql in relation_columns.items()
+        }
+        self._ensure_columns(cursor, "relations", relation_columns)
+        self._ensure_columns(cursor, "deleted_relations", deleted_relation_columns)
+
+        migration_epoch = datetime.now().timestamp()
+        cursor.execute(
+            """
+            UPDATE relations
+            SET retention_strength = MIN(1.0, MAX(0.0, COALESCE(retention_strength, 1.0))),
+                retention_anchor_at = COALESCE(retention_anchor_at, ?),
+                next_lifecycle_at = CASE
+                    WHEN is_pinned = 1 OR is_permanent = 1 THEN NULL
+                    ELSE COALESCE(next_lifecycle_at, ?)
+                END,
+                reinforcement_count = COALESCE(reinforcement_count, 0),
+                lifecycle_revision = COALESCE(lifecycle_revision, 0),
+                inactive_reason = CASE
+                    WHEN is_inactive = 1 THEN COALESCE(inactive_reason, 'schema_19_migrated_inactive')
+                    ELSE inactive_reason
+                END,
+                is_pinned = CASE WHEN is_permanent = 1 THEN 1 ELSE is_pinned END
+            """,
+            (migration_epoch, migration_epoch),
+        )
+        cursor.execute(
+            """
+            UPDATE deleted_relations
+            SET retention_strength = MIN(1.0, MAX(0.0, COALESCE(retention_strength, 1.0))),
+                retention_anchor_at = COALESCE(retention_anchor_at, ?),
+                reinforcement_count = COALESCE(reinforcement_count, 0),
+                lifecycle_revision = COALESCE(lifecycle_revision, 0),
+                inactive_reason = COALESCE(inactive_reason, 'deleted')
+            """,
+            (migration_epoch,),
+        )
+        cursor.execute(
+            """
+            UPDATE paragraphs
+            SET deletion_reason = 'schema_19_migrated_soft_delete'
+            WHERE is_deleted = 1 AND deletion_reason IS NULL
+            """
+        )
+        self._ensure_lifecycle_not_null_constraints()
+        cursor.execute("DROP INDEX IF EXISTS idx_relations_lifecycle_due")
+        cursor.execute(
+            """
+            CREATE INDEX idx_relations_lifecycle_due
+            ON relations(is_inactive, next_lifecycle_at, hash)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relations_inactive_reason
+            ON relations(is_inactive, inactive_reason, inactive_since)
+            """
+        )
+        # SQLite 表重建会删除原表所属索引，迁移后必须恢复全新库的基础索引集合。
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS idx_relations_vector ON relations(vector_index)",
+            "CREATE INDEX IF NOT EXISTS idx_relations_subject ON relations(subject)",
+            "CREATE INDEX IF NOT EXISTS idx_relations_object ON relations(object)",
+            (
+                "CREATE INDEX IF NOT EXISTS idx_relations_inactive "
+                "ON relations(is_inactive, inactive_since)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_relations_protected "
+                "ON relations(is_pinned, protected_until)"
+            ),
+        ):
+            cursor.execute(statement)
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_paragraphs_expiration
+            ON paragraphs(is_deleted, expires_at)
+            """
+        )
+
+    @staticmethod
+    def _ensure_relation_graph_projection_tables(cursor: sqlite3.Cursor) -> None:
+        """建立关系活跃态到持久化图的可重试投影队列。"""
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relation_graph_projection_jobs (
+                relation_hash TEXT PRIMARY KEY,
+                subject TEXT NOT NULL,
+                object TEXT NOT NULL,
+                desired_active INTEGER NOT NULL CHECK(desired_active IN (0, 1)),
+                desired_lifecycle_revision INTEGER NOT NULL,
+                job_revision INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'running', 'failed')),
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                lease_token TEXT,
+                lease_expires_at REAL,
+                last_error TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relation_graph_projection_ready
+            ON relation_graph_projection_jobs(status, lease_expires_at, updated_at, relation_hash)
+            """
+        )
+        cursor.execute("DROP TRIGGER IF EXISTS trg_relations_graph_projection_lifecycle")
+        cursor.execute(
+            """
+            CREATE TRIGGER trg_relations_graph_projection_lifecycle
+            AFTER UPDATE OF is_inactive ON relations
+            WHEN COALESCE(OLD.is_inactive, 0) != COALESCE(NEW.is_inactive, 0)
+            BEGIN
+                INSERT INTO relation_graph_projection_jobs (
+                    relation_hash, subject, object, desired_active,
+                    desired_lifecycle_revision, job_revision, status,
+                    attempt_count, lease_token, lease_expires_at, last_error,
+                    created_at, updated_at
+                ) VALUES (
+                    NEW.hash, NEW.subject, NEW.object,
+                    CASE WHEN COALESCE(NEW.is_inactive, 0) = 0 THEN 1 ELSE 0 END,
+                    COALESCE(NEW.lifecycle_revision, 0), 1, 'pending',
+                    0, NULL, NULL, NULL,
+                    CAST(strftime('%s', 'now') AS REAL),
+                    CAST(strftime('%s', 'now') AS REAL)
+                )
+                ON CONFLICT(relation_hash) DO UPDATE SET
+                    subject = excluded.subject,
+                    object = excluded.object,
+                    desired_active = excluded.desired_active,
+                    desired_lifecycle_revision = excluded.desired_lifecycle_revision,
+                    job_revision = relation_graph_projection_jobs.job_revision + 1,
+                    status = 'pending',
+                    attempt_count = 0,
+                    lease_token = NULL,
+                    lease_expires_at = NULL,
+                    last_error = NULL,
+                    updated_at = excluded.updated_at;
+            END
+            """
+        )
+
+    @staticmethod
+    def _seed_relation_graph_projection_jobs(cursor: sqlite3.Cursor) -> None:
+        """迁移时为全部现存关系建立权威基线，不能信任升级前图快照。"""
+
+        migration_epoch = datetime.now().timestamp()
+        cursor.execute(
+            """
+            INSERT INTO relation_graph_projection_jobs (
+                relation_hash, subject, object, desired_active,
+                desired_lifecycle_revision, job_revision, status,
+                attempt_count, lease_token, lease_expires_at, last_error,
+                created_at, updated_at
+            )
+            SELECT hash, subject, object,
+                   CASE WHEN COALESCE(is_inactive, 0) = 0 THEN 1 ELSE 0 END,
+                   COALESCE(lifecycle_revision, 0), 1, 'pending',
+                   0, NULL, NULL, NULL, ?, ?
+            FROM relations
+            WHERE 1 = 1
+            ON CONFLICT(relation_hash) DO UPDATE SET
+                subject = excluded.subject,
+                object = excluded.object,
+                desired_active = excluded.desired_active,
+                desired_lifecycle_revision = excluded.desired_lifecycle_revision,
+                job_revision = relation_graph_projection_jobs.job_revision + 1,
+                status = 'pending',
+                attempt_count = 0,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                last_error = NULL,
+                updated_at = excluded.updated_at
+            """,
+            (migration_epoch, migration_epoch),
+        )
+    def _ensure_lifecycle_not_null_constraints(self) -> None:
+        """把历史 ALTER 列收敛为与全新数据库一致的 NOT NULL 契约。"""
+        tables_to_rebuild: List[str] = []
+        for table in ("relations", "deleted_relations"):
+            columns = {
+                str(row["name"]): row
+                for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            anchor = columns.get("retention_anchor_at")
+            if anchor is None:
+                raise RuntimeError(f"Schema迁移失败 ({table}.retention_anchor_at 缺失)")
+            if int(anchor["notnull"] or 0) != 1:
+                tables_to_rebuild.append(table)
+        if not tables_to_rebuild:
+            return
+
+        column_names = [
+            "hash",
+            "subject",
+            "predicate",
+            "object",
+            "vector_index",
+            "confidence",
+            "vector_state",
+            "vector_updated_at",
+            "vector_error",
+            "vector_retry_count",
+            "created_at",
+            "source_paragraph",
+            "metadata",
+            "is_permanent",
+            "last_accessed",
+            "access_count",
+            "last_access_reinforced_at",
+            "is_inactive",
+            "inactive_since",
+            "is_pinned",
+            "protected_until",
+            "last_reinforced",
+            "retention_strength",
+            "retention_anchor_at",
+            "next_lifecycle_at",
+            "reinforcement_count",
+            "lifecycle_revision",
+            "inactive_reason",
+        ]
+        self._conn.commit()
+        foreign_keys_enabled = bool(self._conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        if foreign_keys_enabled:
+            self._conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            for table in tables_to_rebuild:
+                temporary_table = f"{table}_schema20_rebuild"
+                schema_objects = self._conn.execute(
+                    """
+                    SELECT type, name, sql
+                    FROM sqlite_master
+                    WHERE tbl_name = ?
+                      AND type IN ('index', 'trigger')
+                      AND sql IS NOT NULL
+                    ORDER BY CASE type WHEN 'index' THEN 0 ELSE 1 END, name
+                    """,
+                    (table,),
+                ).fetchall()
+                self._conn.execute(f"DROP TABLE IF EXISTS {temporary_table}")
+                deleted_at_column = (
+                    ",\n                        deleted_at REAL"
+                    if table == "deleted_relations"
+                    else ""
+                )
+                unique_constraint = (
+                    ",\n                        UNIQUE(subject, predicate, object)"
+                    if table == "relations"
+                    else ""
+                )
+                self._conn.execute(
+                    f"""
+                    CREATE TABLE {temporary_table} (
+                        hash TEXT PRIMARY KEY,
+                        subject TEXT NOT NULL,
+                        predicate TEXT NOT NULL,
+                        object TEXT NOT NULL,
+                        vector_index INTEGER,
+                        confidence REAL DEFAULT 1.0,
+                        vector_state TEXT DEFAULT 'none',
+                        vector_updated_at REAL,
+                        vector_error TEXT,
+                        vector_retry_count INTEGER DEFAULT 0,
+                        created_at REAL,
+                        source_paragraph TEXT,
+                        metadata TEXT,
+                        is_permanent BOOLEAN DEFAULT 0,
+                        last_accessed REAL,
+                        access_count INTEGER DEFAULT 0,
+                        last_access_reinforced_at REAL,
+                        is_inactive BOOLEAN DEFAULT 0,
+                        inactive_since REAL,
+                        is_pinned BOOLEAN DEFAULT 0,
+                        protected_until REAL,
+                        last_reinforced REAL,
+                        retention_strength REAL NOT NULL DEFAULT 1.0,
+                        retention_anchor_at REAL NOT NULL,
+                        next_lifecycle_at REAL,
+                        reinforcement_count INTEGER NOT NULL DEFAULT 0,
+                        lifecycle_revision INTEGER NOT NULL DEFAULT 0,
+                        inactive_reason TEXT{deleted_at_column}{unique_constraint}
+                    )
+                    """
+                )
+                copied_columns = [
+                    *column_names,
+                    *(["deleted_at"] if table == "deleted_relations" else []),
+                ]
+                columns_sql = ", ".join(copied_columns)
+                self._conn.execute(
+                    f"INSERT INTO {temporary_table} ({columns_sql}) SELECT {columns_sql} FROM {table}"
+                )
+                self._conn.execute(f"DROP TABLE {table}")
+                self._conn.execute(f"ALTER TABLE {temporary_table} RENAME TO {table}")
+                for schema_object in schema_objects:
+                    sql = str(schema_object["sql"] or "").strip()
+                    if not sql:
+                        raise RuntimeError(
+                            f"Schema迁移失败 ({table}.{schema_object['name']} 定义为空)"
+                        )
+                    self._conn.execute(sql)
+
+            violations = self._conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(f"Schema迁移后外键校验失败: {len(violations)} 项")
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+        finally:
+            if foreign_keys_enabled:
+                self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def _ensure_external_memory_refs_foreign_key(self, cursor: sqlite3.Cursor) -> None:
+        """重建外部引用表，使悬空映射不可能再次产生。"""
+        cursor.execute("PRAGMA foreign_key_list(external_memory_refs)")
+        has_paragraph_fk = any(
+            str(row[2]) == "paragraphs" and str(row[3]) == "paragraph_hash" and str(row[6]).upper() == "CASCADE"
+            for row in cursor.fetchall()
+        )
+        if has_paragraph_fk:
+            return
+
+        cursor.execute("SELECT COUNT(*) FROM external_memory_refs")
+        before_count = int(cursor.fetchone()[0])
+        cursor.execute("DROP TABLE IF EXISTS external_memory_refs_schema_19")
+        cursor.execute(
+            """
+            CREATE TABLE external_memory_refs_schema_19 (
+                external_id TEXT PRIMARY KEY,
+                paragraph_hash TEXT NOT NULL,
+                source_type TEXT,
+                created_at REAL NOT NULL,
+                metadata_json TEXT,
+                FOREIGN KEY (paragraph_hash) REFERENCES paragraphs(hash) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO external_memory_refs_schema_19 (
+                external_id, paragraph_hash, source_type, created_at, metadata_json
+            )
+            SELECT r.external_id, r.paragraph_hash, r.source_type, r.created_at, r.metadata_json
+            FROM external_memory_refs r
+            JOIN paragraphs p ON p.hash = r.paragraph_hash
+            """
+        )
+        after_count = int(cursor.rowcount if cursor.rowcount >= 0 else 0)
+        cursor.execute("DROP TABLE external_memory_refs")
+        cursor.execute("ALTER TABLE external_memory_refs_schema_19 RENAME TO external_memory_refs")
+        cursor.execute(
+            """
+            CREATE INDEX idx_external_memory_refs_paragraph
+            ON external_memory_refs(paragraph_hash)
+            """
+        )
+        if before_count != after_count:
+            logger.warning(f"Schema 19 清理悬空 external memory ref: {before_count - after_count} 项")
+
+    @staticmethod
+    def _ensure_storage_cleanup_tables(cursor: sqlite3.Cursor) -> None:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS storage_cleanup_jobs (
+                job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                expected_state_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL NOT NULL,
+                lease_token TEXT,
+                lease_until REAL,
+                last_error TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL,
+                UNIQUE(operation_id, resource_type, resource_id, action),
+                FOREIGN KEY (operation_id) REFERENCES delete_operations(operation_id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_storage_cleanup_ready
+            ON storage_cleanup_jobs(status, next_attempt_at, lease_until, created_at)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_storage_cleanup_operation
+            ON storage_cleanup_jobs(operation_id, status, job_id)
+            """
+        )
+
+    @staticmethod
+    def _ensure_fact_tables(cursor: sqlite3.Cursor) -> None:
+        for statement in FACT_SCHEMA_STATEMENTS:
+            cursor.execute(statement)
+
+    def _ensure_episode_columns(self, cursor: sqlite3.Cursor) -> None:
+        """补齐 Episode 分组输入指纹列。"""
+        cursor.execute("PRAGMA table_info(episodes)")
+        episode_columns = {row[1] for row in cursor.fetchall()}
+        if "input_fingerprint" not in episode_columns:
+            try:
+                cursor.execute("ALTER TABLE episodes ADD COLUMN input_fingerprint TEXT")
+            except sqlite3.OperationalError as exc:
+                cursor.execute("PRAGMA table_info(episodes)")
+                current_columns = {row[1] for row in cursor.fetchall()}
+                if "input_fingerprint" not in current_columns:
+                    raise RuntimeError("Schema迁移失败 (episodes.input_fingerprint)") from exc
+
+    def _ensure_episode_source_revision_columns(self, cursor: sqlite3.Cursor) -> None:
+        """把 Episode 调度切换为来源级 revision/outbox。"""
+        self._ensure_columns(
+            cursor,
+            "episode_rebuild_sources",
+            {
+                "desired_revision": (
+                    "ALTER TABLE episode_rebuild_sources "
+                    "ADD COLUMN desired_revision INTEGER NOT NULL DEFAULT 1"
+                ),
+                "built_revision": (
+                    "ALTER TABLE episode_rebuild_sources "
+                    "ADD COLUMN built_revision INTEGER NOT NULL DEFAULT 0"
+                ),
+                "claimed_revision": "ALTER TABLE episode_rebuild_sources ADD COLUMN claimed_revision INTEGER",
+                "dirty_start": "ALTER TABLE episode_rebuild_sources ADD COLUMN dirty_start REAL",
+                "dirty_end": "ALTER TABLE episode_rebuild_sources ADD COLUMN dirty_end REAL",
+                "first_requested_at": (
+                    "ALTER TABLE episode_rebuild_sources ADD COLUMN first_requested_at REAL"
+                ),
+                "ready_at": "ALTER TABLE episode_rebuild_sources ADD COLUMN ready_at REAL",
+                "lease_token": "ALTER TABLE episode_rebuild_sources ADD COLUMN lease_token TEXT",
+                "lease_until": "ALTER TABLE episode_rebuild_sources ADD COLUMN lease_until REAL",
+                "next_attempt_at": (
+                    "ALTER TABLE episode_rebuild_sources ADD COLUMN next_attempt_at REAL"
+                ),
+                "built_generation_hash": (
+                    "ALTER TABLE episode_rebuild_sources ADD COLUMN built_generation_hash TEXT"
+                ),
+                "claimed_generation_hash": (
+                    "ALTER TABLE episode_rebuild_sources ADD COLUMN claimed_generation_hash TEXT"
+                ),
+                "retry_revision": "ALTER TABLE episode_rebuild_sources ADD COLUMN retry_revision INTEGER",
+                "retry_generation_hash": (
+                    "ALTER TABLE episode_rebuild_sources ADD COLUMN retry_generation_hash TEXT"
+                ),
+            },
+        )
+        now = datetime.now().timestamp()
+        cursor.execute(
+            """
+            UPDATE episode_rebuild_sources
+            SET desired_revision = MAX(1, COALESCE(desired_revision, 1)),
+                built_revision = CASE
+                    WHEN status = 'done' THEN MAX(1, COALESCE(desired_revision, 1))
+                    ELSE MIN(COALESCE(built_revision, 0), MAX(0, COALESCE(desired_revision, 1) - 1))
+                END,
+                status = CASE WHEN status = 'running' THEN 'pending' ELSE status END,
+                first_requested_at = COALESCE(first_requested_at, requested_at, ?),
+                ready_at = COALESCE(ready_at, requested_at, ?),
+                next_attempt_at = COALESCE(next_attempt_at, requested_at, ?),
+                lease_token = NULL,
+                lease_until = NULL,
+                claimed_revision = NULL,
+                claimed_generation_hash = NULL,
+                retry_revision = NULL,
+                retry_generation_hash = NULL
+            """,
+            (now, now, now),
+        )
+
+        cursor.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'episode_pending_paragraphs'
+            """
+        )
+        if cursor.fetchone() is not None:
+            cursor.execute(
+                """
+                INSERT INTO episode_rebuild_sources (
+                    source, status, retry_count, last_error, reason,
+                    requested_at, updated_at, desired_revision, built_revision,
+                    first_requested_at, ready_at, next_attempt_at
+                )
+                SELECT source, 'pending', 0, NULL, 'schema_19_pending_migration',
+                       MIN(updated_at), ?, 1, 0, MIN(updated_at), MIN(updated_at), MIN(updated_at)
+                FROM episode_pending_paragraphs
+                WHERE source IS NOT NULL AND TRIM(source) != ''
+                GROUP BY source
+                ON CONFLICT(source) DO UPDATE SET
+                    desired_revision = episode_rebuild_sources.desired_revision + 1,
+                    status = 'pending',
+                    reason = 'schema_19_pending_migration',
+                    updated_at = excluded.updated_at,
+                    ready_at = MIN(episode_rebuild_sources.ready_at, excluded.ready_at),
+                    next_attempt_at = MIN(episode_rebuild_sources.next_attempt_at, excluded.next_attempt_at)
+                """,
+                (now,),
+            )
+            cursor.execute("DROP TABLE episode_pending_paragraphs")
+
+        cursor.execute(
+            """
+            INSERT INTO episode_rebuild_sources (
+                source, status, retry_count, last_error, reason,
+                requested_at, updated_at, desired_revision, built_revision,
+                first_requested_at, ready_at, next_attempt_at
+            )
+            SELECT source, 'pending', 0, NULL, 'schema_19_source_discovery',
+                   ?, ?, 1, 0, ?, ?, ?
+            FROM (
+                SELECT DISTINCT source
+                FROM paragraphs
+                WHERE source IS NOT NULL AND TRIM(source) != ''
+                  AND (is_deleted IS NULL OR is_deleted = 0)
+                UNION
+                SELECT DISTINCT source
+                FROM episodes
+                WHERE source IS NOT NULL AND TRIM(source) != ''
+            ) discovered
+            WHERE 1 = 1
+            ON CONFLICT(source) DO NOTHING
+            """,
+            (now, now, now, now, now),
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_episode_rebuild_claim
+            ON episode_rebuild_sources(lease_until, next_attempt_at, ready_at, first_requested_at)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_episode_rebuild_revision
+            ON episode_rebuild_sources(desired_revision, built_revision)
+            """
+        )
 
     def _ensure_fuzzy_modify_plan_tables(self, cursor: sqlite3.Cursor) -> None:
         """补齐模糊修改计划表，用于预览、确认、执行和追溯。"""
@@ -165,7 +785,9 @@ class MetadataSchemaMixin:
                 last_accessed REAL,
                 access_count INTEGER DEFAULT 0,
                 is_deleted INTEGER DEFAULT 0,
-                deleted_at REAL
+                deleted_at REAL,
+                expires_at REAL,
+                deletion_reason TEXT
             )
         """)
 
@@ -202,11 +824,18 @@ class MetadataSchemaMixin:
                 is_permanent BOOLEAN DEFAULT 0,
                 last_accessed REAL,
                 access_count INTEGER DEFAULT 0,
+                last_access_reinforced_at REAL,
                 is_inactive BOOLEAN DEFAULT 0,
                 inactive_since REAL,
                 is_pinned BOOLEAN DEFAULT 0,
                 protected_until REAL,
                 last_reinforced REAL,
+                retention_strength REAL NOT NULL DEFAULT 1.0,
+                retention_anchor_at REAL NOT NULL,
+                next_lifecycle_at REAL,
+                reinforcement_count INTEGER NOT NULL DEFAULT 0,
+                lifecycle_revision INTEGER NOT NULL DEFAULT 0,
+                inactive_reason TEXT,
                 UNIQUE(subject, predicate, object)
             )
         """)
@@ -230,11 +859,18 @@ class MetadataSchemaMixin:
                 is_permanent BOOLEAN DEFAULT 0,
                 last_accessed REAL,
                 access_count INTEGER DEFAULT 0,
+                last_access_reinforced_at REAL,
                 is_inactive BOOLEAN DEFAULT 0,
                 inactive_since REAL,
                 is_pinned BOOLEAN DEFAULT 0,
                 protected_until REAL,
                 last_reinforced REAL,
+                retention_strength REAL NOT NULL DEFAULT 1.0,
+                retention_anchor_at REAL NOT NULL,
+                next_lifecycle_at REAL,
+                reinforcement_count INTEGER NOT NULL DEFAULT 0,
+                lifecycle_revision INTEGER NOT NULL DEFAULT 0,
+                inactive_reason TEXT,
                 deleted_at REAL
             )
         """)
@@ -346,12 +982,15 @@ class MetadataSchemaMixin:
                 relation_edges_json TEXT,
                 vector_evidence_json TEXT,
                 evidence_ids_json TEXT,
+                evidence_fingerprint TEXT,
+                fact_claim_ids_json TEXT,
                 updated_at REAL NOT NULL,
                 expires_at REAL,
                 source_note TEXT,
                 UNIQUE(person_id, profile_version)
             )
         """)
+        self._ensure_person_profile_snapshot_columns(cursor)
 
         # 已开启范围内的活跃人物集合
         cursor.execute("""
@@ -408,10 +1047,12 @@ class MetadataSchemaMixin:
                 llm_confidence REAL DEFAULT 0.0,
                 segmentation_model TEXT,
                 segmentation_version TEXT,
+                input_fingerprint TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
         """)
+        self._ensure_episode_columns(cursor)
 
         # Episode -> Paragraph 映射
         cursor.execute("""
@@ -425,18 +1066,7 @@ class MetadataSchemaMixin:
             )
         """)
 
-        # Episode 生成队列（异步）
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS episode_pending_paragraphs (
-                paragraph_hash TEXT PRIMARY KEY,
-                source TEXT,
-                created_at REAL,
-                status TEXT DEFAULT 'pending',
-                retry_count INTEGER DEFAULT 0,
-                last_error TEXT,
-                updated_at REAL NOT NULL
-            )
-        """)
+        # Episode 来源级 revision/outbox（异步）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS episode_rebuild_sources (
                 source TEXT PRIMARY KEY,
@@ -445,7 +1075,21 @@ class MetadataSchemaMixin:
                 last_error TEXT,
                 reason TEXT,
                 requested_at REAL NOT NULL,
-                updated_at REAL NOT NULL
+                updated_at REAL NOT NULL,
+                desired_revision INTEGER NOT NULL DEFAULT 1,
+                built_revision INTEGER NOT NULL DEFAULT 0,
+                claimed_revision INTEGER,
+                dirty_start REAL,
+                dirty_end REAL,
+                first_requested_at REAL,
+                ready_at REAL,
+                lease_token TEXT,
+                lease_until REAL,
+                next_attempt_at REAL,
+                built_generation_hash TEXT,
+                claimed_generation_hash TEXT,
+                retry_revision INTEGER,
+                retry_generation_hash TEXT
             )
         """)
 
@@ -462,14 +1106,6 @@ class MetadataSchemaMixin:
             ON episode_paragraphs(paragraph_hash)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_episode_pending_status_updated
-            ON episode_pending_paragraphs(status, updated_at)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_episode_pending_source_created
-            ON episode_pending_paragraphs(source, created_at)
-        """)
-        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_episode_rebuild_status_updated
             ON episode_rebuild_sources(status, updated_at)
         """)
@@ -477,6 +1113,7 @@ class MetadataSchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_episode_rebuild_updated_at
             ON episode_rebuild_sources(updated_at DESC)
         """)
+        self._ensure_episode_source_revision_columns(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS paragraph_vector_backfill (
                 paragraph_hash TEXT PRIMARY KEY,
@@ -611,7 +1248,8 @@ class MetadataSchemaMixin:
                 paragraph_hash TEXT NOT NULL,
                 source_type TEXT,
                 created_at REAL NOT NULL,
-                metadata_json TEXT
+                metadata_json TEXT,
+                FOREIGN KEY (paragraph_hash) REFERENCES paragraphs(hash) ON DELETE CASCADE
             )
         """)
         cursor.execute("""
@@ -675,7 +1313,13 @@ class MetadataSchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_delete_operation_items_hash
             ON delete_operation_items(item_hash)
         """)
+        self._ensure_storage_cleanup_tables(cursor)
+        self._ensure_fact_tables(cursor)
+        self._ensure_lifecycle_columns(cursor)
+        self._ensure_relation_graph_projection_tables(cursor)
+        self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
+        self._create_temporal_indexes_if_ready()
         self._create_performance_indexes()
         # 新版 schema 包含完整字段，直接写入版本信息
         cursor.execute(
@@ -688,6 +1332,7 @@ class MetadataSchemaMixin:
     def _migrate_schema(self) -> None:
         """执行数据库schema迁移"""
         cursor = self._conn.cursor()
+        self._ensure_person_profile_snapshot_columns(cursor)
 
         # vNext 关键表兜底：历史库可能缺失，需在迁移阶段主动补齐。
         cursor.execute("""
@@ -721,10 +1366,12 @@ class MetadataSchemaMixin:
                 llm_confidence REAL DEFAULT 0.0,
                 segmentation_model TEXT,
                 segmentation_version TEXT,
+                input_fingerprint TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
         """)
+        self._ensure_episode_columns(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS episode_paragraphs (
                 episode_id TEXT NOT NULL,
@@ -736,17 +1383,6 @@ class MetadataSchemaMixin:
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS episode_pending_paragraphs (
-                paragraph_hash TEXT PRIMARY KEY,
-                source TEXT,
-                created_at REAL,
-                status TEXT DEFAULT 'pending',
-                retry_count INTEGER DEFAULT 0,
-                last_error TEXT,
-                updated_at REAL NOT NULL
-            )
-        """)
-        cursor.execute("""
             CREATE TABLE IF NOT EXISTS episode_rebuild_sources (
                 source TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'pending',
@@ -754,7 +1390,21 @@ class MetadataSchemaMixin:
                 last_error TEXT,
                 reason TEXT,
                 requested_at REAL NOT NULL,
-                updated_at REAL NOT NULL
+                updated_at REAL NOT NULL,
+                desired_revision INTEGER NOT NULL DEFAULT 1,
+                built_revision INTEGER NOT NULL DEFAULT 0,
+                claimed_revision INTEGER,
+                dirty_start REAL,
+                dirty_end REAL,
+                first_requested_at REAL,
+                ready_at REAL,
+                lease_token TEXT,
+                lease_until REAL,
+                next_attempt_at REAL,
+                built_generation_hash TEXT,
+                claimed_generation_hash TEXT,
+                retry_revision INTEGER,
+                retry_generation_hash TEXT
             )
         """)
         cursor.execute("""
@@ -770,14 +1420,6 @@ class MetadataSchemaMixin:
             ON episode_paragraphs(paragraph_hash)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_episode_pending_status_updated
-            ON episode_pending_paragraphs(status, updated_at)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_episode_pending_source_created
-            ON episode_pending_paragraphs(source, created_at)
-        """)
-        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_episode_rebuild_status_updated
             ON episode_rebuild_sources(status, updated_at)
         """)
@@ -785,6 +1427,7 @@ class MetadataSchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_episode_rebuild_updated_at
             ON episode_rebuild_sources(updated_at DESC)
         """)
+        self._ensure_episode_source_revision_columns(cursor)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS paragraph_vector_backfill (
                 paragraph_hash TEXT PRIMARY KEY,
@@ -919,7 +1562,8 @@ class MetadataSchemaMixin:
                 paragraph_hash TEXT NOT NULL,
                 source_type TEXT,
                 created_at REAL NOT NULL,
-                metadata_json TEXT
+                metadata_json TEXT,
+                FOREIGN KEY (paragraph_hash) REFERENCES paragraphs(hash) ON DELETE CASCADE
             )
         """)
         cursor.execute("""
@@ -983,6 +1627,11 @@ class MetadataSchemaMixin:
             CREATE INDEX IF NOT EXISTS idx_delete_operation_items_hash
             ON delete_operation_items(item_hash)
         """)
+        self._ensure_storage_cleanup_tables(cursor)
+        self._ensure_fact_tables(cursor)
+        self._ensure_lifecycle_columns(cursor)
+        self._ensure_relation_graph_projection_tables(cursor)
+        self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
 
         # 检查paragraphs表是否有knowledge_type列
@@ -1168,6 +1817,9 @@ class MetadataSchemaMixin:
         except Exception as e:
             logger.error(f"数据自动修复失败: {e}")
 
+        # 升级前的图快照不能作为活跃态事实源。迁移完成时为全部关系建立
+        # 最终状态任务，SDK 启动阶段会在开放检索前完成权威重放。
+        self._seed_relation_graph_projection_jobs(cursor)
         self._create_performance_indexes()
         self._conn.commit()
 
@@ -1231,12 +1883,6 @@ class MetadataSchemaMixin:
             )
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_episode_pending_status_retry_updated
-            ON episode_pending_paragraphs(status, retry_count, updated_at)
-            """
-        )
-        cursor.execute(
-            """
             CREATE INDEX IF NOT EXISTS idx_paragraph_vector_backfill_status_retry_updated
             ON paragraph_vector_backfill(status, retry_count, updated_at)
             """
@@ -1265,11 +1911,13 @@ class MetadataSchemaMixin:
         self._migrate_schema()
         alias_result = self.rebuild_relation_hash_aliases()
         knowledge_type_result = self.normalize_paragraph_knowledge_types()
+        fact_result = self.backfill_person_fact_claims()
         self.set_schema_version(SCHEMA_VERSION)
         return {
             "schema_version": SCHEMA_VERSION,
             "alias_result": alias_result,
             "knowledge_type_result": knowledge_type_result,
+            "fact_result": fact_result,
         }
 
     def list_invalid_paragraph_knowledge_types(self) -> List[str]:

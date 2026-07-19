@@ -73,7 +73,7 @@ class MemorySearchService(KernelServiceBase):
                     current_user_id=request.user_id,
                 )
             hits = hits[:limit]
-            return {"summary": self._summary(hits), "hits": hits}
+            return await self._finalize_search_response(hits)
 
         if mode == "aggregate":
             payload = await self.aggregate_query_service.execute(
@@ -101,7 +101,7 @@ class MemorySearchService(KernelServiceBase):
                     current_user_id=request.user_id,
                 )
             filtered = filtered[:limit]
-            return {"summary": self._summary(filtered), "hits": filtered}
+            return await self._finalize_search_response(filtered)
 
         query_type = mode
         runtime_config = self._build_runtime_config()
@@ -133,7 +133,24 @@ class MemorySearchService(KernelServiceBase):
                 current_user_id=request.user_id,
             )
         filtered = filtered[:limit]
-        return {"summary": self._summary(filtered), "hits": filtered}
+        return await self._finalize_search_response(filtered)
+
+    async def _finalize_search_response(self, hits: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """只为最终返回且实际采用的关系命中提交一次 ACCESS。"""
+
+        relation_hashes: List[str] = []
+        seen: set[str] = set()
+        for item in hits:
+            if str(item.get("type", "") or "").strip() != "relation":
+                continue
+            relation_hash = str(item.get("hash", "") or "").strip()
+            if not relation_hash or relation_hash in seen:
+                continue
+            seen.add(relation_hash)
+            relation_hashes.append(relation_hash)
+        if relation_hashes:
+            await self._runtime_facade.reinforce_access(relation_hashes)
+        return {"summary": self._summary(hits), "hits": hits}
 
     async def _aggregate_search(self, query: str, limit: int, request: KernelSearchRequest) -> Dict[str, Any]:
         shared_chat_ids = tuple(str(item or "").strip() for item in request.shared_chat_ids if str(item or "").strip())
@@ -241,7 +258,6 @@ class MemorySearchService(KernelServiceBase):
                 enable_ppr=bool(self._cfg("retrieval.enable_ppr", True)),
             ),
             enforce_chat_filter=enforce_chat_filter,
-            reinforce_access=True,
         )
 
     async def _search_execution_for_chat_scope(

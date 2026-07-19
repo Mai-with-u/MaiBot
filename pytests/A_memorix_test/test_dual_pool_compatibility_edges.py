@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
 from src.A_memorix.core.utils.person_profile_service import PersonProfileService
+from src.A_memorix.core.utils.relation_write_service import RelationWriteService
 from src.A_memorix.core.utils.runtime_self_check import run_embedding_runtime_self_check
 from src.A_memorix.core.utils.summary_importer import SummaryImporter
 
@@ -17,23 +19,43 @@ class _DummyVectorStore:
     def __init__(self, dimension: int = 4) -> None:
         self.dimension = dimension
         self.ids: list[str] = []
+        self._deleted_ids: set[str] = set()
 
     @property
     def num_vectors(self) -> int:
-        return len(self.ids)
+        return sum(item not in self._deleted_ids for item in self.ids)
 
     def __contains__(self, item: str) -> bool:
-        return item in self.ids
+        return item in self.ids and item not in self._deleted_ids
 
     def add(self, vectors: np.ndarray, ids: list[str]) -> int:
         if vectors.shape[1] != self.dimension:
             raise ValueError(f"Dimension mismatch: {vectors.shape[1]} vs {self.dimension}")
+        tombstoned = [item for item in ids if item in self._deleted_ids]
+        if tombstoned:
+            raise ValueError("向量 ID 已被删除，请先调用 restore() 恢复")
         added = 0
         for item in ids:
             if item not in self.ids:
                 self.ids.append(item)
                 added += 1
         return added
+
+    def delete(self, ids: list[str]) -> int:
+        deleted = 0
+        for item in ids:
+            if item in self.ids and item not in self._deleted_ids:
+                self._deleted_ids.add(item)
+                deleted += 1
+        return deleted
+
+    def restore(self, ids: list[str]) -> int:
+        restored = 0
+        for item in dict.fromkeys(ids):
+            if item in self.ids and item in self._deleted_ids:
+                self._deleted_ids.remove(item)
+                restored += 1
+        return restored
 
     def has_data(self) -> bool:
         return bool(self.ids)
@@ -52,6 +74,10 @@ class _DummyEmbeddingManager:
         if isinstance(text, (list, tuple)):
             return np.ones((len(text), self.default_dimension), dtype=np.float32)
         return np.ones(self.default_dimension, dtype=np.float32)
+
+    async def encode_batch(self, texts: list[str]) -> np.ndarray:
+        self.calls.append(list(texts))
+        return np.ones((len(texts), self.default_dimension), dtype=np.float32)
 
     def get_requested_dimension(self) -> int:
         return self.default_dimension
@@ -74,10 +100,28 @@ class _DummyMetadataStore:
         self.entities.append((name, source_paragraph))
         return f"entity-{name}"
 
+    def add_entities_batch(
+        self,
+        names: list[str],
+        source_paragraph: str = "",
+        **kwargs: Any,
+    ) -> list[str]:
+        return [self.add_entity(name, source_paragraph, **kwargs) for name in names]
+
     def add_relation(self, *, subject: str, predicate: str, obj: str, **kwargs: Any) -> str:
         del kwargs
         self.relations.append((subject, predicate, obj))
         return f"relation-{len(self.relations)}"
+
+    def add_relations_batch(
+        self,
+        relations: list[tuple[str, str, str]],
+        **kwargs: Any,
+    ) -> list[str]:
+        return [
+            self.add_relation(subject=subject, predicate=predicate, obj=obj, **kwargs)
+            for subject, predicate, obj in relations
+        ]
 
     def set_relation_vector_state(
         self,
@@ -87,6 +131,15 @@ class _DummyMetadataStore:
         bump_retry: bool = False,
     ) -> None:
         del rel_hash, state, error, bump_retry
+
+    @staticmethod
+    def get_relation_status_batch(relation_hashes: list[str]) -> dict[str, dict[str, bool]]:
+        return {relation_hash: {"is_inactive": False} for relation_hash in relation_hashes}
+
+    @staticmethod
+    def transaction(*, immediate: bool = False):
+        del immediate
+        return nullcontext()
 
 
 class _DummyGraphStore:
@@ -100,6 +153,10 @@ class _DummyGraphStore:
     def add_edges(self, edges: list[tuple[str, str]], relation_hashes: list[str] | None = None) -> None:
         del relation_hashes
         self.edges.append(list(edges))
+
+    @staticmethod
+    def batch_update():
+        return nullcontext()
 
 
 class _DualReadyPlugin:
@@ -156,6 +213,50 @@ async def test_summary_importer_writes_entities_to_graph_pool_when_dual_ready() 
         "entity:entity-蓝色围巾",
     }
     assert single_store.ids == ["paragraph-1"]
+    assert embedding_manager.calls == [
+        "测试用户喜欢蓝色围巾。",
+        ["测试用户", "蓝色围巾"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_relation_write_service_batches_metadata_graph_and_vectors() -> None:
+    metadata_store = _DummyMetadataStore()
+    graph_store = _DummyGraphStore()
+    legacy_store = _DummyVectorStore()
+    graph_vector_store = _DummyVectorStore()
+    embedding_manager = _DummyEmbeddingManager()
+    service = RelationWriteService(
+        metadata_store=metadata_store,
+        graph_store=graph_store,
+        vector_store=legacy_store,
+        embedding_manager=embedding_manager,
+        graph_vector_store=graph_vector_store,
+        use_typed_relation_ids=True,
+    )
+
+    results = await service.upsert_relations_with_vectors(
+        [
+            ("Alice", "持有", "地图"),
+            ("Bob", "居住于", "广州"),
+        ],
+        source_paragraph="paragraph-1",
+    )
+
+    assert metadata_store.relations == [
+        ("Alice", "持有", "地图"),
+        ("Bob", "居住于", "广州"),
+    ]
+    assert graph_store.edges == [[("Alice", "地图"), ("Bob", "广州")]]
+    assert graph_vector_store.ids == ["relation:relation-1", "relation:relation-2"]
+    assert legacy_store.ids == []
+    assert embedding_manager.calls == [
+        [
+            "Alice 持有 地图\nAlice和地图的关系是持有",
+            "Bob 居住于 广州\nBob和广州的关系是居住于",
+        ]
+    ]
+    assert [result.vector_state for result in results] == ["ready", "ready"]
 
 
 def test_person_profile_fallback_retriever_uses_dual_vector_pools_when_ready() -> None:

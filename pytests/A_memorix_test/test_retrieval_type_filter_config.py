@@ -132,3 +132,4 @@ def test_persisted_plugin_schema_excludes_restricted_fields_and_keeps_advanced_f
     assert "a_memorix.retrieval.search.smart_fallback.enabled" in registered_paths
     assert "a_memorix.retrieval.sparse.enabled" in registered_paths
     assert "a_memorix.web.import.max_files_per_task" in registered_paths
+    assert "a_memorix.embedding.runtime_train_threshold" not in registered_paths

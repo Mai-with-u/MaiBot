@@ -81,7 +81,7 @@ def test_sparse_tokenized_shadow_index_incremental_lifecycle(tmp_path: Path) -> 
         paragraph_hash = store.add_paragraph("探针段落 含有 蓝莓曲奇 和 事务一致性", source="test")
         assert index.search("蓝莓曲奇 事务一致性", k=5)[0]["hash"] == paragraph_hash
 
-        assert store.mark_as_deleted([paragraph_hash], "paragraph") == 1
+        assert store.mark_as_deleted([paragraph_hash], "paragraph", reason="test_soft_delete") == 1
         assert index.search("蓝莓曲奇 事务一致性", k=5) == []
 
         assert store.revive_if_deleted(paragraph_hashes=[paragraph_hash]) == 1
@@ -112,7 +112,7 @@ def test_tokenized_shadow_index_meta_tracks_incremental_lifecycle(tmp_path: Path
         cursor.execute("SELECT value FROM paragraph_tokenized_fts_meta WHERE key='paragraph_count'")
         assert cursor.fetchone()[0] == "2"
 
-        assert store.mark_as_deleted([first_hash], "paragraph") == 1
+        assert store.mark_as_deleted([first_hash], "paragraph", reason="test_soft_delete") == 1
         cursor.execute("SELECT value FROM paragraph_tokenized_fts_meta WHERE key='paragraph_count'")
         assert cursor.fetchone()[0] == "1"
 
@@ -141,7 +141,7 @@ def test_relation_support_batch_excludes_soft_deleted_paragraphs(tmp_path: Path)
         )
         store._conn.commit()
 
-        assert store.mark_as_deleted([deleted_hash], "paragraph") == 1
+        assert store.mark_as_deleted([deleted_hash], "paragraph", reason="test_soft_delete") == 1
 
         grouped = store.get_paragraphs_by_relation_hashes([relation_hash])
 

@@ -88,7 +88,6 @@ min_threshold = 0.3
 max_threshold = 0.95
 percentile = 75.0
 min_results = 3
-enable_auto_adjust = true
 
 [filter]
 enabled = true
@@ -98,8 +97,11 @@ chats = []
 [episode]
 enabled = true
 generation_enabled = true
-pending_batch_size = 50
-pending_max_retry = 3
+source_poll_interval_seconds = 1
+source_batch_size = 20
+source_max_retry = 3  # 包含首次尝试，最小值为 1
+source_lease_seconds = 1800
+source_max_wait_seconds = 60
 max_paragraphs_per_call = 20
 max_chars_per_call = 6000
 source_time_window_hours = 24

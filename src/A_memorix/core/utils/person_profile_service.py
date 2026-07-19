@@ -5,6 +5,7 @@
 person_id -> 用户名/别名 -> 图谱关系 + 向量证据 -> 证据总结画像 -> 快照版本化存储
 """
 
+import hashlib
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -44,6 +45,7 @@ from .profile_text import build_profile_injection_text, build_structured_profile
 logger = get_logger("A_Memorix.PersonProfileService")
 
 PROFILE_CLASSIFICATION_REQUEST_TYPE = "A_Memorix.PersonProfileEvidenceClassify"
+PROFILE_GENERATION_VERSION = 2
 
 
 class PersonProfileService:
@@ -82,6 +84,84 @@ class PersonProfileService:
             else:
                 return default
         return current
+
+    @classmethod
+    def _canonical_profile_value(cls, value: Any) -> Any:
+        """规范化画像证据，消除字典顺序、集合顺序和召回排序抖动。"""
+        if isinstance(value, dict):
+            return {
+                str(key): cls._canonical_profile_value(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            }
+        if isinstance(value, (list, tuple, set)):
+            normalized = [cls._canonical_profile_value(item) for item in value]
+            return sorted(
+                normalized,
+                key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, default=str),
+            )
+        if isinstance(value, float):
+            return round(value, 12)
+        return value
+
+    def _profile_generation_signature(self) -> Dict[str, Any]:
+        """返回会影响画像文本生成结果的实现与模型配置签名。"""
+        model = self._resolve_profile_classification_model()
+        if model is None:
+            model_signature: Dict[str, Any] = {"mode": "rule_based"}
+        else:
+            model_signature = {
+                "mode": "llm",
+                "task_name": model.task_name,
+                "selected_model_name": model.selected_model_name,
+                "model_list": sorted(
+                    str(item).strip()
+                    for item in getattr(model.task_config, "model_list", [])
+                    if str(item).strip()
+                ),
+            }
+        return {
+            "generation_version": PROFILE_GENERATION_VERSION,
+            "classification_max_tokens": self._profile_classification_max_tokens(),
+            "classification_temperature": self._profile_classification_temperature(),
+            "model": model_signature,
+        }
+
+    def _profile_evidence_fingerprint(
+        self,
+        *,
+        person_id: str,
+        primary_name: str,
+        aliases: List[str],
+        relation_edges: List[Dict[str, Any]],
+        vector_evidence: List[Dict[str, Any]],
+        memory_traits: List[str],
+        fact_claims: List[Dict[str, Any]],
+    ) -> str:
+        """计算画像输入版本；检索分数不属于证据内容，故不进入指纹。"""
+        stable_vector_evidence = [
+            {key: value for key, value in item.items() if key != "score"}
+            for item in vector_evidence
+        ]
+        payload = self._canonical_profile_value(
+            {
+                "person_id": person_id,
+                "primary_name": primary_name,
+                "aliases": aliases,
+                "memory_traits": memory_traits,
+                "relation_edges": relation_edges,
+                "vector_evidence": stable_vector_evidence,
+                "fact_claims": fact_claims,
+                "generation": self._profile_generation_signature(),
+            }
+        )
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _profile_classification_max_tokens(self) -> int:
         """读取人物画像证据分类的最大输出 token 数。"""
@@ -434,6 +514,48 @@ class PersonProfileService:
                 }
             )
         return self._filter_stale_paragraph_evidence(evidence)
+
+    def _collect_person_fact_claims(self, person_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """读取人物事实账本；该顺序直接决定有界画像投影，不能依赖召回分数。"""
+
+        return self.metadata_store.list_person_profile_fact_claims(
+            person_id,
+            effective_at=time.time(),
+            limit=max(1, int(limit)),
+        )
+
+    def _merge_fact_claim_buckets(
+        self,
+        classified_buckets: Dict[str, List[str]],
+        fact_claims: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        """将账本事实置于分类证据之前，保证 top-k 抖动不能挤出稳定事实。"""
+
+        merged: Dict[str, List[str]] = {key: [] for key in classified_buckets}
+        for claim in fact_claims:
+            section = str(claim.get("profile_section", "stable_facts") or "stable_facts").strip()
+            if section not in merged:
+                raise ValueError(f"事实 claim 使用了未知画像段落: {section}")
+            text = str(claim.get("value_text", "") or "").strip()
+            if text:
+                self._append_profile_bucket(merged, section, text)
+        for section, values in classified_buckets.items():
+            for value in values:
+                self._append_profile_bucket(merged, section, value)
+        return merged
+
+    def _confine_untrusted_profile_buckets(
+        self,
+        classified_buckets: Dict[str, List[str]],
+    ) -> Dict[str, List[str]]:
+        """禁止模型分类结果直接成为稳定画像真相。"""
+
+        confined: Dict[str, List[str]] = {key: [] for key in classified_buckets}
+        for section, values in classified_buckets.items():
+            target = section if section in {"recent_interactions", "uncertain_notes"} else "uncertain_notes"
+            for value in values:
+                self._append_profile_bucket(confined, target, value)
+        return confined
 
     @staticmethod
     def _list_tokens(value: Any) -> List[str]:
@@ -1013,14 +1135,52 @@ class PersonProfileService:
             primary_name = person_keyword.strip()
         relation_edges = self._collect_relation_evidence(aliases, limit=max(10, top_k * 2), person_id=pid)
         vector_evidence = await self._collect_vector_evidence(aliases, top_k=max(4, top_k), person_id=pid)
-        classified_buckets = await self._classify_profile_evidence(
+        fact_claims = self._collect_person_fact_claims(pid, limit=max(32, top_k * 8))
+        evidence_fingerprint = self._profile_evidence_fingerprint(
             person_id=pid,
             primary_name=primary_name,
             aliases=aliases,
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
             memory_traits=memory_traits,
+            fact_claims=fact_claims,
         )
+        expires_at = time.time() + float(ttl_seconds) if ttl_seconds > 0 else None
+        if latest and str(latest.get("evidence_fingerprint", "")) == evidence_fingerprint:
+            snapshot_id = latest.get("snapshot_id")
+            if snapshot_id is None:
+                raise RuntimeError("人物画像快照缺少 snapshot_id，无法执行证据版本短路")
+            refresh_note = source_note if source_note else str(latest.get("source_note", ""))
+            refreshed = self.metadata_store.refresh_person_profile_snapshot_cache(
+                int(snapshot_id),
+                expires_at=expires_at,
+                source_note=refresh_note,
+            )
+            payload = {
+                "success": True,
+                "person_id": pid,
+                "person_name": primary_name,
+                "from_cache": True,
+                "evidence_unchanged": True,
+                **refreshed,
+            }
+            if aliases and not payload.get("aliases"):
+                payload["aliases"] = aliases
+            return self._apply_manual_override(pid, payload)
+
+        unstructured_vector_evidence = [
+            item for item in vector_evidence if not self._source_type_from_source(str(item.get("source", ""))) == "person_fact"
+        ]
+        classified_buckets = await self._classify_profile_evidence(
+            person_id=pid,
+            primary_name=primary_name,
+            aliases=aliases,
+            relation_edges=relation_edges,
+            vector_evidence=unstructured_vector_evidence,
+            memory_traits=memory_traits,
+        )
+        classified_buckets = self._confine_untrusted_profile_buckets(classified_buckets)
+        classified_buckets = self._merge_fact_claim_buckets(classified_buckets, fact_claims)
 
         evidence_ids = [
             str(item.get("hash", ""))
@@ -1045,7 +1205,6 @@ class PersonProfileService:
             classified_buckets=classified_buckets,
         )
 
-        expires_at = time.time() + float(ttl_seconds) if ttl_seconds > 0 else None
         snapshot = self.metadata_store.upsert_person_profile_snapshot(
             person_id=pid,
             profile_text=profile_text,
@@ -1053,6 +1212,8 @@ class PersonProfileService:
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
             evidence_ids=dedup_ids,
+            fact_claim_ids=[str(item.get("claim_id", "")) for item in fact_claims],
+            evidence_fingerprint=evidence_fingerprint,
             expires_at=expires_at,
             source_note=source_note,
         )

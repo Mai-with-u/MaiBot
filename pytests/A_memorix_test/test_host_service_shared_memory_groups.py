@@ -174,6 +174,90 @@ async def test_host_service_dispatches_memory_correction_and_legacy_fuzzy_modify
 
 
 @pytest.mark.asyncio
+async def test_host_service_dispatches_runtime_admin_through_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_kernel = _FakeKernel()
+    service = _ready_service(fake_kernel)
+
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+    monkeypatch.setattr(service, "_read_config", lambda: {"storage": {"data_dir": str(tmp_path)}})
+
+    result = await service.invoke("memory_runtime_admin", {"action": " GET_CONFIG ", "sample": "probe"})
+
+    assert result["success"] is True
+    assert result["component"] == "memory_runtime_admin"
+    assert result["action"] == "get_config"
+    assert result["runtime_ready"] is True
+    assert result["startup_state"] == "ready"
+    assert fake_kernel.admin_calls == [("runtime:get_config", {"sample": "probe"})]
+
+
+@pytest.mark.asyncio
+async def test_host_service_rejects_invalid_admin_action_before_kernel_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_kernel = _FakeKernel()
+    service = _ready_service(fake_kernel)
+
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+
+    result = await service.invoke("memory_runtime_admin", {"action": "missing"})
+
+    assert result["success"] is False
+    assert "不支持的 memory_runtime_admin action" in result["error"]
+    assert fake_kernel.admin_calls == []
+
+
+@pytest.mark.asyncio
+async def test_host_service_unknown_component_keeps_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_kernel = _FakeKernel()
+    service = _ready_service(fake_kernel)
+
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+
+    with pytest.raises(RuntimeError, match="不支持的 A_Memorix 调用"):
+        await service.invoke("unknown_component", {"action": "get"})
+
+    assert fake_kernel.admin_calls == []
+
+
+@pytest.mark.asyncio
+async def test_host_service_enforces_invoke_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SlowKernel(_FakeKernel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled = asyncio.Event()
+
+        async def search_memory(self, request: Any) -> dict[str, Any]:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+
+    kernel = SlowKernel()
+    service = _ready_service(kernel)
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+    monkeypatch.setattr(service, "_read_config", lambda: {"global_memory_sharing_enabled": True})
+
+    with pytest.raises(TimeoutError, match="search_memory.*20"):
+        await service.invoke("search_memory", {"query": "围巾"}, timeout_ms=20)
+
+    assert kernel.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_host_service_rejects_invalid_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _ready_service(_FakeKernel())
+    monkeypatch.setattr(service, "is_enabled", lambda: True)
+
+    with pytest.raises(ValueError, match="timeout_ms 必须是正整数"):
+        await service.invoke("search_memory", {"query": "围巾"}, timeout_ms=0)
+
+
+@pytest.mark.asyncio
 async def test_host_service_start_returns_before_background_startup_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

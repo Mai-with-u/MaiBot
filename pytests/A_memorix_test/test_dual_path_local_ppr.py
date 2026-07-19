@@ -46,6 +46,9 @@ class _FakeGraphStore:
     def get_neighbors(self, node: str):
         return list(self._out.get(node, []))
 
+    def get_weighted_neighbors(self, node: str):
+        return [(neighbor, 1.0) for neighbor in self._out.get(node, [])]
+
     def get_in_neighbors(self, node: str):
         return list(self._in.get(node, []))
 
