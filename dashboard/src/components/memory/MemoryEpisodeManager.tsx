@@ -335,14 +335,14 @@ export function MemoryEpisodeManager({
         max_retry: maxAttempts,
       })
       toast({
-        title: payload.success ? '已处理待生成 Episode' : '处理待生成 Episode 失败',
+        title: payload.success ? '已处理来源重建任务' : '处理来源重建任务失败',
         description: getEpisodeActionDescription(payload),
         variant: payload.success ? 'default' : 'destructive',
       })
       await loadEpisodes()
     } catch (error) {
       toast({
-        title: '处理待生成 Episode 失败',
+        title: '处理来源重建任务失败',
         description: error instanceof Error ? error.message : String(error),
         variant: 'destructive',
       })

@@ -1982,6 +1982,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() =>
       expect(memoryApi.processMemoryEpisodePending).toHaveBeenCalledWith({ limit: 7, max_retry: 4 }),
     )
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '已处理来源重建任务' }))
   }, 20_000)
 
   it('does not replace an invalid Episode attempt budget with the default', async () => {
@@ -2023,7 +2024,10 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ description: 'chat:group-1: 本轮未领取到该来源任务' }),
+        expect.objectContaining({
+          title: '处理来源重建任务失败',
+          description: 'chat:group-1: 本轮未领取到该来源任务',
+        }),
       ),
     )
   }, 20_000)
