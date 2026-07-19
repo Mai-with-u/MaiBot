@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from src.A_memorix.core.utils.web_import_manager import (
     ImportTaskManager,
     ImportTaskRecord,
 )
+from src.A_memorix.core.utils.relation_write_service import RelationWriteService
 
 
 class _DummyMetadataStore:
@@ -34,10 +36,25 @@ class _DummyMetadataStore:
         self.entities.append(name)
         return f"entity-{name}"
 
+    def add_entities_batch(
+        self,
+        names: list[str],
+        source_paragraph: str = "",
+        **kwargs,
+    ) -> list[str]:
+        del kwargs
+        return [self.add_entity(name=name, source_paragraph=source_paragraph) for name in names]
+
     def add_relation(self, *, subject: str, predicate: str, obj: str, **kwargs) -> str:
         del kwargs
         self.relations.append((subject, predicate, obj))
         return f"relation-{len(self.relations)}"
+
+    def add_relations_batch(self, relations: list[tuple[str, str, str]], **kwargs) -> list[str]:
+        return [
+            self.add_relation(subject=subject, predicate=predicate, obj=obj, **kwargs)
+            for subject, predicate, obj in relations
+        ]
 
     def set_relation_vector_state(
         self,
@@ -48,6 +65,10 @@ class _DummyMetadataStore:
     ) -> None:
         self.relation_vector_states.append((rel_hash, state, error, bump_retry))
 
+    @staticmethod
+    def get_relation_status_batch(relation_hashes: list[str]) -> dict[str, dict[str, bool]]:
+        return {relation_hash: {"is_inactive": False} for relation_hash in relation_hashes}
+
     def enqueue_paragraph_vector_backfill(self, paragraph_hash: str, *, error: str = "") -> None:
         self.paragraph_backfills.append((paragraph_hash, error))
 
@@ -57,6 +78,11 @@ class _DummyMetadataStore:
             for paragraph in self.paragraphs
             if paragraph.get("source") == source and not paragraph.get("is_deleted")
         ]
+
+    @staticmethod
+    def transaction(*, immediate: bool = False):
+        del immediate
+        return nullcontext()
 
 
 class _DummyGraphStore:
@@ -71,21 +97,29 @@ class _DummyGraphStore:
         del relation_hashes
         self.edges.append(list(edges))
 
+    @staticmethod
+    def batch_update():
+        return nullcontext()
+
 
 class _DummyVectorStore:
     def __init__(self) -> None:
         self.dimension = 4
         self.ids: list[str] = []
+        self._deleted_ids: set[str] = set()
         self.add_count = 0
         self.save_count = 0
         self.load_count = 0
 
     def __contains__(self, item: str) -> bool:
-        return item in self.ids
+        return item in self.ids and item not in self._deleted_ids
 
     def add(self, vectors, ids):
         if vectors.shape[1] != self.dimension:
             raise ValueError(f"Dimension mismatch: {vectors.shape[1]} vs {self.dimension}")
+        tombstoned = [item for item in ids if item in self._deleted_ids]
+        if tombstoned:
+            raise ValueError("向量 ID 已被删除，请先调用 restore() 恢复")
         added = 0
         for item in ids:
             if item in self.ids:
@@ -94,6 +128,22 @@ class _DummyVectorStore:
             added += 1
         self.add_count += added
         return added
+
+    def delete(self, ids) -> int:
+        deleted = 0
+        for item in ids:
+            if item in self.ids and item not in self._deleted_ids:
+                self._deleted_ids.add(item)
+                deleted += 1
+        return deleted
+
+    def restore(self, ids) -> int:
+        restored = 0
+        for item in dict.fromkeys(ids):
+            if item in self.ids and item in self._deleted_ids:
+                self._deleted_ids.remove(item)
+                restored += 1
+        return restored
 
     def save(self) -> None:
         self.save_count += 1
@@ -106,13 +156,24 @@ class _DummyVectorStore:
 
 
 class _DummyEmbeddingManager:
-    def __init__(self, *, delay: float = 0.0, fail_for: str = "", dimension: int = 4) -> None:
+    def __init__(
+        self,
+        *,
+        delay: float = 0.0,
+        fail_for: str = "",
+        dimension: int = 4,
+        batch_size: int = 32,
+        max_concurrent: int = 5,
+    ) -> None:
         self.delay = delay
         self.fail_for = fail_for
         self.dimension = dimension
+        self.batch_size = batch_size
+        self.max_concurrent = max_concurrent
         self.inflight = 0
         self.max_inflight = 0
         self.calls: list[str] = []
+        self.batch_calls: list[list[str]] = []
 
     async def encode(self, text: str) -> np.ndarray:
         self.calls.append(text)
@@ -126,6 +187,11 @@ class _DummyEmbeddingManager:
         finally:
             self.inflight -= 1
         return np.ones(self.dimension, dtype=np.float32)
+
+    async def encode_batch(self, texts: list[str]) -> np.ndarray:
+        self.batch_calls.append(list(texts))
+        vectors = await asyncio.gather(*(self.encode(text) for text in texts))
+        return np.asarray(vectors, dtype=np.float32)
 
 
 def _build_manager(
@@ -551,6 +617,98 @@ async def test_dual_pool_import_writes_graph_vectors_to_graph_store() -> None:
         "relation:relation-1",
     }
     assert metadata_store.relation_vector_states[-1] == ("relation-1", "ready", None, False)
+
+
+@pytest.mark.asyncio
+async def test_dual_pool_import_batches_entity_and_relation_embeddings() -> None:
+    embedding_manager = _DummyEmbeddingManager()
+    manager, metadata_store = _build_manager(
+        embedding_manager=embedding_manager,
+        relation_vectorization_enabled=True,
+        vector_pool_mode="dual",
+    )
+    manager.plugin.relation_write_service = RelationWriteService(
+        metadata_store=metadata_store,
+        graph_store=manager.plugin.graph_store,
+        vector_store=manager.plugin.vector_store,
+        embedding_manager=embedding_manager,
+        graph_vector_store=manager.plugin.graph_vector_store,
+        use_typed_relation_ids=True,
+    )
+    file_record = SimpleNamespace(source_path="", source_kind="paste", name="demo.txt")
+
+    await manager._persist_processed_chunk(
+        file_record,
+        ProcessedChunk(
+            type=KnowledgeType.FACTUAL,
+            source=SourceInfo(file="demo.txt", offset_start=0, offset_end=8),
+            chunk=ChunkContext(chunk_id="chunk-1", index=0, text="Alice持有地图，Bob居住于广州"),
+            data={
+                "triples": [
+                    {"subject": "Alice", "predicate": "持有", "object": "地图"},
+                    {"subject": "Bob", "predicate": "居住于", "object": "广州"},
+                ],
+                "entities": ["线索"],
+            },
+        ),
+    )
+
+    assert [len(batch) for batch in embedding_manager.batch_calls] == [5, 2]
+    assert set(manager.plugin.graph_vector_store.ids) == {
+        "entity:entity-Alice",
+        "entity:entity-地图",
+        "entity:entity-Bob",
+        "entity:entity-广州",
+        "entity:entity-线索",
+        "relation:relation-1",
+        "relation:relation-2",
+    }
+    assert metadata_store.relation_vector_states[-2:] == [
+        ("relation-1", "ready", None, False),
+        ("relation-2", "ready", None, False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_relation_batch_failure_is_limited_to_failed_write_batch() -> None:
+    embedding_manager = _DummyEmbeddingManager(
+        fail_for="Bob和广州的关系是居住于",
+        batch_size=1,
+        max_concurrent=1,
+    )
+    manager, metadata_store = _build_manager(
+        embedding_manager=embedding_manager,
+        relation_vectorization_enabled=True,
+        vector_pool_mode="dual",
+    )
+    service = RelationWriteService(
+        metadata_store=metadata_store,
+        graph_store=manager.plugin.graph_store,
+        vector_store=manager.plugin.vector_store,
+        embedding_manager=embedding_manager,
+        graph_vector_store=manager.plugin.graph_vector_store,
+        use_typed_relation_ids=True,
+    )
+
+    results = await service.upsert_relations_with_vectors(
+        [
+            ("Alice", "持有", "地图"),
+            ("Bob", "居住于", "广州"),
+            ("Carol", "维护", "项目"),
+        ],
+        source_paragraph="paragraph-1",
+    )
+
+    assert [result.vector_state for result in results] == ["ready", "failed", "ready"]
+    assert set(manager.plugin.graph_vector_store.ids) == {
+        "relation:relation-1",
+        "relation:relation-3",
+    }
+    assert metadata_store.relation_vector_states[-3:] == [
+        ("relation-1", "ready", None, False),
+        ("relation-2", "failed", "embedding failed", True),
+        ("relation-3", "ready", None, False),
+    ]
 
 
 @pytest.mark.asyncio

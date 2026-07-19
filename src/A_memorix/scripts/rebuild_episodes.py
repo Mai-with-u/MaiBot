@@ -54,34 +54,114 @@ def _resolve_sources(store: MetadataStore, *, source: str | None, rebuild_all: b
     return [token]
 
 
+async def _maintain_source_lease(
+    store: MetadataStore,
+    *,
+    source: str,
+    lease_token: str,
+    claimed_revision: int,
+    generation_hash: str,
+    lease_seconds: float,
+    stop_event: asyncio.Event,
+) -> bool:
+    heartbeat_interval = max(0.1, lease_seconds / 3.0)
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=heartbeat_interval)
+        except asyncio.TimeoutError:
+            if not store.renew_episode_source_rebuild_lease(
+                source,
+                lease_token=lease_token,
+                claimed_revision=claimed_revision,
+                generation_hash=generation_hash,
+                lease_seconds=lease_seconds,
+            ):
+                return False
+    return True
+
+
 async def _run_rebuilds(store: MetadataStore, plugin_config: Dict[str, Any], sources: List[str]) -> int:
     service = EpisodeService(metadata_store=store, plugin_config=plugin_config)
-    failures: List[str] = []
-    for source in sources:
-        started = store.mark_episode_source_running(source)
-        if not started:
-            failures.append(f"{source}: unable_to_mark_running")
-            continue
+    failures_by_source: Dict[str, str] = {}
+    completed_sources = set()
+    remaining_sources = list(dict.fromkeys(sources))
+    generation = service.generation_signature()
+    generation_hash = service.generation_hash(generation)
+    lease_seconds = 1800.0
+    for _ in remaining_sources.copy():
+        claims = store.claim_episode_source_rebuild_batch(
+            generation_hash=generation_hash,
+            sources=remaining_sources,
+            limit=1,
+            max_retry=3,
+            lease_seconds=lease_seconds,
+            max_wait_seconds=0.0,
+        )
+        if not claims:
+            break
+        claim = claims[0]
+        source = str(claim.get("source", "") or "").strip()
+        if source in remaining_sources:
+            remaining_sources.remove(source)
+        lease_token = str(claim.get("lease_token", "") or "").strip()
+        claimed_revision = int(claim.get("claimed_revision", 0) or 0)
         try:
-            result = await service.rebuild_source(source)
-            store.mark_episode_source_done(source)
+            heartbeat_stop = asyncio.Event()
+            heartbeat_task = asyncio.create_task(
+                _maintain_source_lease(
+                    store,
+                    source=source,
+                    lease_token=lease_token,
+                    claimed_revision=claimed_revision,
+                    generation_hash=generation_hash,
+                    lease_seconds=lease_seconds,
+                    stop_event=heartbeat_stop,
+                )
+            )
+            try:
+                plan = await service.plan_source_rebuild(source, segmentation_generation=generation)
+            finally:
+                heartbeat_stop.set()
+                await heartbeat_task
+            result = store.publish_episode_source_rebuild(
+                source,
+                lease_token=lease_token,
+                claimed_revision=claimed_revision,
+                generation_hash=generation_hash,
+                episodes_payloads=list(plan.get("payloads") or []),
+            )
+            if not bool(result.get("published")):
+                reason = "superseded" if bool(result.get("superseded")) else "lease_lost_or_claim_mismatch"
+                failures_by_source[source] = reason
+                print(f"unfinished source={source} reason={reason}")
+                continue
+            completed_sources.add(source)
             print(
                 "rebuilt"
                 f" source={source}"
-                f" paragraphs={int(result.get('paragraph_count') or 0)}"
-                f" groups={int(result.get('group_count') or 0)}"
+                f" paragraphs={int(plan.get('paragraph_count') or 0)}"
+                f" groups={int(plan.get('group_count') or 0)}"
                 f" episodes={int(result.get('episode_count') or 0)}"
-                f" fallback={int(result.get('fallback_count') or 0)}"
+                f" fallback={int(plan.get('fallback_count') or 0)}"
             )
         except Exception as exc:
             err = str(exc)[:500]
-            store.mark_episode_source_failed(source, err)
-            failures.append(f"{source}: {err}")
+            store.fail_episode_source_rebuild(
+                source,
+                lease_token=lease_token,
+                claimed_revision=claimed_revision,
+                error=err,
+            )
+            failures_by_source[source] = err
             print(f"failed source={source} error={err}")
 
-    if failures:
-        for item in failures:
-            print(item)
+    for source in sources:
+        if source not in completed_sources and source not in failures_by_source:
+            failures_by_source[source] = "not_claimed"
+
+    if failures_by_source:
+        for source, error in failures_by_source.items():
+            print(f"{source}: {error}")
         return 1
     return 0
 
@@ -103,7 +183,13 @@ def main() -> int:
         enqueued = 0
         reason = "script_rebuild_all" if args.all else "script_rebuild_source"
         for source in sources:
-            enqueued += int(store.enqueue_episode_source_rebuild(source, reason=reason))
+            enqueued += int(
+                store.enqueue_episode_source_rebuild(
+                    source,
+                    reason=reason,
+                    debounce_seconds=0.0 if args.wait else 5.0,
+                )
+            )
         print(f"enqueued={enqueued} sources={len(sources)}")
 
         if not args.wait:

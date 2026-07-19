@@ -21,6 +21,8 @@ import time
 import traceback
 import uuid
 
+import numpy as np
+
 from src.common.logger import get_logger
 from src.services import llm_service as llm_api
 
@@ -477,6 +479,11 @@ class ImportTaskManager:
         if not token or not self._dual_vector_pools_enabled():
             return token
         return f"{target_type}:{token}"
+
+    def _embedding_write_batch_size(self) -> int:
+        batch_size = max(1, int(getattr(self.plugin.embedding_manager, "batch_size", 32)))
+        max_concurrent = max(1, int(getattr(self.plugin.embedding_manager, "max_concurrent", 1)))
+        return min(512, batch_size * max_concurrent)
 
     def _vector_stores_for_persistence(self) -> List[Any]:
         stores: List[Any] = []
@@ -3599,39 +3606,150 @@ class ImportTaskManager:
             entities.extend(_normalize_import_entity_list(data.get(k)))
 
         uniq_entities = list({x.strip().lower(): x.strip() for x in entities if str(x).strip()}.values())
-        for name in uniq_entities:
-            await self._add_entity_with_vector(name, source_paragraph=para_hash)
+        await self._add_entities_with_vectors(uniq_entities, source_paragraph=para_hash)
+        await self._add_relations_with_vectors(relations, source_paragraph=para_hash)
 
-        for s, p, o in relations:
-            await self._add_relation(s, p, o, source_paragraph=para_hash)
-
-    async def _add_entity_with_vector(self, name: str, source_paragraph: str = "") -> str:
-        name_token = str(name or "").strip()
-        if not name_token:
-            return ""
-        if is_probable_hash_token(name_token):
-            logger.warning(f"跳过疑似哈希实体写入: entity={name_token[:32]}")
-            return ""
+    async def _add_entities_with_vectors(
+        self,
+        names: List[str],
+        source_paragraph: str = "",
+    ) -> Dict[str, str]:
+        """批量写入实体元数据、图节点和缺失向量。"""
+        normalized_names: List[str] = []
+        for name in names:
+            name_token = str(name or "").strip()
+            if not name_token:
+                continue
+            if is_probable_hash_token(name_token):
+                logger.warning(f"跳过疑似哈希实体写入: entity={name_token[:32]}")
+                continue
+            normalized_names.append(name_token)
+        if not normalized_names:
+            return {}
 
         async with self._storage_lock:
-            hash_value = self.plugin.metadata_store.add_entity(name=name_token, source_paragraph=source_paragraph)
-            self.plugin.graph_store.add_nodes([name_token])
+            entity_hashes: List[Tuple[str, str]] = []
+            with self.plugin.metadata_store.transaction(
+                immediate=True
+            ), self.plugin.graph_store.batch_update():
+                self.plugin.graph_store.add_nodes(normalized_names)
+                hashes = self.plugin.metadata_store.add_entities_batch(
+                    normalized_names,
+                    source_paragraph=source_paragraph,
+                )
+                entity_hashes.extend(zip(normalized_names, hashes, strict=True))
+
             target_store = self._graph_vector_store()
-            vector_id = self._graph_vector_id("entity", hash_value)
-            vector_exists = target_store is not None and vector_id in target_store
-        if not vector_exists:
+            pending_by_id: Dict[str, Tuple[str, str]] = {}
+            for name_token, hash_value in entity_hashes:
+                vector_id = self._graph_vector_id("entity", hash_value)
+                if target_store is not None and vector_id not in target_store:
+                    pending_by_id[vector_id] = (name_token, hash_value)
+
+        pending_items = list(pending_by_id.items())
+        write_batch_size = self._embedding_write_batch_size()
+        for offset in range(0, len(pending_items), write_batch_size):
+            batch_items = pending_items[offset : offset + write_batch_size]
             try:
                 if target_store is None:
                     raise RuntimeError("graph_vector_store_missing")
                 if self._is_embedding_degraded():
                     raise RuntimeError("embedding_degraded")
-                emb = await self.plugin.embedding_manager.encode(name_token)
-                target_store.add(emb.reshape(1, -1), [vector_id])
+                embeddings = np.asarray(
+                    await self.plugin.embedding_manager.encode_batch(
+                        [item[1][0] for item in batch_items]
+                    ),
+                    dtype=np.float32,
+                )
+                if embeddings.ndim == 1:
+                    embeddings = embeddings.reshape(1, -1)
+                if embeddings.shape[0] != len(batch_items):
+                    raise ValueError(
+                        "实体批量向量数量不匹配: "
+                        f"{embeddings.shape[0]} vs {len(batch_items)}"
+                    )
+                target_store.add(
+                    embeddings,
+                    [vector_id for vector_id, _ in batch_items],
+                )
             except Exception as exc:
                 if not self._allow_metadata_only_write():
                     raise
-                logger.warning(f"实体向量写入降级，保留 metadata/graph: entity={name_token} error={exc}")
-        return hash_value
+                logger.warning(
+                    "实体批量向量写入降级，保留 metadata/graph: "
+                    f"count={len(batch_items)} error={exc}"
+                )
+
+        return {name_token: hash_value for name_token, hash_value in entity_hashes}
+
+    async def _add_entity_with_vector(self, name: str, source_paragraph: str = "") -> str:
+        name_token = str(name or "").strip()
+        entity_hashes = await self._add_entities_with_vectors(
+            [name_token],
+            source_paragraph=source_paragraph,
+        )
+        return entity_hashes.get(name_token, "")
+
+    async def _add_relations_with_vectors(
+        self,
+        relations: List[Tuple[str, str, str]],
+        source_paragraph: str = "",
+    ) -> List[str]:
+        """健康向量运行期使用统一服务批量写关系，降级路径保留逐条状态语义。"""
+        normalized_relations: List[Tuple[str, str, str]] = []
+        for subject, predicate, obj in relations:
+            tokens = (
+                str(subject or "").strip(),
+                str(predicate or "").strip(),
+                str(obj or "").strip(),
+            )
+            if not all(tokens):
+                continue
+            if any(is_probable_hash_token(token) for token in tokens):
+                logger.warning(
+                    f"跳过疑似哈希关系写入: {tokens[0][:24]} | {tokens[1][:24]} | {tokens[2][:24]}"
+                )
+                continue
+            normalized_relations.append(tokens)
+        if not normalized_relations:
+            return []
+
+        relation_write_service = self.plugin.relation_write_service
+        if relation_write_service is None or self._is_embedding_degraded():
+            relation_hashes: List[str] = []
+            for subject, predicate, obj in normalized_relations:
+                relation_hashes.append(
+                    await self._add_relation(
+                        subject,
+                        predicate,
+                        obj,
+                        source_paragraph=source_paragraph,
+                    )
+                )
+            return relation_hashes
+
+        # 保留原有 appearance_count/mention_count 语义：每次关系写入仍记录两端实体出现。
+        relation_entities = [
+            name
+            for subject, _, obj in normalized_relations
+            for name in (subject, obj)
+        ]
+        await self._add_entities_with_vectors(
+            relation_entities,
+            source_paragraph=source_paragraph,
+        )
+
+        rv_cfg = self.plugin.get_config("retrieval.relation_vectorization", {}) or {}
+        if not isinstance(rv_cfg, dict):
+            rv_cfg = {}
+        write_vector = bool(rv_cfg.get("enabled", False)) and bool(rv_cfg.get("write_on_import", True))
+        results = await relation_write_service.upsert_relations_with_vectors(
+            normalized_relations,
+            confidence=1.0,
+            source_paragraph=source_paragraph,
+            write_vector=write_vector,
+        )
+        return [result.hash_value for result in results]
 
     async def _add_relation(self, subject: str, predicate: str, obj: str, source_paragraph: str = "") -> str:
         subject_token = str(subject or "").strip()
