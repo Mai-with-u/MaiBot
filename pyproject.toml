@@ -31,6 +31,7 @@ dependencies = [
     "pyarrow>=20.0.0",
     "pydantic>=2.11.7",
     "pypinyin>=0.54.0",
+    "prompt-toolkit>=3.0.52",
     "python-multipart>=0.0.20",
     "rapidfuzz",
     "rich>=14.0.0",

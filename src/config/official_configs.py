@@ -4979,6 +4979,20 @@ class DebugConfig(ConfigBase):
     __ui_parent__ = "log"
     __ui_label__ = "其他"
 
+    enable_console_input: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用终端输入",
+                "en_US": "Enable console input",
+                "ja_JP": "ターミナル入力を有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "terminal",
+        },
+    )
+    """在交互式终端中启用本地消息和指令输入。"""
+
     show_maisaka_thinking: bool = Field(
         default=True,
         json_schema_extra={

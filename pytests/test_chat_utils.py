@@ -4,6 +4,12 @@ from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.utils.utils import WEBUI_BOT_USER_ID, get_all_bot_accounts, get_bot_account, is_bot_self
 from src.common.data_models.message_component_data_model import MessageSequence
 from src.config.config import global_config
+from src.core.local_operator import (
+    BOT_CONSOLE_BOT_ID,
+    BOT_CONSOLE_PLATFORM,
+    MAISAKA_CLI_BOT_ID,
+    MAISAKA_CLI_PLATFORM,
+)
 from src.services import send_service
 
 
@@ -22,6 +28,21 @@ def test_webui_bot_identity_does_not_reuse_configured_qq_account(monkeypatch: py
     assert get_bot_account("qq") == "123456789"
     assert not is_bot_self("webui", "123456789")
     assert is_bot_self("qq", "123456789")
+
+
+def test_local_console_identities_do_not_require_configured_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config.bot, "qq_account", "")
+    bot_accounts = get_all_bot_accounts()
+
+    assert get_bot_account(BOT_CONSOLE_PLATFORM) == BOT_CONSOLE_BOT_ID
+    assert get_bot_account(MAISAKA_CLI_PLATFORM) == MAISAKA_CLI_BOT_ID
+    assert bot_accounts[BOT_CONSOLE_PLATFORM] == BOT_CONSOLE_BOT_ID
+    assert bot_accounts[MAISAKA_CLI_PLATFORM] == MAISAKA_CLI_BOT_ID
+    assert is_bot_self(BOT_CONSOLE_PLATFORM, BOT_CONSOLE_BOT_ID)
+    assert is_bot_self(MAISAKA_CLI_PLATFORM, MAISAKA_CLI_BOT_ID)
+    assert not is_bot_self(MAISAKA_CLI_PLATFORM, "maisaka_user")
 
 
 def test_send_service_builds_webui_message_without_qq_account(monkeypatch: pytest.MonkeyPatch) -> None:

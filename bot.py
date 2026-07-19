@@ -481,8 +481,6 @@ if __name__ == "__main__":
             initialize_task = loop.create_task(main_system.initialize())
             _active_main_task = initialize_task
             _run_until_complete(loop, initialize_task)
-            # Schedule tasks returns a future that runs forever.
-            # We can run console_input_loop concurrently.
             main_tasks = loop.create_task(main_system.schedule_tasks())
             _active_main_task = main_tasks
             _run_until_complete(loop, main_tasks)

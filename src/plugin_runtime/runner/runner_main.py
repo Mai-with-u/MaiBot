@@ -63,6 +63,8 @@ from src.plugin_runtime.protocol.envelope import (
     ReloadPluginsPayload,
     ReloadPluginsResultPayload,
     RunnerReadyPayload,
+    UnloadPluginsPayload,
+    UnloadPluginsResultPayload,
     UnregisterPluginPayload,
     ValidatePluginConfigPayload,
     ValidatePluginConfigResultPayload,
@@ -1245,6 +1247,7 @@ class PluginRunner:
         self._rpc_client.register_method("plugin.validate_config", self._handle_validate_plugin_config)
         self._rpc_client.register_method("plugin.reload", self._handle_reload_plugin)
         self._rpc_client.register_method("plugin.reload_batch", self._handle_reload_plugins)
+        self._rpc_client.register_method("plugin.unload_batch", self._handle_unload_plugins)
 
     @staticmethod
     def _resolve_component_handler_name(meta: PluginMeta, component_name: str) -> str:
@@ -1730,6 +1733,43 @@ class PluginRunner:
             unloaded_plugins=batch_result.unloaded_plugins,
             inactive_plugins=batch_result.inactive_plugins,
             failed_plugins=batch_result.failed_plugins,
+        )
+
+    async def _unload_plugins_by_ids(
+        self,
+        plugin_ids: List[str],
+        reason: str,
+    ) -> UnloadPluginsResultPayload:
+        """按依赖安全顺序批量卸载当前已加载的插件。"""
+
+        normalized_plugin_ids = self._normalize_requested_plugin_ids(plugin_ids)
+        loaded_plugin_ids = set(self._loader.list_plugins())
+        failed_plugins = {
+            plugin_id: "插件当前未加载"
+            for plugin_id in normalized_plugin_ids
+            if plugin_id not in loaded_plugin_ids
+        }
+        unload_order = self._build_unload_order(set(normalized_plugin_ids) & loaded_plugin_ids)
+        unloaded_plugins: List[str] = []
+
+        for plugin_id in unload_order:
+            meta = self._loader.get_plugin(plugin_id)
+            if meta is None:
+                failed_plugins[plugin_id] = "无法获取已加载插件元数据"
+                continue
+            try:
+                await self._unload_plugin(meta, reason=reason)
+            except Exception as exc:
+                failed_plugins[plugin_id] = str(exc)
+                logger.error(f"卸载插件 {plugin_id} 失败: {exc}", exc_info=True)
+                continue
+            unloaded_plugins.append(plugin_id)
+
+        return UnloadPluginsResultPayload(
+            success=not failed_plugins and len(unloaded_plugins) == len(normalized_plugin_ids),
+            requested_plugin_ids=normalized_plugin_ids,
+            unloaded_plugins=unloaded_plugins,
+            failed_plugins=failed_plugins,
         )
 
     async def _reload_plugins_by_ids(
@@ -2352,6 +2392,25 @@ class PluginRunner:
                 payload.reason,
                 external_available_plugins=dict(payload.external_available_plugins),
             )
+            return envelope.make_response(payload=result.model_dump())
+
+    async def _handle_unload_plugins(self, envelope: Envelope) -> Envelope:
+        """处理批量插件卸载请求。"""
+
+        try:
+            payload = UnloadPluginsPayload.model_validate(envelope.payload)
+        except Exception as exc:
+            return envelope.make_error_response(ErrorCode.E_BAD_PAYLOAD.value, str(exc))
+
+        if self._reload_lock.locked():
+            requested_plugin_ids = ", ".join(self._normalize_requested_plugin_ids(payload.plugin_ids)) or "<empty>"
+            return envelope.make_error_response(
+                ErrorCode.E_RELOAD_IN_PROGRESS.value,
+                f"插件 {requested_plugin_ids} 批量卸载请求被拒绝：已有重载或卸载任务正在执行",
+            )
+
+        async with self._reload_lock:
+            result = await self._unload_plugins_by_ids(list(payload.plugin_ids), payload.reason)
             return envelope.make_response(payload=result.model_dump())
 
     async def _handle_reload_plugins(self, envelope: Envelope) -> Envelope:

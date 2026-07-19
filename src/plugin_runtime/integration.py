@@ -86,6 +86,16 @@ class DependencySyncState:
     environment_changed: bool
 
 
+@dataclass(frozen=True)
+class AdapterRuntimeTransitionResult:
+    """适配器离线或上线操作的结构化结果。"""
+
+    success: bool
+    changed_plugin_ids: List[str]
+    pending_plugin_ids: List[str]
+    failed_plugins: Dict[str, str]
+
+
 class PluginRuntimeManager(
     RuntimeCoreCapabilityMixin,
     RuntimeDataCapabilityMixin,
@@ -121,6 +131,8 @@ class PluginRuntimeManager(
             lambda: self.supervisors,
             hook_spec_registry=self._hook_spec_registry,
         )
+        self._adapter_transition_lock = asyncio.Lock()
+        self._offline_adapter_plugin_ids: Set[str] = set()
 
     async def _dispatch_platform_inbound(self, envelope: InboundMessageEnvelope) -> None:
         """接收 Platform IO 审核后的入站消息并送入主消息链。
@@ -587,6 +599,8 @@ class PluginRuntimeManager(
             logger.info("插件运行时已在配置中禁用，跳过启动")
             return
 
+        self._offline_adapter_plugin_ids.clear()
+
         builtin_dirs, third_party_dirs = self._resolve_runtime_plugin_dirs()
         self._cleanup_plugin_load_residue_dirs(third_party_dirs)
 
@@ -685,6 +699,7 @@ class PluginRuntimeManager(
         finally:
             await self._hook_dispatcher.stop()
             self._started = False
+            self._offline_adapter_plugin_ids.clear()
             self._builtin_supervisor = None
             self._third_party_supervisor = None
             self._plugin_path_cache.clear()
@@ -966,6 +981,95 @@ class PluginRuntimeManager(
             success = success and reloaded
 
         return success and not missing_plugin_ids
+
+    def _get_loaded_adapter_plugin_ids(self) -> Set[str]:
+        """返回所有 Supervisor 当前加载的适配器插件 ID。"""
+
+        return {
+            plugin_id
+            for supervisor in self.supervisors
+            for plugin_id in supervisor.get_loaded_plugin_ids_by_type("adapter")
+        }
+
+    async def take_adapters_offline(self) -> AdapterRuntimeTransitionResult:
+        """卸载当前所有适配器插件，并记录可恢复的插件集合。"""
+
+        if not self._started:
+            return AdapterRuntimeTransitionResult(
+                success=False,
+                changed_plugin_ids=[],
+                pending_plugin_ids=sorted(self._offline_adapter_plugin_ids),
+                failed_plugins={"plugin_runtime": "插件运行时尚未启动"},
+            )
+
+        async with self._adapter_transition_lock:
+            unloaded_plugin_ids: Set[str] = set()
+            failed_plugins: Dict[str, str] = {}
+
+            for supervisor in self.supervisors:
+                plugin_ids = supervisor.get_loaded_plugin_ids_by_type("adapter")
+                if not plugin_ids:
+                    continue
+                try:
+                    result = await supervisor.unload_plugins(
+                        plugin_ids,
+                        reason="local_operator_offline",
+                    )
+                except Exception as exc:
+                    failed_plugins.update({plugin_id: str(exc) for plugin_id in plugin_ids})
+                    continue
+                unloaded_plugin_ids.update(result.unloaded_plugins)
+                self._offline_adapter_plugin_ids.update(result.unloaded_plugins)
+                failed_plugins.update(result.failed_plugins)
+
+            return AdapterRuntimeTransitionResult(
+                success=not failed_plugins,
+                changed_plugin_ids=sorted(unloaded_plugin_ids),
+                pending_plugin_ids=sorted(self._offline_adapter_plugin_ids),
+                failed_plugins=failed_plugins,
+            )
+
+    async def bring_adapters_online(self) -> AdapterRuntimeTransitionResult:
+        """重新加载由 ``take_adapters_offline`` 成功卸载的适配器插件。"""
+
+        if not self._started:
+            return AdapterRuntimeTransitionResult(
+                success=False,
+                changed_plugin_ids=[],
+                pending_plugin_ids=sorted(self._offline_adapter_plugin_ids),
+                failed_plugins={"plugin_runtime": "插件运行时尚未启动"},
+            )
+
+        async with self._adapter_transition_lock:
+            requested_plugin_ids = set(self._offline_adapter_plugin_ids)
+            if not requested_plugin_ids:
+                return AdapterRuntimeTransitionResult(
+                    success=True,
+                    changed_plugin_ids=[],
+                    pending_plugin_ids=[],
+                    failed_plugins={},
+                )
+
+            loaded_adapter_plugin_ids = self._get_loaded_adapter_plugin_ids()
+            plugin_ids_to_reload = requested_plugin_ids - loaded_adapter_plugin_ids
+            if plugin_ids_to_reload:
+                await self.reload_plugins_globally(
+                    sorted(plugin_ids_to_reload),
+                    reason="local_operator_online",
+                )
+
+            restored_plugin_ids = requested_plugin_ids & self._get_loaded_adapter_plugin_ids()
+            self._offline_adapter_plugin_ids.difference_update(restored_plugin_ids)
+            failed_plugins = {
+                plugin_id: "适配器插件重新加载失败"
+                for plugin_id in sorted(self._offline_adapter_plugin_ids)
+            }
+            return AdapterRuntimeTransitionResult(
+                success=not failed_plugins,
+                changed_plugin_ids=sorted(restored_plugin_ids),
+                pending_plugin_ids=sorted(self._offline_adapter_plugin_ids),
+                failed_plugins=failed_plugins,
+            )
 
     async def notify_plugin_config_updated(
         self,

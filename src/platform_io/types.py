@@ -17,6 +17,7 @@ class DriverKind(str, Enum):
 
     LEGACY = "legacy"
     PLUGIN = "plugin"
+    LOCAL = "local"
 
 
 class DeliveryStatus(str, Enum):

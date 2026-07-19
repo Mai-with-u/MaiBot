@@ -56,6 +56,8 @@ from src.plugin_runtime.protocol.envelope import (
     RouteMessagePayload,
     RunnerReadyPayload,
     ShutdownPayload,
+    UnloadPluginsPayload,
+    UnloadPluginsResultPayload,
     UnregisterPluginPayload,
     ValidatePluginConfigPayload,
     ValidatePluginConfigResultPayload,
@@ -279,6 +281,16 @@ class PluginRunnerSupervisor:
 
         return sorted(self._registered_plugins.keys())
 
+    def get_loaded_plugin_ids_by_type(self, plugin_type: str) -> List[str]:
+        """返回指定 Manifest 类型的已加载插件 ID。"""
+
+        normalized_type = str(plugin_type).strip().lower()
+        return sorted(
+            plugin_id
+            for plugin_id, registration in self._registered_plugins.items()
+            if str(registration.plugin_type or "extension").strip().lower() == normalized_type
+        )
+
     def get_loaded_plugin_versions(self) -> Dict[str, str]:
         """返回当前 Supervisor 已注册插件的版本映射。
 
@@ -349,6 +361,21 @@ class PluginRunnerSupervisor:
             failed_plugins=sorted(failed_set),
             failed_plugin_reasons=failure_reasons,
             inactive_plugins=sorted(inactive_set),
+        )
+
+    def _apply_plugin_unload_result(self, unloaded_plugins: List[str]) -> None:
+        """从最近一次 Runner 加载状态中移除已卸载插件。"""
+
+        unloaded_set = set(unloaded_plugins)
+        self._runner_ready_payloads = RunnerReadyPayload(
+            loaded_plugins=sorted(set(self._runner_ready_payloads.loaded_plugins) - unloaded_set),
+            failed_plugins=sorted(set(self._runner_ready_payloads.failed_plugins) - unloaded_set),
+            failed_plugin_reasons={
+                plugin_id: reason
+                for plugin_id, reason in self._runner_ready_payloads.failed_plugin_reasons.items()
+                if plugin_id not in unloaded_set
+            },
+            inactive_plugins=sorted(set(self._runner_ready_payloads.inactive_plugins) - unloaded_set),
         )
 
     @property
@@ -757,6 +784,31 @@ class PluginRunnerSupervisor:
         if not result.success:
             self._logger.warning(f"插件批量重载失败: {result.failed_plugins}")
         return result.success
+
+    async def unload_plugins(
+        self,
+        plugin_ids: List[str],
+        reason: str = "manual",
+    ) -> UnloadPluginsResultPayload:
+        """批量卸载指定插件，并返回 Runner 的结构化结果。"""
+
+        if is_shutdown_requested():
+            return UnloadPluginsResultPayload(
+                success=False,
+                requested_plugin_ids=list(plugin_ids),
+                failed_plugins={plugin_id: "主程序正在关停" for plugin_id in plugin_ids},
+            )
+
+        response = await self._rpc_server.send_request(
+            "plugin.unload_batch",
+            payload=UnloadPluginsPayload(plugin_ids=plugin_ids, reason=reason).model_dump(),
+            timeout_ms=max(int(self._runner_spawn_timeout * 1000), 10000),
+        )
+        result = UnloadPluginsResultPayload.model_validate(response.payload)
+        self._apply_plugin_unload_result(result.unloaded_plugins)
+        if not result.success:
+            self._logger.warning(f"插件批量卸载失败: {result.failed_plugins}")
+        return result
 
     async def notify_plugin_config_updated(
         self,
@@ -1902,7 +1954,7 @@ class PluginRunnerSupervisor:
                 raise
 
             retry_timeout_ms = min(timeout_ms, 5000)
-            logger.warning(
+            self._logger.warning(
                 "Runner 健康检查超时，使用 %sms 快速复核以排除 Host 事件循环失速",
                 retry_timeout_ms,
             )
