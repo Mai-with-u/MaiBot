@@ -28,7 +28,7 @@ _BROAD_PREDICATES = {
 class PosteriorGraphConfig:
     """双重方案中的后验图补位配置。"""
 
-    enabled: bool = True
+    enabled: bool = False
     drop_ratio: float = 0.15
     min_core_results: int = 2
     max_graph_slots: int = 2
@@ -532,11 +532,12 @@ def _competition_merge(
         min_core_results=cfg.min_core_results,
     )
     core_results = ranked[:cliff]
-    replaceable_slots = min(
-        max(0, int(top_k) - len(core_results)),
+    remaining_slots = max(0, int(top_k) - len(core_results))
+    graph_slot_limit = min(
+        remaining_slots,
         int(cfg.max_graph_slots),
     )
-    if replaceable_slots <= 0:
+    if remaining_slots <= 0 or graph_slot_limit <= 0:
         return ranked[:top_k]
 
     core_paragraph_hashes = {item.hash_value for item in core_results if item.result_type == "paragraph"}
@@ -593,13 +594,33 @@ def _competition_merge(
 
     tail_winners: List[RetrievalResult] = []
     seen_hashes = set(selected_hashes)
+    graph_candidate_ids = {id(item) for item in filtered_graph_results}
+    selected_graph_count = 0
     for item, _ in scored_candidates:
+        if item.hash_value in seen_hashes:
+            continue
+        is_graph_candidate = id(item) in graph_candidate_ids
+        if is_graph_candidate and selected_graph_count >= graph_slot_limit:
+            continue
+        tail_winners.append(item)
+        seen_hashes.add(item.hash_value)
+        if is_graph_candidate:
+            selected_graph_count += 1
+        if len(tail_winners) >= remaining_slots:
+            break
+
+    # 图候选没有赢得竞争时必须保持原始结果，避免后验阶段无意义地重排尾部。
+    if selected_graph_count == 0:
+        return ranked[:top_k]
+
+    # 去重或异常候选可能导致竞争结果不足，继续用原始尾部补齐 Top-K 预算。
+    for item in ranked[cliff:top_k]:
+        if len(tail_winners) >= remaining_slots:
+            break
         if item.hash_value in seen_hashes:
             continue
         tail_winners.append(item)
         seen_hashes.add(item.hash_value)
-        if len(tail_winners) >= replaceable_slots:
-            break
 
     return (core_results + tail_winners)[:top_k]
 

@@ -66,8 +66,9 @@ def test_tuning_profile_normalize_clamps_and_drops_unknown_fields():
     assert "unknown" not in normalized
     assert "unknown" not in normalized["retrieval"]
     assert "unknown" not in normalized["retrieval"]["vector_pools"]
-    assert normalized["threshold"]["min_threshold"] == 0.3
+    assert normalized["threshold"]["min_threshold"] == 0.29
     assert normalized["threshold"]["max_threshold"] == 0.95
+    assert "enable_auto_adjust" not in normalized["threshold"]
 
 
 @pytest.mark.asyncio

@@ -92,8 +92,9 @@ class _ScopedSearchMetadataStore:
     def get_relation_status_batch(self, hashes: list[str]) -> dict[str, dict[str, Any]]:
         return {str(hash_value): {"is_inactive": False} for hash_value in hashes}
 
-    def reinforce_relations(self, hashes: list[str]) -> None:
-        del hashes
+    def apply_relation_lifecycle_event(self, hashes: list[str], **kwargs: Any) -> list[dict[str, Any]]:
+        del hashes, kwargs
+        return []
 
     def get_paragraph_relations(self, paragraph_hash: str) -> list[dict[str, Any]]:
         del paragraph_hash
@@ -159,8 +160,15 @@ class _ScopedSearchRetriever:
     def __init__(self) -> None:
         self.top_k_values: list[int] = []
 
-    async def retrieve(self, *, query: str, top_k: int, temporal: Any) -> list[RetrievalResult]:
-        del query
+    async def retrieve(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        temporal: Any,
+        enable_ppr: bool,
+    ) -> list[RetrievalResult]:
+        del query, enable_ppr
         self.top_k_values.append(top_k)
         results = [
             RetrievalResult(
@@ -207,8 +215,15 @@ class _ScopedSearchRetriever:
 class _RetrievalTypeFilterSearchRetriever:
     config = type("RetrieverConfig", (), {"enable_ppr": False})()
 
-    async def retrieve(self, *, query: str, top_k: int, temporal: Any) -> list[RetrievalResult]:
-        del query, top_k, temporal
+    async def retrieve(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        temporal: Any,
+        enable_ppr: bool,
+    ) -> list[RetrievalResult]:
+        del query, top_k, temporal, enable_ppr
         return [
             RetrievalResult(
                 hash_value="para-stream-other",

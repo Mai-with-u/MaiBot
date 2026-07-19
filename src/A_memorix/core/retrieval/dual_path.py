@@ -11,7 +11,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import asyncio
 import re
 import time
+import unicodedata
 
+from scipy.sparse import csr_matrix
 import numpy as np
 
 from src.common.logger import get_logger
@@ -23,9 +25,35 @@ from ..utils.time_parser import format_timestamp
 from .graph_relation_recall import GraphRelationRecallConfig, GraphRelationRecallService
 from .pagerank import PersonalizedPageRank, PageRankConfig
 from .posterior_graph import PosteriorGraphConfig, apply_posterior_graph_gate
+from .score_calibration import fuse_score_maps, normalize_calibration_method
 from .sparse_bm25 import SparseBM25Config, SparseBM25Index
 
 logger = get_logger("A_Memorix.DualPathRetriever")
+
+_RELATION_BOTH_ENTITIES_GROUNDING_FACTOR = 0.78
+_RELATION_SINGLE_ENTITY_GROUNDING_FACTOR = 0.55
+_RELATION_PREDICATE_ONLY_GROUNDING_FACTOR = 0.4
+_RELATION_UNGROUNDED_FACTOR = 0.3
+_ENTITY_UNGROUNDED_FACTOR = 0.4
+_GRAPH_RELIABILITY_GROUNDING_WEIGHT = 0.65
+_GRAPH_RELIABILITY_AGREEMENT_WEIGHT = 0.10
+_GRAPH_RELIABILITY_SUPPORT_WEIGHT = 0.25
+_GRAPH_RELIABILITY_SUPPORT_TARGET = 2
+_GRAPH_RELIABILITY_WEIGHT_FLOOR = 0.15
+_GRAPH_RELIABILITY_CURVE_EXPONENT = 3.0
+
+
+@dataclass(frozen=True)
+class _GraphReliabilityEstimate:
+    """当前查询命中的图证据可信度估计。"""
+
+    score: float
+    grounding_quality: float
+    channel_agreement: float
+    support_coverage: float
+    evidence_count: int
+    grounded_relation_count: int
+    relation_count: int
 
 
 class RetrievalStrategy(Enum):
@@ -195,6 +223,8 @@ class VectorPoolsConfig:
     semantic_weight: float = 0.65
     sparse_weight: float = 0.20
     graph_weight: float = 0.15
+    score_calibration_method: str = "none"
+    score_calibration_rrf_k: int = 60
     relation_intent_graph_top_k: int = 80
     relation_intent_semantic_weight: float = 0.45
     relation_intent_sparse_weight: float = 0.15
@@ -216,6 +246,8 @@ class VectorPoolsConfig:
         self.semantic_weight = max(0.0, float(self.semantic_weight))
         self.sparse_weight = max(0.0, float(self.sparse_weight))
         self.graph_weight = max(0.0, float(self.graph_weight))
+        self.score_calibration_method = normalize_calibration_method(self.score_calibration_method)
+        self.score_calibration_rrf_k = max(1, int(self.score_calibration_rrf_k))
 
         relation_intent = self.relation_intent if isinstance(self.relation_intent, dict) else {}
         self.relation_intent_graph_top_k = max(
@@ -334,6 +366,7 @@ class DualPathRetriever:
         # 缓存 Aho-Corasick 匹配器
         self._ac_matcher: Optional[AhoCorasick] = None
         self._ac_nodes_count = 0
+        self._ac_node_revision = -1
         self._ac_node_map: Dict[str, str] = {}
         self._relation_intent_pattern = re.compile(
             r"(什么关系|有哪些关系|和.+关系|关联|关系网|subject|predicate|object|"
@@ -359,6 +392,7 @@ class DualPathRetriever:
         top_k: Optional[int] = None,
         strategy: Optional[RetrievalStrategy] = None,
         temporal: Optional[TemporalQueryOptions] = None,
+        enable_ppr: Optional[bool] = None,
     ) -> List[RetrievalResult]:
         """
         执行检索（异步方法）
@@ -368,12 +402,14 @@ class DualPathRetriever:
             top_k: 返回结果数量（默认使用配置值）
             strategy: 检索策略（默认使用配置值）
             temporal: 时序查询选项（可选）
+            enable_ppr: 本次请求是否启用 PPR；未指定时使用全局配置
 
         Returns:
             检索结果列表
         """
         top_k = top_k or self.config.top_k_final
         strategy = strategy or self.config.retrieval_strategy
+        request_enable_ppr = self.config.enable_ppr if enable_ppr is None else bool(enable_ppr)
         relation_intent_ctx = self._build_relation_intent_context(query=query, top_k=top_k)
 
         logger.info(
@@ -397,6 +433,7 @@ class DualPathRetriever:
                 top_k,
                 temporal=temporal,
                 relation_intent=relation_intent_ctx,
+                enable_ppr=request_enable_ppr,
             )
 
         logger.info(f"检索完成: 返回 {len(results)} 条结果")
@@ -447,6 +484,15 @@ class DualPathRetriever:
         if temporal and temporal.max_scan and temporal.max_scan > 0:
             k = min(k, int(temporal.max_scan))
         return max(1, k)
+
+    def _expand_temporal_candidate_k(
+        self,
+        candidate_k: int,
+        temporal: Optional[TemporalQueryOptions],
+    ) -> int:
+        """在范围过滤前扩大候选池，避免全局高分结果挤占范围内召回。"""
+        multiplier = max(1, int(temporal.candidate_multiplier)) if temporal else 1
+        return self._cap_temporal_scan_k(max(1, int(candidate_k)) * multiplier, temporal)
 
     def _is_valid_embedding(self, emb: Optional[np.ndarray]) -> bool:
         if emb is None:
@@ -512,7 +558,15 @@ class DualPathRetriever:
             return True
         if not vector_results:
             return True
-        best = max((float(r.score) for r in vector_results), default=0.0)
+        vector_scores: List[float] = []
+        for result in vector_results:
+            score = float(result.score)
+            metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            score_breakdown = metadata.get("score_breakdown")
+            if isinstance(score_breakdown, dict) and "semantic" in score_breakdown:
+                score = float(score_breakdown["semantic"])
+            vector_scores.append(score)
+        best = max(vector_scores, default=0.0)
         return best < 0.45
 
     def _should_use_sparse_relations(
@@ -1117,6 +1171,7 @@ class DualPathRetriever:
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
         relation_intent: Optional[Dict[str, Any]] = None,
+        enable_ppr: bool = True,
     ) -> List[RetrievalResult]:
         """
         双路检索（段落+关系）（异步方法）
@@ -1134,6 +1189,7 @@ class DualPathRetriever:
                 top_k=top_k,
                 temporal=temporal,
                 relation_intent=relation_intent,
+                enable_ppr=enable_ppr,
             )
 
         query_emb = None
@@ -1194,7 +1250,7 @@ class DualPathRetriever:
                 alpha_override=alpha_override,
                 preserve_top_relations=preserve_top_relations,
             )
-            if self.config.enable_ppr:
+            if enable_ppr:
                 fused_results = await self._rerank_with_ppr(
                     fused_results,
                     query,
@@ -1301,7 +1357,7 @@ class DualPathRetriever:
         )
 
         # PageRank重排序
-        if self.config.enable_ppr:
+        if enable_ppr:
             fused_results = await self._rerank_with_ppr(
                 fused_results,
                 query,
@@ -1567,6 +1623,144 @@ class DualPathRetriever:
         return min(1.0, graph_score)
 
     @staticmethod
+    def _clip_unit(value: float) -> float:
+        return min(1.0, max(0.0, float(value)))
+
+    def _estimate_graph_reliability(
+        self,
+        candidates: List[RetrievalResult],
+        *,
+        scan_limit: int,
+    ) -> _GraphReliabilityEstimate:
+        """用证据落地、多通道一致性和关系覆盖估计查询局部可信度。"""
+
+        ranked_graph_candidates: List[Tuple[float, RetrievalResult]] = []
+        best_independent_score = 0.0
+        for candidate in candidates:
+            score_meta = self._candidate_score_meta(candidate)
+            semantic_score = max(0.0, float(score_meta.get("semantic", 0.0) or 0.0))
+            sparse_score = max(0.0, float(score_meta.get("sparse", 0.0) or 0.0))
+            best_independent_score = max(best_independent_score, semantic_score, sparse_score)
+
+            graph_score = max(
+                0.0,
+                float(score_meta.get("graph_evidence", self._aggregate_graph_evidence_score(candidate)) or 0.0),
+            )
+            if graph_score > 0.0:
+                ranked_graph_candidates.append((graph_score, candidate))
+
+        ranked_graph_candidates.sort(key=lambda pair: pair[0], reverse=True)
+        ranked_graph_candidates = ranked_graph_candidates[: max(1, int(scan_limit))]
+        if not ranked_graph_candidates:
+            return _GraphReliabilityEstimate(0.0, 0.0, 0.0, 0.0, 0, 0, 0)
+
+        graph_score_total = sum(graph_score for graph_score, _ in ranked_graph_candidates)
+        agreement_total = 0.0
+        grounding_weight_total = 0.0
+        grounding_quality_total = 0.0
+        evidence_count = 0
+        grounded_relation_hashes = set()
+        relation_hashes = set()
+
+        for graph_score, candidate in ranked_graph_candidates:
+            score_meta = self._candidate_score_meta(candidate)
+            independent_score = max(
+                0.0,
+                float(score_meta.get("semantic", 0.0) or 0.0),
+                float(score_meta.get("sparse", 0.0) or 0.0),
+            )
+            if best_independent_score > 0.0:
+                agreement_total += graph_score * self._clip_unit(independent_score / best_independent_score)
+
+            for evidence in self._candidate_evidence_items(candidate):
+                evidence_type = str(evidence.get("type", "") or "").strip().lower()
+                if evidence_type not in {"relation", "entity"}:
+                    continue
+
+                normalized_score = max(0.0, float(evidence.get("normalized_score", 0.0) or 0.0))
+                if normalized_score <= 0.0:
+                    continue
+
+                grounding_factor = self._clip_unit(float(evidence.get("grounding_factor", 0.0) or 0.0))
+                if evidence_type == "relation":
+                    normalized_grounding = self._clip_unit(
+                        (grounding_factor - _RELATION_UNGROUNDED_FACTOR)
+                        / (1.0 - _RELATION_UNGROUNDED_FACTOR)
+                    )
+                    relation_hash = str(evidence.get("hash", "") or "").strip()
+                    if relation_hash:
+                        relation_hashes.add(relation_hash)
+                        if grounding_factor >= _RELATION_BOTH_ENTITIES_GROUNDING_FACTOR:
+                            grounded_relation_hashes.add(relation_hash)
+                else:
+                    # 实体在段落中出现只能证明局部落地，不能单独证明关系链可靠。
+                    normalized_grounding = 0.35 * self._clip_unit(
+                        (grounding_factor - _ENTITY_UNGROUNDED_FACTOR)
+                        / (1.0 - _ENTITY_UNGROUNDED_FACTOR)
+                    )
+
+                grounding_weight_total += normalized_score
+                grounding_quality_total += normalized_score * normalized_grounding
+                evidence_count += 1
+
+        grounding_quality = (
+            grounding_quality_total / grounding_weight_total if grounding_weight_total > 0.0 else 0.0
+        )
+        channel_agreement = agreement_total / graph_score_total if graph_score_total > 0.0 else 0.0
+        support_quantity = self._clip_unit(
+            len(grounded_relation_hashes) / float(_GRAPH_RELIABILITY_SUPPORT_TARGET)
+        )
+        support_precision = (
+            len(grounded_relation_hashes) / float(len(relation_hashes)) if relation_hashes else 0.0
+        )
+        support_coverage = self._clip_unit(support_quantity * support_precision)
+        reliability = self._clip_unit(
+            _GRAPH_RELIABILITY_GROUNDING_WEIGHT * grounding_quality
+            + _GRAPH_RELIABILITY_AGREEMENT_WEIGHT * channel_agreement
+            + _GRAPH_RELIABILITY_SUPPORT_WEIGHT * support_coverage
+        )
+        return _GraphReliabilityEstimate(
+            score=reliability,
+            grounding_quality=grounding_quality,
+            channel_agreement=channel_agreement,
+            support_coverage=support_coverage,
+            evidence_count=evidence_count,
+            grounded_relation_count=len(grounded_relation_hashes),
+            relation_count=len(relation_hashes),
+        )
+
+    def _calibrate_dual_pool_weights(
+        self,
+        candidates: List[RetrievalResult],
+        *,
+        semantic_weight: float,
+        sparse_weight: float,
+        graph_weight: float,
+        scan_limit: int,
+    ) -> Tuple[float, float, float, _GraphReliabilityEstimate]:
+        """图权重高于常规值时，按查询局部可信度连续缩放。"""
+
+        estimate = self._estimate_graph_reliability(candidates, scan_limit=scan_limit)
+        graph_weight_floor = min(float(graph_weight), _GRAPH_RELIABILITY_WEIGHT_FLOOR)
+        graph_weight_range = max(0.0, float(graph_weight) - graph_weight_floor)
+        independent_weight = float(semantic_weight) + float(sparse_weight)
+        if graph_weight_range <= 0.0 or independent_weight <= 0.0:
+            return semantic_weight, sparse_weight, graph_weight, estimate
+
+        effective_graph_weight = (
+            graph_weight_floor
+            + graph_weight_range * estimate.score**_GRAPH_RELIABILITY_CURVE_EXPONENT
+        )
+        released_weight = float(graph_weight) - effective_graph_weight
+        effective_semantic_weight = float(semantic_weight) + released_weight * (
+            float(semantic_weight) / independent_weight
+        )
+        effective_sparse_weight = float(sparse_weight) + released_weight * (
+            float(sparse_weight) / independent_weight
+        )
+        return effective_semantic_weight, effective_sparse_weight, effective_graph_weight, estimate
+
+    @staticmethod
     def _normalize_graph_scores_by_type(
         parsed_items: List[Tuple[str, str, float]],
     ) -> List[Tuple[str, str, float, float]]:
@@ -1586,6 +1780,38 @@ class DualPathRetriever:
                 normalized_score = max(0.0, min(1.0, float(raw_score)))
             normalized_items.append((item_type, hash_value, float(raw_score), float(normalized_score)))
         return normalized_items
+
+    @staticmethod
+    def _graph_evidence_grounding_factor(
+        evidence: Dict[str, Any],
+        paragraph: Dict[str, Any],
+    ) -> float:
+        """按证据在当前支撑段落中的逐字落地程度进行软衰减。"""
+
+        paragraph_text = unicodedata.normalize(
+            "NFKC",
+            str(paragraph.get("content", "") or ""),
+        ).casefold()
+
+        def is_grounded(value: Any) -> bool:
+            token = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+            return bool(token and token in paragraph_text)
+
+        if str(evidence.get("type", "") or "") == "entity":
+            return 1.0 if is_grounded(evidence.get("name", "")) else _ENTITY_UNGROUNDED_FACTOR
+
+        subject_grounded = is_grounded(evidence.get("subject", ""))
+        predicate_grounded = is_grounded(evidence.get("predicate", ""))
+        object_grounded = is_grounded(evidence.get("object", ""))
+        if subject_grounded and predicate_grounded and object_grounded:
+            return 1.0
+        if subject_grounded and object_grounded:
+            return _RELATION_BOTH_ENTITIES_GROUNDING_FACTOR
+        if subject_grounded or object_grounded:
+            return _RELATION_SINGLE_ENTITY_GROUNDING_FACTOR
+        if predicate_grounded:
+            return _RELATION_PREDICATE_ONLY_GROUNDING_FACTOR
+        return _RELATION_UNGROUNDED_FACTOR
 
     async def _collect_dual_graph_evidence(
         self,
@@ -1667,10 +1893,14 @@ class DualPathRetriever:
                     continue
                 if temporal and not self._is_temporal_match(paragraph, temporal):
                     continue
+                grounding_factor = self._graph_evidence_grounding_factor(evidence, paragraph)
+                grounded_evidence_score = float(evidence_score) * float(grounding_factor)
+                grounded_evidence = dict(evidence)
+                grounded_evidence["grounding_factor"] = float(grounding_factor)
                 order = (
                     item_index * max(1, max(cfg.relation_expand_per_hit, cfg.entity_expand_per_hit)) + paragraph_index
                 )
-                expanded_entries.append((float(evidence_score), order, paragraph, dict(evidence)))
+                expanded_entries.append((grounded_evidence_score, order, paragraph, grounded_evidence))
 
         expanded_entries.sort(key=lambda item: (-item[0], item[1]))
         evidence_by_paragraph: Dict[str, Dict[str, Any]] = {}
@@ -1694,6 +1924,7 @@ class DualPathRetriever:
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
         relation_intent: Optional[Dict[str, Any]] = None,
+        enable_ppr: bool = True,
     ) -> List[RetrievalResult]:
         relation_intent = relation_intent or {}
         semantic_weight, sparse_weight, graph_weight, graph_top_k = self._dual_pool_weights(relation_intent)
@@ -1710,7 +1941,10 @@ class DualPathRetriever:
 
         candidates: Dict[str, RetrievalResult] = {}
         if embedding_ok and query_emb is not None:
-            paragraph_top_k = max(top_k, int(self.config.vector_pools.paragraph_top_k))
+            paragraph_top_k = self._expand_temporal_candidate_k(
+                max(top_k, int(self.config.vector_pools.paragraph_top_k)),
+                temporal,
+            )
             para_ids, para_scores = await asyncio.to_thread(
                 self.paragraph_vector_store.search,
                 query_emb,
@@ -1734,7 +1968,7 @@ class DualPathRetriever:
 
             graph_evidence = await self._collect_dual_graph_evidence(
                 query_emb=query_emb,
-                top_k=graph_top_k,
+                top_k=self._expand_temporal_candidate_k(graph_top_k, temporal),
                 temporal=temporal,
             )
             for payload in graph_evidence.values():
@@ -1787,20 +2021,73 @@ class DualPathRetriever:
                 )
 
         results = list(candidates.values())
+        configured_semantic_weight = semantic_weight
+        configured_sparse_weight = sparse_weight
+        configured_graph_weight = graph_weight
+        semantic_weight, sparse_weight, graph_weight, graph_reliability = self._calibrate_dual_pool_weights(
+            results,
+            semantic_weight=semantic_weight,
+            sparse_weight=sparse_weight,
+            graph_weight=graph_weight,
+            scan_limit=max(10, top_k * 2),
+        )
+        score_maps: Dict[str, Dict[str, float]] = {
+            "semantic": {},
+            "sparse": {},
+            "graph": {},
+        }
+        for item in results:
+            score_meta = self._candidate_score_meta(item)
+            if "semantic" in score_meta:
+                score_maps["semantic"][item.hash_value] = float(score_meta["semantic"])
+            if "sparse" in score_meta:
+                score_maps["sparse"][item.hash_value] = float(score_meta["sparse"])
+            graph_score = float(
+                score_meta.get("graph_evidence", self._aggregate_graph_evidence_score(item)) or 0.0
+            )
+            if graph_score > 0.0:
+                score_maps["graph"][item.hash_value] = graph_score
+        final_scores, calibrated_score_maps = fuse_score_maps(
+            score_maps,
+            {
+                "semantic": semantic_weight,
+                "sparse": sparse_weight,
+                "graph": graph_weight,
+            },
+            method=self.config.vector_pools.score_calibration_method,
+            rrf_k=self.config.vector_pools.score_calibration_rrf_k,
+        )
         for item in results:
             score_meta = self._candidate_score_meta(item)
             semantic_score = float(score_meta.get("semantic", 0.0) or 0.0)
             sparse_score = float(score_meta.get("sparse", 0.0) or 0.0)
             graph_score = float(score_meta.get("graph_evidence", self._aggregate_graph_evidence_score(item)) or 0.0)
-            final_score = semantic_weight * semantic_score + sparse_weight * sparse_score + graph_weight * graph_score
+            calibrated_semantic_score = float(calibrated_score_maps["semantic"].get(item.hash_value, 0.0))
+            calibrated_sparse_score = float(calibrated_score_maps["sparse"].get(item.hash_value, 0.0))
+            calibrated_graph_score = float(calibrated_score_maps["graph"].get(item.hash_value, 0.0))
+            final_score = float(final_scores.get(item.hash_value, 0.0))
             score_meta.update(
                 {
                     "semantic": semantic_score,
                     "sparse": sparse_score,
                     "graph_evidence": graph_score,
+                    "calibrated_semantic": calibrated_semantic_score,
+                    "calibrated_sparse": calibrated_sparse_score,
+                    "calibrated_graph": calibrated_graph_score,
+                    "score_calibration_method": self.config.vector_pools.score_calibration_method,
                     "semantic_weight": semantic_weight,
                     "sparse_weight": sparse_weight,
                     "graph_weight": graph_weight,
+                    "configured_semantic_weight": configured_semantic_weight,
+                    "configured_sparse_weight": configured_sparse_weight,
+                    "configured_graph_weight": configured_graph_weight,
+                    "graph_reliability": graph_reliability.score,
+                    "graph_grounding_quality": graph_reliability.grounding_quality,
+                    "graph_channel_agreement": graph_reliability.channel_agreement,
+                    "graph_support_coverage": graph_reliability.support_coverage,
+                    "graph_evidence_count": graph_reliability.evidence_count,
+                    "graph_grounded_relation_count": graph_reliability.grounded_relation_count,
+                    "graph_relation_count": graph_reliability.relation_count,
                     "final": final_score,
                 }
             )
@@ -1809,7 +2096,7 @@ class DualPathRetriever:
 
         results.sort(key=lambda x: x.score, reverse=True)
 
-        if self.config.enable_ppr:
+        if enable_ppr:
             results = await self._rerank_with_ppr(results, query)
 
         if temporal:
@@ -2253,7 +2540,7 @@ class DualPathRetriever:
     def _should_use_local_ppr(self) -> bool:
         return bool(
             self.config.ppr_local_enabled
-            and int(getattr(self.graph_store, "num_nodes", 0) or 0) >= self.config.ppr_local_min_graph_nodes
+            and self.graph_store.num_nodes >= self.config.ppr_local_min_graph_nodes
         )
 
     def _resolve_ppr_seed_nodes(self, entities: Dict[str, float]) -> Dict[str, float]:
@@ -2300,47 +2587,59 @@ class DualPathRetriever:
             return {}
 
         node_set = set(nodes)
-        adjacency: Dict[str, List[str]] = {}
-        for node in nodes:
-            adjacency[node] = [neighbor for neighbor in self.graph_store.get_neighbors(node) if neighbor in node_set]
+        node_to_local_idx = {node: index for index, node in enumerate(nodes)}
+        transition_rows: List[int] = []
+        transition_cols: List[int] = []
+        transition_values: List[float] = []
+        for source_index, node in enumerate(nodes):
+            weighted_neighbors = [
+                (neighbor, float(weight))
+                for neighbor, weight in self.graph_store.get_weighted_neighbors(node)
+                if neighbor in node_set and float(weight) > 0.0
+            ]
+            total_edge_weight = sum(weight for _, weight in weighted_neighbors)
+            if total_edge_weight <= 0.0:
+                continue
+            for neighbor, weight in weighted_neighbors:
+                transition_rows.append(source_index)
+                transition_cols.append(node_to_local_idx[neighbor])
+                transition_values.append(weight / total_edge_weight)
 
         total_seed_weight = sum(seeds.get(node, 0.0) for node in nodes)
         if total_seed_weight <= 0.0:
             return {}
 
-        personalization = {node: float(seeds.get(node, 0.0)) / total_seed_weight for node in nodes}
-        scores = dict(personalization)
+        personalization = np.asarray(
+            [float(seeds.get(node, 0.0)) / total_seed_weight for node in nodes],
+            dtype=np.float64,
+        )
+        transition = csr_matrix(
+            (transition_values, (transition_rows, transition_cols)),
+            shape=(len(nodes), len(nodes)),
+            dtype=np.float64,
+        )
+        dangling = np.diff(transition.indptr) == 0
+        scores = personalization.copy()
         alpha = float(self.config.ppr_alpha)
         tol = float(self._ppr.config.tol)
         max_iter = int(self._ppr.config.max_iter)
         min_iterations = int(self._ppr.config.min_iterations)
 
         for iteration in range(max_iter):
-            next_scores = {node: (1.0 - alpha) * personalization.get(node, 0.0) for node in nodes}
-            dangling_mass = 0.0
-            for node, score in scores.items():
-                neighbors = adjacency.get(node, [])
-                if not neighbors:
-                    dangling_mass += score
-                    continue
-                share = alpha * score / float(len(neighbors))
-                for neighbor in neighbors:
-                    next_scores[neighbor] = next_scores.get(neighbor, 0.0) + share
+            next_scores = alpha * (transition.T @ scores) + (1.0 - alpha) * personalization
+            dangling_mass = float(scores[dangling].sum())
             if dangling_mass > 0.0:
-                for node in nodes:
-                    next_scores[node] = next_scores.get(node, 0.0) + alpha * dangling_mass * personalization.get(
-                        node, 0.0
-                    )
+                next_scores += alpha * dangling_mass * personalization
 
-            diff = sum(abs(next_scores.get(node, 0.0) - scores.get(node, 0.0)) for node in nodes)
+            diff = float(np.abs(next_scores - scores).sum())
             scores = next_scores
             if iteration + 1 >= min_iterations and diff < tol:
                 break
 
-        total_score = sum(scores.values())
+        total_score = float(scores.sum())
         if total_score > 0.0:
-            scores = {node: score / total_score for node, score in scores.items()}
-        return scores
+            scores = scores / total_score
+        return {node: float(scores[index]) for index, node in enumerate(nodes)}
 
     def _build_ppr_cache_key(self, entities: Dict[str, float]) -> Tuple[Any, ...]:
         entity_key = tuple(
@@ -2354,8 +2653,9 @@ class DualPathRetriever:
             )
         )
         return (
-            int(getattr(self.graph_store, "num_nodes", 0) or 0),
-            int(getattr(self.graph_store, "num_edges", 0) or 0),
+            int(self.graph_store.graph_revision),
+            int(self.graph_store.num_nodes),
+            int(self.graph_store.num_edges),
             round(float(self.config.ppr_alpha), 6),
             bool(self.config.ppr_local_enabled),
             int(self.config.ppr_local_max_nodes),
@@ -2632,12 +2932,14 @@ class DualPathRetriever:
             return {}
 
         # 检查是否需要更新 Aho-Corasick 匹配器
-        if self._ac_matcher is None or self._ac_nodes_count != len(all_entities):
+        node_revision = self.graph_store.node_revision
+        if self._ac_matcher is None or self._ac_node_revision != node_revision:
             self._ac_matcher = AhoCorasick()
             for entity in all_entities:
                 self._ac_matcher.add_pattern(entity.lower())
             self._ac_matcher.build()
             self._ac_nodes_count = len(all_entities)
+            self._ac_node_revision = node_revision
             self._ac_node_map = {node.lower(): node for node in all_entities}
 
         # 执行匹配

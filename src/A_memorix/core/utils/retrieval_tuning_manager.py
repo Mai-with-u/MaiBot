@@ -410,11 +410,10 @@ class RetrievalTuningManager:
                 },
             },
             "threshold": {
-                "min_threshold": _nested_get(cfg, "threshold.min_threshold", 0.3),
+                "min_threshold": _nested_get(cfg, "threshold.min_threshold", 0.29),
                 "max_threshold": _nested_get(cfg, "threshold.max_threshold", 0.95),
                 "percentile": _nested_get(cfg, "threshold.percentile", 75.0),
-                "min_results": _nested_get(cfg, "threshold.min_results", 3),
-                "enable_auto_adjust": _nested_get(cfg, "threshold.enable_auto_adjust", True),
+                "min_results": _nested_get(cfg, "threshold.min_results", 4),
             },
         }
         return self._normalize_profile(profile, fallback=profile)
@@ -489,10 +488,10 @@ class RetrievalTuningManager:
                 ri_graph_w / ri_sum,
             )
 
-        min_threshold = _clamp_float(pick("threshold.min_threshold", 0.3), 0.3, 0.0, 1.0)
+        min_threshold = _clamp_float(pick("threshold.min_threshold", 0.29), 0.29, 0.0, 1.0)
         max_threshold = _clamp_float(pick("threshold.max_threshold", 0.95), 0.95, 0.0, 1.0)
         if min_threshold >= max_threshold:
-            min_threshold, max_threshold = 0.3, 0.95
+            min_threshold, max_threshold = 0.29, 0.95
 
         return {
             "retrieval": {
@@ -574,8 +573,7 @@ class RetrievalTuningManager:
                 "min_threshold": float(min_threshold),
                 "max_threshold": float(max_threshold),
                 "percentile": _clamp_float(pick("threshold.percentile", 75.0), 75.0, 1.0, 99.0),
-                "min_results": _clamp_int(pick("threshold.min_results", 3), 3, 1, 100),
-                "enable_auto_adjust": _coerce_bool(pick("threshold.enable_auto_adjust", True), True),
+                "min_results": _clamp_int(pick("threshold.min_results", 4), 4, 1, 100),
             },
         }
 
@@ -684,7 +682,6 @@ class RetrievalTuningManager:
             f"max_threshold = {float(t['max_threshold']):.4f}",
             f"percentile = {float(t['percentile']):.4f}",
             f"min_results = {int(t['min_results'])}",
-            f"enable_auto_adjust = {str(bool(t['enable_auto_adjust'])).lower()}",
         ]
         return "\n".join(lines).strip() + "\n"
 
@@ -1738,7 +1735,7 @@ class RetrievalTuningManager:
             "retrieval.vector_pools.relation_intent.sparse_weight, "
             "retrieval.vector_pools.relation_intent.graph_weight, "
             "threshold.min_threshold, threshold.max_threshold, threshold.percentile, "
-            "threshold.min_results, threshold.enable_auto_adjust。\n"
+            "threshold.min_results。\n"
             f"objective={objective}\n"
             f"base={json.dumps(base_profile, ensure_ascii=False)}\n"
             f"failure_summary={json.dumps(failure_summary, ensure_ascii=False)}"
@@ -1839,7 +1836,6 @@ class RetrievalTuningManager:
         _nested_set(candidate, "threshold.max_threshold", rng.choice([0.88, 0.92, 0.95, 0.98]))
         _nested_set(candidate, "threshold.percentile", rng.choice(pct_choices))
         _nested_set(candidate, "threshold.min_results", rng.choice(min_results_choices))
-        _nested_set(candidate, "threshold.enable_auto_adjust", bool(rng.choice([True, True, False])))
 
         return self._normalize_profile(candidate, fallback=base)
 
@@ -2101,7 +2097,6 @@ class RetrievalTuningManager:
                         plugin_config=runtime_cfg,
                         request=req,
                         enforce_chat_filter=False,
-                        reinforce_access=False,
                     ),
                     timeout=float(eval_timeout_s),
                 )
