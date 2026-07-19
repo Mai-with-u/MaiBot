@@ -232,6 +232,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 plan_record=plan_record,
                 requested_by=requested_by,
                 reason=reason,
+                fact_claim_confirmed=confirmed,
             )
             execution = {
                 **execution,
@@ -322,7 +323,6 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                     "rollback": rollback_result,
                     "error": rollback_result["error"],
                 }
-
         restored_targets: List[Dict[str, Any]] = []
         restore_failures: List[Dict[str, str]] = []
         stale_marks_deleted: List[Dict[str, Any]] = []
@@ -405,6 +405,12 @@ class MemoryCorrectionAdminService(KernelServiceBase):
 
                 updated = self.metadata_store.update_paragraph_metadata(hash_value, previous_metadata, merge=False)
                 if updated is not None:
+                    fact_evidence_snapshot = item.get("fact_evidence_snapshot")
+                    if isinstance(fact_evidence_snapshot, dict):
+                        self.metadata_store.restore_fact_evidence_snapshot(
+                            fact_evidence_snapshot,
+                            reason=reason or "fuzzy_modify_rollback_restore_fact_evidence",
+                        )
                     restored_targets.append({"target_type": target_type, "hash": hash_value})
                 else:
                     restore_failures.append(
@@ -957,6 +963,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         plan_record: Dict[str, Any],
         requested_by: str = "webui",
         reason: str = "",
+        fact_claim_confirmed: bool = False,
     ) -> Dict[str, Any]:
         assert self.metadata_store is not None
         plan = plan_record.get("plan") if isinstance(plan_record.get("plan"), dict) else {}
@@ -988,9 +995,17 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 },
                 "source_request": str(plan.get("request_text", "") or plan_record.get("request_text", "") or ""),
             }
+            source_type = str(operation.get("source_type", "") or "memory")
+            if source_type == "person_fact" and fact_claim_confirmed:
+                metadata["fact_claim"] = {
+                    "trust": "manual_confirmed",
+                    "authority": "manual",
+                    "stability": "stable",
+                    "profile_section": "stable_facts",
+                }
             result = await self.ingest_text(
                 external_id=f"{change_id}:ingest:{index}",
-                source_type=str(operation.get("source_type", "") or "memory"),
+                source_type=source_type,
                 text=str(operation.get("text", "") or ""),
                 chat_id=str(operation.get("chat_id", "") or plan.get("chat_id", "") or ""),
                 person_ids=argument_tokens(operation.get("person_ids")),
@@ -1081,6 +1096,11 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             updated = self.metadata_store.update_paragraph_metadata(hash_value, patch, merge=True)
             if updated is None:
                 return {}
+            fact_evidence_snapshot = self.metadata_store.detach_fact_evidence_for_paragraphs(
+                [hash_value],
+                reason=reason or "memory_correction_paragraph_superseded",
+                detached_at=valid_to,
+            )
             cascade = self._execute_fuzzy_modify_paragraph_cascade(
                 paragraph_hash=hash_value,
                 plan_id=plan_id,
@@ -1092,6 +1112,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
                 "hash": hash_value,
                 "previous_metadata": previous_metadata,
                 "updated_metadata": updated,
+                "fact_evidence_snapshot": fact_evidence_snapshot,
                 "cascade": cascade,
             }
         previous = self.metadata_store.get_relation(hash_value)

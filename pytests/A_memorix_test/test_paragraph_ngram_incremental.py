@@ -30,7 +30,7 @@ def test_ngram_incremental_add_soft_delete_and_revive(tmp_path: Path) -> None:
         rows = store.ngram_search_paragraphs(["三文"], limit=10)
         assert {row["hash"] for row in rows} == {first_hash, second_hash}
 
-        assert store.mark_as_deleted([second_hash], "paragraph") == 1
+        assert store.mark_as_deleted([second_hash], "paragraph", reason="test_soft_delete") == 1
         assert _ngram_meta_count(store) == 1
         rows = store.ngram_search_paragraphs(["k7"], limit=10)
         assert second_hash not in {row["hash"] for row in rows}
@@ -53,12 +53,11 @@ def test_ngram_incremental_physical_delete_paths(tmp_path: Path) -> None:
         assert store.ensure_paragraph_ngram_backfilled(n=2)
         assert _ngram_meta_count(store) == 4
 
-        assert store.delete_paragraph(direct_hash)
+        assert store.physically_delete_paragraphs([direct_hash]) == 1
         assert _ngram_meta_count(store) == 3
         assert direct_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["直接"], limit=10)}
 
-        cleanup = store.delete_paragraph_atomic(atomic_hash)
-        assert cleanup["paragraph_hash"] == atomic_hash
+        assert store.physically_delete_paragraphs([atomic_hash]) == 1
         assert _ngram_meta_count(store) == 2
         assert atomic_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["原子"], limit=10)}
 
@@ -66,7 +65,14 @@ def test_ngram_incremental_physical_delete_paths(tmp_path: Path) -> None:
         assert _ngram_meta_count(store) == 1
         assert batch_hash not in {row["hash"] for row in store.ngram_search_paragraphs(["批量"], limit=10)}
 
-        assert store.mark_as_deleted([soft_then_physical_hash], "paragraph") == 1
+        assert (
+            store.mark_as_deleted(
+                [soft_then_physical_hash],
+                "paragraph",
+                reason="test_soft_delete",
+            )
+            == 1
+        )
         assert _ngram_meta_count(store) == 0
         assert store.physically_delete_paragraphs([soft_then_physical_hash]) == 1
         assert _ngram_meta_count(store) == 0

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import json
 import re
 import sqlite3
+import uuid
 
 from ..utils.hash import compute_hash, normalize_text
 from .tokenizer_runtime import HAS_JIEBA, JIEBA_MODULE
@@ -53,179 +54,474 @@ class MetadataEpisodeMixin:
         )
         return self._dedupe_episode_sources([row["source"] for row in cursor.fetchall()])
 
-    def _enqueue_episode_source_rebuilds(self, sources: List[Any], reason: str = "") -> int:
+    def _enqueue_episode_source_rebuilds(
+        self,
+        sources: List[Any],
+        reason: str = "",
+        *,
+        dirty_start: Optional[float] = None,
+        dirty_end: Optional[float] = None,
+        debounce_seconds: float = 5.0,
+        now: Optional[float] = None,
+    ) -> int:
+        """原子提升来源期望版本，并合并本轮脏区间。"""
         normalized_sources = self._dedupe_episode_sources(sources)
         if not normalized_sources:
             return 0
 
-        now = datetime.now().timestamp()
+        now_ts = float(datetime.now().timestamp() if now is None else now)
+        ready_at = now_ts + max(0.0, float(debounce_seconds))
         reason_text = str(reason or "").strip()[:200] or None
         cursor = self._conn.cursor()
         cursor.executemany(
             """
             INSERT INTO episode_rebuild_sources (
-                source, status, retry_count, last_error, reason, requested_at, updated_at
-            ) VALUES (?, 'pending', 0, NULL, ?, ?, ?)
+                source, status, retry_count, last_error, reason, requested_at, updated_at,
+                desired_revision, built_revision, claimed_revision,
+                dirty_start, dirty_end, first_requested_at, ready_at,
+                lease_token, lease_until, next_attempt_at,
+                built_generation_hash, claimed_generation_hash,
+                retry_revision, retry_generation_hash
+            ) VALUES (
+                ?, 'pending', 0, NULL, ?, ?, ?, 1, 0, NULL, ?, ?, ?, ?,
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            )
             ON CONFLICT(source) DO UPDATE SET
-                status = 'pending',
+                status = CASE
+                    WHEN episode_rebuild_sources.lease_token IS NOT NULL
+                     AND COALESCE(episode_rebuild_sources.lease_until, 0) > excluded.requested_at
+                    THEN 'running'
+                    ELSE 'pending'
+                END,
                 retry_count = 0,
                 last_error = NULL,
                 reason = excluded.reason,
                 requested_at = excluded.requested_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                desired_revision = COALESCE(episode_rebuild_sources.desired_revision, 0) + 1,
+                dirty_start = CASE
+                    WHEN excluded.dirty_start IS NULL THEN episode_rebuild_sources.dirty_start
+                    WHEN episode_rebuild_sources.dirty_start IS NULL THEN excluded.dirty_start
+                    ELSE MIN(episode_rebuild_sources.dirty_start, excluded.dirty_start)
+                END,
+                dirty_end = CASE
+                    WHEN excluded.dirty_end IS NULL THEN episode_rebuild_sources.dirty_end
+                    WHEN episode_rebuild_sources.dirty_end IS NULL THEN excluded.dirty_end
+                    ELSE MAX(episode_rebuild_sources.dirty_end, excluded.dirty_end)
+                END,
+                first_requested_at = CASE
+                    WHEN COALESCE(episode_rebuild_sources.desired_revision, 0)
+                         <= COALESCE(episode_rebuild_sources.built_revision, 0)
+                    THEN excluded.first_requested_at
+                    ELSE COALESCE(episode_rebuild_sources.first_requested_at, excluded.first_requested_at)
+                END,
+                ready_at = excluded.ready_at,
+                next_attempt_at = NULL,
+                retry_revision = NULL,
+                retry_generation_hash = NULL
             """,
-            [(source, reason_text, now, now) for source in normalized_sources],
+            [
+                (
+                    source,
+                    reason_text,
+                    now_ts,
+                    now_ts,
+                    self._as_optional_float(dirty_start),
+                    self._as_optional_float(dirty_end),
+                    now_ts,
+                    ready_at,
+                )
+                for source in normalized_sources
+            ],
         )
         self._conn.commit()
         return len(normalized_sources)
 
-    def enqueue_episode_source_rebuild(self, source: str, reason: str = "") -> bool:
-        """将 source 入队到 episode 重建队列。"""
-        return bool(self._enqueue_episode_source_rebuilds([source], reason=reason))
-
-    def fetch_episode_source_rebuild_batch(
+    def enqueue_episode_source_rebuild(
         self,
+        source: str,
+        reason: str = "",
+        *,
+        dirty_start: Optional[float] = None,
+        dirty_end: Optional[float] = None,
+        debounce_seconds: float = 5.0,
+        now: Optional[float] = None,
+    ) -> bool:
+        """将 source 入队到 episode 重建队列。"""
+        return bool(
+            self._enqueue_episode_source_rebuilds(
+                [source],
+                reason=reason,
+                dirty_start=dirty_start,
+                dirty_end=dirty_end,
+                debounce_seconds=debounce_seconds,
+                now=now,
+            )
+        )
+
+    def claim_episode_source_rebuild_batch(
+        self,
+        *,
+        generation_hash: str,
+        sources: Optional[List[str]] = None,
         limit: int = 20,
         max_retry: int = 3,
+        lease_seconds: float = 1800.0,
+        max_wait_seconds: float = 60.0,
+        now: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """获取待处理的 source 重建任务。"""
+        """领取到期的来源任务，并返回本次租约和目标版本。"""
         safe_limit = max(1, int(limit))
-        safe_retry = max(0, int(max_retry))
+        safe_retry = int(max_retry)
+        if safe_retry < 1:
+            raise ValueError("max_retry 必须至少为1")
+        generation_token = str(generation_hash or "").strip()
+        if not generation_token:
+            raise ValueError("generation_hash 不能为空")
+        source_scope = self._dedupe_episode_sources(sources or [])
+        if sources is not None and not source_scope:
+            return []
+        now_ts = float(datetime.now().timestamp() if now is None else now)
+        lease_until = now_ts + max(1.0, float(lease_seconds))
+        max_wait_cutoff = now_ts - max(0.0, float(max_wait_seconds))
+        claims: List[Dict[str, Any]] = []
+        source_filter_sql = ""
+        source_filter_params: List[Any] = []
+        if source_scope:
+            source_filter_sql = "AND source IN (SELECT value FROM json_each(?))"
+            source_filter_params.append(json.dumps(source_scope, ensure_ascii=False))
+
+        with self.transaction(immediate=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""
+                SELECT source
+                FROM episode_rebuild_sources
+                WHERE (
+                        COALESCE(desired_revision, 0) > COALESCE(built_revision, 0)
+                     OR COALESCE(built_generation_hash, '') != ?
+                )
+                  AND (
+                        retry_revision IS NULL
+                     OR retry_revision != desired_revision
+                     OR COALESCE(retry_generation_hash, '') != ?
+                     OR COALESCE(retry_count, 0) < ?
+                  )
+                  AND (lease_token IS NULL OR COALESCE(lease_until, 0) <= ?)
+                  AND (
+                        retry_revision IS NULL
+                     OR retry_revision != desired_revision
+                     OR COALESCE(retry_generation_hash, '') != ?
+                     OR next_attempt_at IS NULL
+                     OR next_attempt_at <= ?
+                  )
+                  AND (
+                        COALESCE(ready_at, requested_at) <= ?
+                     OR COALESCE(first_requested_at, requested_at) <= ?
+                  )
+                  {source_filter_sql}
+                ORDER BY COALESCE(first_requested_at, requested_at) ASC, updated_at ASC, source ASC
+                LIMIT ?
+                """,
+                (
+                    generation_token,
+                    generation_token,
+                    safe_retry,
+                    now_ts,
+                    generation_token,
+                    now_ts,
+                    now_ts,
+                    max_wait_cutoff,
+                    *source_filter_params,
+                    safe_limit,
+                ),
+            )
+            sources = [str(row["source"] or "").strip() for row in cursor.fetchall()]
+            for source in sources:
+                lease_token = uuid.uuid4().hex
+                cursor.execute(
+                    """
+                    UPDATE episode_rebuild_sources
+                    SET status = 'running',
+                        claimed_revision = desired_revision,
+                        claimed_generation_hash = ?,
+                        retry_count = CASE
+                            WHEN retry_revision IS NULL
+                              OR retry_revision != desired_revision
+                              OR COALESCE(retry_generation_hash, '') != ?
+                            THEN 0
+                            ELSE COALESCE(retry_count, 0)
+                        END,
+                        last_error = CASE
+                            WHEN retry_revision IS NULL
+                              OR retry_revision != desired_revision
+                              OR COALESCE(retry_generation_hash, '') != ?
+                            THEN NULL
+                            ELSE last_error
+                        END,
+                        next_attempt_at = CASE
+                            WHEN retry_revision IS NULL
+                              OR retry_revision != desired_revision
+                              OR COALESCE(retry_generation_hash, '') != ?
+                            THEN NULL
+                            ELSE next_attempt_at
+                        END,
+                        retry_revision = desired_revision,
+                        retry_generation_hash = ?,
+                        lease_token = ?,
+                        lease_until = ?,
+                        updated_at = ?
+                    WHERE source = ?
+                      AND (lease_token IS NULL OR COALESCE(lease_until, 0) <= ?)
+                    """,
+                    (
+                        generation_token,
+                        generation_token,
+                        generation_token,
+                        generation_token,
+                        generation_token,
+                        lease_token,
+                        lease_until,
+                        now_ts,
+                        source,
+                        now_ts,
+                    ),
+                )
+                if cursor.rowcount <= 0:
+                    continue
+                cursor.execute(
+                    """
+                    SELECT source, status, retry_count, last_error, reason, requested_at, updated_at,
+                           desired_revision, built_revision, claimed_revision,
+                           dirty_start, dirty_end, first_requested_at, ready_at,
+                           lease_token, lease_until, next_attempt_at,
+                           built_generation_hash, claimed_generation_hash,
+                           retry_revision, retry_generation_hash
+                    FROM episode_rebuild_sources
+                    WHERE source = ?
+                    """,
+                    (source,),
+                )
+                row = cursor.fetchone()
+                if row is not None:
+                    claims.append(dict(row))
+        return claims
+
+    def renew_episode_source_rebuild_lease(
+        self,
+        source: str,
+        *,
+        lease_token: str,
+        claimed_revision: int,
+        generation_hash: str,
+        lease_seconds: float,
+        now: Optional[float] = None,
+    ) -> bool:
+        """仅当当前工作者仍持有未过期且未被新revision取代的租约时续期。"""
+        token = self._normalize_episode_source(source)
+        lease = str(lease_token or "").strip()
+        generation_token = str(generation_hash or "").strip()
+        if not token or not lease or not generation_token:
+            return False
+        revision = max(0, int(claimed_revision))
+        now_ts = float(datetime.now().timestamp() if now is None else now)
+        renewed_until = now_ts + max(1.0, float(lease_seconds))
         cursor = self._conn.cursor()
         cursor.execute(
             """
-            SELECT source, status, retry_count, last_error, reason, requested_at, updated_at
-            FROM episode_rebuild_sources
-            WHERE status = 'pending'
-               OR (status = 'failed' AND retry_count < ?)
-            ORDER BY requested_at ASC, updated_at ASC
-            LIMIT ?
-            """,
-            (safe_retry, safe_limit),
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    def mark_episode_source_running(
-        self,
-        source: str,
-        *,
-        requested_at: Optional[float] = None,
-    ) -> bool:
-        """将 source 标记为 running。"""
-        token = self._normalize_episode_source(source)
-        if not token:
-            return False
-
-        now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
-        params: List[Any] = [now, token]
-        sql = """
             UPDATE episode_rebuild_sources
-            SET status = 'running',
+            SET lease_until = MAX(COALESCE(lease_until, 0), ?),
                 updated_at = ?
             WHERE source = ?
-              AND status IN ('pending', 'failed')
-        """
-        if requested_at is not None:
-            sql += " AND requested_at = ?"
-            params.append(float(requested_at))
-        cursor.execute(sql, tuple(params))
+              AND lease_token = ?
+              AND claimed_revision = ?
+              AND claimed_generation_hash = ?
+              AND desired_revision = ?
+              AND COALESCE(lease_until, 0) > ?
+            """,
+            (
+                renewed_until,
+                now_ts,
+                token,
+                lease,
+                revision,
+                generation_token,
+                revision,
+                now_ts,
+            ),
+        )
         self._conn.commit()
-        return cursor.rowcount > 0
+        return cursor.rowcount == 1
 
-    def mark_episode_source_done(
+    def publish_episode_source_rebuild(
         self,
         source: str,
         *,
-        requested_at: Optional[float] = None,
-    ) -> bool:
-        """将 source 标记为 done；若运行期间发生新写入，则保持 pending。"""
+        lease_token: str,
+        claimed_revision: int,
+        generation_hash: str,
+        episodes_payloads: List[Dict[str, Any]],
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """仅在来源版本未变化时替换完整快照并完成任务。"""
         token = self._normalize_episode_source(source)
-        if not token:
-            return False
+        lease = str(lease_token or "").strip()
+        generation_token = str(generation_hash or "").strip()
+        if not token or not lease or not generation_token:
+            raise ValueError("source、lease_token 和 generation_hash 不能为空")
+        revision = max(0, int(claimed_revision))
+        now_ts = float(datetime.now().timestamp() if now is None else now)
 
-        now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
-        if requested_at is None:
+        with self.transaction(immediate=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT desired_revision, claimed_revision, claimed_generation_hash, lease_token, lease_until
+                FROM episode_rebuild_sources
+                WHERE source = ?
+                """,
+                (token,),
+            )
+            row = cursor.fetchone()
+            claim_matches = bool(
+                row is not None
+                and str(row["lease_token"] or "") == lease
+                and int(row["claimed_revision"] or 0) == revision
+                and str(row["claimed_generation_hash"] or "") == generation_token
+                and float(row["lease_until"] or 0.0) > now_ts
+            )
+            source_unchanged = claim_matches and int(row["desired_revision"] or 0) == revision
+            if not source_unchanged:
+                if claim_matches:
+                    cursor.execute(
+                        """
+                        UPDATE episode_rebuild_sources
+                        SET status = 'pending',
+                            claimed_revision = NULL,
+                            claimed_generation_hash = NULL,
+                            lease_token = NULL,
+                            lease_until = NULL,
+                            updated_at = ?
+                        WHERE source = ? AND lease_token = ?
+                        """,
+                        (now_ts, token, lease),
+                    )
+                return {
+                    "source": token,
+                    "published": False,
+                    "superseded": bool(claim_matches),
+                    "episode_count": 0,
+                }
+
+            replace_result = self.replace_episodes_for_source(token, episodes_payloads)
             cursor.execute(
                 """
                 UPDATE episode_rebuild_sources
                 SET status = 'done',
+                    built_revision = ?,
+                    built_generation_hash = ?,
+                    claimed_revision = NULL,
+                    claimed_generation_hash = NULL,
+                    dirty_start = NULL,
+                    dirty_end = NULL,
+                    first_requested_at = NULL,
+                    ready_at = NULL,
+                    lease_token = NULL,
+                    lease_until = NULL,
+                    retry_count = 0,
+                    retry_revision = NULL,
+                    retry_generation_hash = NULL,
+                    next_attempt_at = NULL,
                     last_error = NULL,
                     updated_at = ?
-                WHERE source = ?
+                WHERE source = ? AND lease_token = ?
                 """,
-                (now, token),
+                (revision, generation_token, now_ts, token, lease),
             )
-        else:
-            req_ts = float(requested_at)
-            cursor.execute(
-                """
-                UPDATE episode_rebuild_sources
-                SET status = CASE
-                        WHEN requested_at > ? THEN 'pending'
-                        ELSE 'done'
-                    END,
-                    last_error = NULL,
-                    updated_at = ?
-                WHERE source = ?
-                """,
-                (req_ts, now, token),
-            )
-        self._conn.commit()
-        return cursor.rowcount > 0
+            if cursor.rowcount != 1:
+                raise RuntimeError("Episode 来源发布期间租约发生变化")
+            return {
+                "source": token,
+                "published": True,
+                "superseded": False,
+                "episode_count": int(replace_result.get("episode_count") or 0),
+                "built_revision": revision,
+            }
 
-    def mark_episode_source_failed(
+    def fail_episode_source_rebuild(
         self,
         source: str,
-        error: str = "",
         *,
-        requested_at: Optional[float] = None,
+        lease_token: str,
+        claimed_revision: int,
+        error: str,
+        retry_backoff_seconds: float = 5.0,
+        now: Optional[float] = None,
     ) -> bool:
-        """标记 source 失败；若运行期间发生新写入，则重新回到 pending。"""
+        """释放失败租约；新版本已到达时直接回到 pending。"""
         token = self._normalize_episode_source(source)
-        if not token:
+        lease = str(lease_token or "").strip()
+        if not token or not lease:
             return False
-
-        err_text = str(error or "").strip()[:500]
-        now = datetime.now().timestamp()
+        revision = max(0, int(claimed_revision))
+        now_ts = float(datetime.now().timestamp() if now is None else now)
+        next_attempt_at = now_ts + max(0.0, float(retry_backoff_seconds))
         cursor = self._conn.cursor()
-        if requested_at is None:
-            cursor.execute(
-                """
-                UPDATE episode_rebuild_sources
-                SET status = 'failed',
-                    retry_count = COALESCE(retry_count, 0) + 1,
-                    last_error = ?,
-                    updated_at = ?
-                WHERE source = ?
-                """,
-                (err_text, now, token),
-            )
-        else:
-            req_ts = float(requested_at)
-            cursor.execute(
-                """
-                UPDATE episode_rebuild_sources
-                SET status = CASE
-                        WHEN requested_at > ? THEN 'pending'
-                        ELSE 'failed'
-                    END,
-                    retry_count = CASE
-                        WHEN requested_at > ? THEN COALESCE(retry_count, 0)
-                        ELSE COALESCE(retry_count, 0) + 1
-                    END,
-                    last_error = CASE
-                        WHEN requested_at > ? THEN NULL
-                        ELSE ?
-                    END,
-                    updated_at = ?
-                WHERE source = ?
-                """,
-                (req_ts, req_ts, req_ts, err_text, now, token),
-            )
+        cursor.execute(
+            """
+            UPDATE episode_rebuild_sources
+            SET status = CASE
+                    WHEN desired_revision > ? THEN 'pending'
+                    ELSE 'failed'
+                END,
+                retry_count = CASE
+                    WHEN desired_revision > ? THEN 0
+                    ELSE COALESCE(retry_count, 0) + 1
+                END,
+                last_error = CASE
+                    WHEN desired_revision > ? THEN NULL
+                    ELSE ?
+                END,
+                next_attempt_at = CASE
+                    WHEN desired_revision > ? THEN NULL
+                    ELSE ?
+                END,
+                claimed_revision = NULL,
+                claimed_generation_hash = NULL,
+                retry_revision = CASE
+                    WHEN desired_revision > ? THEN NULL
+                    ELSE retry_revision
+                END,
+                retry_generation_hash = CASE
+                    WHEN desired_revision > ? THEN NULL
+                    ELSE retry_generation_hash
+                END,
+                lease_token = NULL,
+                lease_until = NULL,
+                updated_at = ?
+            WHERE source = ?
+              AND lease_token = ?
+              AND claimed_revision = ?
+              AND COALESCE(lease_until, 0) > ?
+            """,
+            (
+                revision,
+                revision,
+                revision,
+                str(error or "").strip()[:500],
+                revision,
+                next_attempt_at,
+                revision,
+                revision,
+                now_ts,
+                token,
+                lease,
+                revision,
+                now_ts,
+            ),
+        )
         self._conn.commit()
-        return cursor.rowcount > 0
+        return cursor.rowcount == 1
 
     def list_episode_source_rebuilds(
         self,
@@ -252,7 +548,12 @@ class MetadataEpisodeMixin:
         cursor = self._conn.cursor()
         cursor.execute(
             f"""
-            SELECT source, status, retry_count, last_error, reason, requested_at, updated_at
+            SELECT source, status, retry_count, last_error, reason, requested_at, updated_at,
+                   desired_revision, built_revision, claimed_revision,
+                   dirty_start, dirty_end, first_requested_at, ready_at,
+                   lease_token, lease_until, next_attempt_at,
+                   built_generation_hash, claimed_generation_hash,
+                   retry_revision, retry_generation_hash
             FROM episode_rebuild_sources
             {where_sql}
             ORDER BY updated_at DESC, source ASC
@@ -361,22 +662,35 @@ class MetadataEpisodeMixin:
         return self._dedupe_episode_sources([row["source"] for row in cursor.fetchall()])
 
     def is_episode_source_query_blocked(self, source: str) -> bool:
-        """判断 source 是否处于重建中或失败状态。"""
+        """仅在来源尚无任何完整物化版本时报告阻塞。"""
         token = self._normalize_episode_source(source)
         if not token:
             return False
         cursor = self._conn.cursor()
         cursor.execute(
             """
-            SELECT 1
+            SELECT desired_revision, built_revision
             FROM episode_rebuild_sources
             WHERE source = ?
-              AND status IN ('pending', 'running', 'failed')
             LIMIT 1
             """,
             (token,),
         )
-        return cursor.fetchone() is not None
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        if int(row["built_revision"] or 0) > 0 or int(row["desired_revision"] or 0) <= 0:
+            return False
+        cursor.execute(
+            """
+            SELECT 1
+            FROM episodes
+            WHERE TRIM(COALESCE(source, '')) = ?
+            LIMIT 1
+            """,
+            (token,),
+        )
+        return cursor.fetchone() is None
 
     def replace_episodes_for_source(
         self,
@@ -473,8 +787,8 @@ class MetadataEpisodeMixin:
                         event_time_start, event_time_end, time_granularity, time_confidence,
                         participants_json, keywords_json, evidence_ids_json,
                         paragraph_count, llm_confidence, segmentation_model, segmentation_version,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        input_fingerprint, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         episode_id,
@@ -492,6 +806,7 @@ class MetadataEpisodeMixin:
                         llm_confidence,
                         str(raw_payload.get("segmentation_model", "") or "").strip() or None,
                         str(raw_payload.get("segmentation_version", "") or "").strip() or None,
+                        str(raw_payload.get("input_fingerprint", "") or "").strip() or None,
                         created_ts,
                         updated_ts,
                     ),
@@ -506,149 +821,6 @@ class MetadataEpisodeMixin:
                 inserted_count += 1
 
             return {"source": token, "episode_count": inserted_count}
-
-    def enqueue_episode_pending(
-        self,
-        paragraph_hash: str,
-        source: Optional[str] = None,
-        created_at: Optional[float] = None,
-    ) -> None:
-        """将段落入队到 episode 异步生成队列。"""
-        token = str(paragraph_hash or "").strip()
-        if not token:
-            return
-        now = datetime.now().timestamp()
-        created_ts = float(created_at) if created_at is not None else now
-        src = str(source or "").strip() or None
-
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO episode_pending_paragraphs (
-                paragraph_hash, source, created_at, status, retry_count, last_error, updated_at
-            ) VALUES (?, ?, ?, 'pending', 0, NULL, ?)
-            ON CONFLICT(paragraph_hash) DO UPDATE SET
-                source = excluded.source,
-                created_at = COALESCE(episode_pending_paragraphs.created_at, excluded.created_at),
-                status = CASE
-                    WHEN episode_pending_paragraphs.status = 'done' THEN 'done'
-                    ELSE 'pending'
-                END,
-                last_error = CASE
-                    WHEN episode_pending_paragraphs.status = 'done' THEN episode_pending_paragraphs.last_error
-                    ELSE NULL
-                END,
-                updated_at = excluded.updated_at
-            """,
-            (token, src, created_ts, now),
-        )
-        self._conn.commit()
-
-    def fetch_episode_pending_batch(self, limit: int = 20, max_retry: int = 3) -> List[Dict[str, Any]]:
-        """获取待处理 episode 队列批次。"""
-        safe_limit = max(1, int(limit))
-        safe_retry = max(0, int(max_retry))
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            SELECT paragraph_hash, source, created_at, status, retry_count, last_error, updated_at
-            FROM episode_pending_paragraphs
-            WHERE status = 'pending'
-               OR (status = 'failed' AND retry_count < ?)
-            ORDER BY updated_at ASC
-            LIMIT ?
-            """,
-            (safe_retry, safe_limit),
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    def mark_episode_pending_running(self, hashes: List[str]) -> None:
-        """批量标记队列项为 running。"""
-        if not hashes:
-            return
-        now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
-        chunk_size = 500
-        uniq = list(dict.fromkeys([str(h).strip() for h in hashes if str(h).strip()]))
-        for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i : i + chunk_size]
-            placeholders = ",".join(["?"] * len(chunk))
-            cursor.execute(
-                f"""
-                UPDATE episode_pending_paragraphs
-                SET status = 'running', updated_at = ?
-                WHERE paragraph_hash IN ({placeholders})
-                  AND status IN ('pending', 'failed')
-                """,
-                [now] + chunk,
-            )
-        self._conn.commit()
-
-    def mark_episode_pending_done(self, hashes: List[str]) -> None:
-        """批量标记队列项为 done。"""
-        if not hashes:
-            return
-        now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
-        chunk_size = 500
-        uniq = list(dict.fromkeys([str(h).strip() for h in hashes if str(h).strip()]))
-        for i in range(0, len(uniq), chunk_size):
-            chunk = uniq[i : i + chunk_size]
-            placeholders = ",".join(["?"] * len(chunk))
-            cursor.execute(
-                f"""
-                UPDATE episode_pending_paragraphs
-                SET status = 'done',
-                    last_error = NULL,
-                    updated_at = ?
-                WHERE paragraph_hash IN ({placeholders})
-                """,
-                [now] + chunk,
-            )
-        self._conn.commit()
-
-    def mark_episode_pending_failed(self, hash_value: str, error: str = "") -> None:
-        """标记单条队列项失败并累加重试次数。"""
-        token = str(hash_value or "").strip()
-        if not token:
-            return
-        now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            UPDATE episode_pending_paragraphs
-            SET status = 'failed',
-                retry_count = COALESCE(retry_count, 0) + 1,
-                last_error = ?,
-                updated_at = ?
-            WHERE paragraph_hash = ?
-            """,
-            (str(error or ""), now, token),
-        )
-        self._conn.commit()
-
-    def get_episode_pending_status_counts(self, source: str) -> Dict[str, int]:
-        """统计某个 source 当前 pending 队列中的状态分布。"""
-        token = self._normalize_episode_source(source)
-        if not token:
-            return {"pending": 0, "running": 0, "failed": 0, "done": 0}
-
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            SELECT status, COUNT(*) AS count
-            FROM episode_pending_paragraphs
-            WHERE TRIM(COALESCE(source, '')) = ?
-            GROUP BY status
-            """,
-            (token,),
-        )
-        counts = {"pending": 0, "running": 0, "failed": 0, "done": 0}
-        for row in cursor.fetchall():
-            status = str(row["status"] or "").strip().lower()
-            if status in counts:
-                counts[status] = int(row["count"] or 0)
-        return counts
 
     def enqueue_paragraph_vector_backfill(
         self,
@@ -899,8 +1071,8 @@ class MetadataEpisodeMixin:
                 event_time_start, event_time_end, time_granularity, time_confidence,
                 participants_json, keywords_json, evidence_ids_json,
                 paragraph_count, llm_confidence, segmentation_model, segmentation_version,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                input_fingerprint, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(episode_id) DO UPDATE SET
                 source = excluded.source,
                 title = excluded.title,
@@ -916,6 +1088,7 @@ class MetadataEpisodeMixin:
                 llm_confidence = excluded.llm_confidence,
                 segmentation_model = excluded.segmentation_model,
                 segmentation_version = excluded.segmentation_version,
+                input_fingerprint = excluded.input_fingerprint,
                 updated_at = excluded.updated_at
             """,
             (
@@ -934,6 +1107,7 @@ class MetadataEpisodeMixin:
                 llm_conf,
                 str(payload.get("segmentation_model", "") or "").strip() or None,
                 str(payload.get("segmentation_version", "") or "").strip() or None,
+                str(payload.get("input_fingerprint", "") or "").strip() or None,
                 created_ts,
                 updated_ts,
             ),
@@ -996,16 +1170,6 @@ class MetadataEpisodeMixin:
 
         conditions.append(f"{source_expr} != ''")
         conditions.append("COALESCE(e.paragraph_count, 0) > 0")
-        conditions.append(
-            """
-            NOT EXISTS (
-                SELECT 1
-                FROM episode_rebuild_sources ers
-                WHERE ers.source = TRIM(COALESCE(e.source, ''))
-                  AND ers.status IN ('pending', 'running')
-            )
-            """
-        )
 
         if source:
             token = self._normalize_episode_source(source)
@@ -1309,6 +1473,23 @@ class MetadataEpisodeMixin:
 
         cursor = self._conn.cursor()
         cursor.execute(sql, tuple(final_params))
+        return [self._episode_row_to_dict(row) for row in cursor.fetchall()]
+
+    def get_episodes_by_source(self, source: str) -> List[Dict[str, Any]]:
+        """读取来源下的全部 Episode，供确定性重建缓存复用。"""
+        token = self._normalize_episode_source(source)
+        if not token:
+            return []
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT *
+            FROM episodes
+            WHERE TRIM(COALESCE(source, '')) = ?
+            ORDER BY event_time_start ASC, created_at ASC, episode_id ASC
+            """,
+            (token,),
+        )
         return [self._episode_row_to_dict(row) for row in cursor.fetchall()]
 
     def get_episode_by_id(self, episode_id: str) -> Optional[Dict[str, Any]]:

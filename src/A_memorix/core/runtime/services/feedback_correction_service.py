@@ -257,30 +257,30 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
         )
         return detail
 
-    def _soft_delete_feedback_correction_paragraphs(self, paragraph_hashes: Sequence[str]) -> Dict[str, Any]:
+    async def _soft_delete_feedback_correction_paragraphs(
+        self,
+        paragraph_hashes: Sequence[str],
+    ) -> Dict[str, Any]:
         assert self.metadata_store is not None
         hashes = tokens(paragraph_hashes)
         if not hashes:
             return {"deleted_hashes": [], "deleted_external_refs": []}
 
         paragraph_rows = {hash_value: self.metadata_store.get_paragraph(hash_value) for hash_value in hashes}
-        self.metadata_store.mark_as_deleted(hashes, "paragraph")
-        conn = self.metadata_store.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            f"DELETE FROM paragraph_entities WHERE paragraph_hash IN ({','.join(['?'] * len(hashes))})",
-            tuple(hashes),
+        deleted_external_refs = self.metadata_store.list_external_memory_refs_by_paragraphs(hashes)
+        delete_result = await self._delete_admin_service._execute_delete_action(
+            mode="paragraph",
+            selector={"hashes": hashes},
+            requested_by="feedback_correction",
+            reason="feedback_correction_retracted",
         )
-        cursor.execute(
-            f"DELETE FROM paragraph_relations WHERE paragraph_hash IN ({','.join(['?'] * len(hashes))})",
-            tuple(hashes),
-        )
-        conn.commit()
-        deleted_external_refs = self.metadata_store.delete_external_memory_refs_by_paragraphs(hashes)
+        if not delete_result.get("success", False):
+            raise RuntimeError(str(delete_result.get("error", "反馈纠错段落删除失败") or "反馈纠错段落删除失败"))
         return {
             "deleted_hashes": hashes,
             "paragraph_rows": paragraph_rows,
             "deleted_external_refs": deleted_external_refs,
+            "delete_operation_id": delete_result.get("operation_id"),
         }
 
     async def _rollback_feedback_task(
@@ -433,7 +433,7 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 rollback_plan.get("corrected_write") if isinstance(rollback_plan.get("corrected_write"), dict) else {}
             )
             correction_paragraph_hashes = tokens(corrected_write.get("paragraph_hashes"))
-            deleted_paragraphs = self._soft_delete_feedback_correction_paragraphs(correction_paragraph_hashes)
+            deleted_paragraphs = await self._soft_delete_feedback_correction_paragraphs(correction_paragraph_hashes)
             result["deleted_correction_paragraph_hashes"] = deleted_paragraphs.get("deleted_hashes", [])
             paragraph_rows = (
                 deleted_paragraphs.get("paragraph_rows")
@@ -664,41 +664,6 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
             "failures": failures,
         }
 
-    async def _process_feedback_episode_rebuild_batch(self, *, limit: int) -> Dict[str, Any]:
-        if self.metadata_store is None or self.episode_service is None:
-            return {"processed": 0, "rebuilt": 0, "failed": 0, "items": [], "failures": []}
-
-        rows = self.metadata_store.fetch_episode_source_rebuild_batch(
-            limit=max(1, int(limit or 1)),
-            max_retry=max(1, int(self._cfg("episode.pending_max_retry", 3) or 3)),
-        )
-        items: List[Dict[str, Any]] = []
-        failures: List[Dict[str, Any]] = []
-        for row in rows:
-            source = str(row.get("source", "") or "").strip()
-            requested_at = row.get("requested_at")
-            if not source:
-                continue
-            if not self.metadata_store.mark_episode_source_running(source, requested_at=requested_at):
-                continue
-            try:
-                result = await self.episode_service.rebuild_source(source)
-                self.metadata_store.mark_episode_source_done(source, requested_at=requested_at)
-                items.append(result if isinstance(result, dict) else {"source": source})
-            except Exception as exc:
-                error = str(exc)[:500]
-                self.metadata_store.mark_episode_source_failed(source, error, requested_at=requested_at)
-                failures.append({"source": source, "error": error})
-        if items or failures:
-            self._persist()
-        return {
-            "processed": len(items) + len(failures),
-            "rebuilt": len(items),
-            "failed": len(failures),
-            "items": items,
-            "failures": failures,
-        }
-
     async def _feedback_correction_reconcile_loop(self) -> None:
         try:
             while not self._background_stopping:
@@ -710,8 +675,6 @@ class MemoryFeedbackCorrectionService(KernelServiceBase):
                 batch_size = feedback_cfg_reconcile_batch_size()
                 if feedback_cfg_profile_refresh_enabled():
                     await self._process_person_profile_refresh_queue_batch(limit=batch_size)
-                if feedback_cfg_episode_rebuild_enabled():
-                    await self._process_feedback_episode_rebuild_batch(limit=batch_size)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

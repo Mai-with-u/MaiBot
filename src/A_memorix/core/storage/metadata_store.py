@@ -4,18 +4,30 @@
 基于SQLite的元数据管理，存储段落、实体、关系等信息。
 """
 
-import json
-import sqlite3
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ContextManager, Dict, List, Optional, Sequence, Tuple, Union
 
+import json
+import sqlite3
+import uuid
+
 from src.common.logger import get_logger
+
 from ..utils.hash import compute_hash, normalize_text
+from ..utils.memory_lifecycle_policy import (
+    RelationLifecycleEvent,
+    RelationLifecyclePolicy,
+    RelationLifecycleState,
+    apply_lifecycle_event,
+    evaluate_lifecycle,
+    retention_at,
+)
 from ..utils.time_parser import normalize_time_meta
 from .knowledge_types import validate_stored_knowledge_type
+from .metadata_cleanup import MetadataCleanupMixin
 from .metadata_episode import MetadataEpisodeMixin
+from .metadata_fact import MetadataFactMixin
 from .metadata_feedback import MetadataFeedbackMixin
 from .metadata_fts import MetadataFTSMixin
 from .metadata_profile import MetadataProfileMixin
@@ -29,7 +41,9 @@ logger = get_logger("A_Memorix.MetadataStore")
 class MetadataStore(
     MetadataSchemaMixin,
     MetadataFTSMixin,
+    MetadataCleanupMixin,
     MetadataEpisodeMixin,
+    MetadataFactMixin,
     MetadataFeedbackMixin,
     MetadataProfileMixin,
 ):
@@ -193,49 +207,46 @@ class MetadataStore(
         word_count = len(content_normalized.split())
         normalized_time = normalize_time_meta(time_meta)
 
-        cursor = self._conn.cursor()
         try:
-            cursor.execute(
-                """
-                INSERT INTO paragraphs
-                (
-                    hash, content, vector_index, created_at, updated_at, metadata, source, word_count,
-                    event_time, event_time_start, event_time_end, time_granularity, time_confidence,
-                    knowledge_type
+            with self.transaction(immediate=True):
+                cursor = self._conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO paragraphs
+                    (
+                        hash, content, vector_index, created_at, updated_at, metadata, source, word_count,
+                        event_time, event_time_start, event_time_end, time_granularity, time_confidence,
+                        knowledge_type
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        hash_value,
+                        content,
+                        vector_index,
+                        now,
+                        now,
+                        self._encode_metadata(metadata),
+                        source,
+                        word_count,
+                        normalized_time.get("event_time"),
+                        normalized_time.get("event_time_start"),
+                        normalized_time.get("event_time_end"),
+                        normalized_time.get("time_granularity"),
+                        normalized_time.get("time_confidence", 1.0),
+                        resolved_knowledge_type.value,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
+                self._upsert_paragraph_ngram_if_ready(
                     hash_value,
                     content,
-                    vector_index,
-                    now,
-                    now,
-                    self._encode_metadata(metadata),
-                    source,
-                    word_count,
-                    normalized_time.get("event_time"),
-                    normalized_time.get("event_time_start"),
-                    normalized_time.get("event_time_end"),
-                    normalized_time.get("time_granularity"),
-                    normalized_time.get("time_confidence", 1.0),
-                    resolved_knowledge_type.value,
-                ),
-            )
-            self._upsert_paragraph_ngram_if_ready(
-                hash_value,
-                content,
-                count_delta=1,
-            )
-            self.fts_upsert_tokenized_paragraph(hash_value)
-            self._conn.commit()
-            try:
+                    count_delta=1,
+                )
+                self.fts_upsert_tokenized_paragraph(hash_value)
                 self.enqueue_episode_source_rebuild(
                     source=source,
                     reason="paragraph_added",
                 )
-            except Exception as e:
-                logger.warning(f"Episode source 重建入队失败: hash={hash_value[:16]}..., err={e}")
             logger.debug(
                 f"添加段落: hash={hash_value[:16]}..., words={word_count}, type={resolved_knowledge_type.value}"
             )
@@ -289,8 +300,6 @@ class MetadataStore(
         hash_value = compute_hash(name_normalized)
         now = datetime.now().timestamp()
 
-        cursor = self._conn.cursor()
-
         # 2. 插入实体 (INSERT OR IGNORE)
         # 注意：这里我们保留原有的 name 字段存储，可以是 display name，
         # 但 hash 必须由 canonical name 生成。
@@ -302,13 +311,20 @@ class MetadataStore(
         # 如果 db 中已存在的 name 是 "Apple"，新来的 name 是 "apple"，它们 canonical name 都是 "apple"，hash 一样。
         # 此时 INSERT OR IGNORE 会忽略。
 
-        try:
+        with self.transaction(immediate=True):
+            cursor = self._conn.cursor()
+            cursor.execute("SELECT 1 FROM entities WHERE hash = ?", (hash_value,))
+            existed = cursor.fetchone() is not None
             cursor.execute(
                 """
                 INSERT INTO entities
-                (hash, name, vector_index, appearance_count, created_at, metadata)
-                VALUES (?, ?, ?, 1, ?, ?)
-            """,
+                (hash, name, vector_index, appearance_count, created_at, metadata, is_deleted, deleted_at)
+                VALUES (?, ?, ?, 1, ?, ?, 0, NULL)
+                ON CONFLICT(hash) DO UPDATE SET
+                    appearance_count = entities.appearance_count + 1,
+                    is_deleted = 0,
+                    deleted_at = NULL
+                """,
                 (
                     hash_value,
                     name,
@@ -317,39 +333,97 @@ class MetadataStore(
                     self._encode_metadata(metadata),
                 ),
             )
-
-            logger.debug(f"添加实体: {name} ({hash_value[:8]})")
-            self._conn.commit()
-
-            # 3. 建立来源关联
             if source_paragraph:
                 self.link_paragraph_entity(source_paragraph, hash_value)
-
-            return hash_value
-
-        except sqlite3.IntegrityError:
-            # 实体已存在
-            # 1. 尝试复活 (自动复活)
-            self.revive_if_deleted(entity_hashes=[hash_value])
-
-            # 2. 更新计数
-            cursor.execute(
-                """
-                UPDATE entities
-                SET appearance_count = appearance_count + 1
-                WHERE hash = ?
-            """,
-                (hash_value,),
-            )
-            self._conn.commit()
-
+        if existed:
             logger.debug(f"实体已存在(复活/计数+1): {name}")
+        else:
+            logger.debug(f"添加实体: {name} ({hash_value[:8]})")
+        return hash_value
 
-            # 3. 建立来源关联
-            if source_paragraph:
-                self.link_paragraph_entity(source_paragraph, hash_value)
+    def add_entities_batch(
+        self,
+        names: List[str],
+        vector_index: Optional[int] = None,
+        source_paragraph: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """在单个受管事务中批量添加实体。"""
+        with self.transaction(immediate=True):
+            return self._add_entities_batch(
+                names,
+                vector_index=vector_index,
+                source_paragraph=source_paragraph,
+                metadata=metadata,
+            )
 
-            return hash_value
+    def _add_entities_batch(
+        self,
+        names: List[str],
+        vector_index: Optional[int] = None,
+        source_paragraph: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """批量添加实体，并保持出现次数、软删除复活和段落提及次数语义。"""
+        if not names:
+            return []
+
+        ordered_hashes: List[str] = []
+        grouped_entities: Dict[str, Tuple[str, int]] = {}
+        for name in names:
+            name_normalized = self._canonicalize_name(name)
+            if not name_normalized:
+                raise ValueError("Entity name cannot be empty")
+            hash_value = compute_hash(name_normalized)
+            ordered_hashes.append(hash_value)
+            existing = grouped_entities.get(hash_value)
+            if existing is None:
+                grouped_entities[hash_value] = (name, 1)
+            else:
+                grouped_entities[hash_value] = (existing[0], existing[1] + 1)
+
+        now = datetime.now().timestamp()
+        encoded_metadata = self._encode_metadata(metadata)
+        cursor = self._conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO entities
+            (hash, name, vector_index, appearance_count, created_at, metadata, is_deleted, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+            ON CONFLICT(hash) DO UPDATE SET
+                appearance_count = entities.appearance_count + excluded.appearance_count,
+                is_deleted = 0,
+                deleted_at = NULL
+            """,
+            [
+                (hash_value, name, vector_index, count, now, encoded_metadata)
+                for hash_value, (name, count) in grouped_entities.items()
+            ],
+        )
+
+        if source_paragraph:
+            cursor.executemany(
+                """
+                INSERT INTO paragraph_entities (paragraph_hash, entity_hash, mention_count)
+                VALUES (?, ?, ?)
+                ON CONFLICT(paragraph_hash, entity_hash) DO UPDATE SET
+                    mention_count = paragraph_entities.mention_count + excluded.mention_count
+                """,
+                [
+                    (source_paragraph, hash_value, count)
+                    for hash_value, (_, count) in grouped_entities.items()
+                ],
+            )
+            sources = self._get_sources_for_paragraph_hashes([source_paragraph], include_deleted=True)
+            self._enqueue_episode_source_rebuilds(
+                sources,
+                reason="paragraph_entity_linked",
+            )
+        else:
+            self._conn.commit()
+
+        logger.debug(f"批量添加实体: items={len(names)}, unique={len(grouped_entities)}")
+        return ordered_hashes
 
     def add_relation(
         self,
@@ -384,13 +458,14 @@ class MetadataStore(
         # 这里我们直接存入 subject, predicate, object 字段，
         # 注意：如果 DB 里已存在该关系 (hash 相同)，则不会更新这些字段，保留第一次的拼写。
 
-        cursor = self._conn.cursor()
-        try:
+        with self.transaction(immediate=True):
+            cursor = self._conn.cursor()
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO relations
-                (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata,
+                 retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count, inactive_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, ?, ?, 0, NULL)
             """,
                 (
                     hash_value,
@@ -402,10 +477,10 @@ class MetadataStore(
                     now,
                     source_paragraph,  # 这里的 source_paragraph 仅作为 "首次发现地" 记录，也可留空
                     self._encode_metadata(metadata),
+                    now,
+                    now,
                 ),
             )
-            self._conn.commit()
-
             if cursor.rowcount > 0:
                 logger.debug(f"添加关系: {subject} -{predicate}-> {obj}")
             else:
@@ -415,12 +490,105 @@ class MetadataStore(
             # 无论关系是新创建的还是已存在的，只要提供了 source_paragraph，都要建立连接
             if source_paragraph:
                 self.link_paragraph_relation(source_paragraph, hash_value)
+        return hash_value
 
-            return hash_value
+    def add_relations_batch(
+        self,
+        relations: List[Tuple[str, str, str]],
+        vector_index: Optional[int] = None,
+        confidence: float = 1.0,
+        source_paragraph: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """在单个受管事务中批量添加关系。"""
+        with self.transaction(immediate=True):
+            return self._add_relations_batch(
+                relations,
+                vector_index=vector_index,
+                confidence=confidence,
+                source_paragraph=source_paragraph,
+                metadata=metadata,
+            )
 
-        except sqlite3.IntegrityError as e:
-            logger.warning(f"添加关系异常: {e}")
-            return hash_value
+    def _add_relations_batch(
+        self,
+        relations: List[Tuple[str, str, str]],
+        vector_index: Optional[int] = None,
+        confidence: float = 1.0,
+        source_paragraph: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """批量添加关系和段落关联，保留首见关系元数据。"""
+        if not relations:
+            return []
+
+        relation_rows: List[Tuple[str, str, str, str]] = []
+        for subject, predicate, obj in relations:
+            relation_hash = self.compute_relation_hash(subject, predicate, obj)
+            relation_rows.append((relation_hash, subject, predicate, obj))
+
+        now = datetime.now().timestamp()
+        encoded_metadata = self._encode_metadata(metadata)
+        cursor = self._conn.cursor()
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO relations
+            (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata,
+             retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count, inactive_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, ?, ?, 0, NULL)
+            """,
+            [
+                (
+                    relation_hash,
+                    subject,
+                    predicate,
+                    obj,
+                    vector_index,
+                    confidence,
+                    now,
+                    source_paragraph,
+                    encoded_metadata,
+                    now,
+                    now,
+                )
+                for relation_hash, subject, predicate, obj in relation_rows
+            ],
+        )
+
+        if source_paragraph:
+            unique_relation_hashes = list(dict.fromkeys(row[0] for row in relation_rows))
+            placeholders = ",".join(["?"] * len(unique_relation_hashes))
+            cursor.execute(
+                f"""
+                SELECT relation_hash
+                FROM paragraph_relations
+                WHERE paragraph_hash = ?
+                  AND relation_hash IN ({placeholders})
+                """,
+                (source_paragraph, *unique_relation_hashes),
+            )
+            existing_links = {str(row[0]) for row in cursor.fetchall()}
+            cursor.executemany(
+                """
+                INSERT OR IGNORE INTO paragraph_relations (paragraph_hash, relation_hash)
+                VALUES (?, ?)
+                """,
+                [(source_paragraph, relation_hash) for relation_hash, _, _, _ in relation_rows],
+            )
+            new_evidence_hashes = [
+                relation_hash for relation_hash in unique_relation_hashes if relation_hash not in existing_links
+            ]
+            self._observe_relation_evidence(new_evidence_hashes, observed_at=now, cursor=cursor)
+            sources = self._get_sources_for_paragraph_hashes([source_paragraph], include_deleted=True)
+            self._enqueue_episode_source_rebuilds(
+                sources,
+                reason="paragraph_relation_linked",
+            )
+        else:
+            self._conn.commit()
+
+        logger.debug(f"批量添加关系: items={len(relations)}")
+        return [relation_hash for relation_hash, _, _, _ in relation_rows]
 
     def compute_relation_hash(self, subject: str, predicate: str, obj: str) -> str:
         """
@@ -447,23 +615,30 @@ class MetadataStore(
         """
         关联段落和关系 (幂等)
         """
-        cursor = self._conn.cursor()
         try:
-            # 使用 INSERT OR IGNORE 避免重复报错
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO paragraph_relations
-                (paragraph_hash, relation_hash)
-                VALUES (?, ?)
-            """,
-                (paragraph_hash, relation_hash),
-            )
-            self._conn.commit()
-            self._enqueue_episode_source_rebuilds(
-                self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
-                reason="paragraph_relation_linked",
-            )
-            return True
+            with self.transaction(immediate=True):
+                cursor = self._conn.cursor()
+                # 使用 INSERT OR IGNORE 避免重复报错
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO paragraph_relations
+                    (paragraph_hash, relation_hash)
+                    VALUES (?, ?)
+                    """,
+                    (paragraph_hash, relation_hash),
+                )
+                linked = cursor.rowcount > 0
+                if linked:
+                    self._observe_relation_evidence(
+                        [relation_hash],
+                        observed_at=datetime.now().timestamp(),
+                        cursor=cursor,
+                    )
+                    self._enqueue_episode_source_rebuilds(
+                        self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
+                        reason="paragraph_relation_linked",
+                    )
+            return linked
         except sqlite3.IntegrityError:
             return False
 
@@ -476,34 +651,34 @@ class MetadataStore(
         """
         关联段落和实体 (幂等)
         """
-        cursor = self._conn.cursor()
         try:
-            # 首先尝试插入
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO paragraph_entities
-                (paragraph_hash, entity_hash, mention_count)
-                VALUES (?, ?, ?)
-            """,
-                (paragraph_hash, entity_hash, mention_count),
-            )
-
-            if cursor.rowcount == 0:
-                # 如果已存在 (IGNORE生效)，则更新计数
+            with self.transaction(immediate=True):
+                cursor = self._conn.cursor()
+                # 首先尝试插入
                 cursor.execute(
                     """
-                    UPDATE paragraph_entities
-                    SET mention_count = mention_count + ?
-                    WHERE paragraph_hash = ? AND entity_hash = ?
-                """,
-                    (mention_count, paragraph_hash, entity_hash),
+                    INSERT OR IGNORE INTO paragraph_entities
+                    (paragraph_hash, entity_hash, mention_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    (paragraph_hash, entity_hash, mention_count),
                 )
 
-            self._conn.commit()
-            self._enqueue_episode_source_rebuilds(
-                self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
-                reason="paragraph_entity_linked",
-            )
+                if cursor.rowcount == 0:
+                    # 如果已存在 (IGNORE生效)，则更新计数
+                    cursor.execute(
+                        """
+                        UPDATE paragraph_entities
+                        SET mention_count = mention_count + ?
+                        WHERE paragraph_hash = ? AND entity_hash = ?
+                        """,
+                        (mention_count, paragraph_hash, entity_hash),
+                    )
+
+                self._enqueue_episode_source_rebuilds(
+                    self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
+                    reason="paragraph_entity_linked",
+                )
             return True
         except sqlite3.IntegrityError:
             return False
@@ -592,18 +767,18 @@ class MetadataStore(
         params.append(datetime.now().timestamp())
         params.append(paragraph_hash)
 
-        cursor = self._conn.cursor()
-        cursor.execute(
-            f"UPDATE paragraphs SET {', '.join(updates)} WHERE hash = ?",
-            tuple(params),
-        )
-        self._conn.commit()
-        changed = cursor.rowcount > 0
-        if changed:
-            self._enqueue_episode_source_rebuilds(
-                source_to_rebuild,
-                reason="paragraph_time_updated",
+        with self.transaction(immediate=True):
+            cursor = self._conn.cursor()
+            cursor.execute(
+                f"UPDATE paragraphs SET {', '.join(updates)} WHERE hash = ?",
+                tuple(params),
             )
+            changed = cursor.rowcount > 0
+            if changed:
+                self._enqueue_episode_source_rebuilds(
+                    source_to_rebuild,
+                    reason="paragraph_time_updated",
+                )
         return changed
 
     def query_paragraphs_temporal(
@@ -1186,163 +1361,6 @@ class MetadataStore(
         )
         return [self._row_to_dict(row, "paragraph") for row in cursor.fetchall()]
 
-    def delete_paragraph(self, hash_value: str) -> bool:
-        """
-        删除段落（级联删除相关关联）
-
-        Args:
-            hash_value: 段落哈希
-
-        Returns:
-            是否成功删除
-        """
-        cursor = self._conn.cursor()
-        cursor.execute(
-            "SELECT is_deleted FROM paragraphs WHERE hash = ?",
-            (hash_value,),
-        )
-        row = cursor.fetchone()
-        was_active = bool(row and (row["is_deleted"] is None or int(row["is_deleted"]) == 0))
-        self._delete_paragraph_ngrams_if_ready(
-            [hash_value],
-            count_delta=-1 if was_active else 0,
-        )
-        self.fts_delete_tokenized_paragraph(hash_value)
-        cursor.execute(
-            """
-            DELETE FROM paragraphs WHERE hash = ?
-        """,
-            (hash_value,),
-        )
-        self._conn.commit()
-
-        deleted = cursor.rowcount > 0
-        if deleted:
-            logger.info(f"删除段落: {hash_value[:16]}...")
-
-        return deleted
-
-    def delete_entity(self, hash_or_name: str) -> bool:
-        """
-        删除实体（级联删除相关关联）
-        支持通过哈希值或名称删除
-
-        注意：会同时删除所有引用该实体（作为主语或宾语）的关系
-        """
-        cursor = self._conn.cursor()
-
-        # 1. 解析实体信息 (获取 Name 和 Hash)
-        entity_name = None
-        entity_hash = None
-
-        # 尝试作为 Hash 查询
-        cursor.execute("SELECT name, hash FROM entities WHERE hash = ?", (hash_or_name,))
-        row = cursor.fetchone()
-        if row:
-            entity_name = row[0]
-            entity_hash = row[1]
-        else:
-            # 尝试作为 Name 查询 (原始匹配)
-            cursor.execute("SELECT name, hash FROM entities WHERE name = ?", (hash_or_name,))
-            row = cursor.fetchone()
-            if row:
-                entity_name = row[0]
-                entity_hash = row[1]
-            else:
-                # 最后的最后：尝试规范化名称 (Canonical) 查询，解决大小写或 WebUI 手动输入导致的不匹配
-                name_canon = self._canonicalize_name(hash_or_name)
-                canon_hash = compute_hash(name_canon)
-                cursor.execute("SELECT name, hash FROM entities WHERE hash = ?", (canon_hash,))
-                row = cursor.fetchone()
-                if row:
-                    entity_name = row[0]
-                    entity_hash = row[1]
-
-        if not entity_name or not entity_hash:
-            logger.debug(f"删除实体请求跳过：未在元数据记录中找到 {hash_or_name}")
-            return False
-
-        logger.info(f"开始删除实体: {entity_name} (Hash: {entity_hash[:8]}...)")
-
-        try:
-            # 2. 查找相关关系 (Subject 或 Object 为该实体)
-            cursor.execute(
-                """
-                SELECT hash FROM relations
-                WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))
-                   OR LOWER(TRIM(object)) = LOWER(TRIM(?))
-            """,
-                (entity_name, entity_name),
-            )
-
-            relation_hashes = [r[0] for r in cursor.fetchall()]
-
-            if relation_hashes:
-                logger.info(f"发现 {len(relation_hashes)} 个相关关系，准备级联删除")
-
-                # 3. 删除这些关系与段落的关联
-                # SQLite 不支持直接 DELETE ... WHERE ... IN (...) 的列表参数，需要拼接占位符
-                placeholders = ",".join(["?"] * len(relation_hashes))
-
-                cursor.execute(
-                    f"""
-                    DELETE FROM paragraph_relations
-                    WHERE relation_hash IN ({placeholders})
-                """,
-                    relation_hashes,
-                )
-
-                # 4. 删除关系本体
-                cursor.execute(
-                    f"""
-                    DELETE FROM relations
-                    WHERE hash IN ({placeholders})
-                """,
-                    relation_hashes,
-                )
-
-                logger.info("相关关系已级联删除")
-
-            # 5. 删除实体与段落的关联
-            cursor.execute("DELETE FROM paragraph_entities WHERE entity_hash = ?", (entity_hash,))
-
-            # 6. 删除实体本体
-            cursor.execute("DELETE FROM entities WHERE hash = ?", (entity_hash,))
-
-            self._conn.commit()
-            logger.info("实体删除完成")
-            return True
-
-        except Exception as e:
-            logger.error(f"删除实体时发生错误: {e}")
-            self._conn.rollback()
-            return False
-
-    def delete_relation(self, hash_value: str) -> bool:
-        """
-        删除关系（级联删除相关关联）
-
-        Args:
-            hash_value: 关系哈希
-
-        Returns:
-            是否成功删除
-        """
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            DELETE FROM relations WHERE hash = ?
-        """,
-            (hash_value,),
-        )
-        self._conn.commit()
-
-        deleted = cursor.rowcount > 0
-        if deleted:
-            logger.info(f"删除关系: {hash_value[:16]}...")
-
-        return deleted
-
     def set_relation_vector_state(
         self,
         hash_value: str,
@@ -1496,14 +1514,50 @@ class MetadataStore(
             raise ValueError(f"类型 {item_type} 不支持设置永久性")
 
         cursor = self._conn.cursor()
-        cursor.execute(
-            f"""
-            UPDATE {table_map[item_type]}
-            SET is_permanent = ?
-            WHERE hash = ?
-        """,
-            (1 if is_permanent else 0, hash_value),
-        )
+        if item_type == "paragraph":
+            cursor.execute(
+                """
+                UPDATE paragraphs
+                SET is_permanent = ?,
+                    expires_at = CASE WHEN ? = 1 THEN NULL ELSE expires_at END,
+                    deletion_reason = CASE WHEN ? = 1 THEN NULL ELSE deletion_reason END
+                WHERE hash = ?
+                """,
+                (
+                    1 if is_permanent else 0,
+                    1 if is_permanent else 0,
+                    1 if is_permanent else 0,
+                    hash_value,
+                ),
+            )
+        else:
+            permanent_value = 1 if is_permanent else 0
+            cursor.execute(
+                """
+                UPDATE relations
+                SET is_permanent = ?,
+                    is_pinned = ?,
+                    next_lifecycle_at = CASE WHEN ? = 1 THEN NULL ELSE retention_anchor_at END,
+                    lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1
+                WHERE hash = ?
+                  AND (
+                    is_permanent IS NOT ?
+                    OR is_pinned IS NOT ?
+                    OR (? = 1 AND next_lifecycle_at IS NOT NULL)
+                    OR (? = 0 AND next_lifecycle_at IS NOT retention_anchor_at)
+                  )
+                """,
+                (
+                    permanent_value,
+                    permanent_value,
+                    permanent_value,
+                    hash_value,
+                    permanent_value,
+                    permanent_value,
+                    permanent_value,
+                    permanent_value,
+                ),
+            )
         self._conn.commit()
 
         if cursor.rowcount > 0:
@@ -1525,10 +1579,11 @@ class MetadataStore(
         cursor.execute(
             f"""
             UPDATE {table_map[item_type]}
-            SET last_accessed = ?, access_count = access_count + 1
+            SET last_accessed = MAX(COALESCE(last_accessed, ?), ?),
+                access_count = access_count + 1
             WHERE hash = ?
         """,
-            (now, hash_value),
+            (now, now, hash_value),
         )
         self._conn.commit()
         return cursor.rowcount > 0
@@ -1754,19 +1809,19 @@ class MetadataStore(
         if updated == metadata:
             return metadata
 
-        cursor.execute(
-            """
-            UPDATE paragraphs
-            SET metadata = ?, updated_at = ?
-            WHERE hash = ?
-            """,
-            (self._encode_metadata(updated), datetime.now().timestamp(), paragraph_hash),
-        )
-        self._conn.commit()
-        self._enqueue_episode_source_rebuilds(
-            self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
-            reason="paragraph_metadata_merged",
-        )
+        with self.transaction(immediate=True):
+            cursor.execute(
+                """
+                UPDATE paragraphs
+                SET metadata = ?, updated_at = ?
+                WHERE hash = ?
+                """,
+                (self._encode_metadata(updated), datetime.now().timestamp(), paragraph_hash),
+            )
+            self._enqueue_episode_source_rebuilds(
+                self._get_sources_for_paragraph_hashes([paragraph_hash], include_deleted=True),
+                reason="paragraph_metadata_merged",
+            )
         return updated
 
     def list_external_memory_refs_by_paragraphs(self, paragraph_hashes: List[str]) -> List[Dict[str, Any]]:
@@ -2228,19 +2283,19 @@ class MetadataStore(
 
         metadata = self._decode_metadata(row["metadata"])
         updated = self._merge_paragraph_metadata(metadata, patch) if merge else dict(patch)
-        cursor.execute(
-            """
-            UPDATE paragraphs
-            SET metadata = ?, updated_at = ?
-            WHERE hash = ?
-            """,
-            (self._encode_metadata(updated), datetime.now().timestamp(), hash_token),
-        )
-        self._conn.commit()
-        self._enqueue_episode_source_rebuilds(
-            self._get_sources_for_paragraph_hashes([hash_token], include_deleted=True),
-            reason="paragraph_metadata_updated",
-        )
+        with self.transaction(immediate=True):
+            cursor.execute(
+                """
+                UPDATE paragraphs
+                SET metadata = ?, updated_at = ?
+                WHERE hash = ?
+                """,
+                (self._encode_metadata(updated), datetime.now().timestamp(), hash_token),
+            )
+            self._enqueue_episode_source_rebuilds(
+                self._get_sources_for_paragraph_hashes([hash_token], include_deleted=True),
+                reason="paragraph_metadata_updated",
+            )
         return updated
 
     def list_delete_operations(self, *, limit: int = 50, mode: str = "") -> List[Dict[str, Any]]:
@@ -2712,7 +2767,11 @@ class MetadataStore(
         )
         row = cursor.fetchone()
         cursor.execute(
-            "UPDATE paragraphs SET is_deleted=0, deleted_at=NULL WHERE hash=? AND is_deleted=1",
+            """
+            UPDATE paragraphs
+            SET is_deleted=0, deleted_at=NULL, expires_at=NULL, deletion_reason=NULL
+            WHERE hash=? AND is_deleted=1
+            """,
             (str(paragraph_hash),),
         )
         changed = cursor.rowcount > 0 and row is not None
@@ -2754,27 +2813,27 @@ class MetadataStore(
 
         updated = 0
         touched_sources: List[str] = []
-        for row in rows:
-            created_at = row["created_at"]
-            if created_at is None:
-                continue
-            cursor.execute(
-                """
-                UPDATE paragraphs
-                SET event_time = ?, time_granularity = ?, time_confidence = ?, updated_at = ?
-                WHERE hash = ?
-                """,
-                (float(created_at), "day", 0.2, float(created_at), row["hash"]),
-            )
-            if cursor.rowcount > 0:
-                updated += 1
-                touched_sources.append(row["source"])
-        self._conn.commit()
-        if updated > 0:
-            self._enqueue_episode_source_rebuilds(
-                touched_sources,
-                reason="paragraph_time_backfill",
-            )
+        with self.transaction(immediate=True):
+            for row in rows:
+                created_at = row["created_at"]
+                if created_at is None:
+                    continue
+                cursor.execute(
+                    """
+                    UPDATE paragraphs
+                    SET event_time = ?, time_granularity = ?, time_confidence = ?, updated_at = ?
+                    WHERE hash = ?
+                    """,
+                    (float(created_at), "day", 0.2, float(created_at), row["hash"]),
+                )
+                if cursor.rowcount > 0:
+                    updated += 1
+                    touched_sources.append(row["source"])
+            if updated > 0:
+                self._enqueue_episode_source_rebuilds(
+                    touched_sources,
+                    reason="paragraph_time_backfill",
+                )
         return {"candidates": candidates, "updated": updated}
 
     def get_schema_version(self) -> int:
@@ -2797,107 +2856,11 @@ class MetadataStore(
         )
         self._conn.commit()
 
-    def delete_paragraph_atomic(self, paragraph_hash: str) -> Dict[str, Any]:
-        """
-        两阶段删除段落：DB 事务内计算 + 提交后执行清理
-
-        Args:
-            paragraph_hash: 段落哈希
-
-        Returns:
-            cleanup_plan: 包含需要后续从 Vector/GraphStore 中移除的 ID 列表
-        """
-        cleanup_plan = {
-            "paragraph_hash": paragraph_hash,
-            "vector_id_to_remove": None,
-            "edges_to_remove": [],  # (src, tgt) 元组列表 (fallback)
-            "relation_prune_ops": [],  # (subject, object, relation_hash) 精准裁剪
-            "episode_sources_to_rebuild": [],
-        }
-
-        cursor = self._conn.cursor()
-        try:
-            # === Phase 1: DB Transaction (可回滚) ===
-            # 使用 IMMEDIATE 模式，一旦开启事务立即锁定 DB (防止其他写操作插队导致幻读)
-            cursor.execute("BEGIN IMMEDIATE")
-
-            # 1. [快照] 获取候选关系
-            cursor.execute("SELECT relation_hash FROM paragraph_relations WHERE paragraph_hash = ?", (paragraph_hash,))
-            candidate_relations = [row[0] for row in cursor.fetchall()]
-
-            # 2. [快照] 确认该段落存在并记录 ID 用于向量删除
-            cursor.execute("SELECT hash, source, is_deleted FROM paragraphs WHERE hash = ?", (paragraph_hash,))
-            paragraph_row = cursor.fetchone()
-            paragraph_was_active = bool(
-                paragraph_row and (paragraph_row["is_deleted"] is None or int(paragraph_row["is_deleted"]) == 0)
-            )
-            if paragraph_row:
-                cleanup_plan["vector_id_to_remove"] = paragraph_hash
-                cleanup_plan["episode_sources_to_rebuild"] = self._dedupe_episode_sources([paragraph_row["source"]])
-
-            # 3. [主删除] 删除段落 (触发 CASCADE 删 paragraph_relations)
-            self._delete_paragraph_ngrams_if_ready(
-                [paragraph_hash],
-                count_delta=-1 if paragraph_was_active else 0,
-                conn=self._conn,
-            )
-            self.fts_delete_tokenized_paragraph(paragraph_hash, conn=self._conn)
-            cursor.execute("DELETE FROM paragraphs WHERE hash = ?", (paragraph_hash,))
-
-            # 4. [计算孤儿]
-            orphaned_hashes = []
-            for rel_hash in candidate_relations:
-                count = cursor.execute(
-                    "SELECT count(*) FROM paragraph_relations WHERE relation_hash = ?", (rel_hash,)
-                ).fetchone()[0]
-
-                if count == 0:
-                    # 是孤儿：记录边信息以便后续删 Graph
-                    cursor.execute("SELECT subject, object FROM relations WHERE hash = ?", (rel_hash,))
-                    rel_info = cursor.fetchone()
-                    if rel_info:
-                        s_val, o_val = rel_info[0], rel_info[1]
-                        cleanup_plan["relation_prune_ops"].append((s_val, o_val, rel_hash))
-
-                        # 仅当 (subject, object) 不再有任何关系时，才计划删整条边（兼容旧实现）。
-                        sibling_count = cursor.execute(
-                            """
-                            SELECT count(*) FROM relations
-                            WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?))
-                              AND LOWER(TRIM(object)) = LOWER(TRIM(?))
-                              AND hash != ?
-                            """,
-                            (s_val, o_val, rel_hash),
-                        ).fetchone()[0]
-                        if sibling_count == 0:
-                            cleanup_plan["edges_to_remove"].append((s_val, o_val))
-
-                    orphaned_hashes.append(rel_hash)
-
-            # 5. [DB清理] 删除孤儿关系记录
-            if orphaned_hashes:
-                placeholders = ",".join(["?"] * len(orphaned_hashes))
-                cursor.execute(f"DELETE FROM relations WHERE hash IN ({placeholders})", orphaned_hashes)
-
-            self._conn.commit()
-            if cleanup_plan["episode_sources_to_rebuild"]:
-                self._enqueue_episode_source_rebuilds(
-                    cleanup_plan["episode_sources_to_rebuild"],
-                    reason="paragraph_deleted",
-                )
-            if cleanup_plan["vector_id_to_remove"]:
-                logger.debug(f"原子删除段落成功: {paragraph_hash}, 计划清理 {len(orphaned_hashes)} 个孤儿关系")
-            return cleanup_plan
-
-        except Exception as e:
-            self._conn.rollback()
-            logger.error(f"DB Transaction failed: {e}")
-            raise e
-
     def clear_all(self) -> None:
         """清空所有表数据"""
         cursor = self._conn.cursor()
         tables = [
+            "relation_graph_projection_jobs",
             "paragraphs",
             "entities",
             "relations",
@@ -2906,12 +2869,15 @@ class MetadataStore(
             "episodes",
             "episode_paragraphs",
             "episode_rebuild_sources",
-            "episode_pending_paragraphs",
             "paragraph_vector_backfill",
             "memory_feedback_tasks",
             "memory_feedback_action_logs",
             "paragraph_stale_relation_marks",
             "person_profile_refresh_queue",
+            "fact_transitions",
+            "fact_evidence",
+            "fact_claims",
+            "storage_cleanup_jobs",
         ]
         for table in tables:
             cursor.execute(f"DELETE FROM {table}")
@@ -2928,13 +2894,657 @@ class MetadataStore(
         cursor.execute(
             """
             UPDATE relations
-            SET last_accessed = ?,
+            SET last_accessed = MAX(COALESCE(last_accessed, ?), ?),
                 access_count = access_count + ?
             WHERE hash = ?
         """,
-            (now, access_count_delta, hash_value),
+            (now, now, access_count_delta, hash_value),
         )
         self._conn.commit()
+
+    def claim_relation_graph_projection_jobs(
+        self,
+        *,
+        limit: int = 1000,
+        lease_seconds: float = 60.0,
+        now: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """领取一批关系图投影任务，过期租约可以被正式重试。"""
+
+        safe_limit = int(limit)
+        safe_lease = float(lease_seconds)
+        if safe_limit <= 0:
+            raise ValueError("关系图投影任务 limit 必须大于0")
+        if safe_lease <= 0.0:
+            raise ValueError("关系图投影任务 lease_seconds 必须大于0")
+        claimed_at = datetime.now().timestamp() if now is None else float(now)
+        lease_token = uuid.uuid4().hex
+        claimed: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT relation_hash, subject, object, desired_active,
+                       desired_lifecycle_revision, job_revision, status,
+                       attempt_count, updated_at
+                FROM relation_graph_projection_jobs
+                WHERE status IN ('pending', 'failed')
+                   OR (status = 'running' AND COALESCE(lease_expires_at, 0.0) <= ?)
+                ORDER BY updated_at ASC, relation_hash ASC
+                LIMIT ?
+                """,
+                (claimed_at, safe_limit),
+            )
+            for row in cursor.fetchall():
+                cursor.execute(
+                    """
+                    UPDATE relation_graph_projection_jobs
+                    SET status = 'running',
+                        attempt_count = attempt_count + 1,
+                        lease_token = ?,
+                        lease_expires_at = ?,
+                        last_error = NULL,
+                        updated_at = ?
+                    WHERE relation_hash = ?
+                      AND job_revision = ?
+                      AND (
+                          status IN ('pending', 'failed')
+                          OR (status = 'running' AND COALESCE(lease_expires_at, 0.0) <= ?)
+                      )
+                    """,
+                    (
+                        lease_token,
+                        claimed_at + safe_lease,
+                        claimed_at,
+                        str(row["relation_hash"]),
+                        int(row["job_revision"]),
+                        claimed_at,
+                    ),
+                )
+                if cursor.rowcount <= 0:
+                    continue
+                item = dict(row)
+                item["lease_token"] = lease_token
+                item["lease_expires_at"] = claimed_at + safe_lease
+                item["attempt_count"] = int(row["attempt_count"] or 0) + 1
+                item["status"] = "running"
+                claimed.append(item)
+        return claimed
+
+    def count_claimable_relation_graph_projection_jobs(
+        self,
+        *,
+        now: Optional[float] = None,
+    ) -> int:
+        """返回调用时刻可领取任务数，为单轮聚合建立有界水位。"""
+
+        timestamp = datetime.now().timestamp() if now is None else float(now)
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM relation_graph_projection_jobs
+            WHERE status IN ('pending', 'failed')
+               OR (status = 'running' AND COALESCE(lease_expires_at, 0.0) <= ?)
+            """,
+            (timestamp,),
+        ).fetchone()
+        return int(row["count"] or 0) if row is not None else 0
+
+    def reset_relation_graph_projection_leases(self, *, now: Optional[float] = None) -> int:
+        """独占图运行时启动时释放上次进程遗留的执行租约。"""
+
+        reset_at = datetime.now().timestamp() if now is None else float(now)
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE relation_graph_projection_jobs
+                SET status = 'pending', lease_token = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE status = 'running'
+                """,
+                (reset_at,),
+            )
+            return max(0, int(cursor.rowcount))
+
+    def authorize_relation_graph_projection_jobs(
+        self,
+        jobs: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """按任务版本、租约和当前关系活跃态授权图投影副作用。"""
+
+        claims = {
+            str(item.get("relation_hash", "") or "").strip(): item
+            for item in jobs
+            if str(item.get("relation_hash", "") or "").strip()
+        }
+        if not claims:
+            return []
+        authorized: List[Dict[str, Any]] = []
+        relation_hashes = sorted(claims)
+        for offset in range(0, len(relation_hashes), 900):
+            chunk = relation_hashes[offset : offset + 900]
+            placeholders = ",".join(["?"] * len(chunk))
+            cursor = self._conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT j.relation_hash, j.subject, j.object,
+                       j.job_revision, j.status, j.lease_token,
+                       r.hash AS current_hash,
+                       r.subject AS current_subject, r.object AS current_object,
+                       r.is_inactive AS current_is_inactive,
+                       r.lifecycle_revision AS current_lifecycle_revision
+                FROM relation_graph_projection_jobs j
+                LEFT JOIN relations r ON r.hash = j.relation_hash
+                WHERE j.relation_hash IN ({placeholders})
+                """,
+                tuple(chunk),
+            )
+            for row in cursor.fetchall():
+                relation_hash = str(row["relation_hash"])
+                claim = claims[relation_hash]
+                if (
+                    str(row["status"] or "") != "running"
+                    or str(row["lease_token"] or "") != str(claim.get("lease_token", "") or "")
+                    or int(row["job_revision"] or 0) != int(claim.get("job_revision", 0) or 0)
+                ):
+                    continue
+                current_exists = row["current_hash"] is not None
+                authorized.append(
+                    {
+                        **dict(claim),
+                        "subject": (
+                            str(row["current_subject"] or "")
+                            if current_exists
+                            else str(row["subject"] or "")
+                        ),
+                        "object": (
+                            str(row["current_object"] or "")
+                            if current_exists
+                            else str(row["object"] or "")
+                        ),
+                        "authoritative_active": current_exists and not bool(row["current_is_inactive"]),
+                        "current_lifecycle_revision": (
+                            int(row["current_lifecycle_revision"] or 0)
+                            if current_exists
+                            else None
+                        ),
+                    }
+                )
+        return authorized
+
+    def complete_relation_graph_projection_jobs(
+        self,
+        jobs: Sequence[Dict[str, Any]],
+        *,
+        completed_at: Optional[float] = None,
+    ) -> int:
+        """图快照持久化后按租约、任务版本和当前权威态 CAS 完成。"""
+
+        finished_at = datetime.now().timestamp() if completed_at is None else float(completed_at)
+        completed = 0
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            for item in jobs:
+                relation_hash = str(item.get("relation_hash", "") or "").strip()
+                if not relation_hash:
+                    continue
+                row = cursor.execute(
+                    "SELECT is_inactive FROM relations WHERE hash = ?",
+                    (relation_hash,),
+                ).fetchone()
+                current_active = row is not None and not bool(row["is_inactive"])
+                applied_active = bool(item.get("authoritative_active"))
+                if current_active != applied_active:
+                    cursor.execute(
+                        """
+                        UPDATE relation_graph_projection_jobs
+                        SET status = 'pending', lease_token = NULL,
+                            lease_expires_at = NULL, updated_at = ?
+                        WHERE relation_hash = ? AND job_revision = ?
+                          AND status = 'running' AND lease_token = ?
+                        """,
+                        (
+                            finished_at,
+                            relation_hash,
+                            int(item.get("job_revision", 0) or 0),
+                            str(item.get("lease_token", "") or ""),
+                        ),
+                    )
+                    continue
+                cursor.execute(
+                    """
+                    DELETE FROM relation_graph_projection_jobs
+                    WHERE relation_hash = ? AND job_revision = ?
+                      AND status = 'running' AND lease_token = ?
+                    """,
+                    (
+                        relation_hash,
+                        int(item.get("job_revision", 0) or 0),
+                        str(item.get("lease_token", "") or ""),
+                    ),
+                )
+                completed += max(0, int(cursor.rowcount))
+        return completed
+
+    def fail_relation_graph_projection_jobs(
+        self,
+        jobs: Sequence[Dict[str, Any]],
+        *,
+        error: str,
+        failed_at: Optional[float] = None,
+    ) -> int:
+        """记录当前租约执行失败；更高版本任务不会被旧失败覆盖。"""
+
+        recorded_at = datetime.now().timestamp() if failed_at is None else float(failed_at)
+        message = str(error or "关系图投影失败")[:500]
+        failed = 0
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            for item in jobs:
+                cursor.execute(
+                    """
+                    UPDATE relation_graph_projection_jobs
+                    SET status = 'failed', lease_token = NULL,
+                        lease_expires_at = NULL, last_error = ?, updated_at = ?
+                    WHERE relation_hash = ? AND job_revision = ?
+                      AND status = 'running' AND lease_token = ?
+                    """,
+                    (
+                        message,
+                        recorded_at,
+                        str(item.get("relation_hash", "") or ""),
+                        int(item.get("job_revision", 0) or 0),
+                        str(item.get("lease_token", "") or ""),
+                    ),
+                )
+                failed += max(0, int(cursor.rowcount))
+        return failed
+
+    def reenqueue_authoritative_relation_graph_projection_jobs(
+        self,
+        jobs: Sequence[Dict[str, Any]],
+        *,
+        enqueued_at: Optional[float] = None,
+    ) -> int:
+        """CAS 未完成时按当前 metadata 状态重新建立 durable intent。"""
+
+        fallback_by_hash = {
+            str(item.get("relation_hash", "") or "").strip(): item
+            for item in jobs
+            if str(item.get("relation_hash", "") or "").strip()
+        }
+        if not fallback_by_hash:
+            return 0
+        timestamp = datetime.now().timestamp() if enqueued_at is None else float(enqueued_at)
+        enqueued = 0
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            for relation_hash, fallback in fallback_by_hash.items():
+                relation = cursor.execute(
+                    """
+                    SELECT subject, object, is_inactive, lifecycle_revision
+                    FROM relations
+                    WHERE hash = ?
+                    """,
+                    (relation_hash,),
+                ).fetchone()
+                if relation is None:
+                    subject = str(fallback.get("subject", "") or "").strip()
+                    obj = str(fallback.get("object", "") or "").strip()
+                    desired_active = 0
+                    lifecycle_revision = int(
+                        fallback.get("current_lifecycle_revision")
+                        or fallback.get("desired_lifecycle_revision")
+                        or 0
+                    )
+                else:
+                    subject = str(relation["subject"] or "").strip()
+                    obj = str(relation["object"] or "").strip()
+                    desired_active = 0 if bool(relation["is_inactive"]) else 1
+                    lifecycle_revision = int(relation["lifecycle_revision"] or 0)
+                if not subject or not obj:
+                    raise RuntimeError(f"关系图投影任务缺少端点: {relation_hash}")
+                cursor.execute(
+                    """
+                    INSERT INTO relation_graph_projection_jobs (
+                        relation_hash, subject, object, desired_active,
+                        desired_lifecycle_revision, job_revision, status,
+                        attempt_count, lease_token, lease_expires_at, last_error,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 1, 'pending', 0, NULL, NULL, NULL, ?, ?)
+                    ON CONFLICT(relation_hash) DO UPDATE SET
+                        subject = excluded.subject,
+                        object = excluded.object,
+                        desired_active = excluded.desired_active,
+                        desired_lifecycle_revision = excluded.desired_lifecycle_revision,
+                        job_revision = relation_graph_projection_jobs.job_revision + 1,
+                        status = 'pending',
+                        attempt_count = 0,
+                        lease_token = NULL,
+                        lease_expires_at = NULL,
+                        last_error = NULL,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        relation_hash,
+                        subject,
+                        obj,
+                        desired_active,
+                        lifecycle_revision,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                enqueued += 1
+        return enqueued
+
+    def _relation_lifecycle_state_from_row(self, row: sqlite3.Row) -> RelationLifecycleState:
+        anchor_at = row["retention_anchor_at"]
+        if anchor_at is None:
+            raise RuntimeError(f"关系缺少 retention_anchor_at: {row['hash']}")
+        return RelationLifecycleState(
+            strength=float(row["retention_strength"]),
+            anchor_at=float(anchor_at),
+            is_inactive=bool(row["is_inactive"]),
+            inactive_since=self._as_optional_float(row["inactive_since"]),
+            inactive_reason=str(row["inactive_reason"] or "").strip() or None,
+            last_access_reinforced_at=self._as_optional_float(row["last_access_reinforced_at"]),
+        )
+
+    def _observe_relation_evidence(
+        self,
+        hashes: List[str],
+        *,
+        observed_at: float,
+        cursor: sqlite3.Cursor,
+    ) -> None:
+        """新证据建立关联时重置关系生命周期；调用方负责事务边界。"""
+        normalized = list(dict.fromkeys(str(item or "").strip() for item in hashes if str(item or "").strip()))
+        if not normalized:
+            return
+        for index in range(0, len(normalized), 500):
+            chunk = normalized[index : index + 500]
+            placeholders = ",".join(["?"] * len(chunk))
+            cursor.execute(
+                f"""
+                UPDATE relations
+                SET retention_strength = 1.0,
+                    retention_anchor_at = MAX(
+                        COALESCE(retention_anchor_at, ?),
+                        COALESCE(inactive_since, ?),
+                        COALESCE(last_accessed, ?),
+                        COALESCE(last_reinforced, ?),
+                        COALESCE(last_access_reinforced_at, ?),
+                        ?
+                    ),
+                    next_lifecycle_at = MAX(
+                        COALESCE(retention_anchor_at, ?),
+                        COALESCE(inactive_since, ?),
+                        COALESCE(last_accessed, ?),
+                        COALESCE(last_reinforced, ?),
+                        COALESCE(last_access_reinforced_at, ?),
+                        ?
+                    ),
+                    reinforcement_count = COALESCE(reinforcement_count, 0) + 1,
+                    lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1,
+                    last_reinforced = MAX(
+                        COALESCE(retention_anchor_at, ?),
+                        COALESCE(inactive_since, ?),
+                        COALESCE(last_accessed, ?),
+                        COALESCE(last_reinforced, ?),
+                        COALESCE(last_access_reinforced_at, ?),
+                        ?
+                    ),
+                    is_inactive = 0,
+                    inactive_since = NULL,
+                    inactive_reason = NULL
+                WHERE hash IN ({placeholders})
+                """,
+                (*([float(observed_at)] * 18), *chunk),
+            )
+
+    def apply_relation_lifecycle_event(
+        self,
+        hashes: List[str],
+        *,
+        event: RelationLifecycleEvent,
+        policy: RelationLifecyclePolicy,
+        now: float,
+        strength: float = 1.0,
+    ) -> List[Dict[str, Any]]:
+        """在单个元数据事务内应用关系生命周期事件。"""
+        normalized = list(dict.fromkeys(str(item or "").strip() for item in hashes if str(item or "").strip()))
+        if not normalized:
+            return []
+
+        event_value = RelationLifecycleEvent(event)
+        placeholders = ",".join(["?"] * len(normalized))
+        transitions: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT hash, subject, object,
+                       retention_strength, retention_anchor_at, next_lifecycle_at,
+                       is_inactive, inactive_since, inactive_reason,
+                       last_accessed, last_reinforced, last_access_reinforced_at
+                FROM relations
+                WHERE hash IN ({placeholders})
+                ORDER BY hash ASC
+                """,
+                tuple(normalized),
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                previous = self._relation_lifecycle_state_from_row(row)
+                related_times = [float(now), float(previous.anchor_at)]
+                for field in (
+                    "inactive_since",
+                    "last_accessed",
+                    "last_reinforced",
+                    "last_access_reinforced_at",
+                ):
+                    if row[field] is not None:
+                        related_times.append(float(row[field]))
+                event_time = max(related_times)
+                decision = apply_lifecycle_event(
+                    previous,
+                    event_value,
+                    now=event_time,
+                    policy=policy,
+                    strength=float(strength),
+                )
+                access_increment = 1 if event_value is RelationLifecycleEvent.ACCESS else 0
+                reinforced_increment = (
+                    1
+                    if event_value in {RelationLifecycleEvent.EVIDENCE, RelationLifecycleEvent.REINFORCE}
+                    else 0
+                )
+                cursor.execute(
+                    """
+                    UPDATE relations
+                    SET retention_strength = ?,
+                        retention_anchor_at = ?,
+                        next_lifecycle_at = ?,
+                        is_inactive = ?,
+                        inactive_since = ?,
+                        inactive_reason = ?,
+                        last_accessed = CASE
+                            WHEN ? > 0 THEN MAX(COALESCE(last_accessed, ?), ?)
+                            ELSE last_accessed
+                        END,
+                        access_count = COALESCE(access_count, 0) + ?,
+                        last_access_reinforced_at = ?,
+                        last_reinforced = CASE
+                            WHEN ? > 0 THEN MAX(COALESCE(last_reinforced, ?), ?)
+                            ELSE last_reinforced
+                        END,
+                        reinforcement_count = COALESCE(reinforcement_count, 0) + ?,
+                        lifecycle_revision = COALESCE(lifecycle_revision, 0) + ?
+                    WHERE hash = ?
+                    """,
+                    (
+                        decision.strength,
+                        decision.anchor_at,
+                        decision.next_lifecycle_at,
+                        1 if decision.is_inactive else 0,
+                        decision.inactive_since,
+                        decision.inactive_reason,
+                        access_increment,
+                        event_time,
+                        event_time,
+                        access_increment,
+                        decision.last_access_reinforced_at,
+                        reinforced_increment,
+                        event_time,
+                        event_time,
+                        reinforced_increment,
+                        1 if decision.changed else 0,
+                        str(row["hash"]),
+                    ),
+                )
+                transitions.append(
+                    {
+                        "hash": str(row["hash"]),
+                        "subject": str(row["subject"] or ""),
+                        "object": str(row["object"] or ""),
+                        "was_inactive": previous.is_inactive,
+                        "is_inactive": decision.is_inactive,
+                        "inactive_reason": decision.inactive_reason,
+                        "retention_score": retention_at(
+                            RelationLifecycleState(
+                                strength=decision.strength,
+                                anchor_at=decision.anchor_at,
+                                is_inactive=decision.is_inactive,
+                                inactive_since=decision.inactive_since,
+                                inactive_reason=decision.inactive_reason,
+                                last_access_reinforced_at=decision.last_access_reinforced_at,
+                            ),
+                            now=event_time,
+                            policy=policy,
+                        ),
+                        "retention_anchor_at": decision.anchor_at,
+                        "next_lifecycle_at": decision.next_lifecycle_at,
+                        "lifecycle_changed": decision.changed,
+                    }
+                )
+        return transitions
+
+    def evaluate_due_relation_lifecycles(
+        self,
+        *,
+        policy: RelationLifecyclePolicy,
+        now: float,
+        limit: int = 1000,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """计算到期活跃关系并物化冻结状态或下一到期时间。"""
+        frozen: List[Dict[str, Any]] = []
+        scheduled: List[Dict[str, Any]] = []
+        with self.transaction(immediate=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT hash, subject, object,
+                       retention_strength, retention_anchor_at, next_lifecycle_at,
+                       is_inactive, inactive_since, inactive_reason, last_access_reinforced_at
+                FROM relations
+                WHERE is_inactive = 0
+                  AND is_permanent = 0
+                  AND is_pinned = 0
+                  AND COALESCE(protected_until, 0.0) <= ?
+                  AND next_lifecycle_at <= ?
+                ORDER BY next_lifecycle_at ASC, hash ASC
+                LIMIT ?
+                """,
+                (float(now), float(now), max(1, int(limit))),
+            )
+            for row in cursor.fetchall():
+                state = self._relation_lifecycle_state_from_row(row)
+                decision = evaluate_lifecycle(state, now=float(now), policy=policy)
+                cursor.execute(
+                    """
+                    UPDATE relations
+                    SET next_lifecycle_at = ?,
+                        is_inactive = ?,
+                        inactive_since = ?,
+                        inactive_reason = ?,
+                        lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1
+                    WHERE hash = ?
+                    """,
+                    (
+                        decision.next_lifecycle_at,
+                        1 if decision.is_inactive else 0,
+                        decision.inactive_since,
+                        decision.inactive_reason,
+                        str(row["hash"]),
+                    ),
+                )
+                payload = {
+                    "hash": str(row["hash"]),
+                    "subject": str(row["subject"] or ""),
+                    "object": str(row["object"] or ""),
+                    "retention_score": retention_at(state, now=float(now), policy=policy),
+                    "next_lifecycle_at": decision.next_lifecycle_at,
+                }
+                if decision.is_inactive:
+                    frozen.append(payload)
+                else:
+                    scheduled.append(payload)
+        return {"frozen": frozen, "scheduled": scheduled}
+
+    def get_decay_prune_candidate_rows(
+        self,
+        *,
+        cutoff_time: float,
+        now: float,
+        policy: RelationLifecyclePolicy,
+        limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """返回冻结期已过且当前仍低于阈值的自动衰减关系。"""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT hash, subject, object,
+                   retention_strength, retention_anchor_at, next_lifecycle_at,
+                   lifecycle_revision, is_inactive, inactive_since, inactive_reason,
+                   is_permanent, is_pinned, protected_until, last_access_reinforced_at
+            FROM relations
+            WHERE is_inactive = 1
+              AND inactive_reason = 'decay'
+              AND inactive_since < ?
+              AND is_permanent = 0
+              AND is_pinned = 0
+              AND COALESCE(protected_until, 0.0) <= ?
+            ORDER BY inactive_since ASC, hash ASC
+            LIMIT ?
+            """,
+            (float(cutoff_time), float(now), max(1, int(limit))),
+        )
+        candidates: List[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            state = self._relation_lifecycle_state_from_row(row)
+            score = retention_at(state, now=float(now), policy=policy)
+            if score > policy.freeze_threshold:
+                continue
+            candidates.append(
+                {
+                    "hash": str(row["hash"]),
+                    "subject": str(row["subject"] or ""),
+                    "object": str(row["object"] or ""),
+                    "retention_score": score,
+                    "expected_lifecycle_revision": int(row["lifecycle_revision"] or 0),
+                    "expected_retention_strength": float(row["retention_strength"]),
+                    "expected_retention_anchor_at": float(row["retention_anchor_at"]),
+                    "expected_inactive_since": self._as_optional_float(row["inactive_since"]),
+                    "expected_inactive_reason": str(row["inactive_reason"] or ""),
+                    "expected_is_inactive": bool(row["is_inactive"]),
+                    "expected_is_permanent": bool(row["is_permanent"]),
+                    "expected_is_pinned": bool(row["is_pinned"]),
+                    "expected_protected_until": self._as_optional_float(row["protected_until"]),
+                }
+            )
+        return candidates
 
     # =========================================================================
     # V5 记忆系统方法
@@ -2949,7 +3559,7 @@ class MetadataStore(
 
         Returns:
             Dict[hash, status_dict]
-            status_dict 包含: is_inactive, weight(confidence), is_pinned, protected_until, last_reinforced, inactive_since
+            status_dict 分开返回证据置信度、生命周期保留状态和保护状态。
         """
         if not hashes:
             return {}
@@ -2958,7 +3568,9 @@ class MetadataStore(
         cursor = self._conn.cursor()
         cursor.execute(
             f"""
-            SELECT hash, is_inactive, confidence, is_pinned, protected_until, last_reinforced, inactive_since
+            SELECT hash, is_inactive, confidence, is_pinned, protected_until, last_reinforced, inactive_since,
+                   retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count,
+                   lifecycle_revision, inactive_reason, last_access_reinforced_at
             FROM relations
             WHERE hash IN ({placeholders})
         """,
@@ -2969,49 +3581,41 @@ class MetadataStore(
         for row in cursor.fetchall():
             result[row["hash"]] = {
                 "is_inactive": bool(row["is_inactive"]),
-                "weight": row["confidence"],
+                "confidence": row["confidence"],
                 "is_pinned": bool(row["is_pinned"]),
                 "protected_until": row["protected_until"],
                 "last_reinforced": row["last_reinforced"],
                 "inactive_since": row["inactive_since"],
+                "retention_strength": row["retention_strength"],
+                "retention_anchor_at": row["retention_anchor_at"],
+                "next_lifecycle_at": row["next_lifecycle_at"],
+                "reinforcement_count": int(row["reinforcement_count"] or 0),
+                "lifecycle_revision": int(row["lifecycle_revision"] or 0),
+                "inactive_reason": str(row["inactive_reason"] or ""),
+                "last_access_reinforced_at": row["last_access_reinforced_at"],
             }
         return result
 
-    def mark_relations_active(self, hashes: List[str], boost_weight: Optional[float] = None) -> None:
-        """
-        批量标记关系为活跃 (Active/Revive)
-
-        Args:
-            hashes: 关系哈希列表
-            boost_weight: 如果提供，将设置 confidence = max(confidence, boost_weight)
-        """
+    def mark_relations_active(self, hashes: List[str]) -> None:
+        """批量恢复关系活跃状态，不改变证据置信度。"""
         if not hashes:
             return
 
         placeholders = ",".join(["?"] * len(hashes))
         cursor = self._conn.cursor()
-
-        if boost_weight is not None:
-            cursor.execute(
-                f"""
-                UPDATE relations
-                SET is_inactive = 0,
-                    inactive_since = NULL,
-                    confidence = MAX(confidence, ?)
-                WHERE hash IN ({placeholders})
+        cursor.execute(
+            f"""
+            UPDATE relations
+            SET is_inactive = 0,
+                inactive_since = NULL,
+                inactive_reason = NULL,
+                next_lifecycle_at = retention_anchor_at,
+                lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1
+            WHERE hash IN ({placeholders})
+              AND (is_inactive = 1 OR inactive_since IS NOT NULL OR inactive_reason IS NOT NULL)
             """,
-                (boost_weight, *hashes),
-            )
-        else:
-            cursor.execute(
-                f"""
-                UPDATE relations
-                SET is_inactive = 0,
-                    inactive_since = NULL
-                WHERE hash IN ({placeholders})
-            """,
-                hashes,
-            )
+            hashes,
+        )
 
         self._conn.commit()
 
@@ -3028,26 +3632,47 @@ class MetadataStore(
         if not hashes:
             return
 
-        updates = []
-        params = []
+        updates: List[str] = []
+        params: List[Any] = []
+        changed_conditions: List[str] = []
+        changed_params: List[Any] = []
 
         if protected_until is not None:
             updates.append("protected_until = ?")
             params.append(protected_until)
+            changed_conditions.append("protected_until IS NOT ?")
+            changed_params.append(protected_until)
         if is_pinned is not None:
             updates.append("is_pinned = ?")
-            params.append(1 if is_pinned else 0)
+            pinned_value = 1 if is_pinned else 0
+            params.append(pinned_value)
+            updates.append(
+                "next_lifecycle_at = CASE "
+                "WHEN ? = 1 THEN NULL "
+                "ELSE COALESCE(next_lifecycle_at, retention_anchor_at) END"
+            )
+            params.append(pinned_value)
+            changed_conditions.append("is_pinned IS NOT ?")
+            changed_params.append(pinned_value)
+            changed_conditions.append("(? = 1 AND next_lifecycle_at IS NOT NULL)")
+            changed_params.append(pinned_value)
+            changed_conditions.append("(? = 0 AND next_lifecycle_at IS NULL)")
+            changed_params.append(pinned_value)
         if last_reinforced is not None:
             updates.append("last_reinforced = ?")
             params.append(last_reinforced)
+            changed_conditions.append("last_reinforced IS NOT ?")
+            changed_params.append(last_reinforced)
 
         if not updates:
             return
 
+        updates.append("lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1")
         sql_set = ", ".join(updates)
         placeholders = ",".join(["?"] * len(hashes))
 
         params.extend(hashes)
+        params.extend(changed_params)
 
         cursor = self._conn.cursor()
         cursor.execute(
@@ -3055,6 +3680,7 @@ class MetadataStore(
             UPDATE relations
             SET {sql_set}
             WHERE hash IN ({placeholders})
+              AND ({" OR ".join(changed_conditions)})
         """,
             params,
         )
@@ -3102,12 +3728,18 @@ class MetadataStore(
                 (hash, subject, predicate, object, vector_index, confidence, created_at,
                  vector_state, vector_updated_at, vector_error, vector_retry_count,
                  source_paragraph, metadata, is_permanent, last_accessed, access_count,
-                 is_inactive, inactive_since, is_pinned, protected_until, last_reinforced, deleted_at)
+                 last_access_reinforced_at,
+                 is_inactive, inactive_since, is_pinned, protected_until, last_reinforced,
+                 retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count, lifecycle_revision,
+                 inactive_reason, deleted_at)
                 SELECT
                  hash, subject, predicate, object, vector_index, confidence, created_at,
                  vector_state, vector_updated_at, vector_error, vector_retry_count,
                  source_paragraph, metadata, is_permanent, last_accessed, access_count,
-                 is_inactive, inactive_since, is_pinned, protected_until, last_reinforced, ?
+                 last_access_reinforced_at,
+                 is_inactive, inactive_since, is_pinned, protected_until, last_reinforced,
+                 retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count, lifecycle_revision,
+                 inactive_reason, ?
                 FROM relations
                 WHERE hash IN ({placeholders})
             """,
@@ -3132,6 +3764,52 @@ class MetadataStore(
             self._conn.rollback()
             return 0
 
+    @staticmethod
+    def _restore_relation_metadata_in_transaction(
+        cursor: sqlite3.Cursor,
+        hash_value: str,
+    ) -> bool:
+        """在现有写事务中恢复墓碑，并为恢复结果分配新生命周期世代。"""
+
+        row = cursor.execute(
+            "SELECT * FROM deleted_relations WHERE hash = ?",
+            (hash_value,),
+        ).fetchone()
+        if row is None:
+            return False
+
+        data = dict(row)
+        data.pop("deleted_at", None)
+        current_row = cursor.execute(
+            "SELECT lifecycle_revision FROM relations WHERE hash = ?",
+            (hash_value,),
+        ).fetchone()
+        current_revision = (
+            int(current_row["lifecycle_revision"] or 0)
+            if current_row is not None
+            else -1
+        )
+        tombstone_revision = int(data.get("lifecycle_revision", 0) or 0)
+        # 墓碑复活必须进入新世代，不能让删除前的 expected_revision 再次命中。
+        data["lifecycle_revision"] = max(current_revision, tombstone_revision) + 1
+
+        columns = list(data)
+        placeholders = ",".join(["?"] * len(columns))
+        update_columns = [column for column in columns if column != "hash"]
+        update_sql = ", ".join(
+            f"{column} = excluded.{column}" for column in update_columns
+        )
+        cursor.execute(
+            f"""
+            INSERT INTO relations ({",".join(columns)})
+            VALUES ({placeholders})
+            ON CONFLICT(hash) DO UPDATE SET {update_sql}
+            """,
+            [data[column] for column in columns],
+        )
+        cursor.execute("DELETE FROM deleted_relations WHERE hash = ?", (hash_value,))
+        return True
+
     def restore_relation_metadata(self, hash_value: str) -> Optional[Dict[str, Any]]:
         """
         从回收站恢复关系元数据
@@ -3139,47 +3817,15 @@ class MetadataStore(
         Returns:
             恢复后的关系数据 (字典)，失败返回 None
         """
-        cursor = self._conn.cursor()
         try:
-            # 1. 查询备份数据
-            cursor.execute("SELECT * FROM deleted_relations WHERE hash = ?", (hash_value,))
-            row = cursor.fetchone()
-            if not row:
-                return None
-
-            data = dict(row)
-            # 移除 deleted_at 字段
-            if "deleted_at" in data:
-                del data["deleted_at"]
-
-            # 2. 插入回 relations 表
-            # 动态构建 SQL 以适应字段变化
-            columns = list(data.keys())
-            placeholders = ",".join(["?"] * len(columns))
-            cols_str = ",".join(columns)
-            values = list(data.values())
-
-            update_columns = [column for column in columns if column != "hash"]
-            update_sql = ", ".join(f"{column} = excluded.{column}" for column in update_columns)
-            cursor.execute(
-                f"""
-                INSERT INTO relations ({cols_str})
-                VALUES ({placeholders})
-                ON CONFLICT(hash) DO UPDATE SET {update_sql}
-                """,
-                values,
-            )
-
-            # 3. 从备份表删除
-            cursor.execute("DELETE FROM deleted_relations WHERE hash = ?", (hash_value,))
-
-            self._conn.commit()
-            restored = self.get_relation(hash_value)
-            return restored
-
+            with self.transaction(immediate=True) as connection:
+                restored = self._restore_relation_metadata_in_transaction(
+                    connection.cursor(),
+                    hash_value,
+                )
+            return self.get_relation(hash_value) if restored else None
         except Exception as e:
             logger.error(f"恢复关系失败: {hash_value} - {e}")
-            self._conn.rollback()
             return None
 
     def restore_relation(self, hash_value: str) -> Optional[Dict[str, Any]]:
@@ -3195,35 +3841,62 @@ class MetadataStore(
         if not token or not isinstance(snapshot, dict):
             return None
 
-        current = self.get_relation_status_batch([token]).get(token)
-        if current is None:
-            restored = self.restore_relation(token)
-            if restored is None:
-                return None
+        with self.transaction(immediate=True) as connection:
+            cursor = connection.cursor()
+            current = cursor.execute(
+                "SELECT lifecycle_revision FROM relations WHERE hash = ?",
+                (token,),
+            ).fetchone()
+            if current is None:
+                restored = self._restore_relation_metadata_in_transaction(cursor, token)
+                if not restored:
+                    return None
+                current = cursor.execute(
+                    "SELECT lifecycle_revision FROM relations WHERE hash = ?",
+                    (token,),
+                ).fetchone()
+            if current is None:
+                raise RuntimeError(f"关系状态恢复后仍不存在: {token}")
+            next_revision = max(
+                int(current["lifecycle_revision"] or 0),
+                int(snapshot.get("lifecycle_revision", 0) or 0),
+            ) + 1
 
-        cursor = self._conn.cursor()
-        cursor.execute(
-            """
-            UPDATE relations
-            SET is_inactive = ?,
-                confidence = ?,
-                is_pinned = ?,
-                protected_until = ?,
-                last_reinforced = ?,
-                inactive_since = ?
-            WHERE hash = ?
-            """,
-            (
-                1 if bool(snapshot.get("is_inactive")) else 0,
-                float(snapshot.get("weight", 0.0) or 0.0),
-                1 if bool(snapshot.get("is_pinned")) else 0,
-                self._as_optional_float(snapshot.get("protected_until")),
-                self._as_optional_float(snapshot.get("last_reinforced")),
-                self._as_optional_float(snapshot.get("inactive_since")),
-                token,
-            ),
-        )
-        self._conn.commit()
+            cursor.execute(
+                """
+                UPDATE relations
+                SET is_inactive = ?,
+                    confidence = ?,
+                    is_pinned = ?,
+                    protected_until = ?,
+                    last_reinforced = ?,
+                    inactive_since = ?,
+                    last_access_reinforced_at = ?,
+                    retention_strength = ?,
+                    retention_anchor_at = ?,
+                    next_lifecycle_at = ?,
+                    reinforcement_count = ?,
+                    lifecycle_revision = ?,
+                    inactive_reason = ?
+                WHERE hash = ?
+                """,
+                (
+                    1 if bool(snapshot.get("is_inactive")) else 0,
+                    float(snapshot.get("confidence", 0.0) or 0.0),
+                    1 if bool(snapshot.get("is_pinned")) else 0,
+                    self._as_optional_float(snapshot.get("protected_until")),
+                    self._as_optional_float(snapshot.get("last_reinforced")),
+                    self._as_optional_float(snapshot.get("inactive_since")),
+                    self._as_optional_float(snapshot.get("last_access_reinforced_at")),
+                    float(snapshot["retention_strength"]),
+                    float(snapshot["retention_anchor_at"]),
+                    self._as_optional_float(snapshot.get("next_lifecycle_at")),
+                    int(snapshot["reinforcement_count"]),
+                    next_revision,
+                    str(snapshot.get("inactive_reason", "") or "").strip() or None,
+                    token,
+                ),
+            )
         return self.get_relation_status_batch([token]).get(token)
 
     def get_protected_relations_hashes(self) -> List[str]:
@@ -3273,29 +3946,31 @@ class MetadataStore(
                 d["metadata"] = {}
         return d
 
-    def reinforce_relations(self, hashes: List[str]) -> None:
-        """强化关系 (更新 last_reinforced, is_inactive=0)"""
-        if not hashes:
-            return
-        now = datetime.now().timestamp()
+    def reinforce_relations(
+        self,
+        hashes: List[str],
+        *,
+        policy: RelationLifecyclePolicy,
+        now: float,
+        strength: float = 1.0,
+    ) -> List[Dict[str, Any]]:
+        """按关系生命周期策略执行显式强化。"""
+        return self.apply_relation_lifecycle_event(
+            hashes,
+            event=RelationLifecycleEvent.REINFORCE,
+            policy=policy,
+            now=now,
+            strength=strength,
+        )
 
-        cursor = self._conn.cursor()
-        # 批量更新，数据量增大时可进一步分块。
-        chunk_size = 500
-        for i in range(0, len(hashes), chunk_size):
-            chunk = hashes[i : i + chunk_size]
-            placeholders = ",".join(["?"] * len(chunk))
-            sql = f"""
-                UPDATE relations
-                SET last_reinforced = ?, is_inactive = 0, inactive_since = NULL
-                WHERE hash IN ({placeholders})
-            """
-            cursor.execute(sql, [now] + chunk)
-
-        self._conn.commit()
-
-    def mark_relations_inactive(self, hashes: List[str], inactive_since: Optional[float] = None) -> None:
-        """标记关系为非活跃 (Freeze)。兼容显式 inactive_since 或默认当前时间。"""
+    def mark_relations_inactive(
+        self,
+        hashes: List[str],
+        inactive_since: Optional[float] = None,
+        *,
+        reason: str = "correction",
+    ) -> None:
+        """标记纠错链路淘汰的关系为非活跃。"""
         if not hashes:
             return
         mark_time = inactive_since if inactive_since is not None else datetime.now().timestamp()
@@ -3307,10 +3982,27 @@ class MetadataStore(
             placeholders = ",".join(["?"] * len(chunk))
             sql = f"""
                 UPDATE relations
-                SET is_inactive = 1, inactive_since = ?
+                SET is_inactive = 1,
+                    inactive_since = CASE
+                        WHEN is_inactive = 1 THEN inactive_since
+                        ELSE MAX(
+                            COALESCE(retention_anchor_at, ?),
+                            COALESCE(last_accessed, ?),
+                            COALESCE(last_reinforced, ?),
+                            COALESCE(last_access_reinforced_at, ?),
+                            ?
+                        )
+                    END,
+                    inactive_reason = ?,
+                    next_lifecycle_at = NULL,
+                    lifecycle_revision = COALESCE(lifecycle_revision, 0) + 1
                 WHERE hash IN ({placeholders})
+                  AND (is_inactive = 0 OR inactive_reason IS NOT ?)
             """
-            cursor.execute(sql, [mark_time] + chunk)
+            cursor.execute(
+                sql,
+                [*([float(mark_time)] * 5), str(reason), *chunk, str(reason)],
+            )
 
         self._conn.commit()
 
@@ -3322,29 +4014,11 @@ class MetadataStore(
             return
         now = datetime.now().timestamp()
         protected_until = (now + ttl_seconds) if ttl_seconds > 0 else 0
-
-        cursor = self._conn.cursor()
-        chunk_size = 500
-        for i in range(0, len(hashes), chunk_size):
-            chunk = hashes[i : i + chunk_size]
-            placeholders = ",".join(["?"] * len(chunk))
-
-            # 由于 is_pinned 和 protected_until 是分开的，如果请求固定（pin），我们会同时更新这两项，
-            # 但通常用户要么切换固定状态，要么设置 TTL。
-            # 如果 is_pinned=True，TTL 通常就不重要了。
-            # 但目前的逻辑是正交处理它们的。
-
-            # 如果用户取消固定 (is_pinned=False)，我们是否应该尊重已设置的 TTL？
-            # 当前的 API 会同时设置这两项。
-
-            sql = f"""
-                UPDATE relations
-                SET is_pinned = ?, protected_until = ?
-                WHERE hash IN ({placeholders})
-            """
-            cursor.execute(sql, [is_pinned, protected_until] + chunk)
-
-        self._conn.commit()
+        self.update_relations_protection(
+            hashes,
+            protected_until=protected_until,
+            is_pinned=is_pinned,
+        )
 
     def vacuum(self) -> None:
         """优化数据库"""
@@ -3485,39 +4159,7 @@ class MetadataStore(
 
         return candidates
 
-    def get_paragraph_gc_candidates(self, retention_seconds: float) -> List[str]:
-        """
-        获取段落 GC 候选列表
-        条件:
-        1. is_deleted = 0
-        2. created_at < cutoff
-        3. 没有 Relations (paragraph_relations empty)
-        4. 没有 Entities 引用 (paragraph_entities empty)
-           OR 引用的 Entities 全是软删状态? (太复杂，简单点: 无引用)
-
-        Refined Strategy:
-        段落孤儿判定 =
-          (Left Join paragraph_relations -> NULL) AND
-          (Left Join paragraph_entities -> NULL)
-        """
-        now = datetime.now().timestamp()
-        cutoff = now - retention_seconds
-
-        query = """
-            SELECT p.hash FROM paragraphs p
-            LEFT JOIN paragraph_relations pr ON p.hash = pr.paragraph_hash
-            LEFT JOIN paragraph_entities pe ON p.hash = pe.paragraph_hash
-            WHERE p.is_deleted = 0
-            AND (p.created_at IS NULL OR p.created_at < ?)
-            AND pr.relation_hash IS NULL
-            AND pe.entity_hash IS NULL
-        """
-
-        cursor = self._conn.cursor()
-        cursor.execute(query, (cutoff,))
-        return [row[0] for row in cursor.fetchall()]
-
-    def mark_as_deleted(self, hashes: List[str], type_: str) -> int:
+    def mark_as_deleted(self, hashes: List[str], type_: str, *, reason: str = "") -> int:
         """
         标记为软删除 (Mark Phase)
 
@@ -3529,43 +4171,56 @@ class MetadataStore(
             return 0
 
         table = "entities" if type_ == "entity" else "paragraphs"
-        now = datetime.now().timestamp()
-        touched_sources: List[str] = []
-        if type_ == "paragraph":
-            touched_sources = self._get_sources_for_paragraph_hashes(hashes, include_deleted=True)
-
+        reason_token = str(reason or "").strip()
+        if type_ == "paragraph" and not reason_token:
+            raise ValueError("软删除段落必须提供明确的 reason")
         count = 0
-        batch_size = 900
-        for i in range(0, len(hashes), batch_size):
-            batch = hashes[i : i + batch_size]
-            placeholders = ",".join(["?"] * len(batch))
+        with self.transaction(immediate=True):
+            now = datetime.now().timestamp()
+            touched_sources: List[str] = []
+            if type_ == "paragraph":
+                touched_sources = self._get_sources_for_paragraph_hashes(hashes, include_deleted=True)
 
-            # 幂等更新: 只更那些 is_deleted=0 的
-            cursor = self._conn.cursor()
-            cursor.execute(
-                f"""
-                UPDATE {table}
-                SET is_deleted = 1, deleted_at = ?
-                WHERE is_deleted = 0 AND hash IN ({placeholders})
-            """,
-                [now] + batch,
-            )
-            changed = cursor.rowcount
-            count += changed
-            if type_ == "paragraph" and changed > 0:
-                self._delete_paragraph_ngrams_if_ready(
-                    batch,
-                    count_delta=-changed,
+            batch_size = 900
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i : i + batch_size]
+                placeholders = ",".join(["?"] * len(batch))
+
+                # 幂等更新: 只更那些 is_deleted=0 的
+                cursor = self._conn.cursor()
+                if type_ == "paragraph":
+                    cursor.execute(
+                        f"""
+                        UPDATE paragraphs
+                        SET is_deleted = 1, deleted_at = ?, deletion_reason = ?
+                        WHERE is_deleted = 0 AND hash IN ({placeholders})
+                        """,
+                        [now, reason_token] + batch,
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        UPDATE {table}
+                        SET is_deleted = 1, deleted_at = ?
+                        WHERE is_deleted = 0 AND hash IN ({placeholders})
+                        """,
+                        [now] + batch,
+                    )
+                changed = cursor.rowcount
+                count += changed
+                if type_ == "paragraph" and changed > 0:
+                    self._delete_paragraph_ngrams_if_ready(
+                        batch,
+                        count_delta=-changed,
+                    )
+                    for paragraph_hash in batch:
+                        self.fts_delete_tokenized_paragraph(str(paragraph_hash))
+
+            if type_ == "paragraph" and count > 0 and touched_sources:
+                self._enqueue_episode_source_rebuilds(
+                    touched_sources,
+                    reason="paragraph_soft_deleted",
                 )
-                for paragraph_hash in batch:
-                    self.fts_delete_tokenized_paragraph(str(paragraph_hash))
-
-        self._conn.commit()
-        if type_ == "paragraph" and count > 0:
-            self._enqueue_episode_source_rebuilds(
-                touched_sources,
-                reason="paragraph_soft_deleted",
-            )
         if count > 0:
             logger.info(f"软删除标记 ({table}): {count} 项")
         return count
@@ -3605,64 +4260,84 @@ class MetadataStore(
             return 0
 
         count = 0
-        batch_size = 900
-        for i in range(0, len(hashes), batch_size):
-            batch = hashes[i : i + batch_size]
-            placeholders = ",".join(["?"] * len(batch))
+        with self.transaction(immediate=True):
+            touched_sources: List[str] = []
+            batch_size = 900
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i : i + batch_size]
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = self._conn.cursor()
+                cursor.execute(
+                    f"""
+                    SELECT DISTINCT p.source
+                    FROM paragraph_entities pe
+                    JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                    WHERE pe.entity_hash IN ({placeholders})
+                      AND p.source IS NOT NULL AND TRIM(p.source) != ''
+                      AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+                    """,
+                    batch,
+                )
+                touched_sources.extend(str(row["source"] or "").strip() for row in cursor.fetchall())
+                cursor.execute(f"DELETE FROM entities WHERE hash IN ({placeholders})", batch)
+                count += cursor.rowcount
 
-            cursor = self._conn.cursor()
-            cursor.execute(f"DELETE FROM entities WHERE hash IN ({placeholders})", batch)
-            count += cursor.rowcount
-
-        self._conn.commit()
+            if count > 0 and touched_sources:
+                self._enqueue_episode_source_rebuilds(
+                    touched_sources,
+                    reason="entity_physically_deleted",
+                )
         return count
 
     def physically_delete_paragraphs(self, hashes: List[str]) -> int:
         """物理删除段落 (批量)"""
         if not hashes:
             return 0
-        touched_sources = self._get_sources_for_paragraph_hashes(hashes, include_deleted=True)
-        active_delete_count = 0
-        batch_size = 900
-        for i in range(0, len(hashes), batch_size):
-            batch = hashes[i : i + batch_size]
-            placeholders = ",".join(["?"] * len(batch))
-            cursor = self._conn.cursor()
-            cursor.execute(
-                f"""
-                SELECT hash
-                FROM paragraphs
-                WHERE (is_deleted IS NULL OR is_deleted = 0)
-                  AND hash IN ({placeholders})
-            """,
-                batch,
-            )
-            active_batch = [str(row["hash"]) for row in cursor.fetchall()]
-            active_delete_count += len(active_batch)
-        self._delete_paragraph_ngrams_if_ready(
-            hashes,
-            count_delta=-active_delete_count,
-        )
-        for paragraph_hash in hashes:
-            self.fts_delete_tokenized_paragraph(str(paragraph_hash))
-
         count = 0
-        for i in range(0, len(hashes), batch_size):
-            batch = hashes[i : i + batch_size]
-            placeholders = ",".join(["?"] * len(batch))
-
-            cursor = self._conn.cursor()
-            cursor.execute(f"DELETE FROM paragraphs WHERE hash IN ({placeholders})", batch)
-            count += cursor.rowcount
-        if count > 0:
-            self._refresh_paragraph_tokenized_fts_meta(self._conn)
-
-        self._conn.commit()
-        if count > 0:
-            self._enqueue_episode_source_rebuilds(
-                touched_sources,
+        with self.transaction(immediate=True):
+            touched_sources = self._get_sources_for_paragraph_hashes(hashes, include_deleted=True)
+            self.detach_fact_evidence_for_paragraphs(
+                hashes,
                 reason="paragraph_physically_deleted",
+                conn=self._conn,
             )
+            active_delete_count = 0
+            batch_size = 900
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i : i + batch_size]
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = self._conn.cursor()
+                cursor.execute(
+                    f"""
+                    SELECT hash
+                    FROM paragraphs
+                    WHERE (is_deleted IS NULL OR is_deleted = 0)
+                      AND hash IN ({placeholders})
+                    """,
+                    batch,
+                )
+                active_delete_count += len(cursor.fetchall())
+            self._delete_paragraph_ngrams_if_ready(
+                hashes,
+                count_delta=-active_delete_count,
+            )
+            for paragraph_hash in hashes:
+                self.fts_delete_tokenized_paragraph(str(paragraph_hash))
+
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i : i + batch_size]
+                placeholders = ",".join(["?"] * len(batch))
+                cursor = self._conn.cursor()
+                cursor.execute(f"DELETE FROM paragraphs WHERE hash IN ({placeholders})", batch)
+                count += cursor.rowcount
+            if count > 0:
+                self._refresh_paragraph_tokenized_fts_meta(self._conn)
+
+            if count > 0 and touched_sources:
+                self._enqueue_episode_source_rebuilds(
+                    touched_sources,
+                    reason="paragraph_physically_deleted",
+                )
         return count
 
     def revive_if_deleted(self, entity_hashes: List[str] = None, paragraph_hashes: List[str] = None) -> int:
@@ -3671,69 +4346,65 @@ class MetadataStore(
         当数据被再次访问、引用或导入时调用。
         """
         count = 0
+        with self.transaction(immediate=True):
+            if entity_hashes:
+                batch_size = 900
+                for i in range(0, len(entity_hashes), batch_size):
+                    batch = entity_hashes[i : i + batch_size]
+                    placeholders = ",".join(["?"] * len(batch))
+                    cursor = self._conn.cursor()
+                    cursor.execute(
+                        f"""
+                        UPDATE entities
+                        SET is_deleted = 0, deleted_at = NULL
+                        WHERE is_deleted = 1 AND hash IN ({placeholders})
+                        """,
+                        batch,
+                    )
+                    count += cursor.rowcount
 
-        if entity_hashes:
-            batch_size = 900
-            for i in range(0, len(entity_hashes), batch_size):
-                batch = entity_hashes[i : i + batch_size]
-                placeholders = ",".join(["?"] * len(batch))
-
-                cursor = self._conn.cursor()
-                cursor.execute(
-                    f"""
-                    UPDATE entities
-                    SET is_deleted = 0, deleted_at = NULL
-                    WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """,
-                    batch,
-                )
-                count += cursor.rowcount
-
-        if paragraph_hashes:
-            touched_sources = self._get_sources_for_paragraph_hashes(paragraph_hashes, include_deleted=True)
-            batch_size = 900
-            for i in range(0, len(paragraph_hashes), batch_size):
-                batch = paragraph_hashes[i : i + batch_size]
-                placeholders = ",".join(["?"] * len(batch))
-
-                cursor = self._conn.cursor()
-                cursor.execute(
-                    f"""
-                    SELECT hash, content
-                    FROM paragraphs
-                    WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """,
-                    batch,
-                )
-                revive_rows = cursor.fetchall()
-                cursor.execute(
-                    f"""
-                    UPDATE paragraphs
-                    SET is_deleted = 0, deleted_at = NULL
-                    WHERE is_deleted = 1 AND hash IN ({placeholders})
-                """,
-                    batch,
-                )
-                changed = cursor.rowcount
-                count += changed
-                if changed > 0:
-                    for row in revive_rows:
-                        self._upsert_paragraph_ngram_if_ready(
-                            str(row["hash"]),
-                            str(row["content"] or ""),
-                            count_delta=1,
-                        )
-                        self.fts_upsert_tokenized_paragraph(str(row["hash"]))
-        else:
-            touched_sources = []
+            if paragraph_hashes:
+                touched_sources = self._get_sources_for_paragraph_hashes(paragraph_hashes, include_deleted=True)
+                batch_size = 900
+                for i in range(0, len(paragraph_hashes), batch_size):
+                    batch = paragraph_hashes[i : i + batch_size]
+                    placeholders = ",".join(["?"] * len(batch))
+                    cursor = self._conn.cursor()
+                    cursor.execute(
+                        f"""
+                        SELECT hash, content
+                        FROM paragraphs
+                        WHERE is_deleted = 1 AND hash IN ({placeholders})
+                        """,
+                        batch,
+                    )
+                    revive_rows = cursor.fetchall()
+                    cursor.execute(
+                        f"""
+                        UPDATE paragraphs
+                        SET is_deleted = 0, deleted_at = NULL,
+                            expires_at = NULL, deletion_reason = NULL
+                        WHERE is_deleted = 1 AND hash IN ({placeholders})
+                        """,
+                        batch,
+                    )
+                    changed = cursor.rowcount
+                    count += changed
+                    if changed > 0:
+                        for row in revive_rows:
+                            self._upsert_paragraph_ngram_if_ready(
+                                str(row["hash"]),
+                                str(row["content"] or ""),
+                                count_delta=1,
+                            )
+                            self.fts_upsert_tokenized_paragraph(str(row["hash"]))
+                if touched_sources:
+                    self._enqueue_episode_source_rebuilds(
+                        touched_sources,
+                        reason="paragraph_revived",
+                    )
 
         if count > 0:
-            self._conn.commit()
-            if touched_sources:
-                self._enqueue_episode_source_rebuilds(
-                    touched_sources,
-                    reason="paragraph_revived",
-                )
             logger.info(f"自动复活: {count} 项 (Soft Delete Revived)")
 
         return count

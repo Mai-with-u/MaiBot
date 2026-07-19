@@ -131,6 +131,11 @@ class GraphStore:
 
         # 状态管理
         self._modification_mode = GraphModificationMode.BATCH
+        self._batch_update_depth = 0
+        self._batch_graph_changed = False
+        self._batch_nodes_changed = False
+        self._graph_revision = 0
+        self._node_revision = 0
 
         # 状态管理
         self._adjacency_T: Optional[Union[csr_matrix, csc_matrix]] = None
@@ -270,6 +275,25 @@ class GraphStore:
             return ""
         return str(node).strip().lower()
 
+    def _record_graph_change(self, *, nodes_changed: bool = False) -> None:
+        """记录运行期图内容变化，并在批量更新结束时合并版本递增。"""
+        if self._batch_update_depth > 0:
+            self._batch_graph_changed = True
+            self._batch_nodes_changed = self._batch_nodes_changed or nodes_changed
+            return
+
+        self._graph_revision += 1
+        if nodes_changed:
+            self._node_revision += 1
+
+    def _commit_batch_revisions(self) -> None:
+        if self._batch_graph_changed:
+            self._graph_revision += 1
+        if self._batch_nodes_changed:
+            self._node_revision += 1
+        self._batch_graph_changed = False
+        self._batch_nodes_changed = False
+
     @contextlib.contextmanager
     def batch_update(self):
         """
@@ -278,12 +302,20 @@ class GraphStore:
         进入时切换到 LIL 格式以优化随机/增量更新
         退出时恢复到 CSR/CSC 格式以优化存储和计算
         """
+        outermost = self._batch_update_depth == 0
         original_mode = self._modification_mode
-        self._switch_mode(GraphModificationMode.INCREMENTAL)
+        if outermost:
+            self._switch_mode(GraphModificationMode.INCREMENTAL)
+        self._batch_update_depth += 1
         try:
             yield
         finally:
-            self._switch_mode(original_mode)
+            self._batch_update_depth -= 1
+            if outermost:
+                try:
+                    self._switch_mode(original_mode)
+                finally:
+                    self._commit_batch_revisions()
 
     def _switch_mode(self, new_mode: GraphModificationMode):
         """切换修改模式并转换矩阵格式"""
@@ -356,6 +388,7 @@ class GraphStore:
 
         # 扩展邻接矩阵
         if added > 0:
+            self._record_graph_change(nodes_changed=True)
             self._expand_adjacency_matrix(added)
 
         logger.debug(f"添加 {added} 个节点")
@@ -368,14 +401,14 @@ class GraphStore:
         relation_hashes: Optional[List[str]] = None,  # V5: 支持关系哈希映射 (Relation Hash Mapping)
     ) -> int:
         """
-        添加边
+        添加或更新边。同一端点的权重采用覆盖语义，批内重复端点取最后一个值。
 
         Args:
             edges: 边列表 [(source, target), ...]
             weights: 边权重列表（默认为1.0）
 
         Returns:
-            成功添加的边数量
+            成功处理的边数量
         """
         if not edges:
             return 0
@@ -402,92 +435,127 @@ class GraphStore:
         if weights is None:
             weights = [1.0] * len(edges)
 
-        # 如果仅仅是添加边且处于增量模式 (LIL)，直接更新
+        # add_edges 的统一语义是按端点覆盖权重。重复端点取本批最后一个值，
+        # 不因当前稀疏矩阵格式不同而出现增量覆盖、批量求和两种结果。
+        edge_rows: List[int] = []
+        edge_cols: List[int] = []
+        edge_values: List[float] = []
+        for (src, tgt), weight in zip(edges, weights, strict=True):
+            weight_value = float(weight)
+            edge_rows.append(self._node_to_idx[self._canonicalize(src)])
+            edge_cols.append(self._node_to_idx[self._canonicalize(tgt)])
+            edge_values.append(weight_value)
+
+        n = len(self._nodes)
+        if len(edges) == 1:
+            weight_value = edge_values[0]
+            if not np.isfinite(weight_value) or abs(weight_value) > np.finfo(np.float32).max:
+                src, tgt = edges[0]
+                raise ValueError(f"边权重必须为有限数值: {src} -> {tgt} = {weights[0]}")
+            update_rows = np.asarray(edge_rows, dtype=np.int64)
+            update_cols = np.asarray(edge_cols, dtype=np.int64)
+            update_values = np.asarray(edge_values, dtype=np.float32)
+        else:
+            raw_rows = np.asarray(edge_rows, dtype=np.int64)
+            raw_cols = np.asarray(edge_cols, dtype=np.int64)
+            raw_values_float64 = np.asarray(edge_values, dtype=np.float64)
+            valid_weight_mask = np.isfinite(raw_values_float64) & (
+                np.abs(raw_values_float64) <= np.finfo(np.float32).max
+            )
+            if not np.all(valid_weight_mask):
+                invalid_index = int(np.flatnonzero(~valid_weight_mask)[0])
+                src, tgt = edges[invalid_index]
+                raise ValueError(f"边权重必须为有限数值: {src} -> {tgt} = {weights[invalid_index]}")
+            raw_values = raw_values_float64.astype(np.float32)
+            endpoint_keys = raw_rows * n + raw_cols
+            _, reverse_positions = np.unique(endpoint_keys[::-1], return_index=True)
+            last_positions = len(edges) - 1 - reverse_positions
+            update_rows = raw_rows[last_positions]
+            update_cols = raw_cols[last_positions]
+            update_values = raw_values[last_positions]
+
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
             if self._adjacency is None:
-                # 初始化为空 LIL
-                n = len(self._nodes)
-                from scipy.sparse import lil_matrix
+                working_adjacency = lil_matrix((n, n), dtype=np.float32)
+            elif isinstance(self._adjacency, lil_matrix):
+                working_adjacency = self._adjacency
+            else:
+                working_adjacency = self._adjacency.tolil(copy=True)
 
-                self._adjacency = lil_matrix((n, n), dtype=np.float32)
-
-            # 尝试直接使用 LIL 索引更新
-            try:
-                # 批量获取索引
-                rows = [self._node_to_idx[self._canonicalize(src)] for src, _ in edges]
-                cols = [self._node_to_idx[self._canonicalize(tgt)] for _, tgt in edges]
-
-                # 确保矩阵足够大 (如果 add_nodes 没有扩展它) - 通常 add_nodes 会处理
-                # 这里直接赋值
-                self._adjacency[rows, cols] = weights
-
-                self._total_edges_added += len(edges)
-                self._adjacency_dirty = True
-                self._saliency_cache = None
-
-                # V5：更新边哈希映射
-                if relation_hashes:
-                    for (src, tgt), r_hash in zip(edges, relation_hashes, strict=True):
-                        if r_hash:
-                            s_idx = self._node_to_idx[self._canonicalize(src)]
-                            t_idx = self._node_to_idx[self._canonicalize(tgt)]
-                            self._edge_hash_map[(s_idx, t_idx)].add(r_hash)
-
-                logger.debug(f"增量添加 {len(edges)} 条边 (LIL)")
-                return len(edges)
-            except Exception as e:
-                logger.warning(f"LIL 增量更新失败，回退到通用方法: {e}")
-                # 失败时回退到下方通用方法
-
-        # 通用方法 (构建 COO 然后合并)
-        # 构建边的三元组
-        row_indices = []
-        col_indices = []
-        data_values = []
-
-        for (src, tgt), weight in zip(edges, weights, strict=True):
-            src_idx = self._node_to_idx[self._canonicalize(src)]
-            tgt_idx = self._node_to_idx[self._canonicalize(tgt)]
-
-            row_indices.append(src_idx)
-            col_indices.append(tgt_idx)
-            data_values.append(weight)
-
-        # 创建新的边的矩阵
-        n = len(self._nodes)
-        new_edges = csr_matrix(
-            (data_values, (row_indices, col_indices)),
-            shape=(n, n),
-        )
-
-        # 合并到邻接矩阵
-        if self._adjacency is None:
-            self._adjacency = new_edges
+            graph_changed = False
+            for src_idx, tgt_idx, weight_value in zip(
+                update_rows,
+                update_cols,
+                update_values,
+                strict=True,
+            ):
+                if float(working_adjacency[src_idx, tgt_idx]) != weight_value:
+                    graph_changed = True
+                    working_adjacency[src_idx, tgt_idx] = weight_value
+            self._adjacency = working_adjacency
         else:
-            self._adjacency = self._adjacency + new_edges
+            base_adjacency = self._adjacency
+            if base_adjacency is None:
+                base_adjacency = csr_matrix((n, n), dtype=np.float32)
+            if not base_adjacency.nnz:
+                changed_mask = update_values != 0.0
+                graph_changed = bool(np.any(changed_mask))
+                if graph_changed:
+                    base_adjacency = csr_matrix(
+                        (
+                            update_values[changed_mask],
+                            (update_rows[changed_mask], update_cols[changed_mask]),
+                        ),
+                        shape=(n, n),
+                        dtype=np.float32,
+                    )
+            else:
+                if len(update_values) == 1:
+                    current_values = np.asarray(
+                        [float(base_adjacency[int(update_rows[0]), int(update_cols[0])])],
+                        dtype=np.float32,
+                    )
+                else:
+                    current_values = np.asarray(
+                        base_adjacency[update_rows, update_cols],
+                        dtype=np.float32,
+                    ).reshape(-1)
+                changed_mask = current_values != update_values
+                graph_changed = bool(np.any(changed_mask))
+                if graph_changed:
+                    delta_matrix = csr_matrix(
+                        (
+                            update_values[changed_mask] - current_values[changed_mask],
+                            (update_rows[changed_mask], update_cols[changed_mask]),
+                        ),
+                        shape=(n, n),
+                        dtype=np.float32,
+                    )
+                    base_adjacency = base_adjacency + delta_matrix
 
-        # 转换为指定格式
-        if self.matrix_format == "csc" and isinstance(self._adjacency, csr_matrix):
-            self._adjacency = self._adjacency.tocsc()
-        elif self.matrix_format == "csr" and isinstance(self._adjacency, csc_matrix):
-            self._adjacency = self._adjacency.tocsr()
+            if graph_changed:
+                self._adjacency = base_adjacency.tocsc() if self.matrix_format == "csc" else base_adjacency.tocsr()
+                self._adjacency.eliminate_zeros()
+            else:
+                self._adjacency = base_adjacency
 
         self._total_edges_added += len(edges)
-        self._adjacency_dirty = True  # 标记脏位
-        self._saliency_cache = None
+        if graph_changed:
+            self._adjacency_dirty = True
+            self._saliency_cache = None
+            self._record_graph_change()
 
         # V5: 更新边哈希映射 (Edge Hash Map)
         if relation_hashes:
             for (src, tgt), r_hash in zip(edges, relation_hashes, strict=True):
                 if r_hash:
-                    try:
-                        s_idx = self._node_to_idx[self._canonicalize(src)]
-                        t_idx = self._node_to_idx[self._canonicalize(tgt)]
-                        self._edge_hash_map[(s_idx, t_idx)].add(r_hash)
-                    except KeyError:
-                        pass  # 正常情况下节点已在上方添加，此处仅作防错处理
+                    s_idx = self._node_to_idx[self._canonicalize(src)]
+                    t_idx = self._node_to_idx[self._canonicalize(tgt)]
+                    self._edge_hash_map[(s_idx, t_idx)].add(r_hash)
 
-        logger.debug(f"添加 {len(edges)} 条边")
+        # 单边在线写入频率高，逐条 debug 日志会显著放大写入延迟。
+        if len(edges) > 1:
+            logger.debug(f"添加 {len(edges)} 条边")
         return len(edges)
 
     def update_edge_weight(
@@ -613,6 +681,7 @@ class GraphStore:
         self._total_nodes_deleted += deleted_count
         self._adjacency_dirty = True
         self._saliency_cache = None
+        self._record_graph_change(nodes_changed=True)
 
         logger.info(f"删除 {deleted_count} 个节点")
         return deleted_count
@@ -681,6 +750,8 @@ class GraphStore:
         self._total_edges_deleted += deleted
         self._adjacency_dirty = True
         self._saliency_cache = None
+        if deleted > 0:
+            self._record_graph_change()
         logger.info(f"删除 {deleted} 条边")
         return deleted
 
@@ -752,6 +823,28 @@ class GraphStore:
         idx = self._node_to_idx[canon]
         neighbor_indices = self._row_neighbor_indices(self._adjacency, idx)
         return [self._nodes[int(i)] for i in neighbor_indices]
+
+    def get_weighted_neighbors(self, node: str) -> List[Tuple[str, float]]:
+        """获取节点的出邻居及对应边权重。"""
+        canon = self._canonicalize(node)
+        if canon not in self._node_to_idx or self._adjacency is None:
+            return []
+
+        idx = self._node_to_idx[canon]
+        if isinstance(self._adjacency, csr_matrix):
+            start = int(self._adjacency.indptr[idx])
+            end = int(self._adjacency.indptr[idx + 1])
+            columns = self._adjacency.indices[start:end]
+            weights = self._adjacency.data[start:end]
+        else:
+            row = self._adjacency.getrow(idx).tocsr()
+            columns = row.indices
+            weights = row.data
+        return [
+            (self._nodes[int(column)], float(weight))
+            for column, weight in zip(columns, weights, strict=True)
+            if float(weight) != 0.0
+        ]
 
     def get_in_neighbors(self, node: str) -> List[str]:
         """
@@ -887,10 +980,14 @@ class GraphStore:
                 if s_canon in self._node_to_idx and t_canon in self._node_to_idx:
                     idx_s = self._node_to_idx[s_canon]
                     idx_t = self._node_to_idx[t_canon]
+                    if float(self._adjacency[idx_s, idx_t]) == 0.0:
+                        continue
                     self._adjacency[idx_s, idx_t] = 0.0
                     deactivated_count += 1
 
         self._adjacency_dirty = True
+        if deactivated_count > 0:
+            self._record_graph_change()
         return deactivated_count
 
     def _ensure_adjacency_T(self):
@@ -1060,11 +1157,12 @@ class GraphStore:
         else:
             # 使用指定的个性化向量
             p = np.zeros(n)
-            total_weight = sum(personalization.values())
             for node, weight in personalization.items():
-                if node in self._node_to_idx:
-                    idx = self._node_to_idx[node]
-                    p[idx] = weight / total_weight
+                canon = self._canonicalize(node)
+                weight_value = float(weight)
+                if canon in self._node_to_idx and np.isfinite(weight_value) and weight_value > 0.0:
+                    idx = self._node_to_idx[canon]
+                    p[idx] += weight_value
 
             # 确保和为1
             if p.sum() == 0:
@@ -1170,6 +1268,7 @@ class GraphStore:
         logger.debug(f"正在执行全图衰减，因子: {factor}")
 
         # 直接矩阵乘法，SciPy CSR/CSC 非常高效
+        graph_changed = bool(self._adjacency.nnz and np.any(self._adjacency.data != 0.0))
         self._adjacency *= factor
 
         # 如果需要处理极小值 (可选，防止下溢，但通常浮点数足够小)
@@ -1177,6 +1276,8 @@ class GraphStore:
         #    ... (复杂操作，暂不需要，由 prune 逻辑处理)
 
         self._adjacency_dirty = True
+        if graph_changed:
+            self._record_graph_change()
 
     def prune_relation_hashes(self, operations: List[Tuple[str, str, str]]) -> None:
         """
@@ -1291,6 +1392,8 @@ class GraphStore:
 
     def clear(self) -> None:
         """清空所有数据"""
+        had_nodes = bool(self._nodes)
+        had_graph_content = had_nodes or bool(self._adjacency is not None and self._adjacency.nnz > 0)
         self._nodes.clear()
         self._node_to_idx.clear()
         self._node_attrs.clear()
@@ -1303,6 +1406,8 @@ class GraphStore:
         self._total_edges_added = 0
         self._total_nodes_deleted = 0
         self._total_edges_deleted = 0
+        if had_graph_content:
+            self._record_graph_change(nodes_changed=had_nodes)
         logger.info("图存储已清空")
 
     def save(self, data_dir: Optional[Union[str, Path]] = None) -> None:
@@ -1467,6 +1572,8 @@ class GraphStore:
                 )
 
         self._adjacency_dirty = True
+        self._saliency_cache = None
+        self._record_graph_change(nodes_changed=True)
         logger.info(
             f"图存储已加载: 节点={len(self._nodes)}, 边={self._adjacency.nnz if self._adjacency is not None else 0}"
         )
@@ -1537,6 +1644,16 @@ class GraphStore:
         # 如果都在增量模式，确保是LIL
         if self._modification_mode == GraphModificationMode.INCREMENTAL:
             self._adjacency = self._adjacency.tolil()
+
+    @property
+    def graph_revision(self) -> int:
+        """运行期图拓扑与边权重版本。"""
+        return self._graph_revision
+
+    @property
+    def node_revision(self) -> int:
+        """运行期节点集合版本。"""
+        return self._node_revision
 
     @property
     def num_nodes(self) -> int:

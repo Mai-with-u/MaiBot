@@ -910,50 +910,16 @@ class MemoryGraphAdminService(KernelServiceBase):
             "evidence_graph": evidence_graph,
         }
 
-    def _delete_sources(self, sources: Iterable[Any]) -> Dict[str, Any]:
-        assert self.metadata_store
+    async def _delete_sources(self, sources: Iterable[Any]) -> Dict[str, Any]:
+        """通过统一删除协调器删除来源，避免元数据与外部存储发生部分提交。"""
         source_tokens = tokens(sources)
         if not source_tokens:
             return {"success": False, "error": "source 不能为空"}
-
-        deleted_paragraphs = 0
-        deleted_sources: List[str] = []
-        for source in source_tokens:
-            paragraphs = self.metadata_store.get_paragraphs_by_source(source)
-            if not paragraphs:
-                self.metadata_store.replace_episodes_for_source(source, [])
-                continue
-            for row in paragraphs:
-                paragraph_hash = str(row.get("hash", "") or "").strip()
-                if not paragraph_hash:
-                    continue
-                cleanup = self.metadata_store.delete_paragraph_atomic(paragraph_hash)
-                self._apply_cleanup_plan(cleanup)
-                deleted_paragraphs += 1
-            self.metadata_store.replace_episodes_for_source(source, [])
-            deleted_sources.append(source)
-
-        self._rebuild_graph_from_metadata()
-        self._persist()
-        return {
-            "success": True,
-            "sources": deleted_sources,
-            "deleted_source_count": len(deleted_sources),
-            "deleted_paragraph_count": deleted_paragraphs,
-        }
-
-    def _apply_cleanup_plan(self, cleanup: Dict[str, Any]) -> None:
-        if not isinstance(cleanup, dict):
-            return
-        paragraph_hash = str(cleanup.get("vector_id_to_remove", "") or "").strip()
-        relation_hashes = [
-            str(relation_hash or "").strip()
-            for _, _, relation_hash in cleanup.get("relation_prune_ops", []) or []
-            if str(relation_hash or "").strip()
-        ]
-        self._delete_vectors_by_type(
-            paragraph_hashes=[paragraph_hash] if paragraph_hash else [],
-            relation_hashes=relation_hashes,
+        return await self._execute_delete_action(
+            mode="source",
+            selector={"sources": source_tokens},
+            requested_by="memory_graph_admin",
+            reason="graph_source_delete",
         )
 
     def _rebuild_graph_from_metadata(self) -> Dict[str, int]:
@@ -1003,6 +969,8 @@ class MemoryGraphAdminService(KernelServiceBase):
         if names:
             self.graph_store.add_nodes(names)
         if relation_rows:
+            # 图邻接只表达结构连接，关系置信度由 metadata 候选评分使用。
+            # 重建与在线写入都使用单位结构边，避免重建改变 PPR 转移概率。
             self.graph_store.add_edges(
                 [
                     (
@@ -1011,7 +979,6 @@ class MemoryGraphAdminService(KernelServiceBase):
                     )
                     for row in relation_rows
                 ],
-                weights=[float(row.get("confidence", 1.0) or 1.0) for row in relation_rows],
                 relation_hashes=[str(row.get("hash", "") or "") for row in relation_rows],
             )
         return {"node_count": int(self.graph_store.num_nodes), "edge_count": int(self.graph_store.num_edges)}
@@ -1049,6 +1016,18 @@ class MemoryGraphAdminService(KernelServiceBase):
                     return {"success": False, "error": "原节点不存在"}
                 old_entity_hash = str(old_row["hash"] or "").strip()
                 old_entity_name = str(old_row["name"] or "").strip()
+                cursor.execute(
+                    """
+                    SELECT DISTINCT p.source
+                    FROM paragraph_entities pe
+                    JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                    WHERE pe.entity_hash = ?
+                      AND p.source IS NOT NULL AND TRIM(p.source) != ''
+                      AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+                    """,
+                    (old_entity_hash,),
+                )
+                episode_sources = [str(row["source"] or "").strip() for row in cursor.fetchall()]
 
                 cursor.execute(
                     """
@@ -1196,6 +1175,11 @@ class MemoryGraphAdminService(KernelServiceBase):
 
                 if resolved_target_hash != old_entity_hash:
                     cursor.execute("DELETE FROM entities WHERE hash = ?", (old_entity_hash,))
+                if episode_sources:
+                    self.metadata_store._enqueue_episode_source_rebuilds(
+                        episode_sources,
+                        reason="entity_renamed",
+                    )
         except Exception as exc:
             return {"success": False, "error": f"rename failed: {exc}"}
 

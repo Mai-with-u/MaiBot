@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Dict
+from typing import Any, Callable, Coroutine, Dict, List, Tuple
 
 import asyncio
 import time
@@ -12,16 +12,20 @@ from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
 
+RUNTIME_VECTOR_TRAIN_CHECK_INTERVAL_SECONDS = 60.0
+
 
 class MemoryBackgroundTaskService(KernelServiceBase):
     async def _start_background_tasks(self) -> None:
         async with self._background_lock:
             self._background_stopping = False
             self._ensure_background_task("auto_save", self._auto_save_loop)
-            self._ensure_background_task("episode_pending", self._episode_pending_loop)
+            self._ensure_background_task("episode_materialization", self._episode_materialization_loop)
             self._ensure_background_task("embedding_probe", self._embedding_probe_loop)
             self._ensure_background_task("paragraph_vector_backfill", self._paragraph_vector_backfill_loop)
+            self._ensure_background_task("vector_index_training", self._vector_index_training_loop)
             self._ensure_background_task("memory_maintenance", self._memory_maintenance_loop)
+            self._ensure_background_task("storage_cleanup", self._storage_cleanup_loop)
             self._ensure_background_task("person_profile_refresh", self._person_profile_refresh_loop)
             self._ensure_background_task("person_profile_refresh_queue", self._person_profile_refresh_queue_loop)
             self._ensure_background_task("feedback_correction", self._feedback_correction_loop)
@@ -214,24 +218,123 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         except Exception as exc:
             logger.warning(f"auto_save loop 异常: {exc}")
 
-    async def _episode_pending_loop(self) -> None:
+    async def _storage_cleanup_loop(self) -> None:
+        """持续消费跨存储清理与关系图投影任务，确保崩溃后可以恢复进度。"""
+        while not self._background_stopping:
+            await self._sleep_background(10.0)
+            if self._background_stopping:
+                break
+            try:
+                self._maintenance_service._reconcile_relation_graph_projection_jobs()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"relation graph projection loop 异常，将在下一轮重试: {exc}")
+            try:
+                result = await self._delete_admin_service.process_pending_storage_cleanup_jobs(limit=100)
+                if int(result.get("failed", 0) or 0) > 0:
+                    logger.warning(f"storage cleanup 本轮失败任务: {result.get('failed')}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"storage cleanup loop 异常，将在下一轮重试: {exc}")
+
+    def _runtime_vector_training_targets(self) -> List[Tuple[str, Any]]:
+        if self._dual_vector_pools_enabled():
+            candidates = [
+                ("paragraph", self.paragraph_vector_store),
+                ("graph", self.graph_vector_store),
+            ]
+        else:
+            candidates = [("single", self.vector_store)]
+        return [(name, store) for name, store in candidates if store is not None]
+
+    async def _warmup_vector_store_in_thread(self, store: Any) -> Dict[str, Any]:
+        worker = asyncio.create_task(
+            asyncio.to_thread(store.warmup_index, force_train=True),
+            name="A_Memorix.vector_index_training.worker",
+        )
         try:
-            while not self._background_stopping:
-                await asyncio.sleep(60.0)
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await worker
+            except Exception as exc:
+                logger.warning(f"向量索引训练任务取消收尾异常: {exc}")
+            raise
+
+    async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
+        threshold_value = self._cfg("embedding.runtime_train_threshold", 256)
+        runtime_threshold = max(1, int(256 if threshold_value is None else threshold_value))
+        if self._background_stopping or self._vector_persist_blocked_until_rebuild:
+            return {}
+        if self._vector_rebuild_lock.locked():
+            return {}
+
+        summaries: Dict[str, Dict[str, Any]] = {}
+        async with self._vector_rebuild_lock:
+            for name, store in self._runtime_vector_training_targets():
+                if self._background_stopping:
+                    break
+                if not store.needs_training(runtime_threshold):
+                    continue
+                summary = await self._warmup_vector_store_in_thread(store)
+                summaries[name] = summary
+                if bool(summary.get("trained", False)):
+                    self._save_vector_store(store)
+                    logger.info(
+                        "运行期向量索引训练完成: "
+                        f"pool={name}, vectors={summary.get('bin_count', 0)}, "
+                        f"duration_ms={float(summary.get('duration_ms', 0.0)):.2f}"
+                    )
+                else:
+                    logger.warning(
+                        "运行期向量索引训练未完成: "
+                        f"pool={name}, ok={bool(summary.get('ok', False))}, "
+                        f"error={summary.get('error') or 'index_not_trained'}"
+                    )
+        return summaries
+
+    async def _vector_index_training_loop(self) -> None:
+        while not self._background_stopping:
+            try:
+                await self._sleep_background(RUNTIME_VECTOR_TRAIN_CHECK_INTERVAL_SECONDS)
+                if self._background_stopping:
+                    break
+                await self._train_runtime_vector_indexes_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"运行期向量索引训练异常，将在下一周期重试: {exc}")
+
+    async def _episode_materialization_loop(self) -> None:
+        while not self._background_stopping:
+            try:
+                await self._sleep_background(
+                    max(0.1, float(self._cfg("episode.source_poll_interval_seconds", 1.0) or 1.0))
+                )
                 if self._background_stopping:
                     break
                 if not bool(self._cfg("episode.enabled", True)):
                     continue
                 if not bool(self._cfg("episode.generation_enabled", True)):
                     continue
-                await self.process_episode_pending_batch(
-                    limit=max(1, int(self._cfg("episode.pending_batch_size", 50) or 50)),
-                    max_retry=max(1, int(self._cfg("episode.pending_max_retry", 3) or 3)),
+                await self.process_episode_source_rebuild_batch(
+                    limit=max(1, int(self._cfg("episode.source_batch_size", 20) or 20)),
+                    max_retry=int(self._cfg("episode.source_max_retry", 3)),
+                    lease_seconds=max(
+                        1.0,
+                        float(self._cfg("episode.source_lease_seconds", 1800.0) or 1800.0),
+                    ),
+                    max_wait_seconds=max(
+                        0.0,
+                        float(self._cfg("episode.source_max_wait_seconds", 60.0) or 0.0),
+                    ),
                 )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(f"episode_pending loop 异常: {exc}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"Episode 来源物化循环异常，将在下一周期重试: {exc}")
 
     async def _embedding_probe_loop(self) -> None:
         try:

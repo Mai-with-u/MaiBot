@@ -370,6 +370,9 @@ async def test_feedback_task_rollback_restores_snapshots_and_requeues_followups(
         mark_as_deleted=lambda hashes, type_: deleted_paragraphs.extend(list(hashes)) or len(list(hashes)),
         get_paragraph=lambda paragraph_hash: {"hash": paragraph_hash, "source": "chat_summary:session-1"},
         get_connection=lambda: _Conn(),
+        list_external_memory_refs_by_paragraphs=lambda hashes: [
+            {"paragraph_hash": str(hash_value), "external_id": f"external:{hash_value}"} for hash_value in hashes
+        ],
         delete_external_memory_refs_by_paragraphs=lambda hashes: [
             {"paragraph_hash": str(hash_value), "external_id": f"external:{hash_value}"} for hash_value in hashes
         ],
@@ -408,6 +411,15 @@ async def test_feedback_task_rollback_restores_snapshots_and_requeues_followups(
     kernel.initialize = _noop_initialize  # type: ignore[method-assign]
     kernel._rebuild_graph_from_metadata = lambda: None  # type: ignore[method-assign]
     kernel._persist = lambda: None  # type: ignore[method-assign]
+
+    async def _delete_correction_paragraphs(**kwargs: Any) -> Dict[str, Any]:
+        hashes = list((kwargs.get("selector") or {}).get("hashes") or [])
+        deleted_paragraphs.extend(hashes)
+        return {"success": True, "operation_id": "feedback-delete-op"}
+
+    kernel._delete_admin_service = SimpleNamespace(  # type: ignore[assignment]
+        _execute_delete_action=_delete_correction_paragraphs
+    )
 
     payload = await kernel._rollback_feedback_task(
         task_id=1,
@@ -488,6 +500,11 @@ def test_fuzzy_modify_superseded_change_type_matches_operation() -> None:
         get_paragraph_relations=lambda paragraph_hash: [],
         get_paragraph_entities=lambda paragraph_hash: [],
         get_relation_status_batch=lambda hashes: {},
+        detach_fact_evidence_for_paragraphs=lambda hashes, **kwargs: {
+            "paragraph_hashes": list(hashes),
+            "evidence": [],
+            "transitions": [],
+        },
     )
 
     result = kernel._mark_fuzzy_modify_target_superseded(

@@ -90,6 +90,7 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
             if self.graph_vector_store is not None:
                 self._save_vector_store(self.graph_vector_store)
         if self.graph_store is not None:
-            self.graph_store.save()
+            with self._relation_graph_projection_lock:
+                self.graph_store.save()
         if self.sparse_index is not None and getattr(self.sparse_index.config, "enabled", False):
             self.sparse_index.ensure_loaded()

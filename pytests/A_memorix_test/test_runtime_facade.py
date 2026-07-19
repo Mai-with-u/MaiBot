@@ -5,6 +5,7 @@ import pytest
 
 from src.A_memorix.core.runtime.runtime_facade import KernelRuntimeFacade
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
+from src.A_memorix.core.utils.memory_lifecycle_policy import RelationLifecycleEvent
 
 
 @pytest.mark.asyncio
@@ -42,9 +43,14 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
         events.append(("write_vector", kwargs))
         return {"queued": False, **kwargs}
 
+    async def fake_ingest_text(**kwargs):
+        events.append(("ingest_text", kwargs))
+        return {"stored_ids": ["paragraph-summary"]}
+
     monkeypatch.setattr(kernel, "execute_request_with_dedup", fake_execute_request_with_dedup)
     monkeypatch.setattr(kernel, "apply_retrieval_tuning_profile", fake_apply_retrieval_tuning_profile)
     monkeypatch.setattr(kernel, "_write_paragraph_vector_or_enqueue", fake_write_paragraph_vector_or_enqueue)
+    monkeypatch.setattr(kernel, "ingest_text", fake_ingest_text)
     monkeypatch.setattr(
         kernel,
         "_enqueue_paragraph_vector_backfill",
@@ -79,6 +85,12 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
         "content": "Alice 喜欢绿茶",
         "context": "test",
     }
+    ingest_payload = await facade.ingest_text(
+        external_id="summary-1",
+        source_type="chat_summary",
+        text="摘要",
+    )
+    assert ingest_payload == {"stored_ids": ["paragraph-summary"]}
     facade.enqueue_paragraph_vector_backfill("paragraph-1", error="missing")
 
     assert ("chat_enabled", ("session-1", "group-1", "user-1")) in events
@@ -93,23 +105,30 @@ async def _async_payload(value: str) -> dict[str, str]:
 
 @pytest.mark.asyncio
 async def test_runtime_facade_reinforce_access_filters_empty_hashes(
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reinforced: list[list[str]] = []
+    reinforced: list[tuple[list[str], RelationLifecycleEvent]] = []
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
     facade = kernel._runtime_facade
 
-    class FakeMetadataStore:
-        def reinforce_relations(self, hashes: list[str]) -> None:
-            reinforced.append(hashes)
+    class FakeMaintenanceService:
+        def apply_relation_lifecycle_event(
+            self,
+            hashes: list[str],
+            *,
+            event: RelationLifecycleEvent,
+        ) -> None:
+            reinforced.append((hashes, event))
 
-    monkeypatch.setattr("src.A_memorix.core.runtime.runtime_facade.time.time", lambda: 1234.5)
-    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.metadata_store = object()  # type: ignore[assignment]
+    kernel.graph_store = object()  # type: ignore[assignment]
+    kernel._maintenance_service = FakeMaintenanceService()  # type: ignore[assignment]
 
-    await facade.reinforce_access(["", " relation-1 ", None, "relation-2"])  # type: ignore[list-item]
+    await facade.reinforce_access(
+        ["", " relation-1 ", None, "relation-2", "relation-1"]  # type: ignore[list-item]
+    )
 
-    assert reinforced == [["relation-1", "relation-2"]]
-    assert kernel._last_maintenance_at == 1234.5
+    assert reinforced == [(["relation-1", "relation-2"], RelationLifecycleEvent.ACCESS)]
+    assert kernel._last_maintenance_at is None
 
 
 @pytest.mark.asyncio

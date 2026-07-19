@@ -7,11 +7,15 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+from weakref import WeakValueDictionary
 
+import asyncio
 import json
 import re
 import time
 import traceback
+
+import numpy as np
 
 from src.common.logger import get_logger
 from src.config.config import config_manager, global_config
@@ -31,7 +35,9 @@ from .model_routing import (
     find_text_generation_task_for_model,
     get_text_generation_model_tasks,
 )
+from .metadata import coerce_metadata_dict
 from .relation_write_service import RelationWriteService
+from .runtime_payloads import optional_float
 from .runtime_self_check import ensure_runtime_self_check, run_embedding_runtime_self_check
 
 logger = get_logger("A_Memorix.SummaryImporter")
@@ -185,6 +191,7 @@ class SummaryImporter:
         self.metadata_store = metadata_store
         self.embedding_manager = embedding_manager
         self.plugin_config = plugin_config
+        self._import_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self.relation_write_service: Optional[RelationWriteService] = (
             plugin_config.get("relation_write_service") if isinstance(plugin_config, dict) else None
         )
@@ -234,25 +241,58 @@ class SummaryImporter:
     def _graph_vector_id(item_type: str, hash_value: str) -> str:
         return f"{str(item_type or '').strip()}:{str(hash_value or '').strip()}"
 
+    def _embedding_write_batch_size(self) -> int:
+        batch_size = max(1, int(getattr(self.embedding_manager, "batch_size", 32)))
+        max_concurrent = max(1, int(getattr(self.embedding_manager, "max_concurrent", 1)))
+        return min(512, batch_size * max_concurrent)
+
     async def _ensure_entity_vector(self, *, entity_hash: str, name: str) -> None:
-        token = str(entity_hash or "").strip()
-        text = str(name or "").strip()
-        if not token or not text or not self._dual_vector_pools_enabled():
+        await self._ensure_entity_vectors([(entity_hash, name)])
+
+    async def _ensure_entity_vectors(self, entities: List[Tuple[str, str]]) -> None:
+        """批量补齐实体向量，减少导入阶段的串行远程等待。"""
+        if not entities or not self._dual_vector_pools_enabled():
             return
 
         target_store = self._graph_vector_store()
-        vector_id = self._graph_vector_id("entity", token)
-        if target_store is None or vector_id in target_store:
+        pending_entities: List[Tuple[str, str, str]] = []
+        for entity_hash, name in entities:
+            token = str(entity_hash or "").strip()
+            text = str(name or "").strip()
+            vector_id = self._graph_vector_id("entity", token)
+            if token and text and target_store is not None and vector_id not in target_store:
+                pending_entities.append((token, text, vector_id))
+        if not pending_entities:
             return
-        try:
-            embedding = await self.embedding_manager.encode(text)
-            if getattr(embedding, "ndim", 1) == 1:
-                embedding = embedding.reshape(1, -1)
-            target_store.add(vectors=embedding, ids=[vector_id])
-        except Exception as exc:
-            if not self._allow_metadata_only_write():
-                raise
-            logger.warning(f"总结导入实体向量写入失败，保留 metadata/graph: entity={text} error={exc}")
+
+        write_batch_size = self._embedding_write_batch_size()
+        for offset in range(0, len(pending_entities), write_batch_size):
+            batch_entities = pending_entities[offset : offset + write_batch_size]
+            try:
+                embeddings = np.asarray(
+                    await self.embedding_manager.encode_batch(
+                        [name for _, name, _ in batch_entities]
+                    ),
+                    dtype=np.float32,
+                )
+                if embeddings.ndim == 1:
+                    embeddings = embeddings.reshape(1, -1)
+                if embeddings.shape[0] != len(batch_entities):
+                    raise ValueError(
+                        "实体批量向量数量不匹配: "
+                        f"{embeddings.shape[0]} vs {len(batch_entities)}"
+                    )
+                target_store.add(
+                    vectors=embeddings,
+                    ids=[vector_id for _, _, vector_id in batch_entities],
+                )
+            except Exception as exc:
+                if not self._allow_metadata_only_write():
+                    raise
+                logger.warning(
+                    "总结导入实体批量向量写入失败，保留 metadata/graph: "
+                    f"count={len(batch_entities)} error={exc}"
+                )
 
     def _normalize_summary_model_selectors(self, raw_value: Any) -> List[str]:
         """标准化 summarization.model_name 配置。"""
@@ -419,34 +459,50 @@ class SummaryImporter:
 
     @staticmethod
     def _clean_review_summary(text: str) -> str:
-        content = re.sub(r"\s+", " ", str(text or "")).strip()
-        if not content:
-            return ""
-        blocked_markers = (
-            "不是",
-            "纠正",
-            "更正",
-            "误记",
-            "此前",
-            "之前",
-            "旧",
-            "否认",
-            "玩笑",
-            "示例",
-            "测试",
-            "不要记",
+        """规范化历史摘要，不按词面猜测事实是否有效。
+
+        事实失效必须由结构化 supersession 状态表达。中文子串无法可靠区分
+        “旧值”和“旧金山”、“测试内容”和“测试工程师”，删除命中句会造成
+        合法负向事实、职业和地名在递归摘要中无声消失。
+        """
+
+        return " ".join(str(text or "").strip().split())[:500]
+
+    def _existing_summary_result(
+        self,
+        *,
+        stream_id: str,
+        metadata: Optional[Dict[str, Any]],
+    ) -> Optional[SummaryImportResult]:
+        """在模型调用前解析 external ID，避免重试重复生成摘要。"""
+
+        if not isinstance(metadata, dict):
+            return None
+        external_id = str(metadata.get("external_id", "") or "").strip()
+        if not external_id:
+            return None
+        existing = self.metadata_store.get_external_memory_ref(external_id)
+        if existing is None:
+            return None
+        paragraph_hash = str(existing.get("paragraph_hash", "") or "").strip()
+        paragraph = self.metadata_store.get_paragraph(paragraph_hash) if paragraph_hash else None
+        if not isinstance(paragraph, dict) or bool(paragraph.get("is_deleted", 0)):
+            raise RuntimeError(
+                f"摘要 external ID 指向无效段落: external_id={external_id} paragraph={paragraph_hash}"
+            )
+        expected_source = f"chat_summary:{stream_id}"
+        actual_source = str(paragraph.get("source", "") or "").strip()
+        if actual_source != expected_source:
+            raise RuntimeError(
+                f"摘要 external ID 已绑定到其他聊天流: external_id={external_id} "
+                f"expected={expected_source} actual={actual_source}"
+            )
+        return SummaryImportResult(
+            True,
+            "总结已存在，跳过重复生成",
+            paragraph_hash=paragraph_hash,
+            source=expected_source,
         )
-        sentences = re.split(r"(?<=[。！？!?；;])\s*", content)
-        kept: List[str] = []
-        for sentence in sentences:
-            item = sentence.strip()
-            if not item:
-                continue
-            if any(marker in item for marker in blocked_markers):
-                continue
-            kept.append(item)
-        cleaned = "".join(kept).strip()
-        return cleaned[:500]
 
     def _build_previous_summary_context(
         self,
@@ -466,7 +522,17 @@ class SummaryImporter:
 
         ordered = sorted(paragraphs, key=_paragraph_created_at, reverse=True)
         lines: List[str] = []
+        now = time.time()
         for paragraph in ordered:
+            paragraph_metadata = coerce_metadata_dict(paragraph.get("metadata"))
+            memory_change = (
+                paragraph_metadata.get("memory_change")
+                if isinstance(paragraph_metadata.get("memory_change"), dict)
+                else {}
+            )
+            valid_to = optional_float(memory_change.get("valid_to"))
+            if valid_to is not None and valid_to <= now:
+                continue
             cleaned = self._clean_review_summary(str(paragraph.get("content", "") or ""))
             if not cleaned:
                 continue
@@ -490,6 +556,31 @@ class SummaryImporter:
         time_end: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SummaryImportResult:
+        """串行化同一聊天流的摘要生成，使 external ID 检查覆盖并发重试。"""
+
+        stream_token = str(stream_id or "").strip()
+        if not stream_token:
+            return SummaryImportResult(False, "stream_id 不能为空")
+        external_id = str((metadata or {}).get("external_id", "") or "").strip()
+        lock_key = f"external:{external_id}" if external_id else f"stream:{stream_token}"
+        lock = self._import_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            return await self._import_from_stream_unlocked(
+                stream_token,
+                context_length=context_length,
+                include_personality=include_personality,
+                time_end=time_end,
+                metadata=metadata,
+            )
+
+    async def _import_from_stream_unlocked(
+        self,
+        stream_id: str,
+        context_length: Optional[int] = None,
+        include_personality: Optional[bool] = None,
+        time_end: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SummaryImportResult:
         """
         从指定的聊天流中提取记录并执行总结导入
 
@@ -503,6 +594,13 @@ class SummaryImporter:
             SummaryImportResult: 导入结果，包含本次新增摘要段落 hash。
         """
         try:
+            existing_result = self._existing_summary_result(
+                stream_id=stream_id,
+                metadata=metadata,
+            )
+            if existing_result is not None:
+                return existing_result
+
             self_check_ok, self_check_msg = await self._ensure_runtime_self_check()
             if not self_check_ok:
                 return SummaryImportResult(False, f"导入前自检失败: {self_check_msg}")
@@ -609,6 +707,15 @@ class SummaryImporter:
             self.vector_store.save()
             self.graph_store.save()
 
+            external_id = str((metadata or {}).get("external_id", "") or "").strip()
+            if external_id:
+                self.metadata_store.upsert_external_memory_ref(
+                    external_id=external_id,
+                    paragraph_hash=paragraph_hash,
+                    source_type="chat_summary",
+                    metadata={"chat_id": stream_id},
+                )
+
             result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
             return SummaryImportResult(
                 True,
@@ -672,6 +779,32 @@ class SummaryImporter:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """将数据写入存储"""
+        external_id = str((metadata or {}).get("external_id", "") or "").strip()
+        plugin_instance = self._plugin_instance()
+        common_ingest = getattr(plugin_instance, "ingest_text", None)
+        if external_id and callable(common_ingest):
+            normalized_relations = _normalize_relation_items(relations)
+            result = await common_ingest(
+                external_id=external_id,
+                source_type="chat_summary",
+                text=summary,
+                chat_id=stream_id,
+                time_start=(time_meta or {}).get("event_time_start"),
+                time_end=(time_meta or {}).get("event_time_end"),
+                metadata=metadata,
+                entities=_normalize_entity_items(entities),
+                relations=normalized_relations,
+                respect_filter=False,
+            )
+            existing = self.metadata_store.get_external_memory_ref(external_id)
+            paragraph_hash = str((existing or {}).get("paragraph_hash", "") or "").strip()
+            if paragraph_hash:
+                return paragraph_hash
+            stored_ids = [str(item or "").strip() for item in result.get("stored_ids", []) if str(item or "").strip()]
+            if stored_ids:
+                return stored_ids[0]
+            raise RuntimeError(f"公共 ingest 未返回摘要段落: external_id={external_id}")
+
         # 获取默认知识类型
         type_str = self.plugin_config.get("summarization", {}).get("default_knowledge_type", "narrative")
         try:
@@ -689,7 +822,6 @@ class SummaryImporter:
             time_meta=time_meta,
         )
 
-        plugin_instance = self._plugin_instance()
         vector_writer = getattr(plugin_instance, "write_paragraph_vector_or_enqueue", None)
         if callable(vector_writer):
             result = await vector_writer(
@@ -712,35 +844,45 @@ class SummaryImporter:
         # 导入实体
         normalized_entities = _normalize_entity_items(entities)
         if normalized_entities:
-            self.graph_store.add_nodes(normalized_entities)
-            for name in normalized_entities:
-                entity_hash = self.metadata_store.add_entity(name=name, source_paragraph=hash_value)
-                await self._ensure_entity_vector(entity_hash=entity_hash, name=name)
+            with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
+                self.graph_store.add_nodes(normalized_entities)
+                entity_hashes = self.metadata_store.add_entities_batch(
+                    normalized_entities,
+                    source_paragraph=hash_value,
+                )
+            entity_vector_items = list(zip(entity_hashes, normalized_entities, strict=True))
+            await self._ensure_entity_vectors(entity_vector_items)
 
         # 导入关系
         rv_cfg = self.plugin_config.get("retrieval", {}).get("relation_vectorization", {})
         if not isinstance(rv_cfg, dict):
             rv_cfg = {}
         write_vector = bool(rv_cfg.get("enabled", False)) and bool(rv_cfg.get("write_on_import", True))
-        for rel in _normalize_relation_items(relations):
-            s, p, o = rel["subject"], rel["predicate"], rel["object"]
-            if all([s, p, o]):
-                if self.relation_write_service is not None:
-                    await self.relation_write_service.upsert_relation_with_vector(
-                        subject=s,
-                        predicate=p,
-                        obj=o,
+        normalized_relations = _normalize_relation_items(relations)
+        relation_tuples = [
+            (rel["subject"], rel["predicate"], rel["object"])
+            for rel in normalized_relations
+        ]
+        if relation_tuples:
+            if self.relation_write_service is not None:
+                await self.relation_write_service.upsert_relations_with_vectors(
+                    relation_tuples,
+                    confidence=1.0,
+                    source_paragraph=hash_value,
+                    write_vector=write_vector,
+                )
+            else:
+                with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
+                    # 写入元数据和图数据库（保留 relation_hashes，确保后续可按关系精确修剪）
+                    relation_hashes = self.metadata_store.add_relations_batch(
+                        relation_tuples,
                         confidence=1.0,
                         source_paragraph=hash_value,
-                        write_vector=write_vector,
                     )
-                else:
-                    # 写入元数据
-                    rel_hash = self.metadata_store.add_relation(
-                        subject=s, predicate=p, obj=o, confidence=1.0, source_paragraph=hash_value
+                    self.graph_store.add_edges(
+                        [(subject, obj) for subject, _, obj in relation_tuples],
+                        relation_hashes=relation_hashes,
                     )
-                    # 写入图数据库（写入 relation_hashes，确保后续可按关系精确修剪）
-                    self.graph_store.add_edges([(s, o)], relation_hashes=[rel_hash])
 
         logger.info(f"总结导入完成: hash={hash_value[:8]}")
         return hash_value

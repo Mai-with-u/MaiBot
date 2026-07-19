@@ -7,7 +7,7 @@ import pytest
 
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
-from src.A_memorix.core.runtime.services import memory_search_service
+from src.A_memorix.core.runtime.services import memory_maintenance_service, memory_search_service
 from src.A_memorix.core.utils.search_execution_service import SearchExecutionResult
 
 
@@ -46,6 +46,8 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
     class FakeGraphStore:
         def __init__(self, **kwargs: Any) -> None:
             events.append(f"graph_store:{kwargs['matrix_format']}")
+            self.num_nodes = 0
+            self.num_edges = 0
 
         def has_data(self) -> bool:
             events.append("graph_has_data")
@@ -54,12 +56,40 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
         def load(self) -> None:
             events.append("graph_load")
 
+        def clear(self) -> None:
+            events.append("graph_clear")
+
+        def save(self) -> None:
+            events.append("graph_save")
+
     class FakeMetadataStore:
         def __init__(self, **kwargs: Any) -> None:
             events.append("metadata_store")
 
         def connect(self) -> None:
             events.append("metadata_connect")
+
+        def close(self) -> None:
+            events.append("metadata_close")
+
+        def query(self, sql: str) -> list[dict[str, Any]]:
+            del sql
+            return []
+
+        def reset_relation_graph_projection_leases(self) -> int:
+            return 0
+
+        def count_claimable_relation_graph_projection_jobs(self) -> int:
+            return 0
+
+        def claim_relation_graph_projection_jobs(
+            self,
+            *,
+            limit: int,
+            lease_seconds: float,
+        ) -> list[dict[str, Any]]:
+            del limit, lease_seconds
+            return []
 
     class FakeSparseBM25Config:
         def __init__(self, **kwargs: Any) -> None:
@@ -146,6 +176,33 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
 
     monkeypatch.setattr(kernel, "_start_background_tasks", fake_start_background_tasks)
 
+    original_projection_reconcile = (
+        memory_maintenance_service.MemoryMaintenanceService._reconcile_relation_graph_projection_jobs
+    )
+
+    def fail_startup_projection(*args: Any, **kwargs: Any) -> dict[str, int]:
+        del args, kwargs
+        events.append("projection_reconcile_failed")
+        raise OSError("injected startup projection failure")
+
+    monkeypatch.setattr(
+        memory_maintenance_service.MemoryMaintenanceService,
+        "_reconcile_relation_graph_projection_jobs",
+        fail_startup_projection,
+    )
+    with pytest.raises(OSError, match="injected startup projection failure"):
+        await kernel.initialize()
+    assert kernel._initialized is False
+    assert "projection_reconcile_failed" in events
+    assert "sparse_config" not in events
+
+    monkeypatch.setattr(
+        memory_maintenance_service.MemoryMaintenanceService,
+        "_reconcile_relation_graph_projection_jobs",
+        original_projection_reconcile,
+    )
+    events.clear()
+
     await kernel.initialize()
 
     assert kernel._initialized is True
@@ -177,6 +234,10 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
     await kernel.initialize()
 
     assert events == ["apply_sparse_mode", "background_start"]
+    kernel.import_task_manager = None
+    kernel.retrieval_tuning_manager = None
+    monkeypatch.setattr(kernel, "_persist", lambda: None)
+    await kernel.shutdown()
 
 
 @pytest.mark.asyncio
@@ -197,7 +258,11 @@ async def test_runtime_lifecycle_shutdown_preserves_cleanup_semantics(
         def close(self) -> None:
             events.append("metadata_close")
 
-    kernel = SDKMemoryKernel(plugin_root=tmp_path, config={})
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(tmp_path / "memory")}},
+    )
+    kernel._runtime_writer_lock.acquire()
     kernel.import_task_manager = FakeManager("import")  # type: ignore[assignment]
     kernel.retrieval_tuning_manager = FakeManager("tuning")  # type: ignore[assignment]
     kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
@@ -250,6 +315,234 @@ def test_runtime_lifecycle_close_rejects_initialized_runtime(
 
     assert events == []
     assert kernel._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_data_directory_allows_only_one_active_sdk_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {"storage": {"data_dir": str(tmp_path / "shared-memory")}}
+    first = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    second = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+
+    async def initialize_first() -> None:
+        first._initialized = True
+
+    async def initialize_second() -> None:
+        second._initialized = True
+
+    monkeypatch.setattr(
+        first,
+        "_initialize_with_writer_lock",
+        initialize_first,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        second,
+        "_initialize_with_writer_lock",
+        initialize_second,
+        raising=False,
+    )
+
+    await first.initialize()
+    assert first._runtime_writer_lock.held is True
+    with pytest.raises(RuntimeError, match="已有活动写者"):
+        await second.initialize()
+    assert second._initialized is False
+    assert second._runtime_writer_lock.held is False
+
+    await first.shutdown()
+    await second.initialize()
+    assert second._runtime_writer_lock.held is True
+    await second.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_initialize_constructs_runtime_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(tmp_path / "memory")}},
+    )
+    construction_count = 0
+    refresh_count = 0
+
+    async def initialize_once() -> None:
+        nonlocal construction_count, refresh_count
+        if kernel._initialized:
+            refresh_count += 1
+            return
+        construction_count += 1
+        await asyncio.sleep(0.01)
+        kernel._initialized = True
+
+    monkeypatch.setattr(
+        kernel,
+        "_initialize_with_writer_lock",
+        initialize_once,
+        raising=False,
+    )
+
+    await asyncio.gather(kernel.initialize(), kernel.initialize())
+
+    assert construction_count == 1
+    assert refresh_count == 1
+    assert kernel._runtime_writer_lock.held is True
+    await kernel.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_initialize_discards_writable_references_and_releases_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {"storage": {"data_dir": str(tmp_path / "shared-memory")}}
+    failed = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    replacement = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    metadata_close_calls = 0
+    graph_save_calls = 0
+
+    class FakeMetadataStore:
+        def close(self) -> None:
+            nonlocal metadata_close_calls
+            metadata_close_calls += 1
+
+    class FakeGraphStore:
+        def save(self) -> None:
+            nonlocal graph_save_calls
+            graph_save_calls += 1
+
+    async def fail_initialization() -> None:
+        failed.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+        failed.graph_store = FakeGraphStore()  # type: ignore[assignment]
+        raise OSError("injected initialization failure")
+
+    async def initialize_replacement() -> None:
+        replacement._initialized = True
+
+    monkeypatch.setattr(
+        failed,
+        "_initialize_with_writer_lock",
+        fail_initialization,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        replacement,
+        "_initialize_with_writer_lock",
+        initialize_replacement,
+        raising=False,
+    )
+
+    with pytest.raises(OSError, match="injected initialization failure"):
+        await failed.initialize()
+
+    assert metadata_close_calls == 1
+    assert graph_save_calls == 0
+    assert failed.metadata_store is None
+    assert failed.graph_store is None
+    assert failed._runtime_writer_lock.held is False
+    failed.close()
+    assert graph_save_calls == 0
+
+    await replacement.initialize()
+    await replacement.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_invalidates_old_writer_before_unlock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {"storage": {"data_dir": str(tmp_path / "shared-memory")}}
+    kernel = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    successor = SDKMemoryKernel(plugin_root=tmp_path, config=config)
+    metadata_close_calls = 0
+
+    class FakeMetadataStore:
+        def close(self) -> None:
+            nonlocal metadata_close_calls
+            metadata_close_calls += 1
+
+    kernel._runtime_writer_lock.acquire()
+    kernel.metadata_store = FakeMetadataStore()  # type: ignore[assignment]
+    kernel.graph_store = object()  # type: ignore[assignment]
+    kernel._initialized = True
+
+    def fail_persist() -> None:
+        raise OSError("injected persist failure")
+
+    monkeypatch.setattr(kernel, "_persist", fail_persist)
+
+    with pytest.raises(OSError, match="injected persist failure"):
+        await kernel.shutdown()
+
+    assert metadata_close_calls == 1
+    assert kernel._initialized is False
+    assert kernel.metadata_store is None
+    assert kernel.graph_store is None
+    assert kernel.vector_store is None
+    assert kernel._runtime_writer_lock.held is False
+    kernel.close()
+
+    successor._runtime_writer_lock.acquire()
+    assert successor._runtime_writer_lock.held is True
+    successor._runtime_writer_lock.release()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_initialize_and_close_fails_fast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(tmp_path / "memory")}},
+    )
+    initialize_started = asyncio.Event()
+    allow_initialize = asyncio.Event()
+    events: list[str] = []
+
+    async def paused_initialize() -> None:
+        events.append("initialize_started")
+        initialize_started.set()
+        await allow_initialize.wait()
+        kernel._initialized = True
+        events.append("initialize_finished")
+
+    async def stop_background_tasks() -> None:
+        events.append("shutdown_started")
+
+    monkeypatch.setattr(
+        kernel,
+        "_initialize_with_writer_lock",
+        paused_initialize,
+        raising=False,
+    )
+    monkeypatch.setattr(kernel, "_stop_background_tasks", stop_background_tasks)
+
+    initialize_task = asyncio.create_task(kernel.initialize())
+    await initialize_started.wait()
+    with pytest.raises(RuntimeError, match="正在初始化或异步关闭"):
+        kernel.close()
+
+    shutdown_task = asyncio.create_task(kernel.shutdown())
+    await asyncio.sleep(0)
+    assert shutdown_task.done() is False
+    assert events == ["initialize_started"]
+
+    allow_initialize.set()
+    await asyncio.gather(initialize_task, shutdown_task)
+
+    assert events == [
+        "initialize_started",
+        "initialize_finished",
+        "shutdown_started",
+    ]
+    assert kernel._runtime_writer_lock.held is False
+    assert kernel._initialized is False
 
 
 @pytest.mark.asyncio
@@ -367,7 +660,7 @@ async def test_search_execution_once_preserves_request_semantics(
     assert captured["threshold_filter"] is kernel.threshold_filter
     assert captured["plugin_config"] == {"memory": {"enabled": True}}
     assert captured["enforce_chat_filter"] is True
-    assert captured["reinforce_access"] is True
+    assert "reinforce_access" not in captured
     assert execution_request.caller == "boundary-test"
     assert execution_request.stream_id == "session-1"
     assert execution_request.group_id == "group-1"

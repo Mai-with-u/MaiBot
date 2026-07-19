@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable
 
 from ...utils.runtime_payloads import optional_float, tokens
 from .base import KernelServiceBase
@@ -10,27 +10,20 @@ class MemoryEpisodeAdminService(KernelServiceBase):
     async def rebuild_episodes_for_sources(self, sources: Iterable[str]) -> Dict[str, Any]:
         await self.initialize()
         assert self.metadata_store is not None
-        assert self.episode_service is not None
-
-        items: List[Dict[str, Any]] = []
-        failures: List[Dict[str, str]] = []
-        for source in tokens(sources):
-            self.metadata_store.mark_episode_source_running(source)
-            try:
-                result = await self.episode_service.rebuild_source(source)
-                self.metadata_store.mark_episode_source_done(source)
-                items.append(result)
-            except Exception as exc:
-                err = str(exc)[:500]
-                self.metadata_store.mark_episode_source_failed(source, err)
-                failures.append({"source": source, "error": err})
-        self._persist()
-        return {
-            "rebuilt": len(items),
-            "items": items,
-            "failures": failures,
-            "sources": [str(item.get("source", "") or "") for item in items] or tokens(sources),
-        }
+        source_tokens = tokens(sources)
+        for source in source_tokens:
+            self.metadata_store.enqueue_episode_source_rebuild(
+                source,
+                reason="episode_admin_rebuild",
+                debounce_seconds=0.0,
+            )
+        result = await self.process_episode_source_rebuild_batch(
+            sources=source_tokens,
+            limit=max(1, len(source_tokens)),
+            max_wait_seconds=0.0,
+        )
+        result["sources"] = source_tokens
+        return result
 
     async def memory_episode_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         await self.initialize()
@@ -65,9 +58,6 @@ class MemoryEpisodeAdminService(KernelServiceBase):
             summary = self.metadata_store.get_episode_source_rebuild_summary(
                 failed_limit=max(1, int(kwargs.get("limit", 20) or 20))
             )
-            summary["pending_queue"] = self.metadata_store.query(
-                "SELECT COUNT(*) AS c FROM episode_pending_paragraphs WHERE status IN ('pending', 'running', 'failed')"
-            )[0]["c"]
             return {"success": True, **summary}
 
         if act == "rebuild":
@@ -85,13 +75,21 @@ class MemoryEpisodeAdminService(KernelServiceBase):
             if not sources:
                 return {"success": False, "error": "未提供可重建的 source"}
             result = await self.rebuild_episodes_for_sources(sources)
-            return {"success": len(result.get("failures", [])) == 0, **result}
-
-        if act == "process_pending":
-            result = await self.process_episode_pending_batch(
-                limit=max(1, int(kwargs.get("limit", 20) or 20)),
-                max_retry=max(1, int(kwargs.get("max_retry", 3) or 3)),
+            completed = int(result.get("rebuilt", 0) or 0)
+            success = (
+                len(result.get("failures", [])) == 0
+                and int(result.get("unfinished", 0) or 0) == 0
+                and completed == len(sources)
             )
-            return {"success": True, **result}
+            return {"success": success, **result}
+
+        if act == "process_sources":
+            result = await self.process_episode_source_rebuild_batch(
+                limit=max(1, int(kwargs.get("limit", 20) or 20)),
+                max_retry=int(kwargs.get("max_retry", 3)),
+                max_wait_seconds=0.0,
+            )
+            success = int(result.get("failed", 0) or 0) == 0 and int(result.get("unfinished", 0) or 0) == 0
+            return {"success": success, **result}
 
         return {"success": False, "error": f"不支持的 episode action: {act}"}
