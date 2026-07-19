@@ -162,6 +162,8 @@ class MemoryV5AdminService(KernelServiceBase):
         for hash_value in active_hashes:
             relation = self.metadata_store.get_relation(hash_value) or {}
             status = active_statuses.get(hash_value, {})
+            if not relation or not status:
+                continue
             lifecycle_state = RelationLifecycleState(
                 strength=float(status["retention_strength"]),
                 anchor_at=float(status["retention_anchor_at"]),

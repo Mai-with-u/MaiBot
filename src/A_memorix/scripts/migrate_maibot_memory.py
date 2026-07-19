@@ -1624,7 +1624,7 @@ class MigrationRunner:
                         now_ts,
                         now_ts,
                         evidence_counts.get(relation_hash, 0),
-                        evidence_counts.get(relation_hash, 0),
+                        0,
                         now_ts if evidence_counts.get(relation_hash, 0) > 0 else None,
                     )
                     for relation_hash, rel in relation_records.items()

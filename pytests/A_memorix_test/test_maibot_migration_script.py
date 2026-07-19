@@ -566,6 +566,10 @@ def test_migration_window_algorithm_is_idempotent_and_stable(tmp_path: Path) -> 
         assert first_counts["vectors"] == first_counts["paragraphs"] + first_counts["entities"]
         assert runner.stats["windows_committed"] == 3
         assert first_embedding_calls < first_counts["vectors"]
+        lifecycle_revisions = runner.metadata_store.get_connection().execute(
+            "SELECT lifecycle_revision FROM relations"
+        ).fetchall()
+        assert {int(row[0]) for row in lifecycle_revisions} == {0}
     finally:
         _close_runner(runner)
 

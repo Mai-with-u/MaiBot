@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Dict, List
 
 import asyncio
 import numpy as np
@@ -10,8 +10,42 @@ from src.A_memorix.core.retrieval import RetrievalResult
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from src.A_memorix.core.runtime.services import memory_maintenance_service
+from src.A_memorix.core.runtime.services.v5_admin_service import MemoryV5AdminService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
+from src.A_memorix.core.utils.memory_lifecycle_policy import RelationLifecyclePolicy
+
+
+def test_v5_status_skips_relation_removed_after_hash_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MetadataStoreStub:
+        def get_memory_status_summary(self, now: float) -> Dict[str, int]:
+            del now
+            return {}
+
+        def get_relation_status_batch(self, hashes: List[str]) -> Dict[str, Dict[str, Any]]:
+            assert hashes == ["removed-relation"]
+            return {}
+
+        def get_relation(self, hash_value: str) -> None:
+            assert hash_value == "removed-relation"
+            return None
+
+    kernel = SimpleNamespace(
+        metadata_store=MetadataStoreStub(),
+        _cfg=lambda key, default: default,
+        _last_maintenance_at=None,
+        _maintenance_service=SimpleNamespace(
+            _relation_lifecycle_policy=lambda: RelationLifecyclePolicy(),
+        ),
+    )
+    service = MemoryV5AdminService(kernel)
+    monkeypatch.setattr(service, "_resolve_relation_hashes", lambda target: ["removed-relation"])
+    monkeypatch.setattr(service, "_resolve_deleted_relation_hashes", lambda target: [])
+
+    result = service._memory_v5_status(target="removed-relation")
+
+    assert result["items"] == []
+    assert result["count"] == 0
 
 
 @pytest.mark.asyncio
