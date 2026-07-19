@@ -990,8 +990,7 @@
         "threshold_percentile": "自动筛选强度",
         "threshold_min_results": "最少展示数量",
         "threshold_min_threshold": "最低筛选线",
-        "threshold_max_threshold": "最高筛选线",
-        "threshold_enable_auto_adjust": "自动调整筛选线"
+        "threshold_max_threshold": "最高筛选线"
       }
     }
   },

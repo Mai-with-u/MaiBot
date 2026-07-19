@@ -990,8 +990,7 @@
         "threshold_percentile": "Dynamic threshold percentile",
         "threshold_min_results": "Minimum returned results",
         "threshold_min_threshold": "Minimum threshold",
-        "threshold_max_threshold": "Maximum threshold",
-        "threshold_enable_auto_adjust": "Auto-adjust threshold"
+        "threshold_max_threshold": "Maximum threshold"
       }
     }
   },

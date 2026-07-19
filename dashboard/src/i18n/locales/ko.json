@@ -982,8 +982,7 @@
         "threshold_percentile": "동적 임계값 분위",
         "threshold_min_results": "최소 반환 수",
         "threshold_min_threshold": "최소 임계값",
-        "threshold_max_threshold": "최대 임계값",
-        "threshold_enable_auto_adjust": "임계값 자동 조정"
+        "threshold_max_threshold": "최대 임계값"
       }
     }
   },
