@@ -28,6 +28,7 @@ try:
     from src.common.database.migrations import create_database_migration_bootstrapper
     from src.common.message_repository import count_messages
     from src.config.model_configs import TaskConfig
+    from src.platform_io import DriverKind
     from src.services import memory_flow_service as memory_flow_service_module
     from src.services import memory_service as memory_service_module
     from src.services import send_service
@@ -46,6 +47,7 @@ except SystemExit as exc:
     create_database_migration_bootstrapper = None  # type: ignore[assignment]
     count_messages = None  # type: ignore[assignment]
     TaskConfig = None  # type: ignore[assignment]
+    DriverKind = None  # type: ignore[assignment]
     memory_flow_service_module = None  # type: ignore[assignment]
     memory_service_module = None  # type: ignore[assignment]
     send_service = None  # type: ignore[assignment]
@@ -119,6 +121,7 @@ class _FakePlatformIOManager:
             sent_receipts=[
                 SimpleNamespace(
                     driver_id="plugin.qq.sender",
+                    driver_kind=DriverKind.PLUGIN,
                     external_message_id="real-message-id",
                     metadata={},
                 )
