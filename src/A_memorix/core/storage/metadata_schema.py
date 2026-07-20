@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import sqlite3
 
@@ -54,6 +55,7 @@ class MetadataSchemaMixin:
         logger.info(
             f"检测到 metadata schema 需要运行时自动迁移: current={current_version}, target={SCHEMA_VERSION}",
         )
+        self._repair_historical_foreign_key_violations(current_version=current_version)
         self._migrate_schema()
         alias_result = self.rebuild_relation_hash_aliases()
         knowledge_type_result = self.normalize_paragraph_knowledge_types()
@@ -65,6 +67,263 @@ class MetadataSchemaMixin:
             f"knowledge_normalized={int(knowledge_type_result.get('normalized', 0) or 0)}, "
             f"fact_migrated={int(fact_result.get('migrated', 0) or 0)}",
         )
+
+    def _collect_foreign_key_violations(self) -> List[sqlite3.Row]:
+        """收集当前数据库中已经存在的外键违规记录。"""
+        return list(self._conn.execute("PRAGMA foreign_key_check").fetchall())
+
+    @staticmethod
+    def _format_foreign_key_violation_summary(violations: List[sqlite3.Row]) -> str:
+        """按子表、父表和外键编号汇总外键违规，避免日志输出大量行号。"""
+        grouped: Dict[Tuple[str, str, int], int] = {}
+        for row in violations:
+            key = (str(row[0]), str(row[2]), int(row[3]))
+            grouped[key] = grouped.get(key, 0) + 1
+        return ", ".join(
+            f"{child}->{parent}(fk#{foreign_key_id})={count}"
+            for (child, parent, foreign_key_id), count in sorted(grouped.items())
+        )
+
+    def _backup_metadata_database_for_schema_repair(self, *, current_version: int) -> Path:
+        """在自动清理历史孤立关联前创建一致性的 SQLite 备份。"""
+        database_path = self.get_db_path()
+        backup_path = database_path.with_name(
+            f"{database_path.name}.pre-schema{current_version}-to-{SCHEMA_VERSION}-repair.bak"
+        )
+        if backup_path.exists():
+            logger.warning(f"Schema 修复备份已存在，将继续使用: {backup_path}")
+            return backup_path
+
+        backup_connection = sqlite3.connect(str(backup_path))
+        try:
+            self._conn.backup(backup_connection)
+            backup_connection.commit()
+        except BaseException:
+            backup_connection.close()
+            backup_path.unlink(missing_ok=True)
+            raise
+        backup_connection.close()
+        logger.warning(f"Schema 修复前数据库已备份: {backup_path}")
+        return backup_path
+
+    def _repair_historical_foreign_key_violations(self, *, current_version: int) -> Dict[str, int]:
+        """定向清理缺少父记录、因而无法再被正常使用的历史关联数据。"""
+        violations = self._collect_foreign_key_violations()
+        if not violations:
+            return {}
+
+        backup_path = self._backup_metadata_database_for_schema_repair(
+            current_version=current_version
+        )
+        table_rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        tables = {str(row[0]) for row in table_rows}
+
+        # 关联表、缓存表和操作明细缺少父记录后已没有独立业务含义，可以安全清理。
+        # 主体记忆表不进入该列表，未知异常会在事务末尾触发回滚。
+        repairs: List[Tuple[str, str]] = []
+        if {"paragraph_relations", "paragraphs", "relations"}.issubset(tables):
+            repairs.append(
+                (
+                    "paragraph_relations",
+                    """
+                    DELETE FROM paragraph_relations
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = paragraph_relations.paragraph_hash
+                    )
+                       OR NOT EXISTS (
+                        SELECT 1 FROM relations r
+                        WHERE r.hash = paragraph_relations.relation_hash
+                    )
+                    """,
+                )
+            )
+        if {"paragraph_entities", "paragraphs", "entities"}.issubset(tables):
+            repairs.append(
+                (
+                    "paragraph_entities",
+                    """
+                    DELETE FROM paragraph_entities
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = paragraph_entities.paragraph_hash
+                    )
+                       OR NOT EXISTS (
+                        SELECT 1 FROM entities e
+                        WHERE e.hash = paragraph_entities.entity_hash
+                    )
+                    """,
+                )
+            )
+        if {"episode_paragraphs", "episodes", "paragraphs"}.issubset(tables):
+            repairs.append(
+                (
+                    "episode_paragraphs",
+                    """
+                    DELETE FROM episode_paragraphs
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM episodes e
+                        WHERE e.episode_id = episode_paragraphs.episode_id
+                    )
+                       OR NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = episode_paragraphs.paragraph_hash
+                    )
+                    """,
+                )
+            )
+        if {"memory_feedback_action_logs", "memory_feedback_tasks"}.issubset(tables):
+            repairs.append(
+                (
+                    "memory_feedback_action_logs",
+                    """
+                    DELETE FROM memory_feedback_action_logs
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM memory_feedback_tasks t
+                        WHERE t.id = memory_feedback_action_logs.task_id
+                    )
+                    """,
+                )
+            )
+        if {"paragraph_stale_relation_marks", "paragraphs", "relations"}.issubset(tables):
+            repairs.append(
+                (
+                    "paragraph_stale_relation_marks",
+                    """
+                    DELETE FROM paragraph_stale_relation_marks
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = paragraph_stale_relation_marks.paragraph_hash
+                    )
+                       OR NOT EXISTS (
+                        SELECT 1 FROM relations r
+                        WHERE r.hash = paragraph_stale_relation_marks.relation_hash
+                    )
+                    """,
+                )
+            )
+        stale_mark_columns = (
+            {
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(paragraph_stale_relation_marks)"
+                ).fetchall()
+            }
+            if "paragraph_stale_relation_marks" in tables
+            else set()
+        )
+        if (
+            {"paragraph_stale_relation_marks", "memory_feedback_tasks"}.issubset(tables)
+            and "task_id" in stale_mark_columns
+        ):
+            repairs.append(
+                (
+                    "paragraph_stale_relation_marks.task_id",
+                    """
+                    UPDATE paragraph_stale_relation_marks
+                    SET task_id = NULL
+                    WHERE task_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM memory_feedback_tasks t
+                        WHERE t.id = paragraph_stale_relation_marks.task_id
+                    )
+                    """,
+                )
+            )
+        if {"external_memory_refs", "paragraphs"}.issubset(tables):
+            repairs.append(
+                (
+                    "external_memory_refs",
+                    """
+                    DELETE FROM external_memory_refs
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = external_memory_refs.paragraph_hash
+                    )
+                    """,
+                )
+            )
+        if {"delete_operation_items", "delete_operations"}.issubset(tables):
+            repairs.append(
+                (
+                    "delete_operation_items",
+                    """
+                    DELETE FROM delete_operation_items
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM delete_operations o
+                        WHERE o.operation_id = delete_operation_items.operation_id
+                    )
+                    """,
+                )
+            )
+        if {"storage_cleanup_jobs", "delete_operations"}.issubset(tables):
+            repairs.append(
+                (
+                    "storage_cleanup_jobs",
+                    """
+                    DELETE FROM storage_cleanup_jobs
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM delete_operations o
+                        WHERE o.operation_id = storage_cleanup_jobs.operation_id
+                    )
+                    """,
+                )
+            )
+        if {"fact_evidence", "fact_claims"}.issubset(tables):
+            repairs.append(
+                (
+                    "fact_evidence",
+                    """
+                    DELETE FROM fact_evidence
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM fact_claims c
+                        WHERE c.claim_id = fact_evidence.claim_id
+                    )
+                    """,
+                )
+            )
+        if {"paragraph_ngrams", "paragraphs"}.issubset(tables):
+            repairs.append(
+                (
+                    "paragraph_ngrams",
+                    """
+                    DELETE FROM paragraph_ngrams
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM paragraphs p
+                        WHERE p.hash = paragraph_ngrams.paragraph_hash
+                    )
+                    """,
+                )
+            )
+
+        repaired: Dict[str, int] = {}
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for label, sql in repairs:
+                cursor = self._conn.execute(sql)
+                if cursor.rowcount > 0:
+                    repaired[label] = int(cursor.rowcount)
+
+            remaining = self._collect_foreign_key_violations()
+            if remaining:
+                summary = self._format_foreign_key_violation_summary(remaining)
+                raise RuntimeError(
+                    f"历史数据库包含无法自动修复的外键异常: {len(remaining)} 项，"
+                    f"详情={summary}，备份={backup_path}"
+                )
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+        repair_summary = ", ".join(f"{name}={count}" for name, count in repaired.items())
+        logger.warning(
+            f"历史数据库孤立关联已自动修复: violations={len(violations)}, "
+            f"repaired={repair_summary or '0'}, backup={backup_path}"
+        )
+        return repaired
 
     def _ensure_memory_feedback_task_columns(self, cursor: sqlite3.Cursor) -> None:
         """补齐 memory_feedback_tasks 历史库缺失的 rollback_* 列。"""
@@ -482,7 +741,10 @@ class MetadataSchemaMixin:
 
             violations = self._conn.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
-                raise RuntimeError(f"Schema迁移后外键校验失败: {len(violations)} 项")
+                summary = self._format_foreign_key_violation_summary(list(violations))
+                raise RuntimeError(
+                    f"Schema迁移后外键校验失败: {len(violations)} 项，详情={summary}"
+                )
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
