@@ -2,6 +2,8 @@ from pathlib import Path
 
 import sqlite3
 
+import pytest
+
 from src.A_memorix.core.storage.metadata_store import MetadataStore, SCHEMA_VERSION
 
 
@@ -407,6 +409,76 @@ def _materialize_schema16_database(database_path: Path) -> None:
         connection.commit()
 
 
+def _inject_known_orphaned_associations(database_path: Path) -> None:
+    """模拟历史版本在未启用外键约束时留下的孤立关联。"""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            """
+            INSERT INTO paragraph_relations (paragraph_hash, relation_hash)
+            VALUES (?, ?)
+            """,
+            ("f" * 64, _RELATION_HASHES["normal"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO paragraph_entities (paragraph_hash, entity_hash, mention_count)
+            VALUES (?, ?, 1)
+            """,
+            (_PARAGRAPH_HASHES["live"], "e" * 64),
+        )
+        connection.execute(
+            """
+            INSERT INTO episode_paragraphs (episode_id, paragraph_hash, position)
+            VALUES ('episode-legacy', ?, 1)
+            """,
+            ("f" * 64,),
+        )
+        connection.execute(
+            """
+            INSERT INTO memory_feedback_action_logs (
+                task_id, query_tool_id, action_type, target_hash, created_at
+            ) VALUES (999, 'orphan-query', 'test', NULL, 50.0)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO paragraph_stale_relation_marks (
+                paragraph_hash, relation_hash, query_tool_id, task_id,
+                reason, created_at, updated_at
+            ) VALUES (?, ?, 'orphan-task-query', 999, 'orphan-task', 51.0, 52.0)
+            """,
+            (_PARAGRAPH_HASHES["permanent"], _RELATION_HASHES["permanent"]),
+        )
+        connection.execute(
+            """
+            INSERT INTO delete_operation_items (
+                operation_id, item_type, item_hash, created_at
+            ) VALUES ('missing-operation', 'relation', ?, 53.0)
+            """,
+            (_RELATION_HASHES["normal"],),
+        )
+
+
+def _inject_unknown_foreign_key_violation(database_path: Path) -> None:
+    """创建不属于 A_Memorix 已知关联表的外键异常。"""
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.executescript(
+            """
+            CREATE TABLE unknown_parent (
+                id INTEGER PRIMARY KEY
+            );
+            CREATE TABLE unknown_child (
+                id INTEGER PRIMARY KEY,
+                parent_id INTEGER NOT NULL,
+                FOREIGN KEY (parent_id) REFERENCES unknown_parent(id)
+            );
+            INSERT INTO unknown_child (id, parent_id) VALUES (1, 999);
+            """
+        )
+
+
 def _column_names(store: MetadataStore, table: str) -> set[str]:
     return {str(row["name"]) for row in store.query(f"PRAGMA table_info({table})")}
 
@@ -759,6 +831,79 @@ def test_schema16_database_migrates_to_schema21_without_losing_live_data(tmp_pat
         assert len(reopened.query("SELECT source FROM episode_rebuild_sources")) == 7
     finally:
         reopened.close()
+
+
+def test_schema16_migration_repairs_known_orphans_and_creates_backup(tmp_path: Path) -> None:
+    bootstrap = MetadataStore(data_dir=tmp_path)
+    bootstrap.connect()
+    database_path = bootstrap.get_db_path()
+    bootstrap.close()
+    _materialize_schema16_database(database_path)
+    _inject_known_orphaned_associations(database_path)
+
+    migrated = MetadataStore(data_dir=tmp_path)
+    migrated.connect()
+    try:
+        assert migrated.get_schema_version() == SCHEMA_VERSION == 21
+        assert migrated.query("PRAGMA foreign_key_check") == []
+        assert migrated.query(
+            "SELECT 1 FROM paragraph_relations WHERE paragraph_hash = ?",
+            ("f" * 64,),
+        ) == []
+        assert migrated.query(
+            "SELECT 1 FROM paragraph_entities WHERE entity_hash = ?",
+            ("e" * 64,),
+        ) == []
+        assert migrated.query(
+            "SELECT 1 FROM episode_paragraphs WHERE paragraph_hash = ?",
+            ("f" * 64,),
+        ) == []
+        assert migrated.query(
+            "SELECT 1 FROM memory_feedback_action_logs WHERE task_id = 999"
+        ) == []
+        assert migrated.query(
+            "SELECT 1 FROM delete_operation_items WHERE operation_id = 'missing-operation'"
+        ) == []
+        stale_mark = dict(
+            migrated.query(
+                """
+                SELECT task_id, reason
+                FROM paragraph_stale_relation_marks
+                WHERE paragraph_hash = ? AND relation_hash = ?
+                """,
+                (_PARAGRAPH_HASHES["permanent"], _RELATION_HASHES["permanent"]),
+            )[0]
+        )
+        assert stale_mark == {"task_id": None, "reason": "orphan-task"}
+
+        backup_path = tmp_path / "metadata.db.pre-schema16-to-21-repair.bak"
+        assert backup_path.is_file()
+        with sqlite3.connect(backup_path) as backup_connection:
+            assert backup_connection.execute(
+                "SELECT MAX(version) FROM schema_migrations"
+            ).fetchone()[0] == 16
+            assert len(backup_connection.execute("PRAGMA foreign_key_check").fetchall()) == 6
+    finally:
+        migrated.close()
+
+
+def test_schema16_migration_preserves_unknown_foreign_key_violation(tmp_path: Path) -> None:
+    bootstrap = MetadataStore(data_dir=tmp_path)
+    bootstrap.connect()
+    database_path = bootstrap.get_db_path()
+    bootstrap.close()
+    _materialize_schema16_database(database_path)
+    _inject_unknown_foreign_key_violation(database_path)
+
+    migrated = MetadataStore(data_dir=tmp_path)
+    with pytest.raises(RuntimeError, match=r"unknown_child->unknown_parent"):
+        migrated.connect()
+    migrated.close()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM unknown_child").fetchone()[0] == 1
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
+    assert (tmp_path / "metadata.db.pre-schema16-to-21-repair.bak").is_file()
 
 
 def test_schema16_migration_matches_fresh_schema21_structure(tmp_path: Path) -> None:
