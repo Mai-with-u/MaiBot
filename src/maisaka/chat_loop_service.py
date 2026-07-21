@@ -667,6 +667,17 @@ class MaisakaChatLoopService:
 
         return MaisakaChatLoopService._build_time_user_message(datetime.now())
 
+    @staticmethod
+    def _append_time_user_message(messages: List[Message], timestamp: datetime) -> None:
+        """向请求消息列表追加一条时间提示。"""
+
+        messages.append(
+            MessageBuilder()
+            .set_role(RoleType.User)
+            .add_text_content(MaisakaChatLoopService._build_time_user_message(timestamp))
+            .build()
+        )
+
     def _build_group_chat_attention_block(self) -> str:
         """构建当前聊天场景下的额外注意事项块。"""
 
@@ -784,6 +795,7 @@ class MaisakaChatLoopService:
         messages.append(system_msg.build())
 
         previous_context_timestamp: datetime | None = None
+        deferred_boundary_timestamps: List[datetime] = []
         for msg in selected_history:
             llm_message = build_llm_message_from_context(
                 msg,
@@ -792,21 +804,27 @@ class MaisakaChatLoopService:
             if llm_message is None:
                 continue
 
+            # assistant tool_calls 与其连续 tool 结果是协议原子段，跨日时间提示必须延后到整个结果段之后。
+            if llm_message.role != RoleType.Tool and deferred_boundary_timestamps:
+                for boundary_timestamp in deferred_boundary_timestamps:
+                    self._append_time_user_message(messages, boundary_timestamp)
+                deferred_boundary_timestamps.clear()
+
             if (
                 include_day_boundary_time_messages
                 and previous_context_timestamp is not None
                 and previous_context_timestamp.date() != msg.timestamp.date()
             ):
-                boundary_message = self._build_time_user_message(msg.timestamp)
-                messages.append(
-                    MessageBuilder()
-                    .set_role(RoleType.User)
-                    .add_text_content(boundary_message)
-                    .build()
-                )
+                if llm_message.role == RoleType.Tool:
+                    deferred_boundary_timestamps.append(msg.timestamp)
+                else:
+                    self._append_time_user_message(messages, msg.timestamp)
 
             messages.append(llm_message)
             previous_context_timestamp = msg.timestamp
+
+        for boundary_timestamp in deferred_boundary_timestamps:
+            self._append_time_user_message(messages, boundary_timestamp)
 
         normalized_injected_messages: List[Message] = []
         current_chat_attention = self._build_current_chat_attention_tail_message()
