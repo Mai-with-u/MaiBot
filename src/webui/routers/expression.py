@@ -1053,6 +1053,12 @@ async def get_expression_groups(
         groups: List[ExpressionGroupInfo] = []
         with get_db_session() as session:
             all_expression_chat_ids = get_visible_expression_chat_ids(session, include_legacy)
+            chat_sessions_by_id = {
+                chat_session.session_id: chat_session
+                for chat_session in session.exec(
+                    select(ChatSession).where(col(ChatSession.session_id).in_(all_expression_chat_ids))
+                ).all()
+            }
             for index, expression_group in enumerate(global_config.expression.expression_groups):
                 chat_ids: set[str] = set()
                 is_global = False
@@ -1070,7 +1076,10 @@ async def get_expression_groups(
                     is_global = True
 
                 resolved_chat_ids = sorted(all_expression_chat_ids if is_global else chat_ids & all_expression_chat_ids)
-                members = [build_chat_info(chat_id, session) for chat_id in resolved_chat_ids]
+                members = [
+                    build_chat_info(chat_id, session, chat_sessions_by_id.get(chat_id))
+                    for chat_id in resolved_chat_ids
+                ]
                 groups.append(
                     ExpressionGroupInfo(
                         index=index,
