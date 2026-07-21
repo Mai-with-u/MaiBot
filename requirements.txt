@@ -11,7 +11,7 @@ jieba>=0.42.1
 json-repair>=0.47.6
 maim-message==0.6.8
 maibot-dashboard>=1.5.5
-maibot-plugin-sdk>=2.7.0
+maibot-plugin-sdk>=2.7.1
 mcp
 msgpack>=1.1.2
 numpy>=2.2.6
