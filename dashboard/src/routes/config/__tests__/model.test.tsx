@@ -45,11 +45,22 @@ vi.mock('@/lib/config-api', () => ({
 vi.mock('../model/components', () => ({
   Pagination: () => <div data-testid="pagination" />,
   ModelCardList: () => <div data-testid="model-card-list" />,
-  ModelTable: ({ paginatedModels, onDelete }: { paginatedModels: { name: string }[]; onDelete: (i: number) => void }) => (
+  ModelTable: ({
+    paginatedModels,
+    onDelete,
+    onEdit,
+  }: {
+    paginatedModels: { name: string }[]
+    onDelete: (i: number) => void
+    onEdit: (model: { name: string }, index: number) => void
+  }) => (
     <div data-testid="model-table">
       {paginatedModels.map((m, i) => (
         <div key={m.name}>
           <span>{m.name}</span>
+          <button type="button" onClick={() => onEdit(m, i)}>
+            {`edit-model-${m.name}`}
+          </button>
           <button type="button" onClick={() => onDelete(i)}>{`del-model-${m.name}`}</button>
         </div>
       ))}
@@ -83,7 +94,10 @@ function baseConfig() {
   return {
     models: [{ name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' }],
     api_providers: [{ name: 'openai', base_url: 'https://api.openai.com/v1', api_key: 'sk-x', client_type: 'openai' }],
-    model_task_config: { embedding: { model_list: ['old-embed-model'] } },
+    model_task_config: {
+      replyer: { model_list: ['gpt-4'] },
+      embedding: { model_list: ['old-embed-model'] },
+    },
   }
 }
 
@@ -135,6 +149,7 @@ beforeEach(() => {
   vi.mocked(configApi.testProviderConnection).mockResolvedValue({
     network_ok: true, api_key_valid: true, latency_ms: 120, error: null, http_status: 200,
   } as never)
+  vi.mocked(configApi.fetchProviderModels).mockResolvedValue([])
 })
 
 async function renderModelPage() {
@@ -204,6 +219,27 @@ describe('ModelConfigPage 特征化', () => {
 
     await waitFor(() => expect(configApi.getModelConfig).toHaveBeenCalled())
     expect(configApi.updateModelConfig).toHaveBeenCalled()
+  })
+
+  it('模型改名时原子保存模型列表与任务引用', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+
+    await user.click(screen.getByText('edit-model-gpt-4'))
+    const nameInput = await screen.findByRole('textbox', { name: '模型名称 *' })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'renamed-gpt-4')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalledTimes(1))
+    const savedConfig = vi.mocked(configApi.updateModelConfig).mock.calls[0][0] as {
+      models: { name: string }[]
+      model_task_config: Record<string, { model_list: string[] }>
+    }
+    expect(savedConfig.models[0].name).toBe('renamed-gpt-4')
+    expect(savedConfig.model_task_config.replyer.model_list).toEqual(['renamed-gpt-4'])
+    expect(savedConfig.model_task_config.embedding.model_list).toEqual(['old-embed-model'])
+    expect(configApi.updateModelConfigSection).not.toHaveBeenCalled()
   })
 
   it('提供商连接测试调用 testProviderConnection', async () => {
