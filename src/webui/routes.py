@@ -25,6 +25,7 @@ from src.webui.routers.model import router as model_router
 from src.webui.routers.person import router as person_router
 from src.webui.routers.plugin import router as plugin_router
 from src.webui.routers.reasoning_process import router as reasoning_process_router
+from src.webui.routers.search import router as search_router
 from src.webui.routers.statistics import router as statistics_router
 from src.webui.routers.system import router as system_router
 from src.webui.routers.websocket.auth import router as ws_auth_router
@@ -55,6 +56,7 @@ router.include_router(plugin_router)
 router.include_router(system_router)
 router.include_router(data_transfer_router)
 router.include_router(reasoning_process_router)
+router.include_router(search_router)
 # 注册模型列表获取路由
 router.include_router(model_router)
 # 注册长期记忆管理路由

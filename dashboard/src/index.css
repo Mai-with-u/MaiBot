@@ -131,6 +131,13 @@
   animation-fill-mode: forwards;
 }
 
+[data-config-search-highlight='true'] {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 4px;
+  border-radius: var(--visual-radius-md);
+  transition: outline-color 180ms ease-out;
+}
+
 [data-dashboard-toast="true"]:hover .toast-progress,
 [data-dashboard-toast="true"]:focus-within .toast-progress {
   animation-play-state: paused;

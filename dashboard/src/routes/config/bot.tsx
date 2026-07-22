@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Check,
   ChevronLeft,
@@ -43,6 +43,10 @@ import {
   updateBotConfigRaw,
 } from '@/lib/config-api'
 import { fieldHooks } from '@/lib/field-hooks'
+import {
+  getConfigSearchField,
+  scrollToConfigSearchField,
+} from '@/lib/config-search-navigation'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { cn } from '@/lib/utils'
 
@@ -182,6 +186,8 @@ function BotConfigPageContent() {
   )
   const { toast } = useToast()
   const { triggerRestart, isRestarting } = useRestart()
+  const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
+  const searchFieldPath = useMemo(() => getConfigSearchField(routeSearch), [routeSearch])
 
   const [sectionValues, setSectionValues] = useState<Record<string, ConfigSectionData | null>>({})
 
@@ -579,6 +585,15 @@ function BotConfigPageContent() {
     return buildTabGroupsFromSchema(configSchema)
   }, [configSchema])
 
+  useEffect(() => {
+    if (!searchFieldPath) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => setEditMode('detail'))
+    return () => window.cancelAnimationFrame(frameId)
+  }, [searchFieldPath])
+
   const setSectionValue = useCallback((sectionName: string, value: ConfigSectionData) => {
     setSectionValues((current) => ({
       ...current,
@@ -757,6 +772,7 @@ function BotConfigPageContent() {
             sectionValues={sectionValues}
             setSectionValue={setSectionValue}
             setHasUnsavedChanges={setHasUnsavedChanges}
+            searchFieldPath={searchFieldPath}
           />
         )}
 
@@ -804,10 +820,18 @@ interface DynamicConfigTabsProps {
   sectionValues: Record<string, ConfigSectionData | null>
   setSectionValue: (sectionName: string, value: ConfigSectionData) => void
   setHasUnsavedChanges: (v: boolean) => void
+  searchFieldPath: string
 }
 
 function DynamicConfigTabs(props: DynamicConfigTabsProps) {
-  const { configSchema, sectionValues, setHasUnsavedChanges, setSectionValue, tabGroups } = props
+  const {
+    configSchema,
+    searchFieldPath,
+    sectionValues,
+    setHasUnsavedChanges,
+    setSectionValue,
+    tabGroups,
+  } = props
   const initialActiveTab = tabGroups[0]?.id ?? ''
   const [expanded, setExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState(initialActiveTab)
@@ -822,12 +846,69 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
       initialActiveTab === 'experimental' &&
       localStorage.getItem(EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY) !== 'true'
   )
+  const scrolledSearchFieldRef = useRef('')
 
   useEffect(() => {
     if (!tabGroups.some((tab) => tab.id === activeTab)) {
       setActiveTab(tabGroups[0]?.id ?? '')
     }
   }, [activeTab, tabGroups])
+
+  useEffect(() => {
+    if (!searchFieldPath) {
+      return
+    }
+
+    const [sectionName, subcategoryName] = searchFieldPath.split('.')
+    const targetTab = tabGroups.find((tab) => tab.sections.includes(sectionName))
+    if (!targetTab) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setActiveTab(targetTab.id)
+      setAdvancedVisible(true)
+      if (targetTab.advanced) {
+        setExpanded(true)
+      }
+
+      if (subcategoryName) {
+        const subtabId = `${sectionName}.${subcategoryName}`
+        setActiveSubtabByGroup((current) => ({
+          ...current,
+          [targetTab.id]: subtabId,
+        }))
+        setExpandedSubtabGroups((current) => ({
+          ...current,
+          [targetTab.id]: true,
+        }))
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [searchFieldPath, tabGroups])
+
+  useEffect(() => {
+    if (!searchFieldPath || scrolledSearchFieldRef.current === searchFieldPath) {
+      return
+    }
+
+    let nestedFrameId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      nestedFrameId = window.requestAnimationFrame(() => {
+        if (scrollToConfigSearchField(searchFieldPath)) {
+          scrolledSearchFieldRef.current = searchFieldPath
+        }
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (nestedFrameId) {
+        window.cancelAnimationFrame(nestedFrameId)
+      }
+    }
+  }, [activeSubtabByGroup, activeTab, advancedVisible, expanded, searchFieldPath])
 
   if (tabGroups.length === 0 || !configSchema?.nested) {
     return null

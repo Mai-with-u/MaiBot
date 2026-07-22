@@ -85,6 +85,7 @@ describe('DynamicConfigForm', () => {
       expect(screen.getByText('Top Field')).toBeInTheDocument()
       expect(screen.getByText('Sub configuration')).toBeInTheDocument()
       expect(screen.getByText('Nested Field')).toBeInTheDocument()
+      expect(document.querySelector('[data-dynamic-field="sub_config.nested_field"]')).toBeInTheDocument()
     })
 
     it('does not add an extra collapse button for the A_Memorix root section', () => {

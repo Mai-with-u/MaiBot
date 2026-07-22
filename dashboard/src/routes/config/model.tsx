@@ -1,4 +1,5 @@
 import { type CSSProperties, type MouseEvent, useEffect, useRef, useState } from 'react'
+import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -66,6 +67,11 @@ import {
   Zap,
 } from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
+import {
+  getConfigSearchField,
+  getModelConfigTabForField,
+  scrollToConfigSearchField,
+} from '@/lib/config-search-navigation'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
@@ -173,6 +179,9 @@ export function ModelConfigPage() {
 function ModelConfigPageContent() {
   const { i18n } = useTranslation()
   const { isRestarting } = useRestart()
+  const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
+  const searchFieldPath = getConfigSearchField(routeSearch)
+  const scrolledSearchFieldRef = useRef('')
 
   // 核心领域 hook：models / apiProviders / model_task_config 三份草稿及其全部编排
   const mc = useModelConfig()
@@ -288,6 +297,52 @@ function ModelConfigPageContent() {
   const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
   const [createVersionDialogOpen, setCreateVersionDialogOpen] = useState(false)
   const [manageVersionsDialogOpen, setManageVersionsDialogOpen] = useState(false)
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(routeSearch.startsWith('?') ? routeSearch.slice(1) : routeSearch)
+    const tab = searchParams.get('tab')
+    const nextTab = searchFieldPath
+      ? getModelConfigTabForField(searchFieldPath)
+      : MODEL_CONFIG_TABS.includes(tab as ModelConfigTab)
+        ? (tab as ModelConfigTab)
+        : 'providers'
+
+    const frameId = window.requestAnimationFrame(() => {
+      setActiveTab(nextTab)
+      if (searchFieldPath) {
+        setAdvancedModelSettingsVisible(true)
+        setAdvancedTaskSettingsVisible(true)
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [routeSearch, searchFieldPath])
+
+  useEffect(() => {
+    if (
+      loading ||
+      !searchFieldPath ||
+      scrolledSearchFieldRef.current === searchFieldPath
+    ) {
+      return
+    }
+
+    let nestedFrameId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      nestedFrameId = window.requestAnimationFrame(() => {
+        if (scrollToConfigSearchField(searchFieldPath)) {
+          scrolledSearchFieldRef.current = searchFieldPath
+        }
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (nestedFrameId) {
+        window.cancelAnimationFrame(nestedFrameId)
+      }
+    }
+  }, [activeTab, advancedModelSettingsVisible, advancedTaskSettingsVisible, loading, searchFieldPath])
   const [newVersionLabel, setNewVersionLabel] = useState('')
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null)
   const [tourEntryVisible, setTourEntryVisible] = useState(
@@ -537,13 +592,14 @@ function ModelConfigPageContent() {
               </div>
             </div>
 
-            <ProviderList
-              providers={apiProviders}
-              testingProviders={testingProviders}
-              testResults={testResults}
-              selectedProviders={selectedProviders}
-              toolbarActions={(
-                <>
+            <div data-config-field-path="api_providers">
+              <ProviderList
+                providers={apiProviders}
+                testingProviders={testingProviders}
+                testResults={testResults}
+                selectedProviders={selectedProviders}
+                toolbarActions={(
+                  <>
                   {selectedProviders.size > 0 && (
                     <Button
                       onClick={openProviderBatchDeleteDialog}
@@ -571,14 +627,15 @@ function ModelConfigPageContent() {
                     <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
                     <span className="text-sm">添加厂商</span>
                   </Button>
-                </>
-              )}
-              onEdit={openProviderDialog}
-              onDelete={openProviderDeleteDialog}
-              onTest={handleTestProviderConnection}
-              onToggleSelect={toggleProviderSelection}
-              onToggleSelectAll={toggleSelectAllProviders}
-            />
+                  </>
+                )}
+                onEdit={openProviderDialog}
+                onDelete={openProviderDeleteDialog}
+                onTest={handleTestProviderConnection}
+                onToggleSelect={toggleProviderSelection}
+                onToggleSelectAll={toggleSelectAllProviders}
+              />
+            </div>
           </TabsContent>
           {/* 模型配置标签页 */}
           <TabsContent value="models" className="space-y-4 mt-0">
@@ -651,34 +708,36 @@ function ModelConfigPageContent() {
             </div>
           </div>
 
-          <ModelCardList
-            paginatedModels={paginatedModels}
-            allModels={models}
-            onEdit={openEditDialog}
-            onDelete={openDeleteDialog}
-            onTest={handleTestModelCapability}
-            isModelUsed={isModelUsed}
-            testingModels={testingModels}
-            modelTestResults={modelTestResults}
-            searchQuery={searchQuery}
-          />
+          <div data-config-field-path="models">
+            <ModelCardList
+              paginatedModels={paginatedModels}
+              allModels={models}
+              onEdit={openEditDialog}
+              onDelete={openDeleteDialog}
+              onTest={handleTestModelCapability}
+              isModelUsed={isModelUsed}
+              testingModels={testingModels}
+              modelTestResults={modelTestResults}
+              searchQuery={searchQuery}
+            />
 
-          {/* 模型列表 - 桌面端表格视图 */}
-          <ModelTable
-            paginatedModels={paginatedModels}
-            allModels={models}
-            filteredModels={filteredModels}
-            selectedModels={selectedModels}
-            onEdit={openEditDialog}
-            onDelete={openDeleteDialog}
-            onTest={handleTestModelCapability}
-            onToggleSelection={toggleModelSelection}
-            onToggleSelectAll={toggleSelectAll}
-            isModelUsed={isModelUsed}
-            testingModels={testingModels}
-            modelTestResults={modelTestResults}
-            searchQuery={searchQuery}
-          />
+            {/* 模型列表 - 桌面端表格视图 */}
+            <ModelTable
+              paginatedModels={paginatedModels}
+              allModels={models}
+              filteredModels={filteredModels}
+              selectedModels={selectedModels}
+              onEdit={openEditDialog}
+              onDelete={openDeleteDialog}
+              onTest={handleTestModelCapability}
+              onToggleSelection={toggleModelSelection}
+              onToggleSelectAll={toggleSelectAll}
+              isModelUsed={isModelUsed}
+              testingModels={testingModels}
+              modelTestResults={modelTestResults}
+              searchQuery={searchQuery}
+            />
+          </div>
 
           {/* 分页 - 使用模块化组件 */}
           <Pagination
@@ -718,17 +777,18 @@ function ModelConfigPageContent() {
                 .filter(f => f.type === 'object' && (advancedTaskSettingsVisible || !f.advanced))
                 .map((field, index) => {
                   return (
-                    <TaskConfigCard
-                      key={field.name}
-                      title={resolveFieldLabel(field, i18n.language)}
-                      description={field.description}
-                      taskConfig={taskConfig[field.name] ?? { model_list: [] }}
-                      modelNames={modelNames}
-                      onChange={(f, value) => updateTaskConfig(field.name, f, value)}
-                      advanced={field.advanced}
-                      showAdvancedSettings={advancedTaskSettingsVisible}
-                      {...(index === 0 ? { dataTour: 'task-model-select' } : {})}
-                    />
+                    <div key={field.name} data-config-field-path={`model_task_config.${field.name}`}>
+                      <TaskConfigCard
+                        title={resolveFieldLabel(field, i18n.language)}
+                        description={field.description}
+                        taskConfig={taskConfig[field.name] ?? { model_list: [] }}
+                        modelNames={modelNames}
+                        onChange={(f, value) => updateTaskConfig(field.name, f, value)}
+                        advanced={field.advanced}
+                        showAdvancedSettings={advancedTaskSettingsVisible}
+                        {...(index === 0 ? { dataTour: 'task-model-select' } : {})}
+                      />
+                    </div>
                   )
                 })}
             </div>
