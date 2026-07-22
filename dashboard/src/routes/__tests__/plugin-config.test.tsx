@@ -43,9 +43,22 @@ vi.mock('@/components/ListFieldEditor', () => ({ ListFieldEditor: () => <div dat
 vi.mock('@/lib/plugin-api', () => ({
   getInstalledPlugins: vi.fn(),
   fetchPluginList: vi.fn(),
-  getPluginConfigSchema: vi.fn(),
-  getPluginConfig: vi.fn(),
-  getPluginConfigRaw: vi.fn(),
+  getMaimaiVersion: vi.fn(),
+  isPluginCompatible: vi.fn((minVersion: string, maxVersion: string | undefined, currentVersion: { version: string }) => {
+    const current = currentVersion.version.split('.').map(Number)
+    const min = minVersion.split('.').map(Number)
+    const max = maxVersion?.split('.').map(Number)
+    const compare = (left: number[], right: number[]) => {
+      for (let index = 0; index < 3; index++) {
+        if ((left[index] || 0) !== (right[index] || 0)) {
+          return (left[index] || 0) - (right[index] || 0)
+        }
+      }
+      return 0
+    }
+    return compare(current, min) >= 0 && (!max || compare(current, max) <= 0)
+  }),
+  getPluginConfigBundle: vi.fn(),
   updatePluginConfig: vi.fn(),
   updatePluginConfigRaw: vi.fn(),
   resetPluginConfig: vi.fn(),
@@ -60,6 +73,7 @@ function makePlugin(id: string, name: string) {
     path: `/plugins/${id}`,
     enabled: true,
     load_status: 'success',
+    load_error: undefined as string | undefined,
     manifest: {
       manifest_version: 2,
       name,
@@ -67,19 +81,36 @@ function makePlugin(id: string, name: string) {
       description: 'desc',
       author: { name: 'tester' },
       license: 'MIT',
-      host_application: { min_version: '1.0.0' },
+      host_application: {
+        min_version: '1.0.0',
+        max_version: undefined as string | undefined,
+      },
     },
   }
 }
 
 beforeEach(() => {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
   vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([makePlugin('test.emoji', 'Emoji Plugin')] as never)
   vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([] as never)
-  vi.mocked(pluginApi.getPluginConfigSchema).mockResolvedValue({
-    plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' }, sections: {}, layout: { type: 'auto' },
+  vi.mocked(pluginApi.getMaimaiVersion).mockResolvedValue({
+    version: '1.1.0',
+    version_major: 1,
+    version_minor: 1,
+    version_patch: 0,
+  })
+  vi.mocked(pluginApi.getPluginConfigBundle).mockResolvedValue({
+    schema: {
+      plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' },
+      sections: {},
+      layout: { type: 'auto' },
+    },
+    config: {},
+    rawConfig: 'key = "value"\n',
   } as never)
-  vi.mocked(pluginApi.getPluginConfig).mockResolvedValue({} as never)
-  vi.mocked(pluginApi.getPluginConfigRaw).mockResolvedValue('key = "value"\n' as never)
   vi.mocked(pluginApi.updatePluginConfigRaw).mockResolvedValue({ success: true, message: 'ok' } as never)
   vi.mocked(pluginApi.updatePluginConfig).mockResolvedValue({ success: true, message: 'ok' } as never)
   vi.mocked(pluginApi.togglePlugin).mockResolvedValue({ success: true, enabled: false, message: '已禁用插件' } as never)
@@ -98,14 +129,63 @@ describe('PluginConfigPage 特征化', () => {
     await waitFor(() => expect(screen.getByText('暂无已安装的插件')).toBeInTheDocument())
   })
 
+  it('插件版本不兼容时优先展示用户可理解的结论并保留技术详情', async () => {
+    const user = userEvent.setup()
+    const incompatiblePlugin = makePlugin('test.incompatible', 'Incompatible Plugin')
+    incompatiblePlugin.manifest.version = '1.3.2'
+    incompatiblePlugin.manifest.host_application.max_version = '1.0.99'
+    incompatiblePlugin.load_status = 'failed'
+    incompatiblePlugin.load_error =
+      'manifest 校验失败: Host 版本不兼容: 版本 1.1.0 高于最大支持 1.0.99 (当前 Host: 1.1.0)'
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([incompatiblePlugin] as never)
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('当前插件版本已不兼容')).toBeInTheDocument()
+    expect(screen.getByText('已安装 v1.3.2 与当前麦麦版本不兼容，请前往插件市场查看兼容版本。')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '前往插件市场' })).toHaveAttribute('href', '/plugins')
+    expect(screen.queryByText(incompatiblePlugin.load_error)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    expect(screen.getByText(incompatiblePlugin.load_error)).toBeInTheDocument()
+  })
+
+  it('插件版本不兼容且市场有兼容新版时直接引导更新', async () => {
+    const user = userEvent.setup()
+    const incompatiblePlugin = makePlugin('test.incompatible', 'Incompatible Plugin')
+    incompatiblePlugin.manifest.version = '1.3.2'
+    incompatiblePlugin.manifest.host_application.max_version = '1.0.99'
+    incompatiblePlugin.load_status = 'failed'
+    incompatiblePlugin.load_error =
+      'manifest 校验失败: Host 版本不兼容: 版本 1.1.0 高于最大支持 1.0.99 (当前 Host: 1.1.0)'
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([incompatiblePlugin] as never)
+    vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([
+      {
+        id: 'test.incompatible',
+        manifest: {
+          ...incompatiblePlugin.manifest,
+          version: '1.4.0',
+          repository_url: 'https://example.com/test.incompatible.git',
+          host_application: { min_version: '1.1.0', max_version: '1.1.99' },
+        },
+      },
+    ] as never)
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('当前插件版本需要更新')).toBeInTheDocument()
+    expect(screen.getByText('已安装 v1.3.2，插件市场已有 v1.4.0，请更新后重试。')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '立即更新' }))
+    expect(screen.getByRole('heading', { name: '确认更新插件' })).toBeInTheDocument()
+  })
+
   it('选中插件加载其 schema/config/raw 并进入编辑器', async () => {
     const user = userEvent.setup()
     render(<PluginConfigPage />)
     await user.click(await screen.findByRole('button', { name: /Emoji Plugin/ }))
 
-    await waitFor(() => expect(pluginApi.getPluginConfigSchema).toHaveBeenCalledWith('test.emoji'))
-    expect(pluginApi.getPluginConfig).toHaveBeenCalledWith('test.emoji')
-    expect(pluginApi.getPluginConfigRaw).toHaveBeenCalledWith('test.emoji')
+    await waitFor(() => expect(pluginApi.getPluginConfigBundle).toHaveBeenCalledWith('test.emoji'))
     expect(await screen.findByRole('button', { name: /保存/ })).toBeInTheDocument()
   })
 
@@ -113,7 +193,7 @@ describe('PluginConfigPage 特征化', () => {
     const user = userEvent.setup()
     render(<PluginConfigPage />)
     await user.click(await screen.findByRole('button', { name: /Emoji Plugin/ }))
-    await user.click(await screen.findByRole('button', { name: /禁用/ }))
+    await user.click(await screen.findByRole('switch', { name: /禁用插件/ }))
     await waitFor(() => expect(pluginApi.togglePlugin).toHaveBeenCalledWith('test.emoji'))
   })
 
@@ -132,36 +212,37 @@ describe('PluginConfigPage 特征化', () => {
 
   it('可视化模式下将 multiple=true 的 select 字段保存为字符串数组', async () => {
     const user = userEvent.setup()
-    vi.mocked(pluginApi.getPluginConfigSchema).mockResolvedValue({
-      plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' },
-      sections: {
-        batch: {
-          name: 'batch',
-          title: '批量配置',
-          collapsed: false,
-          order: 0,
-          fields: {
-            push_format: {
-              name: 'push_format',
-              type: 'select',
-              default: [],
-              description: '推送格式',
-              required: false,
-              choices: ['image', 'text'],
-              multiple: true,
-              label: '推送格式',
-              hidden: false,
-              disabled: false,
-              order: 0,
-              ui_type: 'select',
+    vi.mocked(pluginApi.getPluginConfigBundle).mockResolvedValue({
+      schema: {
+        plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' },
+        sections: {
+          batch: {
+            name: 'batch',
+            title: '批量配置',
+            collapsed: false,
+            order: 0,
+            fields: {
+              push_format: {
+                name: 'push_format',
+                type: 'select',
+                default: [],
+                description: '推送格式',
+                required: false,
+                choices: ['image', 'text'],
+                multiple: true,
+                label: '推送格式',
+                hidden: false,
+                disabled: false,
+                order: 0,
+                ui_type: 'select',
+              },
             },
           },
         },
+        layout: { type: 'auto', tabs: [] },
       },
-      layout: { type: 'auto', tabs: [] },
-    } as never)
-    vi.mocked(pluginApi.getPluginConfig).mockResolvedValue({
-      batch: { push_format: [] },
+      config: { batch: { push_format: [] } },
+      rawConfig: 'key = "value"\n',
     } as never)
 
     render(<PluginConfigPage />)
@@ -181,36 +262,37 @@ describe('PluginConfigPage 特征化', () => {
   })
 
   it('可视化模式下将 disabled 的多选字段渲染为禁用态', async () => {
-    vi.mocked(pluginApi.getPluginConfigSchema).mockResolvedValue({
-      plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' },
-      sections: {
-        batch: {
-          name: 'batch',
-          title: '批量配置',
-          collapsed: false,
-          order: 0,
-          fields: {
-            push_format: {
-              name: 'push_format',
-              type: 'select',
-              default: ['image'],
-              description: '推送格式',
-              required: false,
-              choices: ['image', 'text'],
-              multiple: true,
-              label: '推送格式',
-              hidden: false,
-              disabled: true,
-              order: 0,
-              ui_type: 'select',
+    vi.mocked(pluginApi.getPluginConfigBundle).mockResolvedValue({
+      schema: {
+        plugin_info: { name: 'Emoji Plugin', version: '1.0.0', description: 'desc' },
+        sections: {
+          batch: {
+            name: 'batch',
+            title: '批量配置',
+            collapsed: false,
+            order: 0,
+            fields: {
+              push_format: {
+                name: 'push_format',
+                type: 'select',
+                default: ['image'],
+                description: '推送格式',
+                required: false,
+                choices: ['image', 'text'],
+                multiple: true,
+                label: '推送格式',
+                hidden: false,
+                disabled: true,
+                order: 0,
+                ui_type: 'select',
+              },
             },
           },
         },
+        layout: { type: 'auto', tabs: [] },
       },
-      layout: { type: 'auto', tabs: [] },
-    } as never)
-    vi.mocked(pluginApi.getPluginConfig).mockResolvedValue({
-      batch: { push_format: ['image'] },
+      config: { batch: { push_format: ['image'] } },
+      rawConfig: 'key = "value"\n',
     } as never)
 
     render(<PluginConfigPage />)

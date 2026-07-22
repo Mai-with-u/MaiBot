@@ -17,9 +17,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   fetchPluginList,
   getInstalledPlugins,
+  getMaimaiVersion,
+  isPluginCompatible,
   togglePlugin,
 } from '@/lib/plugin-api'
-import type { InstalledPlugin } from '@/lib/plugin-api'
+import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
 
@@ -31,6 +33,42 @@ export interface PluginStatusMeta {
   badgeClassName?: string
   icon?: PluginStatusIcon
   showsBadge?: boolean
+}
+
+export interface PluginUpdateState {
+  canUpdate: boolean
+  hasUpdate: boolean
+  latestVersion?: string
+  title?: string
+}
+
+interface CompatibilityManifest {
+  manifest_version: number
+  host_application?: {
+    min_version: string
+    max_version?: string
+  }
+}
+
+const VERSION_INCOMPATIBILITY_MARKERS = [
+  'Host 版本不兼容',
+  'SDK 版本不兼容',
+  'Manifest 版本不兼容',
+]
+
+function isManifestCompatibleWithMaimai(
+  manifest: CompatibilityManifest,
+  maimaiVersion: MaimaiVersion
+): boolean {
+  if (manifest.manifest_version !== 2 || !manifest.host_application) {
+    return false
+  }
+
+  return isPluginCompatible(
+    manifest.host_application.min_version,
+    manifest.host_application.max_version,
+    maimaiVersion
+  )
 }
 
 function getInitialPluginConfigTarget(): { pluginId: string | null; tabId: string | null } {
@@ -73,6 +111,7 @@ export function usePluginList() {
   const [selectedPluginTab, setSelectedPluginTab] = useState<string | undefined>(initialTarget.tabId ?? undefined)
   const [actingPluginId, setActingPluginId] = useState<string | null>(null)
   const [marketPluginsById, setMarketPluginsById] = useState<Record<string, PluginInfo>>({})
+  const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const updateCheckStartedRef = useRef(false)
 
@@ -100,7 +139,13 @@ export function usePluginList() {
     updateCheckStartedRef.current = true
     setCheckingUpdates(true)
     try {
-      const marketPlugins = await fetchPluginList()
+      const [marketPlugins, currentMaimaiVersion] = await Promise.all([
+        fetchPluginList(),
+        getMaimaiVersion().catch((error) => {
+          console.warn('获取麦麦版本信息失败，跳过插件更新兼容性检查:', error)
+          return null
+        }),
+      ])
       const nextMarketPluginsById: Record<string, PluginInfo> = {}
       for (const marketPlugin of marketPlugins) {
         nextMarketPluginsById[marketPlugin.id] = marketPlugin
@@ -109,10 +154,12 @@ export function usePluginList() {
         }
       }
       setMarketPluginsById(nextMarketPluginsById)
+      setMaimaiVersion(currentMaimaiVersion?.version === '0.0.0' ? null : currentMaimaiVersion)
     } catch (error) {
       updateCheckStartedRef.current = false
       console.warn('加载插件市场版本信息失败:', error)
       setMarketPluginsById({})
+      setMaimaiVersion(null)
     } finally {
       setCheckingUpdates(false)
     }
@@ -185,6 +232,18 @@ export function usePluginList() {
     && !isPluginLoading(plugin)
     && !isPluginLoadSuccess(plugin)
   )
+  const isPluginVersionIncompatible = (plugin: InstalledPlugin) => {
+    if (!isPluginLoadFailed(plugin)) {
+      return false
+    }
+
+    const loadError = plugin.load_error?.trim() || ''
+    if (VERSION_INCOMPATIBILITY_MARKERS.some((marker) => loadError.includes(marker))) {
+      return true
+    }
+
+    return maimaiVersion !== null && !isManifestCompatibleWithMaimai(plugin.manifest, maimaiVersion)
+  }
   const installedCount = plugins.length
   const disabledCount = plugins.filter(isPluginDisabled).length
   const loadSuccessCount = plugins.filter(isPluginLoadSuccess).length
@@ -295,7 +354,7 @@ export function usePluginList() {
     const urls = plugin.manifest.urls as { repository?: string } | undefined
     return plugin.manifest.repository_url || urls?.repository || marketPlugin?.manifest.repository_url || marketPlugin?.manifest.urls?.repository
   }
-  const getPluginUpdateState = (plugin: InstalledPlugin): { canUpdate: boolean; hasUpdate: boolean; title?: string } => {
+  const getPluginUpdateState = (plugin: InstalledPlugin): PluginUpdateState => {
     if (checkingUpdates) {
       return { canUpdate: false, hasUpdate: false, title: '正在检查更新' }
     }
@@ -312,10 +371,19 @@ export function usePluginList() {
     const currentVersion = plugin.manifest.version
     const latestVersion = marketPlugin.manifest.version
     if (comparePluginVersions(currentVersion, latestVersion) <= 0) {
-      return { canUpdate: false, hasUpdate: false, title: '当前已是最新版本' }
+      return { canUpdate: false, hasUpdate: false, latestVersion, title: '当前已是最新版本' }
     }
 
-    return { canUpdate: true, hasUpdate: true, title: `发现新版本 v${latestVersion}` }
+    if (maimaiVersion && !isManifestCompatibleWithMaimai(marketPlugin.manifest, maimaiVersion)) {
+      return {
+        canUpdate: false,
+        hasUpdate: false,
+        latestVersion,
+        title: `插件市场最新版本 v${latestVersion} 与当前麦麦不兼容`,
+      }
+    }
+
+    return { canUpdate: true, hasUpdate: true, latestVersion, title: `发现新版本 v${latestVersion}` }
   }
 
   const visiblePlugins = showUpdateOnly
@@ -369,6 +437,7 @@ export function usePluginList() {
     // 状态派生
     isPluginDisabled,
     isPluginLoadFailed,
+    isPluginVersionIncompatible,
     getPluginStatusBarClassName,
     getPluginStatusLabel,
     getPluginStatusMeta,
