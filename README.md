@@ -84,8 +84,8 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 <sub><sup>Updates and Installation</sup></sub>
 
 
-> **最新版本: v1.0.12** ([📄 更新日志](changelogs/changelog.md))  
-> <sub><sup><strong>Latest Version: v1.0.12</strong> (<a href="changelogs/changelog.md">📄 Changelog</a>)</sup></sub>
+> **最新版本: v1.1.0** ([📄 更新日志](changelogs/changelog.md))  
+> <sub><sup><strong>Latest Version: v1.1.0</strong> (<a href="changelogs/changelog.md">📄 Changelog</a>)</sup></sub>
 
 
 - **下载**：前往 [Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面下载最新版本。  
