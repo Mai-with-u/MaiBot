@@ -87,6 +87,7 @@ https://github.com/Mai-with-u/maibot-plugin-sdk/blob/main/docs/guide.md
 https://github.com/Mai-with-u/plugin-repo/blob/main/CONTRIBUTING.md
 
 # changelog编写
-建议分为两部分，一部分是用户感知功能侧，一部分是开发侧（包含修复和插件sdk,api改动）。最好一个功能一行，按模块分。
+建议分为两部分，一部分是主要功能，一部分是细节（包含修复和插件sdk,api改动）。最好一个功能一行，按模块分。
+不用修改changelog.dev，改动应该都写changelog.md
 一般不写入changelog的内容：
 版本号提升或更新项目依赖

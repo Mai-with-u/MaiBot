@@ -32,6 +32,7 @@ export interface JargonChatInfo {
   session_id: string
   chat_name: string
   platform: string | null
+  account_id?: string | null
   is_group: boolean
 }
 

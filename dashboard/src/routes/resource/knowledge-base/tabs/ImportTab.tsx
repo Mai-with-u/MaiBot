@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
 import { cn } from '@/lib/utils'
 import type {
   MemoryImportChatTargetPayload,
@@ -78,6 +79,7 @@ function getChatTargetMetaParts(chat: MemoryImportChatTargetPayload): string[] {
     chat.is_group ? '群聊' : '私聊',
     chat.group_id ? `群号 ${chat.group_id}` : '',
     getUserIdLabel(chat),
+    formatChatAccountLabel(chat.account_id),
   ])
 }
 
@@ -100,7 +102,8 @@ function getChatTargetValueLabel(chat: MemoryImportChatTargetPayload | undefined
     return '不绑定聊天流'
   }
   const idLabel = chat.group_id || chat.user_id
-  return idLabel ? `${chat.chat_name} · ${idLabel}` : chat.chat_name
+  const displayName = formatChatDisplayName(chat.chat_name, chat.account_id)
+  return idLabel ? `${displayName} · ${idLabel}` : displayName
 }
 
 function filterChatTargets(

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Tuple
 
 import asyncio
 import json
@@ -25,7 +25,9 @@ VECTOR_CLUSTER_WEIGHT = 0.1
 VECTOR_LEXICAL_WEIGHT = 0.2
 VECTOR_DIVERSITY_LAMBDA = 0.85
 EMBEDDING_PROFILE_CACHE_SECONDS = 600.0
-EMBEDDING_PROFILE_VERSION = 1
+EMBEDDING_PROFILE_VERSION = 2
+EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY = 0.999
+EMBEDDING_PROFILE_DRIFT_CONFIRMATIONS = 3
 LEGACY_EMBEDDING_PROFILE_MARKER = "__legacy_unmarked__"
 HISTORY_BACKFILL_BATCH_SIZE = 200
 HISTORY_BACKFILL_MIN_INTERVAL_SECONDS = 10.0
@@ -45,7 +47,11 @@ class ExpressionEmbeddingProfile:
 
     marker: str
     model_name: str
+    model_identifier: str
+    api_provider: str
     dimension: int
+    revision: int
+    probe_embeddings: Tuple[Tuple[float, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -108,10 +114,63 @@ def expression_embedding_text(situation: str, style: str) -> str:
     return f"情景：{normalize_text(situation)}\n风格：{normalize_text(style)}"
 
 
-def _quantize_embedding_for_profile(embedding: Sequence[float]) -> List[float]:
-    """把探针向量压成稳定可 hash 的小数表示。"""
+def _build_embedding_profile_marker(
+    *,
+    model_name: str,
+    model_identifier: str,
+    api_provider: str,
+    dimension: int,
+    revision: int,
+) -> str:
+    """使用稳定后端身份和向量空间修订号生成 profile marker。"""
 
-    return [round(float(value), 6) for value in embedding]
+    payload = {
+        "version": EMBEDDING_PROFILE_VERSION,
+        "model_name": model_name,
+        "model_identifier": model_identifier,
+        "api_provider": api_provider,
+        "dimension": int(dimension),
+        "revision": int(revision),
+    }
+    return sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _build_embedding_profile(
+    *,
+    model_name: str,
+    model_identifier: str,
+    api_provider: str,
+    probe_embeddings: Sequence[Sequence[float]],
+    revision: int,
+) -> ExpressionEmbeddingProfile:
+    """根据稳定身份、探针基准和修订号构建 embedding profile。"""
+
+    normalized_probes = tuple(tuple(float(value) for value in embedding) for embedding in probe_embeddings)
+    dimensions = {len(embedding) for embedding in normalized_probes}
+    if len(dimensions) != 1:
+        raise ValueError(f"embedding profile 探针维度不一致: {sorted(dimensions)}")
+    dimension = next(iter(dimensions))
+    if dimension <= 0:
+        raise ValueError("embedding profile 探针返回空向量")
+    if revision <= 0:
+        raise ValueError(f"embedding profile 修订号无效: {revision}")
+
+    marker = _build_embedding_profile_marker(
+        model_name=model_name,
+        model_identifier=model_identifier,
+        api_provider=api_provider,
+        dimension=dimension,
+        revision=revision,
+    )
+    return ExpressionEmbeddingProfile(
+        marker=marker,
+        model_name=model_name,
+        model_identifier=model_identifier,
+        api_provider=api_provider,
+        dimension=dimension,
+        revision=revision,
+        probe_embeddings=normalized_probes,
+    )
 
 
 def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> ExpressionEmbeddingProfile:
@@ -122,32 +181,135 @@ def build_embedding_profile_from_probe_results(results: Sequence[Any]) -> Expres
             f"embedding profile 探针数量异常: results={len(results)}, probes={len(EMBEDDING_PROFILE_PROBE_TEXTS)}"
         )
 
-    model_names = {normalize_text(result.model_name) for result in results if normalize_text(result.model_name)}
-    if len(model_names) != 1:
+    model_names = {normalize_text(result.model_name) for result in results}
+    if len(model_names) != 1 or not all(model_names):
         raise ValueError(f"embedding profile 探针命中模型不一致: {sorted(model_names)}")
     model_name = next(iter(model_names))
 
-    dimensions = {len(result.embedding) for result in results}
-    if len(dimensions) != 1:
-        raise ValueError(f"embedding profile 探针维度不一致: {sorted(dimensions)}")
-    dimension = next(iter(dimensions))
-    if dimension <= 0:
-        raise ValueError("embedding profile 探针返回空向量")
+    model_identifiers = {normalize_text(result.model_identifier) for result in results}
+    if len(model_identifiers) != 1 or not all(model_identifiers):
+        raise ValueError(f"embedding profile 探针命中模型标识不一致: {sorted(model_identifiers)}")
+    model_identifier = next(iter(model_identifiers))
 
-    payload = {
+    api_providers = {normalize_text(result.api_provider) for result in results}
+    if len(api_providers) != 1 or not all(api_providers):
+        raise ValueError(f"embedding profile 探针命中 Provider 不一致: {sorted(api_providers)}")
+    api_provider = next(iter(api_providers))
+
+    return _build_embedding_profile(
+        model_name=model_name,
+        model_identifier=model_identifier,
+        api_provider=api_provider,
+        probe_embeddings=[result.embedding for result in results],
+        revision=1,
+    )
+
+
+def _embedding_profile_identity(profile: ExpressionEmbeddingProfile) -> Tuple[str, str, str, int]:
+    """返回用于明确区分 embedding 后端的稳定身份。"""
+
+    return (
+        profile.model_name,
+        profile.model_identifier,
+        profile.api_provider,
+        profile.dimension,
+    )
+
+
+def _embedding_profile_probe_similarities(
+    baseline: ExpressionEmbeddingProfile,
+    candidate: ExpressionEmbeddingProfile,
+) -> List[float]:
+    """计算两次 profile 标定中对应探针的余弦相似度。"""
+
+    if len(baseline.probe_embeddings) != len(candidate.probe_embeddings):
+        raise ValueError(
+            "embedding profile 探针数量不一致: "
+            f"baseline={len(baseline.probe_embeddings)}, candidate={len(candidate.probe_embeddings)}"
+        )
+    if baseline.dimension != candidate.dimension:
+        raise ValueError(
+            f"embedding profile 探针维度不一致: baseline={baseline.dimension}, candidate={candidate.dimension}"
+        )
+
+    similarities: List[float] = []
+    for baseline_embedding, candidate_embedding in zip(
+        baseline.probe_embeddings,
+        candidate.probe_embeddings,
+        strict=True,
+    ):
+        baseline_vector = np.asarray(baseline_embedding, dtype=np.float64)
+        candidate_vector = np.asarray(candidate_embedding, dtype=np.float64)
+        baseline_norm = float(np.linalg.norm(baseline_vector))
+        candidate_norm = float(np.linalg.norm(candidate_vector))
+        if baseline_norm <= 0 or candidate_norm <= 0:
+            raise ValueError("embedding profile 探针包含零向量，无法判断向量空间兼容性")
+        similarity = float(np.dot(baseline_vector, candidate_vector) / (baseline_norm * candidate_norm))
+        similarities.append(max(-1.0, min(1.0, similarity)))
+    return similarities
+
+
+def _embedding_profiles_are_compatible(
+    baseline: ExpressionEmbeddingProfile,
+    candidate: ExpressionEmbeddingProfile,
+) -> bool:
+    """判断候选 profile 是否仍与基准向量空间兼容。"""
+
+    if _embedding_profile_identity(baseline) != _embedding_profile_identity(candidate):
+        return False
+    similarities = _embedding_profile_probe_similarities(baseline, candidate)
+    return all(similarity >= EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY for similarity in similarities)
+
+
+def _serialize_embedding_profile(profile: ExpressionEmbeddingProfile) -> dict[str, Any]:
+    """把当前 profile 及其探针基准写入索引元数据。"""
+
+    return {
         "version": EMBEDDING_PROFILE_VERSION,
-        "model_name": model_name,
-        "dimension": dimension,
-        "probes": [
-            {
-                "text": probe_text,
-                "embedding": _quantize_embedding_for_profile(result.embedding),
-            }
-            for probe_text, result in zip(EMBEDDING_PROFILE_PROBE_TEXTS, results, strict=True)
-        ],
+        "marker": profile.marker,
+        "model_name": profile.model_name,
+        "model_identifier": profile.model_identifier,
+        "api_provider": profile.api_provider,
+        "dimension": profile.dimension,
+        "revision": profile.revision,
+        "probe_texts": list(EMBEDDING_PROFILE_PROBE_TEXTS),
+        "probe_embeddings": [list(embedding) for embedding in profile.probe_embeddings],
     }
-    marker = sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    return ExpressionEmbeddingProfile(marker=marker, model_name=model_name, dimension=dimension)
+
+
+def _deserialize_embedding_profile(raw_profile: dict[str, Any]) -> ExpressionEmbeddingProfile:
+    """从索引元数据恢复并校验持久化的 profile 基准。"""
+
+    version = int(raw_profile.get("version") or 0)
+    if version != EMBEDDING_PROFILE_VERSION:
+        raise ValueError(f"embedding profile 元数据版本不匹配: {version}")
+    probe_texts = raw_profile.get("probe_texts")
+    if probe_texts != EMBEDDING_PROFILE_PROBE_TEXTS:
+        raise ValueError("embedding profile 探针文本与当前版本不一致")
+    raw_probe_embeddings = raw_profile.get("probe_embeddings")
+    if not isinstance(raw_probe_embeddings, list) or len(raw_probe_embeddings) != len(EMBEDDING_PROFILE_PROBE_TEXTS):
+        raise ValueError("embedding profile 持久化探针数量异常")
+
+    profile = _build_embedding_profile(
+        model_name=normalize_text(raw_profile.get("model_name")),
+        model_identifier=normalize_text(raw_profile.get("model_identifier")),
+        api_provider=normalize_text(raw_profile.get("api_provider")),
+        probe_embeddings=raw_probe_embeddings,
+        revision=int(raw_profile.get("revision") or 0),
+    )
+    if not all((profile.model_name, profile.model_identifier, profile.api_provider)):
+        raise ValueError("embedding profile 持久化后端身份为空")
+    stored_dimension = int(raw_profile.get("dimension") or 0)
+    if stored_dimension != profile.dimension:
+        raise ValueError(
+            f"embedding profile 持久化维度不一致: stored={stored_dimension}, actual={profile.dimension}"
+        )
+    stored_marker = normalize_text(raw_profile.get("marker"))
+    if stored_marker != profile.marker:
+        raise ValueError(
+            f"embedding profile 持久化 marker 不一致: stored={stored_marker[:12]}, actual={profile.marker[:12]}"
+        )
+    return profile
 
 
 def resolve_project_path(raw_path: str) -> Path:
@@ -234,10 +396,91 @@ class ExpressionVectorIndex:
         self._update_lock = asyncio.Lock()
         self._profile_lock = asyncio.Lock()
         self._profile_cache: tuple[float, ExpressionEmbeddingProfile] | None = None
+        self._profile_drift_candidate: ExpressionEmbeddingProfile | None = None
+        self._profile_drift_confirmations = 0
         self._history_backfill_task: asyncio.Task[None] | None = None
         self._history_backfill_last_empty_at = 0.0
 
-    async def get_current_embedding_profile(self, *, session_id: str = "") -> ExpressionEmbeddingProfile:
+    @staticmethod
+    def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
+        """从现有索引读取当前向量空间的持久化探针基准。"""
+
+        if not index_path.exists():
+            return None
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        raw_profile = payload.get("embedding_profile")
+        if raw_profile is None:
+            return None
+        if not isinstance(raw_profile, dict):
+            raise ValueError("表达向量索引中的 embedding_profile 元数据格式错误")
+        return _deserialize_embedding_profile(raw_profile)
+
+    def _reset_profile_drift_candidate(self) -> None:
+        """清理尚未达到确认次数的向量空间漂移候选。"""
+
+        self._profile_drift_candidate = None
+        self._profile_drift_confirmations = 0
+
+    def _resolve_embedding_profile_candidate(
+        self,
+        *,
+        persisted_profile: ExpressionEmbeddingProfile | None,
+        candidate_profile: ExpressionEmbeddingProfile,
+    ) -> ExpressionEmbeddingProfile:
+        """根据持久化基准和连续确认结果解析本次实际使用的 profile。"""
+
+        if persisted_profile is None:
+            self._reset_profile_drift_candidate()
+            return candidate_profile
+
+        if _embedding_profile_identity(persisted_profile) != _embedding_profile_identity(candidate_profile):
+            self._reset_profile_drift_candidate()
+            return candidate_profile
+
+        similarities = _embedding_profile_probe_similarities(persisted_profile, candidate_profile)
+        min_similarity = min(similarities)
+        if min_similarity >= EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY:
+            self._reset_profile_drift_candidate()
+            return persisted_profile
+
+        if self._profile_drift_candidate is not None and _embedding_profiles_are_compatible(
+            self._profile_drift_candidate,
+            candidate_profile,
+        ):
+            self._profile_drift_confirmations += 1
+        else:
+            self._profile_drift_candidate = candidate_profile
+            self._profile_drift_confirmations = 1
+
+        if self._profile_drift_confirmations < EMBEDDING_PROFILE_DRIFT_CONFIRMATIONS:
+            logger.warning(
+                "检测到 embedding 向量空间疑似漂移，等待连续确认: "
+                f"min_cosine={min_similarity:.8f} "
+                f"confirmations={self._profile_drift_confirmations}/{EMBEDDING_PROFILE_DRIFT_CONFIRMATIONS}"
+            )
+            return persisted_profile
+
+        next_profile = _build_embedding_profile(
+            model_name=candidate_profile.model_name,
+            model_identifier=candidate_profile.model_identifier,
+            api_provider=candidate_profile.api_provider,
+            probe_embeddings=candidate_profile.probe_embeddings,
+            revision=persisted_profile.revision + 1,
+        )
+        logger.warning(
+            "embedding 向量空间漂移已连续确认，切换 profile: "
+            f"old_marker={persisted_profile.marker[:12]} new_marker={next_profile.marker[:12]} "
+            f"min_cosine={min_similarity:.8f} revision={next_profile.revision}"
+        )
+        self._reset_profile_drift_candidate()
+        return next_profile
+
+    async def get_current_embedding_profile(
+        self,
+        *,
+        index_path: str,
+        session_id: str = "",
+    ) -> ExpressionEmbeddingProfile:
         """用固定探针解析当前 embedding 后端 profile，并做短时缓存。"""
 
         now = time.monotonic()
@@ -265,11 +508,17 @@ class ExpressionVectorIndex:
                 max_concurrent=1,
                 session_id=session_id,
             )
-            profile = build_embedding_profile_from_probe_results(probe_results)
+            candidate_profile = build_embedding_profile_from_probe_results(probe_results)
+            persisted_profile = self._load_persisted_embedding_profile(resolve_project_path(index_path))
+            profile = self._resolve_embedding_profile_candidate(
+                persisted_profile=persisted_profile,
+                candidate_profile=candidate_profile,
+            )
             self._profile_cache = (time.monotonic(), profile)
             logger.info(
                 f"表达向量 embedding profile 已标定: marker={profile.marker[:12]} "
-                f"model={profile.model_name} dimension={profile.dimension}"
+                f"model={profile.model_name} identifier={profile.model_identifier} "
+                f"provider={profile.api_provider} dimension={profile.dimension} revision={profile.revision}"
             )
             return profile
 
@@ -281,11 +530,21 @@ class ExpressionVectorIndex:
         usage: str,
     ) -> None:
         result_model_name = normalize_text(result.model_name)
+        result_model_identifier = normalize_text(result.model_identifier)
+        result_api_provider = normalize_text(result.api_provider)
         result_dimension = len(result.embedding)
-        if result_model_name != profile.model_name or result_dimension != profile.dimension:
+        if (
+            result_model_name != profile.model_name
+            or result_model_identifier != profile.model_identifier
+            or result_api_provider != profile.api_provider
+            or result_dimension != profile.dimension
+        ):
             raise ValueError(
                 f"{usage} embedding profile 与当前标定不一致: "
                 f"result_model={result_model_name!r}, profile_model={profile.model_name!r}, "
+                f"result_identifier={result_model_identifier!r}, "
+                f"profile_identifier={profile.model_identifier!r}, "
+                f"result_provider={result_api_provider!r}, profile_provider={profile.api_provider!r}, "
                 f"result_dimension={result_dimension}, profile_dimension={profile.dimension}"
             )
 
@@ -678,6 +937,34 @@ class ExpressionVectorIndex:
         return max(2, min(80, sample_count))
 
     @staticmethod
+    def _repair_empty_cluster_labels(
+        labels: np.ndarray,
+        similarities: np.ndarray,
+        cluster_count: int,
+    ) -> np.ndarray:
+        """从成员充足的簇中迁移最不匹配的样本，确保每个簇都有成员。"""
+
+        repaired_labels = labels.copy()
+        member_counts = np.bincount(repaired_labels, minlength=cluster_count)
+        assigned_similarities = similarities[np.arange(repaired_labels.shape[0]), repaired_labels]
+
+        for empty_cluster_id in np.flatnonzero(member_counts == 0):
+            donor_candidates = np.flatnonzero(member_counts[repaired_labels] > 1)
+            if donor_candidates.size == 0:
+                raise ValueError("表达向量索引无法为所有聚类分配成员")
+
+            # 只从至少有两个成员的簇迁移，并优先选择最不匹配原中心的样本。
+            donor_index = int(
+                donor_candidates[np.argmin(assigned_similarities[donor_candidates])]
+            )
+            source_cluster_id = int(repaired_labels[donor_index])
+            repaired_labels[donor_index] = int(empty_cluster_id)
+            member_counts[source_cluster_id] -= 1
+            member_counts[empty_cluster_id] += 1
+
+        return repaired_labels
+
+    @staticmethod
     def _run_kmeans(
         normalized_vectors: np.ndarray,
         *,
@@ -688,6 +975,10 @@ class ExpressionVectorIndex:
         """在归一化向量上执行确定性 cosine k-means。"""
 
         sample_count = normalized_vectors.shape[0]
+        if cluster_count > sample_count:
+            raise ValueError(
+                f"表达向量索引聚类数量超过样本数量: clusters={cluster_count}, samples={sample_count}"
+            )
         if cluster_count <= 1 or sample_count <= 1:
             return np.zeros(sample_count, dtype=np.int32)
 
@@ -710,22 +1001,27 @@ class ExpressionVectorIndex:
         centroids = normalized_vectors[centroid_indices].copy()
         labels = np.full(sample_count, -1, dtype=np.int32)
         for _ in range(max_iter):
-            next_labels = np.argmax(normalized_vectors @ centroids.T, axis=1).astype(np.int32)
-            if np.array_equal(next_labels, labels):
-                break
+            similarities = normalized_vectors @ centroids.T
+            next_labels = np.argmax(similarities, axis=1).astype(np.int32)
+            next_labels = ExpressionVectorIndex._repair_empty_cluster_labels(
+                next_labels,
+                similarities,
+                cluster_count,
+            )
+            next_centroids = ExpressionVectorIndex._build_cluster_centers_from_labels(
+                normalized_vectors,
+                next_labels,
+                cluster_count,
+            )
+            converged = np.array_equal(next_labels, labels)
             labels = next_labels
-            for cluster_index in range(cluster_count):
-                member_vectors = normalized_vectors[labels == cluster_index]
-                if len(member_vectors) == 0:
-                    farthest_index = int(np.argmin(np.max(normalized_vectors @ centroids.T, axis=1)))
-                    centroids[cluster_index] = normalized_vectors[farthest_index]
-                    labels[farthest_index] = cluster_index
-                    continue
-                centroid = member_vectors.mean(axis=0)
-                norm = float(np.linalg.norm(centroid))
-                if norm <= 0:
-                    raise ValueError(f"表达向量索引聚类 {cluster_index} 中心向量为零")
-                centroids[cluster_index] = centroid / norm
+            centroids = next_centroids
+            if converged:
+                break
+
+        member_counts = np.bincount(labels, minlength=cluster_count)
+        if np.any(member_counts == 0):
+            raise ValueError(f"表达向量索引聚类结果存在空簇: counts={member_counts.tolist()}")
         return labels
 
     @staticmethod
@@ -951,8 +1247,12 @@ class ExpressionVectorIndex:
         if not normalized_items:
             return
 
+        resolved_index_path = resolve_project_path(index_path)
         embedding_session_id = normalize_text(normalized_items[0].session_id)
-        current_profile = await self.get_current_embedding_profile(session_id=embedding_session_id)
+        current_profile = await self.get_current_embedding_profile(
+            index_path=str(resolved_index_path),
+            session_id=embedding_session_id,
+        )
 
         from src.services.embedding_service import EmbeddingServiceClient
 
@@ -982,7 +1282,6 @@ class ExpressionVectorIndex:
             )
         next_vectors = l2_normalize(next_vectors).astype(np.float32)
 
-        resolved_index_path = resolve_project_path(index_path)
         async with self._update_lock:
             current_fingerprints = self._load_current_expression_fingerprints()
             vectors_path = resolved_index_path.with_suffix(".npz")
@@ -1125,6 +1424,7 @@ class ExpressionVectorIndex:
             payload["embedding_profile_marker"] = current_profile.marker
             payload["embedding_profile_version"] = EMBEDDING_PROFILE_VERSION
             payload["embedding_dimension"] = int(current_profile.dimension)
+            payload["embedding_profile"] = _serialize_embedding_profile(current_profile)
             payload["embedding_profiles"] = profile_metadata
             payload["sample_count"] = len(raw_expressions)
             payload["clusters"] = self._build_cluster_summaries(raw_expressions)
@@ -1223,7 +1523,7 @@ class ExpressionVectorIndex:
                 return
 
             batch_started_at = time.monotonic()
-            current_profile = await self.get_current_embedding_profile()
+            current_profile = await self.get_current_embedding_profile(index_path=str(resolved_index_path))
             items = await asyncio.to_thread(
                 self._load_history_backfill_items,
                 index_path=resolved_index_path,
@@ -1284,7 +1584,10 @@ class ExpressionVectorIndex:
         if snapshot is None:
             return []
 
-        current_profile = await self.get_current_embedding_profile(session_id=session_id)
+        current_profile = await self.get_current_embedding_profile(
+            index_path=index_path,
+            session_id=session_id,
+        )
         profile_vectors = snapshot.profile_vectors.get(current_profile.marker)
         profile_cluster_centers = snapshot.profile_cluster_centers.get(current_profile.marker)
         if profile_vectors is None or profile_cluster_centers is None:

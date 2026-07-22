@@ -1,6 +1,6 @@
 # A_Memorix 配置参考 (v2.0.0)
 
-本文档对应当前仓库代码（`__version__ = 2.0.0`、`SCHEMA_VERSION = 10`）。
+本文档对应当前仓库代码（`__version__ = 2.0.0`、`SCHEMA_VERSION = 21`）。
 
 说明：
 
@@ -59,11 +59,10 @@ candidate_k = 80
 relation_candidate_k = 60
 
 [threshold]
-min_threshold = 0.3
+min_threshold = 0.29
 max_threshold = 0.95
 percentile = 75.0
-min_results = 3
-enable_auto_adjust = true
+min_results = 4
 
 [filter]
 enabled = true
@@ -73,8 +72,11 @@ chats = []
 [episode]
 enabled = true
 generation_enabled = true
-pending_batch_size = 50
-pending_max_retry = 3
+source_poll_interval_seconds = 1
+source_batch_size = 20
+source_max_retry = 3
+source_lease_seconds = 1800
+source_max_wait_seconds = 60
 max_paragraphs_per_call = 20
 max_chars_per_call = 6000
 source_time_window_hours = 24
@@ -93,7 +95,13 @@ evidence_classification_temperature = 0.1
 enabled = true
 half_life_hours = 24.0
 prune_threshold = 0.1
+revive_threshold = 0.15
 freeze_duration_hours = 24.0
+access_reinforcement_alpha = 0.05
+access_reinforcement_cooldown_minutes = 60
+explicit_reinforcement_alpha = 0.5
+weaken_alpha = 0.5
+lifecycle_batch_size = 1000
 
 [advanced]
 enable_auto_save = true
@@ -265,7 +273,7 @@ default_sample_size = 24
 
 ### `retrieval.search.posterior_graph` (`PosteriorGraphConfig`)
 
-- `enabled` (默认 `true`)
+- `enabled` (默认 `false`，需要后验图补位时显式开启)
 - `drop_ratio` (默认 `0.15`)
 - `min_core_results` (默认 `2`)
 - `max_graph_slots` (默认 `2`)
@@ -294,12 +302,13 @@ default_sample_size = 24
 
 ### `threshold` (`ThresholdConfig`)
 
-- `threshold.min_threshold` (默认 `0.3`)
+- `threshold.min_threshold` (默认 `0.29`)
 - `threshold.max_threshold` (默认 `0.95`)
 - `threshold.percentile` (默认 `75.0`)
 - `threshold.std_multiplier` (默认 `1.5`)
-- `threshold.min_results` (默认 `3`)
-- `threshold.enable_auto_adjust` (默认 `true`)
+- `threshold.min_results` (默认 `4`)
+
+阈值只由当前请求的候选分数分布计算。运行时只累计次数、总和、最小值、最大值用于统计展示，不保存阈值序列，也不把累计值反馈给后续请求。
 
 ## 4. 聊天过滤
 
@@ -385,8 +394,12 @@ rule_type = "group"
 
 - `episode.enabled` (默认 `true`)
 - `episode.generation_enabled` (默认 `true`)
-- `episode.pending_batch_size` (默认 `50`)
-- `episode.pending_max_retry` (默认 `3`)
+- `episode.source_poll_interval_seconds` (默认 `1.0`)
+- `episode.source_batch_size` (默认 `20`)
+- `episode.source_max_retry` (默认 `3`)
+: 每个来源版本最多尝试3次，包含首次尝试。
+- `episode.source_lease_seconds` (默认 `1800.0`)
+- `episode.source_max_wait_seconds` (默认 `60.0`)
 - `episode.max_paragraphs_per_call` (默认 `20`)
 - `episode.max_chars_per_call` (默认 `6000`)
 - `episode.source_time_window_hours` (默认 `24`)
@@ -413,14 +426,23 @@ rule_type = "group"
 - `memory.half_life_hours` (默认 `24.0`)
 - `memory.base_decay_interval_hours` (默认 `1.0`)
 - `memory.prune_threshold` (默认 `0.1`)
+- `memory.revive_threshold` (默认 `0.15`，应高于冻结阈值)
 - `memory.freeze_duration_hours` (默认 `24.0`)
+- `memory.access_reinforcement_alpha` (默认 `0.05`，仅对最终返回且实际采用的 relation 命中生效)
+- `memory.access_reinforcement_cooldown_minutes` (默认 `60`，设为 `0` 时不限制访问加强频率)
+- `memory.explicit_reinforcement_alpha` (默认 `0.5`)
+- `memory.weaken_alpha` (默认 `0.5`)
+- `memory.lifecycle_batch_size` (默认 `1000`)
 
 ### `memory.orphan`
 
 - `enable_soft_delete` (默认 `true`)
 - `entity_retention_days` (默认 `7.0`)
-- `paragraph_retention_days` (默认 `7.0`)
 - `sweep_grace_hours` (默认 `24.0`)
+
+Paragraph 不再因为年龄较大或缺少实体、关系派生物而自动回收。只有显式设置
+`expires_at` 的临时段落会进入自动删除流程；永久段落和存在 external ref 的段落
+始终跳过自动回收。
 
 ## 8. 高级运行时
 

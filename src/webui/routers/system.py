@@ -4,9 +4,10 @@
 提供系统重启、状态查询等功能
 """
 
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -23,13 +24,14 @@ import time
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
-from src.common.update_notice import get_pending_update_notice, mark_update_notice_seen
+from src.common.update_notice import build_debug_update_notice, get_pending_update_notice, mark_update_notice_seen
 from src.common.utils.image_path import (
     StoredImagePathError,
     resolve_stored_image_path,
     stored_image_paths_equal,
 )
 from src.config.config import MMC_VERSION
+from src.plugin_runtime.update_compatibility_notice import collect_update_incompatible_plugins
 from src.webui.dependencies import require_auth
 
 router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_auth)])
@@ -138,14 +140,27 @@ class StatusResponse(BaseModel):
     start_time: str
 
 
+class IncompatiblePluginNoticeResponse(BaseModel):
+    """主程序更新导致的不兼容插件。"""
+
+    plugin_id: str
+    name: str
+    installed_version: str
+    host_min_version: str
+    host_max_version: str
+    update_status: Literal["checking", "available", "unavailable", "not_found", "check_failed"]
+    update_version: str | None = None
+
+
 class UpdateNoticeResponse(BaseModel):
     """更新公告响应。"""
 
     pending: bool
     current_version: str
     from_version: str | None = None
-    versions: list[str] = Field(default_factory=list)
+    versions: List[str] = Field(default_factory=list)
     content: str = ""
+    incompatible_plugins: List[IncompatiblePluginNoticeResponse] = Field(default_factory=list)
 
 
 class UpdateNoticeAckResponse(BaseModel):
@@ -1473,19 +1488,28 @@ async def get_maibot_status():
 
 
 @router.get("/update-notice", response_model=UpdateNoticeResponse)
-async def get_update_notice() -> UpdateNoticeResponse:
+async def get_update_notice(force: bool = False) -> UpdateNoticeResponse:
     """获取当前 WebUI 是否需要弹出更新公告。"""
 
     try:
         notice = get_pending_update_notice("webui", current_version=MMC_VERSION)
+        if notice is None and force:
+            notice = build_debug_update_notice(MMC_VERSION)
         if notice is None:
             return UpdateNoticeResponse(pending=False, current_version=MMC_VERSION)
+        incompatible_plugins = await collect_update_incompatible_plugins(
+            notice.from_version,
+            notice.current_version,
+        )
         return UpdateNoticeResponse(
             pending=True,
             current_version=notice.current_version,
             from_version=notice.from_version,
             versions=notice.versions,
             content=notice.content,
+            incompatible_plugins=[
+                IncompatiblePluginNoticeResponse(**asdict(plugin)) for plugin in incompatible_plugins
+            ],
         )
     except Exception as e:
         logger.exception(f"获取更新公告失败: {e}")

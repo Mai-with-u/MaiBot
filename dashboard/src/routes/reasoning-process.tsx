@@ -54,6 +54,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
 import { useAvatarFetchEnabled } from '@/lib/avatar-url'
+import { formatChatAccountLabel } from '@/lib/chat-display'
 import { getModelConfig } from '@/lib/config-api'
 import {
   getReasoningPromptFile,
@@ -711,6 +712,9 @@ function getSessionSubtitle(sessionInfo?: ReasoningPromptSessionInfo): string {
   const parts = []
   if (sessionInfo.platform) {
     parts.push(`${sessionInfo.platform} · ${formatSessionType(sessionInfo.chat_type)}`)
+  }
+  if (sessionInfo.account_id) {
+    parts.push(formatChatAccountLabel(sessionInfo.account_id))
   }
   if (sessionInfo.resolved_session_id) {
     parts.push(`会话 ${sessionInfo.resolved_session_id.slice(0, 8)}`)

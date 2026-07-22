@@ -886,8 +886,7 @@ describe('KnowledgeBasePage import workflow', () => {
     })
     vi.mocked(memoryApi.getMemoryEpisodeStatus).mockResolvedValue({
       success: true,
-      pending_queue: 0,
-      counts: {},
+      counts: { pending: 2, running: 1, done: 3, failed: 0, total: 6 },
       failed: [],
     })
     vi.mocked(memoryApi.getMemoryEpisodes).mockResolvedValue({
@@ -1554,6 +1553,50 @@ describe('KnowledgeBasePage import workflow', () => {
     )
   }, 20_000)
 
+  it('shows business failure when tuning task creation is rejected', async () => {
+    vi.mocked(memoryApi.createMemoryTuningTask).mockResolvedValueOnce({
+      success: false,
+      error: '样本不足',
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+    await user.click(screen.getByRole('button', { name: '开始调优' }))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '创建调优任务失败',
+        description: '样本不足',
+        variant: 'destructive',
+      }),
+    )
+  }, 20_000)
+
+  it('shows business failure when applying tuning profile is rejected', async () => {
+    vi.mocked(memoryApi.applyBestMemoryTuningProfile).mockResolvedValueOnce({
+      success: false,
+      error: '独立样本验证未通过',
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+    await user.click(screen.getByRole('button', { name: '应用推荐结果' }))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '应用最佳参数失败',
+        description: '独立样本验证未通过',
+        variant: 'destructive',
+      }),
+    )
+  }, 20_000)
+
   it('keeps tuning parameters collapsed by default', async () => {
     const user = userEvent.setup()
     renderPage()
@@ -1915,6 +1958,112 @@ describe('KnowledgeBasePage import workflow', () => {
       })),
     )
     await waitFor(() => expect(memoryApi.getMemoryEpisode).toHaveBeenCalledWith('ep-1'))
+  }, 20_000)
+
+  it('submits the explicit Episode source attempt budget', async () => {
+    const user = userEvent.setup()
+    vi.mocked(memoryApi.processMemoryEpisodePending).mockClear()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '情景记忆' }))
+    expect(await screen.findByText('已完成')).toBeInTheDocument()
+
+    const limitInput = screen.getByLabelText('本次处理上限')
+    const attemptInput = screen.getByLabelText('最大尝试次数（含首次）')
+    expect(limitInput).toHaveAttribute('max', '200')
+    expect(attemptInput).toHaveAttribute('max', '20')
+    await user.clear(limitInput)
+    await user.type(limitInput, '7')
+    await user.clear(attemptInput)
+    await user.type(attemptInput, '4')
+    await user.click(screen.getByRole('button', { name: '处理来源重建任务' }))
+
+    await waitFor(() =>
+      expect(memoryApi.processMemoryEpisodePending).toHaveBeenCalledWith({ limit: 7, max_retry: 4 }),
+    )
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '已处理来源重建任务' }))
+  }, 20_000)
+
+  it('does not replace an invalid Episode attempt budget with the default', async () => {
+    const user = userEvent.setup()
+    vi.mocked(memoryApi.processMemoryEpisodePending).mockClear()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '情景记忆' }))
+    const attemptInput = await screen.findByLabelText('最大尝试次数（含首次）')
+    await user.clear(attemptInput)
+    await user.type(attemptInput, '0')
+    await user.click(screen.getByRole('button', { name: '处理来源重建任务' }))
+
+    expect(memoryApi.processMemoryEpisodePending).not.toHaveBeenCalled()
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '处理参数无效' }))
+
+    await user.clear(attemptInput)
+    await user.type(attemptInput, '21')
+    await user.click(screen.getByRole('button', { name: '处理来源重建任务' }))
+
+    expect(memoryApi.processMemoryEpisodePending).not.toHaveBeenCalled()
+  }, 20_000)
+
+  it('shows the reason returned for an unfinished Episode source task', async () => {
+    const user = userEvent.setup()
+    vi.mocked(memoryApi.processMemoryEpisodePending).mockResolvedValueOnce({
+      success: false,
+      processed: 1,
+      failed: 0,
+      unfinished: 1,
+      unfinished_items: [{ source: 'chat:group-1', reason: 'not_claimed' }],
+    })
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '情景记忆' }))
+    await user.click(screen.getByRole('button', { name: '处理来源重建任务' }))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '处理来源重建任务失败',
+          description: 'chat:group-1: 本轮未领取到该来源任务',
+        }),
+      ),
+    )
+  }, 20_000)
+
+  it('prefers a real chat stream over WebUI local chat in audit timeline', async () => {
+    const user = userEvent.setup()
+    vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValueOnce({
+      success: true,
+      data: [
+        {
+          chat_id: 'webui-chat',
+          chat_name: 'WebUI用户的私聊',
+          platform: 'webui',
+          group_id: null,
+          user_id: 'webui',
+          is_group: false,
+        },
+        {
+          chat_id: 'chat-1',
+          chat_name: '测试群',
+          platform: 'qq',
+          group_id: '10001',
+          user_id: null,
+          is_group: true,
+        },
+      ],
+    })
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '审计时间线' }))
+
+    await waitFor(() =>
+      expect(memoryApi.getMemoryTimeline).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1' })),
+    )
+    expect(memoryApi.getMemoryTimeline).not.toHaveBeenCalledWith(expect.objectContaining({ chatId: 'webui-chat' }))
   }, 20_000)
 
   it('jumps from paragraph timeline event to graph paragraph detail', async () => {

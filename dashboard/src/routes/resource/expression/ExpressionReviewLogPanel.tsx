@@ -20,6 +20,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
+import { formatChatDisplayName } from '@/lib/chat-display'
 import { approveExpressionReviewLog, getExpressionChatTargets, getExpressionReviewLogs } from '@/lib/expression-api'
 
 import type { ChatInfo, ExpressionReviewLogEntry } from '@/types/expression'
@@ -173,7 +174,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
               <SelectItem value={ALL_CHATS_VALUE}>全部聊天流</SelectItem>
               {chatList.map((chat) => (
                 <SelectItem key={chat.chat_id} value={chat.chat_id}>
-                  {chat.chat_name}
+                  {formatChatDisplayName(chat.chat_name, chat.account_id)}
                 </SelectItem>
               ))}
             </SelectContent>

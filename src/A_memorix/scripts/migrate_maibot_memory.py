@@ -19,7 +19,6 @@ import importlib
 import json
 import logging
 import os
-import pickle
 import sqlite3
 import sys
 import time
@@ -102,9 +101,10 @@ def _disable_unavailable_gemini_provider() -> None:
     global model_config
     try:
         from google import genai  # type: ignore  # noqa: F401
+
         return
-    except Exception:
-        pass
+    except ImportError:
+        logger.info("未安装 google-genai，迁移时禁用 Gemini provider")
 
     from src.config.config import model_config as loaded_model_config
 
@@ -289,7 +289,7 @@ def _safe_float(value: Any, default: float) -> float:
         return value.timestamp()
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError):
         pass
 
     text = str(value or "").strip()
@@ -688,7 +688,9 @@ class SourceDB:
             conditions.append("1=0")
 
         if selection.time_from_ts is not None and selection.time_to_ts is not None:
-            conditions.append(f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ? AND {_sqlite_timestamp_expr(schema.start_time_expr)} <= ?)")
+            conditions.append(
+                f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ? AND {_sqlite_timestamp_expr(schema.start_time_expr)} <= ?)"
+            )
             params.extend([selection.time_from_ts, selection.time_to_ts])
         elif selection.time_from_ts is not None:
             conditions.append(f"({_sqlite_timestamp_expr(schema.end_time_expr)} >= ?)")
@@ -720,8 +722,7 @@ class SourceDB:
             f"GROUP BY {schema.chat_id_expr} ORDER BY c DESC LIMIT 30"
         )
         distribution = [
-            (_normalize_name(row["chat_id"]), int(row["c"]))
-            for row in conn.execute(dist_sql, tuple(params)).fetchall()
+            (_normalize_name(row["chat_id"]), int(row["c"])) for row in conn.execute(dist_sql, tuple(params)).fetchall()
         ]
 
         sample_sql = f"SELECT {self._select_clause(include_content_fields=False)} FROM chat_history {where_sql} ORDER BY id ASC LIMIT ?"
@@ -898,12 +899,12 @@ class MigrationRunner:
         self.plugin_config = merged
 
     def _read_existing_vector_dimension(self, fallback_dimension: int) -> int:
-        meta_path = self.target_data_dir / "vectors" / "vectors_metadata.pkl"
+        meta_path = self.target_data_dir / "vectors" / "vectors_metadata.json"
         if not meta_path.exists():
             return fallback_dimension
         try:
-            with open(meta_path, "rb") as f:
-                payload = pickle.load(f)
+            with open(meta_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
             value = _safe_int(payload.get("dimension"), fallback_dimension)
             return max(1, value)
         except Exception:
@@ -948,7 +949,7 @@ class MigrationRunner:
 
             try:
                 detected_dim = self._read_existing_vector_dimension(emb_default_dim)
-                has_existing_vectors = (self.target_data_dir / "vectors" / "vectors_metadata.pkl").exists()
+                has_existing_vectors = (self.target_data_dir / "vectors" / "vectors_metadata.json").exists()
                 if not has_existing_vectors:
                     detected_dim = await self.embedding_manager._detect_dimension()
             except Exception as e:
@@ -1251,16 +1252,16 @@ class MigrationRunner:
                 if not isinstance(parsed, list):
                     self._warn_list_field_coerced(row_id, field_name, f"JSON 类型为 {type(parsed).__name__}")
                 return self._normalize_list_field_items(parsed)
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.debug(f"列表字段不是 JSON，继续兼容解析: row={row_id}, field={field_name}")
 
             try:
                 parsed_literal = ast.literal_eval(text)
                 if isinstance(parsed_literal, (list, tuple, set, dict)):
                     self._warn_list_field_coerced(row_id, field_name, "使用 Python literal 兼容解析")
                     return self._normalize_list_field_items(parsed_literal)
-            except Exception:
-                pass
+            except (SyntaxError, ValueError):
+                logger.debug(f"列表字段不是 Python literal，继续分隔符解析: row={row_id}, field={field_name}")
 
             separators = [",", "，", "、", ";", "；", "\n"]
             for sep in separators:
@@ -1287,12 +1288,7 @@ class MigrationRunner:
         participants_text = "、".join(participants) if participants else ""
         keywords_text = "、".join(keywords_top) if keywords_top else ""
 
-        content = (
-            f"话题：{theme}\n"
-            f"概括：{summary}\n"
-            f"参与者：{participants_text}\n"
-            f"关键词：{keywords_text}"
-        ).strip()
+        content = (f"话题：{theme}\n概括：{summary}\n参与者：{participants_text}\n关键词：{keywords_text}").strip()
 
         paragraph_hash = compute_hash(normalize_text(content))
         source = f"maibot.chat_history:{chat_id}"
@@ -1376,9 +1372,7 @@ class MigrationRunner:
                     self._append_bad_row(row, str(e))
                     max_errors = int(self.args.max_errors or 0)
                     if max_errors > 0 and self.stats["bad_rows"] > max_errors:
-                        raise MigrationError(
-                            f"坏行数量超过上限 max_errors={self.args.max_errors}，已中止。"
-                        ) from e
+                        raise MigrationError(f"坏行数量超过上限 max_errors={self.args.max_errors}，已中止。") from e
                     continue
 
                 self.stats["valid_rows"] += 1
@@ -1415,7 +1409,7 @@ class MigrationRunner:
             return
 
         now_ts = time.time()
-        empty_meta_blob = pickle.dumps({})
+        empty_meta_blob = json.dumps({}, ensure_ascii=False, sort_keys=True)
 
         conn = self.metadata_store.get_connection()
 
@@ -1612,6 +1606,9 @@ class MigrationRunner:
                     )
 
             if relation_records:
+                evidence_counts: Dict[str, int] = {}
+                for _, relation_hash in paragraph_relation_links:
+                    evidence_counts[relation_hash] = evidence_counts.get(relation_hash, 0) + 1
                 relation_rows = [
                     (
                         relation_hash,
@@ -1623,14 +1620,22 @@ class MigrationRunner:
                         now_ts,
                         rel[4],
                         rel[5],
+                        1.0,
+                        now_ts,
+                        now_ts,
+                        evidence_counts.get(relation_hash, 0),
+                        0,
+                        now_ts if evidence_counts.get(relation_hash, 0) > 0 else None,
                     )
                     for relation_hash, rel in relation_records.items()
                 ]
                 cursor.executemany(
                     """
                     INSERT OR IGNORE INTO relations
-                    (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (hash, subject, predicate, object, vector_index, confidence, created_at, source_paragraph, metadata,
+                     retention_strength, retention_anchor_at, next_lifecycle_at, reinforcement_count,
+                     lifecycle_revision, last_reinforced)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     relation_rows,
                 )
@@ -1724,9 +1729,7 @@ class MigrationRunner:
             if emb_arr.ndim == 1:
                 emb_arr = emb_arr.reshape(1, -1)
             if emb_arr.shape[0] != len(chunk_ids):
-                logger.warning(
-                    f"embedding 返回数量异常: expected={len(chunk_ids)}, got={emb_arr.shape[0]}，跳过该批次"
-                )
+                logger.warning(f"embedding 返回数量异常: expected={len(chunk_ids)}, got={emb_arr.shape[0]}，跳过该批次")
                 continue
 
             valid_vectors = []
@@ -1882,7 +1885,7 @@ class MigrationRunner:
             if self.metadata_store is not None:
                 self.metadata_store.close()
         except Exception:
-            pass
+            logger.exception("关闭 A_Memorix 迁移目标存储失败")
         self.source_db.close()
 
 

@@ -75,6 +75,7 @@ interface HeaderProps {
   onSearchOpenChange: (open: boolean) => void
   onThemeChange: (theme: 'light' | 'dark' | 'system') => void
   onTopbarToggle: () => void
+  onWorkspaceNavigate: (to: '/' | '/chat' | '/logs') => void
   topbarCollapsed: boolean
   workspaceMode: WorkspaceMode
 }
@@ -89,6 +90,7 @@ export function Header({
   onSearchOpenChange,
   onThemeChange,
   onTopbarToggle,
+  onWorkspaceNavigate,
   topbarCollapsed,
   workspaceMode,
 }: HeaderProps) {
@@ -350,7 +352,23 @@ export function Header({
                         workspaceTabsCompact ? 'px-2' : 'px-2.5'
                       )}
                     >
-                      <Link to={to}>
+                      <Link
+                        to={to}
+                        onClick={(event) => {
+                          if (
+                            workspaceMode === value ||
+                            event.button !== 0 ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          ) {
+                            return
+                          }
+                          event.preventDefault()
+                          onWorkspaceNavigate(to)
+                        }}
+                      >
                         {workspaceMode === value && (
                           <motion.span
                             layoutId="workspace-tab-pill"

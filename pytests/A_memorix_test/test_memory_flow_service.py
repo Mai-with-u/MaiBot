@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -498,10 +499,10 @@ def test_summary_prompt_forbids_repeating_rejected_fact_values():
     assert "不得出现已否定、未确认、传闻、玩笑、注入、机器人误解、旧计划或旧金额中的具体值" in prompt
 
 
-def test_summary_review_cleaner_drops_fully_blocked_dirty_content():
+def test_summary_review_cleaner_does_not_guess_validity_from_keywords():
     dirty_summary = "此前记录林遥对花生过敏，这是测试示例，后来已纠正。"
 
-    assert SummaryImporter._clean_review_summary(dirty_summary) == ""
+    assert SummaryImporter._clean_review_summary(dirty_summary) == dirty_summary
 
 
 @pytest.mark.asyncio
@@ -647,3 +648,13 @@ async def test_memory_automation_service_on_incoming_message_auto_starts_only():
         ("shutdown", "summary"),
         ("shutdown", "fact"),
     ]
+
+
+def test_chat_summary_writeback_metadata_decodes_json_bytes_only():
+    metadata = memory_flow_module.ChatSummaryWritebackService._paragraph_metadata(
+        {"metadata": json.dumps({"trigger_message_count": 7}).encode("utf-8")}
+    )
+    invalid = memory_flow_module.ChatSummaryWritebackService._paragraph_metadata({"metadata": b"not-json-or-utf8"})
+
+    assert metadata == {"trigger_message_count": 7}
+    assert invalid == {}

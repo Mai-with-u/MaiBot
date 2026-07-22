@@ -11,7 +11,6 @@ import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
-import tomlkit
 
 from src.A_memorix import host_service as host_service_module
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
@@ -114,7 +113,7 @@ def _build_test_config(data_dir: Path) -> Dict[str, Any]:
         },
         "threshold": {
             "percentile": 70.0,
-            "min_results": 1,
+            "min_results": 20,
         },
         "web": {
             "tuning": {
@@ -144,7 +143,23 @@ def _assert_response_ok(response: Any) -> Dict[str, Any]:
     return payload
 
 
-def _wait_for_import_task_terminal(client: TestClient, task_id: str, *, timeout_seconds: float = IMPORT_TIMEOUT_SECONDS) -> Dict[str, Any]:
+def _wait_for_runtime_ready(client: TestClient, *, timeout_seconds: float = 30.0) -> Dict[str, Any]:
+    deadline = monotonic() + timeout_seconds
+    last_payload: Dict[str, Any] = {}
+    while monotonic() < deadline:
+        response = client.get("/api/webui/memory/runtime/config")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        last_payload = payload
+        if payload.get("success", False) is True:
+            return payload
+        sleep(0.2)
+    raise AssertionError(f"A_Memorix 运行时初始化超时: last_payload={last_payload}")
+
+
+def _wait_for_import_task_terminal(
+    client: TestClient, task_id: str, *, timeout_seconds: float = IMPORT_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -162,7 +177,9 @@ def _wait_for_import_task_terminal(client: TestClient, task_id: str, *, timeout_
     raise AssertionError(f"导入任务超时: task_id={task_id}, last_payload={last_payload}")
 
 
-def _wait_for_tuning_task_terminal(client: TestClient, task_id: str, *, timeout_seconds: float = TUNING_TIMEOUT_SECONDS) -> Dict[str, Any]:
+def _wait_for_tuning_task_terminal(
+    client: TestClient, task_id: str, *, timeout_seconds: float = TUNING_TIMEOUT_SECONDS
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -180,7 +197,13 @@ def _wait_for_tuning_task_terminal(client: TestClient, task_id: str, *, timeout_
     raise AssertionError(f"调优任务超时: task_id={task_id}, last_payload={last_payload}")
 
 
-def _wait_for_query_hit(client: TestClient, query: str, *, timeout_seconds: float = 30.0) -> Dict[str, Any]:
+def _wait_for_query_hit(
+    client: TestClient,
+    query: str,
+    *,
+    expected_content: str = "",
+    timeout_seconds: float = 30.0,
+) -> Dict[str, Any]:
     deadline = monotonic() + timeout_seconds
     last_payload: Dict[str, Any] = {}
     while monotonic() < deadline:
@@ -192,7 +215,10 @@ def _wait_for_query_hit(client: TestClient, query: str, *, timeout_seconds: floa
         )
         last_payload = payload
         hits = payload.get("hits") or []
-        if isinstance(hits, list) and len(hits) > 0:
+        if isinstance(hits, list) and any(
+            isinstance(item, dict) and (not expected_content or expected_content in str(item.get("content", "") or ""))
+            for item in hits
+        ):
             return payload
         sleep(0.2)
     raise AssertionError(f"检索命中超时: query={query}, last_payload={last_payload}")
@@ -233,9 +259,7 @@ def _wait_for_source_paragraph_count(
         if item:
             last_item = dict(item)
         sleep(0.2)
-    raise AssertionError(
-        f"等待来源段落计数超时: source={source_name}, min_count={min_count}, last_item={last_item}"
-    )
+    raise AssertionError(f"等待来源段落计数超时: source={source_name}, min_count={min_count}, last_item={last_item}")
 
 
 def _create_multitype_upload_task(client: TestClient) -> str:
@@ -275,8 +299,18 @@ def _create_multitype_upload_task(client: TestClient) -> str:
     files = [
         ("files", ("integration-notes.txt", "Alice 在测试环境记录了一条长期记忆。".encode("utf-8"), "text/plain")),
         ("files", ("integration-diary.md", "# 日志\nBob 与 Alice 讨论了导图。".encode("utf-8"), "text/markdown")),
-        ("files", ("integration-structured.json", json.dumps(structured_json, ensure_ascii=False).encode("utf-8"), "application/json")),
-        ("files", ("integration-extra.json", json.dumps(extra_json, ensure_ascii=False).encode("utf-8"), "application/json")),
+        (
+            "files",
+            (
+                "integration-structured.json",
+                json.dumps(structured_json, ensure_ascii=False).encode("utf-8"),
+                "application/json",
+            ),
+        ),
+        (
+            "files",
+            ("integration-extra.json", json.dumps(extra_json, ensure_ascii=False).encode("utf-8"), "application/json"),
+        ),
     ]
 
     response = client.post(
@@ -421,6 +455,7 @@ def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dic
     source_name = f"integration-source-{uuid4().hex[:8]}"
 
     with TestClient(app) as client:
+        _wait_for_runtime_ready(client)
         upload_task_id = _create_multitype_upload_task(client)
         upload_task = _wait_for_import_task_terminal(client, upload_task_id)
 
@@ -428,7 +463,7 @@ def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dic
         seed_task = _wait_for_import_task_terminal(client, seed_task_id)
         assert str(seed_task.get("status", "") or "") in {"completed", "completed_with_errors"}, seed_task
 
-        _wait_for_query_hit(client, unique_token, timeout_seconds=45.0)
+        _wait_for_query_hit(client, unique_token, expected_content=unique_token, timeout_seconds=45.0)
 
         yield {
             "client": client,
@@ -464,7 +499,12 @@ def test_retrieval_module_end_to_end_queries_seeded_data(integration_state: Dict
     client = integration_state["client"]
     unique_token = integration_state["unique_token"]
 
-    aggregate_payload = _wait_for_query_hit(client, unique_token, timeout_seconds=45.0)
+    aggregate_payload = _wait_for_query_hit(
+        client,
+        unique_token,
+        expected_content=unique_token,
+        timeout_seconds=45.0,
+    )
     hits = aggregate_payload.get("hits") or []
     joined_content = "\n".join(str(item.get("content", "") or "") for item in hits if isinstance(item, dict))
     assert unique_token in joined_content
@@ -477,7 +517,9 @@ def test_retrieval_module_end_to_end_queries_seeded_data(integration_state: Dict
     )
     graph_items = graph_payload.get("items") or []
     assert isinstance(graph_items, list)
-    assert any(str(item.get("type", "") or "") == "entity" for item in graph_items if isinstance(item, dict)), graph_items
+    assert any(str(item.get("type", "") or "") == "entity" for item in graph_items if isinstance(item, dict)), (
+        graph_items
+    )
 
 
 def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[str, Any]) -> None:
@@ -507,7 +549,7 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
     assert str(task.get("status", "") or "") == "completed", task
     assert isinstance(task.get("recommended"), bool)
 
-    split_stats = ((task.get("query_set_stats") or {}).get("split") or {})
+    split_stats = (task.get("query_set_stats") or {}).get("split") or {}
     assert split_stats.get("strategy") == "category_balanced_holdout", task
     assert int(split_stats.get("train", 0) or 0) > 0, task
     assert int(split_stats.get("holdout", 0) or 0) > 0, task
@@ -545,10 +587,19 @@ def test_tuning_module_end_to_end_create_and_apply_best(integration_state: Dict[
     assert runtime_retrieval.get("top_k_final") == applied_retrieval.get("top_k_final")
     assert runtime_retrieval.get("fusion") == applied_retrieval.get("fusion")
 
-    probe_payload = _wait_for_query_hit(client, probe_query, timeout_seconds=45.0)
+    probe_payload = _wait_for_query_hit(
+        client,
+        probe_query,
+        expected_content=probe_phrase,
+        timeout_seconds=45.0,
+    )
     probe_hits = probe_payload.get("hits") or []
-    joined_probe_content = "\n".join(str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict))
+    joined_probe_content = "\n".join(
+        str(item.get("content", "") or "") for item in probe_hits if isinstance(item, dict)
+    )
     assert probe_phrase in joined_probe_content
+
+    _assert_response_ok(client.post("/api/webui/memory/retrieval_tuning/profile/rollback"))
 
 
 def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dict[str, Any]) -> None:
@@ -595,9 +646,7 @@ def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dic
     )
     after_delete_hits = after_delete_payload.get("hits") or []
     after_delete_text = "\n".join(
-        str(item.get("content", "") or "")
-        for item in after_delete_hits
-        if isinstance(item, dict)
+        str(item.get("content", "") or "") for item in after_delete_hits if isinstance(item, dict)
     )
     assert unique_token not in after_delete_text
     assert int(execute_payload.get("deleted_paragraph_count", 0) or 0) >= 1, execute_payload
@@ -622,13 +671,188 @@ def test_delete_module_end_to_end_preview_execute_restore(integration_state: Dic
         )
     )
     operation_items = operations_payload.get("items") or []
-    operation_ids = {
-        str(item.get("operation_id", "") or "")
-        for item in operation_items
-        if isinstance(item, dict)
-    }
+    operation_ids = {str(item.get("operation_id", "") or "") for item in operation_items if isinstance(item, dict)}
     assert operation_id in operation_ids
 
     operation_detail_payload = _assert_response_ok(client.get(f"/api/webui/memory/delete/operations/{operation_id}"))
     detail_operation = operation_detail_payload.get("operation") or {}
     assert str(detail_operation.get("status", "") or "") == "restored"
+
+
+def test_real_api_business_flow_import_query_graph_delete_restore(integration_state: Dict[str, Any]) -> None:
+    client = integration_state["client"]
+    flow_id = uuid4().hex[:12]
+    source_name = f"business-flow-{flow_id}"
+    access_code = f"ORBIT-{flow_id.upper()}"
+    person_name = f"林澈-{flow_id[:6]}"
+    location_name = f"苍穹观测站-{flow_id[:6]}"
+    device_name = f"极光记录仪-{flow_id[:6]}"
+
+    simulated_payload = {
+        "paragraphs": [
+            {
+                "content": (
+                    f"{person_name} 在 {location_name} 使用 {device_name} 记录极光，"
+                    f"并把任务口令 {access_code} 写入值班日志。"
+                ),
+                "source": source_name,
+                "entities": [person_name, location_name, device_name, access_code],
+                "relations": [
+                    {"subject": person_name, "predicate": "位于", "object": location_name},
+                    {"subject": person_name, "predicate": "使用", "object": device_name},
+                    {"subject": device_name, "predicate": "记录", "object": "极光"},
+                ],
+            },
+            {
+                "content": (f"次日 {person_name} 将 {device_name} 交给巡检组，巡检确认口令仍为 {access_code}。"),
+                "source": source_name,
+                "entities": [person_name, device_name, "巡检组", access_code],
+                "relations": [
+                    {"subject": person_name, "predicate": "交给", "object": "巡检组"},
+                    {"subject": "巡检组", "predicate": "确认", "object": access_code},
+                ],
+            },
+        ]
+    }
+
+    create_payload = _assert_response_ok(
+        client.post(
+            "/api/webui/memory/import/paste",
+            json={
+                "name": f"真实业务流-{flow_id}",
+                "input_mode": "json",
+                "llm_enabled": False,
+                "content": json.dumps(simulated_payload, ensure_ascii=False),
+                "dedupe_policy": "none",
+            },
+        )
+    )
+    task_id = str((create_payload.get("task") or {}).get("task_id") or "").strip()
+    assert task_id, create_payload
+
+    task = _wait_for_import_task_terminal(client, task_id)
+    assert str(task.get("status", "") or "") in {"completed", "completed_with_errors"}, task
+
+    source_item = _wait_for_source_paragraph_count(client, source_name, min_count=2, timeout_seconds=45.0)
+    assert _source_paragraph_count(source_item) == 2
+
+    relation_query_payload = _wait_for_query_hit(
+        client,
+        access_code,
+        expected_content=access_code,
+        timeout_seconds=45.0,
+    )
+    relation_hits = [
+        item
+        for item in (relation_query_payload.get("hits") or [])
+        if isinstance(item, dict) and access_code in str(item.get("content", "") or "")
+    ]
+    assert relation_hits, relation_query_payload
+
+    paragraph_query_payload = _wait_for_query_hit(
+        client,
+        f"{person_name} {location_name} {device_name}",
+        expected_content=location_name,
+        timeout_seconds=45.0,
+    )
+    paragraph_hits = [
+        item
+        for item in (paragraph_query_payload.get("hits") or [])
+        if isinstance(item, dict)
+        and str(item.get("type", "") or "") == "paragraph"
+        and all(token in str(item.get("content", "") or "") for token in (person_name, location_name, device_name))
+    ]
+    assert paragraph_hits, paragraph_query_payload
+
+    paragraph_hit = paragraph_hits[0]
+    paragraph_hash = str(paragraph_hit.get("hash", "") or "").strip()
+    assert paragraph_hash, paragraph_hit
+
+    paragraph_detail = _assert_response_ok(
+        client.get(
+            "/api/webui/memory/graph/paragraph-detail",
+            params={"paragraph_hash": paragraph_hash, "evidence_node_limit": 80},
+        )
+    )
+    paragraph_record = paragraph_detail.get("paragraph") or {}
+    assert str(paragraph_record.get("source", "") or "") == source_name, paragraph_detail
+
+    detail_graph = paragraph_detail.get("evidence_graph") or paragraph_detail
+    detail_nodes = detail_graph.get("nodes") or []
+    detail_node_contents = {str(item.get("content", "") or "") for item in detail_nodes if isinstance(item, dict)}
+    assert person_name in detail_node_contents
+    assert location_name in detail_node_contents
+    assert device_name in detail_node_contents
+
+    graph_search = _assert_response_ok(
+        client.get(
+            "/api/webui/memory/graph/search",
+            params={"query": person_name, "limit": 20},
+        )
+    )
+    graph_items = graph_search.get("items") or []
+    assert any(
+        isinstance(item, dict)
+        and str(item.get("matched_value", "") or "") == person_name
+        and str(item.get("entity_hash", "") or "").strip()
+        for item in graph_items
+    ), graph_search
+
+    preview = _assert_response_ok(
+        client.post(
+            "/api/webui/memory/delete/preview",
+            json={
+                "mode": "source",
+                "selector": {"sources": [source_name]},
+                "reason": "business_flow_cleanup_preview",
+                "requested_by": "pytest_business_flow",
+            },
+        )
+    )
+    assert int((preview.get("counts") or {}).get("paragraphs", 0) or 0) == 2, preview
+
+    deleted = _assert_response_ok(
+        client.post(
+            "/api/webui/memory/delete/execute",
+            json={
+                "mode": "source",
+                "selector": {"sources": [source_name]},
+                "reason": "business_flow_cleanup_execute",
+                "requested_by": "pytest_business_flow",
+            },
+        )
+    )
+    operation_id = str(deleted.get("operation_id", "") or "").strip()
+    assert operation_id, deleted
+    assert int(deleted.get("deleted_paragraph_count", 0) or 0) == 2, deleted
+
+    deleted_query = _assert_response_ok(
+        client.get(
+            "/api/webui/memory/query/aggregate",
+            params={"query": access_code, "limit": 20},
+        )
+    )
+    assert all(
+        access_code not in str(item.get("content", "") or "")
+        for item in (deleted_query.get("hits") or [])
+        if isinstance(item, dict)
+    )
+
+    _assert_response_ok(
+        client.post(
+            "/api/webui/memory/delete/restore",
+            json={"operation_id": operation_id, "requested_by": "pytest_business_flow"},
+        )
+    )
+    _wait_for_source_paragraph_count(client, source_name, min_count=2, timeout_seconds=45.0)
+    restored_query = _wait_for_query_hit(
+        client,
+        access_code,
+        expected_content=access_code,
+        timeout_seconds=45.0,
+    )
+    assert any(
+        access_code in str(item.get("content", "") or "")
+        for item in (restored_query.get("hits") or [])
+        if isinstance(item, dict)
+    )

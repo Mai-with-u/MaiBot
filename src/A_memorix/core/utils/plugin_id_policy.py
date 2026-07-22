@@ -1,4 +1,4 @@
-"""Plugin ID matching policy for A_Memorix."""
+"""A_Memorix 插件 ID 匹配策略。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 
 class PluginIdPolicy:
-    """Centralized plugin id normalization/matching policy."""
+    """集中管理插件 ID 的归一化与匹配规则。"""
 
     CANONICAL_ID = "a_memorix"
 
@@ -24,4 +24,3 @@ class PluginIdPolicy:
         if normalized == cls.CANONICAL_ID:
             return True
         return normalized.split(".")[-1] == cls.CANONICAL_ID
-

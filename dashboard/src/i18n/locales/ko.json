@@ -396,6 +396,8 @@
       "confirmRerunSetup": "재구성 확인",
       "confirmRerunSetupDesc": "초기 설정 마법사로 돌아갑니다. 시스템 기본 설정을 재구성할 수 있습니다. 계속하시겠습니까?",
       "devToolsDesc": "아래 기능은 개발 및 디버깅 전용입니다. 페이지 충돌이나 비정상 동작을 유발할 수 있습니다.",
+      "alwaysShowUpdateNotice": "업데이트 로그 항상 표시",
+      "alwaysShowUpdateNoticeDesc": "활성화하면 WebUI에 들어갈 때마다 업데이트 내용과 플러그인 호환성 알림이 차례로 표시됩니다. 새로고침 후 적용됩니다.",
       "triggerError": "테스트 오류 발생",
       "confirmTriggerError": "오류 발생 확인",
       "confirmTriggerErrorDesc": "React 오류를 수동으로 발생시켜 오류 경계 컴포넌트를 테스트합니다. 페이지를 새로고침하거나 홈으로 돌아가면 복구됩니다.",
@@ -980,8 +982,7 @@
         "threshold_percentile": "동적 임계값 분위",
         "threshold_min_results": "최소 반환 수",
         "threshold_min_threshold": "최소 임계값",
-        "threshold_max_threshold": "최대 임계값",
-        "threshold_enable_auto_adjust": "임계값 자동 조정"
+        "threshold_max_threshold": "최대 임계값"
       }
     }
   },

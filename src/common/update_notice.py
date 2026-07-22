@@ -190,6 +190,38 @@ def build_update_notice(
     return UpdateNotice(current_version=current_version, from_version=from_version, versions=[], content=content)
 
 
+def build_debug_update_notice(
+    current_version: str,
+    changelog_path: Path = _CHANGELOG_PATH,
+) -> UpdateNotice:
+    """构造用于 WebUI 调试的当前版本公告，并以相邻旧版本作为兼容性检查起点。"""
+
+    entries = [
+        entry
+        for entry in parse_changelog_entries(changelog_path)
+        if not _is_version_newer(entry.version, current_version)
+    ]
+    entries.sort(key=lambda entry: _version_key(entry.version), reverse=True)
+
+    if not entries:
+        return UpdateNotice(
+            current_version=current_version,
+            from_version="0.0.0",
+            versions=[],
+            content=f"# 当前 MaiBot 版本 v{current_version}\n\n未找到可展示的更新日志条目。",
+        )
+
+    latest_entry = entries[0]
+    from_version = entries[1].version if len(entries) > 1 else "0.0.0"
+    content = f"# 当前 MaiBot 版本 v{current_version}\n\n{latest_entry.markdown}"
+    return UpdateNotice(
+        current_version=current_version,
+        from_version=from_version,
+        versions=[latest_entry.version],
+        content=content,
+    )
+
+
 def get_pending_update_notice(
     channel: NoticeChannel,
     current_version: str | None = None,
@@ -258,7 +290,7 @@ def mark_update_notice_seen(
     _write_json_state(state, state_path)
 
 
-def emit_terminal_update_notice_if_needed() -> None:
+async def emit_terminal_update_notice_if_needed() -> None:
     notice = get_pending_update_notice("terminal")
     if notice is None:
         return
@@ -269,4 +301,22 @@ def emit_terminal_update_notice_if_needed() -> None:
         f"{notice.content}\n"
         f"{'=' * 48}"
     )
+
+    from src.plugin_runtime.update_compatibility_notice import (
+        collect_update_incompatible_plugins,
+        format_terminal_compatibility_notice,
+    )
+
+    incompatible_plugins = await collect_update_incompatible_plugins(
+        notice.from_version,
+        notice.current_version,
+    )
+    if incompatible_plugins:
+        logger.warning(
+            format_terminal_compatibility_notice(
+                notice.from_version,
+                notice.current_version,
+                incompatible_plugins,
+            )
+        )
     mark_update_notice_seen("terminal", notice.current_version)

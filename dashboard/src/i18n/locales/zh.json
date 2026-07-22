@@ -404,6 +404,8 @@
       "confirmRerunSetup": "确认重新配置",
       "confirmRerunSetupDesc": "这将带您重新进入初次配置向导。您可以重新设置系统的基础配置项。确定要继续吗？",
       "devToolsDesc": "以下功能仅供开发调试使用，可能会导致页面崩溃或异常。",
+      "alwaysShowUpdateNotice": "永远显示更新日志",
+      "alwaysShowUpdateNoticeDesc": "开启后，每次进入 WebUI 都会依次弹出更新内容和插件兼容性提醒。刷新页面后生效。",
       "triggerError": "触发测试错误",
       "confirmTriggerError": "确认触发错误",
       "confirmTriggerErrorDesc": "这将手动触发一个 React 错误，用于测试错误边界组件的显示效果。页面将显示错误界面，您可以通过刷新页面或点击返回首页来恢复。",
@@ -988,8 +990,7 @@
         "threshold_percentile": "自动筛选强度",
         "threshold_min_results": "最少展示数量",
         "threshold_min_threshold": "最低筛选线",
-        "threshold_max_threshold": "最高筛选线",
-        "threshold_enable_auto_adjust": "自动调整筛选线"
+        "threshold_max_threshold": "最高筛选线"
       }
     }
   },

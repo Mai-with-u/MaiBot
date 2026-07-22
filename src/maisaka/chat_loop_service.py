@@ -8,13 +8,13 @@ import asyncio
 import time
 
 from rich.console import RenderableType
+
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
-from src.config.official_configs import build_personality_emotion_suffix
 from src.core.tooling import ToolAvailabilityContext, ToolRegistry
 from src.llm_models.model_client.base_client import BaseClient
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
@@ -31,7 +31,6 @@ from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.services.llm_service import LLMServiceClient
 
-from src.maisaka.attention_drift import build_attention_drift_prompt_block
 from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.context.history import normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
@@ -503,10 +502,10 @@ class MaisakaChatLoopService:
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
 
     @property
-    def personality_prompt(self) -> str:
-        """返回当前人格提示词。"""
+    def behavior_style_prompt(self) -> str:
+        """返回 Planner 使用的行为风格提示词。"""
 
-        return self._build_personality_prompt()
+        return global_config.personality.behavior_style.strip()
 
     @staticmethod
     def _resolve_llm_request_type(request_kind: str) -> str:
@@ -616,31 +615,6 @@ class MaisakaChatLoopService:
             f"prompt_tokens={prompt_tokens}"
         )
 
-    def _build_personality_prompt(self) -> str:
-        """构造人格提示词。"""
-
-        try:
-            bot_name = global_config.bot.nickname.strip()
-            alias_names = [alias_name.strip() for alias_name in global_config.bot.alias_names if alias_name.strip()]
-            prompt_personality = global_config.personality.personality.strip()
-            if not prompt_personality:
-                prompt_personality = "是人类。"
-
-            if prompt_personality.startswith("是"):
-                identity_line = f"{bot_name}{prompt_personality}"
-            else:
-                identity_line = f"{bot_name}是{prompt_personality}"
-
-            prompt_lines = [identity_line]
-            emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
-            if emotion_suffix:
-                prompt_lines.append(emotion_suffix)
-            if alias_names:
-                prompt_lines.append(f"{bot_name}的昵称还有{','.join(alias_names)}")
-            return "\n".join(prompt_lines)
-        except Exception:
-            return "麦麦是人类。"
-
     async def ensure_chat_prompt_loaded(self, tools_section: str = "") -> None:
         """确保主聊天提示词已经加载完成。
 
@@ -653,10 +627,7 @@ class MaisakaChatLoopService:
     def _build_chat_system_prompt(self, tools_section: str = "") -> str:
         """基于当前配置实时构造主聊天系统提示词。"""
 
-        try:
-            return load_prompt(self._get_chat_prompt_name(), **self.build_prompt_template_context(tools_section))
-        except Exception:
-            return f"{self.personality_prompt}\n\nYou are a helpful AI assistant."
+        return load_prompt(self._get_chat_prompt_name(), **self.build_prompt_template_context(tools_section))
 
     @staticmethod
     def _build_planner_final_assistant_reminder() -> str:
@@ -676,9 +647,9 @@ class MaisakaChatLoopService:
 
         return {
             "bot_name": global_config.bot.nickname,
+            "behavior_style": self.behavior_style_prompt,
             "file_tools_section": tools_section,
             "group_chat_attention_block": self._build_group_chat_attention_block(),
-            "identity": self.personality_prompt,
             "planner_idle_focus_rule": self._build_planner_idle_focus_rule(),
             "query_memory_rule": self._build_query_memory_rule(),
         }
@@ -695,6 +666,17 @@ class MaisakaChatLoopService:
         """构建追加到请求末尾的当前时间消息。"""
 
         return MaisakaChatLoopService._build_time_user_message(datetime.now())
+
+    @staticmethod
+    def _append_time_user_message(messages: List[Message], timestamp: datetime) -> None:
+        """向请求消息列表追加一条时间提示。"""
+
+        messages.append(
+            MessageBuilder()
+            .set_role(RoleType.User)
+            .add_text_content(MaisakaChatLoopService._build_time_user_message(timestamp))
+            .build()
+        )
 
     def _build_group_chat_attention_block(self) -> str:
         """构建当前聊天场景下的额外注意事项块。"""
@@ -813,6 +795,7 @@ class MaisakaChatLoopService:
         messages.append(system_msg.build())
 
         previous_context_timestamp: datetime | None = None
+        deferred_boundary_timestamps: List[datetime] = []
         for msg in selected_history:
             llm_message = build_llm_message_from_context(
                 msg,
@@ -821,21 +804,27 @@ class MaisakaChatLoopService:
             if llm_message is None:
                 continue
 
+            # assistant tool_calls 与其连续 tool 结果是协议原子段，跨日时间提示必须延后到整个结果段之后。
+            if llm_message.role != RoleType.Tool and deferred_boundary_timestamps:
+                for boundary_timestamp in deferred_boundary_timestamps:
+                    self._append_time_user_message(messages, boundary_timestamp)
+                deferred_boundary_timestamps.clear()
+
             if (
                 include_day_boundary_time_messages
                 and previous_context_timestamp is not None
                 and previous_context_timestamp.date() != msg.timestamp.date()
             ):
-                boundary_message = self._build_time_user_message(msg.timestamp)
-                messages.append(
-                    MessageBuilder()
-                    .set_role(RoleType.User)
-                    .add_text_content(boundary_message)
-                    .build()
-                )
+                if llm_message.role == RoleType.Tool:
+                    deferred_boundary_timestamps.append(msg.timestamp)
+                else:
+                    self._append_time_user_message(messages, msg.timestamp)
 
             messages.append(llm_message)
             previous_context_timestamp = msg.timestamp
+
+        for boundary_timestamp in deferred_boundary_timestamps:
+            self._append_time_user_message(messages, boundary_timestamp)
 
         normalized_injected_messages: List[Message] = []
         current_chat_attention = self._build_current_chat_attention_tail_message()

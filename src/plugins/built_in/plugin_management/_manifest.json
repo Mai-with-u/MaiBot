@@ -16,7 +16,7 @@
   },
   "host_application": {
     "min_version": "1.0.0",
-    "max_version": "1.0.0"
+    "max_version": "1.1.0"
   },
   "sdk": {
     "min_version": "2.0.0",

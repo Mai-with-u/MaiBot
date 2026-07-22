@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 import asyncio
 
 from src.common.logger import get_logger
+from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.platform_io.drivers.base import PlatformIODriver
 
 from .dedupe import MessageDeduplicator
@@ -12,7 +13,7 @@ from .outbound_tracker import OutboundTracker
 from .route_key_factory import RouteKeyFactory
 from .registry import DriverRegistry
 from .routing import RouteTable
-from .types import DeliveryBatch, DeliveryReceipt, DeliveryStatus, DriverKind, InboundMessageEnvelope, RouteBinding, RouteKey
+from .types import DeliveryBatch, DeliveryReceipt, DeliveryStatus, InboundMessageEnvelope, RouteBinding, RouteKey
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -297,7 +298,11 @@ class PlatformIOManager:
         from src.chat.utils.utils import get_all_bot_accounts
         from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
 
-        desired_accounts = get_all_bot_accounts()
+        desired_accounts = {
+            platform: account_id
+            for platform, account_id in get_all_bot_accounts().items()
+            if platform not in LOCAL_PLATFORM_BOT_IDS
+        }
         desired_platforms = set(desired_accounts.keys())
         current_platforms = set(self._legacy_send_drivers.keys())
 
@@ -409,8 +414,8 @@ class PlatformIOManager:
                 drivers.append(driver)
                 seen_driver_ids.add(driver.driver_id)
 
-        has_plugin_driver = any(driver.descriptor.kind == DriverKind.PLUGIN for driver in drivers)
-        if has_plugin_driver:
+        # 精确路由绑定始终优先；legacy 只在没有任何显式驱动时作为平台级后备。
+        if drivers:
             return drivers
 
         fallback_driver = self._legacy_send_drivers.get(route_key.platform)

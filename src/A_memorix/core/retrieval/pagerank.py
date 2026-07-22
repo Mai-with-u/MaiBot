@@ -4,9 +4,8 @@ Personalized PageRank实现
 提供个性化的图节点排序功能。
 """
 
-from typing import Dict, List, Optional, Tuple, Union, Any
 from dataclasses import dataclass
-import numpy as np
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 from ..storage import GraphStore
@@ -49,7 +48,7 @@ class PageRankConfig:
             raise ValueError(f"min_iterations必须大于等于0: {self.min_iterations}")
 
         if self.min_iterations >= self.max_iter:
-            raise ValueError(f"min_iterations必须小于max_iter")
+            raise ValueError("min_iterations必须小于max_iter")
 
 
 class PersonalizedPageRank:
@@ -88,15 +87,12 @@ class PersonalizedPageRank:
         self._total_iterations = 0
         self._convergence_history: List[int] = []
 
-        logger.debug(
-            f"PersonalizedPageRank 初始化: "
-            f"alpha={self.config.alpha}, "
-            f"max_iter={self.config.max_iter}"
-        )
+        logger.debug(f"PersonalizedPageRank 初始化: alpha={self.config.alpha}, max_iter={self.config.max_iter}")
 
         # 缓存 Aho-Corasick 匹配器
         self._ac_matcher: Optional[AhoCorasick] = None
         self._ac_nodes_count = 0
+        self._ac_node_revision = -1
 
     def compute(
         self,
@@ -140,8 +136,7 @@ class PersonalizedPageRank:
         self._total_computations += 1
 
         logger.debug(
-            f"PPR计算完成: {len(scores)} 个节点, "
-            f"personalization_nodes={len(personalization) if personalization else 0}"
+            f"PPR计算完成: {len(scores)} 个节点, personalization_nodes={len(personalization) if personalization else 0}"
         )
 
         return scores
@@ -164,7 +159,7 @@ class PersonalizedPageRank:
         results = []
 
         for i, personalization in enumerate(personalization_list):
-            logger.debug(f"计算第 {i+1}/{len(personalization_list)} 个PPR")
+            logger.debug(f"计算第 {i + 1}/{len(personalization_list)} 个PPR")
             scores = self.compute(personalization=personalization, normalize=normalize)
             results.append(scores)
 
@@ -198,7 +193,7 @@ class PersonalizedPageRank:
         if len(weights) != len(entities):
             raise ValueError(f"权重数量与实体数量不匹配: {len(weights)} vs {len(entities)}")
 
-        personalization = {entity: weight for entity, weight in zip(entities, weights)}
+        personalization = {entity: weight for entity, weight in zip(entities, weights, strict=True)}
 
         return self.compute(personalization=personalization, normalize=normalize)
 
@@ -366,11 +361,7 @@ class PersonalizedPageRank:
         Returns:
             统计信息字典
         """
-        avg_iterations = (
-            self._total_iterations / self._total_computations
-            if self._total_computations > 0
-            else 0
-        )
+        avg_iterations = self._total_iterations / self._total_computations if self._total_computations > 0 else 0
 
         return {
             "config": {
@@ -415,18 +406,20 @@ class PersonalizedPageRank:
             return []
 
         # 检查是否需要更新 Aho-Corasick 匹配器
-        if self._ac_matcher is None or self._ac_nodes_count != len(all_nodes):
+        node_revision = self.graph_store.node_revision
+        if self._ac_matcher is None or self._ac_node_revision != node_revision:
             self._ac_matcher = AhoCorasick()
             for node in all_nodes:
                 # 统一转为小写进行不区分大小写匹配
                 self._ac_matcher.add_pattern(node.lower())
             self._ac_matcher.build()
             self._ac_nodes_count = len(all_nodes)
+            self._ac_node_revision = node_revision
 
         # 执行匹配
         query_lower = query.lower()
         stats = self._ac_matcher.find_all(query_lower)
-        
+
         # 转换回原始的大小写（这里简化为从 all_nodes 中找，或者 AC 存原始值）
         # 为了简单，AC 中 add_pattern 存的是小写
         # 我们需要一个映射：小写 -> 原始
@@ -448,11 +441,7 @@ class PersonalizedPageRank:
         return self._total_iterations / self._total_computations
 
     def __repr__(self) -> str:
-        return (
-            f"PersonalizedPageRank("
-            f"alpha={self.config.alpha}, "
-            f"computations={self._total_computations})"
-        )
+        return f"PersonalizedPageRank(alpha={self.config.alpha}, computations={self._total_computations})"
 
 
 def create_ppr_from_graph(

@@ -338,6 +338,7 @@ class LegacyExpressionMatchOption(BaseModel):
 
     session_id: str
     chat_name: str
+    account_id: Optional[str] = None
 
 
 class LegacyExpressionGroupPreview(BaseModel):
@@ -813,6 +814,7 @@ def resolve_legacy_group_preview(
                     LegacyExpressionMatchOption(
                         session_id=session.session_id,
                         chat_name=get_chat_name(session.session_id, db_session),
+                        account_id=session.account_id,
                     )
                     for session in matched_sessions
                 ]
@@ -889,6 +891,7 @@ class ChatInfo(BaseModel):
     chat_id: str
     chat_name: str
     platform: Optional[str] = None
+    account_id: Optional[str] = None
     is_group: bool = False
     use_expression: bool = True
     enable_learning: bool = True
@@ -902,6 +905,7 @@ def build_chat_info(chat_id: str, db_session: Any, chat_session: Optional[ChatSe
         chat_id=chat_id,
         chat_name=get_chat_name(chat_id, db_session),
         platform=chat_session.platform if chat_session else None,
+        account_id=chat_session.account_id if chat_session else None,
         is_group=bool(chat_session and chat_session.group_id),
         use_expression=use_expression,
         enable_learning=enable_learning,
@@ -1049,6 +1053,12 @@ async def get_expression_groups(
         groups: List[ExpressionGroupInfo] = []
         with get_db_session() as session:
             all_expression_chat_ids = get_visible_expression_chat_ids(session, include_legacy)
+            chat_sessions_by_id = {
+                chat_session.session_id: chat_session
+                for chat_session in session.exec(
+                    select(ChatSession).where(col(ChatSession.session_id).in_(all_expression_chat_ids))
+                ).all()
+            }
             for index, expression_group in enumerate(global_config.expression.expression_groups):
                 chat_ids: set[str] = set()
                 is_global = False
@@ -1066,7 +1076,10 @@ async def get_expression_groups(
                     is_global = True
 
                 resolved_chat_ids = sorted(all_expression_chat_ids if is_global else chat_ids & all_expression_chat_ids)
-                members = [build_chat_info(chat_id, session) for chat_id in resolved_chat_ids]
+                members = [
+                    build_chat_info(chat_id, session, chat_sessions_by_id.get(chat_id))
+                    for chat_id in resolved_chat_ids
+                ]
                 groups.append(
                     ExpressionGroupInfo(
                         index=index,

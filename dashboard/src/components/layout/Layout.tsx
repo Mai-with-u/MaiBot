@@ -20,12 +20,16 @@ import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
-import type { LayoutProps, WorkspaceMode } from './types'
+import type { LayoutProps } from './types'
 import { useMenuSections } from './use-menu-sections'
 
 const SIDEBAR_OPEN_STORAGE_KEY = 'maibot-layout-sidebar-open'
 const TOPBAR_COLLAPSED_STORAGE_KEY = 'maibot-layout-topbar-collapsed'
 const LAYOUT_IMMERSIVE_EVENT = 'maibot-layout-immersive-change'
+const PAGE_TRANSITION_DURATION_MS = 280
+const SIDEBAR_TRANSITION_DURATION_MS = 180
+
+type WorkspaceTransitionStage = 'idle' | 'page-exit' | 'sidebar-exit' | 'sidebar-enter' | 'page-enter'
 
 function loadStoredBoolean(key: string, fallback: boolean): boolean {
   if (typeof window === 'undefined') {
@@ -47,19 +51,14 @@ export function Layout({ children }: LayoutProps) {
   const isLogsPath = pathname === '/logs' || pathname.startsWith('/reasoning-process')
   const workspaceMode = pathname === '/chat' ? 'chat' : isLogsPath ? 'logs' : 'settings'
   const isSettingsWorkspace = workspaceMode === 'settings'
-  const isChatWorkspace = workspaceMode === 'chat'
   const showBackToTop = isSettingsWorkspace && pathname !== '/planner-monitor'
 
   const [sidebarOpen, setSidebarOpen] = useState(() => loadStoredBoolean(SIDEBAR_OPEN_STORAGE_KEY, true))
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => loadStoredBoolean(TOPBAR_COLLAPSED_STORAGE_KEY, false))
-  const [visibleWorkspaceMode, setVisibleWorkspaceMode] = useState<WorkspaceMode>(workspaceMode)
-  const [visibleChildren, setVisibleChildren] = useState<LayoutProps['children']>(children)
-  const [pendingWorkspace, setPendingWorkspace] = useState<{
-    children: LayoutProps['children']
-    mode: WorkspaceMode
-  } | null>(null)
+  const [workspaceTransitionStage, setWorkspaceTransitionStage] = useState<WorkspaceTransitionStage>('idle')
+  const workspaceTransitionTimerRef = useRef<number | null>(null)
   const shellStateRef = useRef({ sidebarOpen, topbarCollapsed })
   const immersiveRestoreRef = useRef<{ sidebarOpen: boolean; topbarCollapsed: boolean } | null>(null)
   const { theme, setTheme } = useTheme()
@@ -115,14 +114,13 @@ export function Layout({ children }: LayoutProps) {
   }, [])
 
   useEffect(() => {
-    if (workspaceMode === visibleWorkspaceMode) {
-      setVisibleChildren(children)
-      setPendingWorkspace(null)
-      return
+    return () => {
+      if (workspaceTransitionTimerRef.current !== null) {
+        window.clearTimeout(workspaceTransitionTimerRef.current)
+      }
     }
+  }, [])
 
-    setPendingWorkspace({ children, mode: workspaceMode })
-  }, [children, visibleWorkspaceMode, workspaceMode])
   // 路由变更：焦点管理 + 屏幕阅读器播报 + document.title 更新
   useEffect(() => {
     // 构建 路径 -> 页面标题 的映射表（以当前语言 t() 翻译）
@@ -169,9 +167,57 @@ export function Layout({ children }: LayoutProps) {
 
   const actualTheme = getActualTheme()
   const { config: pageBg } = useBackground('page')
-  const isWorkspaceTransitioning = pendingWorkspace !== null
-  const visibleIsChatWorkspace = visibleWorkspaceMode === 'chat'
-  const visibleIsSettingsWorkspace = visibleWorkspaceMode === 'settings'
+
+  const handleWorkspaceNavigate = (to: '/' | '/chat' | '/logs') => {
+    if (workspaceTransitionStage !== 'idle') {
+      return
+    }
+
+    setMobileMenuOpen(false)
+
+    const schedule = (callback: () => void, duration: number) => {
+      workspaceTransitionTimerRef.current = window.setTimeout(() => {
+        workspaceTransitionTimerRef.current = null
+        callback()
+      }, duration)
+    }
+
+    const enterWorkspace = () => {
+      void router.navigate({ to }).then(
+        () => {
+          if (to === '/') {
+            setWorkspaceTransitionStage('sidebar-enter')
+            schedule(() => {
+              setWorkspaceTransitionStage('page-enter')
+              schedule(() => setWorkspaceTransitionStage('idle'), PAGE_TRANSITION_DURATION_MS)
+            }, SIDEBAR_TRANSITION_DURATION_MS)
+            return
+          }
+
+          setWorkspaceTransitionStage('page-enter')
+          schedule(() => setWorkspaceTransitionStage('idle'), PAGE_TRANSITION_DURATION_MS)
+        },
+        () => setWorkspaceTransitionStage('idle')
+      )
+    }
+
+    setWorkspaceTransitionStage('page-exit')
+    schedule(() => {
+      if (workspaceMode === 'settings') {
+        setWorkspaceTransitionStage('sidebar-exit')
+        schedule(enterWorkspace, SIDEBAR_TRANSITION_DURATION_MS)
+        return
+      }
+
+      enterWorkspace()
+    }, PAGE_TRANSITION_DURATION_MS)
+  }
+
+  const pageHidden =
+    workspaceTransitionStage === 'page-exit' ||
+    workspaceTransitionStage === 'sidebar-exit' ||
+    workspaceTransitionStage === 'sidebar-enter'
+  const sidebarExiting = workspaceTransitionStage === 'sidebar-exit'
 
   // 认证检查中，显示加载状态
   if (checking) {
@@ -192,27 +238,28 @@ export function Layout({ children }: LayoutProps) {
       >
         <BackgroundLayer config={pageBg} layerId="page" />
         <div className="relative z-10 flex h-full min-h-0 w-full overflow-hidden">
-          {/* Sidebar：仅在设置工作区显示，伴随滑入/滑出动画 */}
-          <AnimatePresence initial={false}>
-            {isSettingsWorkspace && (
+          {/* Sidebar：离开设置工作区时向左收起，并同步释放布局宽度 */}
+          {isSettingsWorkspace && (
+            <motion.div
+              key="settings-sidebar"
+              className="relative z-40 hidden shrink-0 overflow-hidden lg:block"
+              initial={false}
+              animate={
+                sidebarExiting
+                  ? { width: 0 }
+                  : {
+                      width: sidebarOpen
+                        ? 'var(--layout-sidebar-width)'
+                        : 'var(--layout-sidebar-collapsed-width)',
+                    }
+              }
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
               <motion.div
-                key="settings-sidebar"
-                className="relative z-40 hidden shrink-0 overflow-hidden transition-[width] duration-150 ease-out motion-reduce:transition-none lg:block"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{
-                  type: 'spring',
-                  stiffness: 320,
-                  damping: 36,
-                  mass: 0.7,
-                  opacity: { duration: 0.2 },
-                }}
-                style={{
-                  width: sidebarOpen
-                    ? 'var(--layout-sidebar-width)'
-                    : 'var(--layout-sidebar-collapsed-width)',
-                }}
+                className="h-full w-full will-change-transform"
+                initial={{ opacity: 0, x: '-100%' }}
+                animate={sidebarExiting ? { opacity: 0, x: '-100%' } : { opacity: 1, x: 0 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               >
                 <Sidebar
                   sidebarOpen={sidebarOpen}
@@ -220,8 +267,8 @@ export function Layout({ children }: LayoutProps) {
                   onMobileMenuClose={() => setMobileMenuOpen(false)}
                 />
               </motion.div>
-            )}
-          </AnimatePresence>
+            </motion.div>
+          )}
 
           {/* 移动端 Sidebar 走自己的 fixed 定位，通过 mobileMenuOpen 控制显隐 */}
           {isSettingsWorkspace && (
@@ -264,6 +311,7 @@ export function Layout({ children }: LayoutProps) {
               onSearchOpenChange={setSearchOpen}
               onThemeChange={setTheme}
               onTopbarToggle={() => setTopbarCollapsed(!topbarCollapsed)}
+              onWorkspaceNavigate={handleWorkspaceNavigate}
               topbarCollapsed={topbarCollapsed}
               workspaceMode={workspaceMode}
             />
@@ -275,47 +323,43 @@ export function Layout({ children }: LayoutProps) {
               tabIndex={-1}
               className={cn(
                 'relative isolate min-h-0 flex-1 outline-none',
-                isSettingsWorkspace ? 'overflow-y-auto overflow-x-hidden overscroll-contain' : 'overflow-hidden',
-                isChatWorkspace
+                workspaceTransitionStage !== 'idle'
+                  ? 'overflow-hidden'
+                  : isSettingsWorkspace
+                    ? 'overflow-y-auto overflow-x-hidden overscroll-contain'
+                    : 'overflow-hidden',
+                workspaceMode === 'chat'
                   ? 'bg-transparent'
                   : pageBg.type === 'none'
                     ? 'bg-background'
                     : 'bg-transparent'
               )}
             >
-              <AnimatePresence
-                mode="wait"
-                initial={false}
-                onExitComplete={() => {
-                  if (!pendingWorkspace) {
-                    return
-                  }
-
-                  setVisibleWorkspaceMode(pendingWorkspace.mode)
-                  setVisibleChildren(pendingWorkspace.children)
-                  setPendingWorkspace(null)
-                }}
-              >
-                {!isWorkspaceTransitioning && (
-                  <motion.div
-                    key={visibleWorkspaceMode}
-                    className={cn('relative z-10 min-w-0', visibleIsSettingsWorkspace ? 'h-full min-h-full' : 'h-full')}
-                    initial={{ opacity: 0, x: visibleIsChatWorkspace ? 32 : -32, filter: 'blur(6px)' }}
-                    animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, x: visibleIsChatWorkspace ? -32 : 32, filter: 'blur(6px)' }}
-                    transition={{
-                      type: 'spring',
-                      stiffness: 320,
-                      damping: 34,
-                      mass: 0.7,
-                      opacity: { duration: 0.18 },
-                      filter: { duration: 0.22 },
-                    }}
-                  >
-                    {visibleChildren}
-                  </motion.div>
+              <motion.div
+                key={workspaceMode}
+                className={cn(
+                  'relative z-10 h-full min-w-0 origin-bottom will-change-transform',
+                  isSettingsWorkspace && 'min-h-full'
                 )}
-              </AnimatePresence>
+                variants={
+                  workspaceMode === 'chat'
+                    ? {
+                        initial: { opacity: 1 },
+                        animate: { opacity: 1 },
+                        exit: { opacity: 1 },
+                      }
+                    : {
+                        initial: { y: '100%' },
+                        animate: { y: 0 },
+                        exit: { y: '100%' },
+                      }
+                }
+                initial="initial"
+                animate={pageHidden ? 'exit' : 'animate'}
+                transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              >
+                {children}
+              </motion.div>
             </main>
 
             {/* Back to Top Button */}

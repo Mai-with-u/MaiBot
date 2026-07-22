@@ -163,6 +163,7 @@ class HTMLRenderService:
         self._browser: Any = None
         self._browser_lock: asyncio.Lock = asyncio.Lock()
         self._connected_via_cdp: bool = False
+        self._intentional_browser_close: bool = False
         self._playwright: Any = None
         self._render_count: int = 0
         self._render_semaphore: Optional[asyncio.Semaphore] = None
@@ -190,6 +191,41 @@ class HTMLRenderService:
             self._render_semaphore = asyncio.Semaphore(limit)
             self._render_semaphore_limit = limit
         return self._render_semaphore
+
+    async def create_browser_context(
+        self,
+        *,
+        accept_downloads: bool = False,
+        locale: str = "zh-CN",
+        service_workers: Literal["allow", "block"] = "allow",
+        viewport_height: int = 720,
+        viewport_width: int = 1280,
+    ) -> Any:
+        """使用现有浏览器启动策略创建一个独立上下文。
+
+        调用方负责校验自身功能开关、配置页面网络策略并关闭返回的上下文。
+        该入口复用本机浏览器探测、托管 Chromium 自动安装和启动配置，避免各业务模块
+        分别维护 Playwright 生命周期。
+
+        Args:
+            accept_downloads: 是否允许页面下载文件。
+            locale: 浏览器上下文语言。
+            service_workers: 是否允许页面注册和运行 Service Worker。
+            viewport_height: 视口高度。
+            viewport_width: 视口宽度。
+
+        Returns:
+            Any: Playwright BrowserContext 对象。
+        """
+
+        config = self._get_render_config()
+        browser = await self._ensure_browser(config)
+        return await browser.new_context(
+            accept_downloads=accept_downloads,
+            locale=locale,
+            service_workers=service_workers,
+            viewport={"width": viewport_width, "height": viewport_height},
+        )
 
     async def render_html_to_png(self, request: HtmlRenderRequest) -> HtmlRenderResult:
         """将 HTML 内容渲染为 PNG 图片。
@@ -263,8 +299,12 @@ class HTMLRenderService:
         """
 
         if self._browser is not None:
-            with contextlib.suppress(Exception):
-                await self._browser.close()
+            self._intentional_browser_close = True
+            try:
+                with contextlib.suppress(Exception):
+                    await self._browser.close()
+            finally:
+                self._intentional_browser_close = False
         self._browser = None
         self._connected_via_cdp = False
         if restart_playwright and self._playwright is not None:
@@ -435,7 +475,10 @@ class HTMLRenderService:
 
         self._browser = None
         self._connected_via_cdp = False
-        logger.warning("HTML 渲染浏览器已断开，将在下次请求时重新建立连接")
+        if self._intentional_browser_close:
+            logger.debug("HTML 渲染浏览器已主动释放")
+            return
+        logger.warning("HTML 渲染浏览器意外断开，将在下次请求时重新建立连接")
 
     def _build_launch_options(self, config: PluginRuntimeRenderConfig) -> Dict[str, Any]:
         """构造本地浏览器启动参数。

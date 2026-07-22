@@ -69,6 +69,36 @@ export function getPluginProgressDetail(progress: PluginLoadProgress): string | 
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
+export type PluginProgressById = Record<string, PluginLoadProgress>
+
+export function mergePluginProgress(
+  currentProgress: PluginProgressById,
+  progress: PluginLoadProgress
+): PluginProgressById {
+  if (!progress.plugin_id) {
+    return currentProgress
+  }
+
+  return {
+    ...currentProgress,
+    [progress.plugin_id]: progress,
+  }
+}
+
+export function clearPluginProgress(
+  currentProgress: PluginProgressById,
+  pluginId: string,
+  completedProgress: PluginLoadProgress
+): PluginProgressById {
+  if (currentProgress[pluginId] !== completedProgress) {
+    return currentProgress
+  }
+
+  const nextProgress = { ...currentProgress }
+  delete nextProgress[pluginId]
+  return nextProgress
+}
+
 // 导出类型
 export type MarketplaceSortKey = 'default' | 'downloads' | 'likes' | 'rating' | 'latest'
 

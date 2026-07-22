@@ -254,6 +254,7 @@ class ChatInfoResponse(BaseModel):
     session_id: str
     chat_name: str
     platform: Optional[str] = None
+    account_id: Optional[str] = None
     is_group: bool = False
 
 
@@ -864,6 +865,7 @@ async def get_chat_list(include_empty: bool = Query(False, description="是否�
                     session_id=chat_session.session_id,
                     chat_name=display_name_cache[chat_session.session_id],
                     platform=chat_session.platform,
+                    account_id=chat_session.account_id,
                     is_group=bool(chat_session.group_id),
                 )
 
@@ -875,6 +877,7 @@ async def get_chat_list(include_empty: bool = Query(False, description="是否�
                     session_id=stored_session_id,
                     chat_name=display_name_cache[stored_session_id],
                     platform=None,
+                    account_id=None,
                     is_group=False,
                 )
 

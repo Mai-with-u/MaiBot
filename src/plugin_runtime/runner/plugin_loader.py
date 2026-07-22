@@ -192,6 +192,11 @@ class PluginLoader:
         if not plugin_path.exists():
             return None
 
+        # 两个 Runner 会扫描同一个第三方插件目录。完整校验前先按原始类型分流，
+        # 避免不属于当前 Runner 的插件因 Manifest 错误而被重复记录和输出。
+        if not self._plugin_type_matches_filter_before_validation(plugin_dir):
+            return None
+
         manifest = self._manifest_validator.load_from_plugin_path(plugin_dir)
         if manifest is None:
             errors = "; ".join(self._manifest_validator.errors)
@@ -211,6 +216,42 @@ class PluginLoader:
             return None
 
         return plugin_id, (plugin_dir, manifest, plugin_path)
+
+    def _plugin_type_matches_filter_before_validation(self, plugin_dir: Path) -> bool:
+        """在完整 Manifest 校验前，使用原始类型字段判断插件是否属于当前 Runner。"""
+
+        if not self._plugin_type_filter:
+            return True
+
+        resolved_plugin_dir = plugin_dir.resolve()
+        if self._plugin_type_filter == "trusted_or_adapter" and any(
+            self._path_is_relative_to(resolved_plugin_dir, trusted_dir) for trusted_dir in self._trusted_plugin_dirs
+        ):
+            return True
+
+        plugin_type = self._read_raw_plugin_type(plugin_dir)
+        if self._plugin_type_filter == "not_adapter":
+            return plugin_type != "adapter"
+        if self._plugin_type_filter == "trusted_or_adapter":
+            return plugin_type == "adapter"
+        return plugin_type == self._plugin_type_filter
+
+    @staticmethod
+    def _read_raw_plugin_type(plugin_dir: Path) -> str:
+        """轻量读取插件类型；缺省或清单不可解析时按 extension 分流。"""
+
+        manifest_path = plugin_dir / "_manifest.json"
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as file_obj:
+                manifest_data = json.load(file_obj)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return "extension"
+
+        if not isinstance(manifest_data, dict):
+            return "extension"
+
+        raw_plugin_type = manifest_data.get("plugin_type", manifest_data.get("type", "extension"))
+        return str(raw_plugin_type or "extension").strip().lower() or "extension"
 
     def _plugin_type_matches_filter(self, plugin_dir: Path, manifest: PluginManifest) -> bool:
         """判断候选插件是否符合当前 Runner 的类型过滤模式。"""
@@ -543,7 +584,7 @@ class PluginLoader:
                     if create_plugin is not None:
                         instance = create_plugin()
                         self._validate_sdk_plugin_contract(plugin_id, instance)
-                        logger.info(f"插件 {plugin_id} v{manifest.version} 加载成功")
+                        logger.debug(f"插件 {plugin_id} v{manifest.version} 加载成功")
                         return PluginMeta(
                             plugin_id=plugin_id,
                             plugin_dir=str(plugin_dir),

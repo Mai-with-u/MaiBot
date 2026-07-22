@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MaiBot"
-version = "1.0.12"
+version = "1.1.0"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,8 +19,8 @@ dependencies = [
     "jieba>=0.42.1",
     "json-repair>=0.47.6",
     "maim-message==0.6.8",
-    "maibot-dashboard>=1.5.5",
-    "maibot-plugin-sdk>=2.7.0",
+    "maibot-dashboard>=1.5.6",
+    "maibot-plugin-sdk>=2.7.1",
     "mcp",
     "msgpack>=1.1.2",
     "numpy>=2.2.6",
@@ -31,6 +31,7 @@ dependencies = [
     "pyarrow>=20.0.0",
     "pydantic>=2.11.7",
     "pypinyin>=0.54.0",
+    "prompt-toolkit>=3.0.52",
     "python-multipart>=0.0.20",
     "rapidfuzz",
     "rich>=14.0.0",
@@ -79,6 +80,13 @@ select = [
 ]
 
 ignore = ["E711", "E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Body", "fastapi.File"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/run_a_memorix_webui_backend.py" = ["E402"]
+"src/plugin_runtime/runner/runner_main.py" = ["E402"]
 
 [tool.ruff.format]
 docstring-code-format = true

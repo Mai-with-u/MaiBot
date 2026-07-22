@@ -36,15 +36,22 @@ import {
   recordPluginDownload,
   type PluginStatsData,
 } from '@/lib/plugin-stats'
+import { PLUGIN_MARKET_VIEW_STATE_KEY } from '@/lib/plugin-market-navigation'
 
 import { InstallDialog } from './InstallDialog'
 import { MarketplaceTab } from './MarketplaceTab'
-import type { GitStatus, MaimaiVersion, MarketplaceSortKey, PluginInfo, PluginLoadProgress } from './types'
-import { getPluginType, PLUGIN_TYPE_OPTIONS } from './types'
+import type {
+  GitStatus,
+  MaimaiVersion,
+  MarketplaceSortKey,
+  PluginInfo,
+  PluginLoadProgress,
+  PluginProgressById,
+} from './types'
+import { clearPluginProgress, getPluginType, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
 import { PluginDetailPage } from '../plugin-detail'
 
 const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
-const PLUGIN_MARKET_VIEW_STATE_KEY = 'plugins-market-view-state'
 const PLUGIN_MARKET_SCROLL_TOP_KEY = 'plugins-market-scroll-top'
 const MARKETPLACE_SORT_KEYS: MarketplaceSortKey[] = ['default', 'latest', 'downloads', 'likes', 'rating']
 
@@ -164,7 +171,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  const [loadProgress, setLoadProgress] = useState<PluginLoadProgress | null>(null)
+  const [marketplaceProgress, setMarketplaceProgress] = useState<PluginLoadProgress | null>(null)
+  const [pluginProgressById, setPluginProgressById] = useState<PluginProgressById>({})
   const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
   const [, setInstalledPlugins] = useState<InstalledPlugin[]>([])
   const [pluginStats, setPluginStats] = useState<Record<string, PluginStatsData>>({})
@@ -176,7 +184,29 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const [detailPluginId, setDetailPluginId] = useState<string | null>(null)
   
   const { toast } = useToast()
-  const isFetchingMarketplace = loadProgress?.stage === 'loading' && loadProgress.operation === 'fetch'
+  const isFetchingMarketplace = marketplaceProgress?.stage === 'loading'
+    && marketplaceProgress.operation === 'fetch'
+  const installProgress = installingPlugin
+    ? pluginProgressById[installingPlugin.id] ?? null
+    : null
+
+  const setPluginProgress = (progress: PluginLoadProgress) => {
+    setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
+  }
+
+  const setCompletedPluginProgress = (progress: PluginLoadProgress) => {
+    setPluginProgress(progress)
+    if (!progress.plugin_id) {
+      return
+    }
+
+    const completedPluginId = progress.plugin_id
+    setTimeout(() => {
+      setPluginProgressById((currentProgress) => (
+        clearPluginProgress(currentProgress, completedPluginId, progress)
+      ))
+    }, 2000)
+  }
 
   const dismissRestartNotice = () => {
     localStorage.setItem('plugins-restart-notice-dismissed', 'true')
@@ -319,13 +349,26 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         (progress) => {
           if (isUnmounted) return
           
-          setLoadProgress(progress)
-          
-          // 如果加载完成，清除进度
-          if (progress.stage === 'success') {
+          if (progress.operation === 'fetch') {
+            setMarketplaceProgress(progress)
+          } else {
+            setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
+          }
+
+          // 完成状态短暂保留在对应插件卡片上，不影响其他插件的进度。
+          if (progress.stage === 'success' && progress.operation === 'fetch') {
             setTimeout(() => {
               if (!isUnmounted) {
-                setLoadProgress(null)
+                setMarketplaceProgress(null)
+              }
+            }, 2000)
+          } else if (progress.stage === 'success' && progress.plugin_id) {
+            const completedPluginId = progress.plugin_id
+            setTimeout(() => {
+              if (!isUnmounted) {
+                setPluginProgressById((currentProgress) => (
+                  clearPluginProgress(currentProgress, completedPluginId, progress)
+                ))
               }
             }, 2000)
           } else if (progress.stage === 'error' && progress.operation === 'fetch') {
@@ -584,7 +627,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   }
 
   const handleInstallDialogOpenChange = (open: boolean) => {
-    if (!open && loadProgress?.operation === 'install' && loadProgress.stage === 'loading') {
+    if (!open && installProgress?.operation === 'install' && installProgress.stage === 'loading') {
       return
     }
 
@@ -667,7 +710,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     }
 
     try {
-      setLoadProgress({
+      setPluginProgress({
         operation: 'install',
         stage: 'loading',
         progress: 0,
@@ -694,7 +737,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         title: '安装成功',
         description: `${installingPlugin.manifest.name} 已成功安装`,
       })
-      setLoadProgress({
+      setCompletedPluginProgress({
         operation: 'install',
         stage: 'success',
         progress: 100,
@@ -726,7 +769,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       )
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误'
-      setLoadProgress({
+      setPluginProgress({
         operation: 'install',
         stage: 'error',
         progress: 0,
@@ -746,6 +789,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   // 卸载插件处理
   const handleUninstall = async (plugin: PluginInfo) => {
+    if (pluginProgressById[plugin.id]?.stage === 'loading') {
+      return
+    }
+
     try {
       await uninstallPlugin(plugin.id)
 
@@ -785,6 +832,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
   // 更新插件处理
   const handleUpdate = async (plugin: PluginInfo) => {
+    if (pluginProgressById[plugin.id]?.stage === 'loading') {
+      return
+    }
+
     if (!gitStatus?.installed) {
       toast({
         title: '无法更新',
@@ -805,6 +856,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     }
 
     try {
+      setPluginProgress({
+        operation: 'update',
+        stage: 'loading',
+        progress: 0,
+        message: `正在准备更新 ${plugin.manifest.name}`,
+        plugin_id: plugin.id,
+        total_plugins: 1,
+        loaded_plugins: 0,
+      })
       const updateResult = await updatePlugin(
         plugin.id,
         plugin.manifest.repository_url || plugin.manifest.urls?.repository || '',
@@ -814,6 +874,15 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
       toast({
         title: '更新成功',
         description: `${plugin.manifest.name} 已从 ${updateResult.old_version} 更新到 ${updateResult.new_version}`,
+      })
+      setCompletedPluginProgress({
+        operation: 'update',
+        stage: 'success',
+        progress: 100,
+        message: `${plugin.manifest.name} 已完成更新`,
+        plugin_id: plugin.id,
+        total_plugins: 1,
+        loaded_plugins: 1,
       })
 
       // 重新加载已安装插件列表
@@ -837,9 +906,20 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         })
       )
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未知错误'
+      setPluginProgress({
+        operation: 'update',
+        stage: 'error',
+        progress: 0,
+        message: errorMessage,
+        error: errorMessage,
+        plugin_id: plugin.id,
+        total_plugins: 1,
+        loaded_plugins: 0,
+      })
       toast({
         title: '更新失败',
-        description: error instanceof Error ? error.message : '未知错误',
+        description: errorMessage,
         variant: 'destructive',
       })
     }
@@ -1023,17 +1103,17 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
               <span className="shrink-0 font-medium">加载插件市场</span>
               <span className="min-w-0 truncate text-muted-foreground">
-                {loadProgress.message || '正在获取插件清单'}
+                {marketplaceProgress?.message || '正在获取插件清单'}
               </span>
             </div>
           )}
         </Card>
 
         {/* 加载错误显示 */}
-        {loadProgress
-          && loadProgress.operation === 'fetch'
-          && loadProgress.stage === 'error'
-          && loadProgress.error && (
+        {marketplaceProgress
+          && marketplaceProgress.operation === 'fetch'
+          && marketplaceProgress.stage === 'error'
+          && marketplaceProgress.error && (
           <Card className="border-destructive bg-destructive/10">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -1043,7 +1123,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
                     加载失败
                   </CardTitle>
                   <CardDescription className="text-destructive/80">
-                    {loadProgress.error}
+                    {marketplaceProgress.error}
                   </CardDescription>
                 </div>
               </div>
@@ -1078,7 +1158,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             gitStatus={gitStatus}
             maimaiVersion={maimaiVersion}
             pluginStats={pluginStats}
-            loadProgress={loadProgress}
+            pluginProgressById={pluginProgressById}
             likingPluginIds={likingPluginIds}
             onInstall={openInstallDialog}
             onLike={handleLike}
@@ -1096,7 +1176,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         <InstallDialog
           open={installDialogOpen}
           plugin={installingPlugin}
-          loadProgress={loadProgress}
+          loadProgress={installProgress}
           onOpenChange={handleInstallDialogOpenChange}
           onInstall={handleInstall}
         />

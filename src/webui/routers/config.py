@@ -218,6 +218,7 @@ class PromptGeneratorParsedResult(BaseModel):
     """LLM 生成的 MaiBot 人设配置结构。"""
 
     personality: str = Field(default="", description="对应 [personality].personality")
+    behavior_style: str = Field(default="", description="对应 [personality].behavior_style")
     reply_style: str = Field(default="", description="对应 [personality].reply_style")
     multiple_reply_style: List[str] = Field(default_factory=list, description="对应 multiple_reply_style")
     group_chat_prompt: str = Field(default="", description="对应 [chat.reply_style].group_chat_prompt")
@@ -985,6 +986,10 @@ def _ensure_prompt_generator_model_exists(model_name: str) -> None:
 
 _PROMPT_GENERATOR_REFERENCE_CONFIG: Dict[str, Any] = {
     "personality": "是一个大二女大学生，现在正在上网和群友聊天。包容且善良",
+    "behavior_style": (
+        "先观察聊天上下文和他人的反应，再决定是否参与。只在被提及、对话题感兴趣或确实能推进聊天时行动，"
+        "不需要回应每条消息；不适合参与时保持安静。"
+    ),
     "reply_style": (
         "你的风格平淡简短。可以参考贴吧，知乎的回复风格。不浮夸不过分修辞，不使用复杂句。"
         "只回复简短的内容就好。\n"
@@ -1022,6 +1027,7 @@ def _build_prompt_generator_reference_config() -> str:
     lines = [
         "[personality]",
         f"personality = {_toml_string(_PROMPT_GENERATOR_REFERENCE_CONFIG['personality'])}",
+        f"behavior_style = {_toml_string(_PROMPT_GENERATOR_REFERENCE_CONFIG['behavior_style'])}",
         f"reply_style = {_toml_string(_PROMPT_GENERATOR_REFERENCE_CONFIG['reply_style'])}",
         "multiple_reply_style = [",
     ]
@@ -1060,6 +1066,7 @@ def _build_prompt_generator_instruction(request: PromptGeneratorRequest) -> str:
 必须只输出一个 JSON 对象，不要 Markdown，不要代码块，不要额外解释。JSON 结构如下：
 {{
   "personality": "对应 [personality].personality。使用第二人称描述稳定人格、身份和长期特质，建议 80-220 字，不要写成小说设定。",
+  "behavior_style": "对应 [personality].behavior_style。只描述何时参与、如何观察局面、如何选择动作以及何时保持安静，不要规定具体说法。",
   "reply_style": "对应 [personality].reply_style。描述麦麦说话方式、回复长度、语气、互动习惯和禁用表达。",
   "multiple_reply_style": ["可选备用表达风格，每项一段，最多 5 项"],
   "group_chat_prompt": "对应 [chat.reply_style].group_chat_prompt。只写群聊场景规则，不要重复人格设定。",
@@ -1072,11 +1079,12 @@ def _build_prompt_generator_instruction(request: PromptGeneratorRequest) -> str:
 
 生成要求：
 1. 输出要适合聊天型 bot，像真实聊天参与者，不要像客服、旁白、小说角色卡或系统公告。
-2. personality 放稳定身份与人格；reply_style 放表达风格和边界；chat prompt 放聊天场景规则。不要三处重复同一段话。
-3. 除非特别提到，reply_style 和 multiple_reply_style 最好不要是特别具体的句式，而是描述性的风格要求，方便覆盖不同话题和场景的回复。
-4. 默认回复应日常、自然、不过度展开；可以保留原文中的鲜明风格，但要改成可维护的配置文字。
-5. 如果信息不足，请根据原文谨慎补全通用聊天规则，并在 notes 中说明需要人工确认，不要反问用户。
-6. 字段值必须都是字符串、字符串数组或对象数组，不能为 null。
+2. personality 放稳定身份与人格；behavior_style 放行动决策偏好；reply_style 放表达风格和边界；chat prompt 放聊天场景规则。不要重复同一段话。
+3. behavior_style 供 Planner 决定是否参与和采取什么动作，不要写具体措辞、口癖或回复文案。
+4. 除非特别提到，reply_style 和 multiple_reply_style 最好不要是特别具体的句式，而是描述性的风格要求，方便覆盖不同话题和场景的回复。
+5. 默认回复应日常、自然、不过度展开；可以保留原文中的鲜明风格，但要改成可维护的配置文字。
+6. 如果信息不足，请根据原文谨慎补全通用聊天规则，并在 notes 中说明需要人工确认，不要反问用户。
+7. 字段值必须都是字符串、字符串数组或对象数组，不能为 null。
 
 额外要求：
 {request.extra_requirements.strip() or "无"}
@@ -1165,6 +1173,7 @@ def _normalize_prompt_generator_result(raw_data: Dict[str, Any]) -> PromptGenera
 
     return PromptGeneratorParsedResult(
         personality=_coerce_prompt_generator_string(raw_data.get("personality")),
+        behavior_style=_coerce_prompt_generator_string(raw_data.get("behavior_style")),
         reply_style=_coerce_prompt_generator_string(raw_data.get("reply_style")),
         multiple_reply_style=_coerce_prompt_generator_string_list(raw_data.get("multiple_reply_style"), max_items=5),
         group_chat_prompt=_coerce_prompt_generator_string(raw_data.get("group_chat_prompt")),
@@ -1186,6 +1195,7 @@ def _build_prompt_generator_toml(result: PromptGeneratorParsedResult) -> str:
     lines = [
         "[personality]",
         f"personality = {_toml_string(result.personality)}",
+        f"behavior_style = {_toml_string(result.behavior_style)}",
         f"reply_style = {_toml_string(result.reply_style)}",
         "multiple_reply_style = [",
     ]
@@ -1294,6 +1304,14 @@ def _build_prompt_generator_config_blocks(result: PromptGeneratorParsedResult) -
         result.personality,
     )
     add_block(
+        "personality.behavior_style",
+        "personality",
+        "behavior_style",
+        "行为风格",
+        "写入 bot_config.toml 的 [personality].behavior_style，会覆盖 Planner 使用的行为风格字段。",
+        result.behavior_style,
+    )
+    add_block(
         "personality.reply_style",
         "personality",
         "reply_style",
@@ -1343,6 +1361,7 @@ def _build_prompt_generator_config_blocks(result: PromptGeneratorParsedResult) -
 
 _PROMPT_GENERATOR_ALLOWED_BLOCK_FIELDS = {
     ("personality", "personality"),
+    ("personality", "behavior_style"),
     ("personality", "reply_style"),
     ("personality", "multiple_reply_style"),
     ("chat.reply_style", "group_chat_prompt"),
@@ -1359,7 +1378,7 @@ def _normalize_prompt_generator_block_value(block: PromptGeneratorConfigBlock) -
     if (section, field) not in _PROMPT_GENERATOR_ALLOWED_BLOCK_FIELDS:
         raise HTTPException(status_code=400, detail=f"不允许写入配置字段: {section}.{field}")
 
-    if field in {"personality", "reply_style", "group_chat_prompt", "private_chat_prompts"}:
+    if field in {"personality", "behavior_style", "reply_style", "group_chat_prompt", "private_chat_prompts"}:
         value = _coerce_prompt_generator_string(block.value)
         if not value:
             raise HTTPException(status_code=400, detail=f"配置块 {section}.{field} 不能为空")
@@ -1753,8 +1772,8 @@ async def generate_prompt_persona(request: PromptGeneratorRequest):
         raw_response = llm_result.response.strip()
         parsed_data = _extract_json_object(raw_response)
         parsed_result = _normalize_prompt_generator_result(parsed_data)
-        if not parsed_result.personality or not parsed_result.reply_style:
-            raise ValueError("模型返回缺少 personality 或 reply_style 字段")
+        if not parsed_result.personality or not parsed_result.behavior_style or not parsed_result.reply_style:
+            raise ValueError("模型返回缺少 personality、behavior_style 或 reply_style 字段")
 
         return PromptGeneratorResponse(
             model_name=llm_result.model_name or model_name,

@@ -52,7 +52,7 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 | --- | --- |
 | `memory_graph_admin` | `get_graph/create_node/delete_node/rename_node/create_edge/delete_edge/update_edge_weight` |
 | `memory_source_admin` | `list/delete/batch_delete` |
-| `memory_episode_admin` | `query/list/get/status/rebuild/process_pending` |
+| `memory_episode_admin` | `query/list/get/status/rebuild/process_sources` |
 | `memory_profile_admin` | `query/list/set_override/delete_override` |
 | `memory_runtime_admin` | `save/get_config/self_check/refresh_self_check/set_auto_save` |
 | `memory_import_admin` | `settings/get_guide/create_upload/create_paste/create_raw_scan/create_lpmm_openie/create_lpmm_convert/create_temporal_backfill/create_maibot_migration/list/get/chunks/cancel/retry_failed` |

@@ -532,7 +532,13 @@ def test_same_content_from_different_streams_keeps_same_hash_for_idempotency(tmp
     }
 
     row1 = _Row(id=1, chat_id="stream-a", **base)
-    row2 = _Row(id=2, chat_id="stream-b", start_time=1800000000, end_time=1800000100, **{k: v for k, v in base.items() if k not in {"start_time", "end_time"}})
+    row2 = _Row(
+        id=2,
+        chat_id="stream-b",
+        start_time=1800000000,
+        end_time=1800000100,
+        **{k: v for k, v in base.items() if k not in {"start_time", "end_time"}},
+    )
 
     assert runner._map_row(row1).paragraph_hash == runner._map_row(row2).paragraph_hash
 
@@ -560,6 +566,10 @@ def test_migration_window_algorithm_is_idempotent_and_stable(tmp_path: Path) -> 
         assert first_counts["vectors"] == first_counts["paragraphs"] + first_counts["entities"]
         assert runner.stats["windows_committed"] == 3
         assert first_embedding_calls < first_counts["vectors"]
+        lifecycle_revisions = runner.metadata_store.get_connection().execute(
+            "SELECT lifecycle_revision FROM relations"
+        ).fetchall()
+        assert {int(row[0]) for row in lifecycle_revisions} == {0}
     finally:
         _close_runner(runner)
 

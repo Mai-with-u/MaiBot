@@ -83,7 +83,6 @@ const PARAMETER_ORDER = [
   'threshold.min_results',
   'threshold.min_threshold',
   'threshold.max_threshold',
-  'threshold.enable_auto_adjust',
 ]
 
 const RESULT_METRICS = [

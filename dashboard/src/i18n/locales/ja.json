@@ -404,6 +404,8 @@
       "confirmRerunSetup": "再構成を確認",
       "confirmRerunSetupDesc": "初回設定ウィザードに戻ります。システムの基本設定を再設定できます。続けますか？",
       "devToolsDesc": "以下の機能は開発・デバッグ目的のみです。クラッシュや異常動作を引き起こす可能性があります。",
+      "alwaysShowUpdateNotice": "更新ログを常に表示",
+      "alwaysShowUpdateNoticeDesc": "有効にすると、WebUI を開くたびに更新内容とプラグイン互換性通知が順番に表示されます。ページ更新後に反映されます。",
       "triggerError": "テストエラーを発生させる",
       "confirmTriggerError": "エラーの発生を確認",
       "confirmTriggerErrorDesc": "React エラーを手動で発生させ、エラーボーダーコンポーネントをテストします。ページを更新するかホームに戻ることで復元できます。",
@@ -988,8 +990,7 @@
         "threshold_percentile": "動的しきい値の分位",
         "threshold_min_results": "最小返却数",
         "threshold_min_threshold": "最小しきい値",
-        "threshold_max_threshold": "最大しきい値",
-        "threshold_enable_auto_adjust": "しきい値の自動調整"
+        "threshold_max_threshold": "最大しきい値"
       }
     }
   },

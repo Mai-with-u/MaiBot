@@ -90,7 +90,9 @@ class PersonProfileResult:
 
 
 class MemoryService:
-    async def _invoke(self, component_name: str, args: Optional[Dict[str, Any]] = None, *, timeout_ms: int = 30000) -> Any:
+    async def _invoke(
+        self, component_name: str, args: Optional[Dict[str, Any]] = None, *, timeout_ms: int = 30000
+    ) -> Any:
         response = await a_memorix_host_service.invoke(
             component_name,
             args or {},
@@ -255,7 +257,9 @@ class MemoryService:
         except Exception as exc:
             logger.warning(f"反馈纠错任务入队失败: {exc}")
             return {"success": False, "queued": False, "reason": str(exc)}
-        return payload if isinstance(payload, dict) else {"success": False, "queued": False, "reason": "invalid_payload"}
+        return (
+            payload if isinstance(payload, dict) else {"success": False, "queued": False, "reason": "invalid_payload"}
+        )
 
     async def ingest_summary(
         self,
@@ -466,7 +470,9 @@ class MemoryService:
 
     async def get_recycle_bin(self, *, limit: int = 50) -> Dict[str, Any]:
         try:
-            payload = await self._invoke("maintain_memory", {"action": "recycle_bin", "limit": max(1, int(limit or 50))})
+            payload = await self._invoke(
+                "maintain_memory", {"action": "recycle_bin", "limit": max(1, int(limit or 50))}
+            )
             return payload if isinstance(payload, dict) else {"success": False, "error": "invalid_payload"}
         except Exception as exc:
             logger.warning(f"获取回收站失败: {exc}")

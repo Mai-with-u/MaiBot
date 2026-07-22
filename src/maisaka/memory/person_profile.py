@@ -70,7 +70,9 @@ def _resolve_candidate(
         else:
             person_id = ""
     except Exception as exc:
-        logger.debug(f"解析人物画像候选失败: source={source} user_id={clean_user_id!r} name={clean_person_name!r} err={exc}")
+        logger.debug(
+            f"解析人物画像候选失败: source={source} user_id={clean_user_id!r} name={clean_person_name!r} err={exc}"
+        )
         return None
 
     if not person_id:

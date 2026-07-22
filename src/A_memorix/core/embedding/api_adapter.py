@@ -116,15 +116,13 @@ class EmbeddingAPIAdapter:
             return ""
 
     def get_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Dict[str, Any]:
-        """Return a compact fingerprint for the vector space used by this adapter."""
+        """返回当前适配器所用向量空间的精简指纹。"""
         effective_dimension = max(1, int(dimension or self.get_embedding_dimension()))
         model_token = str(self._last_success_model_name or "").strip()
         provider_token = str(self._last_success_provider_name or "").strip()
         source = "observed" if model_token else "configured"
         candidate_names = [
-            str(item or "").strip()
-            for item in self._resolve_candidate_model_names()
-            if str(item or "").strip()
+            str(item or "").strip() for item in self._resolve_candidate_model_names() if str(item or "").strip()
         ]
         if not model_token:
             model_token = str(self.model_name or "auto").strip() or "auto"
@@ -285,13 +283,11 @@ class EmbeddingAPIAdapter:
             try:
                 model_info = self._find_model_info(candidate_name)
                 api_provider = self._find_provider(model_info.api_provider)
-                client = client_registry.get_client_class_instance(api_provider, force_new=True)
+                client = client_registry.get_client_class_instance(api_provider)
 
                 should_include_dimension = self._should_include_dimension(dimensions, include_dimension)
                 requested_dimension = (
-                    self._resolve_canonical_dimension(dimensions)
-                    if should_include_dimension
-                    else None
+                    self._resolve_canonical_dimension(dimensions) if should_include_dimension else None
                 )
                 extra_params = self._build_request_extra_params(
                     api_provider=api_provider,
@@ -404,7 +400,9 @@ class EmbeddingAPIAdapter:
         start_time = time.time()
         if dimensions is None or self.dimension_request_mode == "never":
             target_dim = int(await self._detect_dimension())
-            requested_dimension = None if self.dimension_request_mode != "always" else self._resolve_canonical_dimension()
+            requested_dimension = (
+                None if self.dimension_request_mode != "always" else self._resolve_canonical_dimension()
+            )
         else:
             target_dim = self._resolve_canonical_dimension(dimensions)
             requested_dimension = target_dim
@@ -476,8 +474,13 @@ class EmbeddingAPIAdapter:
 
             semaphore = asyncio.Semaphore(self.max_concurrent)
 
-            async def encode_with_semaphore(text: str, batch_index: int, absolute_index: int):
-                async with semaphore:
+            async def encode_with_semaphore(
+                text: str,
+                batch_index: int,
+                absolute_index: int,
+                _semaphore: asyncio.Semaphore = semaphore,
+            ):
+                async with _semaphore:
                     embedding = await self._get_embedding_direct(text, dimensions=dimensions)
                     if embedding is None:
                         raise RuntimeError(f"文本 {absolute_index} 编码失败：embedding 返回为空")
@@ -487,10 +490,7 @@ class EmbeddingAPIAdapter:
                     )
                     return batch_index, vector
 
-            tasks = [
-                encode_with_semaphore(text, index, offset + index)
-                for index, text in uncached_items
-            ]
+            tasks = [encode_with_semaphore(text, index, offset + index) for index, text in uncached_items]
             results = await asyncio.gather(*tasks)
             normalized_results: List[Tuple[int, np.ndarray]] = []
             for batch_index, vector in results:

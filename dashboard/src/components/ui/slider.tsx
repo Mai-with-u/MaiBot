@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
   "data-dashboard-slider"?: "config" | "default"
-  "data-dashboard-slider-value-format"?: "fixed-2"
+  "data-dashboard-slider-value-format"?: "fixed-2" | "fixed-3"
 }
 
 const Slider = React.forwardRef<
@@ -72,8 +72,8 @@ const Slider = React.forwardRef<
               data-dashboard-slider-value="true"
               className="pointer-events-none select-none"
             >
-              {dashboardValueFormat === 'fixed-2' && typeof currentValues[index] === 'number'
-                ? currentValues[index].toFixed(2)
+              {typeof currentValues[index] === 'number' && dashboardValueFormat
+                ? currentValues[index].toFixed(dashboardValueFormat === 'fixed-3' ? 3 : 2)
                 : currentValues[index]}
             </span>
           )}

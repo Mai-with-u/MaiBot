@@ -214,6 +214,26 @@ class PersonalityConfig(ConfigBase):
     )
     """麦麦的人格和身份设定，建议简短描述她是谁、是什么性格。"""
 
+    behavior_style: str = Field(
+        default=(
+            "先观察聊天上下文和他人的反应，再决定是否参与。只在被提及、对话题感兴趣或确实能推进聊天时行动，"
+            "不需要回应每条消息；不适合参与时保持安静。"
+        ),
+        json_schema_extra={
+            "label": {
+                "zh_CN": "行为风格",
+                "en_US": "Behavior style",
+                "ja_JP": "行動スタイル",
+            },
+            "x-widget": "textarea",
+            "x-icon": "compass",
+            "x-textarea-min-height": 40,
+            "x-textarea-rows": 1,
+            "x-description-display": "icon",
+        },
+    )
+    """Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。"""
+
     reply_style: str = Field(
         default="你的风格平淡简短。可以参考贴吧，知乎和微博的回复风格。不浮夸不长篇大论，不要过分修辞和复杂句。尽量回复的简短一些，平淡一些",
         json_schema_extra={
@@ -1018,6 +1038,76 @@ class AttentionDriftConfig(ConfigBase):
     """控制短句、吐槽、语气词等短反应在漂移风格中的使用方式。"""
 
 
+class ExperimentalBrowserConfig(ConfigBase):
+    """暂未开放的实验性网页浏览能力参数。"""
+
+    __ui_label__ = "网页浏览"
+
+    session_timeout_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "浏览会话超时秒数",
+                "en_US": "Browser session timeout",
+                "ja_JP": "閲覧セッションのタイムアウト",
+            },
+            "x-widget": "number",
+            "x-icon": "timer",
+        },
+    )
+    """浏览器会话无操作多久后自动关闭。"""
+
+    navigation_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "页面导航超时秒数",
+                "en_US": "Navigation timeout",
+                "ja_JP": "ページ遷移のタイムアウト",
+            },
+            "x-widget": "number",
+            "x-icon": "clock",
+        },
+    )
+    """打开网页或等待页面跳转的最长时间。"""
+
+    max_page_text_length: int = Field(
+        default=6000,
+        ge=1000,
+        le=20000,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "单页正文最大字符数",
+                "en_US": "Maximum page text length",
+                "ja_JP": "ページ本文の最大文字数",
+            },
+            "x-widget": "number",
+            "x-icon": "text",
+        },
+    )
+    """单次页面观察最多返回多少正文字符。"""
+
+    max_actions: int = Field(
+        default=20,
+        ge=5,
+        le=40,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "单页最大动作数",
+                "en_US": "Maximum page actions",
+                "ja_JP": "ページごとの最大アクション数",
+            },
+            "x-widget": "number",
+            "x-icon": "list-tree",
+        },
+    )
+    """每次仅向模型披露当前页面中排序靠前的少量语义动作。"""
+
+
 class ExperimentalConfig(ConfigBase):
     """实验性功能配置类"""
 
@@ -1070,6 +1160,9 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
+
+    browser: ExperimentalBrowserConfig = Field(default_factory=ExperimentalBrowserConfig)
+    """动作票据式网页浏览实验能力。"""
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
@@ -2068,6 +2161,19 @@ class AMemorixEmbeddingConfig(ConfigBase):
     )
     """是否缓存向量化结果"""
 
+    runtime_train_threshold: int = Field(
+        default=256,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "运行期向量训练阈值",
+                "en_US": "Runtime vector training threshold",
+                "ja_JP": "実行時ベクトル学習しきい値",
+            },
+        },
+    )
+    """未训练向量池在运行期间触发 SQ8 后台训练所需的最少向量数"""
+
     quantization_type: Literal["int8"] = Field(
         default="int8",
         json_schema_extra={
@@ -2723,7 +2829,7 @@ class AMemorixThresholdConfig(ConfigBase):
     """A_Memorix 阈值过滤配置"""
 
     min_threshold: float = Field(
-        default=0.3,
+        default=0.29,
         ge=0.0,
         le=1.0,
         json_schema_extra={
@@ -2765,7 +2871,7 @@ class AMemorixThresholdConfig(ConfigBase):
     """动态阈值百分位"""
 
     min_results: int = Field(
-        default=3,
+        default=4,
         ge=1,
         json_schema_extra={
             "label": {
@@ -2777,18 +2883,10 @@ class AMemorixThresholdConfig(ConfigBase):
     )
     """最小保留条数"""
 
-    enable_auto_adjust: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "自动调整阈值",
-                "en_US": "Auto-adjust threshold",
-                "ja_JP": "しきい値を自動調整",
-            },
-        },
-    )
-    """是否启用自动阈值调整"""
-
+    def model_post_init(self, context: Optional[dict] = None) -> None:
+        if self.min_threshold >= self.max_threshold:
+            raise ValueError("min_threshold 必须小于 max_threshold")
+        return super().model_post_init(context)
 
 class AMemorixRetrievalSubtypeFilterConfig(ConfigBase):
     """A_Memorix 跨聊天流检索结果分类型过滤配置"""
@@ -2953,31 +3051,70 @@ class AMemorixEpisodeConfig(ConfigBase):
     )
     """是否启用自动生成"""
 
-    pending_batch_size: int = Field(
-        default=50,
+    source_poll_interval_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务轮询间隔",
+                "en_US": "Source task polling interval",
+                "ja_JP": "ソースタスクのポーリング間隔",
+            },
+        },
+    )
+    """来源级 Episode 任务轮询间隔秒数"""
+
+    source_batch_size: int = Field(
+        default=20,
         ge=1,
         json_schema_extra={
             "label": {
-                "zh_CN": "待处理批量",
-                "en_US": "Pending batch size",
-                "ja_JP": "保留中バッチサイズ",
+                "zh_CN": "来源任务批量",
+                "en_US": "Source task batch size",
+                "ja_JP": "ソースタスクのバッチサイズ",
             },
         },
     )
-    """待处理批大小"""
+    """单轮领取的来源任务数"""
 
-    pending_max_retry: int = Field(
+    source_max_retry: int = Field(
         default=3,
-        ge=0,
+        ge=1,
         json_schema_extra={
             "label": {
-                "zh_CN": "待处理重试",
-                "en_US": "Pending max retries",
-                "ja_JP": "保留中最大リトライ",
+                "zh_CN": "来源任务最大尝试次数",
+                "en_US": "Source task max attempts",
+                "ja_JP": "ソースタスクの最大試行回数",
             },
         },
     )
-    """待处理最大重试次数"""
+    """每个来源版本的最大尝试次数，包含首次尝试"""
+
+    source_lease_seconds: float = Field(
+        default=1800.0,
+        ge=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务租约时长",
+                "en_US": "Source task lease duration",
+                "ja_JP": "ソースタスクのリース時間",
+            },
+        },
+    )
+    """来源任务租约时长秒数"""
+
+    source_max_wait_seconds: float = Field(
+        default=60.0,
+        ge=0.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "来源任务最大防抖等待",
+                "en_US": "Source task maximum debounce wait",
+                "ja_JP": "ソースタスクの最大デバウンス待機時間",
+            },
+        },
+    )
+    """来源持续写入时允许的最大防抖等待秒数"""
 
     max_paragraphs_per_call: int = Field(
         default=20,
@@ -3239,8 +3376,8 @@ class AMemorixMemoryEvolutionConfig(ConfigBase):
 
     prune_threshold: float = Field(
         default=0.1,
-        ge=0.0,
-        le=1.0,
+        gt=0.0,
+        lt=1.0,
         json_schema_extra={
             "label": {
                 "zh_CN": "裁剪阈值",
@@ -3263,6 +3400,93 @@ class AMemorixMemoryEvolutionConfig(ConfigBase):
         },
     )
     """冻结时长小时数"""
+
+    revive_threshold: float = Field(
+        default=0.15,
+        gt=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "恢复阈值",
+                "en_US": "Revival threshold",
+                "ja_JP": "復帰しきい値",
+            },
+        },
+    )
+    """冻结关系恢复为活跃状态的保留强度阈值"""
+
+    access_reinforcement_alpha: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "访问加强系数",
+                "en_US": "Access reinforcement factor",
+                "ja_JP": "アクセス強化係数",
+            },
+        },
+    )
+    """记忆被最终采用时的饱和加强系数"""
+
+    access_reinforcement_cooldown_minutes: float = Field(
+        default=60.0,
+        ge=0.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "访问加强冷却时间",
+                "en_US": "Access reinforcement cooldown",
+                "ja_JP": "アクセス強化クールダウン",
+            },
+        },
+    )
+    """同一关系两次访问加强之间的最短分钟数，0表示不限制"""
+
+    explicit_reinforcement_alpha: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "显式加强系数",
+                "en_US": "Explicit reinforcement factor",
+                "ja_JP": "明示的強化係数",
+            },
+        },
+    )
+    """用户显式加强或独立新证据的饱和加强系数"""
+
+    weaken_alpha: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "弱化系数",
+                "en_US": "Weakening factor",
+                "ja_JP": "弱化係数",
+            },
+        },
+    )
+    """显式弱化事件的比例系数"""
+
+    lifecycle_batch_size: int = Field(
+        default=1000,
+        ge=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "生命周期批量",
+                "en_US": "Lifecycle batch size",
+                "ja_JP": "ライフサイクルのバッチサイズ",
+            },
+        },
+    )
+    """单轮处理的到期关系数量"""
+
+    def model_post_init(self, context: Optional[dict] = None) -> None:
+        if self.revive_threshold <= self.prune_threshold:
+            raise ValueError("revive_threshold 必须大于 prune_threshold")
+        return super().model_post_init(context)
 
 
 class AMemorixAdvancedConfig(ConfigBase):
@@ -4872,6 +5096,20 @@ class DebugConfig(ConfigBase):
     __ui_parent__ = "log"
     __ui_label__ = "其他"
 
+    enable_console_input: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用终端输入",
+                "en_US": "Enable console input",
+                "ja_JP": "ターミナル入力を有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "terminal",
+        },
+    )
+    """在交互式终端中启用本地消息和指令输入。"""
+
     show_maisaka_thinking: bool = Field(
         default=True,
         json_schema_extra={
@@ -4885,6 +5123,20 @@ class DebugConfig(ConfigBase):
         },
     )
     """在日志或界面中显示麦麦的思考过程。"""
+
+    enable_clear_context_command: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "启用 /clear 指令",
+                "en_US": "Enable /clear command",
+                "ja_JP": "/clear コマンドを有効化",
+            },
+            "x-widget": "switch",
+            "x-icon": "eraser",
+        },
+    )
+    """允许使用 /clear 清空当前聊天流的 Maisaka 短期历史上下文。"""
 
     enable_reply_effect_tracking: bool = Field(
         default=False,

@@ -559,29 +559,33 @@ export function useModelConfig() {
     })
   }, [taskConfig, models, toast])
 
-  const persistCurrentDraft = useCallback(async () => {
-    clearAutoSaveTimers()
-    if (providerAutoSaveTimerRef.current) {
-      clearTimeout(providerAutoSaveTimerRef.current)
-      providerAutoSaveTimerRef.current = null
-    }
+  const persistModelConfigDraft = useCallback(
+    async (
+      nextModels: ModelInfo[],
+      nextTaskConfig: ModelTaskConfig | null,
+      nextApiProviders: APIProvider[]
+    ) => {
+      clearAutoSaveTimers()
+      if (providerAutoSaveTimerRef.current) {
+        clearTimeout(providerAutoSaveTimerRef.current)
+        providerAutoSaveTimerRef.current = null
+      }
 
-    const config = unwrapModelConfig(await getModelConfig())
-    config.api_providers = apiProviders.map(cleanProviderData)
-    config.models = models.map(cleanModelForSave)
-    config.model_task_config = taskConfig
-    await updateModelConfig(config)
-    resetSnapshots(config.models as ModelInfo[], taskConfig)
-    providersSnapshotRef.current = JSON.stringify(config.api_providers)
-    setHasUnsavedChanges(false)
-  }, [
-    apiProviders,
-    clearAutoSaveTimers,
-    cleanModelForSave,
-    models,
-    resetSnapshots,
-    taskConfig,
-  ])
+      const config = unwrapModelConfig(await getModelConfig())
+      config.api_providers = nextApiProviders.map(cleanProviderData)
+      config.models = nextModels.map(cleanModelForSave)
+      config.model_task_config = nextTaskConfig
+      await updateModelConfig(config)
+      resetSnapshots(config.models as ModelInfo[], nextTaskConfig)
+      providersSnapshotRef.current = JSON.stringify(config.api_providers)
+      setHasUnsavedChanges(false)
+    },
+    [clearAutoSaveTimers, cleanModelForSave, resetSnapshots]
+  )
+
+  const persistCurrentDraft = useCallback(async () => {
+    await persistModelConfigDraft(models, taskConfig, apiProviders)
+  }, [apiProviders, models, persistModelConfigDraft, taskConfig])
 
   // 保存配置（手动保存）
   const saveConfig = useCallback(async () => {
@@ -788,7 +792,7 @@ export function useModelConfig() {
   )
 
   // 保存模型编辑
-  const handleSaveEdit = useCallback(() => {
+  const handleSaveEdit = useCallback(async () => {
     if (!editingModel) return
 
     // 验证必填项
@@ -857,32 +861,55 @@ export function useModelConfig() {
       newModels = [...models, modelToSave]
     }
 
-    setModels(newModels)
-    setModelNames(newModels.map((m) => m.name))
-
     // 如果模型名称发生变化，更新任务配置中对该模型的引用
-    if (oldModelName && oldModelName !== modelToSave.name && taskConfig) {
+    const modelRenamed = oldModelName !== null && oldModelName !== modelToSave.name
+    let newTaskConfig = taskConfig
+    if (modelRenamed && taskConfig) {
       const updateModelList = (list: string[]): string[] => {
         return list.map((name) => (name === oldModelName ? modelToSave.name : name))
       }
 
-      const newTaskConfig: ModelTaskConfig = {}
+      newTaskConfig = {}
       for (const [key, task] of Object.entries(taskConfig)) {
         newTaskConfig[key] = { ...task, model_list: updateModelList(task?.model_list || []) }
       }
-      setTaskConfig(newTaskConfig)
     }
 
-    setEditDialogOpen(false)
-    setEditingModel(null)
-    setEditingIndex(null)
-
-    // 提示用户配置将自动保存
-    toast({
-      title: editingIndex !== null ? '模型已更新' : '模型已添加',
-      description: '配置将在 2 秒后自动保存',
-    })
-  }, [editingIndex, editingModel, models, taskConfig, toast])
+    try {
+      setSaving(true)
+      // 模型名称与任务引用必须在同一次写入中保存，避免热重载读到不一致的中间状态。
+      await persistModelConfigDraft(newModels, newTaskConfig, apiProviders)
+      setModels(newModels)
+      setModelNames(newModels.map((model) => model.name))
+      setTaskConfig(newTaskConfig)
+      checkTaskConfigIssues(newTaskConfig, newModels)
+      setEditDialogOpen(false)
+      setEditingModel(null)
+      setEditingIndex(null)
+      toast({
+        title: editingIndex !== null ? '模型已更新' : '模型已添加',
+        description: modelRenamed ? '模型名称及任务引用已同步保存' : '模型配置已保存',
+      })
+    } catch (error) {
+      console.error('保存模型配置失败:', error)
+      toast({
+        title: '保存失败',
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }, [
+    apiProviders,
+    checkTaskConfigIssues,
+    editingIndex,
+    editingModel,
+    models,
+    persistModelConfigDraft,
+    taskConfig,
+    toast,
+  ])
 
   // 处理编辑对话框关闭
   const handleEditDialogClose = useCallback(

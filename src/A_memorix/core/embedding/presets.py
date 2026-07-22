@@ -2,9 +2,9 @@
 嵌入模型配置模块
 """
 
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, Union
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional, Union
 
 
 @dataclass
@@ -37,16 +37,12 @@ class EmbeddingModelConfig:
     cache_dir: Optional[Union[str, Path]] = None
 
 
-def validate_config_compatibility(
-    config1: EmbeddingModelConfig, config2: EmbeddingModelConfig
-) -> bool:
+def validate_config_compatibility(config1: EmbeddingModelConfig, config2: EmbeddingModelConfig) -> bool:
     """检查两个配置是否兼容（主要看维度）"""
     return config1.dimension == config2.dimension
 
 
-def are_models_compatible(
-    config1: EmbeddingModelConfig, config2: EmbeddingModelConfig
-) -> bool:
+def are_models_compatible(config1: EmbeddingModelConfig, config2: EmbeddingModelConfig) -> bool:
     """检查模型是否完全相同（用于热切换判断）"""
     return (
         config1.model_path == config2.model_path

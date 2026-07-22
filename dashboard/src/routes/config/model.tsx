@@ -1619,9 +1619,10 @@ function ModelConfigPageContent() {
               data-dialog-action="confirm"
               className="flex-1 sm:flex-none"
               onClick={handleSaveEdit}
+              disabled={saving}
               data-tour="model-save-button"
             >
-              保存
+              {saving ? '保存中...' : '保存'}
             </Button>
           </DialogFooter>
         </DialogContent>

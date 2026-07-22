@@ -28,7 +28,7 @@ _BROAD_PREDICATES = {
 class PosteriorGraphConfig:
     """双重方案中的后验图补位配置。"""
 
-    enabled: bool = True
+    enabled: bool = False
     drop_ratio: float = 0.15
     min_core_results: int = 2
     max_graph_slots: int = 2
@@ -55,15 +55,9 @@ class PosteriorGraphConfig:
         self.grounded_confidence_threshold = _clip_score(self.grounded_confidence_threshold)
         self.incidental_confidence_threshold = _clip_score(self.incidental_confidence_threshold)
         self.min_query_token_coverage = _clip_score(self.min_query_token_coverage)
-        self.incidental_query_relevance_threshold = _clip_score(
-            self.incidental_query_relevance_threshold
-        )
-        self.incidental_core_overlap_threshold = _clip_score(
-            self.incidental_core_overlap_threshold
-        )
-        self.incidental_specificity_threshold = _clip_score(
-            self.incidental_specificity_threshold
-        )
+        self.incidental_query_relevance_threshold = _clip_score(self.incidental_query_relevance_threshold)
+        self.incidental_core_overlap_threshold = _clip_score(self.incidental_core_overlap_threshold)
+        self.incidental_specificity_threshold = _clip_score(self.incidental_specificity_threshold)
         self.query_weight = max(0.0, float(self.query_weight))
         self.novelty_weight = max(0.0, float(self.novelty_weight))
         self.complementarity_weight = max(0.0, float(self.complementarity_weight))
@@ -109,11 +103,7 @@ def _tokenize_for_competition(text: str, *, max_tokens: int) -> List[str]:
     tokens: List[str] = []
     for chunk in _TOKEN_PATTERN.findall(normalized):
         if _is_cjk_chunk(chunk):
-            tokens.extend(
-                item.strip().lower()
-                for item in jieba.lcut_for_search(chunk)
-                if item.strip()
-            )
+            tokens.extend(item.strip().lower() for item in jieba.lcut_for_search(chunk) if item.strip())
         else:
             tokens.append(chunk)
 
@@ -177,9 +167,7 @@ def _build_query_profile(
     text = str(query or "")
     tokens = set(_tokenize_for_competition(text, max_tokens=max_tokens))
     entities = {
-        str(name or "").strip().lower()
-        for name in retriever._extract_entities(text).keys()
-        if str(name or "").strip()
+        str(name or "").strip().lower() for name in retriever._extract_entities(text).keys() if str(name or "").strip()
     }
     return _CompetitionProfile(text=text, tokens=tokens, entities=entities)
 
@@ -544,16 +532,15 @@ def _competition_merge(
         min_core_results=cfg.min_core_results,
     )
     core_results = ranked[:cliff]
-    replaceable_slots = min(
-        max(0, int(top_k) - len(core_results)),
+    remaining_slots = max(0, int(top_k) - len(core_results))
+    graph_slot_limit = min(
+        remaining_slots,
         int(cfg.max_graph_slots),
     )
-    if replaceable_slots <= 0:
+    if remaining_slots <= 0 or graph_slot_limit <= 0:
         return ranked[:top_k]
 
-    core_paragraph_hashes = {
-        item.hash_value for item in core_results if item.result_type == "paragraph"
-    }
+    core_paragraph_hashes = {item.hash_value for item in core_results if item.result_type == "paragraph"}
     selected_hashes = {item.hash_value for item in core_results}
     filtered_graph_results: List[RetrievalResult] = []
     for item in graph_results:
@@ -607,13 +594,33 @@ def _competition_merge(
 
     tail_winners: List[RetrievalResult] = []
     seen_hashes = set(selected_hashes)
+    graph_candidate_ids = {id(item) for item in filtered_graph_results}
+    selected_graph_count = 0
     for item, _ in scored_candidates:
+        if item.hash_value in seen_hashes:
+            continue
+        is_graph_candidate = id(item) in graph_candidate_ids
+        if is_graph_candidate and selected_graph_count >= graph_slot_limit:
+            continue
+        tail_winners.append(item)
+        seen_hashes.add(item.hash_value)
+        if is_graph_candidate:
+            selected_graph_count += 1
+        if len(tail_winners) >= remaining_slots:
+            break
+
+    # 图候选没有赢得竞争时必须保持原始结果，避免后验阶段无意义地重排尾部。
+    if selected_graph_count == 0:
+        return ranked[:top_k]
+
+    # 去重或异常候选可能导致竞争结果不足，继续用原始尾部补齐 Top-K 预算。
+    for item in ranked[cliff:top_k]:
+        if len(tail_winners) >= remaining_slots:
+            break
         if item.hash_value in seen_hashes:
             continue
         tail_winners.append(item)
         seen_hashes.add(item.hash_value)
-        if len(tail_winners) >= replaceable_slots:
-            break
 
     return (core_results + tail_winners)[:top_k]
 
@@ -631,16 +638,12 @@ def apply_posterior_graph_gate(
     if not isinstance(cfg, PosteriorGraphConfig) or not cfg.enabled:
         return list(base_results)[:top_k]
     if not base_results:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_empty",
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_empty",
+        }
         return []
 
     top_k_int = max(1, int(top_k))
@@ -676,8 +679,7 @@ def apply_posterior_graph_gate(
         max_tokens=cfg.max_candidate_tokens,
     )
     core_profiles = [
-        _build_candidate_profile(retriever, item, max_tokens=cfg.max_candidate_tokens)
-        for item in core_results
+        _build_candidate_profile(retriever, item, max_tokens=cfg.max_candidate_tokens) for item in core_results
     ]
     need_for_graph, need_reason = _need_for_graph(
         query_profile=query_profile,
@@ -693,31 +695,23 @@ def apply_posterior_graph_gate(
     if grounded_seeds and need_for_graph:
         seed_type = "grounded"
         seed_names = grounded_seeds
-    elif (
-        not grounded_seeds
-        and incidental_seeds
-        and rag_confidence < float(cfg.incidental_confidence_threshold)
-    ):
+    elif not grounded_seeds and incidental_seeds and rag_confidence < float(cfg.incidental_confidence_threshold):
         seed_type = "incidental"
         seed_names = incidental_seeds
 
     if not seed_names:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_none",
-                "grounded_seeds": list(grounded_seeds),
-                "incidental_seeds": list(incidental_seeds),
-                "selected_seed_type": seed_type,
-                "need_for_graph": bool(need_for_graph),
-                "need_reason": str(need_reason),
-                "rag_confidence": round(float(rag_confidence), 4),
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_none",
+            "grounded_seeds": list(grounded_seeds),
+            "incidental_seeds": list(incidental_seeds),
+            "selected_seed_type": seed_type,
+            "need_for_graph": bool(need_for_graph),
+            "need_reason": str(need_reason),
+            "rag_confidence": round(float(rag_confidence), 4),
+        }
         return list(base_results)[:top_k_int]
 
     graph_results = _build_graph_results_from_seeds(
@@ -741,23 +735,19 @@ def apply_posterior_graph_gate(
         ]
 
     if not graph_results:
-        setattr(
-            retriever,
-            "_posterior_graph_gate_last_decision",
-            {
-                "scheme": "posterior_graph_gate",
-                "query": str(query or ""),
-                "enabled": False,
-                "bucket": "posterior_gate_graph_filtered",
-                "grounded_seeds": list(grounded_seeds),
-                "incidental_seeds": list(incidental_seeds),
-                "selected_seed_type": seed_type,
-                "need_for_graph": bool(need_for_graph),
-                "need_reason": str(need_reason),
-                "rag_confidence": round(float(rag_confidence), 4),
-                "graph_result_count": int(raw_graph_count),
-            },
-        )
+        retriever._posterior_graph_gate_last_decision = {
+            "scheme": "posterior_graph_gate",
+            "query": str(query or ""),
+            "enabled": False,
+            "bucket": "posterior_gate_graph_filtered",
+            "grounded_seeds": list(grounded_seeds),
+            "incidental_seeds": list(incidental_seeds),
+            "selected_seed_type": seed_type,
+            "need_for_graph": bool(need_for_graph),
+            "need_reason": str(need_reason),
+            "rag_confidence": round(float(rag_confidence), 4),
+            "graph_result_count": int(raw_graph_count),
+        }
         return list(base_results)[:top_k_int]
 
     final_results = _competition_merge(
@@ -770,23 +760,19 @@ def apply_posterior_graph_gate(
     )
     selected_hashes = {item.hash_value for item in final_results}
     graph_selected = any(item.hash_value in selected_hashes for item in graph_results)
-    setattr(
-        retriever,
-        "_posterior_graph_gate_last_decision",
-        {
-            "scheme": "posterior_graph_gate",
-            "query": str(query or ""),
-            "enabled": bool(graph_selected),
-            "bucket": "posterior_gate_enabled" if graph_selected else "posterior_gate_tail_rejected",
-            "grounded_seeds": list(grounded_seeds),
-            "incidental_seeds": list(incidental_seeds),
-            "selected_seed_type": seed_type,
-            "need_for_graph": bool(need_for_graph),
-            "need_reason": str(need_reason),
-            "rag_confidence": round(float(rag_confidence), 4),
-            "graph_result_count": int(raw_graph_count),
-            "filtered_graph_count": max(0, raw_graph_count - len(graph_results)),
-            "base_top_k_count": min(len(base_results), top_k_int),
-        },
-    )
+    retriever._posterior_graph_gate_last_decision = {
+        "scheme": "posterior_graph_gate",
+        "query": str(query or ""),
+        "enabled": bool(graph_selected),
+        "bucket": "posterior_gate_enabled" if graph_selected else "posterior_gate_tail_rejected",
+        "grounded_seeds": list(grounded_seeds),
+        "incidental_seeds": list(incidental_seeds),
+        "selected_seed_type": seed_type,
+        "need_for_graph": bool(need_for_graph),
+        "need_reason": str(need_reason),
+        "rag_confidence": round(float(rag_confidence), 4),
+        "graph_result_count": int(raw_graph_count),
+        "filtered_graph_count": max(0, raw_graph_count - len(graph_results)),
+        "base_top_k_count": min(len(base_results), top_k_int),
+    }
     return final_results[:top_k_int]

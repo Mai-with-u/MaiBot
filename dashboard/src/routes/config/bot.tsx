@@ -7,9 +7,10 @@ import {
   Code2,
   ExternalLink,
   Info,
-  Layout,
   RefreshCw,
   Save,
+  SlidersHorizontal,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { parse as parseToml } from 'smol-toml'
@@ -70,6 +71,7 @@ import {
   RegexRulesHook,
   useAutoSave,
 } from './bot/hooks'
+import { CoreSettings } from './bot/CoreSettings'
 
 type ConfigSectionData = Record<string, unknown>
 // ==================== 常量定义 ====================
@@ -171,7 +173,7 @@ function BotConfigPageContent() {
   const [saving, setSaving] = useState(false)
   const [autoSaving, setAutoSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [editMode, setEditMode] = useState<'visual' | 'source'>('visual')
+  const [editMode, setEditMode] = useState<'core' | 'detail' | 'source'>('core')
   const [sourceCode, setSourceCode] = useState<string>('')
   const [hasTomlError, setHasTomlError] = useState(false)
   const [tomlErrorMessage, setTomlErrorMessage] = useState<string>('')
@@ -468,7 +470,7 @@ function BotConfigPageContent() {
   }
 
   // 处理模式切换
-  const handleModeChange = async (mode: 'visual' | 'source') => {
+  const handleModeChange = async (mode: 'core' | 'detail' | 'source') => {
     if (hasUnsavedChanges) {
       toast({
         variant: 'destructive',
@@ -610,17 +612,21 @@ function BotConfigPageContent() {
             <div className="flex w-full min-w-0 flex-wrap gap-2 sm:w-auto sm:flex-shrink-0 sm:justify-end">
               <Tabs
                 value={editMode}
-                onValueChange={(v) => handleModeChange(v as 'visual' | 'source')}
-                className="w-full min-w-0 sm:w-[14rem]"
+                onValueChange={(v) => handleModeChange(v as 'core' | 'detail' | 'source')}
+                className="w-full min-w-0 sm:w-[22rem]"
               >
-                <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-2">
-                  <TabsTrigger value="visual" className="px-2 text-sm">
-                    <Layout className="mr-1 h-4 w-4" />
-                    可视化
+                <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-3">
+                  <TabsTrigger value="core" className="px-2 text-sm">
+                    <Sparkles className="mr-1 h-4 w-4" />
+                    核心设置
+                  </TabsTrigger>
+                  <TabsTrigger value="detail" className="px-2 text-sm">
+                    <SlidersHorizontal className="mr-1 h-4 w-4" />
+                    详细设置
                   </TabsTrigger>
                   <TabsTrigger value="source" className="px-2 text-sm">
                     <Code2 className="mr-1 h-4 w-4" />
-                    文件
+                    源文件
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -636,7 +642,7 @@ function BotConfigPageContent() {
                 <RefreshCw className="h-4 w-4" />
               </Button>
               <Button
-                onClick={editMode === 'visual' ? saveConfig : saveSourceCode}
+                onClick={editMode === 'source' ? saveSourceCode : saveConfig}
                 disabled={saving || autoSaving || !hasUnsavedChanges || isRestarting}
                 size="sm"
                 variant="outline"
@@ -731,8 +737,20 @@ function BotConfigPageContent() {
           </div>
         )}
 
-        {/* 可视化模式 */}
-        {editMode === 'visual' && (
+        {/* 核心设置模式 */}
+        {editMode === 'core' && (
+          <CoreSettings
+            botSection={sectionValues.bot ?? null}
+            personalitySection={sectionValues.personality ?? null}
+            onPersonalitySectionChange={(value) => {
+              setSectionValue('personality', value)
+              setHasUnsavedChanges(true)
+            }}
+          />
+        )}
+
+        {/* 详细设置模式（原可视化模式） */}
+        {editMode === 'detail' && (
           <DynamicConfigTabs
             configSchema={configSchema}
             tabGroups={tabGroups}

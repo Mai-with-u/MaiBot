@@ -61,6 +61,8 @@ class EmbeddingServiceClient:
         return EmbeddingResult(
             embedding=list(raw_result.embedding),
             model_name=raw_result.model_name,
+            model_identifier=raw_result.model_identifier,
+            api_provider=raw_result.api_provider,
         )
 
     async def embed_texts(

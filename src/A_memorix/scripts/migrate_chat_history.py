@@ -65,34 +65,36 @@ async def _main() -> int:
 
     data_dir = resolve_repo_path(args.data_dir, fallback=DEFAULT_DATA_DIR)
     kernel = SDKMemoryKernel(plugin_root=PLUGIN_ROOT, config={"storage": {"data_dir": str(data_dir)}})
-    await kernel.initialize()
-    migrated = 0
-    skipped = 0
-    for row in rows:
-        participants = json.loads(row["participants"]) if row["participants"] else []
-        keywords = json.loads(row["keywords"]) if row["keywords"] else []
-        theme = str(row["theme"] or "").strip()
-        summary = str(row["summary"] or "").strip()
-        text = f"主题：{theme}\n概括：{summary}".strip()
-        result: Dict[str, Any] = await kernel.ingest_summary(
-            external_id=f"chat_history:{row['id']}",
-            chat_id=str(row["session_id"] or ""),
-            text=text,
-            participants=participants,
-            time_start=_to_timestamp(row["start_timestamp"]),
-            time_end=_to_timestamp(row["end_timestamp"]),
-            tags=keywords,
-            metadata={"theme": theme, "source_row_id": int(row["id"])},
-        )
-        if result.get("stored_ids"):
-            migrated += 1
-        else:
-            skipped += 1
+    try:
+        await kernel.initialize()
+        migrated = 0
+        skipped = 0
+        for row in rows:
+            participants = json.loads(row["participants"]) if row["participants"] else []
+            keywords = json.loads(row["keywords"]) if row["keywords"] else []
+            theme = str(row["theme"] or "").strip()
+            summary = str(row["summary"] or "").strip()
+            text = f"主题：{theme}\n概括：{summary}".strip()
+            result: Dict[str, Any] = await kernel.ingest_summary(
+                external_id=f"chat_history:{row['id']}",
+                chat_id=str(row["session_id"] or ""),
+                text=text,
+                participants=participants,
+                time_start=_to_timestamp(row["start_timestamp"]),
+                time_end=_to_timestamp(row["end_timestamp"]),
+                tags=keywords,
+                metadata={"theme": theme, "source_row_id": int(row["id"])},
+            )
+            if result.get("stored_ids"):
+                migrated += 1
+            else:
+                skipped += 1
 
-    print(f"迁移完成: migrated={migrated} skipped={skipped}")
-    print(json.dumps(kernel.memory_stats(), ensure_ascii=False))
-    kernel.close()
-    return 0
+        print(f"迁移完成: migrated={migrated} skipped={skipped}")
+        print(json.dumps(kernel.memory_stats(), ensure_ascii=False))
+        return 0
+    finally:
+        await kernel.shutdown()
 
 
 if __name__ == "__main__":

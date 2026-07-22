@@ -34,7 +34,7 @@ from .graph_relation_recall import (
 )
 
 __all__ = [
-    # DualPathRetriever
+    # 双路检索器（DualPathRetriever）
     "DualPathRetriever",
     "RetrievalStrategy",
     "RetrievalResult",
@@ -44,21 +44,21 @@ __all__ = [
     "RelationIntentConfig",
     "VectorPoolsConfig",
     "PosteriorGraphConfig",
-    # PersonalizedPageRank
+    # 个性化 PageRank（PersonalizedPageRank）
     "PersonalizedPageRank",
     "PageRankConfig",
     "create_ppr_from_graph",
-    # DynamicThresholdFilter
+    # 动态阈值过滤器（DynamicThresholdFilter）
     "DynamicThresholdFilter",
     "ThresholdMethod",
     "ThresholdConfig",
-    # Sparse BM25
+    # 稀疏检索（Sparse BM25）
     "SparseBM25Index",
     "SparseBM25Config",
     "SparseSearchBackend",
     "SQLiteFTS5SparseBackend",
     "ExperimentalExternalInvertedIndexBackend",
-    # Graph relation recall
+    # 图关系召回（Graph relation recall）
     "GraphRelationRecallConfig",
     "GraphRelationRecallService",
 ]

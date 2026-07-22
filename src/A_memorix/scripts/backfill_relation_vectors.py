@@ -23,6 +23,7 @@ import tomlkit
 
 from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR, resolve_repo_path
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="关系向量一次性回填")
     parser.add_argument(
@@ -52,20 +53,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --help/-h fast path: avoid heavy host/plugin bootstrap
+# --help/-h 快速路径：避免加载较重的宿主和插件运行时
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
     _build_arg_parser().print_help()
     raise SystemExit(0)
 
-from A_memorix.core.storage import (
+from A_memorix.core.storage import (  # noqa: E402
     VectorStore,
     GraphStore,
     MetadataStore,
     QuantizationType,
     SparseMatrixFormat,
 )
-from A_memorix.core.embedding import create_embedding_api_adapter
-from A_memorix.core.utils.relation_write_service import RelationWriteService
+from A_memorix.core.embedding import create_embedding_api_adapter  # noqa: E402
+from A_memorix.core.utils.relation_write_service import RelationWriteService  # noqa: E402
 
 
 def _load_config(config_path: Path) -> Dict[str, Any]:
@@ -211,9 +212,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 limit=max(1, limit),
                 max_retry=max(1, max_retry),
             )
-            ready_missing_rows = [
-                row for row in ready_rows if str(row.get("hash", "")) not in vector_store
-            ]
+            ready_missing_rows = [row for row in ready_rows if str(row.get("hash", "")) not in vector_store]
             added_ready_missing = len(ready_missing_rows)
             if ready_missing_rows:
                 dedup: Dict[str, Dict[str, Any]] = {}

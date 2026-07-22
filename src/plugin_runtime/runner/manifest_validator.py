@@ -141,23 +141,33 @@ class VersionComparator:
         return True, ""
 
     @staticmethod
-    def is_same_major_higher_version(version: str, max_version: str) -> bool:
-        """判断版本是否仅在同一主版本内高于声明上限。
+    def is_same_major_minor_higher_version(version: str, max_version: str) -> bool:
+        """判断版本是否仅因修订号更高而超过声明上限。
 
         Args:
             version: 当前版本号。
             max_version: Manifest 声明的最大支持版本号。
 
         Returns:
-            bool: 当前版本高于上限且两者主版本号相同时返回 ``True``。
+            bool: 当前版本高于上限，且两者主版本号和次版本号相同时返回 ``True``。
         """
 
         if not version or not max_version:
             return False
 
-        current_major, _current_minor, _current_patch = VersionComparator.parse_version(version)
-        max_major, _max_minor, _max_patch = VersionComparator.parse_version(max_version)
-        return current_major == max_major and VersionComparator.compare(version, max_version) > 0
+        current_major, current_minor, _current_patch = VersionComparator.parse_version(version)
+        max_major, max_minor, _max_patch = VersionComparator.parse_version(max_version)
+        return (
+            current_major == max_major
+            and current_minor == max_minor
+            and VersionComparator.compare(version, max_version) > 0
+        )
+
+    @staticmethod
+    def is_same_major_higher_version(version: str, max_version: str) -> bool:
+        """兼容旧调用名称，使用仅修订号向后兼容的规则。"""
+
+        return VersionComparator.is_same_major_minor_higher_version(version, max_version)
 
     @staticmethod
     def is_valid_semver(version: str) -> bool:
@@ -1047,13 +1057,14 @@ class ManifestValidator:
             manifest.host_application.max_version,
         )
         if not host_ok:
-            if VersionComparator.is_same_major_higher_version(
+            if VersionComparator.is_same_major_minor_higher_version(
                 self._host_version,
                 manifest.host_application.max_version,
             ):
                 self.warnings.append(
-                    f"当前版本 {self._host_version} 以兼容模式加载"
-                    f"{VersionComparator.normalize_version(manifest.host_application.max_version)} 版本的插件"
+                    f"当前版本 {self._host_version} 以兼容模式加载插件"
+                    f"（插件声明的 Host 最高支持版本为 "
+                    f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）"
                 )
             else:
                 self.errors.append(f"Host 版本不兼容: {host_message} (当前 Host: {self._host_version})")

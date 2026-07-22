@@ -6,7 +6,6 @@
 
 import hashlib
 import re
-from typing import Union
 
 
 def compute_hash(text: str, hash_type: str = "sha256") -> str:

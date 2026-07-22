@@ -1,5 +1,6 @@
+from collections import Counter
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import asyncio
 
@@ -289,6 +290,45 @@ class ChatManager:
             nickname = session.context.message.message_info.user_info.user_nickname
             return f"{nickname}的私聊"
         return None
+
+    def get_named_session_options(
+        self,
+        excluded_platforms: Optional[Set[str]] = None,
+    ) -> Dict[str, str]:
+        """返回可供交互选择的聊天名称与真实会话 ID 映射。
+
+        同名聊天会附带平台和目标 ID；若平台目标仍相同，则继续附带会话 ID，
+        确保每个展示名称只会指向一个真实聊天流。
+        """
+
+        normalized_excluded_platforms = {
+            platform.strip()
+            for platform in (excluded_platforms or set())
+            if platform.strip()
+        }
+        named_sessions: List[Tuple[str, BotChatSession]] = []
+        for session in self.sessions.values():
+            if session.platform in normalized_excluded_platforms:
+                continue
+            session_name = self.get_session_name(session.session_id)
+            if session_name:
+                named_sessions.append((session_name, session))
+
+        name_counts = Counter(session_name for session_name, _session in named_sessions)
+        options: Dict[str, str] = {}
+        for session_name, session in sorted(
+            named_sessions,
+            key=lambda item: (item[0], item[1].platform, item[1].session_id),
+        ):
+            label = session_name
+            if name_counts[session_name] > 1:
+                target_id = session.group_id if session.is_group_session else session.user_id
+                label = f"{session_name} [{session.platform}:{target_id}]"
+            if label in options:
+                label = f"{label} [{session.session_id}]"
+            options[label] = session.session_id
+
+        return options
 
     def get_session_by_info(
         self,

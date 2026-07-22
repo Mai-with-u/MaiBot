@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional
 from maibot_sdk import MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+import asyncio
+
+from A_memorix.core.runtime.admin_contracts import AdminContractError, dispatch_admin_command, parse_admin_command
 from A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from A_memorix.paths import repo_root
 
@@ -31,48 +34,60 @@ class AMemorixPlugin(MaiBotPlugin):
         self._plugin_root = repo_root()
         self._plugin_config: Dict[str, Any] = {}
         self._kernel: Optional[SDKMemoryKernel] = None
+        self._kernel_lock = asyncio.Lock()
+        self._kernel_shutdown_error = ""
 
     def set_plugin_config(self, config: Dict[str, Any]) -> None:
+        """更新下一次内核初始化使用的配置，不在同步入口关闭活动内核。"""
         self._plugin_config = config or {}
-        if self._kernel is not None:
-            self._kernel.close()
-            self._kernel = None
+
+    async def _shutdown_kernel(self) -> None:
+        """等待内核后台任务退出并释放资源，成功后再清除实例引用。"""
+        async with self._kernel_lock:
+            if self._kernel is None:
+                return
+            try:
+                await self._kernel.shutdown()
+            except Exception as exc:
+                self._kernel_shutdown_error = str(exc)
+                raise
+            else:
+                self._kernel = None
+                self._kernel_shutdown_error = ""
 
     async def on_load(self):
         await self._get_kernel()
 
     async def on_unload(self):
-        if self._kernel is not None:
-            shutdown = getattr(self._kernel, "shutdown", None)
-            if callable(shutdown):
-                await shutdown()
-            else:
-                self._kernel.close()
-            self._kernel = None
+        await self._shutdown_kernel()
 
     async def on_config_update(self, scope: str, config_data: dict[str, Any], version: str) -> None:
+        """配置变化时异步停机，后续工具调用会按最新配置惰性重建内核。"""
         _ = version
         if scope == "self":
             self.set_plugin_config(config_data if isinstance(config_data, dict) else {})
+            await self._shutdown_kernel()
             return
         if scope in {"bot", "model"} and self._kernel is not None:
-            shutdown = getattr(self._kernel, "shutdown", None)
-            if callable(shutdown):
-                await shutdown()
-            else:
-                self._kernel.close()
-            self._kernel = None
+            await self._shutdown_kernel()
 
     async def _get_kernel(self) -> SDKMemoryKernel:
-        if self._kernel is None:
-            self._kernel = SDKMemoryKernel(plugin_root=self._plugin_root, config=self._plugin_config)
-            await self._kernel.initialize()
-        return self._kernel
+        async with self._kernel_lock:
+            if self._kernel_shutdown_error:
+                raise RuntimeError(f"A_Memorix 上次停机未完成，拒绝复用旧内核: {self._kernel_shutdown_error}")
+            if self._kernel is None:
+                kernel = SDKMemoryKernel(plugin_root=self._plugin_root, config=self._plugin_config)
+                await kernel.initialize()
+                self._kernel = kernel
+            return self._kernel
 
     async def _dispatch_admin_tool(self, method_name: str, action: str, **kwargs):
+        try:
+            command = parse_admin_command(method_name, {"action": action, **kwargs})
+        except AdminContractError as exc:
+            return exc.to_response()
         kernel = await self._get_kernel()
-        handler = getattr(kernel, method_name)
-        return await handler(action=action, **kwargs)
+        return await dispatch_admin_command(kernel, command)
 
     @Tool(
         "search_memory",

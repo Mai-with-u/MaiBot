@@ -404,6 +404,8 @@
       "confirmRerunSetup": "Confirm Re-run Setup",
       "confirmRerunSetupDesc": "This will take you back to the initial setup wizard. You can reconfigure the system basics. Are you sure?",
       "devToolsDesc": "The following features are for development and debugging only. They may cause crashes or abnormal behavior.",
+      "alwaysShowUpdateNotice": "Always Show Update Notice",
+      "alwaysShowUpdateNoticeDesc": "When enabled, the update details and plugin compatibility notice appear every time you enter the WebUI. Takes effect after a refresh.",
       "triggerError": "Trigger Test Error",
       "confirmTriggerError": "Confirm Trigger Error",
       "confirmTriggerErrorDesc": "This will manually trigger a React error to test the error boundary component. The page will display an error view; you can recover by refreshing the page or clicking Go Home.",
@@ -988,8 +990,7 @@
         "threshold_percentile": "Dynamic threshold percentile",
         "threshold_min_results": "Minimum returned results",
         "threshold_min_threshold": "Minimum threshold",
-        "threshold_max_threshold": "Maximum threshold",
-        "threshold_enable_auto_adjust": "Auto-adjust threshold"
+        "threshold_max_threshold": "Maximum threshold"
       }
     }
   },

@@ -6,7 +6,6 @@
   "startup.brain_external_world_failed": "Failed to start brain and external world: {error}",
   "startup.chat_manager_initialized": "Chat manager initialized successfully",
   "startup.child_process_force_kill": "Child process not responding, force killing...",
-  "startup.compiling_shaders": "Compiling shaders: 1/114514",
   "startup.dev_branch_warning": "Warning: Dev branch is in an unstable development state. Any plugins and WebUI may not function correctly!",
   "startup.easter_egg": "Many years later, facing the AI firing squad, John would remember that distant afternoon in 2023 when he discussed artificial intelligence at the meeting",
   "startup.emoji_manager_initialized": "Emoji manager initialized successfully",

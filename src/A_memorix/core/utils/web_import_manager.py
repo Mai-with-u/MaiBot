@@ -21,6 +21,8 @@ import time
 import traceback
 import uuid
 
+import numpy as np
+
 from src.common.logger import get_logger
 from src.services import llm_service as llm_api
 
@@ -477,6 +479,11 @@ class ImportTaskManager:
         if not token or not self._dual_vector_pools_enabled():
             return token
         return f"{target_type}:{token}"
+
+    def _embedding_write_batch_size(self) -> int:
+        batch_size = max(1, int(getattr(self.plugin.embedding_manager, "batch_size", 32)))
+        max_concurrent = max(1, int(getattr(self.plugin.embedding_manager, "max_concurrent", 1)))
+        return min(512, batch_size * max_concurrent)
 
     def _vector_stores_for_persistence(self) -> List[Any]:
         stores: List[Any] = []
@@ -948,9 +955,7 @@ class ImportTaskManager:
             if malformed_keys:
                 preview = ", ".join(malformed_keys[:5])
                 extra = "" if len(malformed_keys) <= 5 else f" ... (+{len(malformed_keys) - 5})"
-                result["warnings"].append(
-                    f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}"
-                )
+                result["warnings"].append(f"manifest 条目结构异常，已跳过 {len(malformed_keys)} 项: {preview}{extra}")
 
         return result
 
@@ -1063,7 +1068,9 @@ class ImportTaskManager:
             "name": file_record.name,
             "source_path": file_record.source_path or "",
             "source_kind": file_record.source_kind,
-            "sources": self._dedupe_sources(getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)),
+            "sources": self._dedupe_sources(
+                getattr(file_record, "imported_sources", []) or self._default_sources_for_file(file_record)
+            ),
         }
         self._save_manifest(manifest)
 
@@ -1253,7 +1260,9 @@ class ImportTaskManager:
             raise ValueError("start_id 不能大于 end_id")
 
         read_batch_size = _parse_optional_positive_int(payload.get("read_batch_size"), "read_batch_size") or 2000
-        commit_window_rows = _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        commit_window_rows = (
+            _parse_optional_positive_int(payload.get("commit_window_rows"), "commit_window_rows") or 20000
+        )
         embed_batch_size = _parse_optional_positive_int(payload.get("embed_batch_size"), "embed_batch_size") or 256
         entity_embed_batch_size = (
             _parse_optional_positive_int(payload.get("entity_embed_batch_size"), "entity_embed_batch_size") or 512
@@ -1745,7 +1754,9 @@ class ImportTaskManager:
                 return None
             return task.to_detail(include_chunks=include_chunks)
 
-    async def get_chunks(self, task_id: str, file_id: str, offset: int = 0, limit: int = 50) -> Optional[Dict[str, Any]]:
+    async def get_chunks(
+        self, task_id: str, file_id: str, offset: int = 0, limit: int = 50
+    ) -> Optional[Dict[str, Any]]:
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -1802,9 +1813,7 @@ class ImportTaskManager:
             has_non_retryable = False
             for chunk in failed_chunks:
                 failed_at = str(chunk.failed_at or "").strip().lower()
-                retryable = bool(chunk.retryable) or (
-                    file_obj.input_mode == "text" and failed_at == "extracting"
-                )
+                retryable = bool(chunk.retryable) or (file_obj.input_mode == "text" and failed_at == "extracting")
                 if retryable:
                     try:
                         retry_indexes.append(int(chunk.index))
@@ -2051,9 +2060,9 @@ class ImportTaskManager:
             try:
                 await worker
             except asyncio.CancelledError:
-                pass
+                logger.debug("Web 导入工作线程已取消")
             except Exception:
-                pass
+                logger.exception("Web 导入工作线程关闭异常")
 
         self._cleanup_temp_root()
 
@@ -2187,8 +2196,7 @@ class ImportTaskManager:
             file_semaphore = asyncio.Semaphore(task.params["file_concurrency"])
             chunk_semaphore = asyncio.Semaphore(task.params["chunk_concurrency"])
             jobs = [
-                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore))
-                for f in task.files
+                asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore)) for f in task.files
             ]
             await asyncio.gather(*jobs, return_exceptions=True)
 
@@ -2199,10 +2207,7 @@ class ImportTaskManager:
                 return
             self._recompute_task_progress(task)
             has_failed = any(
-                (f.status == "failed")
-                or (f.failed_chunks > 0)
-                or bool(str(f.error or "").strip())
-                for f in task.files
+                (f.status == "failed") or (f.failed_chunks > 0) or bool(str(f.error or "").strip()) for f in task.files
             )
             has_cancelled = any(f.status == "cancelled" for f in task.files)
             has_completed = any(f.status == "completed" for f in task.files)
@@ -2402,12 +2407,16 @@ class ImportTaskManager:
         try:
             process.terminate()
             await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_terminate_seconds"])
-        except Exception:
+        except ProcessLookupError:
+            logger.debug("迁移子进程已在终止前退出")
+        except asyncio.TimeoutError:
             try:
                 process.kill()
                 await asyncio.wait_for(process.wait(), timeout=timeout_cfg["process_kill_seconds"])
-            except Exception:
-                pass
+            except ProcessLookupError:
+                logger.debug("迁移子进程已在强制终止前退出")
+            except asyncio.TimeoutError:
+                logger.error("迁移子进程强制终止超时")
 
     async def _reload_stores_after_external_migration(self) -> None:
         async with self._storage_lock:
@@ -2569,9 +2578,11 @@ class ImportTaskManager:
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         for old in dirs[keep:]:
             try:
-                shutil.rmtree(old, ignore_errors=True)
-            except Exception:
-                pass
+                shutil.rmtree(old)
+            except FileNotFoundError:
+                logger.debug(f"旧转换目录已不存在: {old}")
+            except OSError as exc:
+                logger.warning(f"清理旧转换目录失败: path={old}, error={exc}")
 
     def _verify_convert_output(self, output_dir: Path) -> Dict[str, Any]:
         vectors = output_dir / "vectors"
@@ -2778,6 +2789,7 @@ class ImportTaskManager:
         switched = False
         rollback_info: Dict[str, Any] = {"attempted": True, "restored": False, "error": ""}
         moved_items: List[Tuple[Path, Path]] = []
+        installed_items: List[Path] = []
         try:
             for name in ("vectors", "graph", "metadata"):
                 src_current = target_dir / name
@@ -2789,17 +2801,33 @@ class ImportTaskManager:
                     shutil.move(str(src_current), str(dst_backup))
                     moved_items.append((dst_backup, src_current))
                 shutil.move(str(src_new), str(src_current))
+                installed_items.append(src_current)
             switched = True
         except Exception as switch_err:
             rollback_info["error"] = str(switch_err)
-            # 尝试回滚
-            for src_backup, dst_original in moved_items:
-                if src_backup.exists() and not dst_original.exists():
+            restore_errors: List[str] = []
+            # 先移走已安装的新目录，再逐项恢复旧目录，避免新旧内容混合。
+            for installed_path in reversed(installed_items):
+                if not installed_path.exists():
+                    continue
+                failed_new_path = backup_dir / f"{installed_path.name}.failed_new"
+                try:
+                    shutil.move(str(installed_path), str(failed_new_path))
+                except OSError as restore_exc:
+                    restore_errors.append(str(restore_exc))
+                    logger.error(f"隔离切换失败目录失败: path={installed_path}, error={restore_exc}")
+            for src_backup, dst_original in reversed(moved_items):
+                if src_backup.exists():
                     try:
                         shutil.move(str(src_backup), str(dst_original))
-                    except Exception:
-                        pass
-            rollback_info["restored"] = True
+                    except OSError as restore_exc:
+                        restore_errors.append(str(restore_exc))
+                        logger.error(
+                            f"恢复转换备份失败: source={src_backup}, target={dst_original}, error={restore_exc}"
+                        )
+            rollback_info["restored"] = not restore_errors
+            if restore_errors:
+                rollback_info["error"] = f"{switch_err}; rollback: {'; '.join(restore_errors)}"
             async with self._lock:
                 t = self._tasks.get(task_id)
                 if t:
@@ -2880,7 +2908,7 @@ class ImportTaskManager:
             try:
                 store.close()
             except Exception:
-                pass
+                logger.exception(f"关闭临时迁移存储失败: target_dir={target_dir}")
 
         async with self._lock:
             t = self._tasks.get(task_id)
@@ -3021,10 +3049,7 @@ class ImportTaskManager:
             if not selected_chunks:
                 raise RuntimeError("失败分块重试索引无效，未匹配到可执行分块")
             logger.info(
-                "重试任务按失败分块执行: "
-                f"file={file_record.name} "
-                f"selected={len(selected_chunks)} "
-                f"total={len(chunks)}"
+                f"重试任务按失败分块执行: file={file_record.name} selected={len(selected_chunks)} total={len(chunks)}"
             )
 
         await self._register_chunks(task_id, file_record.file_id, selected_chunks)
@@ -3083,6 +3108,7 @@ class ImportTaskManager:
                 f.progress = 1.0
             f.updated_at = _now()
             self._recompute_task_progress(task)
+
     async def _process_text_chunk(
         self,
         task_id: str,
@@ -3293,9 +3319,7 @@ class ImportTaskManager:
                     default_source=f"web_import:{filename}",
                 )
             except ImportPayloadValidationError as exc:
-                warnings.append(
-                    f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})"
-                )
+                warnings.append(f"跳过段落[{paragraph_index}]：{exc} (code={exc.code})")
                 continue
             units.append(
                 {
@@ -3316,9 +3340,7 @@ class ImportTaskManager:
             name = normalize_entity_import_item(e)
             if not name:
                 raw = str(e or "").strip()
-                warnings.append(
-                    f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})"
-                )
+                warnings.append(f"跳过实体[{entity_index}]：无效名称或疑似哈希值 ({raw[:80]})")
                 continue
             units.append(
                 {
@@ -3341,9 +3363,7 @@ class ImportTaskManager:
                     )
                 else:
                     raw = str(r or "").strip()
-                warnings.append(
-                    f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})"
-                )
+                warnings.append(f"跳过关系[{relation_index}]：无效三元组或疑似哈希值 ({raw[:120]})")
                 continue
             units.append(
                 {
@@ -3503,7 +3523,7 @@ class ImportTaskManager:
         imported_sources = getattr(file_record, "imported_sources", None)
         if imported_sources is None:
             imported_sources = []
-            setattr(file_record, "imported_sources", imported_sources)
+            file_record.imported_sources = imported_sources
         if source_text not in imported_sources:
             imported_sources.append(source_text)
 
@@ -3586,39 +3606,150 @@ class ImportTaskManager:
             entities.extend(_normalize_import_entity_list(data.get(k)))
 
         uniq_entities = list({x.strip().lower(): x.strip() for x in entities if str(x).strip()}.values())
-        for name in uniq_entities:
-            await self._add_entity_with_vector(name, source_paragraph=para_hash)
+        await self._add_entities_with_vectors(uniq_entities, source_paragraph=para_hash)
+        await self._add_relations_with_vectors(relations, source_paragraph=para_hash)
 
-        for s, p, o in relations:
-            await self._add_relation(s, p, o, source_paragraph=para_hash)
-
-    async def _add_entity_with_vector(self, name: str, source_paragraph: str = "") -> str:
-        name_token = str(name or "").strip()
-        if not name_token:
-            return ""
-        if is_probable_hash_token(name_token):
-            logger.warning(f"跳过疑似哈希实体写入: entity={name_token[:32]}")
-            return ""
+    async def _add_entities_with_vectors(
+        self,
+        names: List[str],
+        source_paragraph: str = "",
+    ) -> Dict[str, str]:
+        """批量写入实体元数据、图节点和缺失向量。"""
+        normalized_names: List[str] = []
+        for name in names:
+            name_token = str(name or "").strip()
+            if not name_token:
+                continue
+            if is_probable_hash_token(name_token):
+                logger.warning(f"跳过疑似哈希实体写入: entity={name_token[:32]}")
+                continue
+            normalized_names.append(name_token)
+        if not normalized_names:
+            return {}
 
         async with self._storage_lock:
-            hash_value = self.plugin.metadata_store.add_entity(name=name_token, source_paragraph=source_paragraph)
-            self.plugin.graph_store.add_nodes([name_token])
+            entity_hashes: List[Tuple[str, str]] = []
+            with self.plugin.metadata_store.transaction(
+                immediate=True
+            ), self.plugin.graph_store.batch_update():
+                self.plugin.graph_store.add_nodes(normalized_names)
+                hashes = self.plugin.metadata_store.add_entities_batch(
+                    normalized_names,
+                    source_paragraph=source_paragraph,
+                )
+                entity_hashes.extend(zip(normalized_names, hashes, strict=True))
+
             target_store = self._graph_vector_store()
-            vector_id = self._graph_vector_id("entity", hash_value)
-            vector_exists = target_store is not None and vector_id in target_store
-        if not vector_exists:
+            pending_by_id: Dict[str, Tuple[str, str]] = {}
+            for name_token, hash_value in entity_hashes:
+                vector_id = self._graph_vector_id("entity", hash_value)
+                if target_store is not None and vector_id not in target_store:
+                    pending_by_id[vector_id] = (name_token, hash_value)
+
+        pending_items = list(pending_by_id.items())
+        write_batch_size = self._embedding_write_batch_size()
+        for offset in range(0, len(pending_items), write_batch_size):
+            batch_items = pending_items[offset : offset + write_batch_size]
             try:
                 if target_store is None:
                     raise RuntimeError("graph_vector_store_missing")
                 if self._is_embedding_degraded():
                     raise RuntimeError("embedding_degraded")
-                emb = await self.plugin.embedding_manager.encode(name_token)
-                target_store.add(emb.reshape(1, -1), [vector_id])
+                embeddings = np.asarray(
+                    await self.plugin.embedding_manager.encode_batch(
+                        [item[1][0] for item in batch_items]
+                    ),
+                    dtype=np.float32,
+                )
+                if embeddings.ndim == 1:
+                    embeddings = embeddings.reshape(1, -1)
+                if embeddings.shape[0] != len(batch_items):
+                    raise ValueError(
+                        "实体批量向量数量不匹配: "
+                        f"{embeddings.shape[0]} vs {len(batch_items)}"
+                    )
+                target_store.add(
+                    embeddings,
+                    [vector_id for vector_id, _ in batch_items],
+                )
             except Exception as exc:
                 if not self._allow_metadata_only_write():
                     raise
-                logger.warning(f"实体向量写入降级，保留 metadata/graph: entity={name_token} error={exc}")
-        return hash_value
+                logger.warning(
+                    "实体批量向量写入降级，保留 metadata/graph: "
+                    f"count={len(batch_items)} error={exc}"
+                )
+
+        return {name_token: hash_value for name_token, hash_value in entity_hashes}
+
+    async def _add_entity_with_vector(self, name: str, source_paragraph: str = "") -> str:
+        name_token = str(name or "").strip()
+        entity_hashes = await self._add_entities_with_vectors(
+            [name_token],
+            source_paragraph=source_paragraph,
+        )
+        return entity_hashes.get(name_token, "")
+
+    async def _add_relations_with_vectors(
+        self,
+        relations: List[Tuple[str, str, str]],
+        source_paragraph: str = "",
+    ) -> List[str]:
+        """健康向量运行期使用统一服务批量写关系，降级路径保留逐条状态语义。"""
+        normalized_relations: List[Tuple[str, str, str]] = []
+        for subject, predicate, obj in relations:
+            tokens = (
+                str(subject or "").strip(),
+                str(predicate or "").strip(),
+                str(obj or "").strip(),
+            )
+            if not all(tokens):
+                continue
+            if any(is_probable_hash_token(token) for token in tokens):
+                logger.warning(
+                    f"跳过疑似哈希关系写入: {tokens[0][:24]} | {tokens[1][:24]} | {tokens[2][:24]}"
+                )
+                continue
+            normalized_relations.append(tokens)
+        if not normalized_relations:
+            return []
+
+        relation_write_service = self.plugin.relation_write_service
+        if relation_write_service is None or self._is_embedding_degraded():
+            relation_hashes: List[str] = []
+            for subject, predicate, obj in normalized_relations:
+                relation_hashes.append(
+                    await self._add_relation(
+                        subject,
+                        predicate,
+                        obj,
+                        source_paragraph=source_paragraph,
+                    )
+                )
+            return relation_hashes
+
+        # 保留原有 appearance_count/mention_count 语义：每次关系写入仍记录两端实体出现。
+        relation_entities = [
+            name
+            for subject, _, obj in normalized_relations
+            for name in (subject, obj)
+        ]
+        await self._add_entities_with_vectors(
+            relation_entities,
+            source_paragraph=source_paragraph,
+        )
+
+        rv_cfg = self.plugin.get_config("retrieval.relation_vectorization", {}) or {}
+        if not isinstance(rv_cfg, dict):
+            rv_cfg = {}
+        write_vector = bool(rv_cfg.get("enabled", False)) and bool(rv_cfg.get("write_on_import", True))
+        results = await relation_write_service.upsert_relations_with_vectors(
+            normalized_relations,
+            confidence=1.0,
+            source_paragraph=source_paragraph,
+            write_vector=write_vector,
+        )
+        return [result.hash_value for result in results]
 
     async def _add_relation(self, subject: str, predicate: str, obj: str, source_paragraph: str = "") -> str:
         subject_token = str(subject or "").strip()
@@ -3649,10 +3780,6 @@ class ImportTaskManager:
             )
             self.plugin.graph_store.add_edges([(subject_token, object_token)], relation_hashes=[rel_hash])
             if not write_vector:
-                try:
-                    self.plugin.metadata_store.set_relation_vector_state(rel_hash, "none")
-                except Exception:
-                    pass
                 return rel_hash
             target_store = self._graph_vector_store()
             vector_id = self._graph_vector_id("relation", rel_hash)
@@ -3953,7 +4080,10 @@ JSON schema:
             f.current_step = step
             f.updated_at = _now()
             task.updated_at = _now()
-            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {"queued", "preparing"}:
+            if step in {"preparing", "splitting", "extracting", "writing", "saving"} and task.status in {
+                "queued",
+                "preparing",
+            }:
                 task.status = "running"
                 task.current_step = "running"
 

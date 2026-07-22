@@ -1,3 +1,4 @@
+import { motion } from 'motion/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -1080,19 +1081,44 @@ export function ChatPage() {
       />
 
       {/* 桌面端：左侧会话侧边栏 */}
-      <ChatWorkspaceSidebar
-        className="hidden md:flex"
-        tabs={tabs}
-        activeTabId={activeTabId}
-        userName={userName}
-        onSwitch={switchTab}
-        onClose={closeTab}
-        onAddVirtual={openVirtualConfig}
-        onUpdateUserName={handleUpdateUserName}
-      />
+      <motion.div
+        className="hidden shrink-0 md:block"
+        variants={{
+          initial: { opacity: 0, x: '-100%' },
+          animate: { opacity: 1, x: 0 },
+          exit: {
+            opacity: 0,
+            x: '-100%',
+            transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
+          },
+        }}
+        transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
+      >
+        <ChatWorkspaceSidebar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          userName={userName}
+          onSwitch={switchTab}
+          onClose={closeTab}
+          onAddVirtual={openVirtualConfig}
+          onUpdateUserName={handleUpdateUserName}
+        />
+      </motion.div>
 
       {/* 主聊天区 */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <motion.div
+        className="flex min-w-0 flex-1 flex-col"
+        variants={{
+          initial: { opacity: 0, y: '100%' },
+          animate: { opacity: 1, y: 0 },
+          exit: {
+            opacity: 0,
+            y: '100%',
+            transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
+          },
+        }}
+        transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
+      >
         {/* 移动端会话切换条 */}
         <div className="md:hidden">
           <ChatTabBar
@@ -1124,7 +1150,7 @@ export function ChatPage() {
           images={selectedImages}
           isConnected={!!activeTab?.isConnected}
         />
-      </div>
+      </motion.div>
     </div>
   )
 }

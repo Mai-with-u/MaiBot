@@ -38,8 +38,8 @@ class SparseBM25Config:
     enabled: bool = True
     backend: str = "fts5"
     lazy_load: bool = True
-    mode: str = "auto"  # auto | fallback_only | hybrid
-    tokenizer_mode: str = "jieba"  # jieba | mixed | char_2gram
+    mode: str = "auto"  # 检索模式：auto、fallback_only 或 hybrid
+    tokenizer_mode: str = "jieba"  # 分词方式：jieba、mixed 或 char_2gram
     jieba_user_dict: str = ""
     char_ngram_n: int = 2
     candidate_k: int = 80
@@ -184,9 +184,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
 
     def ensure_loaded(self, conn: sqlite3.Connection) -> bool:
         del conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 仍是实验接口，当前运行时请使用 fts5"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 仍是实验接口，当前运行时请使用 fts5")
 
     def search_paragraphs(
         self,
@@ -197,9 +195,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         del match_query, limit, max_doc_len, conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 尚未接入段落倒排索引实现"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 尚未接入段落倒排索引实现")
 
     def search_relations(
         self,
@@ -211,9 +207,7 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         del match_query, limit, max_doc_len, include_inactive, conn
-        raise NotImplementedError(
-            f"sparse.backend={self.name} 尚未接入关系倒排索引实现"
-        )
+        raise NotImplementedError(f"sparse.backend={self.name} 尚未接入关系倒排索引实现")
 
 
 class SparseBM25Index:
@@ -283,8 +277,7 @@ class SparseBM25Index:
         self._last_load_error = ""
         self._prepare_tokenizer()
         logger.debug(
-            "SparseBM25Index loaded: "
-            f"backend=fts5, tokenizer={self.config.tokenizer_mode}, mode={self.config.mode}"
+            f"SparseBM25Index loaded: backend=fts5, tokenizer={self.config.tokenizer_mode}, mode={self.config.mode}"
         )
         return True
 
@@ -324,11 +317,7 @@ class SparseBM25Index:
 
             probes = [
                 str(item or "").strip()
-                for item in (
-                    sample_queries
-                    if sample_queries is not None
-                    else ("记忆 检索", "关系 证据")
-                )
+                for item in (sample_queries if sample_queries is not None else ("记忆 检索", "关系 证据"))
                 if str(item or "").strip()
             ]
             for probe in probes:
@@ -435,11 +424,7 @@ class SparseBM25Index:
         normalized = [str(token or "").strip() for token in tokens if str(token or "").strip()]
         if not normalized:
             return []
-        informative = [
-            token
-            for token in normalized
-            if not self._is_low_signal_query_token(token)
-        ]
+        informative = [token for token in normalized if not self._is_low_signal_query_token(token)]
         return list(dict.fromkeys(informative or normalized))
 
     def _build_match_query(self, tokens: List[str]) -> str:
@@ -654,19 +639,22 @@ class SparseBM25Index:
 
     def unload(self) -> None:
         """卸载 BM25 连接并尽量释放内存。"""
-        if self._conn is not None:
-            try:
+        conn = self._conn
+        try:
+            if conn is not None:
                 if self.config.shrink_memory_on_unload:
-                    self.metadata_store.shrink_memory(conn=self._conn)
-            except Exception:
-                pass
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-        self._conn = None
-        self._loaded = False
-        logger.info("SparseBM25Index unloaded")
+                    self.metadata_store.shrink_memory(conn=conn)
+        except sqlite3.Error as exc:
+            logger.warning(f"SparseBM25Index 释放 SQLite 缓存失败: {exc}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error as exc:
+                    logger.warning(f"SparseBM25Index 关闭连接失败: {exc}")
+            self._conn = None
+            self._loaded = False
+            logger.info("SparseBM25Index unloaded")
 
     def stats(self) -> Dict[str, Any]:
         backend_stats = self._backend.stats(self._conn if self.loaded else None)

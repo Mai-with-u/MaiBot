@@ -185,6 +185,8 @@ class LLMEmbeddingResult(BaseDataModel):
 
     embedding: List[float] = field(default_factory=list)
     model_name: str = field(default_factory=str)
+    model_identifier: str = field(default_factory=str)
+    api_provider: str = field(default_factory=str)
 
 
 __all__ = [

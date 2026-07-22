@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from rich.traceback import install
 
 import asyncio
+import sys
 import time
 
 from src.common.i18n import t
@@ -226,6 +227,14 @@ class MainSystem:
                 self.app.run(),
                 self.server.run(),
             ]
+            if global_config.debug.enable_console_input:
+                if sys.stdin.isatty():
+                    from src.cli.bot_console import BotConsole
+
+                    logger.info("已启用终端输入，可输入普通消息或 /clear、/pm 等指令；输入 exit() 关闭终端输入")
+                    tasks.append(BotConsole().run())
+                else:
+                    logger.warning("终端输入已配置为启用，但当前 stdin 不是交互式终端，已跳过")
             image_path_maintenance_needed = await asyncio.to_thread(should_schedule_image_path_maintenance_background)
             if image_path_maintenance_needed:
                 tasks.append(run_image_path_maintenance_background())

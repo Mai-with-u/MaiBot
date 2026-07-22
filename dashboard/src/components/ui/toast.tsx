@@ -1,9 +1,10 @@
 import * as React from "react"
 import * as ToastPrimitives from "@radix-ui/react-toast"
 import { cva, type VariantProps } from "class-variance-authority"
-import { cn } from "@/lib/utils"
 import { X } from "lucide-react"
+
 import { useIsMobile } from "@/hooks/use-media-query"
+import { cn } from "@/lib/utils"
 
 const ToastProvider = ToastPrimitives.Provider
 
@@ -55,8 +56,10 @@ const Toast = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> &
     VariantProps<typeof toastVariants>
->(({ className, variant, ...props }, ref) => {
+>(({ children, className, duration, onPause, onResume, variant, ...props }, ref) => {
   const isMobile = useIsMobile()
+  // Radix 会在悬停、聚焦或窗口失焦时暂停关闭计时，进度动画需要同步暂停。
+  const [isPaused, setIsPaused] = React.useState(false)
   const position = isMobile ? "mobile" : "desktop"
   
   return (
@@ -64,8 +67,22 @@ const Toast = React.forwardRef<
       ref={ref}
       data-dashboard-toast="true"
       className={cn(toastVariants({ variant, position }), className)}
+      duration={duration}
+      onPause={() => {
+        setIsPaused(true)
+        onPause?.()
+      }}
+      onResume={() => {
+        setIsPaused(false)
+        onResume?.()
+      }}
       {...props}
-    />
+    >
+      {children}
+      {typeof duration === "number" && Number.isFinite(duration) && duration > 0 && (
+        <ToastProgress duration={duration} paused={isPaused} />
+      )}
+    </ToastPrimitives.Root>
   )
 })
 Toast.displayName = ToastPrimitives.Root.displayName
@@ -94,7 +111,7 @@ const ToastClose = React.forwardRef<
     ref={ref}
     data-dashboard-toast-close="true"
     className={cn(
-      "absolute right-1 top-1 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600",
+      "absolute right-1 top-1 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 group-focus-within:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600",
       className
     )}
     aria-label="关闭提示"
@@ -126,11 +143,35 @@ const ToastDescription = React.forwardRef<
   <ToastPrimitives.Description
     ref={ref}
     data-dashboard-toast-description="true"
-    className={cn("text-sm opacity-90", className)}
+    className={cn("select-text text-sm opacity-90", className)}
     {...props}
   />
 ))
 ToastDescription.displayName = ToastPrimitives.Description.displayName
+
+interface ToastProgressProps extends React.HTMLAttributes<HTMLDivElement> {
+  duration: number
+  paused?: boolean
+}
+
+function ToastProgress({ className, duration, paused = false, style, ...props }: ToastProgressProps) {
+  return (
+    <div
+      aria-hidden="true"
+      data-dashboard-toast-progress="true"
+      className={cn(
+        "toast-progress pointer-events-none absolute right-0 bottom-0 left-0 h-1 origin-left bg-primary/70 group-[.destructive]:bg-destructive/70",
+        className
+      )}
+      style={{
+        ...style,
+        animationDuration: `${duration}ms`,
+        animationPlayState: paused ? "paused" : "running",
+      }}
+      {...props}
+    />
+  )
+}
 
 type ToastProps = React.ComponentPropsWithoutRef<typeof Toast>
 
