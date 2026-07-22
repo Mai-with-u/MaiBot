@@ -5,6 +5,7 @@ export interface AISearchCandidate {
   title: string
   description: string
   category: string
+  document: string
 }
 
 export interface AISearchRequest {
@@ -23,6 +24,9 @@ export interface AISearchResponse {
   success: boolean
   cached: boolean
   model_name: string
+  answer: string
+  suggestions: string[]
+  sources: Array<{ title: string; url: string }>
   expanded_terms: string[]
   results: AISearchResult[]
   prompt_tokens: number

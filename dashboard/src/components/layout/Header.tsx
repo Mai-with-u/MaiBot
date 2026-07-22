@@ -444,7 +444,7 @@ export function Header({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onSearchOpenChange(true)}
+              onClick={() => onSearchOpenChange(!searchOpen)}
               aria-label={t('header.searchPlaceholder')}
               title={t('header.searchPlaceholder')}
               className="hidden md:inline-flex"

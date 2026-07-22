@@ -1,20 +1,25 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Clock, FileText, Loader2, Search, SlidersHorizontal, Sparkles } from 'lucide-react'
+import {
+  BookOpen,
+  Clock,
+  FileText,
+  Lightbulb,
+  Loader2,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { FloatingPanel } from '@/components/ui/floating-panel'
 import { Input } from '@/components/ui/input'
 import { ShortcutKbd } from '@/components/ui/kbd'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { createStreamlineIcon } from '@/components/ui/streamline-menu-icon'
+import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
 import type { MenuIcon } from '@/components/layout/types'
 import { registeredRoutePaths } from '@/router'
@@ -199,6 +204,9 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const [configIndexLoading, setConfigIndexLoading] = useState(false)
   const [recentSearchRoutes, setRecentSearchRoutes] = useState<string[]>(loadRecentSearchRoutes)
   const [aiSearchItems, setAISearchItems] = useState<AISearchItem[]>([])
+  const [aiAnswer, setAIAnswer] = useState('')
+  const [aiSuggestions, setAISuggestions] = useState<string[]>([])
+  const [aiSources, setAISources] = useState<Array<{ title: string; url: string }>>([])
   const [aiExpandedTerms, setAIExpandedTerms] = useState<string[]>([])
   const [aiSearchLoading, setAISearchLoading] = useState(false)
   const [aiSearchError, setAISearchError] = useState('')
@@ -374,6 +382,9 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     setAISearchLoading(true)
     setAISearchError('')
     setAISearchItems([])
+    setAIAnswer('')
+    setAISuggestions([])
+    setAISources([])
     setAIExpandedTerms([])
 
     const aiCandidates = [...searchItems, ...configSearchItems]
@@ -394,6 +405,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             title: item.title.slice(0, 120),
             description: item.description.slice(0, 240),
             category: item.category.slice(0, 80),
+            document: item.keywords.slice(0, 2000),
           })),
         },
         abortController.signal
@@ -417,8 +429,11 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         .filter((item): item is AISearchItem => item !== null)
 
       setAISearchItems(nextItems)
+      setAIAnswer(response.answer)
+      setAISuggestions(response.suggestions)
+      setAISources(response.sources)
       setAIExpandedTerms(response.expanded_terms)
-      if (nextItems.length === 0) {
+      if (nextItems.length === 0 && !response.answer) {
         setAISearchError(t('search.aiNoResults'))
       }
       setSelectedIndex(0)
@@ -443,22 +458,18 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
       setRecentSearchRoutes(nextRoutes)
       saveRecentSearchRoutes(nextRoutes)
       navigate({ to: buildSearchNavigationPath(item.path, item.fieldPath) })
-      onOpenChange(false)
-      aiSearchAbortRef.current?.abort()
-      // 在导航后重置状态
-      setSearchQuery('')
       setSelectedIndex(0)
-      setAISearchItems([])
-      setAIExpandedTerms([])
-      setAISearchError('')
     },
-    [navigate, onOpenChange, recentSearchRoutes]
+    [navigate, recentSearchRoutes]
   )
 
   // 键盘导航
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onOpenChange(false)
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         void runAISearch()
       } else if (e.key === 'ArrowDown') {
@@ -480,135 +491,195 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         handleNavigate(visibleItems[selectedIndex])
       }
     },
-    [handleNavigate, runAISearch, selectedIndex, visibleItems]
+    [handleNavigate, onOpenChange, runAISearch, selectedIndex, visibleItems]
   )
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl gap-0 p-0" confirmOnEnter>
-        <DialogHeader className="px-4 pt-4 pb-0">
-          <DialogTitle className="sr-only">{t('search.title')}</DialogTitle>
-          <div className="relative">
-            <StreamlineIcon
-              name="search-bar-solid"
-              fallback={Search}
-              className="text-muted-foreground absolute top-1/2 left-3 h-5 w-5 -translate-y-1/2"
-            />
-            <Input
-              ref={inputRef}
-              value={searchQuery}
-              onChange={(e) => {
-                aiSearchAbortRef.current?.abort()
-                setSearchQuery(e.target.value)
-                setSelectedIndex(0)
-                setAISearchItems([])
-                setAIExpandedTerms([])
-                setAISearchError('')
-                setAISearchLoading(false)
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={t('search.placeholder')}
-              className="h-12 border-0 pl-11 text-base shadow-none focus-visible:ring-0"
-            />
+    <FloatingPanel
+      open={open}
+      title={t('search.title')}
+      subtitle={aiSearchLoading ? t('search.aiSearching') : t('search.aiHint')}
+      onClose={() => onOpenChange(false)}
+      closeLabel={t('search.close')}
+      className="flex h-[min(calc(100vh-2rem),42rem)] w-[min(calc(100vw-2rem),42rem)] flex-col"
+      initialWidth={672}
+      initialHeight={680}
+      initialTop={88}
+    >
+      <div className="px-4 pt-3">
+        <div className="relative">
+          <StreamlineIcon
+            name="search-bar-solid"
+            fallback={Search}
+            className="text-muted-foreground absolute top-1/2 left-3 h-5 w-5 -translate-y-1/2"
+          />
+          <Input
+            ref={inputRef}
+            value={searchQuery}
+            onChange={(e) => {
+              aiSearchAbortRef.current?.abort()
+              setSearchQuery(e.target.value)
+              setSelectedIndex(0)
+              setAISearchItems([])
+              setAIAnswer('')
+              setAISuggestions([])
+              setAISources([])
+              setAIExpandedTerms([])
+              setAISearchError('')
+              setAISearchLoading(false)
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={t('search.placeholder')}
+            className="h-12 border-0 pl-11 text-base shadow-none focus-visible:ring-0"
+          />
+        </div>
+        {normalizedQuery && (
+          <div className="flex min-h-10 flex-wrap items-center gap-2 border-t px-2 py-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5"
+              disabled={aiSearchLoading || configIndexLoading}
+              onClick={() => void runAISearch()}
+            >
+              {aiSearchLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {aiSearchLoading ? t('search.aiSearching') : t('search.aiSearch')}
+            </Button>
+            <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+              {configIndexLoading
+                ? t('search.indexLoading')
+                : aiSearchError ||
+                  (aiExpandedTerms.length > 0
+                    ? t('search.aiUnderstood', { terms: aiExpandedTerms.join('、') })
+                    : t('search.aiHint'))}
+            </span>
+            <span className="text-muted-foreground hidden text-xs sm:inline">
+              {t('search.aiShortcut')}
+            </span>
           </div>
-          {normalizedQuery && (
-            <div className="flex min-h-10 flex-wrap items-center gap-2 border-t px-2 py-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 shrink-0 gap-1.5"
-                disabled={aiSearchLoading || configIndexLoading}
-                onClick={() => void runAISearch()}
-              >
-                {aiSearchLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
-                )}
-                {aiSearchLoading ? t('search.aiSearching') : t('search.aiSearch')}
-              </Button>
-              <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
-                {configIndexLoading
-                  ? t('search.indexLoading')
-                  : aiSearchError ||
-                    (aiExpandedTerms.length > 0
-                      ? t('search.aiUnderstood', { terms: aiExpandedTerms.join('、') })
-                      : t('search.aiHint'))}
-              </span>
-              <span className="text-muted-foreground hidden text-xs sm:inline">
-                {t('search.aiShortcut')}
-              </span>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 border-t">
+        <ScrollArea className="h-full" viewportClassName="px-0">
+          {visibleItems.length > 0 || aiAnswer || aiSuggestions.length > 0 ? (
+            <div className="space-y-3 p-2">
+              {aiAnswer && (
+                <section className="border-border/70 bg-muted/30 rounded-lg border p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Sparkles className="text-primary h-4 w-4" />
+                    {t('search.aiAnswer')}
+                  </div>
+                  <MarkdownRenderer
+                    content={aiAnswer}
+                    className="text-muted-foreground text-sm [&_h1]:!mt-3 [&_h1]:!text-lg [&_h2]:!mt-3 [&_h2]:!text-base [&_h3]:!mt-2 [&_h3]:!text-sm"
+                  />
+                </section>
+              )}
+              {aiSuggestions.length > 0 && (
+                <section className="border-border/70 rounded-lg border p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <Lightbulb className="h-4 w-4" />
+                    {t('search.aiSuggestions')}
+                  </div>
+                  <ul className="text-muted-foreground space-y-1.5 text-sm">
+                    {aiSuggestions.map((suggestion) => (
+                      <li key={suggestion} className="flex gap-2">
+                        <span aria-hidden>•</span>
+                        <MarkdownRenderer
+                          content={suggestion}
+                          className="min-w-0 text-sm [&_p]:!my-0"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {aiSources.length > 0 && (
+                <section className="flex flex-wrap items-center gap-2 px-1">
+                  <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                    <BookOpen className="h-3.5 w-3.5" />
+                    {t('search.aiSources')}
+                  </span>
+                  {aiSources.map((source) => (
+                    <a
+                      key={source.url}
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="bg-muted hover:bg-accent rounded px-2 py-1 text-xs underline-offset-2 hover:underline"
+                    >
+                      {source.title}
+                    </a>
+                  ))}
+                </section>
+              )}
+              {visibleItems.map((item, index) => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => handleNavigate(item)}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                    title={`${item.title} · ${item.description} · ${item.path}`}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors',
+                      index === selectedIndex
+                        ? 'bg-accent text-accent-foreground'
+                        : 'hover:bg-accent/50'
+                    )}
+                  >
+                    <Icon className="h-5 w-5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{item.title}</div>
+                      <div className="text-muted-foreground truncate text-xs">
+                        {item.description}
+                      </div>
+                    </div>
+                    <div className="bg-muted text-muted-foreground max-w-28 shrink-0 truncate rounded px-2 py-1 text-xs">
+                      {item.category}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <StreamlineIcon
+                name="search-bar-solid"
+                fallback={Search}
+                className="text-muted-foreground/50 mb-4 h-12 w-12"
+              />
+              <p className="text-muted-foreground text-sm">
+                {searchQuery ? t('search.noResults') : t('search.startSearch')}
+              </p>
             </div>
           )}
-        </DialogHeader>
+        </ScrollArea>
+      </div>
 
-        <div className="border-t">
-          <DialogBody className="h-100" viewportClassName="px-0">
-            {visibleItems.length > 0 ? (
-              <div className="space-y-1.5 p-2">
-                {visibleItems.map((item, index) => {
-                  const Icon = item.icon
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => handleNavigate(item)}
-                      onMouseEnter={() => setSelectedIndex(index)}
-                      title={`${item.title} · ${item.description} · ${item.path}`}
-                      className={cn(
-                        'flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors',
-                        index === selectedIndex
-                          ? 'bg-accent text-accent-foreground'
-                          : 'hover:bg-accent/50'
-                      )}
-                    >
-                      <Icon className="h-5 w-5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">{item.title}</div>
-                        <div className="text-muted-foreground truncate text-xs">
-                          {item.description}
-                        </div>
-                      </div>
-                      <div className="bg-muted text-muted-foreground max-w-28 shrink-0 truncate rounded px-2 py-1 text-xs">
-                        {item.category}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <StreamlineIcon
-                  name="search-bar-solid"
-                  fallback={Search}
-                  className="text-muted-foreground/50 mb-4 h-12 w-12"
-                />
-                <p className="text-muted-foreground text-sm">
-                  {searchQuery ? t('search.noResults') : t('search.startSearch')}
-                </p>
-              </div>
-            )}
-          </DialogBody>
+      <div className="text-muted-foreground flex items-center justify-between border-t px-4 py-3 text-xs">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1">
+            <ShortcutKbd size="sm" keys={['up']} />
+            <ShortcutKbd size="sm" keys={['down']} />
+            {t('search.navigate')}
+          </span>
+          <span className="flex items-center gap-1">
+            <ShortcutKbd size="sm" keys={['enter']} />
+            {t('search.select')}
+          </span>
+          <span className="flex items-center gap-1">
+            <ShortcutKbd size="sm" keys={['esc']} />
+            {t('search.close')}
+          </span>
         </div>
-
-        <div className="text-muted-foreground flex items-center justify-between border-t px-4 py-3 text-xs">
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1">
-              <ShortcutKbd size="sm" keys={['up']} />
-              <ShortcutKbd size="sm" keys={['down']} />
-              {t('search.navigate')}
-            </span>
-            <span className="flex items-center gap-1">
-              <ShortcutKbd size="sm" keys={['enter']} />
-              {t('search.select')}
-            </span>
-            <span className="flex items-center gap-1">
-              <ShortcutKbd size="sm" keys={['esc']} />
-              {t('search.close')}
-            </span>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </FloatingPanel>
   )
 }

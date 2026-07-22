@@ -11,6 +11,7 @@ const navigateMock = vi.fn()
 const getBotConfigSchemaMock = vi.fn()
 const getModelConfigSchemaMock = vi.fn()
 const searchWithAIMock = vi.fn()
+const onOpenChangeMock = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
@@ -87,6 +88,7 @@ describe('SearchDialog', () => {
     getBotConfigSchemaMock.mockResolvedValue(botConfigSchema)
     getModelConfigSchemaMock.mockRejectedValue(new Error('模型配置不可用'))
     searchWithAIMock.mockReset()
+    onOpenChangeMock.mockReset()
     localStorage.clear()
   })
 
@@ -105,6 +107,14 @@ describe('SearchDialog', () => {
       success: true,
       cached: false,
       model_name: 'test-utils-model',
+      answer: '可以在 **人格设置** 中调整麦麦的性格描述。',
+      suggestions: ['修改后先在 `测试群` 观察回复效果'],
+      sources: [
+        {
+          title: 'Bot 配置',
+          url: 'https://docs.mai-mai.org/manual/configuration/bot-config',
+        },
+      ],
       expanded_terms: ['人格', '身份设定'],
       results: [
         {
@@ -118,12 +128,18 @@ describe('SearchDialog', () => {
       total_tokens: 120,
     })
     const user = userEvent.setup()
-    render(<SearchDialog open onOpenChange={vi.fn()} />)
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
 
     await user.type(screen.getByPlaceholderText('search.placeholder'), '我想修改麦麦的性格')
     await user.click(await screen.findByRole('button', { name: 'search.aiSearch' }))
 
     expect(await screen.findByText('这里用于调整麦麦的人格与身份')).toBeInTheDocument()
+    expect(screen.getByText('人格设置').tagName).toBe('STRONG')
+    expect(screen.getByText('测试群').tagName).toBe('CODE')
+    expect(screen.getByRole('link', { name: 'Bot 配置' })).toHaveAttribute(
+      'href',
+      'https://docs.mai-mai.org/manual/configuration/bot-config'
+    )
     expect(searchWithAIMock).toHaveBeenCalledWith(
       expect.objectContaining({
         query: '我想修改麦麦的性格',
@@ -140,5 +156,7 @@ describe('SearchDialog', () => {
     expect(navigateMock).toHaveBeenCalledWith({
       to: '/config/bot?field=personality.personality',
     })
+    expect(onOpenChangeMock).not.toHaveBeenCalledWith(false)
+    expect(screen.getByPlaceholderText('search.placeholder')).toHaveValue('我想修改麦麦的性格')
   })
 })
