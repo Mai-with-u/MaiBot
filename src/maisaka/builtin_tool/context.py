@@ -133,11 +133,24 @@ class BuiltinToolRuntimeContext:
         return normalized_results
 
     @staticmethod
-    def post_process_reply_text(reply_text: str) -> List[str]:
+    def post_process_reply_text(
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[str]:
         """沿用旧回复链的文本后处理，执行分段与错别字注入。"""
 
+        if skip_post_process:
+            return [reply_text]
+
         processed_segments: List[str] = []
-        for segment in process_llm_response(reply_text):
+        for segment in process_llm_response(
+            reply_text,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        ):
             normalized_segment = segment.strip()
             if normalized_segment:
                 processed_segments.append(normalized_segment)
@@ -146,15 +159,42 @@ class BuiltinToolRuntimeContext:
             return processed_segments
         return [reply_text.strip()]
 
-    async def post_process_reply_message_sequences_async(self, reply_text: str) -> List[MessageSequence]:
+    async def post_process_reply_message_sequences_async(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[MessageSequence]:
         """将 replyer 输出处理为可发送组件序列。"""
 
-        return self.post_process_reply_message_sequences(reply_text)
+        return self.post_process_reply_message_sequences(
+            reply_text,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
 
-    def post_process_reply_message_sequences(self, reply_text: str) -> List[MessageSequence]:
+    def post_process_reply_message_sequences(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[MessageSequence]:
         """将纯文本回复处理为可发送组件序列。"""
 
-        return [MessageSequence([TextComponent(segment)]) for segment in self.post_process_reply_text(reply_text)]
+        return [
+            MessageSequence([TextComponent(segment)])
+            for segment in self.post_process_reply_text(
+                reply_text,
+                skip_post_process=skip_post_process,
+                enable_splitter=enable_splitter,
+                enable_chinese_typo=enable_chinese_typo,
+            )
+        ]
 
     def _resolve_at_attachment(self, raw_target: Any) -> AtComponent:
         """把 attach_at 参数解析为对目标消息发送者的 at 组件。"""
@@ -255,10 +295,19 @@ class BuiltinToolRuntimeContext:
         self,
         reply_text: str,
         attachments: Optional[Dict[str, Any]] = None,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
     ) -> List[MessageSequence]:
         """将 replyer 正文和 reply 动作附件参数处理为可发送组件序列。"""
 
-        sequences = self.post_process_reply_message_sequences(reply_text)
+        sequences = self.post_process_reply_message_sequences(
+            reply_text,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
         attachment_args = dict(attachments or {})
 
         at_components = [
