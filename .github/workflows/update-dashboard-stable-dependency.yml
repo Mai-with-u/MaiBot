@@ -1,0 +1,54 @@
+name: Update Dashboard Stable Dependency
+
+on:
+  workflow_run:
+    workflows:
+      - Publish WebUI Dist
+    types:
+      - completed
+    branches:
+      - main
+  schedule:
+    - cron: "37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-dashboard-dependency-main
+  cancel-in-progress: false
+
+jobs:
+  update-stable-dependency:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check PyPI latest dashboard stable package
+        run: |
+          uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_stable_dependency.py
+
+      - name: Commit dependency update
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- pyproject.toml requirements.txt; then
+            echo "没有发现 dashboard 正式版依赖更新"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml requirements.txt
+          git commit -m "chore: 更新 dashboard 正式版依赖"
+          git pull --rebase origin main
+          git push origin HEAD:main
