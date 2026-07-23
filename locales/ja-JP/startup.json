@@ -80,6 +80,8 @@
   "startup.webui_cors_configured": "✅ CORS ミドルウェアを設定しました",
   "startup.webui_dashboard_source_missing": "❌ WebUI フロントエンドのソースディレクトリが見つかりません: {dashboard_root}",
   "startup.webui_dashboard_package_hint": "💡 事前ビルド済みの WebUI 静的リソースパッケージを先にインストールしてください。例: {command}",
+  "startup.webui_version_outdated": "⚠️ WebUI のバージョンが古すぎます：現在 v{current_version}、本体が必要とするバージョンは v{required_version} です。予期しない問題を避けるため、WebUI を更新してください。",
+  "startup.main_program_version_outdated_for_webui": "⚠️ 本体のバージョンが古すぎます：MaiBot v{main_version} は WebUI v{required_version} を想定していますが、v{current_version} が読み込まれています。予期しない問題を避けるため、本体を更新してください。",
   "startup.webui_disabled": "WebUI は無効です",
   "startup.webui_index_missing": "❌ index.html が見つかりません: {index_path}",
   "startup.webui_manual_build_hint": "💡 自動復旧でフロントエンド資産を復旧できなかったため、dashboard ディレクトリで依存関係をインストールして手動ビルドしてください: {command}",
