@@ -80,6 +80,8 @@
   "startup.webui_cors_configured": "✅ CORS 미들웨어 설정 완료",
   "startup.webui_dashboard_source_missing": "❌ WebUI 프론트엔드 소스 디렉터리를 찾을 수 없습니다: {dashboard_root}",
   "startup.webui_dashboard_package_hint": "💡 미리 빌드된 WebUI 정적 리소스 패키지를 먼저 설치하세요. 예: {command}",
+  "startup.webui_version_outdated": "⚠️ WebUI 버전이 너무 낮습니다. 현재 v{current_version}, 메인 프로그램 요구 버전은 v{required_version}입니다. 예기치 않은 문제를 방지하려면 WebUI를 업데이트하세요.",
+  "startup.main_program_version_outdated_for_webui": "⚠️ 메인 프로그램 버전이 너무 낮습니다. MaiBot v{main_version}은 WebUI v{required_version}을 선언하지만 v{current_version}이 로드되었습니다. 예기치 않은 문제를 방지하려면 메인 프로그램을 업데이트하세요.",
   "startup.webui_disabled": "WebUI가 비활성화되었습니다",
   "startup.webui_index_missing": "❌ index.html을 찾을 수 없습니다: {index_path}",
   "startup.webui_manual_build_hint": "💡 자동 복구로 프론트엔드 리소스를 수정하지 못했습니다. dashboard 디렉터리에서 의존성을 설치하고 수동으로 빌드하세요: {command}",

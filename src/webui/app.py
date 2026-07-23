@@ -14,6 +14,11 @@ from fastapi.responses import FileResponse
 from src.common.i18n import t
 from src.common.logger import get_logger
 from src.webui.dependencies import require_auth
+from src.webui.version_compatibility import (
+    get_webui_version_compatibility,
+    read_installed_webui_version,
+    read_local_webui_version,
+)
 
 logger = get_logger("webui.app")
 
@@ -187,6 +192,8 @@ def _setup_static_files(app: FastAPI):
     if static_path is None:
         return
 
+    _log_webui_version_compatibility(static_path)
+
     if not static_path.exists():
         logger.warning(t("startup.webui_static_dir_missing_with_path", static_path=static_path))
         logger.warning(t("startup.webui_dashboard_package_hint", command=_MANUAL_INSTALL_COMMAND))
@@ -233,6 +240,35 @@ def _setup_static_files(app: FastAPI):
         return response
 
     logger.debug(t("startup.webui_static_files_configured", static_path=static_path))
+
+
+def _log_webui_version_compatibility(static_path: Path) -> None:
+    """在控制台提示当前加载的 WebUI 与主程序版本是否匹配。"""
+
+    local_static_path = (_get_project_root() / "dashboard" / "dist").resolve()
+    if static_path.resolve() == local_static_path:
+        webui_version = read_local_webui_version(_get_project_root())
+    else:
+        webui_version = read_installed_webui_version()
+
+    compatibility = get_webui_version_compatibility(webui_version, _get_project_root())
+    if compatibility.status == "webui_outdated":
+        logger.warning(
+            t(
+                "startup.webui_version_outdated",
+                current_version=compatibility.webui_version,
+                required_version=compatibility.required_webui_version,
+            )
+        )
+    elif compatibility.status == "main_program_outdated":
+        logger.warning(
+            t(
+                "startup.main_program_version_outdated_for_webui",
+                main_version=compatibility.main_program_version,
+                current_version=compatibility.webui_version,
+                required_version=compatibility.required_webui_version,
+            )
+        )
 
 
 def _resolve_static_path() -> Path | None:
