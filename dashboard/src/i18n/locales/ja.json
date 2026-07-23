@@ -753,6 +753,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "本体と WebUI のバージョンを確認しています...",
+    "eyebrow": "バージョン互換性の警告",
+    "mainProgramVersion": "本体バージョン",
+    "webuiVersion": "現在の WebUI バージョン",
+    "requiredWebuiVersion": "本体が必要とする WebUI バージョン",
+    "updateTargetLabel": "更新が必要：{{target}}",
+    "riskWarning": "一致しないバージョンを使い続けると、画面の異常、API の利用不能、設定エラーが発生する可能性があります。更新後に続行してください。",
+    "countdownHint": "上記の警告を確認してください。{{seconds}} 秒後にこの画面を閉じられます。",
+    "confirmHint": "リスクを確認して続行できます。",
+    "countdownButton": "{{seconds}} 秒後に確認",
+    "confirmButton": "警告を閉じて続行",
+    "webuiOutdated": {
+      "title": "WebUI のバージョンが古すぎます",
+      "description": "現在の WebUI v{{currentVersion}} は、本体が必要とする v{{requiredVersion}} より古いバージョンです。WebUI の静的リソースパッケージを更新してください。",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "本体のバージョンが古すぎます",
+      "description": "本体 v{{mainVersion}} は WebUI v{{requiredVersion}} を想定していますが、WebUI v{{webuiVersion}} が動作しています。MaiBot 本体を更新してください。",
+      "updateTarget": "MaiBot 本体"
+    }
+  },
   "common": {
     "loading": "読み込み中...",
     "error": "エラー",

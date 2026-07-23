@@ -745,6 +745,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "메인 프로그램과 WebUI 버전을 확인하는 중...",
+    "eyebrow": "버전 호환성 경고",
+    "mainProgramVersion": "메인 프로그램 버전",
+    "webuiVersion": "현재 WebUI 버전",
+    "requiredWebuiVersion": "메인 프로그램이 요구하는 WebUI 버전",
+    "updateTargetLabel": "업데이트 필요: {{target}}",
+    "riskWarning": "일치하지 않는 버전을 계속 사용하면 페이지 오류, API 사용 불가 또는 설정 오류가 발생할 수 있습니다. 업데이트 후 계속하세요.",
+    "countdownHint": "위 경고를 확인하세요. {{seconds}}초 후 이 페이지를 닫을 수 있습니다.",
+    "confirmHint": "이제 위험을 확인하고 계속할 수 있습니다.",
+    "countdownButton": "{{seconds}}초 후 확인",
+    "confirmButton": "경고를 닫고 계속",
+    "webuiOutdated": {
+      "title": "WebUI 버전이 너무 낮습니다",
+      "description": "현재 WebUI v{{currentVersion}}은 메인 프로그램이 요구하는 v{{requiredVersion}}보다 낮습니다. WebUI 정적 리소스 패키지를 업데이트하세요.",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "메인 프로그램 버전이 너무 낮습니다",
+      "description": "메인 프로그램 v{{mainVersion}}은 WebUI v{{requiredVersion}}을 선언하지만 WebUI v{{webuiVersion}}이 실행 중입니다. MaiBot 메인 프로그램을 업데이트하세요.",
+      "updateTarget": "MaiBot 메인 프로그램"
+    }
+  },
   "common": {
     "loading": "불러오는 중...",
     "error": "오류",

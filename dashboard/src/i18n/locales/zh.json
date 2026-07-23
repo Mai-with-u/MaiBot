@@ -753,6 +753,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "正在检查主程序与 WebUI 版本...",
+    "eyebrow": "版本兼容性警告",
+    "mainProgramVersion": "主程序版本",
+    "webuiVersion": "当前 WebUI 版本",
+    "requiredWebuiVersion": "主程序要求的 WebUI 版本",
+    "updateTargetLabel": "需要更新：{{target}}",
+    "riskWarning": "继续使用不匹配的版本可能导致页面异常、接口不可用或配置错误。建议完成更新后再继续操作。",
+    "countdownHint": "请阅读以上提示，{{seconds}} 秒后可以关闭此页面。",
+    "confirmHint": "你现在可以确认风险并继续使用。",
+    "countdownButton": "{{seconds}} 秒后可确认",
+    "confirmButton": "关闭提示并继续",
+    "webuiOutdated": {
+      "title": "WebUI 版本过低",
+      "description": "当前 WebUI v{{currentVersion}} 低于主程序要求的 v{{requiredVersion}}。请更新 WebUI 静态资源包。",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "主程序版本过低",
+      "description": "当前主程序 v{{mainVersion}} 仅声明支持 WebUI v{{requiredVersion}}，但正在运行 WebUI v{{webuiVersion}}。请更新 MaiBot 主程序。",
+      "updateTarget": "MaiBot 主程序"
+    }
+  },
   "common": {
     "loading": "加载中...",
     "error": "错误",
