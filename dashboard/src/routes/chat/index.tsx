@@ -652,7 +652,7 @@ export function ChatPage() {
       sessionUnsubscribeMap.clear()
 
       tabsRefSnapshot.current.forEach((tab) => {
-        void chatWsClient.closeSession(tab.id)
+        chatWsClient.releaseSession(tab.id)
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
