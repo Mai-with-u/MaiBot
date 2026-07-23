@@ -1454,6 +1454,7 @@ function PluginConfigPageContent() {
     showUpdateOnly,
     setShowUpdateOnly,
     visiblePlugins,
+    visiblePluginGroups,
     actingPluginId,
     setActingPluginId,
     performTogglePlugin,
@@ -1695,8 +1696,16 @@ function PluginConfigPageContent() {
             </div>
           </div>
         ) : (
-          <div className="divide-border/80 divide-y">
-            {visiblePlugins.map((plugin) => {
+          <div className="space-y-4">
+            {visiblePluginGroups.map((group) => (
+              <section key={group.key} aria-labelledby={`plugin-list-group-${group.key}`}>
+                <div className="text-muted-foreground flex items-center gap-2 border-b px-2 pb-1.5 text-xs font-medium">
+                  <span className={`h-2 w-2 rounded-full ${group.dotClassName}`} aria-hidden="true" />
+                  <h2 id={`plugin-list-group-${group.key}`}>{group.label}</h2>
+                  <span aria-label={`${group.plugins.length} 个插件`}>{group.plugins.length}</span>
+                </div>
+                <div className="divide-border/80 divide-y">
+                  {group.plugins.map((plugin) => {
               const pluginActing = actingPluginId === plugin.id
               const pluginDisabled = isPluginDisabled(plugin)
               const updateState = getPluginUpdateState(plugin)
@@ -1900,7 +1909,10 @@ function PluginConfigPageContent() {
                   </div>
                 </div>
               )
-            })}
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
 

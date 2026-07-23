@@ -745,6 +745,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "메인 프로그램과 WebUI 버전을 확인하는 중...",
+    "eyebrow": "버전 호환성 경고",
+    "mainProgramVersion": "메인 프로그램 버전",
+    "webuiVersion": "현재 WebUI 버전",
+    "requiredWebuiVersion": "메인 프로그램이 요구하는 WebUI 버전",
+    "updateTargetLabel": "업데이트 필요: {{target}}",
+    "riskWarning": "일치하지 않는 버전을 계속 사용하면 페이지 오류, API 사용 불가 또는 설정 오류가 발생할 수 있습니다. 업데이트 후 계속하세요.",
+    "countdownHint": "위 경고를 확인하세요. {{seconds}}초 후 이 페이지를 닫을 수 있습니다.",
+    "confirmHint": "이제 위험을 확인하고 계속할 수 있습니다.",
+    "countdownButton": "{{seconds}}초 후 확인",
+    "confirmButton": "경고를 닫고 계속",
+    "webuiOutdated": {
+      "title": "WebUI 버전이 너무 낮습니다",
+      "description": "현재 WebUI v{{currentVersion}}은 메인 프로그램이 요구하는 v{{requiredVersion}}보다 낮습니다. WebUI 정적 리소스 패키지를 업데이트하세요.",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "메인 프로그램 버전이 너무 낮습니다",
+      "description": "메인 프로그램 v{{mainVersion}}은 WebUI v{{requiredVersion}}을 선언하지만 WebUI v{{webuiVersion}}이 실행 중입니다. MaiBot 메인 프로그램을 업데이트하세요.",
+      "updateTarget": "MaiBot 메인 프로그램"
+    }
+  },
   "common": {
     "loading": "불러오는 중...",
     "error": "오류",
@@ -801,6 +824,23 @@
     "aiSearch": "AI 검색",
     "aiSearching": "AI 분석 중",
     "aiHint": "‘MaiBot이 너무 자주 말해요’처럼 원하는 결과를 설명할 수 있습니다",
+    "progressTitle": "검색 과정",
+    "progressExpand": "검색 과정 펼치기",
+    "progressCollapse": "검색 과정 접기",
+    "progressStart": "질문 분석 시작",
+    "progressPlanning": "{{round}}차: 검색 계획",
+    "progressSearchWebui": "페이지 및 설정 검색",
+    "progressReadWebui": "페이지 및 설정 설명 읽기",
+    "progressSearchDocs": "공식 문서 검색",
+    "progressReadDocs": "공식 문서 읽기",
+    "progressTool": "검색 작업 실행",
+    "progressCompleted": "{{action}} 완료 ({{count}}개)",
+    "progressFailed": "{{action}} 실패",
+    "progressFinalizing": "읽은 자료를 바탕으로 답변 정리",
+    "progressCorrecting": "근거가 부족한 항목을 감지하여 답변을 다시 정리하는 중",
+    "progressCacheHit": "같은 질문의 캐시 결과 사용",
+    "progressAnswerCompleted": "답변 생성 완료",
+    "progressAnswerFailed": "답변 생성 실패",
     "aiShortcut": "Ctrl + Enter",
     "aiRecommendation": "AI 추천",
     "aiAnswer": "AI 답변",

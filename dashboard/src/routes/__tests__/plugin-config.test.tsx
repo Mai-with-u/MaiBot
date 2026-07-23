@@ -129,6 +129,38 @@ describe('PluginConfigPage 特征化', () => {
     await waitFor(() => expect(screen.getByText('暂无已安装的插件')).toBeInTheDocument())
   })
 
+  it('按照加载成功、加载中、加载失败的顺序分层展示插件', async () => {
+    const failedPlugin = makePlugin('test.failed', 'Failed Plugin')
+    failedPlugin.load_status = 'failed'
+    const disabledPlugin = makePlugin('test.disabled', 'Disabled Plugin')
+    disabledPlugin.enabled = false
+    const loadingPlugin = makePlugin('test.loading', 'Loading Plugin')
+    loadingPlugin.load_status = 'loading'
+    const successPlugin = makePlugin('test.success', 'Success Plugin')
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([
+      failedPlugin,
+      disabledPlugin,
+      loadingPlugin,
+      successPlugin,
+    ] as never)
+
+    const { container } = render(<PluginConfigPage />)
+
+    await screen.findByText('Success Plugin')
+    const pluginNames = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-plugin-list-item="true"] h3')
+    ).map((element) => element.textContent)
+    expect(pluginNames).toEqual([
+      'Success Plugin',
+      'Loading Plugin',
+      'Failed Plugin',
+      'Disabled Plugin',
+    ])
+    expect(screen.getByRole('heading', { level: 2, name: '加载成功' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '加载中' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '加载失败' })).toBeInTheDocument()
+  })
+
   it('插件版本不兼容时优先展示用户可理解的结论并保留技术详情', async () => {
     const user = userEvent.setup()
     const incompatiblePlugin = makePlugin('test.incompatible', 'Incompatible Plugin')

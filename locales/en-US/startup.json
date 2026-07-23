@@ -80,6 +80,8 @@
   "startup.webui_cors_configured": "✅ CORS middleware configured",
   "startup.webui_dashboard_source_missing": "❌ WebUI frontend source directory not found: {dashboard_root}",
   "startup.webui_dashboard_package_hint": "💡 Install the prebuilt WebUI static asset package first, for example: {command}",
+  "startup.webui_version_outdated": "⚠️ The WebUI is outdated: installed v{current_version}, required v{required_version}. Update the WebUI or unexpected problems may occur.",
+  "startup.main_program_version_outdated_for_webui": "⚠️ The main program is outdated: MaiBot v{main_version} declares WebUI v{required_version}, but WebUI v{current_version} is loaded. Update the main program or unexpected problems may occur.",
   "startup.webui_disabled": "WebUI is disabled",
   "startup.webui_index_missing": "❌ index.html not found: {index_path}",
   "startup.webui_manual_build_hint": "💡 Automatic recovery could not restore the frontend assets. Install dependencies and build manually in the dashboard directory: {command}",

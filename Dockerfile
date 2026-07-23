@@ -16,7 +16,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Install runtime dependencies
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --no-dev --no-install-project
 
 # Install system libraries required by Playwright Chromium. The browser binary
 # itself is downloaded lazily into the configured data directory at runtime.

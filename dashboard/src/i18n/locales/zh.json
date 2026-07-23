@@ -753,6 +753,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "正在检查主程序与 WebUI 版本...",
+    "eyebrow": "版本兼容性警告",
+    "mainProgramVersion": "主程序版本",
+    "webuiVersion": "当前 WebUI 版本",
+    "requiredWebuiVersion": "主程序要求的 WebUI 版本",
+    "updateTargetLabel": "需要更新：{{target}}",
+    "riskWarning": "继续使用不匹配的版本可能导致页面异常、接口不可用或配置错误。建议完成更新后再继续操作。",
+    "countdownHint": "请阅读以上提示，{{seconds}} 秒后可以关闭此页面。",
+    "confirmHint": "你现在可以确认风险并继续使用。",
+    "countdownButton": "{{seconds}} 秒后可确认",
+    "confirmButton": "关闭提示并继续",
+    "webuiOutdated": {
+      "title": "WebUI 版本过低",
+      "description": "当前 WebUI v{{currentVersion}} 低于主程序要求的 v{{requiredVersion}}。请更新 WebUI 静态资源包。",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "主程序版本过低",
+      "description": "当前主程序 v{{mainVersion}} 仅声明支持 WebUI v{{requiredVersion}}，但正在运行 WebUI v{{webuiVersion}}。请更新 MaiBot 主程序。",
+      "updateTarget": "MaiBot 主程序"
+    }
+  },
   "common": {
     "loading": "加载中...",
     "error": "错误",
@@ -809,6 +832,23 @@
     "aiSearch": "AI 搜索",
     "aiSearching": "AI 理解中",
     "aiHint": "可以描述你想调整的效果，例如“麦麦说话太频繁”",
+    "progressTitle": "搜索过程",
+    "progressExpand": "展开搜索过程",
+    "progressCollapse": "收起搜索过程",
+    "progressStart": "开始分析问题",
+    "progressPlanning": "第 {{round}} 轮：规划检索",
+    "progressSearchWebui": "搜索页面和配置",
+    "progressReadWebui": "读取页面与配置说明",
+    "progressSearchDocs": "搜索官方文档",
+    "progressReadDocs": "读取官方文档",
+    "progressTool": "执行搜索操作",
+    "progressCompleted": "{{action}}完成（{{count}} 项）",
+    "progressFailed": "{{action}}失败",
+    "progressFinalizing": "根据已读取资料整理回答",
+    "progressCorrecting": "检测到证据不足，正在重新整理回答",
+    "progressCacheHit": "已使用相同问题的缓存结果",
+    "progressAnswerCompleted": "回答生成完成",
+    "progressAnswerFailed": "回答生成失败",
     "aiShortcut": "Ctrl + Enter",
     "aiRecommendation": "AI 推荐",
     "aiAnswer": "AI 答复",

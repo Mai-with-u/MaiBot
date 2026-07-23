@@ -1,7 +1,10 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import type { TFunction } from 'i18next'
 import {
   BookOpen,
+  CircleAlert,
+  ChevronDown,
   Clock,
   FileText,
   Lightbulb,
@@ -13,9 +16,9 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { FloatingPanel } from '@/components/ui/floating-panel'
 import { Input } from '@/components/ui/input'
-import { ShortcutKbd } from '@/components/ui/kbd'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { createStreamlineIcon } from '@/components/ui/streamline-menu-icon'
@@ -23,7 +26,8 @@ import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
 import type { MenuIcon } from '@/components/layout/types'
 import { registeredRoutePaths } from '@/router'
-import { searchWithAI } from '@/lib/ai-search-api'
+import { searchWithAIStream } from '@/lib/ai-search-api'
+import type { AISearchProgressEvent } from '@/lib/ai-search-api'
 import { getBotConfigSchema, getModelConfigSchema } from '@/lib/config-api'
 import { getAllLocalizedText, resolveFieldLabel } from '@/lib/config-label'
 import { buildSearchNavigationPath } from '@/lib/config-search-navigation'
@@ -56,6 +60,61 @@ interface AISearchItem {
   item: SearchItem
   reason: string
   score: number
+}
+
+function getProgressTitle(event: AISearchProgressEvent, t: TFunction): string {
+  if (event.stage === 'start') {
+    return t('search.progressStart')
+  }
+  if (event.stage === 'planning') {
+    return t('search.progressPlanning', { round: event.round ?? 1 })
+  }
+  if (event.stage === 'finalizing') {
+    return t('search.progressFinalizing')
+  }
+  if (event.stage === 'correcting') {
+    return t('search.progressCorrecting')
+  }
+  if (event.stage === 'cache_hit') {
+    return t('search.progressCacheHit')
+  }
+  if (event.stage === 'completed') {
+    return t('search.progressAnswerCompleted')
+  }
+  if (event.stage === 'failed') {
+    return t('search.progressAnswerFailed')
+  }
+
+  const actionKeyByTool: Record<string, string> = {
+    search_webui_index: 'search.progressSearchWebui',
+    read_webui_documents: 'search.progressReadWebui',
+    search_official_docs: 'search.progressSearchDocs',
+    read_official_docs: 'search.progressReadDocs',
+  }
+  const action = t(actionKeyByTool[event.tool ?? ''] ?? 'search.progressTool')
+  if (event.status === 'completed') {
+    return t('search.progressCompleted', { action, count: event.count ?? 0 })
+  }
+  if (event.status === 'failed') {
+    return t('search.progressFailed', { action })
+  }
+  return action
+}
+
+function getProgressDetail(event: AISearchProgressEvent): string {
+  if (event.error) {
+    return event.error
+  }
+  if (event.query) {
+    return event.query
+  }
+  if (event.titles && event.titles.length > 0) {
+    return event.titles.join('、')
+  }
+  if (event.targets && event.targets.length > 0) {
+    return event.targets.join('、')
+  }
+  return ''
 }
 
 function loadRecentSearchRoutes(): string[] {
@@ -208,6 +267,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const [aiSuggestions, setAISuggestions] = useState<string[]>([])
   const [aiSources, setAISources] = useState<Array<{ title: string; url: string }>>([])
   const [aiExpandedTerms, setAIExpandedTerms] = useState<string[]>([])
+  const [aiSearchProgress, setAISearchProgress] = useState<AISearchProgressEvent[]>([])
+  const [aiSearchProgressOpen, setAISearchProgressOpen] = useState(true)
   const [aiSearchLoading, setAISearchLoading] = useState(false)
   const [aiSearchError, setAISearchError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -386,6 +447,8 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     setAISuggestions([])
     setAISources([])
     setAIExpandedTerms([])
+    setAISearchProgress([])
+    setAISearchProgressOpen(true)
 
     const aiCandidates = [...searchItems, ...configSearchItems]
       .slice(0, 600)
@@ -396,7 +459,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     const itemMap = new Map(aiCandidates.map(({ id, item }) => [id, item]))
 
     try {
-      const response = await searchWithAI(
+      const response = await searchWithAIStream(
         {
           query,
           language: i18n.language,
@@ -407,6 +470,11 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             category: item.category.slice(0, 80),
             document: item.keywords.slice(0, 2000),
           })),
+        },
+        (event) => {
+          if (!abortController.signal.aborted) {
+            setAISearchProgress((current) => [...current, event].slice(-24))
+          }
         },
         abortController.signal
       )
@@ -433,13 +501,31 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
       setAISuggestions(response.suggestions)
       setAISources(response.sources)
       setAIExpandedTerms(response.expanded_terms)
+      if (response.answer) {
+        setAISearchProgressOpen(false)
+      }
       if (nextItems.length === 0 && !response.answer) {
         setAISearchError(t('search.aiNoResults'))
       }
       setSelectedIndex(0)
     } catch (error) {
       if (!abortController.signal.aborted) {
-        setAISearchError(error instanceof Error ? error.message : t('search.aiFailed'))
+        const errorMessage = error instanceof Error ? error.message : t('search.aiFailed')
+        setAISearchProgress((current) => {
+          if (current.at(-1)?.stage === 'failed') {
+            return current
+          }
+          return [
+            ...current,
+            {
+              type: 'progress',
+              stage: 'failed',
+              status: 'failed',
+              error: errorMessage,
+            } satisfies AISearchProgressEvent,
+          ].slice(-24)
+        })
+        setAISearchError(errorMessage)
       }
     } finally {
       if (!abortController.signal.aborted) {
@@ -498,7 +584,6 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     <FloatingPanel
       open={open}
       title={t('search.title')}
-      subtitle={aiSearchLoading ? t('search.aiSearching') : t('search.aiHint')}
       onClose={() => onOpenChange(false)}
       closeLabel={t('search.close')}
       className="flex h-[min(calc(100vh-2rem),42rem)] w-[min(calc(100vw-2rem),42rem)] flex-col"
@@ -525,11 +610,13 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
               setAISuggestions([])
               setAISources([])
               setAIExpandedTerms([])
+              setAISearchProgress([])
+              setAISearchProgressOpen(true)
               setAISearchError('')
               setAISearchLoading(false)
             }}
             onKeyDown={handleKeyDown}
-            placeholder={t('search.placeholder')}
+            placeholder={t('search.aiHint')}
             className="h-12 border-0 pl-11 text-base shadow-none focus-visible:ring-0"
           />
         </div>
@@ -565,10 +652,105 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         )}
       </div>
 
-      <div className="min-h-0 flex-1 border-t">
+      <div className="min-h-0 flex-1">
         <ScrollArea className="h-full" viewportClassName="px-0">
-          {visibleItems.length > 0 || aiAnswer || aiSuggestions.length > 0 ? (
+          {visibleItems.length > 0 ||
+          aiAnswer ||
+          aiSuggestions.length > 0 ||
+          aiSearchProgress.length > 0 ? (
             <div className="space-y-3 p-2">
+              {aiSearchProgress.length > 0 && (
+                <Collapsible
+                  open={aiSearchProgressOpen}
+                  onOpenChange={setAISearchProgressOpen}
+                  asChild
+                >
+                  <section
+                    className={cn(
+                      'rounded-lg border p-3',
+                      aiSearchProgress.at(-1)?.stage === 'failed'
+                        ? 'border-destructive/70 bg-destructive/5'
+                        : 'border-border/70'
+                    )}
+                    aria-live="polite"
+                    aria-label={t('search.progressTitle')}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 text-sm font-medium"
+                        aria-label={
+                          aiSearchProgressOpen
+                            ? t('search.progressCollapse')
+                            : t('search.progressExpand')
+                        }
+                      >
+                        {aiSearchLoading ? (
+                          <Loader2 className="text-primary h-4 w-4 animate-spin" />
+                        ) : aiSearchProgress.at(-1)?.stage === 'failed' ? (
+                          <CircleAlert className="text-destructive h-4 w-4" />
+                        ) : (
+                          <Sparkles className="text-primary h-4 w-4" />
+                        )}
+                        <span>{t('search.progressTitle')}</span>
+                        <ChevronDown
+                          className={cn(
+                            'text-muted-foreground ml-auto h-4 w-4 transition-transform',
+                            aiSearchProgressOpen && 'rotate-180'
+                          )}
+                        />
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <ol className="mt-2 space-y-2">
+                        {aiSearchProgress.map((event, index) => {
+                          const detail = getProgressDetail(event)
+                          const isLatest = aiSearchLoading && index === aiSearchProgress.length - 1
+                          const isFailed = event.stage === 'failed' || event.status === 'failed'
+                          return (
+                            <li
+                              key={`${event.stage}-${event.tool ?? ''}-${index}`}
+                              className="flex items-start gap-2 text-xs"
+                            >
+                              <span
+                                className={cn(
+                                  'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px]',
+                                  isFailed
+                                    ? 'bg-destructive text-destructive-foreground'
+                                    : isLatest
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'bg-muted text-muted-foreground'
+                                )}
+                              >
+                                {index + 1}
+                              </span>
+                              <div className="min-w-0">
+                                <div
+                                  className={
+                                    isFailed ? 'text-destructive font-medium' : 'text-foreground'
+                                  }
+                                >
+                                  {getProgressTitle(event, t)}
+                                </div>
+                                {detail && (
+                                  <div
+                                    className={cn(
+                                      'mt-0.5 break-words',
+                                      isFailed ? 'text-destructive/90' : 'text-muted-foreground'
+                                    )}
+                                  >
+                                    {detail}
+                                  </div>
+                                )}
+                              </div>
+                            </li>
+                          )
+                        })}
+                      </ol>
+                    </CollapsibleContent>
+                  </section>
+                </Collapsible>
+              )}
               {aiAnswer && (
                 <section className="border-border/70 bg-muted/30 rounded-lg border p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -661,24 +843,6 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             </div>
           )}
         </ScrollArea>
-      </div>
-
-      <div className="text-muted-foreground flex items-center justify-between border-t px-4 py-3 text-xs">
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1">
-            <ShortcutKbd size="sm" keys={['up']} />
-            <ShortcutKbd size="sm" keys={['down']} />
-            {t('search.navigate')}
-          </span>
-          <span className="flex items-center gap-1">
-            <ShortcutKbd size="sm" keys={['enter']} />
-            {t('search.select')}
-          </span>
-          <span className="flex items-center gap-1">
-            <ShortcutKbd size="sm" keys={['esc']} />
-            {t('search.close')}
-          </span>
-        </div>
       </div>
     </FloatingPanel>
   )

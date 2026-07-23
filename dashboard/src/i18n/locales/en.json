@@ -753,6 +753,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "Checking MaiBot and WebUI versions...",
+    "eyebrow": "Version compatibility warning",
+    "mainProgramVersion": "MaiBot version",
+    "webuiVersion": "Current WebUI version",
+    "requiredWebuiVersion": "WebUI version required by MaiBot",
+    "updateTargetLabel": "Update required: {{target}}",
+    "riskWarning": "Using mismatched versions may cause broken pages, unavailable APIs, or configuration errors. Update before continuing.",
+    "countdownHint": "Please read this warning. You can close this page in {{seconds}} seconds.",
+    "confirmHint": "You can now acknowledge the risk and continue.",
+    "countdownButton": "Confirm in {{seconds}}s",
+    "confirmButton": "Close warning and continue",
+    "webuiOutdated": {
+      "title": "WebUI is outdated",
+      "description": "WebUI v{{currentVersion}} is older than v{{requiredVersion}}, which this MaiBot version requires. Update the WebUI static package.",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "MaiBot is outdated",
+      "description": "MaiBot v{{mainVersion}} declares WebUI v{{requiredVersion}}, but WebUI v{{webuiVersion}} is running. Update the MaiBot main program.",
+      "updateTarget": "MaiBot main program"
+    }
+  },
   "common": {
     "loading": "Loading...",
     "error": "Error",
@@ -809,6 +832,23 @@
     "aiSearch": "AI Search",
     "aiSearching": "Understanding",
     "aiHint": "Describe the outcome you want, such as “MaiBot talks too much”",
+    "progressTitle": "Search progress",
+    "progressExpand": "Expand search progress",
+    "progressCollapse": "Collapse search progress",
+    "progressStart": "Analyzing the question",
+    "progressPlanning": "Round {{round}}: planning searches",
+    "progressSearchWebui": "Search pages and settings",
+    "progressReadWebui": "Read page and setting details",
+    "progressSearchDocs": "Search official documentation",
+    "progressReadDocs": "Read official documentation",
+    "progressTool": "Run search operation",
+    "progressCompleted": "{{action}} completed ({{count}} items)",
+    "progressFailed": "{{action}} failed",
+    "progressFinalizing": "Preparing an answer from the sources read",
+    "progressCorrecting": "Unsupported claims detected; rewriting the answer",
+    "progressCacheHit": "Used a cached result for the same question",
+    "progressAnswerCompleted": "Answer generated",
+    "progressAnswerFailed": "Answer generation failed",
     "aiShortcut": "Ctrl + Enter",
     "aiRecommendation": "AI Pick",
     "aiAnswer": "AI Answer",
