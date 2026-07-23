@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
+import asyncio
+
 from src.cli.console import console
 from src.core.tooling import (
     ToolExecutionResult,
@@ -58,17 +60,23 @@ class MCPManager:
         self,
         client_config: MCPClientRuntimeConfig,
         host_callbacks: Optional[MCPHostCallbacks] = None,
+        *,
+        discover_extended_features: bool = True,
     ) -> None:
         """初始化 MCP 管理器。
 
         Args:
             client_config: MCP 客户端宿主能力运行时配置。
             host_callbacks: 宿主侧能力回调集合。
+            discover_extended_features: 是否发现当前尚未接入主流程的 Prompt 和 Resource。
         """
 
         self._client_config = client_config
         self._host_callbacks = host_callbacks or MCPHostCallbacks()
+        self._discover_extended_features = discover_extended_features
         self._connections: dict[str, MCPConnection] = {}
+        self._connection_errors: dict[str, str] = {}
+        self._server_configs: dict[str, MCPServerRuntimeConfig] = {}
         self._tool_to_server: dict[str, str] = {}
         self._prompt_to_server: dict[str, str] = {}
         self._resource_to_server: dict[str, str] = {}
@@ -79,12 +87,17 @@ class MCPManager:
         cls,
         mcp_config: "MCPConfig",
         host_callbacks: Optional[MCPHostCallbacks] = None,
+        *,
+        discover_extended_features: bool = True,
+        allow_empty: bool = False,
     ) -> Optional["MCPManager"]:
         """从官方配置创建并初始化 `MCPManager`。
 
         Args:
             mcp_config: 主程序中的 MCP 配置对象。
             host_callbacks: 宿主侧能力回调集合。
+            discover_extended_features: 是否发现 Prompt 和 Resource。
+            allow_empty: 全部连接失败时是否仍返回包含诊断信息的管理器。
 
         Returns:
             Optional[MCPManager]: 初始化完成的管理器；无可用配置或全部连接失败时返回 ``None``。
@@ -94,19 +107,24 @@ class MCPManager:
         if not configs:
             return None
 
-        if not MCP_AVAILABLE:
-            console.print("[warning]⚠️ 发现 MCP 配置但未安装 mcp SDK，请运行: pip install mcp[/warning]")
-            return None
-
         manager = cls(
             client_config=build_mcp_client_runtime_config(mcp_config),
             host_callbacks=host_callbacks,
+            discover_extended_features=discover_extended_features,
         )
+        if not MCP_AVAILABLE:
+            console.print("[warning]⚠️ 发现 MCP 配置但未安装 mcp SDK，请运行: pip install mcp[/warning]")
+            if allow_empty:
+                manager._server_configs = {config.name: config for config in configs}
+                manager._connection_errors = {config.name: "未安装 mcp SDK" for config in configs}
+                return manager
+            return None
+
         await manager._connect_all(configs)
 
         if not manager._connections:
             console.print("[warning]⚠️ 所有 MCP 服务器连接失败[/warning]")
-            return None
+            return manager if allow_empty else None
 
         return manager
 
@@ -120,10 +138,37 @@ class MCPManager:
             None
         """
 
-        for config in configs:
-            connection = MCPConnection(config, self._client_config, self._host_callbacks)
-            success = await connection.connect()
+        self._server_configs = {config.name: config for config in configs}
+
+        async def connect_one(config: MCPServerRuntimeConfig) -> tuple[MCPServerRuntimeConfig, MCPConnection, bool]:
+            """并行建立一个服务连接，但保持后续注册顺序稳定。"""
+
+            connection = MCPConnection(
+                config,
+                self._client_config,
+                self._host_callbacks,
+                discover_extended_features=self._discover_extended_features,
+            )
+            connect_timeout_seconds = (
+                min(60.0, max(5.0, config.http_timeout_seconds + 5.0))
+                if config.transport != "stdio"
+                else 30.0
+            )
+            try:
+                success = await asyncio.wait_for(
+                    connection.connect(),
+                    timeout=connect_timeout_seconds,
+                )
+            except TimeoutError:
+                connection.last_error = f"连接超过 {connect_timeout_seconds:g} 秒"
+                await connection.close()
+                success = False
+            return config, connection, success
+
+        connection_results = await asyncio.gather(*(connect_one(config) for config in configs))
+        for config, connection, success in connection_results:
             if not success:
+                self._connection_errors[config.name] = connection.last_error or "连接失败"
                 continue
 
             self._connections[config.name] = connection
@@ -137,6 +182,29 @@ class MCPManager:
                 f"[muted](工具 {registered_tool_count} / Prompt {registered_prompt_count} / "
                 f"资源 {registered_resource_count} / 模板 {registered_template_count})[/muted]"
             )
+
+    def get_status_snapshot(self) -> dict[str, Any]:
+        """返回可跨线程读取的纯数据连接状态快照。"""
+
+        servers: list[dict[str, Any]] = []
+        for server_name, config in self._server_configs.items():
+            connection = self._connections.get(server_name)
+            servers.append(
+                {
+                    "name": server_name,
+                    "transport": config.transport,
+                    "connected": connection is not None and connection.session is not None,
+                    "protocol_version": connection.protocol_version if connection is not None else "",
+                    "tool_count": len(connection.tools) if connection is not None else 0,
+                    "error": self._connection_errors.get(server_name, ""),
+                }
+            )
+        return {
+            "initialized": True,
+            "server_count": len(self._connections),
+            "tool_count": len(self._tool_to_server),
+            "servers": servers,
+        }
 
     def _register_tools(self, server_name: str, connection: MCPConnection) -> int:
         """注册单个服务器暴露的 MCP 工具。
@@ -576,9 +644,16 @@ class MCPManager:
     async def close(self) -> None:
         """关闭所有 MCP 服务器连接。"""
 
-        for connection in self._connections.values():
-            await connection.close()
+        close_results = await asyncio.gather(
+            *(connection.close() for connection in self._connections.values()),
+            return_exceptions=True,
+        )
+        for close_result in close_results:
+            if isinstance(close_result, Exception):
+                console.print(f"[warning]⚠️ MCP 连接关闭失败: {close_result}[/warning]")
         self._connections.clear()
+        self._connection_errors.clear()
+        self._server_configs.clear()
         self._tool_to_server.clear()
         self._prompt_to_server.clear()
         self._resource_to_server.clear()

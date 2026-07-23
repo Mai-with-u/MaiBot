@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from src.config.official_configs import MCPConfig
+    from src.config.official_configs import MCPConfig, MCPServerItemConfig
 
 
 @dataclass(slots=True)
@@ -115,7 +115,8 @@ def build_mcp_client_runtime_config(mcp_config: "MCPConfig") -> MCPClientRuntime
         roots=roots,
         enable_sampling=mcp_config.client.sampling.enable,
         sampling_task_name=mcp_config.client.sampling.task_name.strip() or "planner",
-        sampling_include_context_support=mcp_config.client.sampling.include_context_support,
+        # 当前宿主桥接层尚未实现 includeContext 的上下文收集，不能向服务端声明虚假能力。
+        sampling_include_context_support=False,
         sampling_tool_support=mcp_config.client.sampling.tool_support,
         enable_elicitation=mcp_config.client.elicitation.enable,
         elicitation_allow_form=mcp_config.client.elicitation.allow_form,
@@ -141,22 +142,33 @@ def build_mcp_server_runtime_configs(mcp_config: "MCPConfig") -> list[MCPServerR
         if not server.enabled:
             continue
 
-        runtime_configs.append(
-            MCPServerRuntimeConfig(
-                name=server.name.strip(),
-                transport=server.transport,
-                command=server.command.strip(),
-                args=[str(argument) for argument in server.args],
-                env={str(key): str(value) for key, value in server.env.items()},
-                url=server.url.strip(),
-                headers={str(key): str(value) for key, value in server.headers.items()},
-                http_timeout_seconds=float(server.http_timeout_seconds),
-                read_timeout_seconds=float(server.read_timeout_seconds),
-                authorization=MCPAuthorizationRuntimeConfig(
-                    mode=server.authorization.mode,
-                    bearer_token=server.authorization.bearer_token.strip(),
-                ),
-            )
-        )
+        runtime_configs.append(build_mcp_server_runtime_config(server))
 
     return runtime_configs
+
+
+def build_mcp_server_runtime_config(server: "MCPServerItemConfig") -> MCPServerRuntimeConfig:
+    """将单个官方 MCP 服务配置转换为运行时配置。
+
+    Args:
+        server: 具备 ``MCPServerItemConfig`` 字段的配置对象。
+
+    Returns:
+        MCPServerRuntimeConfig: 可直接交给连接层的运行时配置。
+    """
+
+    return MCPServerRuntimeConfig(
+        name=server.name.strip(),
+        transport=server.transport,
+        command=server.command.strip(),
+        args=[str(argument) for argument in server.args],
+        env={str(key): str(value) for key, value in server.env.items()},
+        url=server.url.strip(),
+        headers={str(key): str(value) for key, value in server.headers.items()},
+        http_timeout_seconds=float(server.http_timeout_seconds),
+        read_timeout_seconds=float(server.read_timeout_seconds),
+        authorization=MCPAuthorizationRuntimeConfig(
+            mode=server.authorization.mode,
+            bearer_token=server.authorization.bearer_token.strip(),
+        ),
+    )

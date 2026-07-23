@@ -64,14 +64,33 @@ def build_tool_annotation(raw_annotation: Any) -> Optional[ToolAnnotation]:
     audience = [str(item) for item in audience_value] if isinstance(audience_value, list) else []
     priority_value = getattr(raw_annotation, "priority", None)
     priority = float(priority_value) if isinstance(priority_value, int | float) else None
+    title = str(getattr(raw_annotation, "title", "") or "").strip()
+    read_only = getattr(raw_annotation, "readOnlyHint", None)
+    destructive = getattr(raw_annotation, "destructiveHint", None)
+    idempotent = getattr(raw_annotation, "idempotentHint", None)
+    open_world = getattr(raw_annotation, "openWorldHint", None)
     metadata = _dump_model_metadata(raw_annotation)
 
-    if not audience and priority is None and not metadata:
+    if (
+        not audience
+        and priority is None
+        and not title
+        and read_only is None
+        and destructive is None
+        and idempotent is None
+        and open_world is None
+        and not metadata
+    ):
         return None
 
     return ToolAnnotation(
         audience=audience,
         priority=priority,
+        title=title,
+        read_only=read_only if isinstance(read_only, bool) else None,
+        destructive=destructive if isinstance(destructive, bool) else None,
+        idempotent=idempotent if isinstance(idempotent, bool) else None,
+        open_world=open_world if isinstance(open_world, bool) else None,
         metadata=metadata,
     )
 

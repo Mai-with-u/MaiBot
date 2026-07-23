@@ -58,10 +58,8 @@ from src.maisaka.reply_effect import ReplyEffectTracker
 from src.maisaka.reply_effect.image_utils import extract_visual_attachments_from_sequence
 from src.maisaka.reply_effect.quote_utils import extract_quote_target_ids, message_id_from_context_message
 from src.maisaka.turn_scheduler import MessageTurnScheduler
-from src.mcp_module import MCPManager
-from src.mcp_module.config import build_mcp_server_runtime_configs
-from src.mcp_module.host_llm_bridge import MCPHostLLMBridge
 from src.mcp_module.provider import MCPToolProvider
+from src.mcp_module.service import get_mcp_service
 from src.plugin_runtime.tool_provider import PluginToolProvider
 from src.services.message_word_frequency_service import update_high_frequency_terms_from_context_messages
 
@@ -165,8 +163,6 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         self._focus_cooldown_wakeup_scheduled = False
         self._focus_cooldown_timer_task: Optional[asyncio.Task[None]] = None
 
-        self._mcp_manager: Optional[MCPManager] = None
-        self._mcp_host_bridge: Optional[MCPHostLLMBridge] = None
         self._current_cycle_detail: Optional[CycleDetail] = None
         self._running = False
         self._cycle_counter = 0
@@ -475,13 +471,6 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             await self._reply_effect_tracker.finalize_all("runtime_stop")
         focus_mode_manager.release_focus(self.session_id)
         await self._tool_registry.close()
-        if self._mcp_manager is not None:
-            try:
-                await self._mcp_manager.close()
-            except Exception as exc:
-                logger.warning(f"{self.log_prefix} 关闭 MCP 连接失败: {exc}")
-        self._mcp_manager = None
-        self._mcp_host_bridge = None
         remove_stage_status(self.session_id)
 
         logger.info(f"{self.log_prefix} Maisaka 运行时已停止")
@@ -1338,6 +1327,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         )
         self._tool_registry.register_provider(BrowserActionToolProvider())
         self._tool_registry.register_provider(PluginToolProvider())
+        self._tool_registry.register_provider(MCPToolProvider(get_mcp_service()))
         self._chat_loop_service.set_tool_registry(self._tool_registry)
 
     async def run_sub_agent(
@@ -1983,31 +1973,14 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
     async def _init_mcp(self) -> None:
         """初始化 MCP 工具并注册到统一工具层。"""
-        if not build_mcp_server_runtime_configs(global_config.mcp):
-            logger.debug(f"{self.log_prefix} 未配置可用的 MCP 服务，跳过 Maisaka MCP 初始化")
-            return
-
-        self._mcp_host_bridge = MCPHostLLMBridge(
-            sampling_task_name=global_config.mcp.client.sampling.task_name,
-        )
-        self._mcp_manager = await MCPManager.from_app_config(
-            global_config.mcp,
-            host_callbacks=self._mcp_host_bridge.build_callbacks(),
-        )
-        if self._mcp_manager is None:
-            logger.warning(f"{self.log_prefix} Maisaka MCP 管理器初始化失败，MCP 工具不会注册")
-            return
-
-        mcp_tool_specs = self._mcp_manager.get_tool_specs()
+        mcp_service = get_mcp_service()
+        await mcp_service.ensure_initialized(global_config.mcp)
+        mcp_tool_specs = await mcp_service.list_tools()
         if not mcp_tool_specs:
-            logger.info(f"{self.log_prefix} Maisaka 没有可供使用的 MCP 工具")
+            logger.debug(f"{self.log_prefix} 当前没有可供使用的 MCP 工具")
             return
 
-        self._tool_registry.register_provider(MCPToolProvider(self._mcp_manager))
-        logger.info(
-            f"{self.log_prefix} 已向 Maisaka 加载 {len(mcp_tool_specs)} 个 MCP 工具。\n"
-            f"{self._mcp_manager.get_feature_summary()}"
-        )
+        logger.info(f"{self.log_prefix} 已挂载 {len(mcp_tool_specs)} 个共享 MCP 工具")
 
     def _build_runtime_user_info(self) -> UserInfo:
         if self.chat_stream.user_id:
