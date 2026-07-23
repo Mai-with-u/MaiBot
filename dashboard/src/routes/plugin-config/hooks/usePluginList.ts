@@ -42,6 +42,13 @@ export interface PluginUpdateState {
   title?: string
 }
 
+export interface PluginListGroup {
+  key: 'success' | 'loading' | 'failed' | 'disabled'
+  label: string
+  dotClassName: string
+  plugins: InstalledPlugin[]
+}
+
 interface CompatibilityManifest {
   manifest_version: number
   host_application?: {
@@ -386,9 +393,35 @@ export function usePluginList() {
     return { canUpdate: true, hasUpdate: true, latestVersion, title: `发现新版本 v${latestVersion}` }
   }
 
-  const visiblePlugins = showUpdateOnly
+  const filteredVisiblePlugins = showUpdateOnly
     ? uniqueFilteredPlugins.filter((plugin) => getPluginUpdateState(plugin).hasUpdate)
     : uniqueFilteredPlugins
+
+  const pluginListGroupDefinitions: Array<Omit<PluginListGroup, 'plugins'>> = [
+    { key: 'success', label: '加载成功', dotClassName: 'bg-emerald-500' },
+    { key: 'loading', label: '加载中', dotClassName: 'bg-sky-500' },
+    { key: 'failed', label: '加载失败', dotClassName: 'bg-red-500' },
+    { key: 'disabled', label: '已禁用', dotClassName: 'bg-muted-foreground/45' },
+  ]
+  const getPluginListGroupKey = (plugin: InstalledPlugin): PluginListGroup['key'] => {
+    if (isPluginLoadSuccess(plugin)) {
+      return 'success'
+    }
+    if (isPluginLoading(plugin)) {
+      return 'loading'
+    }
+    if (isPluginLoadFailed(plugin)) {
+      return 'failed'
+    }
+    return 'disabled'
+  }
+  const visiblePluginGroups = pluginListGroupDefinitions
+    .map((group) => ({
+      ...group,
+      plugins: filteredVisiblePlugins.filter((plugin) => getPluginListGroupKey(plugin) === group.key),
+    }))
+    .filter((group) => group.plugins.length > 0)
+  const visiblePlugins = visiblePluginGroups.flatMap((group) => group.plugins)
 
   // 列表内启停插件
   const performTogglePlugin = async (plugin: InstalledPlugin) => {
@@ -426,6 +459,7 @@ export function usePluginList() {
     showUpdateOnly,
     setShowUpdateOnly: handleShowUpdateOnlyChange,
     visiblePlugins,
+    visiblePluginGroups,
     // 启停
     actingPluginId,
     setActingPluginId,
