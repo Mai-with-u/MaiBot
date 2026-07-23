@@ -32,6 +32,11 @@ class ToolAnnotation:
 
     audience: list[str] = field(default_factory=list)
     priority: float | None = None
+    title: str = ""
+    read_only: bool | None = None
+    destructive: bool | None = None
+    idempotent: bool | None = None
+    open_world: bool | None = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

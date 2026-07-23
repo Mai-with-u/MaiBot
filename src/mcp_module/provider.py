@@ -13,23 +13,23 @@ from src.core.tooling import (
     ToolSpec,
 )
 
-from .manager import MCPManager
+from .service import MCPService
 
 
 class MCPToolProvider(ToolProvider):
-    """基于 MCPManager 的工具 Provider。"""
+    """基于进程级 MCPService 的轻量工具 Provider。"""
 
     provider_name = "mcp"
     provider_type = "mcp"
 
-    def __init__(self, manager: MCPManager) -> None:
+    def __init__(self, service: MCPService) -> None:
         """初始化 MCP 工具 Provider。
 
         Args:
-            manager: MCP 管理器实例。
+            service: 进程级 MCP 服务。
         """
 
-        self._manager = manager
+        self._service = service
 
     async def list_tools(
         self,
@@ -38,7 +38,7 @@ class MCPToolProvider(ToolProvider):
         """列出全部 MCP 工具。"""
 
         del context
-        return self._manager.get_tool_specs()
+        return await self._service.list_tools()
 
     async def invoke(
         self,
@@ -55,11 +55,8 @@ class MCPToolProvider(ToolProvider):
             ToolExecutionResult: 工具执行结果。
         """
 
-        del context
-        return await self._manager.call_tool_invocation(invocation)
+        return await self._service.call_tool_invocation(invocation, context)
 
     async def close(self) -> None:
-        """关闭 Provider 并释放 MCP 连接。"""
-
-        await self._manager.close()
+        """Runtime 不拥有共享连接，因此关闭 Provider 时无需释放服务。"""
 
