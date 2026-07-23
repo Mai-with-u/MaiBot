@@ -53,7 +53,7 @@ class RelationWriteService:
         self.metadata_store = metadata_store
         self.graph_store = graph_store
         self.vector_store = vector_store
-        self.graph_vector_store = graph_vector_store or vector_store
+        self.graph_vector_store = graph_vector_store if graph_vector_store is not None else vector_store
         self.embedding_manager = embedding_manager
         self.use_typed_relation_ids = bool(use_typed_relation_ids)
 
@@ -87,6 +87,25 @@ class RelationWriteService:
             return []
 
         target_store = self.graph_vector_store if typed_id else self.vector_store
+        if target_store is None or self.embedding_manager is None:
+            error = "vector_channel_unavailable"
+            with self.metadata_store.transaction(immediate=True):
+                for record in records:
+                    self.metadata_store.set_relation_vector_state(
+                        record.hash_value,
+                        "failed",
+                        error=error,
+                        bump_retry=True,
+                    )
+            return [
+                RelationWriteResult(
+                    hash_value=record.hash_value,
+                    vector_written=False,
+                    vector_already_exists=False,
+                    vector_state="failed",
+                )
+                for record in records
+            ]
         vector_ids = {
             record.hash_value: (
                 self.relation_vector_id(record.hash_value) if typed_id else record.hash_value
@@ -241,14 +260,15 @@ class RelationWriteService:
         if not normalized_relations:
             return []
 
-        with self.metadata_store.transaction(immediate=True), self.graph_store.batch_update():
+        with self.metadata_store.transaction(immediate=True):
             relation_hashes = self.metadata_store.add_relations_batch(
                 normalized_relations,
                 confidence=confidence,
                 source_paragraph=source_paragraph,
                 metadata=metadata or {},
             )
-            statuses = self.metadata_store.get_relation_status_batch(relation_hashes)
+        statuses = self.metadata_store.get_relation_status_batch(relation_hashes)
+        if self.graph_store is not None:
             active_edges = [
                 ((subject, obj), relation_hash)
                 for relation_hash, (subject, _, obj) in zip(
@@ -259,10 +279,14 @@ class RelationWriteService:
                 if not bool((statuses.get(relation_hash) or {}).get("is_inactive"))
             ]
             if active_edges:
-                self.graph_store.add_edges(
-                    [edge for edge, _ in active_edges],
-                    relation_hashes=[relation_hash for _, relation_hash in active_edges],
-                )
+                try:
+                    with self.graph_store.batch_update():
+                        self.graph_store.add_edges(
+                            [edge for edge, _ in active_edges],
+                            relation_hashes=[relation_hash for _, relation_hash in active_edges],
+                        )
+                except Exception as exc:
+                    logger.exception(f"关系元数据已写入，但图谱投影失败: {exc}")
 
         records = [
             _RelationVectorRecord(
@@ -310,6 +334,19 @@ class RelationWriteService:
         """
         vector_id = self.relation_vector_id(hash_value) if typed_id else str(hash_value or "").strip()
         target_store = self.graph_vector_store if typed_id else self.vector_store
+        if target_store is None or self.embedding_manager is None:
+            self.metadata_store.set_relation_vector_state(
+                hash_value,
+                "failed",
+                error="vector_channel_unavailable",
+                bump_retry=True,
+            )
+            return RelationWriteResult(
+                hash_value=hash_value,
+                vector_written=False,
+                vector_already_exists=False,
+                vector_state="failed",
+            )
         if vector_id in target_store:
             self.metadata_store.set_relation_vector_state(hash_value, "ready")
             return RelationWriteResult(

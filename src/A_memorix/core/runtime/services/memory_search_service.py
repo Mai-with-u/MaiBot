@@ -29,7 +29,7 @@ class MemorySearchService(KernelServiceBase):
             group_id=request.group_id,
             user_id=request.user_id,
         ):
-            return {"summary": "", "hits": [], "filtered": True}
+            return {"summary": "", "hits": [], "filtered": True, **self._search_status_fields()}
 
         await self.initialize()
         assert self.retriever is not None
@@ -47,11 +47,12 @@ class MemorySearchService(KernelServiceBase):
                 "summary": "",
                 "hits": [],
                 "error": (f"不支持的检索模式: {mode}（仅支持 search/time/hybrid/episode/aggregate，semantic 已移除）"),
+                **self._search_status_fields(),
             }
         try:
             time_window = self._normalize_search_time_window(request.time_start, request.time_end)
         except ValueError as exc:
-            return {"summary": "", "hits": [], "error": str(exc)}
+            return {"summary": "", "hits": [], "error": str(exc), **self._search_status_fields()}
 
         if mode == "episode":
             rows = await self._episode_query_for_chat_scope(
@@ -117,9 +118,9 @@ class MemorySearchService(KernelServiceBase):
             enforce_chat_filter=bool(request.respect_filter),
         )
         if not result.success:
-            return {"summary": "", "hits": [], "error": result.error}
+            return {"summary": "", "hits": [], "error": result.error, **self._search_status_fields()}
         if result.chat_filtered:
-            return {"summary": "", "hits": [], "filtered": True}
+            return {"summary": "", "hits": [], "filtered": True, **self._search_status_fields()}
 
         hits = [self._retrieval_result_hit(item) for item in result.results]
         filtered = self._filter_hits(hits, request.person_id)
@@ -150,7 +151,21 @@ class MemorySearchService(KernelServiceBase):
             relation_hashes.append(relation_hash)
         if relation_hashes:
             await self._runtime_facade.reinforce_access(relation_hashes)
-        return {"summary": self._summary(hits), "hits": hits}
+        return {
+            "summary": self._summary(hits),
+            "hits": hits,
+            **self._search_status_fields(),
+        }
+
+    def _search_status_fields(self) -> Dict[str, Any]:
+        status = self._runtime_capability_status()
+        return {
+            "degraded": bool(status["degraded"]),
+            "retrieval_ready": bool(status["retrieval_ready"]),
+            "retrieval_mode": str(status["retrieval_mode"]),
+            "available_channels": list(status["available_channels"]),
+            "unavailable_channels": list(status["unavailable_channels"]),
+        }
 
     async def _aggregate_search(self, query: str, limit: int, request: KernelSearchRequest) -> Dict[str, Any]:
         shared_chat_ids = tuple(str(item or "").strip() for item in request.shared_chat_ids if str(item or "").strip())

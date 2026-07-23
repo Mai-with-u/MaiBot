@@ -320,7 +320,14 @@ describe('KnowledgeBasePage import workflow', () => {
       },
       vector_pools_ready: true,
       vector_pools_effective_mode: 'dual',
+      memory_enabled: true,
       runtime_ready: true,
+      retrieval_ready: true,
+      degraded: false,
+      retrieval_mode: 'hybrid',
+      available_channels: ['metadata', 'sparse', 'graph', 'vector_read', 'vector_write', 'embedding'],
+      unavailable_channels: [],
+      vector_health: { state: 'healthy' },
       embedding_degraded: false,
       embedding_degraded_reason: '',
       embedding_degraded_since: null,
@@ -1092,6 +1099,44 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(screen.getByText('双池迁移中')).toBeInTheDocument()
     expect(screen.getByText('实体完成 · 11183/12000 · 预计剩余 2分0秒')).toBeInTheDocument()
     expect(screen.getByText('93.2%')).toBeInTheDocument()
+  })
+
+  it('shows vector failure as degraded ready without disabling memory', async () => {
+    vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
+      success: true,
+      config: { plugin: { enabled: true } },
+      data_dir: 'data/plugins/a-dawn.a-memorix',
+      embedding_dimension: 1024,
+      auto_save: true,
+      relation_vectors_enabled: false,
+      memory_enabled: true,
+      runtime_ready: true,
+      retrieval_ready: true,
+      degraded: true,
+      retrieval_mode: 'sparse_graph',
+      available_channels: ['metadata', 'sparse', 'graph'],
+      unavailable_channels: ['vector_read', 'vector_write', 'embedding'],
+      vector_health: {
+        state: 'unavailable',
+        error_code: 'vector_unclassified_error',
+        reason: '向量文件无法读取',
+      },
+      embedding_degraded: true,
+      embedding_degraded_reason: '向量文件无法读取',
+      paragraph_vector_backfill_pending: 0,
+      paragraph_vector_backfill_running: 0,
+      paragraph_vector_backfill_failed: 0,
+      paragraph_vector_backfill_done: 0,
+    })
+
+    renderPage()
+
+    await waitForConsoleReady()
+
+    expect(screen.getByText('降级就绪')).toBeInTheDocument()
+    expect(screen.getByText('可用通道：元数据、稀疏、图谱')).toBeInTheDocument()
+    expect(screen.getByText('向量不可用')).toBeInTheDocument()
+    expect(screen.queryByText('已停用')).not.toBeInTheDocument()
   })
 
   it('shows pending ETA while vector pool migration rate is unavailable', async () => {

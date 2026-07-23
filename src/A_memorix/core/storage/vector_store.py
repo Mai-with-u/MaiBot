@@ -5,6 +5,7 @@
 """
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
@@ -30,6 +31,321 @@ from ..utils.quantization import QuantizationType
 from ..utils.io import atomic_write, atomic_save_path
 
 logger = get_logger("A_Memorix.VectorStore")
+
+
+class VectorStoreIntegrityError(RuntimeError):
+    """携带机器可读诊断信息的向量一致性异常。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        missing_count: int = 0,
+        unexpected_count: int = 0,
+        pair_aligned: Optional[bool] = None,
+        dimension_status: str = "unknown",
+        fingerprint_status: str = "unknown",
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = str(error_code or "vector_integrity_unknown")
+        self.missing_count = max(0, int(missing_count))
+        self.unexpected_count = max(0, int(unexpected_count))
+        self.pair_aligned = pair_aligned
+        self.dimension_status = str(dimension_status or "unknown")
+        self.fingerprint_status = str(fingerprint_status or "unknown")
+        self.details = dict(details or {})
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "error_code": self.error_code,
+            "reason": str(self),
+            "missing_count": self.missing_count,
+            "unexpected_count": self.unexpected_count,
+            "pair_aligned": self.pair_aligned,
+            "dimension_status": self.dimension_status,
+            "fingerprint_status": self.fingerprint_status,
+            "details": dict(self.details),
+        }
+
+
+@dataclass(frozen=True)
+class TrustedVectorViewReport:
+    """只读旧向量视图的可信性评估结果。"""
+
+    trusted_count: int
+    declared_count: int
+    disk_count: int
+    missing_count: int
+    unexpected_count: int
+    coverage: float
+    pair_aligned: bool
+    dimension_status: str
+    fingerprint_status: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "trusted_count": self.trusted_count,
+            "declared_count": self.declared_count,
+            "disk_count": self.disk_count,
+            "missing_count": self.missing_count,
+            "unexpected_count": self.unexpected_count,
+            "coverage": self.coverage,
+            "pair_aligned": self.pair_aligned,
+            "dimension_status": self.dimension_status,
+            "fingerprint_status": self.fingerprint_status,
+        }
+
+
+class ReadOnlyVectorStoreView:
+    """从已验证的旧成对文件加载可信交集，不允许任何持久化变更。"""
+
+    def __init__(
+        self,
+        *,
+        data_dir: Path,
+        dimension: int,
+        known_hashes: Dict[int, str],
+        row_offsets: Dict[int, int],
+        report: TrustedVectorViewReport,
+    ) -> None:
+        self.data_dir = Path(data_dir)
+        self.dimension = max(1, int(dimension))
+        self.report = report
+        self._known_hashes = dict(known_hashes)
+        self._row_offsets = dict(row_offsets)
+        self._lock = threading.RLock()
+        self._index = faiss.IndexIDMap2(faiss.IndexFlatIP(self.dimension))
+        self._load_index()
+
+    @staticmethod
+    def _fingerprint_status(
+        stored: Any,
+        expected: Optional[Dict[str, Any]],
+    ) -> str:
+        if not isinstance(stored, dict) or not str(stored.get("hash", "") or "").strip():
+            return "missing"
+        if not isinstance(expected, dict) or not str(expected.get("hash", "") or "").strip():
+            return "unknown"
+        return "matched" if str(stored.get("hash")) == str(expected.get("hash")) else "mismatched"
+
+    @classmethod
+    def open_trusted_v1(
+        cls,
+        *,
+        data_dir: Union[str, Path],
+        dimension: int,
+        expected_embedding_fingerprint: Optional[Dict[str, Any]],
+    ) -> "ReadOnlyVectorStoreView":
+        root = Path(data_dir)
+        meta_path = root / "vectors_metadata.json"
+        bin_path = root / "vectors.bin"
+        ids_path = root / "vectors_ids.bin"
+        if not meta_path.exists() or not bin_path.exists() or not ids_path.exists():
+            raise VectorStoreIntegrityError(
+                "旧向量只读视图缺少元数据或成对文件",
+                error_code="legacy_view_files_missing",
+                pair_aligned=False,
+            )
+
+        meta = _read_json_object(meta_path)
+        schema_version = meta.get("schema_version", 1)
+        if schema_version != 1 or isinstance(schema_version, bool):
+            raise VectorStoreIntegrityError(
+                f"旧向量只读视图仅支持 V1 元数据，当前版本为 {schema_version!r}",
+                error_code="legacy_view_schema_unsupported",
+            )
+
+        stored_dimension = meta.get("dimension", dimension)
+        dimension_status = "matched" if stored_dimension == dimension and not isinstance(stored_dimension, bool) else "mismatched"
+        fingerprint_status = cls._fingerprint_status(
+            meta.get("embedding_fingerprint"),
+            expected_embedding_fingerprint,
+        )
+        if dimension_status != "matched" or fingerprint_status != "matched":
+            raise VectorStoreIntegrityError(
+                "旧向量的维度或 embedding 指纹无法可信验证",
+                error_code="legacy_view_incompatible",
+                pair_aligned=None,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+
+        vector_item_size = int(dimension) * 2
+        vector_bytes = bin_path.stat().st_size
+        id_bytes = ids_path.stat().st_size
+        pair_aligned = (
+            vector_bytes % vector_item_size == 0
+            and id_bytes % 8 == 0
+            and vector_bytes // vector_item_size == id_bytes // 8
+        )
+        if not pair_aligned:
+            raise VectorStoreIntegrityError(
+                "旧向量数据文件与 ID 文件未对齐",
+                error_code="legacy_view_pair_misaligned",
+                pair_aligned=False,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+
+        raw_hashes = meta.get("known_hashes", meta.get("ids", []))
+        if not isinstance(raw_hashes, list) or any(
+            not isinstance(hash_value, str) or not hash_value for hash_value in raw_hashes
+        ):
+            raise VectorStoreIntegrityError(
+                "旧向量元数据的 ID 声明无效",
+                error_code="legacy_view_metadata_invalid",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+
+        deleted_ids = set(meta.get("deleted_ids", [])) if isinstance(meta.get("deleted_ids", []), list) else set()
+        declared_owners: Dict[int, str] = {}
+        ambiguous_declared_ids: Set[int] = set()
+        for hash_value in raw_hashes:
+            int_id = VectorStore._generate_id(hash_value)
+            existing = declared_owners.get(int_id)
+            if existing is not None and existing != hash_value:
+                ambiguous_declared_ids.add(int_id)
+            declared_owners[int_id] = hash_value
+
+        raw_disk_ids = np.fromfile(ids_path, dtype=">i8")
+        disk_counts = Counter(int(raw_id) for raw_id in raw_disk_ids)
+        row_offsets: Dict[int, int] = {}
+        for offset, raw_id in enumerate(raw_disk_ids):
+            int_id = int(raw_id)
+            if disk_counts[int_id] == 1:
+                row_offsets[int_id] = offset
+
+        trusted_owners = {
+            int_id: hash_value
+            for int_id, hash_value in declared_owners.items()
+            if int_id not in ambiguous_declared_ids
+            and int_id not in deleted_ids
+            and disk_counts.get(int_id, 0) == 1
+        }
+        trusted_offsets = {int_id: row_offsets[int_id] for int_id in trusted_owners}
+        expected_ids = Counter(VectorStore._generate_id(hash_value) for hash_value in raw_hashes)
+        actual_ids = Counter(int(raw_id) for raw_id in raw_disk_ids)
+        missing_count = sum((expected_ids - actual_ids).values())
+        unexpected_count = sum((actual_ids - expected_ids).values())
+        declared_count = len(raw_hashes)
+        trusted_count = len(trusted_owners)
+        report = TrustedVectorViewReport(
+            trusted_count=trusted_count,
+            declared_count=declared_count,
+            disk_count=len(raw_disk_ids),
+            missing_count=missing_count,
+            unexpected_count=unexpected_count,
+            coverage=(trusted_count / declared_count) if declared_count else 0.0,
+            pair_aligned=True,
+            dimension_status=dimension_status,
+            fingerprint_status=fingerprint_status,
+        )
+        return cls(
+            data_dir=root,
+            dimension=dimension,
+            known_hashes=trusted_owners,
+            row_offsets=trusted_offsets,
+            report=report,
+        )
+
+    def _load_index(self) -> None:
+        if not self._row_offsets:
+            return
+        vector_item_size = self.dimension * 2
+        int_ids: List[int] = []
+        vectors: List[np.ndarray] = []
+        with (self.data_dir / "vectors.bin").open("rb") as vector_file:
+            for int_id, offset in self._row_offsets.items():
+                vector_file.seek(offset * vector_item_size)
+                raw = vector_file.read(vector_item_size)
+                if len(raw) != vector_item_size:
+                    raise VectorStoreIntegrityError(
+                        f"读取可信旧向量时记录不完整: int_id={int_id}",
+                        error_code="legacy_view_record_truncated",
+                        pair_aligned=False,
+                        dimension_status="matched",
+                        fingerprint_status="matched",
+                    )
+                vectors.append(np.frombuffer(raw, dtype=np.float16).astype(np.float32))
+                int_ids.append(int_id)
+        vector_array = np.asarray(vectors, dtype=np.float32)
+        faiss.normalize_L2(vector_array)
+        self._index.add_with_ids(vector_array, np.asarray(int_ids, dtype=np.int64))
+
+    def search(self, query: np.ndarray, k: int = 10, filter_deleted: bool = True) -> Tuple[List[str], List[float]]:
+        del filter_deleted
+        query_local = np.asarray(query, dtype=np.float32)
+        if query_local.ndim == 1:
+            query_local = query_local.reshape(1, -1)
+        if query_local.shape != (1, self.dimension):
+            raise ValueError(f"query embedding dimension mismatch: expected={self.dimension} got={query_local.shape}")
+        if self._index.ntotal == 0:
+            return [], []
+        query_local = np.array(query_local, dtype=np.float32, order="C", copy=True)
+        faiss.normalize_L2(query_local)
+        with self._lock:
+            scores, int_ids = self._index.search(query_local, max(1, int(k)))
+        results = [
+            (self._known_hashes[int(int_id)], float(score))
+            for int_id, score in zip(int_ids[0], scores[0], strict=True)
+            if int(int_id) in self._known_hashes
+        ]
+        return [item[0] for item in results], [item[1] for item in results]
+
+    def iter_vectors_by_ids(
+        self,
+        ids: Sequence[str],
+        *,
+        batch_size: int = 1024,
+    ) -> Iterator[Dict[str, np.ndarray]]:
+        requested = {VectorStore._generate_id(str(item)): str(item) for item in ids if str(item)}
+        pending: Dict[str, np.ndarray] = {}
+        vector_item_size = self.dimension * 2
+        with (self.data_dir / "vectors.bin").open("rb") as vector_file:
+            for int_id, hash_value in requested.items():
+                offset = self._row_offsets.get(int_id)
+                if offset is None or self._known_hashes.get(int_id) != hash_value:
+                    continue
+                vector_file.seek(offset * vector_item_size)
+                raw = vector_file.read(vector_item_size)
+                if len(raw) != vector_item_size:
+                    raise VectorStoreIntegrityError(
+                        f"读取可信旧向量时记录不完整: int_id={int_id}",
+                        error_code="legacy_view_record_truncated",
+                        pair_aligned=False,
+                    )
+                vector = np.frombuffer(raw, dtype=np.float16).astype(np.float32)
+                vector /= max(float(np.linalg.norm(vector)), 1e-12)
+                pending[hash_value] = vector
+                if len(pending) >= max(1, int(batch_size)):
+                    yield pending
+                    pending = {}
+        if pending:
+            yield pending
+
+    def get_vectors(self, ids: Sequence[str]) -> Dict[str, np.ndarray]:
+        return {key: vector for batch in self.iter_vectors_by_ids(ids) for key, vector in batch.items()}
+
+    def has_data(self) -> bool:
+        return bool(self._known_hashes)
+
+    @property
+    def num_vectors(self) -> int:
+        return len(self._known_hashes)
+
+    def __contains__(self, hash_value: str) -> bool:
+        int_id = VectorStore._generate_id(str(hash_value or ""))
+        return self._known_hashes.get(int_id) == hash_value
+
+    @staticmethod
+    def _read_only_error(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("可信旧向量视图为只读，禁止修改或持久化")
+
+    add = save = delete = restore = clear = _read_only_error
 
 
 def _read_json_object(path: Path) -> Dict[str, Any]:
@@ -208,7 +524,11 @@ class VectorStore:
         bin_exists = self._bin_path.exists()
         ids_exists = self._ids_bin_path.exists()
         if bin_exists != ids_exists:
-            raise RuntimeError("向量数据文件与 ID 文件必须成对存在")
+            raise VectorStoreIntegrityError(
+                "向量数据文件与 ID 文件必须成对存在",
+                error_code="vector_pair_missing",
+                pair_aligned=False,
+            )
         if not bin_exists:
             return 0, 0
 
@@ -216,9 +536,23 @@ class VectorStore:
         id_bytes = self._ids_bin_path.stat().st_size
         vector_item_size = self.dimension * 2
         if vector_bytes % vector_item_size != 0 or id_bytes % 8 != 0:
-            raise RuntimeError("向量数据文件或 ID 文件存在不完整记录")
+            raise VectorStoreIntegrityError(
+                "向量数据文件或 ID 文件存在不完整记录",
+                error_code="vector_pair_truncated",
+                pair_aligned=False,
+                details={"vector_bytes": vector_bytes, "id_bytes": id_bytes},
+            )
         if vector_bytes // vector_item_size != id_bytes // 8:
-            raise RuntimeError("向量数据文件与 ID 文件记录数不一致")
+            raise VectorStoreIntegrityError(
+                "向量数据文件与 ID 文件记录数不一致",
+                error_code="vector_pair_count_mismatch",
+                pair_aligned=False,
+                dimension_status="matched",
+                details={
+                    "vector_records": vector_bytes // vector_item_size,
+                    "id_records": id_bytes // 8,
+                },
+            )
         return vector_bytes, id_bytes
 
     def _clear_pair_state_unlocked(self) -> Tuple[int, int, int]:
@@ -684,38 +1018,95 @@ class VectorStore:
         *,
         vector_bytes: int,
         id_bytes: int,
+        expected_embedding_fingerprint: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """V1 无提交代际；只有全量 ID 与 pair 严格一致时才单向升级。"""
         raw_known_hashes = meta.get("known_hashes", meta.get("ids", []))
         if not isinstance(raw_known_hashes, list) or any(
             not isinstance(hash_value, str) or not hash_value for hash_value in raw_known_hashes
         ):
-            raise RuntimeError("V1 向量元数据的 known_hashes 无效，拒绝升级")
+            raise VectorStoreIntegrityError(
+                "V1 向量元数据的 known_hashes 无效，拒绝升级",
+                error_code="v1_metadata_invalid",
+                pair_aligned=True,
+            )
         expected_ids = Counter(self._generate_id(hash_value) for hash_value in raw_known_hashes)
         if len(expected_ids) != len(raw_known_hashes):
-            raise RuntimeError("V1 向量元数据存在重复哈希或 int64 ID 冲突，拒绝升级")
+            raise VectorStoreIntegrityError(
+                "V1 向量元数据存在重复哈希或 int64 ID 冲突，拒绝升级",
+                error_code="v1_metadata_id_collision",
+                pair_aligned=True,
+            )
+
+        metadata_dimension = meta.get("dimension", self.dimension)
+        dimension_status = (
+            "matched"
+            if metadata_dimension == self.dimension and not isinstance(metadata_dimension, bool)
+            else "mismatched"
+        )
+        fingerprint_status = ReadOnlyVectorStoreView._fingerprint_status(
+            meta.get("embedding_fingerprint"),
+            expected_embedding_fingerprint,
+        )
+        if dimension_status != "matched":
+            raise VectorStoreIntegrityError(
+                f"V1 向量维度与当前实例不一致: {metadata_dimension!r} != {self.dimension}",
+                error_code="v1_dimension_mismatch",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+                details={
+                    "stored_dimension": metadata_dimension,
+                    "expected_dimension": self.dimension,
+                },
+            )
+        if expected_embedding_fingerprint is not None and fingerprint_status != "matched":
+            raise VectorStoreIntegrityError(
+                "V1 向量 embedding 指纹无法可信验证",
+                error_code=(
+                    "v1_fingerprint_missing"
+                    if fingerprint_status == "missing"
+                    else "v1_fingerprint_mismatch"
+                ),
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+
         actual_ids = self._disk_id_multiset_unlocked()
         if actual_ids != expected_ids:
             missing_count = sum((expected_ids - actual_ids).values())
             unexpected_count = sum((actual_ids - expected_ids).values())
-            raise RuntimeError(
+            raise VectorStoreIntegrityError(
                 "V1 向量元数据与成对文件不一致，拒绝升级: "
-                f"missing={missing_count}, unexpected={unexpected_count}"
+                f"missing={missing_count}, unexpected={unexpected_count}",
+                error_code="v1_id_set_mismatch",
+                missing_count=missing_count,
+                unexpected_count=unexpected_count,
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
             )
 
         raw_deleted_ids = meta.get("deleted_ids", [])
         if not isinstance(raw_deleted_ids, list) or any(
             not isinstance(int_id, int) or isinstance(int_id, bool) for int_id in raw_deleted_ids
         ):
-            raise RuntimeError("V1 向量元数据的 deleted_ids 无效，拒绝升级")
+            raise VectorStoreIntegrityError(
+                "V1 向量元数据的 deleted_ids 无效，拒绝升级",
+                error_code="v1_tombstone_invalid",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
         deleted_ids = set(raw_deleted_ids)
         if not deleted_ids.issubset(expected_ids):
-            raise RuntimeError("V1 向量元数据存在无对应向量的 tombstone，拒绝升级")
-
-        metadata_dimension = meta.get("dimension", self.dimension)
-        if metadata_dimension != self.dimension or isinstance(metadata_dimension, bool):
-            raise RuntimeError(
-                f"V1 向量维度与当前实例不一致: {metadata_dimension!r} != {self.dimension}"
+            raise VectorStoreIntegrityError(
+                "V1 向量元数据存在无对应向量的 tombstone，拒绝升级",
+                error_code="v1_tombstone_orphaned",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
             )
 
         self._known_hashes = set(raw_known_hashes)
@@ -759,6 +1150,7 @@ class VectorStore:
         *,
         vector_bytes: int,
         id_bytes: int,
+        expected_embedding_fingerprint: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         schema_version = meta.get("schema_version", 1)
         if schema_version == 1 and not isinstance(schema_version, bool):
@@ -767,16 +1159,64 @@ class VectorStore:
                 meta,
                 vector_bytes=vector_bytes,
                 id_bytes=id_bytes,
+                expected_embedding_fingerprint=expected_embedding_fingerprint,
             )
         if schema_version != 2 or isinstance(schema_version, bool):
             raise RuntimeError(f"不支持的向量元数据版本: {schema_version!r}")
 
+        metadata_dimension = meta.get("dimension")
+        dimension_status = (
+            "matched"
+            if metadata_dimension == self.dimension and not isinstance(metadata_dimension, bool)
+            else "mismatched"
+        )
+        fingerprint_status = ReadOnlyVectorStoreView._fingerprint_status(
+            meta.get("embedding_fingerprint"),
+            expected_embedding_fingerprint,
+        )
+        if dimension_status != "matched":
+            raise VectorStoreIntegrityError(
+                f"V2 向量维度与当前实例不一致: {metadata_dimension!r} != {self.dimension}",
+                error_code="v2_dimension_mismatch",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+                details={
+                    "stored_dimension": metadata_dimension,
+                    "expected_dimension": self.dimension,
+                },
+            )
+        if expected_embedding_fingerprint is not None and fingerprint_status != "matched":
+            raise VectorStoreIntegrityError(
+                "V2 向量 embedding 指纹无法可信验证",
+                error_code=(
+                    "v2_fingerprint_missing"
+                    if fingerprint_status == "missing"
+                    else "v2_fingerprint_mismatch"
+                ),
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+
         binary_commit = meta.get("binary_commit")
         if not isinstance(binary_commit, dict):
-            raise RuntimeError("V2 向量元数据缺少 binary_commit")
+            raise VectorStoreIntegrityError(
+                "V2 向量元数据缺少 binary_commit",
+                error_code="v2_commit_invalid",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
         transaction_id = binary_commit.get("transaction_id")
         if transaction_id is not None and (not isinstance(transaction_id, str) or not transaction_id):
-            raise RuntimeError("V2 向量元数据的 transaction_id 无效")
+            raise VectorStoreIntegrityError(
+                "V2 向量元数据的 transaction_id 无效",
+                error_code="v2_commit_invalid",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
         committed_vector_bytes = binary_commit.get("vector_bytes")
         committed_id_bytes = binary_commit.get("id_bytes")
         if (
@@ -787,10 +1227,20 @@ class VectorStore:
             or committed_vector_bytes != vector_bytes
             or committed_id_bytes != id_bytes
         ):
-            raise RuntimeError(
+            raise VectorStoreIntegrityError(
                 "V2 向量元数据提交长度与成对文件不一致: "
                 f"metadata=({committed_vector_bytes}, {committed_id_bytes}), "
-                f"pair=({vector_bytes}, {id_bytes})"
+                f"pair=({vector_bytes}, {id_bytes})",
+                error_code="v2_commit_mismatch",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+                details={
+                    "committed_vector_bytes": committed_vector_bytes,
+                    "committed_id_bytes": committed_id_bytes,
+                    "vector_bytes": vector_bytes,
+                    "id_bytes": id_bytes,
+                },
             )
         return meta
 
@@ -1877,7 +2327,12 @@ class VectorStore:
             self.save(target_dir)
             return {"migrated": True, "reason": "ok"}
 
-    def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
+    def load(
+        self,
+        data_dir: Optional[Union[str, Path]] = None,
+        *,
+        expected_embedding_fingerprint: Optional[Dict[str, Any]] = None,
+    ) -> None:
         with self._lock:
             self._raise_if_cleanup_checkpoint_broken_unlocked()
             if not data_dir:
@@ -1887,6 +2342,31 @@ class VectorStore:
                 raise ValueError("VectorStore 只能从初始化时绑定的 data_dir 加载")
             self._recover_interrupted_append_unlocked()
             self._recover_interrupted_compaction_unlocked()
+            meta_path = data_dir / "vectors_metadata.json"
+            preloaded_meta = _read_json_object(meta_path) if meta_path.exists() else None
+            if preloaded_meta is not None:
+                stored_dimension = preloaded_meta.get("dimension", self.dimension)
+                if stored_dimension != self.dimension or isinstance(stored_dimension, bool):
+                    schema_version = preloaded_meta.get("schema_version", 1)
+                    fingerprint_status = ReadOnlyVectorStoreView._fingerprint_status(
+                        preloaded_meta.get("embedding_fingerprint"),
+                        expected_embedding_fingerprint,
+                    )
+                    raise VectorStoreIntegrityError(
+                        f"向量维度与当前实例不一致: {stored_dimension!r} != {self.dimension}",
+                        error_code=(
+                            "v2_dimension_mismatch"
+                            if schema_version == 2 and not isinstance(schema_version, bool)
+                            else "v1_dimension_mismatch"
+                        ),
+                        pair_aligned=None,
+                        dimension_status="mismatched",
+                        fingerprint_status=fingerprint_status,
+                        details={
+                            "stored_dimension": stored_dimension,
+                            "expected_dimension": self.dimension,
+                        },
+                    )
             vector_bytes, _id_bytes = self._vector_pair_sizes_unlocked()
             self._bin_count = vector_bytes // (self.dimension * 2)
 
@@ -1900,7 +2380,6 @@ class VectorStore:
                     " 请先执行 scripts/release_vnext_migrate.py migrate。"
                 )
 
-            meta_path = data_dir / "vectors_metadata.json"
             if not meta_path.exists():
                 if vector_bytes:
                     raise RuntimeError("检测到未受元数据管理的向量二进制文件")
@@ -1909,9 +2388,10 @@ class VectorStore:
 
             meta = self._validate_or_migrate_vector_metadata_unlocked(
                 meta_path,
-                _read_json_object(meta_path),
+                preloaded_meta or {},
                 vector_bytes=vector_bytes,
                 id_bytes=_id_bytes,
+                expected_embedding_fingerprint=expected_embedding_fingerprint,
             )
 
             if meta.get("vector_norm") != "l2":

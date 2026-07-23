@@ -304,7 +304,91 @@ interface VectorPoolsBadge {
   iconClassName: string
 }
 
+const CHANNEL_LABELS: Record<string, string> = {
+  metadata: '元数据',
+  sparse: '稀疏',
+  graph: '图谱',
+  vector_read: '向量读取',
+  vector_write: '向量写入',
+  embedding: 'Embedding',
+}
+
+function formatChannelList(channels?: string[]): string {
+  return (channels ?? []).map((channel) => CHANNEL_LABELS[channel] ?? channel).join('、')
+}
+
+function resolveRuntimeBadge(runtimeConfig: MemoryRuntimeConfigPayload) {
+  const memoryEnabled = runtimeConfig.memory_enabled !== false
+  const coreReady = Boolean(runtimeConfig.runtime_ready)
+  const retrievalUnavailable = runtimeConfig.retrieval_ready === false
+  const degraded = Boolean(runtimeConfig.degraded || runtimeConfig.embedding_degraded || retrievalUnavailable)
+  const availableChannels = formatChannelList(runtimeConfig.available_channels)
+
+  if (!memoryEnabled) {
+    return {
+      value: '已停用',
+      description: '记忆功能已由用户配置关闭',
+      icon: CircleAlert,
+      className: 'border-slate-500/25',
+      iconClassName: 'text-slate-500',
+    }
+  }
+  if (!coreReady) {
+    return {
+      value: '核心不可用',
+      description: '元数据库未能完成初始化',
+      icon: CircleAlert,
+      className: 'border-red-500/25',
+      iconClassName: 'text-red-500',
+    }
+  }
+  if (degraded) {
+    return {
+      value: '降级就绪',
+      description: availableChannels ? `可用通道：${availableChannels}` : '核心可用，检索通道暂不可用',
+      icon: CircleAlert,
+      className: 'border-amber-500/25',
+      iconClassName: 'text-amber-500',
+    }
+  }
+  return {
+    value: '就绪',
+    description: availableChannels ? `可用通道：${availableChannels}` : '运行时检查通过',
+    icon: CheckCircle2,
+    className: 'border-emerald-500/25',
+    iconClassName: 'text-emerald-500',
+  }
+}
+
 function resolveVectorPoolsBadge(runtimeConfig: MemoryRuntimeConfigPayload): VectorPoolsBadge {
+  const vectorHealth = runtimeConfig.vector_health
+  const vectorState = String(vectorHealth?.state ?? '').trim().toLowerCase()
+  const copyProgress = vectorHealth?.copy_progress
+  const copyProcessed = readProgressNumber(copyProgress, 'processed')
+  const copyTotal = readProgressNumber(copyProgress, 'total')
+  const copyPercent = copyProcessed !== undefined && copyTotal !== undefined && copyTotal > 0
+    ? clampMigrationPercent((copyProcessed / copyTotal) * 100)
+    : undefined
+  if (vectorState === 'unavailable' || vectorState === 'degraded') {
+    return {
+      value: vectorState === 'unavailable' ? '向量不可用' : '向量降级',
+      description: vectorHealth?.reason || '已切换到稀疏、图谱检索',
+      className: 'border-amber-500/25',
+      iconClassName: 'text-amber-500',
+    }
+  }
+  if (vectorState === 'recovering') {
+    return {
+      value: '向量恢复中',
+      description: copyProcessed !== undefined && copyTotal !== undefined
+        ? `可信旧向量复制 ${Math.floor(copyProcessed)}/${Math.floor(copyTotal)}`
+        : '新向量世代已就绪，正在复制可信旧向量',
+      progressValue: copyPercent,
+      progressLabel: copyPercent === undefined ? undefined : `${copyPercent.toFixed(1)}%`,
+      className: 'border-amber-500/25',
+      iconClassName: 'text-amber-500',
+    }
+  }
   const vectorPools = runtimeConfig.vector_pools
   const configuredMode = normalizeVectorPoolMode(vectorPools?.configured_mode)
   const effectiveMode = normalizeVectorPoolMode(
@@ -627,17 +711,18 @@ export function KnowledgeBasePage() {
     if (!runtimeConfig) {
       return []
     }
+    const runtimeBadge = resolveRuntimeBadge(runtimeConfig)
     const vectorPoolsBadge = resolveVectorPoolsBadge(runtimeConfig)
     return [
       {
         label: '运行状态',
-        value: runtimeConfig.runtime_ready ? '就绪' : '未就绪',
-        description: runtimeConfig.embedding_degraded ? 'Embedding 降级运行' : '运行时检查通过',
+        value: runtimeBadge.value,
+        description: runtimeBadge.description,
         progressValue: undefined,
         progressLabel: undefined,
-        icon: runtimeConfig.runtime_ready ? CheckCircle2 : CircleAlert,
-        className: runtimeConfig.runtime_ready ? 'border-emerald-500/25' : 'border-amber-500/25',
-        iconClassName: runtimeConfig.runtime_ready ? 'text-emerald-500' : 'text-amber-500',
+        icon: runtimeBadge.icon,
+        className: runtimeBadge.className,
+        iconClassName: runtimeBadge.iconClassName,
       },
       {
         label: 'Embedding 维度',

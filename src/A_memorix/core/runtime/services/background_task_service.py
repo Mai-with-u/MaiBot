@@ -30,6 +30,8 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             self._ensure_background_task("person_profile_refresh_queue", self._person_profile_refresh_queue_loop)
             self._ensure_background_task("feedback_correction", self._feedback_correction_loop)
             self._ensure_background_task("feedback_correction_reconcile", self._feedback_correction_reconcile_loop)
+            if self._legacy_vector_view is not None:
+                self._ensure_background_task("legacy_vector_copy", self._legacy_vector_copy_loop)
             if self._should_start_dual_vector_auto_migration():
                 self._ensure_background_task("dual_vector_auto_migration", self._dual_vector_auto_migration_loop)
 
@@ -375,6 +377,20 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             raise
         except Exception as exc:
             logger.warning(f"paragraph_vector_backfill loop 异常: {exc}")
+
+    async def _legacy_vector_copy_loop(self) -> None:
+        """持续复制可信旧向量；该任务从不调用 embedding。"""
+        try:
+            while not self._background_stopping and self._legacy_vector_view is not None:
+                result = self._copy_legacy_vectors_once(batch_size=256)
+                if bool(result.get("done", False)):
+                    self._cleanup_vector_quarantine()
+                    break
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(f"可信旧向量后台复制失败，将在下次启动续做: {exc}")
 
     async def _person_profile_refresh_loop(self) -> None:
         try:

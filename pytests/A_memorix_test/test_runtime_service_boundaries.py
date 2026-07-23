@@ -617,7 +617,8 @@ def test_dual_vector_reload_uses_kernel_patched_state_boundaries(
         def has_data(self) -> bool:
             return False
 
-        def load(self) -> None:
+        def load(self, **kwargs: Any) -> None:
+            del kwargs
             self.loaded = True
 
         def warmup_index(self, *, force_train: bool = False) -> None:
@@ -673,7 +674,8 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
         def has_data(self) -> bool:
             return True
 
-        def load(self) -> None:
+        def load(self, **kwargs: Any) -> None:
+            del kwargs
             self.loaded = True
 
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
@@ -731,7 +733,7 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     }
 
 
-def test_dual_migration_start_uses_kernel_patched_state_boundaries(
+def test_dual_migration_does_not_trigger_historical_reembedding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
@@ -752,8 +754,8 @@ def test_dual_migration_start_uses_kernel_patched_state_boundaries(
 
     result = kernel._dual_vector_migration_service._should_start_dual_vector_auto_migration()
 
-    assert result is True
-    assert calls == ["config", "ready"]
+    assert result is False
+    assert calls == []
 
 
 def test_dual_migration_update_uses_kernel_patched_progress_normalizer(

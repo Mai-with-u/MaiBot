@@ -450,11 +450,21 @@ async def test_non_adopted_search_outcomes_do_not_submit_access(
     )
 
     if scenario == "error":
-        assert result == {"summary": "", "hits": [], "error": "retrieval failed"}
+        assert result["error"] == "retrieval failed"
     elif scenario == "chat_filtered":
-        assert result == {"summary": "", "hits": [], "filtered": True}
-    else:
-        assert result == {"summary": "", "hits": []}
+        assert result["filtered"] is True
+    assert result["summary"] == ""
+    assert result["hits"] == []
+    assert result["retrieval_mode"] == "unavailable"
+    assert result["available_channels"] == []
+    assert result["unavailable_channels"] == [
+        "metadata",
+        "sparse",
+        "graph",
+        "vector_read",
+        "vector_write",
+        "embedding",
+    ]
     assert reinforced == []
 
 

@@ -7,12 +7,7 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
     def _refresh_relation_write_service(self) -> None:
         from .. import sdk_memory_kernel as kernel_module
 
-        if (
-            self.metadata_store is None
-            or self.graph_store is None
-            or self.vector_store is None
-            or self.embedding_manager is None
-        ):
+        if self.metadata_store is None:
             self.relation_write_service = None
             return
         self.relation_write_service = kernel_module.RelationWriteService(
@@ -27,19 +22,17 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
     def _refresh_runtime_dependents(self, *, preserve_managers: bool = True) -> None:
         from .. import sdk_memory_kernel as kernel_module
 
-        if (
-            self.metadata_store is None
-            or self.graph_store is None
-            or self.vector_store is None
-            or self.embedding_manager is None
-            or self.retriever is None
-        ):
+        if self.metadata_store is None:
             return
 
         runtime_config = self._build_runtime_config()
-        self.episode_retriever = kernel_module.EpisodeRetrievalService(
-            metadata_store=self.metadata_store,
-            retriever=self.retriever,
+        self.episode_retriever = (
+            kernel_module.EpisodeRetrievalService(
+                metadata_store=self.metadata_store,
+                retriever=self.retriever,
+            )
+            if self.retriever is not None
+            else None
         )
         self.aggregate_query_service = kernel_module.AggregateQueryService(plugin_config=runtime_config)
         self.person_profile_service = kernel_module.PersonProfileService(
@@ -76,9 +69,17 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
     def _persist(self, *, force_vectors: bool = False) -> None:
         from .. import sdk_memory_kernel as kernel_module
 
-        rebuild_required = (
-            False if force_vectors else bool(self._vector_rebuild_status().get("vector_rebuild_required", False))
+        vector_available = any(
+            store is not None
+            for store in (
+                self.vector_store,
+                self.paragraph_vector_store,
+                self.graph_vector_store,
+            )
         )
+        rebuild_required = False
+        if vector_available and not force_vectors:
+            rebuild_required = bool(self._vector_rebuild_status().get("vector_rebuild_required", False))
         if self.vector_store is not None and not self._dual_vector_pools_enabled():
             if rebuild_required:
                 kernel_module.logger.debug("检测到向量库需要重建，跳过向量库持久化以保留重建提示")

@@ -350,9 +350,6 @@ class MemoryIngestService(KernelServiceBase):
 
         await self.initialize()
         assert self.metadata_store is not None
-        assert self.vector_store is not None
-        assert self.graph_store is not None
-        assert self.embedding_manager is not None
         assert self.relation_write_service is not None
 
         if not content:

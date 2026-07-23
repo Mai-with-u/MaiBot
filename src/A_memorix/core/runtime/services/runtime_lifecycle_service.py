@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from typing import List
 
+import time
+
 from src.common.logger import get_logger
 
+from ...storage import VectorStoreIntegrityError
 from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -88,6 +91,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         self.summary_importer = None
         self.import_task_manager = None
         self.retrieval_tuning_manager = None
+        self._legacy_vector_view = None
 
     async def _initialize_with_writer_lock(self) -> None:
         """完成格式迁移、存储装载、检索组装和后台任务启动。
@@ -104,46 +108,64 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         kernel_module.run_startup_format_migration(self.data_dir)
-        self.embedding_manager = kernel_module.create_embedding_api_adapter(
-            batch_size=int(self._cfg("embedding.batch_size", 32)),
-            max_concurrent=int(self._cfg("embedding.max_concurrent", 5)),
-            default_dimension=self.embedding_dimension,
-            enable_cache=bool(self._cfg("embedding.enable_cache", False)),
-            model_name=str(self._cfg("embedding.model_name", "auto") or "auto"),
-            dimension_request_mode=str(self._cfg("embedding.dimension_request_mode", "explicit") or "explicit"),
-            retry_config=self._cfg("embedding.retry", {}) or {},
-        )
-        stored_dimension = self._stored_vector_dimension()
-        provisional_dimension = stored_dimension or self.embedding_dimension
-        self.embedding_dimension = int(provisional_dimension)
+        try:
+            self.embedding_manager = kernel_module.create_embedding_api_adapter(
+                batch_size=int(self._cfg("embedding.batch_size", 32)),
+                max_concurrent=int(self._cfg("embedding.max_concurrent", 5)),
+                default_dimension=self.embedding_dimension,
+                enable_cache=bool(self._cfg("embedding.enable_cache", False)),
+                model_name=str(self._cfg("embedding.model_name", "auto") or "auto"),
+                dimension_request_mode=str(self._cfg("embedding.dimension_request_mode", "explicit") or "explicit"),
+                retry_config=self._cfg("embedding.retry", {}) or {},
+            )
+        except Exception as exc:
+            self.embedding_manager = None
+            self._set_runtime_capability("embedding", False)
+            self._set_embedding_degraded(active=True, reason=str(exc)[:500], checked_at=time.time())
+            logger.exception(f"[sdk] Embedding 通道初始化失败，核心运行时继续启动: {exc}")
+        else:
+            self._set_runtime_capability("embedding", True)
+
+        try:
+            stored_dimension = self._stored_vector_dimension()
+        except Exception as exc:
+            stored_dimension = None
+            logger.warning(f"读取历史向量维度失败，将使用配置维度并隔离向量加载: {exc}")
+        provisional_dimension = int(self.embedding_dimension)
+        if stored_dimension is not None and stored_dimension != provisional_dimension:
+            logger.warning(
+                "历史向量维度与当前配置不同，将按当前维度创建新世代: "
+                f"stored={stored_dimension}, current={provisional_dimension}"
+            )
 
         matrix_format = str(self._cfg("graph.sparse_matrix_format", "csr") or "csr").strip().lower()
         graph_format = (
             kernel_module.SparseMatrixFormat.CSC if matrix_format == "csc" else kernel_module.SparseMatrixFormat.CSR
         )
 
-        self.vector_store = self._make_vector_store(self._vectors_root(), dimension=provisional_dimension)
-        self.paragraph_vector_store = self._make_vector_store(
-            self._paragraph_vector_dir(),
-            dimension=provisional_dimension,
-        )
-        self.graph_vector_store = self._make_vector_store(
-            self._graph_vector_dir(),
-            dimension=provisional_dimension,
-        )
-        self.graph_store = kernel_module.GraphStore(matrix_format=graph_format, data_dir=self.data_dir / "graph")
         self.metadata_store = kernel_module.MetadataStore(data_dir=self.data_dir / "metadata")
         self.metadata_store.connect()
+        self._set_runtime_capability("metadata", True)
 
-        skip_vector_load = False
-        if self.graph_store.has_data():
-            self.graph_store.load()
-        projection_service = self._maintenance_service
-        type(projection_service)._reconcile_relation_graph_projection_jobs(
-            projection_service,
-            reset_leases=True,
-            batch_size=10_000,
-        )
+        try:
+            self.graph_store = kernel_module.GraphStore(
+                matrix_format=graph_format,
+                data_dir=self.data_dir / "graph",
+            )
+            if self.graph_store.has_data():
+                self.graph_store.load()
+            projection_service = self._maintenance_service
+            type(projection_service)._reconcile_relation_graph_projection_jobs(
+                projection_service,
+                reset_leases=True,
+                batch_size=10_000,
+            )
+        except Exception as exc:
+            self.graph_store = None
+            self._set_runtime_capability("graph", False)
+            logger.exception(f"[sdk] 图谱通道初始化失败，元数据与其他检索通道继续运行: {exc}")
+        else:
+            self._set_runtime_capability("graph", True)
 
         sparse_cfg_raw = self._cfg("retrieval.sparse", {}) or {}
         try:
@@ -151,27 +173,80 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         except Exception as exc:
             logger.warning(f"sparse 配置非法，回退默认: {exc}")
             sparse_cfg = kernel_module.SparseBM25Config()
-        self.sparse_index = kernel_module.SparseBM25Index(metadata_store=self.metadata_store, config=sparse_cfg)
-        if getattr(self.sparse_index.config, "enabled", False):
-            warmup_summary = self.sparse_index.warmup()
-            if warmup_summary.get("ok"):
+        try:
+            self.sparse_index = kernel_module.SparseBM25Index(
+                metadata_store=self.metadata_store,
+                config=sparse_cfg,
+            )
+            sparse_enabled = bool(getattr(self.sparse_index.config, "enabled", False))
+            if sparse_enabled:
+                warmup_summary = self.sparse_index.warmup()
+                if not warmup_summary.get("ok"):
+                    raise RuntimeError(str(warmup_summary.get("error", "sparse_warmup_failed")))
                 logger.info(
                     "[sdk] 稀疏索引预热完成: "
                     f"backend={warmup_summary.get('backend')}, "
                     f"docs={warmup_summary.get('doc_count')}, "
                     f"duration_ms={float(warmup_summary.get('duration_ms', 0.0)):.2f}"
                 )
-            else:
-                logger.warning(f"[sdk] 稀疏索引预热失败，后续检索将按需重试: {warmup_summary.get('error', 'unknown')}")
+            self._set_runtime_capability("sparse", sparse_enabled)
+        except Exception as exc:
+            self.sparse_index = None
+            self._set_runtime_capability("sparse", False)
+            logger.exception(f"[sdk] 稀疏通道初始化失败，其他检索通道继续运行: {exc}")
 
-        if not skip_vector_load and self.vector_store.has_data():
-            self.vector_store.load()
-            self.vector_store.warmup_index(force_train=True)
         self._dual_vector_pools_ready = False
-        if self._dual_vector_pools_config_enabled():
+        try:
+            self.vector_store = self._make_vector_store(
+                self._vectors_root(),
+                dimension=provisional_dimension,
+            )
+            self.paragraph_vector_store = self._make_vector_store(
+                self._paragraph_vector_dir(),
+                dimension=provisional_dimension,
+            )
+            self.graph_vector_store = self._make_vector_store(
+                self._graph_vector_dir(),
+                dimension=provisional_dimension,
+            )
             self._cleanup_stale_dual_vector_build_dirs()
-            if not self._reload_dual_vector_stores_from_disk():
-                logger.warning("双池配置已开启，但 ready manifest 不可用，当前按单池检索与写入运行")
+            self._resume_vector_recovery_if_needed()
+
+            dual_loaded = False
+            if self._dual_vector_pools_config_enabled():
+                dual_loaded = self._reload_dual_vector_stores_from_disk()
+            if dual_loaded and self._legacy_vector_view is None:
+                self._set_vector_health(
+                    state="healthy",
+                    error_code="",
+                    reason="",
+                    trusted_coverage=1.0,
+                    recovery_stage="idle",
+                    operation_id="",
+                    copy_progress={},
+                )
+            elif self._legacy_vector_view is None and self.vector_store.has_data():
+                self.vector_store.load(
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                )
+                self.vector_store.warmup_index(force_train=True)
+            self._set_runtime_capability("vector_read", True)
+            self._set_runtime_capability("vector_write", True)
+            if not dual_loaded and self._legacy_vector_view is None:
+                self._set_vector_health(
+                    state="healthy",
+                    error_code="",
+                    reason="",
+                    trusted_coverage=1.0,
+                    recovery_stage="idle",
+                    operation_id="",
+                    copy_progress={},
+                )
+        except VectorStoreIntegrityError as exc:
+            if not self._recover_known_vector_failure(exc):
+                self._disable_vector_channel(exc)
+        except Exception as exc:
+            self._disable_vector_channel(exc)
 
         self._refresh_relation_write_service()
 
@@ -182,13 +257,15 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             owner_tag="sdk_kernel",
             log_prefix="[sdk]",
         )
-        if not self._runtime_bundle.ready:
-            raise RuntimeError(self._runtime_bundle.error or "检索运行时初始化失败")
-
-        self.retriever = self._runtime_bundle.retriever
-        self.threshold_filter = self._runtime_bundle.threshold_filter
-        self.sparse_index = self._runtime_bundle.sparse_index or self.sparse_index
-        self._apply_runtime_sparse_mode()
+        if self._runtime_bundle.ready:
+            self.retriever = self._runtime_bundle.retriever
+            self.threshold_filter = self._runtime_bundle.threshold_filter
+            self.sparse_index = self._runtime_bundle.sparse_index or self.sparse_index
+            self._apply_runtime_sparse_mode()
+        else:
+            self.retriever = None
+            self.threshold_filter = None
+            logger.warning(self._runtime_bundle.error or "检索通道不可用，元数据核心仍保持运行")
 
         self._refresh_runtime_dependents(preserve_managers=True)
         self.import_task_manager = kernel_module.ImportTaskManager(self._runtime_facade)
@@ -284,5 +361,23 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                     "reason": "",
                     "since": None,
                     "last_check": None,
+                }
+                self._runtime_capabilities = {
+                    "metadata": False,
+                    "sparse": False,
+                    "graph": False,
+                    "vector_read": False,
+                    "vector_write": False,
+                    "embedding": False,
+                }
+                self._vector_health = {
+                    "state": "not_initialized",
+                    "error_code": "",
+                    "reason": "",
+                    "trusted_coverage": 0.0,
+                    "recovery_stage": "idle",
+                    "operation_id": "",
+                    "copy_progress": {},
+                    "updated_at": None,
                 }
                 self._runtime_writer_lock.release()

@@ -151,12 +151,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         if current is None:
             return False
         if stored is None:
-            stamped = self._stamp_missing_embedding_fingerprint_if_dimension_matches(store or self.vector_store)
-            if not stamped:
-                return False
-            stored = self._stored_embedding_fingerprint(store)
-            if stored is None:
-                return False
+            return False
         return str(current.get("hash", "") or "") == str(stored.get("hash", "") or "")
 
     def _vector_mismatch_error(self, *, stored_dimension: int, detected_dimension: int) -> str:
@@ -217,6 +212,10 @@ class MemoryEmbeddingStateService(KernelServiceBase):
                 "since": None,
                 "last_check": now,
             }
+        self._set_runtime_capability(
+            "embedding",
+            not active and self.embedding_manager is not None,
+        )
         if bool(prev.get("active", False)) != bool(active):
             if active:
                 logger.warning(

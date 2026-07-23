@@ -484,9 +484,20 @@ class AMemorixHostService:
             self._startup_queue_cache_loaded = True
 
     def _startup_status_payload(self) -> Dict[str, Any]:
+        memory_enabled = self.is_enabled()
+        runtime_status: Dict[str, Any] = {}
+        if self._kernel is not None and self._runtime_state == "ready":
+            runtime_status = self._kernel._runtime_capability_status()
         return {
-            "enabled": self.is_enabled(),
-            "runtime_ready": self._runtime_state == "ready",
+            "enabled": memory_enabled,
+            "memory_enabled": memory_enabled,
+            "runtime_ready": bool(runtime_status.get("runtime_ready", self._runtime_state == "ready")),
+            "retrieval_ready": bool(runtime_status.get("retrieval_ready", False)),
+            "degraded": bool(runtime_status.get("degraded", False)),
+            "retrieval_mode": str(runtime_status.get("retrieval_mode", "unavailable")),
+            "available_channels": list(runtime_status.get("available_channels", [])),
+            "unavailable_channels": list(runtime_status.get("unavailable_channels", [])),
+            "vector_health": dict(runtime_status.get("vector_health", {})),
             "startup_state": self._runtime_state,
             "initializing": self._runtime_state in {"starting", "migrating"},
             "initialization_failed": self._runtime_state == "failed",
@@ -871,6 +882,7 @@ class AMemorixHostService:
             return {
                 "success": True,
                 "enabled": False,
+                "memory_enabled": False,
                 "disabled": True,
                 "reason": reason,
                 "message": message,
@@ -883,10 +895,17 @@ class AMemorixHostService:
             return {
                 "success": True,
                 "enabled": False,
+                "memory_enabled": False,
                 "disabled": True,
                 "reason": reason,
                 "message": message,
                 "runtime_ready": False,
+                "retrieval_ready": False,
+                "degraded": False,
+                "retrieval_mode": "disabled",
+                "available_channels": [],
+                "unavailable_channels": [],
+                "vector_health": {"state": "disabled"},
                 "embedding_degraded": False,
                 "embedding_dimension": 0,
                 "auto_save": False,

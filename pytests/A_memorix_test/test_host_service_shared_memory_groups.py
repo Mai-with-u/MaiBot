@@ -33,6 +33,25 @@ class _FakeKernel:
         self.admin_calls.append((f"runtime:{action}", kwargs))
         return {"success": True, "component": "memory_runtime_admin", "action": action}
 
+    def _runtime_capability_status(self) -> dict[str, Any]:
+        return {
+            "memory_enabled": True,
+            "runtime_ready": True,
+            "retrieval_ready": True,
+            "degraded": False,
+            "retrieval_mode": "hybrid",
+            "available_channels": [
+                "metadata",
+                "sparse",
+                "graph",
+                "vector_read",
+                "vector_write",
+                "embedding",
+            ],
+            "unavailable_channels": [],
+            "vector_health": {"state": "healthy"},
+        }
+
 
 class _ReplayKernel:
     def __init__(self) -> None:

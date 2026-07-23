@@ -1408,6 +1408,27 @@ class MetadataStore(
         self._conn.commit()
         return cursor.rowcount > 0
 
+    def reset_vector_projection_state(self) -> Dict[str, int]:
+        """切换向量世代时重置派生状态，不修改正文、实体和关系本身。"""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            UPDATE relations
+            SET vector_state = 'none',
+                vector_updated_at = NULL,
+                vector_error = NULL,
+                vector_retry_count = 0
+            """
+        )
+        relation_count = max(0, int(cursor.rowcount))
+        cursor.execute("DELETE FROM paragraph_vector_backfill")
+        backfill_count = max(0, int(cursor.rowcount))
+        self._conn.commit()
+        return {
+            "relations_reset": relation_count,
+            "paragraph_backfill_cleared": backfill_count,
+        }
+
     def list_relations_by_vector_state(
         self,
         states: List[str],

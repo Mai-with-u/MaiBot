@@ -315,14 +315,15 @@ class DualPathRetriever:
 
     def __init__(
         self,
-        vector_store: VectorStore,
-        graph_store: GraphStore,
+        vector_store: Optional[VectorStore],
+        graph_store: Optional[GraphStore],
         metadata_store: MetadataStore,
-        embedding_manager: EmbeddingAPIAdapter,
+        embedding_manager: Optional[EmbeddingAPIAdapter],
         sparse_index: Optional[SparseBM25Index] = None,
         config: Optional[DualPathRetrieverConfig] = None,
         paragraph_vector_store: Optional[VectorStore] = None,
         graph_vector_store: Optional[VectorStore] = None,
+        legacy_vector_store: Optional[Any] = None,
     ):
         """
         初始化双路检索器
@@ -337,6 +338,7 @@ class DualPathRetriever:
         self.vector_store = vector_store
         self.paragraph_vector_store = paragraph_vector_store or vector_store
         self.graph_vector_store = graph_vector_store or vector_store
+        self.legacy_vector_store = legacy_vector_store
         self.graph_store = graph_store
         self.metadata_store = metadata_store
         self.embedding_manager = embedding_manager
@@ -345,15 +347,20 @@ class DualPathRetriever:
 
         # PageRank计算器
         ppr_config = PageRankConfig(alpha=self.config.ppr_alpha)
-        self._ppr = PersonalizedPageRank(
-            graph_store=graph_store,
-            config=ppr_config,
+        self._ppr = (
+            PersonalizedPageRank(graph_store=graph_store, config=ppr_config)
+            if graph_store is not None
+            else None
         )
         self._ppr_semaphore = asyncio.Semaphore(self.config.ppr_concurrency_limit)
-        self._graph_relation_recall = GraphRelationRecallService(
-            graph_store=graph_store,
-            metadata_store=metadata_store,
-            config=self.config.graph_recall,
+        self._graph_relation_recall = (
+            GraphRelationRecallService(
+                graph_store=graph_store,
+                metadata_store=metadata_store,
+                config=self.config.graph_recall,
+            )
+            if graph_store is not None
+            else None
         )
 
         logger.debug(
@@ -384,7 +391,12 @@ class DualPathRetriever:
 
     def _is_sparse_only_runtime(self) -> bool:
         mode = str(getattr(self.config.sparse, "mode", "auto") or "auto").strip().lower()
-        return bool(self._runtime_sparse_only or mode == "fallback_only")
+        return bool(
+            self._runtime_sparse_only
+            or mode == "fallback_only"
+            or self.vector_store is None
+            or self.embedding_manager is None
+        )
 
     async def retrieve(
         self,
@@ -1918,6 +1930,89 @@ class DualPathRetriever:
             payload["evidence"].append((evidence, float(evidence_score)))
         return evidence_by_paragraph
 
+    async def _merge_legacy_vector_candidates(
+        self,
+        *,
+        query_emb: np.ndarray,
+        candidates: Dict[str, RetrievalResult],
+        top_k: int,
+        temporal: Optional[TemporalQueryOptions],
+    ) -> None:
+        """合并只读旧向量结果；新世代已命中的段落保持优先。"""
+        legacy_store = self.legacy_vector_store
+        if legacy_store is None:
+            return
+        legacy_ids, legacy_scores = await asyncio.to_thread(
+            legacy_store.search,
+            query_emb,
+            k=max(1, int(top_k)),
+        )
+        if not legacy_ids:
+            return
+
+        paragraph_map = self.metadata_store.get_paragraphs_by_hashes(legacy_ids)
+        relation_map = self.metadata_store.get_relations_by_hashes(
+            legacy_ids,
+            include_inactive=False,
+        )
+        entity_map = self.metadata_store.get_entities_by_hashes(legacy_ids)
+        relation_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(
+            list(relation_map)
+        )
+        entity_paragraphs = self.metadata_store.get_paragraphs_by_entity_hashes(
+            list(entity_map)
+        )
+        for hash_value, raw_score in zip(legacy_ids, legacy_scores, strict=False):
+            score = float(raw_score)
+            paragraph = paragraph_map.get(hash_value)
+            if paragraph is not None:
+                paragraph_hash = str(paragraph.get("hash", "") or "")
+                if paragraph_hash in candidates:
+                    continue
+                if temporal and not self._is_temporal_match(paragraph, temporal):
+                    continue
+                self._add_candidate_score(
+                    candidates,
+                    paragraph,
+                    score_key="semantic",
+                    score=score,
+                    source="legacy_vector_view",
+                    temporal=temporal,
+                )
+                continue
+
+            if hash_value in relation_map:
+                support = relation_paragraphs.get(hash_value, [])
+                evidence_type = "relation"
+            elif hash_value in entity_map:
+                support = entity_paragraphs.get(hash_value, [])
+                evidence_type = "entity"
+            else:
+                continue
+            for support_paragraph in support:
+                paragraph_hash = str(support_paragraph.get("hash", "") or "")
+                if not paragraph_hash or paragraph_hash in candidates:
+                    continue
+                if temporal and not self._is_temporal_match(support_paragraph, temporal):
+                    continue
+                candidate = self._ensure_paragraph_candidate(
+                    candidates,
+                    support_paragraph,
+                    temporal=temporal,
+                )
+                self._mark_candidate_source(candidate, "legacy_vector_view")
+                self._append_graph_evidence(
+                    candidate,
+                    evidence={
+                        "type": evidence_type,
+                        "hash": hash_value,
+                        "source": "legacy_vector_view",
+                        "raw_score": score,
+                        "normalized_score": max(0.0, min(1.0, score)),
+                    },
+                    score=max(0.0, min(1.0, score)),
+                )
+
     async def _retrieve_dual_vector_pools(
         self,
         query: str,
@@ -1985,6 +2080,13 @@ class DualPathRetriever:
                     )
                 score_meta = self._candidate_score_meta(candidate)
                 score_meta["graph_evidence"] = self._aggregate_graph_evidence_score(candidate)
+
+            await self._merge_legacy_vector_candidates(
+                query_emb=query_emb,
+                candidates=candidates,
+                top_k=max(paragraph_top_k, graph_top_k),
+                temporal=temporal,
+            )
         else:
             logger.warning("embedding 不可用，跳过双向量池向量召回")
 
@@ -2441,6 +2543,9 @@ class DualPathRetriever:
         Returns:
             重排序后的结果
         """
+        if self.graph_store is None or self._ppr is None:
+            return results
+
         # 从查询中提取实体
         entities = self._extract_entities(query)
 
@@ -2531,6 +2636,8 @@ class DualPathRetriever:
             return scores
 
     def _compute_ppr_scores(self, entities: Dict[str, float]) -> Dict[str, float]:
+        if self._ppr is None:
+            return {}
         if self._should_use_local_ppr():
             scores = self._compute_local_ppr_scores(entities)
             if scores:
@@ -2539,7 +2646,8 @@ class DualPathRetriever:
 
     def _should_use_local_ppr(self) -> bool:
         return bool(
-            self.config.ppr_local_enabled
+            self.graph_store is not None
+            and self.config.ppr_local_enabled
             and self.graph_store.num_nodes >= self.config.ppr_local_min_graph_nodes
         )
 
@@ -2926,6 +3034,9 @@ class DualPathRetriever:
         Returns:
             实体字典 {实体名: 权重}
         """
+        if self.graph_store is None:
+            return {}
+
         # 获取所有实体
         all_entities = self.graph_store.get_nodes()
         if not all_entities:
@@ -2997,8 +3108,8 @@ class DualPathRetriever:
                 "size": int(vector_size),
             },
             "graph_store": {
-                "num_nodes": self.graph_store.num_nodes,
-                "num_edges": self.graph_store.num_edges,
+                "num_nodes": self.graph_store.num_nodes if self.graph_store is not None else 0,
+                "num_edges": self.graph_store.num_edges if self.graph_store is not None else 0,
             },
             "metadata_store": self.metadata_store.get_statistics(),
             "sparse": self.sparse_index.stats() if self.sparse_index else None,

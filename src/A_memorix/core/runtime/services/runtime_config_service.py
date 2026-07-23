@@ -18,12 +18,14 @@ class MemoryRuntimeConfigService(KernelServiceBase):
                 "vector_store": self.vector_store,
                 "paragraph_vector_store": self.paragraph_vector_store or self.vector_store,
                 "graph_vector_store": self.graph_vector_store or self.vector_store,
+                "legacy_vector_store": self._legacy_vector_view,
                 "graph_store": self.graph_store,
                 "metadata_store": self.metadata_store,
                 "embedding_manager": self.embedding_manager,
                 "sparse_index": self.sparse_index,
                 "relation_write_service": self.relation_write_service,
                 "plugin_instance": self._runtime_facade,
+                "runtime_capabilities": dict(self._runtime_capabilities),
             }
         )
         return runtime_config

@@ -9,7 +9,7 @@ import time
 
 from src.common.logger import get_logger
 
-from ...storage import QuantizationType, VectorStore
+from ...storage import QuantizationType, VectorStore, VectorStoreIntegrityError
 from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -65,9 +65,20 @@ class MemoryDualVectorStateService(KernelServiceBase):
         current_fingerprint = self._current_embedding_fingerprint()
         manifest_fingerprint = self._normalize_embedding_fingerprint(manifest.get("embedding_fingerprint"))
         if current_fingerprint is None or manifest_fingerprint is None:
-            logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")
-            return False
-        if str(current_fingerprint.get("hash", "") or "") != str(manifest_fingerprint.get("hash", "") or ""):
+            empty_recovery_generation = (
+                paragraph_count == 0
+                and graph_count == 0
+                and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
+            )
+            if not empty_recovery_generation:
+                logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")
+                return False
+        if (
+            current_fingerprint is not None
+            and manifest_fingerprint is not None
+            and str(current_fingerprint.get("hash", "") or "")
+            != str(manifest_fingerprint.get("hash", "") or "")
+        ):
             logger.warning(
                 "双池 ready manifest embedding 指纹不匹配，保持单池降级: "
                 f"manifest={manifest_fingerprint.get('hash', '')}, "
@@ -81,6 +92,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
         *,
         stats: Dict[str, Dict[str, int]],
         migration_stats: Dict[str, Dict[str, int]],
+        generation_reason: str = "",
     ) -> None:
         current_dimension = self._current_embedding_status_dimension()
         embedding_fingerprint = self._current_embedding_fingerprint(dimension=current_dimension)
@@ -96,6 +108,8 @@ class MemoryDualVectorStateService(KernelServiceBase):
             "stats": stats,
             "migration": migration_stats,
         }
+        if str(generation_reason or "").strip():
+            payload["generation_reason"] = str(generation_reason).strip()
         if embedding_fingerprint is not None:
             payload["embedding_fingerprint"] = embedding_fingerprint
         path = self._dual_vector_ready_manifest_path()
@@ -288,6 +302,59 @@ class MemoryDualVectorStateService(KernelServiceBase):
         if not self._dual_vector_ready(expected_dimension=current_dimension):
             self._try_recover_dual_ready_manifest()
         if not self._dual_vector_ready(expected_dimension=current_dimension):
+            manifest = self._read_dual_vector_ready_manifest()
+            if manifest is not None and manifest.get("status") == "ready":
+                manifest_dimension = int(manifest.get("dimension", 0) or 0)
+                paragraph_count = int(manifest.get("paragraph_vectors", 0) or 0)
+                graph_count = int(manifest.get("graph_vectors", 0) or 0)
+                current_fingerprint = self._current_embedding_fingerprint()
+                manifest_fingerprint = self._normalize_embedding_fingerprint(
+                    manifest.get("embedding_fingerprint")
+                )
+                if manifest_dimension not in {0, current_dimension}:
+                    raise VectorStoreIntegrityError(
+                        "双池 ready manifest 维度与当前 Embedding 不一致",
+                        error_code="v2_dimension_mismatch",
+                        dimension_status="mismatched",
+                        fingerprint_status="unknown",
+                        details={
+                            "stored_dimension": manifest_dimension,
+                            "expected_dimension": current_dimension,
+                        },
+                    )
+                empty_recovery_generation = (
+                    paragraph_count == 0
+                    and graph_count == 0
+                    and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
+                )
+                if current_fingerprint is None:
+                    raise RuntimeError("当前 Embedding 指纹不可用，无法校验双池世代")
+                if manifest_fingerprint is None and not empty_recovery_generation:
+                    raise VectorStoreIntegrityError(
+                        "双池 ready manifest 缺少 Embedding 指纹",
+                        error_code="v2_fingerprint_missing",
+                        dimension_status="matched",
+                        fingerprint_status="missing",
+                    )
+                if (
+                    manifest_fingerprint is not None
+                    and str(manifest_fingerprint.get("hash", "") or "")
+                    != str(current_fingerprint.get("hash", "") or "")
+                ):
+                    raise VectorStoreIntegrityError(
+                        "双池 ready manifest Embedding 指纹不匹配",
+                        error_code="v2_fingerprint_mismatch",
+                        dimension_status="matched",
+                        fingerprint_status="mismatched",
+                    )
+                if not self._paragraph_vector_dir().exists() or not self._graph_vector_dir().exists():
+                    raise VectorStoreIntegrityError(
+                        "双池 ready manifest 对应的向量目录不完整",
+                        error_code="dual_pool_missing",
+                        pair_aligned=False,
+                        dimension_status="matched",
+                        fingerprint_status="matched",
+                    )
             self.paragraph_vector_store = self._make_vector_store(self._paragraph_vector_dir())
             self.graph_vector_store = self._make_vector_store(self._graph_vector_dir())
             self._dual_vector_pools_ready = False
@@ -295,16 +362,16 @@ class MemoryDualVectorStateService(KernelServiceBase):
         try:
             paragraph_store = self._make_vector_store(self._paragraph_vector_dir())
             graph_store = self._make_vector_store(self._graph_vector_dir())
+            expected_fingerprint = self._current_embedding_fingerprint()
             if paragraph_store.has_data():
-                paragraph_store.load()
+                paragraph_store.load(expected_embedding_fingerprint=expected_fingerprint)
                 paragraph_store.warmup_index(force_train=True)
             if graph_store.has_data():
-                graph_store.load()
+                graph_store.load(expected_embedding_fingerprint=expected_fingerprint)
                 graph_store.warmup_index(force_train=True)
-        except Exception as exc:
-            logger.warning(f"加载双池向量失败，将暂时回退单池: {exc}")
+        except Exception:
             self._dual_vector_pools_ready = False
-            return False
+            raise
         self.paragraph_vector_store = paragraph_store
         self.graph_vector_store = graph_store
         self._dual_vector_pools_ready = True
@@ -325,9 +392,13 @@ class MemoryDualVectorStateService(KernelServiceBase):
             return False
         try:
             if paragraph_store.has_data():
-                paragraph_store.load()
+                paragraph_store.load(
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                )
             if graph_store.has_data():
-                graph_store.load()
+                graph_store.load(
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                )
         except Exception as exc:
             logger.warning(f"双池 ready manifest 自愈失败，加载向量池异常: {exc}")
             return False
