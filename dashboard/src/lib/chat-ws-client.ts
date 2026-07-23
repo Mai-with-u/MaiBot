@@ -1,5 +1,7 @@
 import { unifiedWsClient, type ConnectionStatus } from './unified-ws'
 
+const SESSION_RELEASE_DELAY_MS = 5 * 60 * 1000
+
 interface ChatSessionOpenPayload {
   client?: {
     type?: 'webui' | 'floating' | 'launcher'
@@ -54,6 +56,19 @@ class ChatWsClient {
   private openedSessions: Set<string> = new Set()
   // 记录正在进行中的打开请求，使同一会话的重复调用复用同一个 Promise。
   private pendingOpens: Map<string, Promise<void>> = new Map()
+  // 页面切换时暂时保留逻辑会话，避免路由卸载立即触发关闭和重建。
+  private pendingReleases: Map<string, ReturnType<typeof setTimeout>> = new Map()
+
+  private cancelPendingRelease(sessionId: string): boolean {
+    const releaseTimer = this.pendingReleases.get(sessionId)
+    if (releaseTimer === undefined) {
+      return false
+    }
+
+    clearTimeout(releaseTimer)
+    this.pendingReleases.delete(sessionId)
+    return true
+  }
 
   private initialize(): void {
     if (this.initialized) {
@@ -120,6 +135,7 @@ class ChatWsClient {
   async openSession(sessionId: string, payload: ChatSessionOpenPayload): Promise<void> {
     this.initialize()
 
+    const isResuming = this.cancelPendingRelease(sessionId)
     const previousPayload = this.sessionPayloads.get(sessionId)
     this.sessionPayloads.set(sessionId, payload)
 
@@ -130,21 +146,24 @@ class ChatWsClient {
       return
     }
 
-    // 如果该会话在当前 WS 连接上已经打开，且负载未变化，则跳过，避免服务端重复断开/重连。
+    // 页面返回时复用服务端逻辑会话，并通过 restore 重新同步离开期间的聊天状态。
+    // 普通重复调用仍直接跳过，避免重复下发历史记录。
     if (
       this.openedSessions.has(sessionId) &&
       previousPayload !== undefined &&
-      arePayloadsEqual(previousPayload, payload)
+      arePayloadsEqual(previousPayload, payload) &&
+      !isResuming
     ) {
       return
     }
 
+    const requestPayload = isResuming ? { ...payload, restore: true } : payload
     const openPromise = unifiedWsClient
       .call({
         domain: 'chat',
         method: 'session.open',
         session: sessionId,
-        data: payload as Record<string, unknown>,
+        data: requestPayload as Record<string, unknown>,
       })
       .then(() => {
         this.openedSessions.add(sessionId)
@@ -158,7 +177,25 @@ class ChatWsClient {
     }
   }
 
+  releaseSession(sessionId: string): void {
+    if (
+      this.pendingReleases.has(sessionId) ||
+      (!this.sessionPayloads.has(sessionId) &&
+        !this.openedSessions.has(sessionId) &&
+        !this.pendingOpens.has(sessionId))
+    ) {
+      return
+    }
+
+    const releaseTimer = setTimeout(() => {
+      this.pendingReleases.delete(sessionId)
+      void this.closeSession(sessionId)
+    }, SESSION_RELEASE_DELAY_MS)
+    this.pendingReleases.set(sessionId, releaseTimer)
+  }
+
   async closeSession(sessionId: string): Promise<void> {
+    this.cancelPendingRelease(sessionId)
     this.sessionPayloads.delete(sessionId)
     this.openedSessions.delete(sessionId)
     this.pendingOpens.delete(sessionId)
