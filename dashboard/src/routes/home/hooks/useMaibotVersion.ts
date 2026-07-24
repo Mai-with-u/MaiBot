@@ -12,6 +12,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  getVersionCompatibility,
+  type VersionCompatibilityResult,
+} from '@/lib/version-compatibility-api'
+
 import type { ReleaseStatus } from '../types'
 
 export function useMaibotVersion() {
@@ -19,6 +24,7 @@ export function useMaibotVersion() {
   const [hitokoto, setHitokoto] = useState<{ hitokoto: string; from: string } | null>(null)
   const [hitokotoLoading, setHitokotoLoading] = useState(true)
   const [maibotStableRelease, setMaibotStableRelease] = useState<ReleaseStatus | null>(null)
+  const [versionCompatibility, setVersionCompatibility] = useState<VersionCompatibilityResult | null>(null)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
   const isMountedRef = useRef(true)
@@ -27,6 +33,26 @@ export function useMaibotVersion() {
     return () => {
       isMountedRef.current = false
     }
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    const loadVersionCompatibility = async () => {
+      try {
+        const result = await getVersionCompatibility(controller.signal)
+        if (!controller.signal.aborted) {
+          setVersionCompatibility(result)
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.debug('检查版本匹配状态失败:', error)
+        }
+      }
+    }
+
+    void loadVersionCompatibility()
+    return () => controller.abort()
   }, [])
 
   // 挂载时拉取 GitHub 最新稳定版
@@ -104,6 +130,7 @@ export function useMaibotVersion() {
     hitokoto,
     hitokotoLoading,
     maibotStableRelease,
+    versionCompatibility,
     fetchHitokoto,
   }
 }

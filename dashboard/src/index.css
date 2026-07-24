@@ -893,6 +893,12 @@
 
 :root[data-dashboard-style='future-retro']
   [data-home-summary-cards='true']
+  [data-dashboard-card-content='true'][data-home-titleless-content='true'] {
+  padding-top: 0.875rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-home-summary-cards='true']
   [data-dashboard-card-header='true'].pb-3 {
   padding-bottom: 0.5rem !important;
 }

@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { HomeCardManager } from '../home/HomeCardManager'
 import { IndexPage } from '../index'
 import { backendApi } from '@/lib/http'
 import * as configApi from '@/lib/config-api'
@@ -53,7 +54,11 @@ vi.mock('@/lib/http', () => ({ backendApi: { get: vi.fn() } }))
 vi.mock('@/lib/config-api', () => ({ getBotConfigCached: vi.fn(), getModelConfigCached: vi.fn() }))
 vi.mock('@/lib/expression-api', () => ({ getReviewStats: vi.fn() }))
 vi.mock('@/lib/system-api', () => ({ getLocalCacheStats: vi.fn() }))
-vi.mock('@/lib/plugin-api', () => ({ getInstalledPlugins: vi.fn(), getPluginConfigSchema: vi.fn() }))
+vi.mock('@/lib/plugin-api', () => ({
+  getInstalledPlugins: vi.fn(),
+  getPluginConfigSchema: vi.fn(),
+  getPluginHomeCards: vi.fn(),
+}))
 
 const dashboardData = {
   summary: { total_requests: 1234, total_cost: 12.3, total_tokens: 56789, online_time: 3600, total_messages: 100, total_replies: 90, avg_response_time: 1.2, cost_per_hour: 1, tokens_per_hour: 100 },
@@ -75,6 +80,7 @@ beforeEach(() => {
   vi.mocked(expressionApi.getReviewStats).mockResolvedValue({ unchecked: 3, passed: 10 } as never)
   vi.mocked(systemApi.getLocalCacheStats).mockResolvedValue({ directories: [], database: { total_size: 0, files: [], tables: [] } } as never)
   vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([] as never)
+  vi.mocked(pluginApi.getPluginHomeCards).mockResolvedValue([])
   // 一言 + GitHub 版本走原生 fetch
   vi.stubGlobal('fetch', vi.fn((url: string) => {
     if (typeof url === 'string' && url.includes('github')) {
@@ -102,6 +108,66 @@ describe('IndexPage 特征化', () => {
   it('一言通过原生 fetch 拉取', async () => {
     render(<IndexPage />)
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('hitokoto')))
+  })
+
+  it('首页使用精简版本行且不再显示标题和版本卡片', async () => {
+    window.localStorage.setItem('maibot-home-card-layout-v1', JSON.stringify({
+      order: [
+        'builtin:bot-status',
+        'builtin:quick-actions',
+        'builtin:stats-overview',
+        'builtin:storage',
+      ],
+      hidden: [],
+      rowModes: {},
+    }))
+    render(<IndexPage />)
+
+    expect(await screen.findByText('V1.0.0')).toBeInTheDocument()
+    expect(screen.getByText('V1.6.0')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /home\.versionCard\.updateAvailable V2\.0\.0/ })).toBeInTheDocument()
+    expect(screen.queryByText('home.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('home.versionCard.title')).not.toBeInTheDocument()
+
+    await screen.findByText('home.storage.manage')
+    expect(screen.queryByText('home.quickActions.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('home.storage.title')).not.toBeInTheDocument()
+    const customizeButton = screen.getByRole('button', { name: 'home.quickActions.customize' })
+    expect(customizeButton.parentElement).toHaveAttribute('data-home-titleless-content', 'true')
+    expect(document.querySelector('[data-home-storage-details="true"]')).toHaveClass('lg:grid-cols-2')
+    const cardIds = Array.from(document.querySelectorAll('[data-home-card-id]'))
+      .map((card) => card.getAttribute('data-home-card-id'))
+    expect(cardIds.slice(0, 3)).toEqual([
+      'builtin:bot-status',
+      'builtin:quick-actions',
+      'builtin:storage',
+    ])
+  })
+
+  it('插件首页卡片可以隐藏卡面标题', async () => {
+    render(
+      <HomeCardManager
+        cards={[]}
+        pluginCards={[{
+          id: 'plugin:test:titleless',
+          name: 'titleless',
+          plugin_id: 'test',
+          title: '仅用于管理的标题',
+          show_title: false,
+          description: '',
+          content: '无标题卡片内容',
+          link_url: '',
+          link_label: '',
+          icon: '',
+          width: 'medium',
+          order: 1000,
+          enabled: true,
+        }]}
+      />
+    )
+
+    expect(await screen.findByText('无标题卡片内容')).toBeInTheDocument()
+    expect(screen.queryByText('仅用于管理的标题')).not.toBeInTheDocument()
   })
 
   it('切换时间范围以新的 hours 重新拉取仪表盘', async () => {

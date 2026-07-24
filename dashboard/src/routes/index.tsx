@@ -235,6 +235,22 @@ function isTransferJobRunning(job: DataTransferJob | null): job is DataTransferJ
   return job?.status === 'pending' || job?.status === 'running'
 }
 
+function compareVersions(left: string, right: string): number {
+  const parseVersion = (version: string): number[] => {
+    const match = version.replace(/^v/i, '').match(/^\d+(?:\.\d+)*/)
+    return (match?.[0] ?? '0').split('.').map((part) => Number.parseInt(part, 10))
+  }
+  const leftParts = parseVersion(left)
+  const rightParts = parseVersion(right)
+  const length = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  return 0
+}
+
 function IndexPageContent() {
   const { t, i18n } = useTranslation()
   const { toast } = useToast()
@@ -248,7 +264,13 @@ function IndexPageContent() {
   const { featureStatus, fetchFeatureStatus } = useFeatureStatus()
   const { localCacheStats, isLocalCacheStatsLoading, fetchLocalCacheStats } = useLocalCacheMetrics()
   const { uncheckedCount, fetchReviewStats } = useReviewStats()
-  const { hitokoto, hitokotoLoading, maibotStableRelease, fetchHitokoto } = useMaibotVersion()
+  const {
+    hitokoto,
+    hitokotoLoading,
+    maibotStableRelease,
+    versionCompatibility,
+    fetchHitokoto,
+  } = useMaibotVersion()
   const { pluginHomeCards } = usePluginHomeCards()
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
@@ -591,63 +613,9 @@ function IndexPageContent() {
 
   const homeCards: HomeCardDefinition[] = [
     {
-      id: 'builtin:version',
-      title: t('home.versionCard.title'),
-      width: 'small',
-      source: 'builtin',
-      render: () => (
-        <Card className="h-full">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex h-5 items-center gap-2 text-sm font-medium leading-5">
-              <FileText className="h-4 w-4" />
-              {t('home.versionCard.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">{t('home.versionCard.mainVersion')}</span>
-                <Badge
-                  variant="secondary"
-                  data-dashboard-version-value="true"
-                  className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary"
-                >
-                  {botStatus?.version ? `v${botStatus?.version}` : t('home.versionCard.unknown')}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">{t('home.versionCard.webuiVersion')}</span>
-                <Badge
-                  variant="secondary"
-                  data-dashboard-version-value="true"
-                  className="border border-primary/20 bg-primary/10 px-2 py-0.5 font-semibold text-primary"
-                >
-                  v{APP_VERSION}
-                </Badge>
-              </div>
-              <div className="space-y-1 border-t border-border/50 pt-2 text-xs text-muted-foreground/60">
-                <a
-                  href={maibotStableRelease?.url || 'https://github.com/Mai-with-u/MaiBot/releases'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between gap-2 transition-colors hover:text-muted-foreground"
-                >
-                  <span>{t('home.versionCard.stableLatest')}</span>
-                  <span className="inline-flex items-center gap-1">
-                    {maibotStableRelease ? `v${maibotStableRelease?.version}` : t('home.versionCard.githubReleases')}
-                    <ExternalLink className="h-3 w-3" />
-                  </span>
-                </a>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ),
-    },
-    {
       id: 'builtin:bot-status',
       title: t('home.botStatus.title'),
-      width: 'medium',
+      width: 'small',
       source: 'builtin',
       render: () => (
         <Card className="h-full">
@@ -744,26 +712,25 @@ function IndexPageContent() {
     {
       id: 'builtin:quick-actions',
       title: t('home.quickActions.title'),
-      width: 'large',
+      width: 'medium',
       source: 'builtin',
       render: () => (
         <Card className="h-full">
-          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-            <CardTitle className="flex h-5 items-center gap-2 text-sm font-medium leading-5">
-              <StreamlineIcon name="one-finger-short-tap-remix" fallback={Zap} className="h-4 w-4" />
-              {t('home.quickActions.title')}
-            </CardTitle>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setQuickShortcutDialogOpen(true)}
-              aria-label={t('home.quickActions.customize')}
-              className="h-8 w-8"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </CardHeader>
-          <CardContent>
+          <CardContent
+            data-home-titleless-content="true"
+            className="relative pt-4 sm:pt-5"
+          >
+            {selectedQuickShortcuts.length > 0 && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setQuickShortcutDialogOpen(true)}
+                aria-label={t('home.quickActions.customize')}
+                className="absolute right-4 top-3 h-8 w-8"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            )}
             {selectedQuickShortcuts.length === 0 ? (
               <div className="flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -772,7 +739,7 @@ function IndexPageContent() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 pr-12">
                 {selectedQuickShortcuts.map((shortcut) => {
                   const Icon = shortcut.icon
                   const content = (
@@ -935,17 +902,14 @@ function IndexPageContent() {
     {
       id: 'builtin:storage',
       title: t('home.storage.title'),
-      width: 'medium',
+      width: 'large',
       source: 'builtin',
       render: () => (
         <Card className="h-full xl:self-stretch">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex h-5 items-center gap-2 text-sm font-medium leading-5">
-              <HardDrive className="h-4 w-4" />
-              {t('home.storage.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent
+            data-home-titleless-content="true"
+            className="pt-4 sm:pt-5"
+          >
             <div className="space-y-3">
               <div>
                 <div className="text-2xl font-bold">
@@ -958,7 +922,10 @@ function IndexPageContent() {
                 )}
               </div>
               {hasLocalCacheStats && (
-                <div className="space-y-2.5">
+                <div
+                  data-home-storage-details="true"
+                  className="grid grid-cols-1 gap-x-5 gap-y-3 lg:grid-cols-2"
+                >
                   {storageDetails.map((item) => {
                     const Icon = item.icon
                     const percent = totalStorageSize > 0 ? (item.size / totalStorageSize) * 100 : 0
@@ -992,50 +959,25 @@ function IndexPageContent() {
       ),
     },
   ]
+  const firstRowCardIds = ['builtin:bot-status', 'builtin:quick-actions', 'builtin:storage']
+  const orderedHomeCards = [
+    ...firstRowCardIds
+      .map((id) => homeCards.find((card) => card.id === id))
+      .filter((card): card is HomeCardDefinition => card !== undefined),
+    ...homeCards.filter((card) => !firstRowCardIds.includes(card.id)),
+  ]
   const showLegacyHomeCards = false
+  const maibotUpdateAvailable = Boolean(
+    botStatus?.version
+    && maibotStableRelease
+    && compareVersions(maibotStableRelease.version, botStatus.version) > 0
+  )
+  const versionsMismatch = versionCompatibility?.status !== undefined
+    && versionCompatibility.status !== 'compatible'
 
   return (
     <ScrollArea className="h-full">
       <div className="space-y-2 sm:space-y-4 p-4 sm:p-6">
-      {/* 标题和控制栏 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">{t('home.title')}</h1>
-        </div>
-      </div>
-
-      {/* 一言 */}
-      <div
-        className={cn(
-          'flex items-center gap-3 rounded-lg bg-muted/20 px-4 py-1',
-          themeConfig.dashboardStyle !== 'future-retro' && 'border border-dashed border-muted-foreground/30'
-        )}
-      >
-        {hitokotoLoading ? (
-          <Skeleton className="h-5 flex-1" />
-        ) : hitokoto ? (
-          <p
-            className={cn(
-              'flex-1 truncate text-muted-foreground',
-              themeConfig.dashboardStyle === 'future-retro'
-                ? 'text-[1.05rem] font-medium tracking-wide'
-                : 'text-sm italic'
-            )}
-            style={
-              themeConfig.dashboardStyle === 'future-retro'
-                ? {
-                    fontFamily:
-                      '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
-                    textShadow: '0 0.035em 0 hsl(var(--background))',
-                  }
-                : undefined
-            }
-          >
-            "{hitokoto.hitokoto}" —— {hitokoto.from}
-          </p>
-        ) : null}
-      </div>
-
       {platformAccountConfigured === false && (
         <Card className="border-2 border-orange-500 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-950/20">
           <CardHeader className="pb-3">
@@ -1059,10 +1001,71 @@ function IndexPageContent() {
         </Card>
       )}
 
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-x-7 gap-y-2 font-sans font-black uppercase tracking-[0.12em] text-primary',
+          versionsMismatch && 'text-amber-600 dark:text-amber-400'
+        )}
+      >
+        <span className="inline-flex items-baseline gap-2">
+          <span className="text-[11px] tracking-[0.2em] opacity-70">{t('home.versionCard.maibotVersion')}</span>
+          <span className="text-base">
+            {botStatus?.version ? `V${botStatus.version}` : t('home.versionCard.unknown')}
+          </span>
+        </span>
+        <span className="inline-flex items-baseline gap-2">
+          <span className="text-[11px] tracking-[0.2em] opacity-70">{t('home.versionCard.consoleVersion')}</span>
+          <span className="text-base">V{APP_VERSION}</span>
+        </span>
+        {maibotUpdateAvailable && maibotStableRelease && (
+          <a
+            href={maibotStableRelease.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-sky-600 hover:underline dark:text-sky-400"
+          >
+            {t('home.versionCard.updateAvailable')} V{maibotStableRelease.version}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
+        {versionsMismatch && <span className="text-sm">{t('home.versionCard.mismatch')}</span>}
+      </div>
+
       <HomeCardManager
-        cards={homeCards}
+        cards={orderedHomeCards}
         pluginCards={pluginHomeCards}
         controlsPortalId="home-card-controls-bottom"
+        firstRowSeparator={(
+          <div
+            className={cn(
+              'flex h-full w-full items-center gap-3 rounded-lg bg-muted/20 px-4',
+              themeConfig.dashboardStyle !== 'future-retro' && 'border border-dashed border-muted-foreground/30'
+            )}
+          >
+            {hitokotoLoading ? (
+              <Skeleton className="h-5 flex-1" />
+            ) : hitokoto ? (
+              <p
+                className={cn(
+                  'flex-1 truncate text-muted-foreground',
+                  themeConfig.dashboardStyle === 'future-retro'
+                    ? 'text-[1.05rem] font-medium tracking-wide'
+                    : 'text-sm italic'
+                )}
+                style={
+                  themeConfig.dashboardStyle === 'future-retro'
+                    ? {
+                        fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
+                        textShadow: '0 0.035em 0 hsl(var(--background))',
+                      }
+                    : undefined
+                }
+              >
+                "{hitokoto.hitokoto}" —— {hitokoto.from}
+              </p>
+            ) : null}
+          </div>
+        )}
       />
 
       {showLegacyHomeCards && (

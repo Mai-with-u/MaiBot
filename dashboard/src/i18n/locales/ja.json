@@ -1111,6 +1111,10 @@
     },
     "versionCard": {
       "title": "MaiBot バージョン",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "バージョン不一致",
       "mainVersion": "本体バージョン",
       "webuiVersion": "WebUI バージョン",
       "latestVersion": "最新バージョン",

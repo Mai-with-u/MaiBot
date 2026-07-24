@@ -1111,6 +1111,10 @@
     },
     "versionCard": {
       "title": "麦麦版本",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "版本不匹配",
       "mainVersion": "主程序版本",
       "webuiVersion": "WebUI 版本",
       "stableLatest": "最新版本",

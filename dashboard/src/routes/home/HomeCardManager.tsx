@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ExternalLink, GripVertical, Plus, RotateCcw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
@@ -43,6 +43,17 @@ const HOME_CARD_LAYOUT_STORAGE_KEY = 'maibot-home-card-layout-v1'
 const HOME_CARD_LOW_ROW_HEIGHT = 236
 const HOME_CARD_HIGH_ROW_HEIGHT = 360
 const HOME_CARD_GRID_GAP = 16
+const HOME_CARD_SEPARATOR_ROW_HEIGHT = 34
+const LEGACY_BUILTIN_CARD_ORDERS = [
+  ['builtin:version', 'builtin:bot-status', 'builtin:quick-actions', 'builtin:stats-overview', 'builtin:storage'],
+  ['builtin:bot-status', 'builtin:quick-actions', 'builtin:stats-overview', 'builtin:storage'],
+]
+const DEFAULT_BUILTIN_CARD_ORDER = [
+  'builtin:bot-status',
+  'builtin:quick-actions',
+  'builtin:storage',
+  'builtin:stats-overview',
+]
 
 type HomeCardSource = 'builtin' | 'plugin'
 type HomeCardRowMode = 'low' | 'high'
@@ -66,6 +77,20 @@ interface HomeCardManagerProps {
   cards: HomeCardDefinition[]
   pluginCards: PluginHomeCard[]
   controlsPortalId?: string
+  firstRowSeparator?: ReactNode
+}
+
+function migrateHomeCardOrder(order: string[]): string[] {
+  const builtinOrder = order.filter((id) => id.startsWith('builtin:'))
+  const isLegacyDefault = LEGACY_BUILTIN_CARD_ORDERS.some((legacyOrder) => (
+    stringArraysEqual(builtinOrder, legacyOrder)
+  ))
+  if (!isLegacyDefault) return order
+
+  return [
+    ...DEFAULT_BUILTIN_CARD_ORDER,
+    ...order.filter((id) => !id.startsWith('builtin:')),
+  ]
 }
 
 function loadHomeCardLayout(): HomeCardLayout {
@@ -75,8 +100,11 @@ function loadHomeCardLayout(): HomeCardLayout {
 
   try {
     const parsed = JSON.parse(localStorage.getItem(HOME_CARD_LAYOUT_STORAGE_KEY) || '{}')
+    const order = Array.isArray(parsed.order)
+      ? parsed.order.filter((item: unknown): item is string => typeof item === 'string')
+      : []
     return {
-      order: Array.isArray(parsed.order) ? parsed.order.filter((item: unknown): item is string => typeof item === 'string') : [],
+      order: migrateHomeCardOrder(order),
       hidden: Array.isArray(parsed.hidden) ? parsed.hidden.filter((item: unknown): item is string => typeof item === 'string') : [],
       rowModes: normalizeRowModes(parsed.rowModes),
     }
@@ -345,19 +373,22 @@ function renderContentBlock(block: Record<string, unknown>, index: number): Reac
 function PluginHomeCardView({ card }: { card: PluginHomeCard }) {
   const href = sanitizeUrl(card.link_url)
   const content = renderPluginContent(card.content)
+  const showTitle = card.show_title !== false
 
   return (
     <Card className="h-full">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <CardTitle className="truncate text-sm font-medium">{card.title}</CardTitle>
-            {card.description && <CardDescription className="line-clamp-2">{card.description}</CardDescription>}
+      {showTitle && (
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="truncate text-sm font-medium">{card.title}</CardTitle>
+              {card.description && <CardDescription className="line-clamp-2">{card.description}</CardDescription>}
+            </div>
+            <Badge variant="outline" className="shrink-0 text-[10px]">插件</Badge>
           </div>
-          <Badge variant="outline" className="shrink-0 text-[10px]">插件</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
+        </CardHeader>
+      )}
+      <CardContent className={cn('space-y-3 text-sm', !showTitle && 'pt-6')}>
         {content}
         {href && (
           <Button variant="outline" size="sm" asChild className="w-full justify-start gap-2">
@@ -413,6 +444,7 @@ function SortableHomeCard({
     <div
       ref={setNodeRef}
       style={style}
+      data-home-card-id={card.id}
       className={cn('relative h-full min-w-0', cardWidthClass(displayWidth ?? card.width), isDragging && 'z-20 opacity-80')}
     >
       {editing && (
@@ -465,7 +497,12 @@ function SortableHomeCard({
   )
 }
 
-export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCardManagerProps) {
+export function HomeCardManager({
+  cards,
+  pluginCards,
+  controlsPortalId,
+  firstRowSeparator,
+}: HomeCardManagerProps) {
   const { t } = useTranslation()
   const [layout, setLayout] = useState<HomeCardLayout>(loadHomeCardLayout)
   const [editing, setEditing] = useState(false)
@@ -550,18 +587,32 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
     () => cardRows.map((_, index) => layout.rowModes[String(index)] ?? defaultRowMode(index)),
     [cardRows, layout.rowModes]
   )
-  const rowControls = useMemo(() => {
-    let rowTop = 0
-    return rowModes.map((mode, index) => {
-      const top = rowTop
-      rowTop += rowHeight(mode) + HOME_CARD_GRID_GAP
+  const showFirstRowSeparator = Boolean(firstRowSeparator) && cardRows.length > 1
+  const rowControls = useMemo(
+    () => rowModes.map((mode, index) => {
+      const top = rowModes.slice(0, index).reduce((offset, previousMode, previousIndex) => (
+        offset
+        + rowHeight(previousMode)
+        + HOME_CARD_GRID_GAP
+        + (previousIndex === 0 && showFirstRowSeparator
+          ? HOME_CARD_SEPARATOR_ROW_HEIGHT + HOME_CARD_GRID_GAP
+          : 0)
+      ), 0)
       return { index, mode, top }
-    })
-  }, [rowModes])
+    }),
+    [rowModes, showFirstRowSeparator]
+  )
   const gridStyle = cardRows.length > 0
     ? ({
-      '--home-card-grid-rows': rowModes.map((mode) => `${rowHeight(mode)}px`).join(' '),
+      '--home-card-grid-rows': rowModes.flatMap((mode, index) => (
+        index === 0 && showFirstRowSeparator
+          ? [`${rowHeight(mode)}px`, `${HOME_CARD_SEPARATOR_ROW_HEIGHT}px`]
+          : [`${rowHeight(mode)}px`]
+      )).join(' '),
     } as CSSProperties)
+    : undefined
+  const firstRowLastCardId = showFirstRowSeparator
+    ? cardRows[0][cardRows[0].length - 1]?.id
     : undefined
 
   const handleDragEnd = useCallback(
@@ -662,13 +713,19 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
                 style={gridStyle}
               >
                 {visibleCards.map((card) => (
-                  <SortableHomeCard
-                    key={card.id}
-                    card={card}
-                    displayWidth={adaptiveCardWidths.get(card.id)}
-                    editing={editing}
-                    onHide={hideCard}
-                  />
+                  <Fragment key={card.id}>
+                    <SortableHomeCard
+                      card={card}
+                      displayWidth={adaptiveCardWidths.get(card.id)}
+                      editing={editing}
+                      onHide={hideCard}
+                    />
+                    {card.id === firstRowLastCardId && (
+                      <div className="flex min-h-8 items-center lg:col-span-10">
+                        {firstRowSeparator}
+                      </div>
+                    )}
+                  </Fragment>
                 ))}
               </div>
             </SortableContext>

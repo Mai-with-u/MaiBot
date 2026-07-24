@@ -1103,6 +1103,10 @@
     },
     "versionCard": {
       "title": "MaiBot 버전",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "버전 불일치",
       "mainVersion": "코어 버전",
       "webuiVersion": "WebUI 버전",
       "latestVersion": "최신 버전",
