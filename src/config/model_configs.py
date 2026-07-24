@@ -308,7 +308,7 @@ class ModelInfo(ConfigBase):
             "x-icon": "thermometer",
         },
     )
-    """模型级别温度（可选），会覆盖任务配置中的温度"""
+    """模型级别温度（可选），会覆盖任务配置和调用方显式传入的温度"""
 
     max_tokens: int | None = Field(
         default=None,
