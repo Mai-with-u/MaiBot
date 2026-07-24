@@ -975,6 +975,36 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
     startDrag(event.clientX, event.clientY)
   }
 
+  const handleDragHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const direction = {
+      ArrowDown: { left: 0, top: 1 },
+      ArrowLeft: { left: -1, top: 0 },
+      ArrowRight: { left: 1, top: 0 },
+      ArrowUp: { left: 0, top: -1 },
+    }[event.key]
+    if (!direction) {
+      return
+    }
+
+    event.preventDefault()
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const panelWidth = panelRect?.width ?? DOCUMENT_PANEL_WIDTH
+    const panelHeight = panelRect?.height ?? DOCUMENT_PANEL_HEIGHT
+    const maxLeft = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerWidth - DOCUMENT_PANEL_MARGIN - panelWidth
+    )
+    const maxTop = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerHeight - DOCUMENT_PANEL_MARGIN - panelHeight
+    )
+    const step = event.shiftKey ? 24 : 8
+    setPosition((current) => ({
+      left: clampPanelValue(current.left + direction.left * step, DOCUMENT_PANEL_MARGIN, maxLeft),
+      top: clampPanelValue(current.top + direction.top * step, DOCUMENT_PANEL_MARGIN, maxTop),
+    }))
+  }
+
   const content = mode === 'readme' ? readme : changelog
   const panelStyle = {
     left: position.left,
@@ -989,9 +1019,13 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
       style={panelStyle}
     >
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="移动插件文档窗口"
         className={`flex touch-none select-none items-center gap-2 border-b bg-muted/70 px-3 py-2 ${
           dragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
+        onKeyDown={handleDragHandleKeyDown}
         onPointerCancel={endDrag}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

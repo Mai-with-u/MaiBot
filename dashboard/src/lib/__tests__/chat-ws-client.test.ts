@@ -45,6 +45,7 @@ describe('chatWsClient', () => {
       session: 'tab-1',
       data: {
         content: '看看这张图',
+        emojis: [],
         images: [
           {
             name: 'cat.png',

@@ -40,7 +40,16 @@ import {
 } from './utils'
 
 const MAX_CHAT_IMAGES = 8
+const MAX_MESSAGES_PER_CHAT_TAB = 1000
+const MAX_PROCESSED_MESSAGE_KEYS = 100
 const MAX_USER_AVATAR_BYTES = 5 * 1024 * 1024
+
+function appendRecentMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
+  if (messages.length < MAX_MESSAGES_PER_CHAT_TAB) {
+    return [...messages, message]
+  }
+  return [...messages.slice(-(MAX_MESSAGES_PER_CHAT_TAB - 1)), message]
+}
 
 function buildImageDataUrl(image: ChatImageAttachment | ChatIncomingImage): string {
   const dataUrl = image.data_url || ('dataUrl' in image ? image.dataUrl : undefined)
@@ -282,7 +291,9 @@ export function ChatPage() {
   // 向指定标签页添加消息
   const addMessageToTab = useCallback((tabId: string, message: ChatMessage) => {
     setTabs((prev) =>
-      prev.map((tab) => (tab.id === tabId ? { ...tab, messages: [...tab.messages, message] } : tab))
+      prev.map((tab) =>
+        tab.id === tabId ? { ...tab, messages: appendRecentMessage(tab.messages, message) } : tab
+      )
     )
   }, [])
 
@@ -355,9 +366,10 @@ export function ChatPage() {
 
           processedSet.add(contentHash)
           processedMessagesMapRef.current.set(tabId, processedSet)
-          if (processedSet.size > 100) {
+          while (processedSet.size > MAX_PROCESSED_MESSAGE_KEYS) {
             const firstKey = processedSet.values().next().value
-            if (firstKey) processedSet.delete(firstKey)
+            if (!firstKey) break
+            processedSet.delete(firstKey)
           }
 
           addMessageToTab(tabId, {
@@ -407,7 +419,7 @@ export function ChatPage() {
               }
               return {
                 ...tab,
-                messages: [...tab.messages, newMessage],
+                messages: appendRecentMessage(tab.messages, newMessage),
               }
             })
           )
@@ -438,15 +450,12 @@ export function ChatPage() {
                   detail: data.content,
                   updatedAt: data.timestamp || Date.now() / 1000,
                 },
-                messages: [
-                  ...tab.messages,
-                  {
-                    id: generateMessageId('error'),
-                    type: 'error' as const,
-                    content: data.content || t('chat.message.errorFallback'),
-                    timestamp: data.timestamp || Date.now() / 1000,
-                  },
-                ],
+                messages: appendRecentMessage(tab.messages, {
+                  id: generateMessageId('error'),
+                  type: 'error' as const,
+                  content: data.content || t('chat.message.errorFallback'),
+                  timestamp: data.timestamp || Date.now() / 1000,
+                }),
               }
             })
           )
@@ -460,7 +469,9 @@ export function ChatPage() {
         case 'history': {
           const historyMessages = data.messages || []
           const processedSet = new Set<string>()
-          const formattedMessages: ChatMessage[] = historyMessages.map((msg) => {
+          // 聊天页没有向前翻页能力，只保留最近一段历史，避免多标签长期占用无限内存。
+          const recentHistoryMessages = historyMessages.slice(-MAX_MESSAGES_PER_CHAT_TAB)
+          const formattedMessages: ChatMessage[] = recentHistoryMessages.map((msg) => {
             const isBot = msg.is_bot || false
             const msgId = msg.id || generateMessageId(isBot ? 'bot' : 'user')
             const contentHash = `${isBot ? 'bot' : 'user'}-${msg.content}-${Math.floor(msg.timestamp * 1000)}`
@@ -483,6 +494,11 @@ export function ChatPage() {
             }
           })
 
+          while (processedSet.size > MAX_PROCESSED_MESSAGE_KEYS) {
+            const firstKey = processedSet.values().next().value
+            if (!firstKey) break
+            processedSet.delete(firstKey)
+          }
           processedMessagesMapRef.current.set(tabId, processedSet)
           updateTab(tabId, { messages: formattedMessages })
           setIsLoadingHistory(false)
@@ -1038,6 +1054,7 @@ export function ChatPage() {
         </div>
 
         <MessageList
+          key={activeTab?.id ?? 'empty-chat'}
           messages={activeTab?.messages ?? []}
           isLoadingHistory={isLoadingHistory}
           botDisplayName={activeTab?.sessionInfo.bot_name || t('chat.botNameFallback')}

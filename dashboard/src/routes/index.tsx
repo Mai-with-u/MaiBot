@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import type { CSSProperties, Dispatch, SetStateAction } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   Activity,
@@ -24,7 +24,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useContext, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bar,
@@ -39,7 +39,6 @@ import {
   YAxis,
 } from 'recharts'
 
-import { ExpressionReviewer } from '@/components/expression-reviewer'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -95,6 +94,12 @@ import { HomeCardManager, type HomeCardDefinition } from './home/HomeCardManager
 import { usePluginHomeCards } from './home/hooks/usePluginHomeCards'
 import { useQuickShortcuts } from './home/hooks/useQuickShortcuts'
 import { useReviewStats } from './home/hooks/useReviewStats'
+
+const ExpressionReviewer = lazy(() =>
+  import('@/components/expression-reviewer').then((module) => ({
+    default: module.ExpressionReviewer,
+  }))
+)
 
 // 主导出组件：包装 RestartProvider
 export function IndexPage() {
@@ -235,6 +240,36 @@ function isTransferJobRunning(job: DataTransferJob | null): job is DataTransferJ
   return job?.status === 'pending' || job?.status === 'running'
 }
 
+function useTransferJobPolling(
+  job: DataTransferJob | null,
+  setJob: Dispatch<SetStateAction<DataTransferJob | null>>,
+  refreshJob: (
+    job: DataTransferJob,
+    setter: (value: DataTransferJob) => void
+  ) => Promise<void>
+) {
+  useEffect(() => {
+    if (!isTransferJobRunning(job)) return
+
+    let cancelled = false
+    let timerId: number | null = null
+    const poll = async () => {
+      await refreshJob(job, setJob)
+      if (!cancelled) {
+        timerId = window.setTimeout(() => void poll(), 1200)
+      }
+    }
+
+    timerId = window.setTimeout(() => void poll(), 1200)
+    return () => {
+      cancelled = true
+      if (timerId !== null) {
+        window.clearTimeout(timerId)
+      }
+    }
+  }, [job, refreshJob, setJob])
+}
+
 function compareVersions(left: string, right: string): number {
   const parseVersion = (version: string): number[] => {
     const match = version.replace(/^v/i, '').match(/^\d+(?:\.\d+)*/)
@@ -259,7 +294,15 @@ function IndexPageContent() {
   const { triggerRestart, isRestarting } = useRestart()
 
   // 各数据源领域 hook（页面逻辑下沉，主文件退化为薄渲染层）
-  const { dashboardData, loading, loadingProgress, timeRange, setTimeRange, fetchDashboardData } = useDashboardData()
+  const {
+    dashboardData,
+    error: dashboardError,
+    loading,
+    loadingProgress,
+    timeRange,
+    setTimeRange,
+    fetchDashboardData,
+  } = useDashboardData()
   const { botStatus, isBotStatusLoading, fetchBotStatus } = useBotStatus()
   const { featureStatus, fetchFeatureStatus } = useFeatureStatus()
   const { localCacheStats, isLocalCacheStatsLoading, fetchLocalCacheStats } = useLocalCacheMetrics()
@@ -330,23 +373,8 @@ function IndexPageContent() {
     [toast]
   )
 
-  useEffect(() => {
-    if (!isTransferJobRunning(exportJob)) return
-    const currentJob = exportJob
-    const timer = window.setInterval(() => {
-      void refreshTransferJob(currentJob, setExportJob)
-    }, 1200)
-    return () => window.clearInterval(timer)
-  }, [exportJob, refreshTransferJob])
-
-  useEffect(() => {
-    if (!isTransferJobRunning(importJob)) return
-    const currentJob = importJob
-    const timer = window.setInterval(() => {
-      void refreshTransferJob(currentJob, setImportJob)
-    }, 1200)
-    return () => window.clearInterval(timer)
-  }, [importJob, refreshTransferJob])
+  useTransferJobPolling(exportJob, setExportJob, refreshTransferJob)
+  useTransferJobPolling(importJob, setImportJob, refreshTransferJob)
 
   const handleCreateExport = useCallback(async () => {
     try {
@@ -455,6 +483,26 @@ function IndexPageContent() {
     fetchReviewStats()
     fetchPlatformAccountConfig()
   }, [fetchDashboardData, fetchHitokoto, fetchBotStatus, fetchFeatureStatus, fetchLocalCacheStats, fetchReviewStats, fetchPlatformAccountConfig])
+
+  if (dashboardError && !dashboardData) {
+    return (
+      <div className="flex h-[calc(100vh-200px)] items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+            <CardTitle>仪表盘加载失败</CardTitle>
+            <CardDescription>{dashboardError}</CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            <Button onClick={() => void fetchDashboardData(true)}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              重新加载
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   if (loading || !dashboardData) {
     return (
@@ -978,6 +1026,25 @@ function IndexPageContent() {
   return (
     <ScrollArea className="h-full">
       <div className="space-y-2 sm:space-y-4 p-4 sm:p-6">
+      {dashboardError && (
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span className="truncate">{dashboardError}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => void fetchDashboardData(true)}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              重新加载
+            </Button>
+          </CardContent>
+        </Card>
+      )}
       {platformAccountConfigured === false && (
         <Card className="border-2 border-orange-500 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-950/20">
           <CardHeader className="pb-3">
@@ -1608,6 +1675,8 @@ function IndexPageContent() {
                     dataKey="requests"
                     stroke="var(--color-requests)"
                     strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
                   />
                 </LineChart>
               </ChartContainer>
@@ -1924,15 +1993,16 @@ function IndexPageContent() {
                 </Button>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
-                  <Checkbox checked disabled className="mt-0.5" />
+                <label htmlFor="export-core-data" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                  <Checkbox id="export-core-data" checked disabled className="mt-0.5" />
                   <span>
                     <span className="block text-sm font-medium">配置与数据</span>
                     <span className="block text-xs text-muted-foreground">config / data</span>
                   </span>
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="export-plugins" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="export-plugins"
                     checked={exportIncludePlugins}
                     onCheckedChange={(value) => setExportIncludePlugins(value === true)}
                     className="mt-0.5"
@@ -1942,8 +2012,9 @@ function IndexPageContent() {
                     <span className="block text-xs text-muted-foreground">plugins</span>
                   </span>
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="export-logs" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="export-logs"
                     checked={exportIncludeLogs}
                     onCheckedChange={(value) => setExportIncludeLogs(value === true)}
                     className="mt-0.5"
@@ -2011,8 +2082,9 @@ function IndexPageContent() {
                 onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
               />
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="import-config" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="import-config"
                     checked={importConfig}
                     onCheckedChange={(value) => setImportConfig(value === true)}
                     className="mt-0.5"
@@ -2022,8 +2094,9 @@ function IndexPageContent() {
                     <span className="block text-xs text-muted-foreground">config</span>
                   </span>
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="import-data" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="import-data"
                     checked={importData}
                     onCheckedChange={(value) => setImportData(value === true)}
                     className="mt-0.5"
@@ -2033,8 +2106,9 @@ function IndexPageContent() {
                     <span className="block text-xs text-muted-foreground">data</span>
                   </span>
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="import-plugins" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="import-plugins"
                     checked={importPlugins}
                     onCheckedChange={(value) => setImportPlugins(value === true)}
                     className="mt-0.5"
@@ -2044,8 +2118,9 @@ function IndexPageContent() {
                     <span className="block text-xs text-muted-foreground">plugins</span>
                   </span>
                 </label>
-                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                <label htmlFor="import-logs" className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                   <Checkbox
+                    id="import-logs"
                     checked={importLogs}
                     onCheckedChange={(value) => setImportLogs(value === true)}
                     className="mt-0.5"
@@ -2165,16 +2240,20 @@ function IndexPageContent() {
       <RestartOverlay />
 
       {/* 表达方式审核器 */}
-      <ExpressionReviewer
-        open={isReviewerOpen}
-        onOpenChange={(open) => {
-          setIsReviewerOpen(open)
-          if (!open) {
-            // 关闭审核器时刷新统计
-            fetchReviewStats()
-          }
-        }}
-      />
+      {isReviewerOpen && (
+        <Suspense fallback={null}>
+          <ExpressionReviewer
+            open
+            onOpenChange={(open) => {
+              setIsReviewerOpen(open)
+              if (!open) {
+                // 关闭审核器时刷新统计
+                fetchReviewStats()
+              }
+            }}
+          />
+        </Suspense>
+      )}
     </div>
     </ScrollArea>
   )

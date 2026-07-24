@@ -17,12 +17,11 @@ import {
   TimerReset,
 } from 'lucide-react'
 import { LayoutGroup, motion } from 'motion/react'
-import { type ComponentType, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, type ComponentType, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BackgroundLayer } from '@/components/background-layer'
 import { BackendManager } from '@/components/electron/BackendManager'
-import { SearchDialog } from '@/components/search-dialog'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -53,6 +52,13 @@ const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
 }
 const LOG_WORKSPACE_COMPACT_GAP = 12
 const LOG_WORKSPACE_EXPAND_GAP = 96
+let searchDialogLoaded = false
+const SearchDialog = lazy(() =>
+  import('@/components/search-dialog').then((module) => {
+    searchDialogLoaded = true
+    return { default: module.SearchDialog }
+  })
+)
 
 const WORKSPACE_TABS: Array<{
   value: WorkspaceMode
@@ -453,7 +459,11 @@ export function Header({
             </Button>
 
             {/* 搜索对话框 */}
-            <SearchDialog open={searchOpen} onOpenChange={onSearchOpenChange} />
+            {(searchOpen || searchDialogLoaded) && (
+              <Suspense fallback={null}>
+                <SearchDialog open={searchOpen} onOpenChange={onSearchOpenChange} />
+              </Suspense>
+            )}
 
             {/* 麦麦文档链接 */}
             <Button

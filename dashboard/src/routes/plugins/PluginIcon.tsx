@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { createElement, useMemo, useState, type CSSProperties } from 'react'
 import {
   BarChart3,
   BookOpen,
@@ -122,15 +122,11 @@ export function PluginIcon({
   iconClassName
 }: PluginIconProps) {
   const icon = manifest?.display?.icon
-  const [imageFailed, setImageFailed] = useState(false)
+  const [failedImageSource, setFailedImageSource] = useState<string | null>(null)
   const imageSource = useMemo(
     () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl) : null,
     [icon, installed, marketplaceIconUrl, pluginId]
   )
-
-  useEffect(() => {
-    setImageFailed(false)
-  }, [imageSource])
 
   const style: CSSProperties | undefined = icon?.background ? { backgroundColor: icon.background } : undefined
   const baseClassName = cn(
@@ -148,7 +144,7 @@ export function PluginIcon({
     )
   }
 
-  if (imageSource && !imageFailed) {
+  if (imageSource && imageSource !== failedImageSource) {
     return (
       <div className={baseClassName} style={style}>
         <img
@@ -156,19 +152,19 @@ export function PluginIcon({
           alt=""
           className="h-full w-full object-cover"
           loading="lazy"
-          onError={() => setImageFailed(true)}
+          onError={() => setFailedImageSource(imageSource)}
         />
       </div>
     )
   }
 
-  const Icon = icon?.type === 'lucide'
+  const resolvedIcon = icon?.type === 'lucide'
     ? resolveLucideIcon(icon.value) ?? getFallbackIcon(manifest, icon)
     : getFallbackIcon(manifest, icon)
 
   return (
     <div className={baseClassName} style={style}>
-      <Icon className={cn('h-5 w-5', iconClassName)} />
+      {createElement(resolvedIcon, { className: cn('h-5 w-5', iconClassName) })}
     </div>
   )
 }

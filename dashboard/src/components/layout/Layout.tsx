@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
@@ -6,7 +6,6 @@ import { AnimatePresence, motion } from 'motion/react'
 import { BackgroundLayer } from '@/components/background-layer'
 import { BackToTop } from '@/components/back-to-top'
 import { HttpWarningBanner } from '@/components/http-warning-banner'
-import { UpdateNoticeDialog } from '@/components/update-notice-dialog'
 import { SkipNav } from '@/components/ui/skip-nav'
 import { useAnnounce } from '@/components/ui/announcer'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -20,7 +19,7 @@ import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
-import type { LayoutProps } from './types'
+import type { LayoutProps, WorkspaceMode } from './types'
 import { useMenuSections } from './use-menu-sections'
 
 const SIDEBAR_OPEN_STORAGE_KEY = 'maibot-layout-sidebar-open'
@@ -28,6 +27,11 @@ const TOPBAR_COLLAPSED_STORAGE_KEY = 'maibot-layout-topbar-collapsed'
 const LAYOUT_IMMERSIVE_EVENT = 'maibot-layout-immersive-change'
 const PAGE_TRANSITION_DURATION_MS = 280
 const SIDEBAR_TRANSITION_DURATION_MS = 180
+const UpdateNoticeDialog = lazy(() =>
+  import('@/components/update-notice-dialog').then((module) => ({
+    default: module.UpdateNoticeDialog,
+  }))
+)
 
 type WorkspaceTransitionStage = 'idle' | 'page-exit' | 'sidebar-exit' | 'sidebar-enter' | 'page-enter'
 
@@ -47,6 +51,7 @@ export function Layout({ children }: LayoutProps) {
   const { checking } = useAuthGuard() // 检查认证状态
   const router = useRouter()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const routeStatus = useRouterState({ select: (state) => state.status })
   const announce = useAnnounce()
   const isLogsPath = pathname === '/logs' || pathname.startsWith('/reasoning-process')
   const workspaceMode = pathname === '/chat' ? 'chat' : isLogsPath ? 'logs' : 'settings'
@@ -58,6 +63,7 @@ export function Layout({ children }: LayoutProps) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => loadStoredBoolean(TOPBAR_COLLAPSED_STORAGE_KEY, false))
   const [workspaceTransitionStage, setWorkspaceTransitionStage] = useState<WorkspaceTransitionStage>('idle')
+  const [workspaceTransitionTarget, setWorkspaceTransitionTarget] = useState<WorkspaceMode | null>(null)
   const workspaceTransitionTimerRef = useRef<number | null>(null)
   const shellStateRef = useRef({ sidebarOpen, topbarCollapsed })
   const immersiveRestoreRef = useRef<{ sidebarOpen: boolean; topbarCollapsed: boolean } | null>(null)
@@ -168,44 +174,67 @@ export function Layout({ children }: LayoutProps) {
   const actualTheme = getActualTheme()
   const { config: pageBg } = useBackground('page')
 
+  const scheduleWorkspaceTransition = useCallback((callback: () => void, duration: number) => {
+    workspaceTransitionTimerRef.current = window.setTimeout(() => {
+      workspaceTransitionTimerRef.current = null
+      callback()
+    }, duration)
+  }, [])
+
+  useEffect(() => {
+    if (
+      !workspaceTransitionTarget ||
+      workspaceMode !== workspaceTransitionTarget ||
+      routeStatus !== 'idle'
+    ) {
+      return
+    }
+
+    // pathname 与 Outlet 由路由器分别传播。等新 workspace 完成一次提交后再进入，
+    // 避免目标 wrapper 已切换、children 仍短暂保留旧首页时把旧内容重新显示出来。
+    const frameId = window.requestAnimationFrame(() => {
+      if (workspaceTransitionTarget === 'settings') {
+        setWorkspaceTransitionStage('sidebar-enter')
+        scheduleWorkspaceTransition(() => {
+          setWorkspaceTransitionStage('page-enter')
+          scheduleWorkspaceTransition(() => {
+            setWorkspaceTransitionStage('idle')
+            setWorkspaceTransitionTarget(null)
+          }, PAGE_TRANSITION_DURATION_MS)
+        }, SIDEBAR_TRANSITION_DURATION_MS)
+        return
+      }
+
+      setWorkspaceTransitionStage('page-enter')
+      scheduleWorkspaceTransition(() => {
+        setWorkspaceTransitionStage('idle')
+        setWorkspaceTransitionTarget(null)
+      }, PAGE_TRANSITION_DURATION_MS)
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [routeStatus, scheduleWorkspaceTransition, workspaceMode, workspaceTransitionTarget])
+
   const handleWorkspaceNavigate = (to: '/' | '/chat' | '/logs') => {
     if (workspaceTransitionStage !== 'idle') {
       return
     }
 
     setMobileMenuOpen(false)
-
-    const schedule = (callback: () => void, duration: number) => {
-      workspaceTransitionTimerRef.current = window.setTimeout(() => {
-        workspaceTransitionTimerRef.current = null
-        callback()
-      }, duration)
-    }
+    setWorkspaceTransitionTarget(to === '/chat' ? 'chat' : to === '/logs' ? 'logs' : 'settings')
 
     const enterWorkspace = () => {
-      void router.navigate({ to }).then(
-        () => {
-          if (to === '/') {
-            setWorkspaceTransitionStage('sidebar-enter')
-            schedule(() => {
-              setWorkspaceTransitionStage('page-enter')
-              schedule(() => setWorkspaceTransitionStage('idle'), PAGE_TRANSITION_DURATION_MS)
-            }, SIDEBAR_TRANSITION_DURATION_MS)
-            return
-          }
-
-          setWorkspaceTransitionStage('page-enter')
-          schedule(() => setWorkspaceTransitionStage('idle'), PAGE_TRANSITION_DURATION_MS)
-        },
-        () => setWorkspaceTransitionStage('idle')
-      )
+      void router.navigate({ to }).catch(() => {
+        setWorkspaceTransitionTarget(null)
+        setWorkspaceTransitionStage('idle')
+      })
     }
 
     setWorkspaceTransitionStage('page-exit')
-    schedule(() => {
+    scheduleWorkspaceTransition(() => {
       if (workspaceMode === 'settings') {
         setWorkspaceTransitionStage('sidebar-exit')
-        schedule(enterWorkspace, SIDEBAR_TRANSITION_DURATION_MS)
+        scheduleWorkspaceTransition(enterWorkspace, SIDEBAR_TRANSITION_DURATION_MS)
         return
       }
 
@@ -217,6 +246,10 @@ export function Layout({ children }: LayoutProps) {
     workspaceTransitionStage === 'page-exit' ||
     workspaceTransitionStage === 'sidebar-exit' ||
     workspaceTransitionStage === 'sidebar-enter'
+  const targetWorkspaceWaiting =
+    workspaceTransitionTarget === workspaceMode &&
+    workspaceTransitionStage !== 'idle' &&
+    workspaceTransitionStage !== 'page-enter'
   const sidebarExiting = workspaceTransitionStage === 'sidebar-exit'
 
   // 认证检查中，显示加载状态
@@ -337,9 +370,11 @@ export function Layout({ children }: LayoutProps) {
             >
               <motion.div
                 key={workspaceMode}
+                data-dashboard-workspace-content="true"
                 className={cn(
                   'relative z-10 h-full min-w-0 origin-bottom will-change-transform',
-                  isSettingsWorkspace && 'min-h-full'
+                  isSettingsWorkspace && 'min-h-full',
+                  targetWorkspaceWaiting && 'invisible'
                 )}
                 variants={
                   workspaceMode === 'chat'
@@ -367,7 +402,9 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </div>
       </div>
-      <UpdateNoticeDialog />
+      <Suspense fallback={null}>
+        <UpdateNoticeDialog />
+      </Suspense>
     </TooltipProvider>
   )
 }

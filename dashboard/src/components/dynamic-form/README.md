@@ -46,7 +46,8 @@ You can customize how fields are rendered by adding `json_schema_extra` to your 
   - `textarea`: A multi-line text input.
   - `select`: A dropdown menu (for `Literal` or enum types).
   - `custom`: Indicates that this field requires a Hook for rendering.
-- `x-icon`: A Lucide icon name (e.g., `MessageSquare`, `Settings`).
+- `x-icon`: A supported Lucide icon name (e.g., `MessageSquare`, `Settings`). Add new
+  names to `src/lib/schema-icons.ts`; unsupported names use a generic help icon.
 - `step`: Incremental step for sliders or number inputs.
 
 ### Example

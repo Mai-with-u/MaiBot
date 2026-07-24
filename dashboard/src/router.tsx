@@ -21,11 +21,18 @@ const rootRoute = createRootRoute({
       {import.meta.env.DEV && <TanStackRouterDevtools />}
     </>
   ),
-  beforeLoad: () => {
-    // 如果访问根路径且未认证，重定向到认证页面
-    if (window.location.pathname === '/' && !checkAuth()) {
-      throw redirect({ to: '/auth' })
+  beforeLoad: ({ location }) => {
+    // 只在目标路由确实是首页时异步鉴权。使用 window.location 会读到导航前的旧路径，
+    // 并让离开首页的工作区切换无故进入 pending 状态。
+    if (location.pathname !== '/') {
+      return
     }
+
+    return checkAuth().then((authenticated) => {
+      if (!authenticated) {
+        throw redirect({ to: '/auth' })
+      }
+    })
   },
 })
 

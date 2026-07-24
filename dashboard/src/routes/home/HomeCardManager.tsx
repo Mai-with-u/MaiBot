@@ -297,7 +297,6 @@ function HomeMarkdown({ content }: { content: string }) {
     </ReactMarkdown>
   )
 }
-
 function getBlockText(block: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
     const value = block[key]
@@ -537,6 +536,9 @@ export function HomeCardManager({
   const updateLayout = useCallback((updater: (current: HomeCardLayout) => HomeCardLayout) => {
     setLayout((current) => {
       const next = updater(current)
+      if (next === current) {
+        return current
+      }
       saveHomeCardLayout(next)
       return next
     })

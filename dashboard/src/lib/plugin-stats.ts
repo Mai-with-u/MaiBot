@@ -375,7 +375,7 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
 }
 
 /**
- * 鐠囧嫬鍨庨幓鎺嶆
+ * 提交插件评分或评论
  */
 export async function ratePlugin(
   pluginId: string,
@@ -430,16 +430,16 @@ export async function ratePlugin(
         return { success: false, error: '每天最多评分 3 次' }
       }
       if (error.status !== undefined) {
-        return { success: false, error: getDetailError(error) || '鐠囧嫬鍨庢径杈Е' }
+        return { success: false, error: getDetailError(error) || '评分失败' }
       }
     }
     console.error('Error rating plugin:', error)
-    return { success: false, error: '缂冩垹绮堕柨娆掝嚖' }
+    return { success: false, error: '网络请求失败' }
   }
 }
 
 /**
- * 鐠佹澘缍嶉幓鎺嶆娑撳娴?
+ * 记录插件下载
  */
 export async function recordPluginDownload(pluginId: string): Promise<DownloadStatsResponse> {
   try {
@@ -457,7 +457,7 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 429) {
-        // 娑撳娴囩紒鐔活吀鐞氼偊妾哄ù浣规闂堟瑩绮径杈Е閿涘奔绗夎ぐ鍗炴惙閻劍鍩涙担鎾荤崣
+        // 下载计数受限不影响实际下载流程
         console.warn('Download recording rate limited')
         return { success: true }
       }
@@ -468,7 +468,7 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
       }
     }
     console.error('Error recording download:', error)
-    return { success: false, error: '缂冩垹绮堕柨娆掝嚖' }
+    return { success: false, error: '网络请求失败' }
   }
 }
 

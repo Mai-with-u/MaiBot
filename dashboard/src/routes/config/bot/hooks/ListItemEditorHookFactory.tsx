@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
-import * as LucideIcons from 'lucide-react'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -20,6 +19,7 @@ import { DynamicConfigForm } from '@/components/dynamic-form/DynamicConfigForm'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { resolveLocalizedText } from '@/lib/config-label'
 import type { FieldHookComponent } from '@/lib/field-hooks'
+import { resolveSchemaIcon } from '@/lib/schema-icons'
 import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 
 /**
@@ -121,10 +121,7 @@ function resolveIconName(
 }
 
 function renderLucideIcon(iconName: string | undefined, className: string) {
-  if (!iconName) return null
-  const Icon = LucideIcons[iconName as keyof typeof LucideIcons] as
-    | React.ComponentType<{ className?: string }>
-    | undefined
+  const Icon = resolveSchemaIcon(iconName)
   if (!Icon) return null
   return <Icon className={className} />
 }
@@ -409,7 +406,7 @@ export function createListItemEditorHook(
                         aria-label={`${label} 说明`}
                         className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <LucideIcons.CircleAlert className="h-4 w-4" />
+                        <CircleAlert className="h-4 w-4" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent

@@ -1,5 +1,14 @@
+import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual'
 import { Bot, Sparkles, User } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -23,6 +32,11 @@ interface MessageListProps {
   userAvatarVersion?: number
   language: string
   runtimeStatus?: ChatRuntimeStatus | null
+}
+
+interface ScrollAnchor {
+  messageId: string
+  offsetTop: number
 }
 
 interface BubbleAvatarProps {
@@ -157,6 +171,41 @@ export function MessageList({
   const viewportRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const isNearBottomRef = useRef(true)
+  const highlightFrameRef = useRef<number | null>(null)
+  const highlightTimerRef = useRef<number | null>(null)
+  const highlightedElementRef = useRef<HTMLDivElement | null>(null)
+  const previousMessagesRef = useRef(messages)
+  const scrollAnchorsRef = useRef<ScrollAnchor[]>([])
+  const [playingMessageIds, setPlayingMessageIds] = useState<Set<string>>(
+    () => new Set()
+  )
+
+  const captureScrollAnchors = useCallback(() => {
+    const viewport = viewportRef.current
+    if (!viewport || isNearBottomRef.current) {
+      scrollAnchorsRef.current = []
+      return
+    }
+
+    const viewportRect = viewport.getBoundingClientRect()
+    const anchors: ScrollAnchor[] = []
+    messageRefs.current.forEach((element, messageId) => {
+      const elementRect = element.getBoundingClientRect()
+      if (
+        elementRect.bottom <= viewportRect.top ||
+        elementRect.top >= viewportRect.bottom
+      ) {
+        return
+      }
+      anchors.push({
+        messageId,
+        offsetTop: elementRect.top - viewportRect.top,
+      })
+    })
+    anchors.sort((left, right) => left.offsetTop - right.offsetTop)
+    scrollAnchorsRef.current = anchors
+  }, [])
 
   useEffect(() => {
     const viewport = viewportRef.current
@@ -164,51 +213,176 @@ export function MessageList({
       return
     }
 
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior: 'smooth',
-    })
-  }, [messages, runtimeStatus])
+    const updateNearBottom = () => {
+      const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+      isNearBottomRef.current = distanceFromBottom <= 80
+      captureScrollAnchors()
+    }
+    updateNearBottom()
+    viewport.addEventListener('scroll', updateNearBottom, { passive: true })
+    return () => viewport.removeEventListener('scroll', updateNearBottom)
+  }, [captureScrollAnchors])
 
-  const scrollToMessage = useCallback((messageId: string) => {
-    const viewport = viewportRef.current
-    const target = messageRefs.current.get(messageId)
-    if (!target || !viewport) {
-      return false
+  const messageIndexById = useMemo(
+    () => new Map(messages.map((message, index) => [message.id, index])),
+    [messages]
+  )
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = new Set(defaultRangeExtractor(range))
+      for (const messageId of playingMessageIds) {
+        const index = messageIndexById.get(messageId)
+        if (index !== undefined) {
+          indexes.add(index)
+        }
+      }
+      return Array.from(indexes).sort((left, right) => left - right)
+    },
+    [messageIndexById, playingMessageIds]
+  )
+
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 96,
+    getItemKey: (index) => messages[index]?.id ?? index,
+    overscan: 8,
+    rangeExtractor,
+  })
+  const virtualListSize = rowVirtualizer.getTotalSize()
+
+  useLayoutEffect(() => {
+    const previousMessages = previousMessagesRef.current
+    previousMessagesRef.current = messages
+
+    if (
+      isNearBottomRef.current ||
+      previousMessages.length !== messages.length ||
+      messages.length === 0
+    ) {
+      return
     }
 
-    const viewportRect = viewport.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const targetTop =
-      viewport.scrollTop +
-      targetRect.top -
-      viewportRect.top -
-      viewport.clientHeight / 2 +
-      targetRect.height / 2
+    const firstRetainedIndex = previousMessages.findIndex(
+      (message) => message.id === messages[0].id
+    )
+    if (firstRetainedIndex <= 0) {
+      return
+    }
 
-    viewport.scrollTo({
-      top: Math.max(0, targetTop),
-      behavior: 'smooth',
+    const retainedMessageCount = previousMessages.length - firstRetainedIndex
+    const retainedSequenceMatches = previousMessages
+      .slice(firstRetainedIndex)
+      .every((message, index) => message.id === messages[index]?.id)
+    if (!retainedSequenceMatches || retainedMessageCount >= messages.length) {
+      return
+    }
+
+    const anchor = scrollAnchorsRef.current.find((candidate) =>
+      messageIndexById.has(candidate.messageId)
+    )
+    const viewport = viewportRef.current
+    const target = anchor ? messageRefs.current.get(anchor.messageId) : null
+    if (!anchor || !viewport || !target) {
+      return
+    }
+
+    const viewportTop = viewport.getBoundingClientRect().top
+    const offsetDelta = target.getBoundingClientRect().top - viewportTop - anchor.offsetTop
+    if (Number.isFinite(offsetDelta) && Math.abs(offsetDelta) >= 0.5) {
+      viewport.scrollTop += offsetDelta
+    }
+    captureScrollAnchors()
+  }, [captureScrollAnchors, messageIndexById, messages])
+
+  useEffect(() => {
+    if (!isNearBottomRef.current) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const viewport = viewportRef.current
+      if (!viewport) {
+        return
+      }
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior: 'auto',
+      })
     })
-    target.classList.add('chat-message-flash')
-    window.setTimeout(() => {
-      target.classList.remove('chat-message-flash')
-    }, 1600)
-    return true
+    return () => window.cancelAnimationFrame(frameId)
+  }, [messages, runtimeStatus, virtualListSize])
+
+  useEffect(() => {
+    return () => {
+      if (highlightFrameRef.current !== null) {
+        window.cancelAnimationFrame(highlightFrameRef.current)
+      }
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+      }
+    }
   }, [])
+
+  const scrollToMessage = useCallback(
+    (messageId: string) => {
+      const messageIndex = messageIndexById.get(messageId)
+      if (messageIndex === undefined) {
+        return false
+      }
+
+      rowVirtualizer.scrollToIndex(messageIndex, { align: 'center' })
+      highlightedElementRef.current?.classList.remove('chat-message-flash')
+      if (highlightFrameRef.current !== null) {
+        window.cancelAnimationFrame(highlightFrameRef.current)
+      }
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+      }
+
+      let attempts = 0
+      const highlight = () => {
+        const target = messageRefs.current.get(messageId)
+        if (!target && attempts < 5) {
+          attempts += 1
+          highlightFrameRef.current = window.requestAnimationFrame(highlight)
+          return
+        }
+        highlightFrameRef.current = null
+        if (!target) {
+          return
+        }
+
+        highlightedElementRef.current = target
+        target.classList.add('chat-message-flash')
+        highlightTimerRef.current = window.setTimeout(() => {
+          target.classList.remove('chat-message-flash')
+          if (highlightedElementRef.current === target) {
+            highlightedElementRef.current = null
+          }
+          highlightTimerRef.current = null
+        }, 1600)
+      }
+      highlightFrameRef.current = window.requestAnimationFrame(highlight)
+      return true
+    },
+    [messageIndexById, rowVirtualizer]
+  )
 
   const scrollContextValue = useMemo<ChatScrollContextValue>(
     () => ({ scrollToMessage }),
     [scrollToMessage]
   )
 
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp * 1000)
-    return date.toLocaleTimeString(language || 'zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
+  const timeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(language || 'zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    [language]
+  )
+  const formatTime = (timestamp: number) => timeFormatter.format(new Date(timestamp * 1000))
 
   const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
   const userAvatarUrl = useResolvedAvatarUrl(
@@ -245,99 +419,135 @@ export function MessageList({
       >
         <ChatScrollContext.Provider value={scrollContextValue}>
           <div className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-1 px-3 py-5 sm:px-6 sm:py-6">
-            {messages.map((message, index) => {
-              // 系统消息：作为分隔条
-              if (message.type === 'system') {
-                return (
-                  <div key={message.id} className="my-2 flex items-center gap-3">
-                    <div className="bg-border/60 h-px flex-1" />
-                    <span className="text-muted-foreground bg-card/70 rounded-full border px-3 py-0.5 text-[11px]">
-                      {message.content}
-                    </span>
-                    <div className="bg-border/60 h-px flex-1" />
-                  </div>
-                )
-              }
+            <div
+              className="relative w-full"
+              style={{ height: `${virtualListSize}px` }}
+            >
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const index = virtualRow.index
+                const message = messages[index]
+                if (!message) {
+                  return null
+                }
 
-              // 错误消息
-              if (message.type === 'error') {
-                return (
-                  <div key={message.id} className="my-2 flex justify-center">
-                    <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-full border px-3 py-1 text-xs">
-                      {message.content}
+                const previous = messages[index - 1]
+                const sameGroup = Boolean(
+                  previous &&
+                  previous.type === message.type &&
+                  (previous.sender?.user_id ?? previous.sender?.name) ===
+                    (message.sender?.user_id ?? message.sender?.name)
+                )
+                let rowContent: ReactNode
+                let spacingClass = 'py-2'
+
+                // 系统消息：作为分隔条
+                if (message.type === 'system') {
+                  rowContent = (
+                    <div className="flex items-center gap-3">
+                      <div className="bg-border/60 h-px flex-1" />
+                      <span className="text-muted-foreground bg-card/70 rounded-full border px-3 py-0.5 text-[11px]">
+                        {message.content}
+                      </span>
+                      <div className="bg-border/60 h-px flex-1" />
                     </div>
-                  </div>
-                )
-              }
-
-              const isUser = message.type === 'user'
-              const bubbleType: 'user' | 'bot' = isUser ? 'user' : 'bot'
-
-              // 是否与上一条消息属于同一发送者（用于分组：仅首条显示头像 + 名字）
-              const previous = messages[index - 1]
-              const sameGroup =
-                previous &&
-                previous.type === message.type &&
-                (previous.sender?.user_id ?? previous.sender?.name) ===
-                  (message.sender?.user_id ?? message.sender?.name)
-
-              const senderName = message.sender?.name || (isUser ? userName : botDisplayName)
-
-              return (
-                <div
-                  key={message.id}
-                  ref={(node) => {
-                    if (node) {
-                      messageRefs.current.set(message.id, node)
-                    } else {
-                      messageRefs.current.delete(message.id)
-                    }
-                  }}
-                  data-message-id={message.id}
-                  className={cn(
-                    'chat-message-row flex w-full min-w-0 items-end gap-2 sm:gap-3',
-                    isUser ? 'flex-row-reverse' : 'flex-row',
-                    sameGroup ? 'mt-0.5' : 'mt-3 first:mt-0'
-                  )}
-                >
-                  <BubbleAvatar
-                    type={bubbleType}
-                    visible={!sameGroup}
-                    imageUrl={bubbleType === 'bot' ? botAvatarUrl : userAvatarUrl}
-                  />
-
-                  <div
-                    className={cn(
-                      'flex max-w-[80%] min-w-0 flex-col sm:max-w-[70%]',
-                      isUser ? 'items-end' : 'items-start'
-                    )}
-                  >
-                    {!sameGroup && (
-                      <div
-                        className={cn(
-                          'text-muted-foreground mb-1 flex items-center gap-2 px-1 text-[11px]',
-                          isUser && 'flex-row-reverse'
-                        )}
-                      >
-                        <span className="hidden font-medium sm:inline">{senderName}</span>
-                        <span>{formatTime(message.timestamp)}</span>
+                  )
+                } else if (message.type === 'error') {
+                  // 错误消息
+                  rowContent = (
+                    <div className="flex justify-center">
+                      <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-full border px-3 py-1 text-xs">
+                        {message.content}
                       </div>
-                    )}
-
+                    </div>
+                  )
+                } else {
+                  const isUser = message.type === 'user'
+                  const bubbleType: 'user' | 'bot' = isUser ? 'user' : 'bot'
+                  const senderName = message.sender?.name || (isUser ? userName : botDisplayName)
+                  spacingClass = index === 0 ? 'pb-0.5' : sameGroup ? 'py-0.5' : 'pt-3 pb-0.5'
+                  rowContent = (
                     <div
                       className={cn(
-                        'max-w-full min-w-0 overflow-hidden px-3.5 py-2 text-sm leading-relaxed wrap-break-word shadow-sm/30',
-                        isUser
-                          ? 'bg-primary text-primary-foreground rounded-2xl rounded-br-md'
-                          : 'bg-muted text-foreground rounded-2xl rounded-bl-md'
+                        'chat-message-row flex w-full min-w-0 items-end gap-2 sm:gap-3',
+                        isUser ? 'flex-row-reverse' : 'flex-row'
                       )}
                     >
-                      <RenderMessageContent message={message} />
+                      <BubbleAvatar
+                        type={bubbleType}
+                        visible={!sameGroup}
+                        imageUrl={bubbleType === 'bot' ? botAvatarUrl : userAvatarUrl}
+                      />
+
+                      <div
+                        className={cn(
+                          'flex max-w-[80%] min-w-0 flex-col sm:max-w-[70%]',
+                          isUser ? 'items-end' : 'items-start'
+                        )}
+                      >
+                        {!sameGroup && (
+                          <div
+                            className={cn(
+                              'text-muted-foreground mb-1 flex items-center gap-2 px-1 text-[11px]',
+                              isUser && 'flex-row-reverse'
+                            )}
+                          >
+                            <span className="hidden font-medium sm:inline">{senderName}</span>
+                            <span>{formatTime(message.timestamp)}</span>
+                          </div>
+                        )}
+
+                        <div
+                          className={cn(
+                            'max-w-full min-w-0 overflow-hidden px-3.5 py-2 text-sm leading-relaxed wrap-break-word shadow-sm/30',
+                            isUser
+                              ? 'bg-primary text-primary-foreground rounded-2xl rounded-br-md'
+                              : 'bg-muted text-foreground rounded-2xl rounded-bl-md'
+                          )}
+                        >
+                          <RenderMessageContent message={message} />
+                        </div>
+                      </div>
                     </div>
+                  )
+                }
+
+                return (
+                  <div
+                    key={message.id}
+                    ref={(node) => {
+                      if (node) {
+                        rowVirtualizer.measureElement(node)
+                        messageRefs.current.set(message.id, node)
+                      } else {
+                        messageRefs.current.delete(message.id)
+                      }
+                    }}
+                    data-index={virtualRow.index}
+                    data-message-id={message.id}
+                    className={cn('absolute top-0 left-0 w-full', spacingClass)}
+                    style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    onPlayCapture={() => {
+                      setPlayingMessageIds((current) => {
+                        if (current.has(message.id)) return current
+                        const next = new Set(current)
+                        next.add(message.id)
+                        return next
+                      })
+                    }}
+                    onPauseCapture={() => {
+                      setPlayingMessageIds((current) => {
+                        if (!current.has(message.id)) return current
+                        const next = new Set(current)
+                        next.delete(message.id)
+                        return next
+                      })
+                    }}
+                  >
+                    {rowContent}
                   </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
             {runtimeStatus && (
               <RuntimeStatusIndicator botDisplayName={botDisplayName} status={runtimeStatus} />
             )}
