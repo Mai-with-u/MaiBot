@@ -62,7 +62,7 @@
   "chat": {
     "botNameFallback": "Mai",
     "userFallback": "User",
-    "userNameFallback": "WebUI User",
+    "userNameFallback": "Human",
     "virtualGroupFallback": "WebUI Virtual Group",
     "status": {
       "connected": "Connected",
@@ -72,6 +72,7 @@
     "actions": {
       "cancel": "Cancel",
       "addImage": "Add image",
+      "openEmojiManager": "User stickers",
       "reconnect": "Reconnect",
       "removeImage": "Remove image",
       "save": "Save",
@@ -104,6 +105,14 @@
     "composer": {
       "hint": "Enter to send · Shift + Enter for newline"
     },
+    "emojiManager": {
+      "add": "Add",
+      "delete": "Delete sticker",
+      "empty": "No user stickers yet. Add one to get started.",
+      "hint": "Click a sticker to send it",
+      "send": "Send sticker",
+      "title": "My stickers"
+    },
     "sidebar": {
       "closeConversation": "Close {{label}}",
       "conversations": "Chat conversations",
@@ -116,8 +125,11 @@
       "title": "Chats",
       "virtualBadge": "Virtual",
       "profileTitle": "My identity",
+      "editAvatar": "Change avatar",
       "editName": "Edit nickname",
-      "saveName": "Save"
+      "saveName": "Save",
+      "savingAvatar": "Saving avatar",
+      "userAvatarAlt": "{{name}}'s avatar"
     },
     "dialog": {
       "create": "Create chat",
@@ -150,6 +162,17 @@
       "videoUnsupported": "Your browser does not support video playback"
     },
     "toast": {
+      "avatarSaved": "Avatar saved",
+      "avatarSavedDesc": "Your new avatar is now used in Mai Chat.",
+      "avatarSaveFailed": "Failed to save avatar",
+      "avatarSaveFailedDesc": "Please try again later.",
+      "avatarUnsupported": "This avatar cannot be used",
+      "avatarUnsupportedDesc": "Choose a JPG, PNG, WebP, GIF, or BMP image up to 5 MB.",
+      "emojiDeleteFailed": "Failed to delete sticker",
+      "emojiLoadFailed": "Failed to load stickers",
+      "emojiSendFailed": "Failed to send sticker",
+      "emojiUnsupportedDesc": "Choose a JPG, PNG, WebP, or GIF image up to 2 MB.",
+      "emojiUploadFailed": "Failed to add sticker",
       "backendUnavailable": "Cannot connect to the backend. Make sure MaiBot is running.",
       "backendUnavailableShort": "Cannot connect to the backend",
       "connectionFailed": "Connection failed",

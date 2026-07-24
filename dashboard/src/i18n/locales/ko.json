@@ -62,7 +62,7 @@
   "chat": {
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
-    "userNameFallback": "WebUI 사용자",
+    "userNameFallback": "인간",
     "virtualGroupFallback": "WebUI 가상 그룹 채팅",
     "status": {
       "connected": "연결됨",
@@ -71,6 +71,7 @@
     },
     "actions": {
       "cancel": "취소",
+      "openEmojiManager": "사용자 스티커",
       "reconnect": "다시 연결",
       "save": "저장",
       "send": "메시지 보내기"
@@ -102,6 +103,14 @@
     "composer": {
       "hint": "Enter 전송 · Shift + Enter 줄바꿈"
     },
+    "emojiManager": {
+      "add": "추가",
+      "delete": "스티커 삭제",
+      "empty": "사용자 스티커가 없습니다. 추가해서 사용해 보세요.",
+      "hint": "스티커를 클릭하여 전송",
+      "send": "스티커 전송",
+      "title": "내 스티커"
+    },
     "sidebar": {
       "closeConversation": "{{label}} 닫기",
       "conversations": "채팅 대화",
@@ -114,8 +123,11 @@
       "title": "채팅",
       "virtualBadge": "가상",
       "profileTitle": "내 신분",
+      "editAvatar": "아바타 변경",
       "editName": "닉네임 편집",
-      "saveName": "저장"
+      "saveName": "저장",
+      "savingAvatar": "아바타 저장 중",
+      "userAvatarAlt": "{{name}}의 아바타"
     },
     "dialog": {
       "create": "대화 만들기",
@@ -148,6 +160,17 @@
       "videoUnsupported": "브라우저가 비디오 재생을 지원하지 않습니다"
     },
     "toast": {
+      "avatarSaved": "아바타가 저장되었습니다",
+      "avatarSavedDesc": "새 아바타가 마이 채팅에 적용되었습니다.",
+      "avatarSaveFailed": "아바타를 저장하지 못했습니다",
+      "avatarSaveFailedDesc": "잠시 후 다시 시도해 주세요.",
+      "avatarUnsupported": "이 아바타를 사용할 수 없습니다",
+      "avatarUnsupportedDesc": "5MB 이하의 JPG, PNG, WebP, GIF 또는 BMP 이미지를 선택하세요.",
+      "emojiDeleteFailed": "스티커를 삭제하지 못했습니다",
+      "emojiLoadFailed": "스티커를 불러오지 못했습니다",
+      "emojiSendFailed": "스티커를 전송하지 못했습니다",
+      "emojiUnsupportedDesc": "2MB 이하의 JPG, PNG, WebP 또는 GIF 이미지를 선택하세요.",
+      "emojiUploadFailed": "스티커를 추가하지 못했습니다",
       "backendUnavailable": "백엔드 서비스에 연결할 수 없습니다. MaiBot이 실행 중인지 확인하세요.",
       "backendUnavailableShort": "백엔드 서비스에 연결할 수 없습니다",
       "connectionFailed": "연결 실패",

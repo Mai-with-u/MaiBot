@@ -62,7 +62,7 @@
   "chat": {
     "botNameFallback": "麦麦",
     "userFallback": "用户",
-    "userNameFallback": "WebUI用户",
+    "userNameFallback": "人类",
     "virtualGroupFallback": "WebUI虚拟群聊",
     "status": {
       "connected": "已连接",
@@ -72,6 +72,7 @@
     "actions": {
       "cancel": "取消",
       "addImage": "添加图片",
+      "openEmojiManager": "用户表情包",
       "reconnect": "重新连接",
       "removeImage": "移除图片",
       "save": "保存",
@@ -104,6 +105,14 @@
     "composer": {
       "hint": "Enter 发送 · Shift + Enter 换行"
     },
+    "emojiManager": {
+      "add": "添加",
+      "delete": "删除表情包",
+      "empty": "还没有用户表情包，点击添加即可使用。",
+      "hint": "点击表情包直接发送",
+      "send": "发送表情包",
+      "title": "我的表情包"
+    },
     "sidebar": {
       "closeConversation": "关闭 {{label}}",
       "conversations": "聊天会话",
@@ -116,8 +125,11 @@
       "title": "聊天",
       "virtualBadge": "虚拟",
       "profileTitle": "我的身份",
+      "editAvatar": "修改头像",
       "editName": "编辑昵称",
-      "saveName": "保存"
+      "saveName": "保存",
+      "savingAvatar": "正在保存头像",
+      "userAvatarAlt": "{{name}} 的头像"
     },
     "dialog": {
       "create": "创建对话",
@@ -150,6 +162,17 @@
       "videoUnsupported": "您的浏览器不支持视频播放"
     },
     "toast": {
+      "avatarSaved": "头像已保存",
+      "avatarSavedDesc": "新头像已经应用到麦麦聊天。",
+      "avatarSaveFailed": "头像保存失败",
+      "avatarSaveFailedDesc": "请稍后重试。",
+      "avatarUnsupported": "无法使用此头像",
+      "avatarUnsupportedDesc": "请选择不超过 5 MB 的 JPG、PNG、WebP、GIF 或 BMP 图片。",
+      "emojiDeleteFailed": "删除表情包失败",
+      "emojiLoadFailed": "加载表情包失败",
+      "emojiSendFailed": "发送表情包失败",
+      "emojiUnsupportedDesc": "请选择不超过 2 MB 的 JPG、PNG、WebP 或 GIF 图片。",
+      "emojiUploadFailed": "添加表情包失败",
       "backendUnavailable": "无法连接到后端服务，请确保 MaiBot 已启动",
       "backendUnavailableShort": "无法连接到后端服务",
       "connectionFailed": "连接失败",
