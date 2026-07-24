@@ -139,6 +139,7 @@ export interface ChatIncomingImage {
 export interface WsMessage {
   type: string
   content?: string
+  raw_content?: string
   message_id?: string
   timestamp?: number
   is_typing?: boolean
@@ -155,6 +156,7 @@ export interface WsMessage {
     is_bot?: boolean
   }
   images?: ChatIncomingImage[]
+  emojis?: ChatIncomingImage[]
   // 历史消息列表（用于 type: 'history'）
   messages?: Array<{
     id?: string

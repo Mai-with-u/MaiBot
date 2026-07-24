@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { resolveApiPath } from '@/lib/api-base'
+import { backendApi } from '@/lib/http'
 import { getSetting } from '@/lib/settings-manager'
 
 export type AvatarTargetType = 'user' | 'group'
@@ -37,24 +38,30 @@ export function useAvatarFetchEnabled(): boolean {
 export function buildWebuiAvatarPath(
   platform?: string | null,
   targetId?: string | null,
-  targetType: AvatarTargetType = 'user'
+  targetType: AvatarTargetType = 'user',
+  version?: string | number | null
 ): string | null {
-  const normalizedPlatform = String(platform || '').trim().toLowerCase()
+  const normalizedPlatform = String(platform || '')
+    .trim()
+    .toLowerCase()
   const normalizedTargetId = String(targetId || '').trim()
   if (!normalizedPlatform || !normalizedTargetId) return null
   const idParam = targetType === 'group' ? 'group_id' : 'user_id'
-  return `/api/webui/avatar?platform=${encodeURIComponent(normalizedPlatform)}&${idParam}=${encodeURIComponent(normalizedTargetId)}`
+  const versionQuery =
+    version === undefined || version === null ? '' : `&v=${encodeURIComponent(version)}`
+  return `/api/webui/avatar?platform=${encodeURIComponent(normalizedPlatform)}&${idParam}=${encodeURIComponent(normalizedTargetId)}${versionQuery}`
 }
 
 export function useResolvedAvatarUrl(
   platform?: string | null,
   targetId?: string | null,
-  targetType: AvatarTargetType = 'user'
+  targetType: AvatarTargetType = 'user',
+  version?: string | number | null
 ): string | undefined {
   const avatarFetchEnabled = useAvatarFetchEnabled()
   const avatarPath = useMemo(
-    () => buildWebuiAvatarPath(platform, targetId, targetType),
-    [platform, targetId, targetType]
+    () => buildWebuiAvatarPath(platform, targetId, targetType, version),
+    [platform, targetId, targetType, version]
   )
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>()
 
@@ -75,4 +82,22 @@ export function useResolvedAvatarUrl(
   }, [avatarFetchEnabled, avatarPath])
 
   return avatarUrl
+}
+
+interface WebuiUserAvatarUploadResponse {
+  success: boolean
+  avatar_url: string
+}
+
+export async function uploadWebuiUserAvatar(
+  userId: string,
+  file: File
+): Promise<WebuiUserAvatarUploadResponse> {
+  const formData = new FormData()
+  formData.append('user_id', userId)
+  formData.append('file', file)
+  return backendApi.put<WebuiUserAvatarUploadResponse>('/api/webui/avatar/webui-user', {
+    body: formData,
+    errorMessage: '保存用户头像失败',
+  })
 }

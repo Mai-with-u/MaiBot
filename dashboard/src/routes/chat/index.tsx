@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useToast } from '@/hooks/use-toast'
+import { uploadWebuiUserAvatar } from '@/lib/avatar-url'
 import { chatWsClient } from '@/lib/chat-ws-client'
-import { ApiError, backendApi } from '@/lib/http'
 import {
   maisakaMonitorClient,
   type LlmErrorEvent,
@@ -12,6 +12,7 @@ import {
   type StageRemovedEvent,
   type StageStatusEvent,
 } from '@/lib/maisaka-monitor-client'
+import { loadUserEmojiPayload, type UserEmojiItem } from '@/lib/user-emoji-api'
 
 import { ChatComposer } from './ChatComposer'
 import { ChatTabBar } from './ChatTabBar'
@@ -24,22 +25,22 @@ import type {
   ChatMessage,
   ChatRuntimeStatus,
   MessageSegment,
-  PersonInfo,
-  PlatformInfo,
   SavedVirtualTab,
   VirtualIdentityConfig,
   WsMessage,
 } from './types'
 import {
   getOrCreateUserId,
+  getStoredUserAvatarVersion,
   getStoredUserName,
   getSavedVirtualTabs,
+  saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
 } from './utils'
-import { VirtualIdentityDialog } from './VirtualIdentityDialog'
 
 const MAX_CHAT_IMAGES = 8
+const MAX_USER_AVATAR_BYTES = 5 * 1024 * 1024
 
 function buildImageDataUrl(image: ChatImageAttachment | ChatIncomingImage): string {
   const dataUrl = image.data_url || ('dataUrl' in image ? image.dataUrl : undefined)
@@ -54,7 +55,8 @@ function buildImageDataUrl(image: ChatImageAttachment | ChatIncomingImage): stri
 
 function buildMessageSegments(
   content: string,
-  images: Array<ChatImageAttachment | ChatIncomingImage>
+  images: Array<ChatImageAttachment | ChatIncomingImage>,
+  emojis: Array<ChatImageAttachment | ChatIncomingImage> = []
 ): MessageSegment[] {
   const segments: MessageSegment[] = []
   if (content) {
@@ -65,6 +67,12 @@ function buildMessageSegments(
     const dataUrl = buildImageDataUrl(image)
     if (dataUrl) {
       segments.push({ type: 'image', data: dataUrl })
+    }
+  }
+  for (const emoji of emojis) {
+    const dataUrl = buildImageDataUrl(emoji)
+    if (dataUrl) {
+      segments.push({ type: 'emoji', data: dataUrl })
     }
   }
 
@@ -243,22 +251,8 @@ export function ChatPage() {
   const [selectedImages, setSelectedImages] = useState<ChatImageAttachment[]>([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [userName, setUserName] = useState(getStoredUserName())
-
-  // 虚拟身份配置对话框状态
-  const [showVirtualConfig, setShowVirtualConfig] = useState(false)
-  const [platforms, setPlatforms] = useState<PlatformInfo[]>([])
-  const [persons, setPersons] = useState<PersonInfo[]>([])
-  const [isLoadingPlatforms, setIsLoadingPlatforms] = useState(false)
-  const [isLoadingPersons, setIsLoadingPersons] = useState(false)
-  const [personSearchQuery, setPersonSearchQuery] = useState('')
-  const [tempVirtualConfig, setTempVirtualConfig] = useState<VirtualIdentityConfig>({
-    platform: '',
-    personId: '',
-    userId: '',
-    userName: '',
-    groupName: '',
-    groupId: '',
-  })
+  const [userAvatarVersion, setUserAvatarVersion] = useState(getStoredUserAvatarVersion)
+  const [isUploadingUserAvatar, setIsUploadingUserAvatar] = useState(false)
 
   // 持久化用户 ID
   const userIdRef = useRef(getOrCreateUserId())
@@ -291,68 +285,6 @@ export function ChatPage() {
       prev.map((tab) => (tab.id === tabId ? { ...tab, messages: [...tab.messages, message] } : tab))
     )
   }, [])
-
-  // 获取平台列表
-  const fetchPlatforms = useCallback(async () => {
-    setIsLoadingPlatforms(true)
-    try {
-      const data = await backendApi.get<{ platforms?: PlatformInfo[] }>('/api/chat/platforms')
-      setPlatforms(data.platforms || [])
-    } catch (e) {
-      if (e instanceof ApiError && e.status !== undefined && (e.status < 200 || e.status >= 300)) {
-        // HTTP 层失败
-        console.error('[Chat] 获取平台列表失败: HTTP', e.status)
-        toast({
-          title: t('chat.toast.platformFailed'),
-          description: t('chat.toast.serverError', { status: e.status }),
-          variant: 'destructive',
-        })
-      } else if (e instanceof ApiError && e.status !== undefined) {
-        // HTTP 成功但响应不是合法 JSON（后端不可用，命中了前端页面等）
-        console.error('[Chat] 获取平台列表失败: 非 JSON 响应:', e.message)
-        toast({
-          title: t('chat.toast.connectionFailed'),
-          description: t('chat.toast.backendUnavailable'),
-          variant: 'destructive',
-        })
-      } else {
-        console.error('[Chat] 获取平台列表失败:', e)
-        toast({
-          title: t('chat.toast.networkError'),
-          description: t('chat.toast.backendUnavailableShort'),
-          variant: 'destructive',
-        })
-      }
-    } finally {
-      setIsLoadingPlatforms(false)
-    }
-  }, [t, toast])
-
-  // 获取用户列表
-  const fetchPersons = useCallback(async (platform: string, search?: string) => {
-    setIsLoadingPersons(true)
-    try {
-      const data = await backendApi.get<{ persons?: PersonInfo[] }>('/api/chat/persons', {
-        query: {
-          platform: platform || undefined,
-          search: search || undefined,
-          limit: 50,
-        },
-      })
-      setPersons(data.persons || [])
-    } catch (e) {
-      console.error('[Chat] 获取用户列表失败:', e)
-    } finally {
-      setIsLoadingPersons(false)
-    }
-  }, [])
-
-  // 当平台选择变化时获取用户列表
-  useEffect(() => {
-    if (tempVirtualConfig.platform) {
-      fetchPersons(tempVirtualConfig.platform, personSearchQuery)
-    }
-  }, [tempVirtualConfig.platform, personSearchQuery, fetchPersons])
 
   const handleSessionMessage = useCallback(
     (
@@ -432,10 +364,13 @@ export function ChatPage() {
             id: data.message_id || generateMessageId('user'),
             type: 'user',
             content: data.content || '',
-            message_type: data.images && data.images.length > 0 ? 'rich' : 'text',
+            message_type:
+              (data.images && data.images.length > 0) || (data.emojis && data.emojis.length > 0)
+                ? 'rich'
+                : 'text',
             segments:
-              data.images && data.images.length > 0
-                ? buildMessageSegments(data.content || '', data.images)
+              (data.images && data.images.length > 0) || (data.emojis && data.emojis.length > 0)
+                ? buildMessageSegments(data.raw_content || '', data.images || [], data.emojis || [])
                 : undefined,
             timestamp: data.timestamp || Date.now() / 1000,
             sender: data.sender,
@@ -859,6 +794,43 @@ export function ChatPage() {
     }
   }, [activeTab, activeTabId, addMessageToTab, inputValue, selectedImages, t, toast, userName])
 
+  const sendUserEmoji = useCallback(
+    async (item: UserEmojiItem) => {
+      if (!activeTab?.isConnected) {
+        throw new Error(t('chat.toast.currentSessionUnavailable'))
+      }
+
+      const emoji = await loadUserEmojiPayload(item)
+      const displayName =
+        activeTab.type === 'virtual' ? activeTab.virtualConfig?.userName || userName : userName
+      const timestamp = Date.now() / 1000
+
+      await chatWsClient.sendMessage(activeTabId, '', displayName, {
+        emojis: [
+          {
+            name: emoji.name,
+            mime_type: emoji.mime_type,
+            base64: emoji.base64,
+          },
+        ],
+      })
+
+      addMessageToTab(activeTabId, {
+        id: generateMessageId('user-emoji'),
+        type: 'user',
+        content: `[${t('chat.media.emoji')}]`,
+        message_type: 'rich',
+        segments: [{ type: 'emoji', data: emoji.data_url }],
+        timestamp,
+        sender: {
+          name: displayName,
+          is_bot: false,
+        },
+      })
+    },
+    [activeTab, activeTabId, addMessageToTab, t, userName]
+  )
+
   // 处理键盘事件
   // 处理昵称变更（来自侧边栏）
   const handleAddImages = useCallback(
@@ -925,85 +897,41 @@ export function ChatPage() {
     [activeTab?.isConnected, activeTabId, t]
   )
 
-  // 打开虚拟身份配置对话框（新建标签页用）
-  const openVirtualConfig = () => {
-    setTempVirtualConfig({
-      platform: '',
-      personId: '',
-      userId: '',
-      userName: '',
-      groupName: '',
-      groupId: '',
-    })
-    setPersonSearchQuery('')
-    fetchPlatforms()
-    setShowVirtualConfig(true)
-  }
+  const handleUpdateUserAvatar = useCallback(
+    async (file: File) => {
+      if ((file.type && !file.type.startsWith('image/')) || file.size > MAX_USER_AVATAR_BYTES) {
+        toast({
+          title: t('chat.toast.avatarUnsupported'),
+          description: t('chat.toast.avatarUnsupportedDesc'),
+          variant: 'destructive',
+        })
+        return
+      }
 
-  // 创建新的虚拟身份标签页
-  const createVirtualTab = () => {
-    if (!tempVirtualConfig.platform || !tempVirtualConfig.personId) {
-      toast({
-        title: t('chat.toast.incompleteConfig'),
-        description: t('chat.toast.selectPlatformAndUser'),
-        variant: 'destructive',
-      })
-      return
-    }
-
-    // 生成稳定的虚拟群 ID（基于平台和用户 ID，不包含时间戳）
-    const stableGroupId = `webui_virtual_group_${tempVirtualConfig.platform}_${tempVirtualConfig.userId}`
-
-    // 生成新标签页ID
-    const newTabId = `virtual-${tempVirtualConfig.platform}-${tempVirtualConfig.userId}-${Date.now()}`
-    const tabLabel = tempVirtualConfig.userName || tempVirtualConfig.userId
-
-    // 创建新标签页，包含稳定的 groupId
-    const newTab: ChatTab = {
-      id: newTabId,
-      type: 'virtual',
-      label: tabLabel,
-      virtualConfig: {
-        ...tempVirtualConfig,
-        groupId: stableGroupId,
-      },
-      messages: [],
-      isConnected: false,
-      isTyping: false,
-      runtimeStatus: null,
-      sessionInfo: {},
-    }
-
-    setTabs((prev) => {
-      const newTabs = [...prev, newTab]
-      // 保存虚拟标签页到 localStorage
-      const virtualTabsToSave: SavedVirtualTab[] = newTabs
-        .filter((t) => t.type === 'virtual' && t.virtualConfig)
-        .map((t) => ({
-          id: t.id,
-          label: t.label,
-          virtualConfig: t.virtualConfig!,
-          createdAt: Date.now(),
-        }))
-      saveVirtualTabs(virtualTabsToSave)
-      return newTabs
-    })
-    setActiveTabId(newTabId)
-    setShowVirtualConfig(false)
-
-    // 初始化去重缓存
-    processedMessagesMapRef.current.set(newTabId, new Set())
-
-    void openSessionForTab(newTabId, 'virtual', {
-      ...tempVirtualConfig,
-      groupId: stableGroupId,
-    })
-
-    toast({
-      title: t('chat.toast.virtualTabCreated'),
-      description: t('chat.toast.virtualTabCreatedDesc', { label: tabLabel }),
-    })
-  }
+      setIsUploadingUserAvatar(true)
+      try {
+        await uploadWebuiUserAvatar(userIdRef.current, file)
+        const nextAvatarVersion = Date.now()
+        setUserAvatarVersion(nextAvatarVersion)
+        saveUserAvatarVersion(nextAvatarVersion)
+        toast({
+          title: t('chat.toast.avatarSaved'),
+          description: t('chat.toast.avatarSavedDesc'),
+        })
+      } catch (error) {
+        console.error('保存用户头像失败', error)
+        toast({
+          title: t('chat.toast.avatarSaveFailed'),
+          description:
+            error instanceof Error ? error.message : t('chat.toast.avatarSaveFailedDesc'),
+          variant: 'destructive',
+        })
+      } finally {
+        setIsUploadingUserAvatar(false)
+      }
+    },
+    [t, toast]
+  )
 
   // 关闭标签页
   const closeTab = (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => {
@@ -1025,10 +953,9 @@ export function ChatPage() {
     // 清理去重缓存
     processedMessagesMapRef.current.delete(tabId)
 
-    // 移除标签页并更新存储
+    // 移除标签页并更新存储；历史虚拟身份会话仍保留，只有用户主动关闭时才移除。
     setTabs((prev) => {
       const newTabs = prev.filter((t) => t.id !== tabId)
-      // 更新 localStorage 中的虚拟标签页
       const virtualTabsToSave: SavedVirtualTab[] = newTabs
         .filter((t) => t.type === 'virtual' && t.virtualConfig)
         .map((t) => ({
@@ -1041,7 +968,6 @@ export function ChatPage() {
       return newTabs
     })
 
-    // 如果关闭的是当前标签页，切换到默认标签页
     if (activeTabId === tabId) {
       setActiveTabId('webui-default')
     }
@@ -1052,34 +978,8 @@ export function ChatPage() {
     setActiveTabId(tabId)
   }
 
-  // 选择用户
-  const selectPerson = (person: PersonInfo) => {
-    setTempVirtualConfig((prev) => ({
-      ...prev,
-      personId: person.person_id,
-      userId: person.user_id,
-      userName: person.nickname || person.person_name,
-    }))
-  }
-
   return (
     <div className="bg-background flex h-full min-h-0">
-      {/* 虚拟身份配置对话框 */}
-      <VirtualIdentityDialog
-        open={showVirtualConfig}
-        onOpenChange={setShowVirtualConfig}
-        platforms={platforms}
-        persons={persons}
-        isLoadingPlatforms={isLoadingPlatforms}
-        isLoadingPersons={isLoadingPersons}
-        personSearchQuery={personSearchQuery}
-        setPersonSearchQuery={setPersonSearchQuery}
-        tempVirtualConfig={tempVirtualConfig}
-        setTempVirtualConfig={setTempVirtualConfig}
-        onSelectPerson={selectPerson}
-        onCreateVirtualTab={createVirtualTab}
-      />
-
       {/* 桌面端：左侧会话侧边栏 */}
       <motion.div
         className="hidden shrink-0 md:block"
@@ -1097,10 +997,13 @@ export function ChatPage() {
         <ChatWorkspaceSidebar
           tabs={tabs}
           activeTabId={activeTabId}
+          userId={userIdRef.current}
           userName={userName}
+          userAvatarVersion={userAvatarVersion}
+          isUploadingUserAvatar={isUploadingUserAvatar}
           onSwitch={switchTab}
           onClose={closeTab}
-          onAddVirtual={openVirtualConfig}
+          onUpdateUserAvatar={handleUpdateUserAvatar}
           onUpdateUserName={handleUpdateUserName}
         />
       </motion.div>
@@ -1124,9 +1027,13 @@ export function ChatPage() {
           <ChatTabBar
             tabs={tabs}
             activeTabId={activeTabId}
+            userId={userIdRef.current}
+            userName={userName}
+            userAvatarVersion={userAvatarVersion}
+            isUploadingUserAvatar={isUploadingUserAvatar}
             onSwitch={switchTab}
             onClose={closeTab}
-            onAddVirtual={openVirtualConfig}
+            onUpdateUserAvatar={handleUpdateUserAvatar}
           />
         </div>
 
@@ -1136,6 +1043,17 @@ export function ChatPage() {
           botDisplayName={activeTab?.sessionInfo.bot_name || t('chat.botNameFallback')}
           botQq={activeTab?.sessionInfo.bot_qq}
           userName={userName}
+          userAvatarPlatform={
+            activeTab?.type === 'virtual'
+              ? activeTab.virtualConfig?.platform
+              : userAvatarVersion
+                ? 'webui'
+                : undefined
+          }
+          userAvatarId={
+            activeTab?.type === 'virtual' ? activeTab.virtualConfig?.userId : userIdRef.current
+          }
+          userAvatarVersion={activeTab?.type === 'virtual' ? undefined : userAvatarVersion}
           language={i18n.language}
           runtimeStatus={activeTab?.runtimeStatus ?? null}
         />
@@ -1145,10 +1063,12 @@ export function ChatPage() {
           onChange={setInputValue}
           onAddImages={handleAddImages}
           onRemoveImage={handleRemoveImage}
+          onSendEmoji={sendUserEmoji}
           onSend={() => void sendMessage()}
           disabled={!activeTab?.isConnected}
           images={selectedImages}
           isConnected={!!activeTab?.isConnected}
+          userId={userIdRef.current}
         />
       </motion.div>
     </div>

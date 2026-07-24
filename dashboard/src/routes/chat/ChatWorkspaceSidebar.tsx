@@ -1,5 +1,5 @@
-import { Bot, Check, Edit2, Plus, UserCircle2, X } from 'lucide-react'
-import { useState } from 'react'
+import { Bot, Camera, Check, Edit2, Loader2, UserCircle2, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -17,10 +17,13 @@ interface ChatWorkspaceSidebarProps {
   className?: string
   tabs: ChatTab[]
   activeTabId: string
+  userId: string
   userName: string
+  userAvatarVersion?: number
+  isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
-  onAddVirtual: () => void
+  onUpdateUserAvatar: (file: File) => Promise<void>
   onUpdateUserName: (name: string) => void
 }
 
@@ -44,10 +47,7 @@ function ConversationItem({
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
   const lastMessage = tab.messages[tab.messages.length - 1]
-  const preview = getMessagePreview(
-    lastMessage,
-    t('chat.sidebar.emptyPreview')
-  )
+  const preview = getMessagePreview(lastMessage, t('chat.sidebar.emptyPreview'))
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
   const Icon = isVirtual ? UserCircle2 : Bot
   const avatarUrl = useResolvedAvatarUrl(
@@ -72,11 +72,11 @@ function ConversationItem({
       )}
       <button
         type="button"
-        className="flex w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-xl px-2.5 py-2 text-left"
+        className="flex w-full min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left"
         onClick={() => onSwitch(tab.id)}
       >
         <div className="relative shrink-0">
-          <Avatar className="h-11 w-11 ring-1 ring-border/60">
+          <Avatar className="ring-border/60 h-9 w-9 ring-1">
             {avatarUrl && <AvatarImage src={avatarUrl} alt={avatarAlt} className="object-cover" />}
             <AvatarFallback
               className={cn(
@@ -128,15 +128,25 @@ export function ChatWorkspaceSidebar({
   className,
   tabs,
   activeTabId,
+  userId,
   userName,
+  userAvatarVersion,
+  isUploadingUserAvatar,
   onSwitch,
   onClose,
-  onAddVirtual,
+  onUpdateUserAvatar,
   onUpdateUserName,
 }: ChatWorkspaceSidebarProps) {
   const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(userName)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
+  const userAvatarUrl = useResolvedAvatarUrl(
+    userAvatarVersion ? 'webui' : undefined,
+    userId,
+    'user',
+    userAvatarVersion
+  )
 
   const startEditing = () => {
     setDraftName(userName)
@@ -152,34 +162,20 @@ export function ChatWorkspaceSidebar({
   return (
     <aside
       className={cn(
-        'bg-card/90 supports-backdrop-filter:bg-card/70 flex h-full w-72 shrink-0 flex-col border-r backdrop-blur xl:w-80',
+        'bg-card/90 supports-backdrop-filter:bg-card/70 flex h-full shrink-0 flex-col border-r backdrop-blur',
+        'w-60 xl:w-64',
         className
       )}
     >
-      {/* 头部：标题 + 新建按钮 */}
+      {/* 头部 */}
       <div className="border-b px-4 pt-5 pb-4">
-        <div className="flex items-end justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold tracking-tight">
-              {t('chat.sidebar.title')}
-            </h2>
-            <p className="text-muted-foreground mt-0.5 truncate text-xs">
-              {t('chat.sidebar.subtitle', { count: tabs.length })}
-            </p>
-          </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                aria-label={t('chat.sidebar.newVirtual')}
-                className="h-9 w-9 shrink-0 rounded-full shadow-sm"
-                size="icon"
-                onClick={onAddVirtual}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('chat.sidebar.newVirtual')}</TooltipContent>
-          </Tooltip>
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold tracking-tight">
+            {t('chat.sidebar.title')}
+          </h2>
+          <p className="text-muted-foreground mt-0.5 truncate text-xs">
+            {t('chat.sidebar.subtitle', { count: tabs.length })}
+          </p>
         </div>
       </div>
 
@@ -206,13 +202,57 @@ export function ChatWorkspaceSidebar({
       {/* 底部：本地用户身份 */}
       <div className="border-t p-3">
         <div className="bg-background/70 hover:bg-background flex items-center gap-3 rounded-xl border p-2.5 transition-colors">
-          <Avatar className="h-10 w-10 shrink-0 ring-1 ring-border/60">
-            <AvatarFallback className="bg-secondary text-secondary-foreground">
-              <UserCircle2 className="h-5 w-5" />
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative shrink-0">
+            <Avatar className="ring-border/60 h-10 w-10 ring-1">
+              {userAvatarUrl && (
+                <AvatarImage
+                  src={userAvatarUrl}
+                  alt={t('chat.sidebar.userAvatarAlt', { name: userName })}
+                  className="object-cover"
+                />
+              )}
+              <AvatarFallback className="bg-secondary text-secondary-foreground">
+                <UserCircle2 className="h-5 w-5" />
+              </AvatarFallback>
+            </Avatar>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t('chat.sidebar.editAvatar')}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 border-card absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full border-2 shadow-sm transition disabled:cursor-wait"
+                  disabled={isUploadingUserAvatar}
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  {isUploadingUserAvatar ? (
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-2.5 w-2.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {isUploadingUserAvatar
+                  ? t('chat.sidebar.savingAvatar')
+                  : t('chat.sidebar.editAvatar')}
+              </TooltipContent>
+            </Tooltip>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/bmp"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                if (file) {
+                  void onUpdateUserAvatar(file)
+                }
+              }}
+            />
+          </div>
           <div className="min-w-0 flex-1">
-            <p className="text-muted-foreground text-[11px] uppercase tracking-wide">
+            <p className="text-muted-foreground text-[11px] tracking-wide uppercase">
               {t('chat.sidebar.profileTitle')}
             </p>
             {editing ? (

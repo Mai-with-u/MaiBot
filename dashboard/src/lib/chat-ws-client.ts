@@ -24,6 +24,7 @@ export interface ChatImagePayload {
 
 interface ChatSendOptions {
   images?: ChatImagePayload[]
+  emojis?: ChatImagePayload[]
 }
 
 type ChatSessionListener = (message: Record<string, unknown>) => void
@@ -228,6 +229,7 @@ class ChatWsClient {
       data: {
         content,
         images: options.images ?? [],
+        emojis: options.emojis ?? [],
         user_name: userName,
       },
     })

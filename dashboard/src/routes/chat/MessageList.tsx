@@ -18,6 +18,9 @@ interface MessageListProps {
   /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
   userName: string
+  userAvatarPlatform?: string
+  userAvatarId?: string
+  userAvatarVersion?: number
   language: string
   runtimeStatus?: ChatRuntimeStatus | null
 }
@@ -25,7 +28,7 @@ interface MessageListProps {
 interface BubbleAvatarProps {
   type: 'user' | 'bot'
   visible: boolean
-  /** bot 头像 URL（可选）；加载失败时自动 fallback 到默认 SVG 图标。 */
+  /** 头像 URL（可选）；加载失败时自动 fallback 到默认 SVG 图标。 */
   imageUrl?: string
 }
 
@@ -33,10 +36,8 @@ function BubbleAvatar({ type, visible, imageUrl }: BubbleAvatarProps) {
   return (
     <div className="h-8 w-8 shrink-0 sm:h-9 sm:w-9">
       {visible && (
-        <Avatar className="h-full w-full ring-1 ring-border/60">
-          {type === 'bot' && imageUrl ? (
-            <AvatarImage src={imageUrl} alt="" className="object-cover" />
-          ) : null}
+        <Avatar className="ring-border/60 h-full w-full ring-1">
+          {imageUrl ? <AvatarImage src={imageUrl} alt="" className="object-cover" /> : null}
           <AvatarFallback
             className={cn(
               'text-xs',
@@ -45,11 +46,7 @@ function BubbleAvatar({ type, visible, imageUrl }: BubbleAvatarProps) {
                 : 'bg-primary-gradient text-primary-foreground'
             )}
           >
-            {type === 'user' ? (
-              <User className="h-4 w-4" />
-            ) : (
-              <Bot className="h-4 w-4" />
-            )}
+            {type === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
           </AvatarFallback>
         </Avatar>
       )}
@@ -83,7 +80,8 @@ function RuntimeStatusIndicator({
   status: ChatRuntimeStatus
 }) {
   const { t } = useTranslation()
-  const errorDetail = status.kind === 'error' ? (status.detail || '').replace(/\s+/g, ' ').trim() : ''
+  const errorDetail =
+    status.kind === 'error' ? (status.detail || '').replace(/\s+/g, ' ').trim() : ''
   const visibleErrorDetail =
     errorDetail.length > 120 ? `${errorDetail.slice(0, 120)}...` : errorDetail
   const retryText = status.retry
@@ -106,7 +104,7 @@ function RuntimeStatusIndicator({
         className={cn(
           'flex max-w-[80%] items-center gap-2 rounded-2xl rounded-bl-md px-3.5 py-2 text-xs sm:max-w-[70%]',
           status.kind === 'error'
-            ? 'border border-destructive/30 bg-destructive/10 text-destructive'
+            ? 'border-destructive/30 bg-destructive/10 text-destructive border'
             : 'bg-muted/70 text-muted-foreground'
         )}
         role="status"
@@ -149,6 +147,9 @@ export function MessageList({
   botDisplayName,
   botQq,
   userName,
+  userAvatarPlatform,
+  userAvatarId,
+  userAvatarVersion,
   language,
   runtimeStatus,
 }: MessageListProps) {
@@ -210,10 +211,16 @@ export function MessageList({
   }
 
   const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
+  const userAvatarUrl = useResolvedAvatarUrl(
+    userAvatarPlatform,
+    userAvatarId,
+    'user',
+    userAvatarVersion
+  )
 
   if (messages.length === 0 && !isLoadingHistory) {
     return (
-      <div className="min-w-0 min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <ScrollArea
           className="h-full w-full"
           contentClassName="!block w-full min-w-0"
@@ -228,7 +235,7 @@ export function MessageList({
   }
 
   return (
-    <div className="min-w-0 min-h-0 flex-1 overflow-hidden">
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
       <ScrollArea
         className="h-full w-full"
         contentClassName="!block w-full min-w-0"
@@ -238,108 +245,107 @@ export function MessageList({
       >
         <ChatScrollContext.Provider value={scrollContextValue}>
           <div className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-1 px-3 py-5 sm:px-6 sm:py-6">
-          {messages.map((message, index) => {
-            // 系统消息：作为分隔条
-            if (message.type === 'system') {
-              return (
-                <div key={message.id} className="my-2 flex items-center gap-3">
-                  <div className="bg-border/60 h-px flex-1" />
-                  <span className="text-muted-foreground bg-card/70 rounded-full border px-3 py-0.5 text-[11px]">
-                    {message.content}
-                  </span>
-                  <div className="bg-border/60 h-px flex-1" />
-                </div>
-              )
-            }
-
-            // 错误消息
-            if (message.type === 'error') {
-              return (
-                <div key={message.id} className="my-2 flex justify-center">
-                  <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-full border px-3 py-1 text-xs">
-                    {message.content}
+            {messages.map((message, index) => {
+              // 系统消息：作为分隔条
+              if (message.type === 'system') {
+                return (
+                  <div key={message.id} className="my-2 flex items-center gap-3">
+                    <div className="bg-border/60 h-px flex-1" />
+                    <span className="text-muted-foreground bg-card/70 rounded-full border px-3 py-0.5 text-[11px]">
+                      {message.content}
+                    </span>
+                    <div className="bg-border/60 h-px flex-1" />
                   </div>
-                </div>
-              )
-            }
+                )
+              }
 
-            const isUser = message.type === 'user'
-            const bubbleType: 'user' | 'bot' = isUser ? 'user' : 'bot'
+              // 错误消息
+              if (message.type === 'error') {
+                return (
+                  <div key={message.id} className="my-2 flex justify-center">
+                    <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-full border px-3 py-1 text-xs">
+                      {message.content}
+                    </div>
+                  </div>
+                )
+              }
 
-            // 是否与上一条消息属于同一发送者（用于分组：仅首条显示头像 + 名字）
-            const previous = messages[index - 1]
-            const sameGroup =
-              previous &&
-              previous.type === message.type &&
-              (previous.sender?.user_id ?? previous.sender?.name) ===
-                (message.sender?.user_id ?? message.sender?.name)
+              const isUser = message.type === 'user'
+              const bubbleType: 'user' | 'bot' = isUser ? 'user' : 'bot'
 
-            const senderName =
-              message.sender?.name || (isUser ? userName : botDisplayName)
+              // 是否与上一条消息属于同一发送者（用于分组：仅首条显示头像 + 名字）
+              const previous = messages[index - 1]
+              const sameGroup =
+                previous &&
+                previous.type === message.type &&
+                (previous.sender?.user_id ?? previous.sender?.name) ===
+                  (message.sender?.user_id ?? message.sender?.name)
 
-            return (
-              <div
-                key={message.id}
-                ref={(node) => {
-                  if (node) {
-                    messageRefs.current.set(message.id, node)
-                  } else {
-                    messageRefs.current.delete(message.id)
-                  }
-                }}
-                data-message-id={message.id}
-                className={cn(
-                  'chat-message-row flex w-full min-w-0 items-end gap-2 sm:gap-3',
-                  isUser ? 'flex-row-reverse' : 'flex-row',
-                  sameGroup ? 'mt-0.5' : 'mt-3 first:mt-0'
-                )}
-              >
-                <BubbleAvatar
-                  type={bubbleType}
-                  visible={!sameGroup}
-                  imageUrl={bubbleType === 'bot' ? botAvatarUrl : undefined}
-                />
+              const senderName = message.sender?.name || (isUser ? userName : botDisplayName)
 
+              return (
                 <div
+                  key={message.id}
+                  ref={(node) => {
+                    if (node) {
+                      messageRefs.current.set(message.id, node)
+                    } else {
+                      messageRefs.current.delete(message.id)
+                    }
+                  }}
+                  data-message-id={message.id}
                   className={cn(
-                    'flex min-w-0 max-w-[80%] flex-col sm:max-w-[70%]',
-                    isUser ? 'items-end' : 'items-start'
+                    'chat-message-row flex w-full min-w-0 items-end gap-2 sm:gap-3',
+                    isUser ? 'flex-row-reverse' : 'flex-row',
+                    sameGroup ? 'mt-0.5' : 'mt-3 first:mt-0'
                   )}
                 >
-                  {!sameGroup && (
-                    <div
-                      className={cn(
-                        'text-muted-foreground mb-1 flex items-center gap-2 px-1 text-[11px]',
-                        isUser && 'flex-row-reverse'
-                      )}
-                    >
-                      <span className="hidden font-medium sm:inline">{senderName}</span>
-                      <span>{formatTime(message.timestamp)}</span>
-                    </div>
-                  )}
+                  <BubbleAvatar
+                    type={bubbleType}
+                    visible={!sameGroup}
+                    imageUrl={bubbleType === 'bot' ? botAvatarUrl : userAvatarUrl}
+                  />
 
                   <div
                     className={cn(
-                      'shadow-sm/30 wrap-break-word min-w-0 max-w-full overflow-hidden px-3.5 py-2 text-sm leading-relaxed',
-                      isUser
-                        ? 'bg-primary text-primary-foreground rounded-2xl rounded-br-md'
-                        : 'bg-muted text-foreground rounded-2xl rounded-bl-md'
+                      'flex max-w-[80%] min-w-0 flex-col sm:max-w-[70%]',
+                      isUser ? 'items-end' : 'items-start'
                     )}
                   >
-                    <RenderMessageContent message={message} />
+                    {!sameGroup && (
+                      <div
+                        className={cn(
+                          'text-muted-foreground mb-1 flex items-center gap-2 px-1 text-[11px]',
+                          isUser && 'flex-row-reverse'
+                        )}
+                      >
+                        <span className="hidden font-medium sm:inline">{senderName}</span>
+                        <span>{formatTime(message.timestamp)}</span>
+                      </div>
+                    )}
+
+                    <div
+                      className={cn(
+                        'max-w-full min-w-0 overflow-hidden px-3.5 py-2 text-sm leading-relaxed wrap-break-word shadow-sm/30',
+                        isUser
+                          ? 'bg-primary text-primary-foreground rounded-2xl rounded-br-md'
+                          : 'bg-muted text-foreground rounded-2xl rounded-bl-md'
+                      )}
+                    >
+                      <RenderMessageContent message={message} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
-          {runtimeStatus && (
-            <RuntimeStatusIndicator botDisplayName={botDisplayName} status={runtimeStatus} />
-          )}
-          <div ref={endRef} />
-          {/* 用于读屏 / 避免悬空 */}
-          <span className="sr-only" aria-live="polite">
-            {messages.length > 0 ? t('chat.sidebar.subtitle', { count: messages.length }) : ''}
-          </span>
+              )
+            })}
+            {runtimeStatus && (
+              <RuntimeStatusIndicator botDisplayName={botDisplayName} status={runtimeStatus} />
+            )}
+            <div ref={endRef} />
+            {/* 用于读屏 / 避免悬空 */}
+            <span className="sr-only" aria-live="polite">
+              {messages.length > 0 ? t('chat.sidebar.subtitle', { count: messages.length }) : ''}
+            </span>
           </div>
         </ChatScrollContext.Provider>
       </ScrollArea>

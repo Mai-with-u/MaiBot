@@ -4,9 +4,11 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import type { UserEmojiItem } from '@/lib/user-emoji-api'
 import { cn } from '@/lib/utils'
 
 import type { ChatImageAttachment } from './types'
+import { UserEmojiManager } from './UserEmojiManager'
 
 interface ChatComposerProps {
   value: string
@@ -14,9 +16,11 @@ interface ChatComposerProps {
   onSend: () => void
   onAddImages: (files: FileList) => void
   onRemoveImage: (id: string) => void
+  onSendEmoji: (item: UserEmojiItem) => Promise<void>
   disabled: boolean
   images: ChatImageAttachment[]
   isConnected: boolean
+  userId: string
 }
 
 /**
@@ -28,9 +32,11 @@ export function ChatComposer({
   onSend,
   onAddImages,
   onRemoveImage,
+  onSendEmoji,
   disabled,
   images,
   isConnected,
+  userId,
 }: ChatComposerProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -104,6 +110,7 @@ export function ChatComposer({
           >
             <ImagePlus className="h-4 w-4" />
           </Button>
+          <UserEmojiManager disabled={!isConnected} userId={userId} onSendEmoji={onSendEmoji} />
           <Textarea
             aria-label={t('chat.input.placeholder')}
             autoResize

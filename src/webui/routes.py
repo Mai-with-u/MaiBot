@@ -29,6 +29,7 @@ from src.webui.routers.reasoning_process import router as reasoning_process_rout
 from src.webui.routers.search import router as search_router
 from src.webui.routers.statistics import router as statistics_router
 from src.webui.routers.system import router as system_router
+from src.webui.routers.user_emoji import router as user_emoji_router
 from src.webui.routers.websocket.auth import router as ws_auth_router
 from src.webui.routers.websocket.unified import router as unified_ws_router
 from src.webui.version_compatibility import (
@@ -56,6 +57,7 @@ router.include_router(jargon_router)
 router.include_router(behavior_router)
 router.include_router(emoji_router)
 router.include_router(avatar_router)
+router.include_router(user_emoji_router)
 # 注册插件管理路由
 router.include_router(plugin_router)
 # 注册系统控制路由

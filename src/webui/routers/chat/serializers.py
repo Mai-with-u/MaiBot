@@ -163,7 +163,7 @@ def _load_cached_binary_data(
     """从组件自身或图片缓存中读取 WebUI 可展示的二进制数据。"""
 
     if binary_data:
-        return binary_data, default_mime_type
+        return binary_data, _detect_binary_mime_type(binary_data, default_mime_type)
 
     normalized_hash = str(binary_hash or "").strip()
     if not normalized_hash or not image_type_name:
@@ -190,6 +190,20 @@ def _load_cached_binary_data(
         return image_path.read_bytes(), guessed_mime_type
     except Exception:
         return b"", default_mime_type
+
+
+def _detect_binary_mime_type(binary_data: bytes, default_mime_type: str) -> str:
+    """从二进制签名识别图片 MIME，避免把用户表情包统一误标为 GIF。"""
+
+    if binary_data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if binary_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if binary_data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if binary_data.startswith(b"RIFF") and binary_data[8:12] == b"WEBP":
+        return "image/webp"
+    return default_mime_type
 
 
 def _serialize_forward_component(component: ForwardComponent) -> Dict[str, Any]:

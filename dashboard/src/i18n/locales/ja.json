@@ -62,7 +62,7 @@
   "chat": {
     "botNameFallback": "麦麦",
     "userFallback": "ユーザー",
-    "userNameFallback": "WebUIユーザー",
+    "userNameFallback": "人間",
     "virtualGroupFallback": "WebUI仮想グループチャット",
     "status": {
       "connected": "接続済み",
@@ -72,6 +72,7 @@
     "actions": {
       "cancel": "キャンセル",
       "addImage": "画像を追加",
+      "openEmojiManager": "ユーザースタンプ",
       "reconnect": "再接続",
       "removeImage": "画像を削除",
       "save": "保存",
@@ -104,6 +105,14 @@
     "composer": {
       "hint": "Enter で送信・Shift + Enter で改行"
     },
+    "emojiManager": {
+      "add": "追加",
+      "delete": "スタンプを削除",
+      "empty": "ユーザースタンプはまだありません。追加して使用できます。",
+      "hint": "スタンプをクリックして送信",
+      "send": "スタンプを送信",
+      "title": "マイスタンプ"
+    },
     "sidebar": {
       "closeConversation": "{{label}} を閉じる",
       "conversations": "チャット会話",
@@ -116,8 +125,11 @@
       "title": "チャット",
       "virtualBadge": "仮想",
       "profileTitle": "自分の身份",
+      "editAvatar": "アバターを変更",
       "editName": "ニックネームを編集",
-      "saveName": "保存"
+      "saveName": "保存",
+      "savingAvatar": "アバターを保存中",
+      "userAvatarAlt": "{{name}}のアバター"
     },
     "dialog": {
       "create": "会話を作成",
@@ -150,6 +162,17 @@
       "videoUnsupported": "お使いのブラウザは動画再生に対応していません"
     },
     "toast": {
+      "avatarSaved": "アバターを保存しました",
+      "avatarSavedDesc": "新しいアバターを麦麦チャットに適用しました。",
+      "avatarSaveFailed": "アバターを保存できませんでした",
+      "avatarSaveFailedDesc": "しばらくしてからもう一度お試しください。",
+      "avatarUnsupported": "このアバターは使用できません",
+      "avatarUnsupportedDesc": "5 MB以下のJPG、PNG、WebP、GIF、BMP画像を選択してください。",
+      "emojiDeleteFailed": "スタンプを削除できませんでした",
+      "emojiLoadFailed": "スタンプを読み込めませんでした",
+      "emojiSendFailed": "スタンプを送信できませんでした",
+      "emojiUnsupportedDesc": "2 MB以下のJPG、PNG、WebP、GIF画像を選択してください。",
+      "emojiUploadFailed": "スタンプを追加できませんでした",
       "backendUnavailable": "バックエンドサービスに接続できません。MaiBot が起動しているか確認してください",
       "backendUnavailableShort": "バックエンドサービスに接続できません",
       "connectionFailed": "接続に失敗しました",
