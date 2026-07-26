@@ -6,7 +6,9 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['dist', 'out'] },
+  // 构建产物与依赖目录不参与检查：coverage 是 v8 覆盖率报告的产物目录，
+  // 其中的 HTML/JS 资源会被误当作源码扫描并产生无意义告警
+  { ignores: ['coverage', 'dist', 'dist-electron', 'node_modules', 'out'] },
   jsxA11y.flatConfigs.recommended,
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
