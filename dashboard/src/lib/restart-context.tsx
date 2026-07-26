@@ -13,6 +13,7 @@ import {
   useState,
   useCallback,
   useRef,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import { restartMaiBot } from './system-api'
@@ -99,7 +100,7 @@ export function RestartProvider({
   onRestartFailed,
   healthCheckUrl = '/api/webui/system/status',
   maxAttempts = CONFIG.MAX_ATTEMPTS,
-}: RestartProviderProps) {
+}: RestartProviderProps): ReactElement {
   const [state, setState] = useState<RestartState>({
     status: 'idle',
     progress: 0,
@@ -332,7 +333,7 @@ export function useRestart(): RestartContextValue {
  * 独立的重启 Hook，不依赖 Provider
  * 适用于只需要触发重启，不需要全局状态的场景
  */
-export function useRestartAction() {
+export function useRestartAction(): { isRestarting: boolean; triggerRestart: () => Promise<void> } {
   const [isRestarting, setIsRestarting] = useState(false)
 
   const triggerRestart = useCallback(async () => {

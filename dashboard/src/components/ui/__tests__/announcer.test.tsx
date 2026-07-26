@@ -1,7 +1,8 @@
 import { act, fireEvent, render, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AnnouncerProvider, useAnnounce } from '../announcer'
+import { AnnouncerProvider } from '../announcer'
+import { useAnnounce } from '../announcer-context'
 
 /** 测试用触发组件：通过按钮调用 announce，模拟业务组件的播报行为 */
 function AnnounceTrigger() {

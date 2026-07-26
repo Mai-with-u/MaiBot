@@ -4,7 +4,7 @@ import { python } from '@codemirror/lang-python'
 import { StreamLanguage } from '@codemirror/language'
 import { toml as tomlMode } from '@codemirror/legacy-modes/mode/toml'
 import { linter } from '@codemirror/lint'
-import type { Range, RangeSet } from '@codemirror/state'
+import type { Extension, Range, RangeSet } from '@codemirror/state'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { Decoration, EditorView, ViewPlugin } from '@codemirror/view'
 import CodeMirror from '@uiw/react-codemirror'
@@ -13,8 +13,7 @@ import { useTheme } from '@/components/use-theme'
 
 import type { CodeEditorProps, CodeEditorRangeClassName, Language } from './CodeEditor'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const languageExtensions: Record<Language, any[]> = {
+const languageExtensions: Record<Language, Extension[]> = {
   python: [python()],
   json: [json(), linter(jsonParseLinter())],
   toml: [StreamLanguage.define(tomlMode)],

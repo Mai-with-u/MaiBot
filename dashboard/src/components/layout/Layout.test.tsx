@@ -75,7 +75,7 @@ vi.mock('@/components/update-notice-dialog', () => ({
 vi.mock('@/components/electron/TitleBar', () => ({
   TitleBar: () => null,
 }))
-vi.mock('@/components/ui/announcer', () => ({
+vi.mock('@/components/ui/announcer-context', () => ({
   useAnnounce: () => vi.fn(),
 }))
 vi.mock('@/components/ui/skip-nav', () => ({

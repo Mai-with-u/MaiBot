@@ -2,6 +2,7 @@ import type { PluginInfo, PluginType } from '@/types/plugin'
 
 import { ApiError, backendApi } from '@/lib/http'
 import { pluginProgressClient } from '@/lib/plugin-progress-client'
+
 import type { GitStatus, MaimaiVersion } from './types'
 
 /**

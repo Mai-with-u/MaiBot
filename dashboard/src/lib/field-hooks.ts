@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+
 import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 
 /**

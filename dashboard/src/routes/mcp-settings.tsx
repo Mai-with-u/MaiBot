@@ -795,7 +795,7 @@ function MCPSettingsPageContent() {
       const configToSave = { ...mcpConfig }
       if (Array.isArray(configToSave.servers)) {
         configToSave.servers = configToSave.servers.map((server: MCPServerConfig) => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          // 解构剔除前端专用的 _uuid，保存时不写入配置文件
           const { _uuid, ...rest } = server
           return rest
         })

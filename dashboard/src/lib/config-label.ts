@@ -20,7 +20,7 @@ function getLanguageCandidates(language?: string) {
   ].filter(Boolean)
 }
 
-export function resolveLocalizedText(text: LocalizedText | undefined, language?: string, fallback = '') {
+export function resolveLocalizedText(text: LocalizedText | undefined, language?: string, fallback = ''): string {
   if (!text) {
     return fallback
   }
@@ -39,13 +39,13 @@ export function resolveLocalizedText(text: LocalizedText | undefined, language?:
   return Object.values(text).find(Boolean) ?? fallback
 }
 
-export function getAllLocalizedText(text: LocalizedText | undefined) {
+export function getAllLocalizedText(text: LocalizedText | undefined): string[] {
   if (!text) {
     return []
   }
   return typeof text === 'string' ? [text] : Object.values(text)
 }
 
-export function resolveFieldLabel(field: FieldSchema, language?: string) {
+export function resolveFieldLabel(field: FieldSchema, language?: string): string {
   return resolveLocalizedText(field.label, language, field.name)
 }

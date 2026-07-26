@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { useAssetStore } from '@/components/asset-provider'
+import { useAssetStore } from '@/lib/asset-store-context'
 import type { BackgroundConfig } from '@/lib/theme/tokens'
 
 type BackgroundLayerProps = {

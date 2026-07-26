@@ -1071,8 +1071,8 @@ function ModelConfigPageContent() {
                 {deleteConfirmState.affectedModels.length > 0 && (
                   <div className="rounded-md bg-muted p-3 text-muted-foreground">
                     {deleteConfirmState.affectedModels.slice(0, 8).map((model) => (
-                      <div key={(model as ModelInfo).name}>
-                        {(model as ModelInfo).name} ({(model as ModelInfo).api_provider})
+                      <div key={model.name}>
+                        {model.name} ({model.api_provider})
                       </div>
                     ))}
                     {deleteConfirmState.affectedModels.length > 8 && (

@@ -1,3 +1,5 @@
+import type { ModelInfo } from '@/routes/config/model/types'
+
 /**
  * API 提供商接口定义
  */
@@ -17,7 +19,7 @@ export interface APIProvider {
 export interface DeleteConfirmState {
   isOpen: boolean
   providersToDelete: string[]
-  affectedModels: any[]
+  affectedModels: ModelInfo[]
   pendingProviders: APIProvider[]
   context: 'auto' | 'manual' | 'restart'
   oldProviders: APIProvider[]

@@ -1,7 +1,7 @@
-import { getSetting } from './settings-manager'
-
 import { getWsBaseUrl } from '@/lib/api-base'
 import { backendApi } from '@/lib/http'
+
+import { getSetting } from './settings-manager'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected'
 
