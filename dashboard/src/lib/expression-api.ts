@@ -41,9 +41,7 @@ const API_BASE = '/api/webui/expression'
 /**
  * 获取聊天列表
  */
-export async function getChatList(
-  params: { include_legacy?: boolean } = {}
-): Promise<ChatInfo[]> {
+export async function getChatList(params: { include_legacy?: boolean } = {}): Promise<ChatInfo[]> {
   const data = await backendApi.get<ChatListResponse>(`${API_BASE}/chats`, {
     query: { include_legacy: params.include_legacy ? true : undefined },
     errorMessage: '获取聊天列表失败',
@@ -150,10 +148,13 @@ export async function clearExpressions(params: {
 export async function previewLegacyExpressionImport(params: {
   db_path: string
 }): Promise<LegacyExpressionImportPreviewResponse> {
-  return backendApi.post<LegacyExpressionImportPreviewResponse>(`${API_BASE}/legacy-import/preview`, {
-    body: params,
-    errorMessage: '预览旧版导入失败',
-  })
+  return backendApi.post<LegacyExpressionImportPreviewResponse>(
+    `${API_BASE}/legacy-import/preview`,
+    {
+      body: params,
+      errorMessage: '预览旧版导入失败',
+    }
+  )
 }
 
 /**
@@ -263,7 +264,9 @@ export async function deleteExpression(expressionId: number): Promise<Record<str
 /**
  * 批量删除表达方式
  */
-export async function batchDeleteExpressions(expressionIds: number[]): Promise<Record<string, never>> {
+export async function batchDeleteExpressions(
+  expressionIds: number[]
+): Promise<Record<string, never>> {
   const data = await backendApi.post<ExpressionDeleteResponse>(`${API_BASE}/batch/delete`, {
     body: { ids: expressionIds },
     errorMessage: '批量删除表达方式失败',

@@ -53,7 +53,7 @@ describe('formatLocalCacheCleanupDescription', () => {
         removed_files: 0,
         removed_records: 0,
         vacuumed: false,
-      }),
+      })
     ).toBe('没有可清理的内容。')
   })
 
@@ -81,7 +81,7 @@ describe('formatLocalCacheCleanupDescription', () => {
         removed_records: 4,
         reclaimed_bytes: 1024,
         vacuumed: true,
-      }),
+      })
     ).toBe('删除 2 个文件，释放 1.5 KB，移除 4 条记录，VACUUM 释放 1.0 KB。')
   })
 })

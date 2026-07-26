@@ -18,12 +18,16 @@ type UpdatePluginResult = {
 /**
  * 安装插件
  */
-export async function installPlugin(pluginId: string, repositoryUrl: string, branch: string = 'main'): Promise<{ success: boolean; message: string }> {
+export async function installPlugin(
+  pluginId: string,
+  repositoryUrl: string,
+  branch: string = 'main'
+): Promise<{ success: boolean; message: string }> {
   return backendApi.post<{ success: boolean; message: string }>('/api/webui/plugins/install', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
-      branch: branch
+      branch: branch,
     },
     errorMessage: '安装插件失败',
   })
@@ -32,10 +36,12 @@ export async function installPlugin(pluginId: string, repositoryUrl: string, bra
 /**
  * 卸载插件
  */
-export async function uninstallPlugin(pluginId: string): Promise<{ success: boolean; message: string }> {
+export async function uninstallPlugin(
+  pluginId: string
+): Promise<{ success: boolean; message: string }> {
   return backendApi.post<{ success: boolean; message: string }>('/api/webui/plugins/uninstall', {
     body: {
-      plugin_id: pluginId
+      plugin_id: pluginId,
     },
     errorMessage: '卸载插件失败',
   })
@@ -44,12 +50,16 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
 /**
  * 更新插件
  */
-export async function updatePlugin(pluginId: string, repositoryUrl: string, branch: string = 'main'): Promise<UpdatePluginResult> {
+export async function updatePlugin(
+  pluginId: string,
+  repositoryUrl: string,
+  branch: string = 'main'
+): Promise<UpdatePluginResult> {
   return backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
-      branch: branch
+      branch: branch,
     },
     errorMessage: '更新插件失败',
   })

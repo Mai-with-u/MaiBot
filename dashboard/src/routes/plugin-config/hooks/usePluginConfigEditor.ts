@@ -54,9 +54,10 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const [internalLeavePromptOpen, setInternalLeavePromptOpen] = useState(false)
 
   // hasChanges 直接由草稿与基线比较派生（不用 effect 写 state）
-  const hasChanges = editMode === 'visual'
-    ? JSON.stringify(config) !== JSON.stringify(originalConfig)
-    : sourceCode !== originalSourceCode
+  const hasChanges =
+    editMode === 'visual'
+      ? JSON.stringify(config) !== JSON.stringify(originalConfig)
+      : sourceCode !== originalSourceCode
 
   const navigationBlocker = useBlocker({
     shouldBlockFn: () => hasChanges,
@@ -68,7 +69,11 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const loadConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const { schema: schemaData, config: configData, rawConfig } = await getPluginConfigBundle(plugin.id)
+      const {
+        schema: schemaData,
+        config: configData,
+        rawConfig,
+      } = await getPluginConfigBundle(plugin.id)
 
       setSchema(schemaData)
       setConfig(configData)
@@ -79,7 +84,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
       toast({
         title: '加载配置失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
     } finally {
       setLoading(false)
@@ -91,14 +96,17 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   }, [loadConfig])
 
   // 处理字段变化
-  const handleFieldChange = useCallback((sectionName: string, fieldName: string, value: unknown) => {
-    setConfig(prev => setNestedField(prev, sectionName, fieldName, value))
-  }, [])
+  const handleFieldChange = useCallback(
+    (sectionName: string, fieldName: string, value: unknown) => {
+      setConfig((prev) => setNestedField(prev, sectionName, fieldName, value))
+    },
+    []
+  )
 
   // 源代码草稿变更（编辑后清除上次 TOML 错误标记）
   const handleSourceCodeChange = useCallback((value: string) => {
     setSourceCode(value)
-    setHasTomlError(prev => (prev ? false : prev))
+    setHasTomlError((prev) => (prev ? false : prev))
   }, [])
 
   // 保存配置
@@ -114,7 +122,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
           toast({
             title: 'TOML 格式错误',
             description: error instanceof Error ? error.message : '无法解析 TOML 配置，请检查语法',
-            variant: 'destructive'
+            variant: 'destructive',
           })
           setSaving(false)
           return false
@@ -132,14 +140,14 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
 
       toast({
         title: '配置已保存',
-        description: '更改将在插件重新加载后生效'
+        description: '更改将在插件重新加载后生效',
       })
       return true
     } catch (error) {
       toast({
         title: '保存失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
       return false
     } finally {
@@ -190,7 +198,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
       await resetPluginConfig(plugin.id)
       toast({
         title: '配置已重置',
-        description: '下次加载插件时将使用默认配置'
+        description: '下次加载插件时将使用默认配置',
       })
       setResetDialogOpen(false)
       loadConfig()
@@ -198,7 +206,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
       toast({
         title: '重置失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
     }
   }, [loadConfig, plugin.id, toast])
@@ -209,24 +217,27 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
       const toggleResult = await togglePlugin(plugin.id)
       toast({
         title: toggleResult.message,
-        description: toggleResult.note
+        description: toggleResult.note,
       })
       loadConfig()
     } catch (error) {
       toast({
         title: '切换状态失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
     }
   }, [loadConfig, plugin.id, toast])
 
   // 配置标签页切换（同步 URL）
-  const handleConfigTabChange = useCallback((nextTab: string) => {
-    setActiveConfigTab(nextTab)
-    const params = new URLSearchParams({ plugin: plugin.id, tab: nextTab })
-    window.history.replaceState(null, '', `/plugin-config?${params.toString()}`)
-  }, [plugin.id])
+  const handleConfigTabChange = useCallback(
+    (nextTab: string) => {
+      setActiveConfigTab(nextTab)
+      const params = new URLSearchParams({ plugin: plugin.id, tab: nextTab })
+      window.history.replaceState(null, '', `/plugin-config?${params.toString()}`)
+    },
+    [plugin.id]
+  )
 
   return {
     // 模式 / 页签

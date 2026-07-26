@@ -31,7 +31,7 @@ const localeBackend: BackendModule = {
     void loader().then(
       (module) => callback(null, module.default),
       (error: unknown) =>
-        callback(error instanceof Error ? error : new Error(`加载语言包 ${language} 失败`), false),
+        callback(error instanceof Error ? error : new Error(`加载语言包 ${language} 失败`), false)
     )
   },
 }

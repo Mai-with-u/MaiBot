@@ -49,15 +49,10 @@ interface UseModelAutoSaveReturn {
     nextTaskConfig: ModelTaskConfig | null
   ) => ModelSaveBarrierCheckpoint
   /** 整份配置写入成功后提交快照，并判断目标状态是否仍可安全回填到界面 */
-  commitSaveBarrier: (
-    checkpoint: ModelSaveBarrierCheckpoint
-  ) => ModelSaveBarrierCommit
+  commitSaveBarrier: (checkpoint: ModelSaveBarrierCheckpoint) => ModelSaveBarrierCommit
   /** 初始加载状态标记引用（用于设置初始加载完成） */
   initialLoadRef: RefObject<boolean>
-  resetSnapshots: (
-    nextModels: ModelInfo[],
-    nextTaskConfig: ModelTaskConfig | null
-  ) => void
+  resetSnapshots: (nextModels: ModelInfo[], nextTaskConfig: ModelTaskConfig | null) => void
 }
 
 type SaveDomain = 'models' | 'taskConfig'
@@ -75,9 +70,7 @@ interface DomainGenerations {
 /**
  * 模型配置自动保存 Hook。
  */
-export function useModelAutoSave(
-  options: UseModelAutoSaveOptions
-): UseModelAutoSaveReturn {
+export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAutoSaveReturn {
   const {
     models,
     taskConfig,
@@ -103,9 +96,7 @@ export function useModelAutoSave(
 
   const publishUnsavedState = useCallback(() => {
     if (!isMountedRef.current) return
-    onUnsavedChange?.(
-      dirtyDomainsRef.current.models || dirtyDomainsRef.current.taskConfig
-    )
+    onUnsavedChange?.(dirtyDomainsRef.current.models || dirtyDomainsRef.current.taskConfig)
   }, [onUnsavedChange])
 
   const setDomainDirty = useCallback(
@@ -162,8 +153,7 @@ export function useModelAutoSave(
   }, [])
 
   const snapshotModels = useCallback(
-    (nextModels: ModelInfo[]): string =>
-      JSON.stringify(nextModels.map(cleanModelForSave)),
+    (nextModels: ModelInfo[]): string => JSON.stringify(nextModels.map(cleanModelForSave)),
     [cleanModelForSave]
   )
 
@@ -243,11 +233,7 @@ export function useModelAutoSave(
   )
 
   const queueModelsSave = useCallback(
-    (
-      newModels: ModelInfo[],
-      snapshot: string,
-      generation: number
-    ): Promise<void> => {
+    (newModels: ModelInfo[], snapshot: string, generation: number): Promise<void> => {
       pendingModelsSaveCountRef.current += 1
       updateSavingCount(1)
 
@@ -277,11 +263,7 @@ export function useModelAutoSave(
   )
 
   const queueTaskConfigSave = useCallback(
-    (
-      newTaskConfig: ModelTaskConfig,
-      snapshot: string,
-      generation: number
-    ): Promise<void> => {
+    (newTaskConfig: ModelTaskConfig, snapshot: string, generation: number): Promise<void> => {
       pendingTaskConfigSaveCountRef.current += 1
       updateSavingCount(1)
 
@@ -322,9 +304,7 @@ export function useModelAutoSave(
     generationsRef.current.models += 1
     const generation = generationsRef.current.models
     // 若旧修订已入队，即使用户回退到基线也要补写一次，覆盖旧请求即将落盘的内容。
-    const dirty =
-      snapshot !== modelsSnapshotRef.current ||
-      pendingModelsSaveCountRef.current > 0
+    const dirty = snapshot !== modelsSnapshotRef.current || pendingModelsSaveCountRef.current > 0
     setDomainDirty('models', dirty)
     if (!dirty) return
 
@@ -354,8 +334,7 @@ export function useModelAutoSave(
     generationsRef.current.taskConfig += 1
     const generation = generationsRef.current.taskConfig
     const dirty =
-      snapshot !== taskConfigSnapshotRef.current ||
-      pendingTaskConfigSaveCountRef.current > 0
+      snapshot !== taskConfigSnapshotRef.current || pendingTaskConfigSaveCountRef.current > 0
     setDomainDirty('taskConfig', dirty)
     if (!dirty || snapshot === null) return
 
@@ -370,13 +349,7 @@ export function useModelAutoSave(
         taskConfigTimerRef.current = null
       }
     }
-  }, [
-    taskConfig,
-    debounceMs,
-    queueTaskConfigSave,
-    setDomainDirty,
-    snapshotTaskConfig,
-  ])
+  }, [taskConfig, debounceMs, queueTaskConfigSave, setDomainDirty, snapshotTaskConfig])
 
   useEffect(() => {
     isMountedRef.current = true

@@ -149,9 +149,7 @@ describe('LogWebSocketManager', () => {
 
   it('订阅 ACK 失败时清理底层登记并重试', async () => {
     const failedSubscribe = createDeferred<Record<string, unknown>>()
-    wsMocks.subscribe
-      .mockImplementationOnce(() => failedSubscribe.promise)
-      .mockResolvedValue({})
+    wsMocks.subscribe.mockImplementationOnce(() => failedSubscribe.promise).mockResolvedValue({})
 
     const manager = new LogWebSocketManager()
     const stopListening = manager.onLog(vi.fn())

@@ -9,7 +9,15 @@ import { maibotFeedbackSurvey } from '../maibot-feedback'
 import { webuiFeedbackSurvey } from '../webui-feedback'
 import type { QuestionType, SurveyConfig } from '@/types/survey'
 
-const VALID_TYPES: QuestionType[] = ['single', 'multiple', 'text', 'textarea', 'rating', 'scale', 'dropdown']
+const VALID_TYPES: QuestionType[] = [
+  'single',
+  'multiple',
+  'text',
+  'textarea',
+  'rating',
+  'scale',
+  'dropdown',
+]
 const CHOICE_TYPES: QuestionType[] = ['single', 'multiple', 'dropdown']
 
 const cases: Array<[string, SurveyConfig]> = [
@@ -60,7 +68,9 @@ describe.each(cases)('%s 配置结构', (_name, config) => {
       }
       if (question.minLength !== undefined) {
         expect(question.minLength).toBeGreaterThan(0)
-        expect(question.minLength).toBeLessThanOrEqual(question.maxLength ?? Number.POSITIVE_INFINITY)
+        expect(question.minLength).toBeLessThanOrEqual(
+          question.maxLength ?? Number.POSITIVE_INFINITY
+        )
       }
     }
   })

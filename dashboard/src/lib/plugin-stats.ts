@@ -10,7 +10,8 @@ const STATS_API_BASE_URL = '/api/webui/plugins/stats-proxy'
 const PLUGIN_STATS_SUMMARY_CACHE_TTL = 5 * 60 * 1000
 const PLUGIN_STATS_SUMMARY_STORAGE_KEY = 'maibot-plugin-stats-summary-cache'
 
-let pluginStatsSummaryCache: { timestamp: number; data: Record<string, PluginStatsData> } | null = null
+let pluginStatsSummaryCache: { timestamp: number; data: Record<string, PluginStatsData> } | null =
+  null
 let pluginStatsSummaryRequest: Promise<Record<string, PluginStatsData>> | null = null
 
 export interface PluginStatsData {
@@ -186,14 +187,15 @@ function updateCachedPluginStats(pluginId: string, partialStats: Partial<PluginS
   const currentStats = currentCache.data[pluginId] ?? createEmptyStats(pluginId)
   const nextData = {
     ...currentCache.data,
-    [pluginId]: normalizePluginStatsResponse(
-      {
-        ...currentStats,
-        ...partialStats,
-        plugin_id: pluginId,
-      },
-      pluginId
-    ) ?? currentStats,
+    [pluginId]:
+      normalizePluginStatsResponse(
+        {
+          ...currentStats,
+          ...partialStats,
+          plugin_id: pluginId,
+        },
+        pluginId
+      ) ?? currentStats,
   }
 
   pluginStatsSummaryCache = { timestamp: Date.now(), data: nextData }
@@ -233,7 +235,9 @@ export async function getPluginStats(pluginId: string): Promise<PluginStatsData 
  * 閼惧嘲褰囬幓鎺嶆鐢倸婧€閻ㄥ嫯浜ら柌蹇曠埠鐠佲剝鎲崇憰渚婄礄娑撳秴瀵橀崥顐ョ槑鐠佺尨绱氶妴? */
 async function fetchPluginStatsSummaryUncached(): Promise<Record<string, PluginStatsData>> {
   try {
-    const data = await backendApi.get<PluginStatsSummaryResponse>(`${STATS_API_BASE_URL}/stats/summary`)
+    const data = await backendApi.get<PluginStatsSummaryResponse>(
+      `${STATS_API_BASE_URL}/stats/summary`
+    )
     if (!data.success || !data.stats || typeof data.stats !== 'object') {
       return {}
     }
@@ -281,9 +285,9 @@ export async function getPluginStatsSummary(
   options: { forceRefresh?: boolean } = {}
 ): Promise<Record<string, PluginStatsData>> {
   if (
-    !options.forceRefresh
-    && pluginStatsSummaryCache
-    && Date.now() - pluginStatsSummaryCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL
+    !options.forceRefresh &&
+    pluginStatsSummaryCache &&
+    Date.now() - pluginStatsSummaryCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL
   ) {
     return pluginStatsSummaryCache.data
   }
@@ -311,7 +315,6 @@ export async function getPluginStatsSummary(
   return pluginStatsSummaryRequest
 }
 
-
 /**
  * 閻愮绂愰幓鎺嶆
  */
@@ -319,9 +322,12 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
   try {
     const finalUserId = userId || getUserId()
 
-    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/like`, {
-      body: { plugin_id: pluginId, user_id: finalUserId },
-    })
+    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
+      `${STATS_API_BASE_URL}/stats/like`,
+      {
+        body: { plugin_id: pluginId, user_id: finalUserId },
+      }
+    )
 
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
@@ -350,9 +356,12 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
   try {
     const finalUserId = userId || getUserId()
 
-    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/dislike`, {
-      body: { plugin_id: pluginId, user_id: finalUserId },
-    })
+    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
+      `${STATS_API_BASE_URL}/stats/dislike`,
+      {
+        body: { plugin_id: pluginId, user_id: finalUserId },
+      }
+    )
 
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
@@ -410,9 +419,12 @@ export async function ratePlugin(
       payload.comment = comment
     }
 
-    const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/rate`, {
-      body: payload,
-    })
+    const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(
+      `${STATS_API_BASE_URL}/stats/rate`,
+      {
+        body: payload,
+      }
+    )
 
     const result: RatingStatsResponse = { success: true, ...data }
     const updatedStats: Partial<PluginStatsData> = {}
@@ -445,9 +457,12 @@ export async function recordPluginDownload(pluginId: string): Promise<DownloadSt
   try {
     const userId = getUserId()
     const fingerprint = generateUserFingerprint()
-    const data = await backendApi.post<Omit<DownloadStatsResponse, 'success'>>(`${STATS_API_BASE_URL}/stats/download`, {
-      body: { plugin_id: pluginId, user_id: userId, fingerprint },
-    })
+    const data = await backendApi.post<Omit<DownloadStatsResponse, 'success'>>(
+      `${STATS_API_BASE_URL}/stats/download`,
+      {
+        body: { plugin_id: pluginId, user_id: userId, fingerprint },
+      }
+    )
 
     const result: DownloadStatsResponse = { success: true, ...data }
     if (typeof result.downloads === 'number') {
@@ -493,15 +508,15 @@ export function generateUserFingerprint(): string {
     navigator.maxTouchPoints || 0,
     nav.deviceMemory || 0,
   ].join('|')
-  
+
   // 缁犫偓閸楁洖鎼辩敮灞藉毐閺?
   let hash = 0
   for (let i = 0; i < features.length; i++) {
     const char = features.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
+    hash = (hash << 5) - hash + char
     hash = hash & hash // Convert to 32bit integer
   }
-  
+
   return `fp_${Math.abs(hash).toString(36)}`
 }
 
@@ -511,21 +526,21 @@ export function generateUserFingerprint(): string {
  */
 export function getUserId(): string {
   const STORAGE_KEY = 'maibot_user_id'
-  
+
   // 鐏忔繆鐦禒?localStorage 閼惧嘲褰?
   let userId = localStorage.getItem(STORAGE_KEY)
-  
+
   if (!userId) {
     // 閻㈢喐鍨氶弬鎵畱 UUID
     const fingerprint = generateUserFingerprint()
     const timestamp = Date.now().toString(36)
     const random = Math.random().toString(36).substring(2, 15)
-    
+
     userId = `${fingerprint}_${timestamp}_${random}`
-    
+
     // 鐎涙ê鍋嶉崚?localStorage
     localStorage.setItem(STORAGE_KEY, userId)
   }
-  
+
   return userId
 }

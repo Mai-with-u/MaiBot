@@ -49,9 +49,21 @@ vi.mock('idb', () => ({
 /** 每个对象仓库暴露 put/clear/delete 三个可断言的桩方法 */
 function createFakeStores() {
   return {
-    timeline: { put: vi.fn(async () => {}), clear: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
-    sessions: { put: vi.fn(async () => {}), clear: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
-    meta: { put: vi.fn(async () => {}), clear: vi.fn(async () => {}), delete: vi.fn(async () => {}) },
+    timeline: {
+      put: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    },
+    sessions: {
+      put: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    },
+    meta: {
+      put: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    },
   }
 }
 
@@ -67,9 +79,13 @@ function createFakeDb(stores: FakeStores) {
     done: Promise.resolve(),
   }
   return {
-    get: vi.fn<(store: string, key: string) => Promise<MetaRecord | undefined>>(async () => undefined),
+    get: vi.fn<(store: string, key: string) => Promise<MetaRecord | undefined>>(
+      async () => undefined
+    ),
     getAll: vi.fn<(store: string) => Promise<SessionInfo[]>>(async () => []),
-    getAllFromIndex: vi.fn<(store: string, index: string) => Promise<PersistedTimelineRecord[]>>(async () => []),
+    getAllFromIndex: vi.fn<(store: string, index: string) => Promise<PersistedTimelineRecord[]>>(
+      async () => []
+    ),
     getAllKeysFromIndex: vi.fn<(store: string, index: string) => Promise<string[]>>(async () => []),
     transaction: vi.fn(() => fakeTransaction),
   }
@@ -212,7 +228,13 @@ describe('模块初始化与快照恢复', () => {
         id: 'evt_1',
         eventId: 1,
         type: 'message.ingested',
-        data: { session_id: 'session-a', speaker_name: '张三', content: '历史消息一', message_id: 'msg-h1', timestamp: 100 },
+        data: {
+          session_id: 'session-a',
+          speaker_name: '张三',
+          content: '历史消息一',
+          message_id: 'msg-h1',
+          timestamp: 100,
+        },
         timestamp: 100,
         sessionId: 'session-a',
         persistedAt: 1000,
@@ -221,7 +243,13 @@ describe('模块初始化与快照恢复', () => {
         id: 'evt_2',
         eventId: 2,
         type: 'message.sent',
-        data: { session_id: 'session-a', speaker_name: '麦麦', content: '历史回复', message_id: 'msg-h2', timestamp: 200 },
+        data: {
+          session_id: 'session-a',
+          speaker_name: '麦麦',
+          content: '历史回复',
+          message_id: 'msg-h2',
+          timestamp: 200,
+        },
         timestamp: 200,
         sessionId: 'session-a',
         persistedAt: 1000,
@@ -386,8 +414,14 @@ describe('事件入账', () => {
     const hookModule = await importHookModule()
     const view = await mountMonitor(hookModule)
 
-    emitMonitorEvent('message.ingested', makeMessageData({ event_id: undefined, message_id: 'msg-x1' }))
-    emitMonitorEvent('message.ingested', makeMessageData({ event_id: undefined, message_id: 'msg-x2' }))
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: undefined, message_id: 'msg-x1' })
+    )
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: undefined, message_id: 'msg-x2' })
+    )
 
     expect(view.result.current.allTimeline).toHaveLength(2)
     expect(view.result.current.allTimeline[0].id).toMatch(/^evt_1_\d+$/)
@@ -489,7 +523,10 @@ describe('阶段状态', () => {
     expect(view.result.current.sessions.get('session-a')?.eventCount).toBe(1)
 
     // updated_at 更旧的状态不应覆盖已有状态
-    emitMonitorEvent('stage.status', makeStageData({ event_id: 202, stage: '过期阶段', updated_at: 50, timestamp: 101 }))
+    emitMonitorEvent(
+      'stage.status',
+      makeStageData({ event_id: 202, stage: '过期阶段', updated_at: 50, timestamp: 101 })
+    )
     expect(view.result.current.stageStatuses.get('session-a')?.stage).toBe('规划中')
   })
 
@@ -582,14 +619,17 @@ describe('会话选择、清空与持久化', () => {
     const view = await mountMonitor(hookModule)
 
     emitMonitorEvent('message.ingested', makeMessageData({ event_id: 901, timestamp: 100 }))
-    emitMonitorEvent('message.ingested', makeMessageData({
-      event_id: 902,
-      session_id: 'session-b',
-      session_name: '另一个群',
-      group_id: 'group-2',
-      message_id: 'msg-b1',
-      timestamp: 200,
-    }))
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({
+        event_id: 902,
+        session_id: 'session-b',
+        session_name: '另一个群',
+        group_id: 'group-2',
+        message_id: 'msg-b1',
+        timestamp: 200,
+      })
+    )
 
     // 自动选中首个会话，timeline 只含该会话的条目
     expect(view.result.current.selectedSession).toBe('session-a')
@@ -646,7 +686,7 @@ describe('会话选择、清空与持久化', () => {
       persistedAt: expect.any(Number),
     })
     expect(fakeStores.sessions.put).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: 'session-a', eventCount: 1 }),
+      expect.objectContaining({ sessionId: 'session-a', eventCount: 1 })
     )
     expect(fakeStores.meta.put).toHaveBeenCalledWith({ key: 'selectedSession', value: 'session-a' })
     expect(fakeStores.meta.put).toHaveBeenCalledWith({ key: 'entryCounter', value: 0 })

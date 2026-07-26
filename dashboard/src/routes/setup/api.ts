@@ -107,10 +107,9 @@ export async function loadSetupStatus(): Promise<SetupStatus> {
 
 // 读取Bot基础配置
 export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
-  const data = await backendApi.get<{ config: { bot?: BotBasicConfig } }>(
-    '/api/webui/config/bot',
-    { errorMessage: '读取 Bot 配置失败' }
-  )
+  const data = await backendApi.get<{ config: { bot?: BotBasicConfig } }>('/api/webui/config/bot', {
+    errorMessage: '读取 Bot 配置失败',
+  })
   const botConfig = (data.config.bot || {}) as Partial<BotBasicConfig>
   const qqAccount = String(botConfig.qq_account ?? '').trim()
 
@@ -278,10 +277,7 @@ export async function saveApiProviderSetupConfig(config: ApiProviderSetupConfig)
 }
 
 // 保存基础模型配置
-export async function saveModelSetupConfig(
-  config: ModelSetupConfig,
-  providerName: string
-) {
+export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string) {
   const modelConfig = await loadModelConfig()
   const trimmedProviderName = providerName.trim()
   const plannerModelIdentifier = config.planner_model_identifier.trim()

@@ -398,9 +398,9 @@ describe('getExpressionClusterMembers', () => {
     const response = { success: true, members: [] }
     getMock.mockResolvedValue(response)
 
-    await expect(
-      getExpressionClusterMembers({ cluster_id: 5, profile_marker: '' })
-    ).resolves.toBe(response)
+    await expect(getExpressionClusterMembers({ cluster_id: 5, profile_marker: '' })).resolves.toBe(
+      response
+    )
     expect(getMock).toHaveBeenCalledWith('/api/webui/expression/clusters/5/members', {
       query: { profile_marker: undefined },
       errorMessage: '获取表达聚类成员失败',
@@ -477,9 +477,9 @@ describe('getExpressionReviewLogs', () => {
     const response = { success: true, logs: [] }
     getMock.mockResolvedValue(response)
 
-    await expect(
-      getExpressionReviewLogs({ limit: 0, passed: false, chat_id: '' })
-    ).resolves.toBe(response)
+    await expect(getExpressionReviewLogs({ limit: 0, passed: false, chat_id: '' })).resolves.toBe(
+      response
+    )
     expect(getMock).toHaveBeenCalledWith('/api/webui/expression/review/logs', {
       query: { limit: undefined, passed: false, chat_id: undefined },
       errorMessage: '获取 AI 审核记录失败',

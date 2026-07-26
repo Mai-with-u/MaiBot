@@ -113,7 +113,13 @@ describe('listBehaviorClusters', () => {
     getMock.mockResolvedValue(response)
 
     await expect(
-      listBehaviorClusters({ session_id: 'sess-2', search: '', sort_by: 'score', page: 1, page_size: 50 })
+      listBehaviorClusters({
+        session_id: 'sess-2',
+        search: '',
+        sort_by: 'score',
+        page: 1,
+        page_size: 50,
+      })
     ).resolves.toBe(response)
 
     const [path, options] = getMock.mock.calls[0]

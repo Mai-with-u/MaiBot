@@ -19,7 +19,7 @@ describe('formatApiError', () => {
           },
         ],
       },
-      '获取审核列表失败',
+      '获取审核列表失败'
     )
 
     expect(error).toBe('query.exclude_ids.0: Input should be a valid integer')
@@ -33,7 +33,7 @@ describe('formatApiError', () => {
           msg: 'Field required',
         },
       },
-      '批量审核失败',
+      '批量审核失败'
     )
 
     expect(error).toBe('body.items: Field required')

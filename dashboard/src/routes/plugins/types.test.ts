@@ -22,10 +22,7 @@ describe('插件操作进度', () => {
     const firstProgress = updateProgress('plugin-a', 30)
     const secondProgress = updateProgress('plugin-b', 10)
 
-    const progressById = mergePluginProgress(
-      mergePluginProgress({}, firstProgress),
-      secondProgress
-    )
+    const progressById = mergePluginProgress(mergePluginProgress({}, firstProgress), secondProgress)
 
     expect(progressById['plugin-a']).toBe(firstProgress)
     expect(progressById['plugin-b']).toBe(secondProgress)

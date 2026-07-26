@@ -245,12 +245,18 @@ describe('getInstalledPluginVersion', () => {
   })
 
   it('旧格式插件直接取顶层 version 字段', () => {
-    const legacy: LegacyInstalledPlugin = { id: 'legacy-demo', version: '0.9.0', path: '/plugins/legacy-demo' }
+    const legacy: LegacyInstalledPlugin = {
+      id: 'legacy-demo',
+      version: '0.9.0',
+      path: '/plugins/legacy-demo',
+    }
 
     expect(getInstalledPluginVersion('legacy-demo', [legacy])).toBe('0.9.0')
   })
 
   it('插件不存在时返回 undefined', () => {
-    expect(getInstalledPluginVersion('missing', [makeInstalledPlugin('demo', '1.0.0')])).toBeUndefined()
+    expect(
+      getInstalledPluginVersion('missing', [makeInstalledPlugin('demo', '1.0.0')])
+    ).toBeUndefined()
   })
 })

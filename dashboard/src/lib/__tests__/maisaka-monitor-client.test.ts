@@ -123,7 +123,7 @@ describe('maisakaMonitorClient', () => {
     expect(healthyListener).toHaveBeenCalledWith({ type: 'stage.status', data: stageData })
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       'MaiSaka 监控事件监听器执行失败:',
-      expect.any(Error),
+      expect.any(Error)
     )
   })
 

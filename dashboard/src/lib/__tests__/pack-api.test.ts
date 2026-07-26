@@ -288,9 +288,18 @@ describe('detectPackConflicts', () => {
   it('按归一化 URL（忽略大小写与末尾斜杠）匹配提供商，收集全部匹配的本地提供商', async () => {
     const localConfig = makeLocalConfig({
       api_providers: [
-        { ...makeProvider({ name: '本地甲', base_url: 'https://API.Example.com/v1/' }), api_key: 'k1' },
-        { ...makeProvider({ name: '本地乙', base_url: 'https://api.example.com/v1' }), api_key: 'k2' },
-        { ...makeProvider({ name: '无关商', base_url: 'https://other.example.com' }), api_key: 'k3' },
+        {
+          ...makeProvider({ name: '本地甲', base_url: 'https://API.Example.com/v1/' }),
+          api_key: 'k1',
+        },
+        {
+          ...makeProvider({ name: '本地乙', base_url: 'https://api.example.com/v1' }),
+          api_key: 'k2',
+        },
+        {
+          ...makeProvider({ name: '无关商', base_url: 'https://other.example.com' }),
+          api_key: 'k3',
+        },
       ],
     })
     // 后端返回 { success, config } 包络时应解包 config
@@ -328,7 +337,10 @@ describe('detectPackConflicts', () => {
     backendGetMock.mockResolvedValue(localConfig)
 
     const pack = makePack({
-      models: [makeModel({ name: 'gpt-4o' }), makeModel({ name: 'claude-opus', model_identifier: 'claude-opus' })],
+      models: [
+        makeModel({ name: 'gpt-4o' }),
+        makeModel({ name: 'claude-opus', model_identifier: 'claude-opus' }),
+      ],
     })
 
     const conflicts = await detectPackConflicts(pack)
@@ -360,8 +372,14 @@ describe('applyPack', () => {
   it('应用提供商：映射的跳过、新提供商带 API Key 追加、同名提供商覆盖，最后保存配置', async () => {
     const localConfig = makeLocalConfig({
       api_providers: [
-        { ...makeProvider({ name: '本地已有', base_url: 'https://old.example.com' }), api_key: 'sk-old' },
-        { ...makeProvider({ name: '同名商', base_url: 'https://legacy.example.com' }), api_key: 'sk-legacy' },
+        {
+          ...makeProvider({ name: '本地已有', base_url: 'https://old.example.com' }),
+          api_key: 'sk-old',
+        },
+        {
+          ...makeProvider({ name: '同名商', base_url: 'https://legacy.example.com' }),
+          api_key: 'sk-legacy',
+        },
       ],
     })
     backendGetMock.mockResolvedValue(localConfig)
@@ -390,11 +408,20 @@ describe('applyPack', () => {
     const savedConfig = (backendPostMock.mock.calls[0][1] as { body: LocalConfig }).body
     expect(savedConfig.api_providers).toEqual([
       // 映射到已有提供商：原条目保持不变
-      { ...makeProvider({ name: '本地已有', base_url: 'https://old.example.com' }), api_key: 'sk-old' },
+      {
+        ...makeProvider({ name: '本地已有', base_url: 'https://old.example.com' }),
+        api_key: 'sk-old',
+      },
       // 同名提供商被 Pack 中的配置覆盖，并写入新 API Key
-      { ...makeProvider({ name: '同名商', base_url: 'https://dup.example.com' }), api_key: 'sk-dup' },
+      {
+        ...makeProvider({ name: '同名商', base_url: 'https://dup.example.com' }),
+        api_key: 'sk-dup',
+      },
       // 新提供商追加到末尾
-      { ...makeProvider({ name: '新增商', base_url: 'https://new.example.com' }), api_key: 'sk-new' },
+      {
+        ...makeProvider({ name: '新增商', base_url: 'https://new.example.com' }),
+        api_key: 'sk-new',
+      },
     ])
   })
 
@@ -468,7 +495,10 @@ describe('applyPack', () => {
 
     const savedConfig = (backendPostMock.mock.calls[0][1] as { body: LocalConfig }).body
     // replyer 被替换，且 model_list 只保留已应用的模型A
-    expect(savedConfig.model_task_config.replyer).toEqual({ model_list: ['模型A'], temperature: 0.7 })
+    expect(savedConfig.model_task_config.replyer).toEqual({
+      model_list: ['模型A'],
+      temperature: 0.7,
+    })
     // utils 的 model_list 过滤后为空，保持本地原配置不变
     expect(savedConfig.model_task_config.utils).toEqual({ model_list: ['旧工具模型'] })
   })

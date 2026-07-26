@@ -42,7 +42,8 @@ const DEFAULT_THEME_CONFIG: UserThemeConfig = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
 
-type ImportThemeConfigRecord = Record<string, unknown> & Pick<UserThemeConfig, 'selectedPreset' | 'accentColor'>
+type ImportThemeConfigRecord = Record<string, unknown> &
+  Pick<UserThemeConfig, 'selectedPreset' | 'accentColor'>
 
 function hasRequiredImportThemeFields(
   config: Record<string, unknown>,

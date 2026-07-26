@@ -55,7 +55,9 @@ describe('installPlugin', () => {
   it('后端返回错误时向上抛出 ApiError', async () => {
     postMock.mockRejectedValue(new ApiError('安装插件失败', { status: 500 }))
 
-    await expect(installPlugin('demo', 'https://github.com/user/demo.git')).rejects.toBeInstanceOf(ApiError)
+    await expect(installPlugin('demo', 'https://github.com/user/demo.git')).rejects.toBeInstanceOf(
+      ApiError
+    )
   })
 })
 

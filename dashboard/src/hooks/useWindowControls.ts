@@ -7,15 +7,15 @@ export function useWindowControls() {
 
   useEffect(() => {
     if (!isElectron()) return
-    
+
     const api = window.electronAPI
     if (!api) return
 
     api.isMaximized().then(setIsMaximized)
-    
+
     const unsubMax = api.onWindowMaximized(() => setIsMaximized(true))
     const unsubUnmax = api.onWindowUnmaximized(() => setIsMaximized(false))
-    
+
     return () => {
       unsubMax?.()
       unsubUnmax?.()

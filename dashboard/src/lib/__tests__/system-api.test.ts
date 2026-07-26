@@ -68,7 +68,12 @@ describe('restartMaiBot', () => {
 
 describe('getMaiBotStatus', () => {
   it('GET 运行状态接口并透传响应', async () => {
-    const response = { running: true, uptime: 120, version: '0.11.0', start_time: '2026-07-26T00:00:00' }
+    const response = {
+      running: true,
+      uptime: 120,
+      version: '0.11.0',
+      start_time: '2026-07-26T00:00:00',
+    }
     getMock.mockResolvedValue(response)
 
     await expect(getMaiBotStatus()).resolves.toBe(response)

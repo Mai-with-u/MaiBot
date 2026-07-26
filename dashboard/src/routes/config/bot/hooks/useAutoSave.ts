@@ -85,28 +85,27 @@ export function useAutoSave(
       const savePromise = Promise.all([
         sectionState.saveChain.catch(() => undefined),
         writeBarrier,
-      ])
-        .then(async () => {
-          try {
-            await updateBotConfigSection(sectionName, sectionData)
-            sectionState.savedRevision = Math.max(sectionState.savedRevision, revision)
-            if (isMountedRef.current) {
-              updateUnsavedState()
-              onSaveSuccess?.()
-            }
-          } catch (error) {
-            console.error(`自动保存 ${sectionName} 失败:`, error)
-            if (isMountedRef.current) {
-              updateUnsavedState()
-              onSaveError?.(error instanceof Error ? error : new Error(String(error)))
-            }
-          } finally {
-            activeSaveCountRef.current -= 1
-            if (isMountedRef.current) {
-              setAutoSaving(activeSaveCountRef.current > 0)
-            }
+      ]).then(async () => {
+        try {
+          await updateBotConfigSection(sectionName, sectionData)
+          sectionState.savedRevision = Math.max(sectionState.savedRevision, revision)
+          if (isMountedRef.current) {
+            updateUnsavedState()
+            onSaveSuccess?.()
           }
-        })
+        } catch (error) {
+          console.error(`自动保存 ${sectionName} 失败:`, error)
+          if (isMountedRef.current) {
+            updateUnsavedState()
+            onSaveError?.(error instanceof Error ? error : new Error(String(error)))
+          }
+        } finally {
+          activeSaveCountRef.current -= 1
+          if (isMountedRef.current) {
+            setAutoSaving(activeSaveCountRef.current > 0)
+          }
+        }
+      })
 
       sectionState.saveChain = savePromise
       return savePromise
@@ -153,7 +152,7 @@ export function useAutoSave(
   )
 
   const runWithAutoSaveBarrier = useCallback(
-    async <T,>(operation: () => Promise<T>): Promise<T> => {
+    async <T>(operation: () => Promise<T>): Promise<T> => {
       const revisionsAtStart = new Map<string, number>()
       const activeSaveChains: Promise<void>[] = []
       for (const [sectionName, sectionState] of sectionStatesRef.current) {
@@ -179,10 +178,7 @@ export function useAutoSave(
           for (const [sectionName, revision] of revisionsAtStart) {
             const sectionState = sectionStatesRef.current.get(sectionName)
             if (sectionState) {
-              sectionState.savedRevision = Math.max(
-                sectionState.savedRevision,
-                revision
-              )
+              sectionState.savedRevision = Math.max(sectionState.savedRevision, revision)
             }
           }
           updateUnsavedState()

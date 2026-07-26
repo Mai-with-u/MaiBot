@@ -86,9 +86,7 @@ export function useConfigForm<TDraft, TConfig = unknown, TSchema = unknown>(
 
   const setDraft = useCallback((next: TDraft | ((prev: TDraft) => TDraft)) => {
     setDraftState((prev) =>
-      typeof next === 'function'
-        ? (next as (p: TDraft) => TDraft)(prev as TDraft)
-        : next
+      typeof next === 'function' ? (next as (p: TDraft) => TDraft)(prev as TDraft) : next
     )
   }, [])
 

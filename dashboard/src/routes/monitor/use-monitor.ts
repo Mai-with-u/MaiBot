@@ -33,9 +33,12 @@ export function useChatNameMap() {
     loadChatNameMap()
   }, [loadChatNameMap])
 
-  const getChatName = useCallback((chatId: string): string => {
-    return chatNameMap.get(chatId) || chatId
-  }, [chatNameMap])
+  const getChatName = useCallback(
+    (chatId: string): string => {
+      return chatNameMap.get(chatId) || chatId
+    },
+    [chatNameMap]
+  )
 
   return { chatNameMap, getChatName, loading, reload: loadChatNameMap }
 }
@@ -62,11 +65,7 @@ export function formatRelativeTime(timestamp: number): string {
 /**
  * 自动刷新 Hook
  */
-export function useAutoRefresh(
-  enabled: boolean,
-  callback: () => void,
-  interval: number = 10000
-) {
+export function useAutoRefresh(enabled: boolean, callback: () => void, interval: number = 10000) {
   useEffect(() => {
     if (!enabled) return
 

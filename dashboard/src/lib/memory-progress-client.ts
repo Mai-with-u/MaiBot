@@ -11,7 +11,11 @@ export interface MemoryProgressEvent {
 type ProgressListener = (event: MemoryProgressEvent) => void
 
 const DOMAIN = 'memory'
-const KNOWN_TOPICS: MemoryProgressTopic[] = ['import_progress', 'delete_progress', 'feedback_progress']
+const KNOWN_TOPICS: MemoryProgressTopic[] = [
+  'import_progress',
+  'delete_progress',
+  'feedback_progress',
+]
 
 /**
  * 长期记忆控制台的统一 WebSocket 桥接客户端。
@@ -60,7 +64,7 @@ class MemoryProgressClient {
 
   async subscribe(
     listener: ProgressListener,
-    topics: MemoryProgressTopic[] = KNOWN_TOPICS,
+    topics: MemoryProgressTopic[] = KNOWN_TOPICS
   ): Promise<() => Promise<void>> {
     this.initialize()
     this.listeners.add(listener)

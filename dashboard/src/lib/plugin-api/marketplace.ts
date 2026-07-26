@@ -83,7 +83,9 @@ function normalizeOptionalString(value: unknown): string | undefined {
 }
 
 function uniqueNonEmptyValues(values: Array<string | undefined>): string[] {
-  return Array.from(new Set(values.map(value => value?.trim()).filter((value): value is string => Boolean(value))))
+  return Array.from(
+    new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))
+  )
 }
 
 function normalizePluginType(value: unknown): PluginType {
@@ -142,7 +144,9 @@ function normalizePluginAssetUrl(value: unknown): string | undefined {
   return `https://raw.githubusercontent.com/${PLUGIN_REPO_OWNER}/${PLUGIN_REPO_NAME}/${PLUGIN_REPO_BRANCH}/${normalizedPath}`
 }
 
-function normalizePluginAssets(assets: PluginApiResponse['assets']): PluginInfo['assets'] | undefined {
+function normalizePluginAssets(
+  assets: PluginApiResponse['assets']
+): PluginInfo['assets'] | undefined {
   const icon64 = normalizePluginAssetUrl(assets?.icon_64)
   if (!icon64) {
     return undefined
@@ -234,7 +238,7 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
         owner: PLUGIN_REPO_OWNER,
         repo: PLUGIN_REPO_NAME,
         branch: PLUGIN_REPO_BRANCH,
-        file_path: PLUGIN_DETAILS_FILE
+        file_path: PLUGIN_DETAILS_FILE,
       },
       errorMessage: '获取插件列表失败',
     }
@@ -248,53 +252,55 @@ async function fetchPluginListUncached(): Promise<PluginInfo[]> {
   const data: PluginApiResponse[] = JSON.parse(result.data)
 
   const pluginList = data
-    .filter(item => {
-        if (!item?.manifest) {
-          console.warn('跳过无效插件数据:', item)
-          return false
-        }
-        const pluginId = item.manifest.id || item.id
-        if (!pluginId) {
-          console.warn('跳过缺少 ID 的插件:', item)
-          return false
-        }
-        if (!item.manifest.name || !item.manifest.version) {
-          console.warn('跳过缺少必需字段的插件:', item.id)
-          return false
-        }
-        return true
-      })
-      .map((item, index) => {
-        const manifestId = item.manifest.id?.trim()
-        const marketplaceId = item.id?.trim()
-        const pluginId = manifestId || marketplaceId!
+    .filter((item) => {
+      if (!item?.manifest) {
+        console.warn('跳过无效插件数据:', item)
+        return false
+      }
+      const pluginId = item.manifest.id || item.id
+      if (!pluginId) {
+        console.warn('跳过缺少 ID 的插件:', item)
+        return false
+      }
+      if (!item.manifest.name || !item.manifest.version) {
+        console.warn('跳过缺少必需字段的插件:', item.id)
+        return false
+      }
+      return true
+    })
+    .map((item, index) => {
+      const manifestId = item.manifest.id?.trim()
+      const marketplaceId = item.id?.trim()
+      const pluginId = manifestId || marketplaceId!
 
-        return {
-          id: pluginId,
-          marketplace_id: marketplaceId,
-          marketplace_order: index,
-          stats_ids: uniqueNonEmptyValues([manifestId]),
-          manifest: normalizePluginManifest({ ...item.manifest, id: pluginId }),
-          assets: normalizePluginAssets(item.assets),
-          downloads: 0,
-          rating: 0,
-          review_count: 0,
-          installed: false,
-          source: 'market' as const,
-          changelog: normalizeOptionalString(item.changelog),
-          published_at: normalizeDateString(item.published_at ?? item.created_at ?? item.added_at),
-          updated_at: normalizeDateString(item.updated_at ?? item.modified_at),
-        }
-      })
+      return {
+        id: pluginId,
+        marketplace_id: marketplaceId,
+        marketplace_order: index,
+        stats_ids: uniqueNonEmptyValues([manifestId]),
+        manifest: normalizePluginManifest({ ...item.manifest, id: pluginId }),
+        assets: normalizePluginAssets(item.assets),
+        downloads: 0,
+        rating: 0,
+        review_count: 0,
+        installed: false,
+        source: 'market' as const,
+        changelog: normalizeOptionalString(item.changelog),
+        published_at: normalizeDateString(item.published_at ?? item.created_at ?? item.added_at),
+        updated_at: normalizeDateString(item.updated_at ?? item.modified_at),
+      }
+    })
 
   return pluginList
 }
 
-export async function fetchPluginList(options: { forceRefresh?: boolean } = {}): Promise<PluginInfo[]> {
+export async function fetchPluginList(
+  options: { forceRefresh?: boolean } = {}
+): Promise<PluginInfo[]> {
   if (
-    !options.forceRefresh
-    && pluginListCache
-    && Date.now() - pluginListCache.timestamp < PLUGIN_LIST_CACHE_TTL
+    !options.forceRefresh &&
+    pluginListCache &&
+    Date.now() - pluginListCache.timestamp < PLUGIN_LIST_CACHE_TTL
   ) {
     return pluginListCache.result
   }
@@ -336,7 +342,7 @@ export async function checkGitStatus(): Promise<GitStatus> {
     if (error instanceof ApiError && error.status !== undefined && error.status !== 401) {
       return {
         installed: false,
-        error: '无法检测 Git 安装状态'
+        error: '无法检测 Git 安装状态',
       }
     }
     throw error
@@ -358,7 +364,7 @@ export async function getMaimaiVersion(): Promise<MaimaiVersion> {
         version: '0.0.0',
         version_major: 0,
         version_minor: 0,
-        version_patch: 0
+        version_patch: 0,
       }
     }
     throw error
@@ -373,7 +379,7 @@ function parseVersionTuple(version: string | undefined): VersionTuple {
   }
 
   const normalizedVersion = version.trim().replace(/-snapshot\.\d+$/, '')
-  const parts = normalizedVersion.split('.').map(part => Number.parseInt(part, 10))
+  const parts = normalizedVersion.split('.').map((part) => Number.parseInt(part, 10))
   return [
     Number.isFinite(parts[0]) ? parts[0] : 0,
     Number.isFinite(parts[1]) ? parts[1] : 0,
@@ -420,7 +426,8 @@ export function isPluginCompatible(
     const isHigherThanMax = compareVersionTuple(currentVersion, maxVersion) > 0
 
     // 与运行时 manifest 校验保持一致：仅修订号高于声明上限时，以兼容模式允许。
-    const isSameMajorMinor = currentVersion[0] === maxVersion[0] && currentVersion[1] === maxVersion[1]
+    const isSameMajorMinor =
+      currentVersion[0] === maxVersion[0] && currentVersion[1] === maxVersion[1]
     if (isHigherThanMax && !isSameMajorMinor) {
       return false
     }
@@ -431,7 +438,7 @@ export function isPluginCompatible(
 
 /**
  * 连接插件加载进度 WebSocket
- * 
+ *
  * 使用临时 token 进行认证,异步获取 token 后连接
  */
 export async function connectPluginProgressWebSocket(

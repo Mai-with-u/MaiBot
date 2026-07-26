@@ -20,7 +20,11 @@ function getLanguageCandidates(language?: string) {
   ].filter(Boolean)
 }
 
-export function resolveLocalizedText(text: LocalizedText | undefined, language?: string, fallback = ''): string {
+export function resolveLocalizedText(
+  text: LocalizedText | undefined,
+  language?: string,
+  fallback = ''
+): string {
   if (!text) {
     return fallback
   }

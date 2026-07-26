@@ -122,7 +122,13 @@ describe('图谱查询', () => {
   })
 
   it('getMemoryGraph 透传自定义 limit', async () => {
-    requestMock.mockResolvedValue({ success: true, nodes: [], edges: [], total_nodes: 0, total_edges: 0 })
+    requestMock.mockResolvedValue({
+      success: true,
+      nodes: [],
+      edges: [],
+      total_nodes: 0,
+      total_edges: 0,
+    })
 
     await getMemoryGraph(30)
     expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/graph?limit=30`, { body: undefined })
@@ -158,7 +164,11 @@ describe('图谱查询', () => {
   it('getMemoryGraphNodeDetail 透传自定义上限', async () => {
     requestMock.mockResolvedValue({ success: true })
 
-    await getMemoryGraphNodeDetail('n1', { relationLimit: 5, paragraphLimit: 6, evidenceNodeLimit: 7 })
+    await getMemoryGraphNodeDetail('n1', {
+      relationLimit: 5,
+      paragraphLimit: 6,
+      evidenceNodeLimit: 7,
+    })
 
     const call = parseRequestCall()
     expect(call.search.get('relation_limit')).toBe('5')
@@ -203,7 +213,15 @@ describe('图谱查询', () => {
 
 describe('记忆删除', () => {
   it('previewMemoryDelete 以 POST 提交删除请求体到预览接口', async () => {
-    const response = { success: true, mode: 'source', selector: 's', counts: {}, sources: [], items: [], item_count: 0 }
+    const response = {
+      success: true,
+      mode: 'source',
+      selector: 's',
+      counts: {},
+      sources: [],
+      items: [],
+      item_count: 0,
+    }
     requestMock.mockResolvedValue(response)
     const payload = { mode: 'source', selector: { source: 'doc.txt' }, reason: '误导入' }
 
@@ -222,7 +240,9 @@ describe('记忆删除', () => {
   it('executeMemoryDelete 后端 500 时向上抛出 ApiError', async () => {
     requestMock.mockRejectedValue(new ApiError('删除失败', { status: 500 }))
 
-    await expect(executeMemoryDelete({ mode: 'entity', selector: 'x' })).rejects.toMatchObject({ status: 500 })
+    await expect(executeMemoryDelete({ mode: 'entity', selector: 'x' })).rejects.toMatchObject({
+      status: 500,
+    })
   })
 
   it('restoreMemoryDelete 以 POST 提交恢复请求体', async () => {
@@ -237,7 +257,9 @@ describe('记忆删除', () => {
     requestMock.mockResolvedValue({ success: true, items: [] })
 
     await getMemoryDeleteOperations()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/delete/operations?limit=20`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/delete/operations?limit=20`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryDeleteOperations 空白 mode 不追加参数，非空 mode 追加', async () => {
@@ -256,7 +278,9 @@ describe('记忆删除', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await getMemoryDeleteOperation('op/01')
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/delete/operations/op%2F01`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/delete/operations/op%2F01`, {
+      body: undefined,
+    })
   })
 })
 
@@ -285,14 +309,18 @@ describe('记忆修正', () => {
     const payload = { plan_id: 'plan-1', confirmed: true }
 
     await executeMemoryCorrection(payload)
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/corrections/execute`, { body: payload })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/corrections/execute`, {
+      body: payload,
+    })
   })
 
   it('getMemoryCorrectionPlans 默认仅携带 limit=50', async () => {
     requestMock.mockResolvedValue({ success: true, items: [] })
 
     await getMemoryCorrectionPlans()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/corrections/plans?limit=50`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/corrections/plans?limit=50`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryCorrectionPlans 对 status/scope 去除首尾空白后追加，全空白则跳过', async () => {
@@ -310,7 +338,9 @@ describe('记忆修正', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await getMemoryCorrectionPlan('plan#1')
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/corrections/plans/plan%231`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/corrections/plans/plan%231`, {
+      body: undefined,
+    })
   })
 
   it('rollbackMemoryCorrectionPlan 以 POST 提交回滚请求到编码后的路径', async () => {
@@ -318,9 +348,13 @@ describe('记忆修正', () => {
     const payload = { requested_by: 'webui', reason: '误操作' }
 
     await rollbackMemoryCorrectionPlan('plan/1', payload)
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/corrections/plans/plan%2F1/rollback`, {
-      body: payload,
-    })
+    expect(requestMock).toHaveBeenCalledWith(
+      'POST',
+      `${BASE}/corrections/plans/plan%2F1/rollback`,
+      {
+        body: payload,
+      }
+    )
   })
 })
 
@@ -329,7 +363,9 @@ describe('反馈修正', () => {
     requestMock.mockResolvedValue({ success: true, items: [] })
 
     await getMemoryFeedbackCorrections()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/feedback-corrections?limit=50`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/feedback-corrections?limit=50`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryFeedbackCorrections 把 rollbackStatus 映射为 rollback_status 并去除空白', async () => {
@@ -356,7 +392,9 @@ describe('反馈修正', () => {
     requestMock.mockResolvedValue(response)
 
     await expect(getMemoryFeedbackCorrection(42)).resolves.toBe(response)
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/feedback-corrections/42`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/feedback-corrections/42`, {
+      body: undefined,
+    })
   })
 
   it('rollbackMemoryFeedbackCorrection 以 POST 提交回滚请求体', async () => {
@@ -455,14 +493,18 @@ describe('情景记忆', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await rebuildMemoryEpisodes({ all: true })
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/episodes/rebuild`, { body: { all: true } })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/episodes/rebuild`, {
+      body: { all: true },
+    })
   })
 
   it('getMemoryEpisodeStatus 默认 limit=20', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await getMemoryEpisodeStatus()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/episodes/status?limit=20`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/episodes/status?limit=20`, {
+      body: undefined,
+    })
   })
 
   it('processMemoryEpisodePending 以 POST 提交处理参数', async () => {
@@ -480,7 +522,9 @@ describe('人物画像', () => {
     requestMock.mockResolvedValue({ success: true, items: [] })
 
     await getMemoryProfiles()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/profiles?limit=50`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/profiles?limit=50`, {
+      body: undefined,
+    })
   })
 
   it('searchMemoryProfiles 把驼峰选项映射为下划线参数并以空串补位', async () => {
@@ -530,7 +574,9 @@ describe('人物画像', () => {
     requestMock.mockResolvedValue({ success: true, deleted: true })
 
     await deleteMemoryProfileOverride('p/1')
-    expect(requestMock).toHaveBeenCalledWith('DELETE', `${BASE}/profiles/override/p%2F1`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('DELETE', `${BASE}/profiles/override/p%2F1`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryProfileEvidence 路径编码 personId 且默认 limit=12、force_refresh=false', async () => {
@@ -540,7 +586,10 @@ describe('人物画像', () => {
 
     const call = parseRequestCall()
     expect(call.pathname).toBe(`${BASE}/profiles/p%201/evidence`)
-    expect(Object.fromEntries(call.search.entries())).toEqual({ limit: '12', force_refresh: 'false' })
+    expect(Object.fromEntries(call.search.entries())).toEqual({
+      limit: '12',
+      force_refresh: 'false',
+    })
   })
 
   it('correctMemoryProfileEvidence 缺省字段回填默认值且请求体不含 person_id', async () => {
@@ -601,7 +650,11 @@ describe('记忆维护', () => {
     fn: (target: string) => Promise<unknown>
     path: string
   }> = [
-    { name: 'restoreMaintainedMemory', fn: restoreMaintainedMemory, path: `${BASE}/maintenance/restore` },
+    {
+      name: 'restoreMaintainedMemory',
+      fn: restoreMaintainedMemory,
+      path: `${BASE}/maintenance/restore`,
+    },
     { name: 'reinforceMemory', fn: reinforceMemory, path: `${BASE}/maintenance/reinforce` },
     { name: 'freezeMemory', fn: freezeMemory, path: `${BASE}/maintenance/freeze` },
   ]
@@ -648,14 +701,18 @@ describe('运行时状态', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await refreshMemoryRuntimeSelfCheck()
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/runtime/self-check/refresh`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/runtime/self-check/refresh`, {
+      body: undefined,
+    })
   })
 
   it('rebuildMemoryRuntimeVectors 缺省时提交空对象请求体', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await rebuildMemoryRuntimeVectors()
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/runtime/vectors/rebuild`, { body: {} })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/runtime/vectors/rebuild`, {
+      body: {},
+    })
   })
 
   it('rebuildMemoryRuntimeVectors 透传重建参数', async () => {
@@ -676,7 +733,9 @@ describe('记忆配置', () => {
     await getMemoryConfig()
     await getMemoryConfigRaw()
 
-    expect(requestMock).toHaveBeenNthCalledWith(1, 'GET', `${BASE}/config/schema`, { body: undefined })
+    expect(requestMock).toHaveBeenNthCalledWith(1, 'GET', `${BASE}/config/schema`, {
+      body: undefined,
+    })
     expect(requestMock).toHaveBeenNthCalledWith(2, 'GET', `${BASE}/config`, { body: undefined })
     expect(requestMock).toHaveBeenNthCalledWith(3, 'GET', `${BASE}/config/raw`, { body: undefined })
   })
@@ -685,7 +744,9 @@ describe('记忆配置', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await updateMemoryConfig({ auto_save: true })
-    expect(requestMock).toHaveBeenCalledWith('PUT', `${BASE}/config`, { body: { config: { auto_save: true } } })
+    expect(requestMock).toHaveBeenCalledWith('PUT', `${BASE}/config`, {
+      body: { config: { auto_save: true } },
+    })
   })
 
   it('updateMemoryConfigRaw 以 PUT 提交原文字符串', async () => {
@@ -708,9 +769,21 @@ describe('记忆配置', () => {
 describe('记忆导入', () => {
   const importMetaCases: Array<{ name: string; fn: () => Promise<unknown>; path: string }> = [
     { name: 'getMemoryImportGuide', fn: getMemoryImportGuide, path: `${BASE}/import/guide` },
-    { name: 'getMemoryImportSettings', fn: getMemoryImportSettings, path: `${BASE}/import/settings` },
-    { name: 'getMemoryImportPathAliases', fn: getMemoryImportPathAliases, path: `${BASE}/import/path-aliases` },
-    { name: 'getMemoryImportChatTargets', fn: getMemoryImportChatTargets, path: `${BASE}/import/chat-targets` },
+    {
+      name: 'getMemoryImportSettings',
+      fn: getMemoryImportSettings,
+      path: `${BASE}/import/settings`,
+    },
+    {
+      name: 'getMemoryImportPathAliases',
+      fn: getMemoryImportPathAliases,
+      path: `${BASE}/import/path-aliases`,
+    },
+    {
+      name: 'getMemoryImportChatTargets',
+      fn: getMemoryImportChatTargets,
+      path: `${BASE}/import/chat-targets`,
+    },
   ]
 
   it.each(importMetaCases)('$name 以 GET 读取 $path', async ({ fn, path }) => {
@@ -722,27 +795,42 @@ describe('记忆导入', () => {
   })
 
   it('resolveMemoryImportPath 以 POST 提交路径解析请求', async () => {
-    requestMock.mockResolvedValue({ alias: 'data', relative_path: 'a.txt', resolved_path: '/data/a.txt', exists: true, is_file: true, is_dir: false })
+    requestMock.mockResolvedValue({
+      alias: 'data',
+      relative_path: 'a.txt',
+      resolved_path: '/data/a.txt',
+      exists: true,
+      is_file: true,
+      is_dir: false,
+    })
     const payload = { alias: 'data', relative_path: 'a.txt', must_exist: true }
 
     await resolveMemoryImportPath(payload)
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/import/resolve-path`, { body: payload })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/import/resolve-path`, {
+      body: payload,
+    })
   })
 
   it('getMemoryImportTasks 默认 limit=20', async () => {
     requestMock.mockResolvedValue({ success: true, items: [] })
 
     await getMemoryImportTasks()
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/import/tasks?limit=20`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/import/tasks?limit=20`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryImportTask 编码任务 ID 且默认不含分块', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await getMemoryImportTask('task 1')
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/import/tasks/task%201?include_chunks=false`, {
-      body: undefined,
-    })
+    expect(requestMock).toHaveBeenCalledWith(
+      'GET',
+      `${BASE}/import/tasks/task%201?include_chunks=false`,
+      {
+        body: undefined,
+      }
+    )
   })
 
   it('getMemoryImportTask includeChunks=true 时序列化为字符串 true', async () => {
@@ -761,7 +849,7 @@ describe('记忆导入', () => {
     expect(requestMock).toHaveBeenCalledWith(
       'GET',
       `${BASE}/import/tasks/t1/chunks/f%2F1?offset=0&limit=50`,
-      { body: undefined },
+      { body: undefined }
     )
   })
 
@@ -799,11 +887,31 @@ describe('记忆导入', () => {
     path: string
   }> = [
     { name: 'createMemoryPasteImport', fn: createMemoryPasteImport, path: `${BASE}/import/paste` },
-    { name: 'createMemoryRawScanImport', fn: createMemoryRawScanImport, path: `${BASE}/import/raw-scan` },
-    { name: 'createMemoryLpmmOpenieImport', fn: createMemoryLpmmOpenieImport, path: `${BASE}/import/lpmm-openie` },
-    { name: 'createMemoryLpmmConvertImport', fn: createMemoryLpmmConvertImport, path: `${BASE}/import/lpmm-convert` },
-    { name: 'createMemoryTemporalBackfillImport', fn: createMemoryTemporalBackfillImport, path: `${BASE}/import/temporal-backfill` },
-    { name: 'createMemoryMaibotMigrationImport', fn: createMemoryMaibotMigrationImport, path: `${BASE}/import/maibot-migration` },
+    {
+      name: 'createMemoryRawScanImport',
+      fn: createMemoryRawScanImport,
+      path: `${BASE}/import/raw-scan`,
+    },
+    {
+      name: 'createMemoryLpmmOpenieImport',
+      fn: createMemoryLpmmOpenieImport,
+      path: `${BASE}/import/lpmm-openie`,
+    },
+    {
+      name: 'createMemoryLpmmConvertImport',
+      fn: createMemoryLpmmConvertImport,
+      path: `${BASE}/import/lpmm-convert`,
+    },
+    {
+      name: 'createMemoryTemporalBackfillImport',
+      fn: createMemoryTemporalBackfillImport,
+      path: `${BASE}/import/temporal-backfill`,
+    },
+    {
+      name: 'createMemoryMaibotMigrationImport',
+      fn: createMemoryMaibotMigrationImport,
+      path: `${BASE}/import/maibot-migration`,
+    },
   ]
 
   it.each(importCreateCases)('$name 以 POST 提交 payload 到 $path', async ({ fn, path }) => {
@@ -819,14 +927,18 @@ describe('记忆导入', () => {
     requestMock.mockResolvedValue({ success: true })
 
     await cancelMemoryImportTask('t#1')
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/import/tasks/t%231/cancel`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/import/tasks/t%231/cancel`, {
+      body: undefined,
+    })
   })
 
   it('retryMemoryImportTask 缺省时提交空对象，带 overrides 时原样透传', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await retryMemoryImportTask('t1')
-    expect(requestMock).toHaveBeenNthCalledWith(1, 'POST', `${BASE}/import/tasks/t1/retry`, { body: {} })
+    expect(requestMock).toHaveBeenNthCalledWith(1, 'POST', `${BASE}/import/tasks/t1/retry`, {
+      body: {},
+    })
 
     await retryMemoryImportTask('t1', { overrides: { chunk_concurrency: 4 } })
     expect(requestMock).toHaveBeenNthCalledWith(2, 'POST', `${BASE}/import/tasks/t1/retry`, {
@@ -841,7 +953,9 @@ describe('检索调参', () => {
     requestMock.mockResolvedValue(response)
 
     await expect(getMemoryTuningProfile()).resolves.toBe(response)
-    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/retrieval_tuning/profile`, { body: undefined })
+    expect(requestMock).toHaveBeenCalledWith('GET', `${BASE}/retrieval_tuning/profile`, {
+      body: undefined,
+    })
   })
 
   it('getMemoryTuningTasks 默认 limit=20', async () => {
@@ -858,41 +972,56 @@ describe('检索调参', () => {
     const payload = { mode: 'quick', sample_size: 20 }
 
     await createMemoryTuningTask(payload)
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/retrieval_tuning/tasks`, { body: payload })
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/retrieval_tuning/tasks`, {
+      body: payload,
+    })
   })
 
   it('applyBestMemoryTuningProfile 缺省时提交空对象到编码后的路径', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await applyBestMemoryTuningProfile('task/9')
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/retrieval_tuning/tasks/task%2F9/apply-best`, {
-      body: {},
-    })
+    expect(requestMock).toHaveBeenCalledWith(
+      'POST',
+      `${BASE}/retrieval_tuning/tasks/task%2F9/apply-best`,
+      {
+        body: {},
+      }
+    )
   })
 
   it('applyBestMemoryTuningProfile 透传 persist/validate 参数', async () => {
     requestMock.mockResolvedValue({ success: true })
 
     await applyBestMemoryTuningProfile('t1', { persist: true, validate: false })
-    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/retrieval_tuning/tasks/t1/apply-best`, {
-      body: { persist: true, validate: false },
-    })
+    expect(requestMock).toHaveBeenCalledWith(
+      'POST',
+      `${BASE}/retrieval_tuning/tasks/t1/apply-best`,
+      {
+        body: { persist: true, validate: false },
+      }
+    )
   })
 
   it('getMemoryTuningReport 默认 format=md，可切换为 json', async () => {
     requestMock.mockResolvedValue({ success: true, content: '# 报告', path: '/tmp/r.md' })
 
     await getMemoryTuningReport('t1')
-    expect(requestMock).toHaveBeenNthCalledWith(1, 'GET', `${BASE}/retrieval_tuning/tasks/t1/report?format=md`, {
-      body: undefined,
-    })
+    expect(requestMock).toHaveBeenNthCalledWith(
+      1,
+      'GET',
+      `${BASE}/retrieval_tuning/tasks/t1/report?format=md`,
+      {
+        body: undefined,
+      }
+    )
 
     await getMemoryTuningReport('t 1', 'json')
     expect(requestMock).toHaveBeenNthCalledWith(
       2,
       'GET',
       `${BASE}/retrieval_tuning/tasks/t%201/report?format=json`,
-      { body: undefined },
+      { body: undefined }
     )
   })
 })

@@ -36,7 +36,7 @@ const formatChatTarget = (target: MemoryImportChatTargetPayload): string => {
 const createOption = (
   target: MemoryImportChatTargetPayload,
   kind: RetrievalChatTokenKind,
-  tokenValue: string,
+  tokenValue: string
 ): RetrievalChatTokenOption => ({
   key: `${kind}:${target.chat_id}:${tokenValue}`,
   label: formatChatTarget(target),
@@ -46,7 +46,7 @@ const createOption = (
 })
 
 export const buildAMemorixRetrievalChatTokenOptions = (
-  targets: MemoryImportChatTargetPayload[],
+  targets: MemoryImportChatTargetPayload[]
 ): RetrievalChatTokenOption[] => {
   const options: RetrievalChatTokenOption[] = []
   const seen = new Set<string>()
@@ -54,7 +54,7 @@ export const buildAMemorixRetrievalChatTokenOptions = (
   const pushOption = (
     target: MemoryImportChatTargetPayload,
     kind: RetrievalChatTokenKind,
-    tokenValue?: string | null,
+    tokenValue?: string | null
   ) => {
     const cleanValue = String(tokenValue ?? '').trim()
     if (!cleanValue) {
@@ -101,7 +101,8 @@ export const resolveAMemorixRetrievalChatsCopy = (fieldPath: string): RetrievalC
     return {
       badge: '聊天总结',
       emptyText: '当前未限制其他聊天流的聊天总结命中。',
-      helperText: '只影响跨聊天流的 source_type=chat_summary 或 source=chat_summary:<session_id> 检索命中。',
+      helperText:
+        '只影响跨聊天流的 source_type=chat_summary 或 source=chat_summary:<session_id> 检索命中。',
       title: '聊天总结跨聊天流过滤范围',
     }
   }
@@ -118,7 +119,8 @@ export const resolveAMemorixRetrievalChatsCopy = (fieldPath: string): RetrievalC
   return {
     badge: '普通聊天流',
     emptyText: '当前未限制其他聊天流的普通聊天记忆命中。',
-    helperText: '只影响跨聊天流的普通 paragraph/relation 命中；聊天总结和 Episode 使用各自的过滤范围。',
+    helperText:
+      '只影响跨聊天流的普通 paragraph/relation 命中；聊天总结和 Episode 使用各自的过滤范围。',
     title: '普通聊天流跨聊天流过滤范围',
   }
 }

@@ -25,7 +25,11 @@ import {
   type MemoryFeedbackCorrectionSummaryPayload,
 } from '@/lib/memory-api'
 
-import { FEEDBACK_ACTION_LOG_PAGE_SIZE, FEEDBACK_CORRECTION_FETCH_LIMIT, FEEDBACK_CORRECTION_PAGE_SIZE } from '../constants'
+import {
+  FEEDBACK_ACTION_LOG_PAGE_SIZE,
+  FEEDBACK_CORRECTION_FETCH_LIMIT,
+  FEEDBACK_CORRECTION_PAGE_SIZE,
+} from '../constants'
 import {
   buildFeedbackImpactSummary,
   getFeedbackCorrectionPreview,
@@ -103,7 +107,7 @@ export function useMemoryFeedback({
   })
   const feedbackCorrections = useMemo(
     () => correctionsQuery.data?.items ?? [],
-    [correctionsQuery.data?.items],
+    [correctionsQuery.data?.items]
   )
   const feedbackErrorText = correctionsQuery.error
     ? correctionsQuery.error instanceof Error
@@ -116,7 +120,8 @@ export function useMemoryFeedback({
   const [feedbackRollbackFilter, setFeedbackRollbackFilter] = useState('all')
   const [feedbackPage, setFeedbackPage] = useState(1)
   const [selectedFeedbackTaskId, setSelectedFeedbackTaskId] = useState(initialTaskId)
-  const [selectedFeedbackTaskDetail, setSelectedFeedbackTaskDetail] = useState<MemoryFeedbackCorrectionDetailTaskPayload | null>(null)
+  const [selectedFeedbackTaskDetail, setSelectedFeedbackTaskDetail] =
+    useState<MemoryFeedbackCorrectionDetailTaskPayload | null>(null)
   const [selectedFeedbackTaskLoading, setSelectedFeedbackTaskLoading] = useState(false)
   const [selectedFeedbackTaskError, setSelectedFeedbackTaskError] = useState('')
   const [feedbackActionLogSearch, setFeedbackActionLogSearch] = useState('')
@@ -128,8 +133,12 @@ export function useMemoryFeedback({
   const filteredFeedbackCorrections = useMemo(() => {
     const keyword = feedbackSearch.trim().toLowerCase()
     return feedbackCorrections.filter((item) => {
-      const taskStatus = String(item.task_status ?? '').trim().toLowerCase()
-      const rollbackStatus = String(item.rollback_status ?? '').trim().toLowerCase()
+      const taskStatus = String(item.task_status ?? '')
+        .trim()
+        .toLowerCase()
+      const rollbackStatus = String(item.rollback_status ?? '')
+        .trim()
+        .toLowerCase()
       if (feedbackStatusFilter !== 'all' && taskStatus !== feedbackStatusFilter) {
         return false
       }
@@ -152,36 +161,38 @@ export function useMemoryFeedback({
     })
   }, [feedbackCorrections, feedbackRollbackFilter, feedbackSearch, feedbackStatusFilter])
 
-  const feedbackPageCount = Math.max(1, Math.ceil(filteredFeedbackCorrections.length / FEEDBACK_CORRECTION_PAGE_SIZE))
+  const feedbackPageCount = Math.max(
+    1,
+    Math.ceil(filteredFeedbackCorrections.length / FEEDBACK_CORRECTION_PAGE_SIZE)
+  )
   const pagedFeedbackCorrections = useMemo(() => {
     const start = (feedbackPage - 1) * FEEDBACK_CORRECTION_PAGE_SIZE
     return filteredFeedbackCorrections.slice(start, start + FEEDBACK_CORRECTION_PAGE_SIZE)
   }, [feedbackPage, filteredFeedbackCorrections])
 
-  const selectedFeedbackCorrection = useMemo(
-    () => {
-      const matchedCorrection = filteredFeedbackCorrections.find((item) => item.task_id === selectedFeedbackTaskId)
-      if (matchedCorrection) {
-        return matchedCorrection
-      }
-      if (selectedFeedbackTaskId > 0) {
-        return {
-          task_id: selectedFeedbackTaskId,
-          query_tool_id: '',
-          session_id: '',
-          query_text: '',
-          task_status: '',
-          decision: '',
-          decision_confidence: 0,
-          feedback_message_count: 0,
-          rollback_status: '',
-          affected_counts: {},
-        } satisfies MemoryFeedbackCorrectionSummaryPayload
-      }
-      return pagedFeedbackCorrections[0] ?? null
-    },
-    [filteredFeedbackCorrections, pagedFeedbackCorrections, selectedFeedbackTaskId],
-  )
+  const selectedFeedbackCorrection = useMemo(() => {
+    const matchedCorrection = filteredFeedbackCorrections.find(
+      (item) => item.task_id === selectedFeedbackTaskId
+    )
+    if (matchedCorrection) {
+      return matchedCorrection
+    }
+    if (selectedFeedbackTaskId > 0) {
+      return {
+        task_id: selectedFeedbackTaskId,
+        query_tool_id: '',
+        session_id: '',
+        query_text: '',
+        task_status: '',
+        decision: '',
+        decision_confidence: 0,
+        feedback_message_count: 0,
+        rollback_status: '',
+        affected_counts: {},
+      } satisfies MemoryFeedbackCorrectionSummaryPayload
+    }
+    return pagedFeedbackCorrections[0] ?? null
+  }, [filteredFeedbackCorrections, pagedFeedbackCorrections, selectedFeedbackTaskId])
 
   // 筛选变化 → 重置页码
   useEffect(() => {
@@ -243,7 +254,9 @@ export function useMemoryFeedback({
           return
         }
         setSelectedFeedbackTaskDetail(null)
-        setSelectedFeedbackTaskError(error instanceof Error ? error.message : '未能加载纠错任务详情')
+        setSelectedFeedbackTaskError(
+          error instanceof Error ? error.message : '未能加载纠错任务详情'
+        )
       })
       .finally(() => {
         if (!cancelled) {
@@ -270,16 +283,19 @@ export function useMemoryFeedback({
   }, [selectedFeedbackCorrection, selectedFeedbackTaskDetail])
   const selectedFeedbackPreview = useMemo(
     () => getFeedbackCorrectionPreview(selectedFeedbackResolved),
-    [selectedFeedbackResolved],
+    [selectedFeedbackResolved]
   )
   const selectedFeedbackImpactSummary = useMemo(
     () => buildFeedbackImpactSummary(selectedFeedbackResolved),
-    [selectedFeedbackResolved],
+    [selectedFeedbackResolved]
   )
 
   const selectedFeedbackActionLogs: MemoryFeedbackActionLogPayload[] = useMemo(
-    () => (Array.isArray(selectedFeedbackResolved?.action_logs) ? selectedFeedbackResolved.action_logs : []),
-    [selectedFeedbackResolved?.action_logs],
+    () =>
+      Array.isArray(selectedFeedbackResolved?.action_logs)
+        ? selectedFeedbackResolved.action_logs
+        : [],
+    [selectedFeedbackResolved?.action_logs]
   )
   const filteredFeedbackActionLogs = useMemo(() => {
     const keyword = feedbackActionLogSearch.trim().toLowerCase()
@@ -295,12 +311,12 @@ export function useMemoryFeedback({
         summarizeFeedbackActionPayload(item.after_payload),
       ]
         .map((value) => String(value ?? '').toLowerCase())
-        .some((value) => value.includes(keyword)),
+        .some((value) => value.includes(keyword))
     )
   }, [feedbackActionLogSearch, selectedFeedbackActionLogs])
   const feedbackActionLogPageCount = Math.max(
     1,
-    Math.ceil(filteredFeedbackActionLogs.length / FEEDBACK_ACTION_LOG_PAGE_SIZE),
+    Math.ceil(filteredFeedbackActionLogs.length / FEEDBACK_ACTION_LOG_PAGE_SIZE)
   )
   const pagedFeedbackActionLogs = useMemo(() => {
     const start = (feedbackActionLogPage - 1) * FEEDBACK_ACTION_LOG_PAGE_SIZE
@@ -358,7 +374,14 @@ export function useMemoryFeedback({
     } finally {
       setFeedbackRollingBack(false)
     }
-  }, [correctionsQuery, feedbackRollbackReason, onRuntimeChanged, onSourcesChanged, selectedFeedbackResolved?.task_id, toast])
+  }, [
+    correctionsQuery,
+    feedbackRollbackReason,
+    onRuntimeChanged,
+    onSourcesChanged,
+    selectedFeedbackResolved?.task_id,
+    toast,
+  ])
 
   return {
     feedbackSearch,

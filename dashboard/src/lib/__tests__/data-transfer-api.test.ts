@@ -70,9 +70,9 @@ describe('createDataExportJob', () => {
     const job = makeJob({ status: 'pending', progress: 0 })
     postMock.mockResolvedValue(job)
 
-    await expect(
-      createDataExportJob({ include_plugins: true, include_logs: false })
-    ).resolves.toBe(job)
+    await expect(createDataExportJob({ include_plugins: true, include_logs: false })).resolves.toBe(
+      job
+    )
     expect(postMock).toHaveBeenCalledWith('/api/webui/data-transfer/export', {
       body: { include_plugins: true, include_logs: false },
       errorMessage: '创建导出任务失败',

@@ -207,7 +207,7 @@ class UnifiedWebSocketClient {
 
   private async sendRequest(
     payload: Record<string, unknown>,
-    timeoutMs = 10000,
+    timeoutMs = 10000
   ): Promise<Record<string, unknown>> {
     if (this.ws?.readyState !== WebSocket.OPEN) {
       throw new Error('统一 WebSocket 尚未连接')
@@ -449,7 +449,7 @@ class UnifiedWebSocketClient {
   async subscribe(
     domain: string,
     topic: string,
-    data?: Record<string, unknown>,
+    data?: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     await this.connect()
     this.subscriptions.set(this.getSubscriptionKey(domain, topic), {

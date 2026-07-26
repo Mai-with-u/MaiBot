@@ -157,9 +157,9 @@ describe('updateChatStreamTalkFrequency', () => {
   it('后端未返回 detail 时抛出「聊天流详情为空」', async () => {
     putMock.mockResolvedValue({ success: true })
 
-    await expect(
-      updateChatStreamTalkFrequency('s1', { time: '9:00', value: 1 })
-    ).rejects.toThrow('聊天流详情为空')
+    await expect(updateChatStreamTalkFrequency('s1', { time: '9:00', value: 1 })).rejects.toThrow(
+      '聊天流详情为空'
+    )
   })
 })
 

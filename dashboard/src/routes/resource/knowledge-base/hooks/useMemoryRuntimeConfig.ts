@@ -73,7 +73,7 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
     (next: MemoryRuntimeConfigPayload) => {
       queryClient.setQueryData(['memory-runtime', 'config'], next)
     },
-    [queryClient],
+    [queryClient]
   )
 
   const [refreshingCheck, setRefreshingCheck] = useState(false)
@@ -101,33 +101,36 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
 
   // 向量重建预览-执行：用通用待定模块缓冲「dry-run 预览 → 对话框确认 → 真重建」
   const [vectorRebuildDialogOpen, setVectorRebuildDialogOpenState] = useState(false)
-  const [vectorRebuildPreview, setVectorRebuildPreview] = useState<Record<string, number> | null>(null)
+  const [vectorRebuildPreview, setVectorRebuildPreview] = useState<Record<string, number> | null>(
+    null
+  )
   const [vectorRebuilding, setVectorRebuilding] = useState(false)
 
-  const vectorRebuildPendingOp: UsePendingOperationResult<VectorRebuildOperation> = usePendingOperation<VectorRebuildOperation>({
-    onConfirm: async () => {
-      try {
-        setVectorRebuilding(true)
-        const payload = await rebuildMemoryRuntimeVectors({ dry_run: false })
-        const nextRuntime = await getMemoryRuntimeConfig()
-        setRuntimeConfig(nextRuntime)
-        setVectorRebuildDialogOpenState(false)
-        toast({
-          title: payload.success ? '向量重建完成' : '向量重建未完全成功',
-          description: `已处理 ${payload.done ?? 0} 条，失败 ${payload.failed ?? 0} 条`,
-          variant: payload.success ? 'default' : 'destructive',
-        })
-      } catch (error) {
-        toast({
-          title: '向量重建失败',
-          description: error instanceof Error ? error.message : '未知错误',
-          variant: 'destructive',
-        })
-      } finally {
-        setVectorRebuilding(false)
-      }
-    },
-  })
+  const vectorRebuildPendingOp: UsePendingOperationResult<VectorRebuildOperation> =
+    usePendingOperation<VectorRebuildOperation>({
+      onConfirm: async () => {
+        try {
+          setVectorRebuilding(true)
+          const payload = await rebuildMemoryRuntimeVectors({ dry_run: false })
+          const nextRuntime = await getMemoryRuntimeConfig()
+          setRuntimeConfig(nextRuntime)
+          setVectorRebuildDialogOpenState(false)
+          toast({
+            title: payload.success ? '向量重建完成' : '向量重建未完全成功',
+            description: `已处理 ${payload.done ?? 0} 条，失败 ${payload.failed ?? 0} 条`,
+            variant: payload.success ? 'default' : 'destructive',
+          })
+        } catch (error) {
+          toast({
+            title: '向量重建失败',
+            description: error instanceof Error ? error.message : '未知错误',
+            variant: 'destructive',
+          })
+        } finally {
+          setVectorRebuilding(false)
+        }
+      },
+    })
 
   const openVectorRebuildDialog = useCallback(async () => {
     try {
@@ -160,7 +163,7 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
         setVectorRebuildPreview(null)
       }
     },
-    [vectorRebuildPendingOp],
+    [vectorRebuildPendingOp]
   )
 
   return useMemo(
@@ -191,6 +194,6 @@ export function useMemoryRuntimeConfig(): UseMemoryRuntimeConfigResult {
       vectorRebuilding,
       openVectorRebuildDialog,
       confirmVectorRebuild,
-    ],
+    ]
   )
 }

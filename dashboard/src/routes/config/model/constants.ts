@@ -12,7 +12,7 @@ export const CACHE_TTL = 5 * 60 * 1000
 /**
  * 模型列表缓存
  */
-export const modelListCache = new Map<string, { models: ModelListItem[], timestamp: number }>()
+export const modelListCache = new Map<string, { models: ModelListItem[]; timestamp: number }>()
 
 /**
  * 任务配置信息

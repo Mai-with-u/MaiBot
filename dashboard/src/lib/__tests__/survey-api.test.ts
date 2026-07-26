@@ -116,9 +116,7 @@ describe('submitSurvey', () => {
   })
 
   it('409 且错误体无可用 error 字段时使用默认重复提交文案', async () => {
-    postMock.mockRejectedValue(
-      new ApiError('提交失败', { status: 409, detail: { error: 42 } })
-    )
+    postMock.mockRejectedValue(new ApiError('提交失败', { status: 409, detail: { error: 42 } }))
 
     await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
       success: false,

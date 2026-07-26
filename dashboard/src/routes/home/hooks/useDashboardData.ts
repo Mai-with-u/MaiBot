@@ -13,10 +13,7 @@ import { DEFAULT_TIME_RANGE, type DashboardData } from '../types'
 const DASHBOARD_DATA_CACHE_TTL = 5 * 60_000
 
 // 按 hours 维度的模块级缓存（跨组件实例存活，支持 stale-while-revalidate）。
-const dashboardDataCache = new Map<
-  number,
-  { timestamp: number; data: DashboardData }
->()
+const dashboardDataCache = new Map<number, { timestamp: number; data: DashboardData }>()
 
 function getCachedDashboardData(hours: number): DashboardData | null {
   const cached = dashboardDataCache.get(hours)
@@ -39,11 +36,8 @@ function getDashboardErrorMessage(error: unknown): string {
 
 export function useDashboardData() {
   const initialDashboardData =
-    getCachedDashboardData(DEFAULT_TIME_RANGE) ??
-    getStaleDashboardData(DEFAULT_TIME_RANGE)
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(
-    initialDashboardData
-  )
+    getCachedDashboardData(DEFAULT_TIME_RANGE) ?? getStaleDashboardData(DEFAULT_TIME_RANGE)
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(initialDashboardData)
   const [loading, setLoading] = useState(!initialDashboardData)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -74,9 +68,7 @@ export function useDashboardData() {
       setError(null)
 
       try {
-        const cachedData = force
-          ? null
-          : getCachedDashboardData(requestedTimeRange)
+        const cachedData = force ? null : getCachedDashboardData(requestedTimeRange)
         if (cachedData) {
           setDashboardData(cachedData)
           setLoading(false)
@@ -95,14 +87,10 @@ export function useDashboardData() {
           setLoading(true)
         }
 
-        const data = await backendApi.get<DashboardData>(
-          '/api/webui/statistics/dashboard',
-          { query: { hours: requestedTimeRange } }
-        )
-        if (
-          !isMountedRef.current ||
-          requestId !== latestRequestIdRef.current
-        ) {
+        const data = await backendApi.get<DashboardData>('/api/webui/statistics/dashboard', {
+          query: { hours: requestedTimeRange },
+        })
+        if (!isMountedRef.current || requestId !== latestRequestIdRef.current) {
           return
         }
         dashboardDataCache.set(requestedTimeRange, {
@@ -113,10 +101,7 @@ export function useDashboardData() {
         setLoading(false)
         setLoadingProgress(100)
       } catch (requestError) {
-        if (
-          !isMountedRef.current ||
-          requestId !== latestRequestIdRef.current
-        ) {
+        if (!isMountedRef.current || requestId !== latestRequestIdRef.current) {
           return
         }
         console.error('Failed to fetch dashboard data:', requestError)

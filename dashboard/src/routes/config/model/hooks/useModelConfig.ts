@@ -29,7 +29,11 @@ import {
   updateModelConfig,
   updateModelConfigSection,
 } from '@/lib/config-api'
-import type { ModelConfigVersionInfo, ModelTestResult, TestConnectionResult } from '@/lib/config-api'
+import type {
+  ModelConfigVersionInfo,
+  ModelTestResult,
+  TestConnectionResult,
+} from '@/lib/config-api'
 import { useToast } from '@/hooks/use-toast'
 import type { ConfigSchema } from '@/types/config-schema'
 
@@ -101,7 +105,9 @@ export function useModelConfig() {
   const hasUnsavedChanges = modelHasUnsavedChanges || providerHasUnsavedChanges
 
   // ---- 模型配置文件副本 ----
-  const [activeConfigVersion, setActiveConfigVersion] = useState<ModelConfigVersionInfo | null>(null)
+  const [activeConfigVersion, setActiveConfigVersion] = useState<ModelConfigVersionInfo | null>(
+    null
+  )
   const [configVersions, setConfigVersions] = useState<ModelConfigVersionInfo[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [switchingConfigVersion, setSwitchingConfigVersion] = useState<string | null>(null)
@@ -139,7 +145,9 @@ export function useModelConfig() {
   // ---- 单模型能力测试 ----
   const [testingModels, setTestingModels] = useState<Set<string>>(new Set())
   const [modelTestResults, setModelTestResults] = useState<Map<string, ModelTestResult>>(new Map())
-  const [selectedModelTestResult, setSelectedModelTestResult] = useState<ModelTestResult | null>(null)
+  const [selectedModelTestResult, setSelectedModelTestResult] = useState<ModelTestResult | null>(
+    null
+  )
 
   const buildModelTestDetailAction = useCallback(
     (testResult: ModelTestResult): ToastActionElement =>
@@ -181,15 +189,12 @@ export function useModelConfig() {
   const configWriteChainRef = useRef<Promise<void>>(Promise.resolve())
   latestProvidersSnapshotRef.current = JSON.stringify(apiProviders.map(cleanProviderData))
 
-  const enqueueConfigWrite = useCallback(
-    (operation: () => Promise<void>): Promise<void> => {
-      const operationPromise = configWriteChainRef.current.then(operation)
-      // 单次写入失败不能阻断后续保存，但调用方仍会收到本次失败。
-      configWriteChainRef.current = operationPromise.catch(() => undefined)
-      return operationPromise
-    },
-    []
-  )
+  const enqueueConfigWrite = useCallback((operation: () => Promise<void>): Promise<void> => {
+    const operationPromise = configWriteChainRef.current.then(operation)
+    // 单次写入失败不能阻断后续保存，但调用方仍会收到本次失败。
+    configWriteChainRef.current = operationPromise.catch(() => undefined)
+    return operationPromise
+  }, [])
 
   // 自动保存 models / taskConfig（沿用既有 hook）
   const {
@@ -235,9 +240,7 @@ export function useModelConfig() {
       if (applyProviders) {
         latestProvidersSnapshotRef.current = checkpoint.targetSnapshot
       }
-      setProviderHasUnsavedChanges(
-        latestProvidersSnapshotRef.current !== checkpoint.targetSnapshot
-      )
+      setProviderHasUnsavedChanges(latestProvidersSnapshotRef.current !== checkpoint.targetSnapshot)
       return applyProviders
     },
     []
@@ -556,10 +559,7 @@ export function useModelConfig() {
   )
 
   const saveProviders = useCallback(
-    async (
-      nextProviders: APIProvider[],
-      affectedModels: unknown[] = []
-    ) => {
+    async (nextProviders: APIProvider[], affectedModels: unknown[] = []) => {
       const cleanedProviders = nextProviders.map(cleanProviderData)
       const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(
         models,
@@ -597,11 +597,7 @@ export function useModelConfig() {
   )
 
   const autoSaveProviders = useCallback(
-    async (
-      nextProviders: APIProvider[],
-      snapshot: string,
-      generation: number
-    ) => {
+    async (nextProviders: APIProvider[], snapshot: string, generation: number) => {
       if (initialLoadRef.current) return
       if (
         generation !== providerGenerationRef.current ||
@@ -625,10 +621,7 @@ export function useModelConfig() {
       updateProviderSavingCount(1)
       try {
         await enqueueConfigWrite(async () => {
-          await updateModelConfigSection(
-            'api_providers',
-            nextProviders.map(cleanProviderData)
-          )
+          await updateModelConfigSection('api_providers', nextProviders.map(cleanProviderData))
         })
         if (
           generation === providerGenerationRef.current &&
@@ -671,9 +664,7 @@ export function useModelConfig() {
 
     providerGenerationRef.current += 1
     const generation = providerGenerationRef.current
-    const dirty =
-      snapshot !== providersSnapshotRef.current ||
-      providerSaveCountRef.current > 0
+    const dirty = snapshot !== providersSnapshotRef.current || providerSaveCountRef.current > 0
     setProviderHasUnsavedChanges(dirty)
     if (!dirty) return
 
@@ -925,12 +916,7 @@ export function useModelConfig() {
         setSaving(false)
       }
     },
-    [
-      apiProviders,
-      checkDeleteProviderImpact,
-      saveProviders,
-      toast,
-    ]
+    [apiProviders, checkDeleteProviderImpact, saveProviders, toast]
   )
 
   // 保存模型编辑
@@ -1020,11 +1006,7 @@ export function useModelConfig() {
     try {
       setSaving(true)
       // 模型名称与任务引用必须在同一次写入中保存，避免热重载读到不一致的中间状态。
-      const persistResult = await persistModelConfigDraft(
-        newModels,
-        newTaskConfig,
-        apiProviders
-      )
+      const persistResult = await persistModelConfigDraft(newModels, newTaskConfig, apiProviders)
       if (persistResult.applyModels) {
         setModels(newModels)
         setModelNames(newModels.map((model) => model.name))
@@ -1181,10 +1163,7 @@ export function useModelConfig() {
       } else {
         setSaving(true)
       }
-      await saveProviders(
-        deleteConfirmState.pendingProviders,
-        deleteConfirmState.affectedModels
-      )
+      await saveProviders(deleteConfirmState.pendingProviders, deleteConfirmState.affectedModels)
       toast({
         title: '删除成功',
         description: `已删除 ${deleteConfirmState.providersToDelete.length} 个提供商和 ${deleteConfirmState.affectedModels.length} 个关联模型`,
@@ -1218,10 +1197,7 @@ export function useModelConfig() {
     const pendingSnapshot = JSON.stringify(
       deleteConfirmState.pendingProviders.map(cleanProviderData)
     )
-    if (
-      deleteConfirmState.oldProviders.length > 0 &&
-      currentSnapshot === pendingSnapshot
-    ) {
+    if (deleteConfirmState.oldProviders.length > 0 && currentSnapshot === pendingSnapshot) {
       syncProviderState(deleteConfirmState.oldProviders)
       const restoredSnapshot = JSON.stringify(
         deleteConfirmState.oldProviders.map(cleanProviderData)
@@ -1231,9 +1207,7 @@ export function useModelConfig() {
       providerGenerationRef.current += 1
       setProviderHasUnsavedChanges(false)
     } else {
-      setProviderHasUnsavedChanges(
-        currentSnapshot !== providersSnapshotRef.current
-      )
+      setProviderHasUnsavedChanges(currentSnapshot !== providersSnapshotRef.current)
     }
     setDeleteConfirmState({
       isOpen: false,

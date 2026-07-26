@@ -68,7 +68,13 @@ export interface FeatureStatus {
   visualEnabled: boolean
 }
 
-export type QuickShortcutCategory = 'system' | 'config' | 'resource' | 'plugin' | 'monitor' | 'external'
+export type QuickShortcutCategory =
+  | 'system'
+  | 'config'
+  | 'resource'
+  | 'plugin'
+  | 'monitor'
+  | 'external'
 
 export interface QuickShortcutDefinition {
   id: string

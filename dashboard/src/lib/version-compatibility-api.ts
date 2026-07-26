@@ -1,10 +1,7 @@
 import { getApiBaseUrl } from '@/lib/api-base'
 import { APP_VERSION } from '@/lib/version'
 
-export type VersionCompatibilityStatus =
-  | 'compatible'
-  | 'webui_outdated'
-  | 'main_program_outdated'
+export type VersionCompatibilityStatus = 'compatible' | 'webui_outdated' | 'main_program_outdated'
 
 export interface VersionCompatibilityResult {
   status: VersionCompatibilityStatus
@@ -20,9 +17,7 @@ function isVersionCompatibilityResult(value: unknown): value is VersionCompatibi
 
   const result = value as Record<string, unknown>
   return (
-    ['compatible', 'webui_outdated', 'main_program_outdated'].includes(
-      String(result.status)
-    ) &&
+    ['compatible', 'webui_outdated', 'main_program_outdated'].includes(String(result.status)) &&
     typeof result.main_program_version === 'string' &&
     typeof result.webui_version === 'string' &&
     typeof result.required_webui_version === 'string'
@@ -38,14 +33,11 @@ export async function getVersionCompatibility(
 ): Promise<VersionCompatibilityResult> {
   const baseUrl = await getApiBaseUrl()
   const query = new URLSearchParams({ webui_version: APP_VERSION })
-  const response = await fetch(
-    `${baseUrl}/api/webui/version-compatibility?${query.toString()}`,
-    {
-      credentials: 'include',
-      signal,
-      cache: 'no-store',
-    }
-  )
+  const response = await fetch(`${baseUrl}/api/webui/version-compatibility?${query.toString()}`, {
+    credentials: 'include',
+    signal,
+    cache: 'no-store',
+  })
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
 
   if (

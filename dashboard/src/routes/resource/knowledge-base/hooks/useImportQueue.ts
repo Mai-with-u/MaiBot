@@ -74,7 +74,10 @@ export interface UseImportQueueResult {
   invalidate: () => void
 }
 
-export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOptions): UseImportQueueResult {
+export function useImportQueue({
+  active,
+  buildRetryOverrides,
+}: UseImportQueueOptions): UseImportQueueResult {
   const { toast } = useToast()
 
   // WS 连接状态：连接时关闭轮询，断开时由轮询兜底
@@ -95,7 +98,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
   const importSettings: MemoryImportSettings = settingsQuery.data?.settings ?? {}
   const importPollInterval = useMemo(
     () => Math.max(200, Number(importSettings.poll_interval_ms ?? 1000)),
-    [importSettings.poll_interval_ms],
+    [importSettings.poll_interval_ms]
   )
 
   const [importAutoPolling, setImportAutoPolling] = useState(true)
@@ -121,7 +124,8 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
   const [selectedImportTaskLoading, setSelectedImportTaskLoading] = useState(false)
   const [selectedImportFileId, setSelectedImportFileId] = useState('')
   const [importChunkOffset, setImportChunkOffset] = useState(0)
-  const [importChunksPayload, setImportChunksPayload] = useState<MemoryImportChunkListPayload | null>(null)
+  const [importChunksPayload, setImportChunksPayload] =
+    useState<MemoryImportChunkListPayload | null>(null)
   const [importChunksLoading, setImportChunksLoading] = useState(false)
 
   // 任务列表查询失败时同步到局部错误文案
@@ -140,7 +144,12 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       }
       try {
         setImportChunksLoading(true)
-        const payload = await getMemoryImportTaskChunks(taskId, fileId, offset, IMPORT_CHUNK_PAGE_SIZE)
+        const payload = await getMemoryImportTaskChunks(
+          taskId,
+          fileId,
+          offset,
+          IMPORT_CHUNK_PAGE_SIZE
+        )
         if (!payload.success) {
           throw new Error(payload.error || '加载分块详情失败')
         }
@@ -161,7 +170,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
         setImportChunksLoading(false)
       }
     },
-    [toast],
+    [toast]
   )
 
   const loadImportTaskDetail = useCallback(
@@ -215,7 +224,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
         }
       }
     },
-    [importChunkOffset, loadImportChunks, selectedImportFileId, toast],
+    [importChunkOffset, loadImportChunks, selectedImportFileId, toast]
   )
 
   // 命令式刷新队列：触发任务列表查询重拉，并维护选中任务（沿用原 refreshImportQueue 语义）
@@ -252,7 +261,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
         }
       }
     },
-    [tasksQuery, toast],
+    [tasksQuery, toast]
   )
 
   const afterCreated = useCallback(
@@ -263,7 +272,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
         await loadImportTaskDetail(taskId, true)
       }
     },
-    [loadImportTaskDetail, refreshImportQueue],
+    [loadImportTaskDetail, refreshImportQueue]
   )
 
   const selectImportTask = useCallback(
@@ -272,7 +281,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       setImportChunkOffset(0)
       await loadImportTaskDetail(taskId)
     },
-    [loadImportTaskDetail],
+    [loadImportTaskDetail]
   )
 
   const selectImportFile = useCallback(
@@ -284,7 +293,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       setImportChunkOffset(0)
       await loadImportChunks(selectedImportTaskId, fileId, 0)
     },
-    [loadImportChunks, selectedImportTaskId],
+    [loadImportChunks, selectedImportTaskId]
   )
 
   const moveImportChunkPage = useCallback(
@@ -302,7 +311,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       setImportChunkOffset(nextOffset)
       await loadImportChunks(selectedImportTaskId, selectedImportFileId, nextOffset)
     },
-    [importChunkOffset, loadImportChunks, selectedImportFileId, selectedImportTaskId],
+    [importChunkOffset, loadImportChunks, selectedImportFileId, selectedImportTaskId]
   )
 
   const cancelSelectedImportTask = useCallback(async () => {
@@ -352,7 +361,9 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       }
       toast({
         title: '重试任务已创建',
-        description: nextTaskId ? `重试任务 ${nextTaskId.slice(0, 12)} 已进入队列` : '失败项已提交重试',
+        description: nextTaskId
+          ? `重试任务 ${nextTaskId.slice(0, 12)} 已进入队列`
+          : '失败项已提交重试',
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : '重试失败项失败'
@@ -385,7 +396,10 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
       setImportChunksPayload(null)
       return
     }
-    if (!importTasks.some((task) => task.task_id === selectedImportTaskId) && importTasks.length > 0) {
+    if (
+      !importTasks.some((task) => task.task_id === selectedImportTaskId) &&
+      importTasks.length > 0
+    ) {
       void selectImportTask(importTasks[0].task_id)
       return
     }
@@ -436,11 +450,11 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
   // 派生：任务分组、选中任务的衍生信息、分块分页
   const runningImportTasks = useMemo(
     () => importTasks.filter((task) => RUNNING_IMPORT_STATUS.has(String(task.status ?? '').trim())),
-    [importTasks],
+    [importTasks]
   )
   const queuedImportTasks = useMemo(
     () => importTasks.filter((task) => QUEUED_IMPORT_STATUS.has(String(task.status ?? '').trim())),
-    [importTasks],
+    [importTasks]
   )
   const recentImportTasks = useMemo(
     () =>
@@ -448,7 +462,7 @@ export function useImportQueue({ active, buildRetryOverrides }: UseImportQueueOp
         const status = String(task.status ?? '').trim()
         return !RUNNING_IMPORT_STATUS.has(status) && !QUEUED_IMPORT_STATUS.has(status)
       }),
-    [importTasks],
+    [importTasks]
   )
 
   const selectedImportTaskSummary = useMemo(() => {

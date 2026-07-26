@@ -85,7 +85,9 @@ export function getImportStepLabel(step: string): string {
   return IMPORT_STEP_TEXT[normalized] ?? normalized
 }
 
-export function getImportStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+export function getImportStatusVariant(
+  status: string
+): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'failed') {
     return 'destructive'
   }
@@ -168,7 +170,9 @@ export function formatDeleteOperationTime(timestamp?: number | null): string {
 }
 
 export function trimDeleteItemText(value: string, maxLength: number = 140): string {
-  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ')
+  const normalized = String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
   if (!normalized) {
     return ''
   }
@@ -178,7 +182,11 @@ export function trimDeleteItemText(value: string, maxLength: number = 140): stri
   return `${normalized.slice(0, maxLength)}...`
 }
 
-export function formatDeleteRelationText(subject: string, predicate: string, object: string): string {
+export function formatDeleteRelationText(
+  subject: string,
+  predicate: string,
+  object: string
+): string {
   const left = String(subject ?? '').trim()
   const middle = String(predicate ?? '').trim()
   const right = String(object ?? '').trim()
@@ -197,7 +205,7 @@ export function getDeleteOperationItemLabel(item: DeleteOperationItem): string {
       formatDeleteRelationText(
         String(relation.subject ?? ''),
         String(relation.predicate ?? ''),
-        String(relation.object ?? ''),
+        String(relation.object ?? '')
       ) || String(item.item_key ?? item.item_hash ?? '未命名关系')
     )
   }
@@ -297,7 +305,7 @@ export function formatFeedbackRollbackStatus(status: string): string {
 }
 
 export function getFeedbackStatusVariant(
-  status: string,
+  status: string
 ): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'applied' || status === 'rolled_back') {
     return 'default'
@@ -353,12 +361,12 @@ export function formatFeedbackRelationTriplet(value: unknown): string {
   return formatDeleteRelationText(
     String(triplet.subject ?? ''),
     String(triplet.predicate ?? ''),
-    String(triplet.object ?? ''),
+    String(triplet.object ?? '')
   )
 }
 
 export function getFeedbackCorrectionPreview(
-  task: MemoryFeedbackCorrectionDetailTaskPayload | MemoryFeedbackCorrectionSummaryPayload | null,
+  task: MemoryFeedbackCorrectionDetailTaskPayload | MemoryFeedbackCorrectionSummaryPayload | null
 ): {
   headline: string
   oldRelation: string
@@ -377,10 +385,13 @@ export function getFeedbackCorrectionPreview(
   const forgottenRelations = Array.isArray(rollbackPlanSummary.forgotten_relations)
     ? rollbackPlanSummary.forgotten_relations
     : []
-  const correctedWrite = rollbackPlanSummary.corrected_write && typeof rollbackPlanSummary.corrected_write === 'object'
-    ? rollbackPlanSummary.corrected_write
-    : {}
-  const correctedRelations = Array.isArray((correctedWrite as Record<string, unknown>).corrected_relations)
+  const correctedWrite =
+    rollbackPlanSummary.corrected_write && typeof rollbackPlanSummary.corrected_write === 'object'
+      ? rollbackPlanSummary.corrected_write
+      : {}
+  const correctedRelations = Array.isArray(
+    (correctedWrite as Record<string, unknown>).corrected_relations
+  )
     ? ((correctedWrite as Record<string, unknown>).corrected_relations as unknown[])
     : []
 
@@ -416,7 +427,7 @@ export function getFeedbackCorrectionPreview(
 }
 
 export function buildFeedbackImpactSummary(
-  task: MemoryFeedbackCorrectionDetailTaskPayload | MemoryFeedbackCorrectionSummaryPayload | null,
+  task: MemoryFeedbackCorrectionDetailTaskPayload | MemoryFeedbackCorrectionSummaryPayload | null
 ): string[] {
   if (!task) {
     return []
