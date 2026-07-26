@@ -15,6 +15,22 @@ export default defineConfig({
     // 会抢占 globalThis.localStorage 导致 jsdom 的实现不生效，这里显式关闭
     execArgv: ['--no-experimental-webstorage'],
     setupFiles: './src/test/setup.ts',
+    // 覆盖率：v8 provider，只统计 src 业务代码
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/__tests__/**',
+        'src/test/**',
+        'src/types/**',
+        'src/**/*.d.ts',
+        'src/main.tsx',
+        'src/assets/**',
+      ],
+    },
   },
   resolve: {
     alias: {
