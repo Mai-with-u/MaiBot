@@ -11,6 +11,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // Node 22+ 自带实验性 localStorage 全局（未配 --localstorage-file 时为 undefined），
+    // 会抢占 globalThis.localStorage 导致 jsdom 的实现不生效，这里显式关闭
+    execArgv: ['--no-experimental-webstorage'],
     setupFiles: './src/test/setup.ts',
   },
   resolve: {
