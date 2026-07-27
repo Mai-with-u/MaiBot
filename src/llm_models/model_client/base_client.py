@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
 
 import asyncio
+import time
+import uuid
 
 from src.common.logger import get_logger
 from src.config.config import config_manager
@@ -81,6 +83,20 @@ ResponseParser = Callable[[Any], Tuple["APIResponse", UsageTuple | None]]
 
 
 @dataclass(slots=True)
+class RequestTraceContext:
+    """一次逻辑 LLM 请求在重试和切换模型期间共享的日志上下文。"""
+
+    request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    task_name: str = ""
+    request_type: str = ""
+    session_id: str = ""
+    started_at: float = field(default_factory=time.time)
+    attempt: int = 0
+    model_attempt: int = 0
+    snapshot_path: str = ""
+
+
+@dataclass(slots=True)
 class ResponseRequest:
     """统一的文本/多模态响应请求。"""
 
@@ -94,6 +110,7 @@ class ResponseRequest:
     async_response_parser: ResponseParser | None = None
     interrupt_flag: asyncio.Event | None = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
+    trace_context: RequestTraceContext | None = None
 
     def copy_with(self, **changes: Any) -> "ResponseRequest":
         """基于当前请求创建一个带局部变更的新请求。
@@ -115,6 +132,7 @@ class ResponseRequest:
             "async_response_parser": self.async_response_parser,
             "interrupt_flag": self.interrupt_flag,
             "extra_params": dict(self.extra_params),
+            "trace_context": self.trace_context,
         }
         payload.update(changes)
         return ResponseRequest(**payload)
@@ -127,6 +145,7 @@ class EmbeddingRequest:
     model_info: ModelInfo
     embedding_input: str
     extra_params: Dict[str, Any] = field(default_factory=dict)
+    trace_context: RequestTraceContext | None = None
 
 
 @dataclass(slots=True)
@@ -137,6 +156,7 @@ class AudioTranscriptionRequest:
     audio_base64: str
     max_tokens: int | None = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
+    trace_context: RequestTraceContext | None = None
 
 
 ClientRequest = ResponseRequest | EmbeddingRequest | AudioTranscriptionRequest

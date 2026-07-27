@@ -2,7 +2,9 @@ import { useNavigate } from '@tanstack/react-router'
 import { type CSSProperties, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   ChevronDown,
   Clock,
   Code2,
@@ -76,6 +78,7 @@ const REPLAY_COUNT_MAX = 20
 const AUTO_SESSION = 'auto'
 const ALL_GROUP_SESSIONS = '__all_group_chats__'
 const CORE_STAGE_NAMES = ['planner', 'replyer']
+const LLM_ERROR_STAGE_NAMES = ['llm_error']
 const REMOVED_STAGE_NAMES = ['timing_gate']
 const NATURAL_LANGUAGE_TEXT_STYLE: CSSProperties = {
   fontFamily:
@@ -93,6 +96,7 @@ const STAGE_LABELS: Record<string, string> = {
   expression_selector: '表达选择',
   jargon_learner: '黑话抽取',
   jargon_learning_update: '黑话含义推断',
+  llm_error: 'LLM 请求异常',
   planner: '规划器',
   reply_effect_judge: '回复效果评估',
   replyer: '回复器',
@@ -114,6 +118,24 @@ type StructuredPromptMessage = {
   tool_calls?: unknown[]
 }
 
+type LlmErrorAttempt = {
+  attempt?: number
+  model_attempt?: number
+  status?: string
+  timestamp?: string
+  model_name?: string
+  provider_name?: string
+  client_type?: string
+  operation?: string
+  retry_interval?: number
+  error?: {
+    type?: string
+    status_code?: number | null
+    message?: string
+    response_body?: unknown
+  }
+}
+
 type StructuredPromptOutput = {
   title?: string
   content?: unknown
@@ -124,11 +146,21 @@ type StructuredPromptLlmCall = {
   inference_stage: string
   request?: {
     kind?: string
+    operation?: string
+    request_type?: string
     selection_reason?: string
+    task_name?: string
   }
   metadata?: {
+    client_type?: string
+    created_at?: string
     model_name?: string
     duration_ms?: number
+    provider_name?: string
+    request_id?: string
+    session_id?: string | null
+    status?: string
+    updated_at?: string
   }
   messages?: StructuredPromptMessage[]
   output?: StructuredPromptOutput | null
@@ -148,6 +180,9 @@ type StructuredPromptPayload = {
   output?: StructuredPromptOutput | null
   tool_definitions?: unknown[]
   jargon_learning_calls?: StructuredPromptLlmCall[]
+  attempts?: LlmErrorAttempt[]
+  request_parameters?: Record<string, unknown>
+  provider_request?: Record<string, unknown>
 }
 
 function getInitialSearchParams(): URLSearchParams {
@@ -233,6 +268,7 @@ function buildStageCategoryRows(stageCards: ReasoningPromptStageInfo[]): StageCa
 
   const coreStages = takeNamedStages(CORE_STAGE_NAMES)
   const learnerStages = takeMatchingStages(isLearnerStage)
+  const llmErrorStages = takeNamedStages(LLM_ERROR_STAGE_NAMES)
   const removedStages = takeNamedStages(REMOVED_STAGE_NAMES)
   const otherStages = takeMatchingStages(() => true)
 
@@ -240,6 +276,7 @@ function buildStageCategoryRows(stageCards: ReasoningPromptStageInfo[]): StageCa
     { key: 'core', label: '主流程', items: coreStages },
     { key: 'learners', label: '学习器', items: learnerStages },
     { key: 'others', label: '其余', items: otherStages },
+    { key: 'llm-errors', label: 'LLM 请求', items: llmErrorStages, collapsedByDefault: true },
     { key: 'removed', label: '不再使用', items: removedStages, collapsedByDefault: true },
   ].filter((row) => row.items.length > 0)
 }
@@ -265,6 +302,162 @@ function formatDurationMs(durationMs: number | null): string {
   if (durationMs === null || !Number.isFinite(durationMs)) return ''
   if (durationMs < 1000) return `${durationMs.toFixed(durationMs >= 100 ? 0 : 1)} ms`
   return `${(durationMs / 1000).toFixed(2)} s`
+}
+
+function formatLlmRequestStatus(status?: string): string {
+  const labels: Record<string, string> = {
+    failed: '本次失败',
+    final_failed: '最终失败',
+    retrying: '等待重试',
+    switching_model: '切换模型',
+    succeeded: '请求成功',
+    succeeded_after_retry: '重试后成功',
+  }
+  return labels[status ?? ''] ?? status ?? '状态未知'
+}
+
+function getLlmRequestStatusStyle(status?: string): string {
+  if (status === 'succeeded' || status === 'succeeded_after_retry') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  }
+  if (status === 'retrying' || status === 'switching_model') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  }
+  return 'border-destructive/30 bg-destructive/10 text-destructive'
+}
+
+function formatSnapshotTime(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN')
+}
+
+function LlmErrorDetails({ prompt }: { prompt: StructuredPromptPayload }) {
+  const attempts = prompt.attempts ?? []
+  const status = prompt.metadata?.status
+  const succeeded = status === 'succeeded_after_retry'
+  const summaryItems = [
+    ['任务', prompt.request?.task_name],
+    ['请求类型', prompt.request?.request_type || prompt.request?.kind],
+    ['操作', prompt.request?.operation],
+    ['客户端', prompt.metadata?.client_type],
+    ['模型', prompt.metadata?.model_name],
+    ['服务商', prompt.metadata?.provider_name],
+    ['请求 ID', prompt.metadata?.request_id],
+    ['创建时间', formatSnapshotTime(prompt.metadata?.created_at)],
+    ['更新时间', formatSnapshotTime(prompt.metadata?.updated_at)],
+  ].filter((item): item is [string, string] => Boolean(item[1]))
+
+  return (
+    <section className="space-y-3 rounded-md border p-2.5 sm:p-3" aria-label="LLM 请求异常详情">
+      <div className="flex flex-wrap items-center gap-2">
+        {succeeded ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+        ) : (
+          <AlertTriangle className="text-destructive h-4 w-4" />
+        )}
+        <h3 className="text-sm font-semibold">请求结果</h3>
+        <Badge variant="outline" className={getLlmRequestStatusStyle(status)}>
+          {formatLlmRequestStatus(status)}
+        </Badge>
+        <span className="text-muted-foreground text-xs">{attempts.length} 次尝试</span>
+      </div>
+
+      {summaryItems.length > 0 && (
+        <dl className="grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
+          {summaryItems.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="mt-0.5 break-all font-medium">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <div className="space-y-2">
+        {attempts.map((attempt, index) => {
+          const errorBody = attempt.error?.response_body
+          return (
+            <article
+              key={`${attempt.attempt ?? index}-${attempt.model_name ?? 'unknown'}`}
+              className="rounded-md border bg-muted/20 p-2.5"
+            >
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-semibold">尝试 #{attempt.attempt ?? index + 1}</span>
+                <Badge variant="outline" className={getLlmRequestStatusStyle(attempt.status)}>
+                  {formatLlmRequestStatus(attempt.status)}
+                </Badge>
+                {attempt.model_attempt && (
+                  <span className="text-muted-foreground text-xs">模型内第 {attempt.model_attempt} 次</span>
+                )}
+                {attempt.retry_interval !== undefined && (
+                  <span className="text-muted-foreground text-xs">
+                    {attempt.retry_interval} 秒后重试
+                  </span>
+                )}
+                <time className="text-muted-foreground ml-auto text-xs">
+                  {formatSnapshotTime(attempt.timestamp)}
+                </time>
+              </div>
+              <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                {attempt.model_name && <span>模型：{attempt.model_name}</span>}
+                {attempt.provider_name && <span>服务商：{attempt.provider_name}</span>}
+                {attempt.client_type && <span>客户端：{attempt.client_type}</span>}
+                {attempt.operation && <span>操作：{attempt.operation}</span>}
+              </div>
+              {attempt.error && (
+                <div className="mt-2 space-y-1 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {attempt.error.type && <code className="text-xs">{attempt.error.type}</code>}
+                    {attempt.error.status_code !== null &&
+                      attempt.error.status_code !== undefined && (
+                        <Badge variant="outline">HTTP {attempt.error.status_code}</Badge>
+                      )}
+                  </div>
+                  {attempt.error.message && (
+                    <p className="text-destructive break-words">{attempt.error.message}</p>
+                  )}
+                  {errorBody !== undefined && (
+                    <details className="text-muted-foreground">
+                      <summary className="cursor-pointer text-xs">查看上游响应</summary>
+                      <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">
+                        {typeof errorBody === 'string'
+                          ? errorBody
+                          : JSON.stringify(errorBody, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
+            </article>
+          )
+        })}
+      </div>
+
+      {(prompt.request_parameters || prompt.provider_request) && (
+        <div className="space-y-1.5">
+          {prompt.request_parameters && (
+            <details className="rounded-md border">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">请求参数</summary>
+              <pre className="max-h-64 overflow-auto border-t p-2.5 text-xs whitespace-pre-wrap">
+                {JSON.stringify(prompt.request_parameters, null, 2)}
+              </pre>
+            </details>
+          )}
+          {prompt.provider_request && (
+            <details className="rounded-md border">
+              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">
+                Provider 请求参数
+              </summary>
+              <pre className="max-h-64 overflow-auto border-t p-2.5 text-xs whitespace-pre-wrap">
+                {JSON.stringify(prompt.provider_request, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+    </section>
+  )
 }
 
 function getReasoningMetadataText(item: ReasoningPromptFile): string {
@@ -1775,7 +1968,9 @@ export function ReasoningProcessPage({
   const [contentLoading, setContentLoading] = useState(false)
   const [clearingStage, setClearingStage] = useState<string | null>(null)
   const [pendingClearStage, setPendingClearStage] = useState<ReasoningPromptStageInfo | null>(null)
-  const [collapsedStageRows, setCollapsedStageRows] = useState<Set<string>>(() => new Set(['removed']))
+  const [collapsedStageRows, setCollapsedStageRows] = useState<Set<string>>(
+    () => new Set(['llm-errors', 'removed'])
+  )
   const [error, setError] = useState<string | null>(null)
   const [browsingStage, setBrowsingStage] = useState(
     () => Boolean(initialSearchParams.get('stage') || initialSearchParams.get('session') || initialTargetStem)
@@ -2292,7 +2487,7 @@ export function ReasoningProcessPage({
           value={search}
           onChange={(event) => resetToFirstPage(() => setSearch(event.target.value))}
           className={cn(controlClassName, 'pl-9')}
-          placeholder="搜索会话显示名、真实会话、文件名或 replyer 回复内容"
+          placeholder="搜索会话、文件名、模型或记录摘要"
         />
       </div>
       </>
@@ -2782,6 +2977,10 @@ export function ReasoningProcessPage({
                       </div>
                     ) : structuredPrompt ? (
                       <div className="space-y-2 p-2 sm:space-y-3 sm:p-3">
+                        {selected?.stage === 'llm_error' && (
+                          <LlmErrorDetails prompt={structuredPrompt} />
+                        )}
+
                         {headerMeta.remainingText && (
                           <div className="rounded-md border p-2.5 sm:p-3">
                             <NaturalLanguageText

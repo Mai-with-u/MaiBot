@@ -342,17 +342,21 @@ class PromptCLIVisualizer:
                 raw_role = message.get("role", "unknown")
                 content = message.get("content")
                 tool_call_id = message.get("tool_call_id")
+                tool_name = message.get("tool_name")
                 tool_calls = message.get("tool_calls") or []
             else:
                 raw_role = getattr(message, "role", "unknown")
                 content = getattr(message, "content", None)
                 tool_call_id = getattr(message, "tool_call_id", None)
+                tool_name = getattr(message, "tool_name", None)
                 tool_calls = getattr(message, "tool_calls", None) or []
 
             role = raw_role.value if hasattr(raw_role, "value") else str(raw_role)
             block_lines = [f"[{index}] role={role}"]
             if tool_call_id:
                 block_lines.append(f"tool_call_id={tool_call_id}")
+            if tool_name:
+                block_lines.append(f"tool_name={tool_name}")
 
             normalized_content = cls._serialize_message_content_for_dump(content)
             if normalized_content:
@@ -476,11 +480,13 @@ class PromptCLIVisualizer:
                 raw_role = message.get("role", "unknown")
                 content = message.get("content")
                 tool_call_id = message.get("tool_call_id")
+                tool_name = message.get("tool_name")
                 tool_calls = message.get("tool_calls") or []
             else:
                 raw_role = getattr(message, "role", "unknown")
                 content = getattr(message, "content", None)
                 tool_call_id = getattr(message, "tool_call_id", None)
+                tool_name = getattr(message, "tool_name", None)
                 tool_calls = getattr(message, "tool_calls", None) or []
 
             role = raw_role.value if hasattr(raw_role, "value") else str(raw_role)
@@ -491,6 +497,8 @@ class PromptCLIVisualizer:
             }
             if tool_call_id:
                 structured_message["tool_call_id"] = str(tool_call_id)
+            if tool_name:
+                structured_message["tool_name"] = str(tool_name)
             if tool_calls:
                 structured_message["tool_calls"] = [
                     cls._sanitize_structured_value(

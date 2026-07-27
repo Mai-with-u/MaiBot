@@ -48,12 +48,13 @@ vi.mock('@/lib/reasoning-process-api', () => ({
   replayReasoningPrompt: vi.fn(),
 }))
 
-// 覆盖四个分类：主流程（planner/replyer）、学习器、其余、不再使用（timing_gate）
+// 覆盖五个分类：主流程、学习器、其余、LLM 请求、不再使用
 const STAGE_INFOS: ReasoningPromptStageInfo[] = [
   { name: 'planner', session_count: 3, latest_modified_at: 1753500000 },
   { name: 'replyer', session_count: 2, latest_modified_at: 1753500100 },
   { name: 'expression_learner', session_count: 1, latest_modified_at: 1753500200 },
   { name: 'emotion', session_count: 4, latest_modified_at: 0 },
+  { name: 'llm_error', session_count: 1, latest_modified_at: 1753500250 },
   { name: 'timing_gate', session_count: 1, latest_modified_at: 1753500300 },
 ]
 
@@ -124,6 +125,54 @@ const STRUCTURED_JSON = JSON.stringify({
   ],
   output: { title: '决策结果', content: '回复用户' },
   tool_definitions: [],
+})
+
+const LLM_ERROR_JSON = JSON.stringify({
+  schema_version: 3,
+  request: {
+    kind: 'response',
+    operation: 'create_response',
+    request_type: 'chat',
+    task_name: 'replyer',
+  },
+  metadata: {
+    client_type: 'openai',
+    created_at: '2026-07-28T12:00:00',
+    updated_at: '2026-07-28T12:00:04',
+    model_name: 'gpt-test',
+    provider_name: 'test-provider',
+    request_id: 'request-123',
+    status: 'final_failed',
+  },
+  messages: [{ index: 1, role: 'user', content: '失败请求内容' }],
+  attempts: [
+    {
+      attempt: 1,
+      model_attempt: 1,
+      model_name: 'gpt-test',
+      provider_name: 'test-provider',
+      client_type: 'openai',
+      operation: 'create_response',
+      status: 'retrying',
+      retry_interval: 2,
+      timestamp: '2026-07-28T12:00:01',
+      error: { type: 'RateLimitError', status_code: 429, message: '请求频率过高' },
+    },
+    {
+      attempt: 2,
+      model_attempt: 2,
+      model_name: 'gpt-test',
+      provider_name: 'test-provider',
+      status: 'final_failed',
+      timestamp: '2026-07-28T12:00:04',
+      error: {
+        type: 'APIError',
+        status_code: 503,
+        message: '上游服务不可用',
+        response_body: { error: 'unavailable' },
+      },
+    },
+  ],
 })
 
 function makeFilesResponse(
@@ -241,7 +290,7 @@ async function openReplayPanel() {
 }
 
 describe('类型总览', () => {
-  it('按类别分组展示类型卡片，「不再使用」分组默认折叠可展开', async () => {
+  it('按类别分组展示类型卡片，底部两个分组默认折叠可展开', async () => {
     const user = userEvent.setup()
     render(<ReasoningProcessPage />)
 
@@ -256,12 +305,50 @@ describe('类型总览', () => {
     expect(screen.getByText('表情包发送')).toBeInTheDocument()
     // planner 卡片带「最新」后缀时文案在同一节点内拼接，用正则局部匹配
     expect(screen.getByText(/3 个会话/)).toBeInTheDocument()
-    // 折叠分组内容默认不渲染
+    // 两个底部折叠分组内容默认不渲染
+    expect(screen.queryByText('LLM 请求异常')).not.toBeInTheDocument()
     expect(screen.queryByText('时机判断')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /LLM 请求/ }))
+    expect(screen.getByText('LLM 请求异常')).toBeInTheDocument()
+    expect(screen.getByText('llm_error')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /不再使用/ }))
     expect(screen.getByText('时机判断')).toBeInTheDocument()
     expect(screen.getByText('timing_gate')).toBeInTheDocument()
+  })
+
+  it('LLM 请求异常详情展示最终状态和逐次重试信息', async () => {
+    const llmErrorFile = makeFile({
+      stage: 'llm_error',
+      stem: 'request-123',
+      text_path: null,
+      json_path: '/prompts/request-123.json',
+      display_title: '最终失败 · 上游服务不可用',
+      action_preview: null,
+    })
+    listFilesMock.mockImplementation(async (params) =>
+      makeFilesResponse(params, params.stage === 'llm_error' ? [llmErrorFile] : [PLANNER_FILE])
+    )
+    getFileMock.mockImplementation(async (path) =>
+      makeContentResponse(path, path.includes('request-123') ? LLM_ERROR_JSON : STRUCTURED_JSON)
+    )
+
+    const user = userEvent.setup()
+    render(<ReasoningProcessPage />)
+    await user.click(await screen.findByRole('button', { name: /LLM 请求/ }))
+    await user.click(screen.getByRole('button', { name: /llm_error/ }))
+    await user.click(await screen.findByRole('button', { name: /最终失败/ }))
+
+    expect(await screen.findByRole('heading', { name: '请求结果' })).toBeInTheDocument()
+    expect(screen.getAllByText('最终失败').length).toBeGreaterThan(0)
+    expect(screen.getByText('2 次尝试')).toBeInTheDocument()
+    expect(screen.getByText('请求频率过高')).toBeInTheDocument()
+    expect(screen.getByText('上游服务不可用')).toBeInTheDocument()
+    expect(screen.getByText('HTTP 503')).toBeInTheDocument()
+
+    await user.click(screen.getByText('查看上游响应'))
+    expect(screen.getByText(/unavailable/)).toBeInTheDocument()
   })
 
   it('类型列表加载失败时展示错误提示', async () => {
@@ -356,7 +443,7 @@ describe('类型浏览与文件列表', () => {
     await renderAndEnterStage()
 
     fireEvent.change(
-      screen.getByPlaceholderText('搜索会话显示名、真实会话、文件名或 replyer 回复内容'),
+      screen.getByPlaceholderText('搜索会话、文件名、模型或记录摘要'),
       { target: { value: '关键词' } }
     )
     await waitFor(() => {

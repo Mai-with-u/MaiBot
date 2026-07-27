@@ -35,11 +35,21 @@ from src.llm_models.model_client.base_client import (
     BaseClient,
     ClientRequest,
     EmbeddingRequest,
+    RequestTraceContext,
     ResponseRequest,
     UsageRecord,
     client_registry,
 )
-from src.llm_models.request_snapshot import format_request_snapshot_log_info
+from src.llm_models.request_snapshot import (
+    attach_request_snapshot,
+    format_request_snapshot_log_info,
+    has_request_snapshot,
+    mark_request_final_failure,
+    mark_request_succeeded,
+    save_failed_request_snapshot,
+    serialize_client_request_snapshot,
+    update_failed_request_attempt,
+)
 from src.llm_models.payload_content.message import Message, MessageBuilder
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import (
@@ -334,6 +344,7 @@ class LLMOrchestrator:
             temperature=temperature,
             max_tokens=max_tokens,
             interrupt_flag=interrupt_flag,
+            session_id=session_id,
         )
         response = execution_result.api_response
         model_info = execution_result.model_info
@@ -363,7 +374,12 @@ class LLMOrchestrator:
             response.usage,
         )
 
-    async def generate_response_for_voice(self, voice_base64: str) -> LLMAudioTranscriptionResult:
+    async def generate_response_for_voice(
+        self,
+        voice_base64: str,
+        *,
+        session_id: str = "",
+    ) -> LLMAudioTranscriptionResult:
         """为语音生成转录响应。
 
         Args:
@@ -376,6 +392,7 @@ class LLMOrchestrator:
         execution_result = await self._execute_request(
             request_type=RequestType.AUDIO,
             audio_base64=voice_base64,
+            session_id=session_id,
         )
         return LLMAudioTranscriptionResult(text=execution_result.api_response.content or None)
 
@@ -425,6 +442,7 @@ class LLMOrchestrator:
             tool_options=tool_built,
             response_format=response_format,
             interrupt_flag=interrupt_flag,
+            session_id=session_id,
         )
         response = execution_result.api_response
         model_info = execution_result.model_info
@@ -497,6 +515,7 @@ class LLMOrchestrator:
             tool_options=tool_built,
             response_format=response_format,
             interrupt_flag=interrupt_flag,
+            session_id=session_id,
         )
         response = execution_result.api_response
         model_info = execution_result.model_info
@@ -544,6 +563,7 @@ class LLMOrchestrator:
         execution_result = await self._execute_request(
             request_type=RequestType.EMBEDDING,
             embedding_input=embedding_input,
+            session_id=session_id,
         )
         response = execution_result.api_response
         model_info = execution_result.model_info
@@ -622,6 +642,7 @@ class LLMOrchestrator:
         interrupt_flag: asyncio.Event | None,
         temperature: Optional[float],
         max_tokens: Optional[int],
+        trace_context: RequestTraceContext,
     ) -> ResponseRequest:
         """构建统一响应请求对象。
 
@@ -650,12 +671,14 @@ class LLMOrchestrator:
             async_response_parser=async_response_parser,
             interrupt_flag=interrupt_flag,
             extra_params=dict(model_info.extra_params),
+            trace_context=trace_context,
         )
 
     @staticmethod
     def _build_embedding_request(
         model_info: ModelInfo,
         embedding_input: str,
+        trace_context: RequestTraceContext,
     ) -> EmbeddingRequest:
         """构建统一嵌入请求对象。
 
@@ -670,12 +693,14 @@ class LLMOrchestrator:
             model_info=model_info,
             embedding_input=embedding_input,
             extra_params=dict(model_info.extra_params),
+            trace_context=trace_context,
         )
 
     @staticmethod
     def _build_audio_transcription_request(
         model_info: ModelInfo,
         audio_base64: str,
+        trace_context: RequestTraceContext,
         max_tokens: Optional[int] = None,
     ) -> AudioTranscriptionRequest:
         """构建统一音频转录请求对象。
@@ -693,6 +718,7 @@ class LLMOrchestrator:
             audio_base64=audio_base64,
             max_tokens=max_tokens,
             extra_params=dict(model_info.extra_params),
+            trace_context=trace_context,
         )
 
     def _build_client_request(
@@ -709,6 +735,7 @@ class LLMOrchestrator:
         max_tokens: Optional[int],
         embedding_input: str | None,
         audio_base64: str | None,
+        trace_context: RequestTraceContext,
     ) -> ClientRequest:
         """按请求类型构建统一客户端请求对象。
 
@@ -743,17 +770,23 @@ class LLMOrchestrator:
                 interrupt_flag=interrupt_flag,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                trace_context=trace_context,
             )
         if request_type == RequestType.EMBEDDING:
             if embedding_input is None:
                 raise ValueError("嵌入输入不能为空")
-            return self._build_embedding_request(model_info=model_info, embedding_input=embedding_input)
+            return self._build_embedding_request(
+                model_info=model_info,
+                embedding_input=embedding_input,
+                trace_context=trace_context,
+            )
         if request_type == RequestType.AUDIO:
             if audio_base64 is None:
                 raise ValueError("音频 Base64 不能为空")
             return self._build_audio_transcription_request(
                 model_info=model_info,
                 audio_base64=audio_base64,
+                trace_context=trace_context,
                 max_tokens=max_tokens,
             )
         raise ValueError(f"不支持的请求类型: {request_type}")
@@ -853,14 +886,38 @@ class LLMOrchestrator:
         original_response_request = request if isinstance(request, ResponseRequest) else None
         active_request: ClientRequest = request
 
+        def ensure_attempt_snapshot(error: Exception) -> None:
+            """确保内置或插件 Provider 的每次失败都有统一快照记录。"""
+
+            if has_request_snapshot(error):
+                return
+            snapshot_path = save_failed_request_snapshot(
+                api_provider=api_provider,
+                client_type=api_provider.client_type,
+                error=error,
+                internal_request=serialize_client_request_snapshot(active_request),
+                model_info=model_info,
+                operation="client.request",
+                provider_request={},
+                trace_context=active_request.trace_context,
+            )
+            attach_request_snapshot(error, snapshot_path)
+
         while retry_remain > 0:
+            if active_request.trace_context is not None:
+                active_request.trace_context.attempt += 1
+                active_request.trace_context.model_attempt += 1
             try:
                 if isinstance(active_request, ResponseRequest):
-                    return await client.get_response(active_request)
-                if isinstance(active_request, EmbeddingRequest):
-                    return await client.get_embedding(active_request)
-                return await client.get_audio_transcriptions(active_request)
+                    response = await client.get_response(active_request)
+                elif isinstance(active_request, EmbeddingRequest):
+                    response = await client.get_embedding(active_request)
+                else:
+                    response = await client.get_audio_transcriptions(active_request)
+                mark_request_succeeded(active_request)
+                return response
             except EmptyResponseException as e:
+                ensure_attempt_snapshot(e)
                 # 空回复：通常为临时问题，单独记录并重试
                 original_error_info = self._get_original_error_info(e)
                 retry_remain -= 1
@@ -881,9 +938,11 @@ class LLMOrchestrator:
                     reason="模型返回空回复",
                     retry_interval=api_provider.retry_interval,
                 )
+                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except NetworkConnectionError as e:
+                ensure_attempt_snapshot(e)
                 # 网络错误：单独记录并重试
                 # 尝试从链式异常中获取原始错误信息以诊断具体原因
                 original_error_info = self._get_original_error_info(e)
@@ -909,9 +968,11 @@ class LLMOrchestrator:
                     reason="网络错误",
                     retry_interval=api_provider.retry_interval,
                 )
+                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except RespNotOkException as e:
+                ensure_attempt_snapshot(e)
                 original_error_info = self._get_original_error_info(e)
                 task_display = self.request_type or "未知任务"
 
@@ -939,6 +1000,7 @@ class LLMOrchestrator:
                         reason=f"HTTP {e.status_code}",
                         retry_interval=api_provider.retry_interval,
                     )
+                    update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
                     await asyncio.sleep(api_provider.retry_interval)
                     continue
 
@@ -955,6 +1017,7 @@ class LLMOrchestrator:
                         img_target_size=target_size,
                     )
                     active_request = active_request.copy_with(message_list=compressed_messages)
+                    update_failed_request_attempt(e, status="retrying")
                     continue
 
                 if e.status_code == 413 and can_retry_with_compression:
@@ -964,6 +1027,7 @@ class LLMOrchestrator:
                     # 压缩消息本身不消耗重试次数
                     compressed_messages = compress_messages(active_request.message_list)
                     active_request = active_request.copy_with(message_list=compressed_messages)
+                    update_failed_request_attempt(e, status="retrying")
                     continue
 
                 # 不可重试的HTTP错误
@@ -973,6 +1037,7 @@ class LLMOrchestrator:
                 raise ModelAttemptFailed(f"模型 '{model_info.name}' 遇到硬错误", original_exception=e) from e
 
             except RespParseException as e:
+                ensure_attempt_snapshot(e)
                 original_error_info = self._get_original_error_info(e)
                 retry_remain -= 1
                 task_display = self.request_type or "未知任务"
@@ -993,12 +1058,14 @@ class LLMOrchestrator:
                     reason="响应解析失败",
                     retry_interval=api_provider.retry_interval,
                 )
+                update_failed_request_attempt(e, status="retrying", retry_interval=api_provider.retry_interval)
                 await asyncio.sleep(api_provider.retry_interval)
 
             except ReqAbortException:
                 raise
 
             except Exception as e:
+                ensure_attempt_snapshot(e)
                 logger.error(traceback.format_exc())
 
                 original_error_info = self._get_original_error_info(e)
@@ -1035,11 +1102,23 @@ class LLMOrchestrator:
             )
         except asyncio.TimeoutError as e:
             task_display = self.request_type or self.task_name or "未知任务"
-            raise LLMTaskTimeoutError(
+            timeout_error = LLMTaskTimeoutError(
                 task_name=task_display,
                 model_name=model_name,
                 timeout_s=timeout_s,
-            ) from e
+            )
+            snapshot_path = save_failed_request_snapshot(
+                api_provider=api_provider,
+                client_type=api_provider.client_type,
+                error=timeout_error,
+                internal_request=serialize_client_request_snapshot(request),
+                model_info=request.model_info,
+                operation="task.hard_timeout",
+                provider_request={"hard_timeout": timeout_s},
+                trace_context=request.trace_context,
+            )
+            attach_request_snapshot(timeout_error, snapshot_path)
+            raise timeout_error from e
 
     async def _execute_request(
         self,
@@ -1055,6 +1134,7 @@ class LLMOrchestrator:
         embedding_input: str | None = None,
         audio_base64: str | None = None,
         interrupt_flag: asyncio.Event | None = None,
+        session_id: str = "",
     ) -> LLMExecutionResult:
         """执行一次完整的模型调度请求。
 
@@ -1078,13 +1158,19 @@ class LLMOrchestrator:
         max_attempts = 1 if str(model_name or "").strip() else len(self.model_for_task.model_list)
         last_exception: Optional[Exception] = None
         last_model_name = ""
+        trace_context = RequestTraceContext(
+            task_name=self.task_name,
+            request_type=self.request_type,
+            session_id=self._resolve_effective_session_id(session_id),
+        )
 
-        for _ in range(max_attempts):
+        for model_index in range(max_attempts):
             model_info, api_provider, client = self._select_model(
                 exclude_models=failed_models_this_request,
                 model_name=model_name,
             )
             last_model_name = model_info.name
+            trace_context.model_attempt = 0
             message_list = []
             if message_factory:
                 parameter_count = len(inspect.signature(message_factory).parameters)
@@ -1110,6 +1196,7 @@ class LLMOrchestrator:
                     max_tokens=max_tokens,
                     embedding_input=embedding_input,
                     audio_base64=audio_base64,
+                    trace_context=trace_context,
                 )
                 if self.request_type.startswith("maisaka."):
                     logger.debug(
@@ -1141,10 +1228,24 @@ class LLMOrchestrator:
 
             except ModelAttemptFailed as e:
                 last_exception = e.original_exception or e
+                if not has_request_snapshot(last_exception):
+                    snapshot_path = save_failed_request_snapshot(
+                        api_provider=api_provider,
+                        client_type=api_provider.client_type,
+                        error=last_exception,
+                        internal_request=serialize_client_request_snapshot(request),
+                        model_info=model_info,
+                        operation="client.request",
+                        provider_request={},
+                        trace_context=trace_context,
+                    )
+                    attach_request_snapshot(last_exception, snapshot_path)
                 logger.warning(f"模型 '{model_info.name}' 尝试失败，切换到下一个模型。原因: {e}")
                 total_tokens, penalty, usage_penalty = self.model_usage[model_info.name]
                 self.model_usage[model_info.name] = (total_tokens, penalty + 1, usage_penalty - 1)
                 failed_models_this_request.add(model_info.name)
+                if model_index < max_attempts - 1:
+                    update_failed_request_attempt(last_exception, status="switching_model")
 
                 if isinstance(last_exception, RespNotOkException) and last_exception.status_code == 400:
                     logger.warning("收到客户端错误 (400)，跳过当前模型并继续尝试其他模型。")
@@ -1152,6 +1253,7 @@ class LLMOrchestrator:
 
         logger.error(f"所有 {max_attempts} 个模型均尝试失败。")
         if last_exception:
+            mark_request_final_failure(last_exception)
             self._schedule_llm_error_event(
                 model_name=last_model_name,
                 message=str(last_exception),

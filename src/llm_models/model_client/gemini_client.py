@@ -973,6 +973,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = RespNotOkException(status_code, str(exc))
             attach_request_snapshot(wrapped_error, snapshot_path)
@@ -987,6 +988,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             attach_request_snapshot(wrapped_error, snapshot_path)
             raise wrapped_error from exc
@@ -999,6 +1001,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             attach_request_snapshot(exc, snapshot_path)
             raise
@@ -1013,6 +1016,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = (
                 exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
@@ -1073,6 +1077,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.embed_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = RespNotOkException(status_code, str(exc))
             attach_request_snapshot(wrapped_error, snapshot_path)
@@ -1088,6 +1093,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.embed_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = (
                 exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
@@ -1108,6 +1114,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.embed_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             attach_request_snapshot(exc, snapshot_path)
             raise exc
@@ -1203,6 +1210,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = RespNotOkException(status_code, str(exc))
             attach_request_snapshot(wrapped_error, snapshot_path)
@@ -1218,6 +1226,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 model_info=model_info,
                 operation="models.generate_content",
                 provider_request=snapshot_provider_request,
+                trace_context=request.trace_context,
             )
             wrapped_error = (
                 exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
