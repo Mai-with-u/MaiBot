@@ -1231,6 +1231,8 @@
       "title": "Prompt缓存",
       "description": "缓存输入Token的命中情况",
       "hitRate": "缓存命中率",
+      "all": "全部",
+      "chat": "聊天",
       "hitTokens": "命中Token",
       "missTokens": "未命中Token",
       "eligibleTokens": "参与统计 {{value}} Token"

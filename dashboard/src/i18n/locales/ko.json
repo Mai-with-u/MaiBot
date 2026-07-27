@@ -1225,6 +1225,8 @@
       "title": "Prompt 캐시",
       "description": "입력 토큰 캐시 적중 현황",
       "hitRate": "캐시 적중률",
+      "all": "전체",
+      "chat": "채팅",
       "hitTokens": "적중 Token",
       "missTokens": "미적중 Token",
       "eligibleTokens": "통계 대상 {{value}} Token"

@@ -1233,6 +1233,8 @@
       "title": "Prompt Cache",
       "description": "Cache hits for input tokens",
       "hitRate": "Cache Hit Rate",
+      "all": "All",
+      "chat": "Chat",
       "hitTokens": "Hit Tokens",
       "missTokens": "Miss Tokens",
       "eligibleTokens": "{{value}} eligible tokens"
