@@ -1089,6 +1089,12 @@
         "low": "低い行",
         "high": "高い行"
       },
+      "categories": {
+        "status": "稼働状態",
+        "statistics": "統計グラフ",
+        "analysis": "モデル分析",
+        "plugin": "プラグインカード"
+      },
       "dialog": {
         "title": "ホームカード管理",
         "description": "プラグインまたは組み込みのカードを追加するか、既定のレイアウトに戻せます。",
@@ -1202,9 +1208,13 @@
     },
     "stats": {
       "overviewTitle": "統計概要",
+      "overviewDesc": "主要な稼働指標",
+      "timeRange": "統計期間",
       "totalRequests": "総リクエスト数",
       "totalCost": "総コスト",
       "tokenUsage": "トークン消費",
+      "inputTokens": "入力",
+      "outputTokens": "出力",
       "avgResponse": "平均応答",
       "avgResponseDesc": "API平均レイテンシ",
       "onlineTime": "オンライン時間",
@@ -1218,6 +1228,14 @@
       "seconds": "秒間",
       "hours": "時間",
       "days": "日"
+    },
+    "cache": {
+      "title": "Promptキャッシュ",
+      "description": "入力トークンのキャッシュヒット状況",
+      "hitRate": "キャッシュヒット率",
+      "hitTokens": "ヒットToken",
+      "missTokens": "未ヒットToken",
+      "eligibleTokens": "集計対象 {{value}} Token"
     },
     "storage": {
       "title": "ストレージ使用量",
@@ -1243,18 +1261,24 @@
       },
       "requestTrend": "リクエストトレンド",
       "requestTrendDesc": "直近{{hours}}時間のリクエスト量の変化",
+      "requestTrendDescCompact": "時間別リクエスト量の変化",
       "costTrend": "コストトレンド",
       "costTrendDesc": "API呼び出しコストの変化",
       "tokenUsage": "トークン消費",
       "tokenUsageDesc": "トークン使用量の変化",
+      "tokenUsageSplitDesc": "入力・出力トークンの変化",
       "modelDistribution": "モデルコスト分布",
       "modelDistributionDesc": "各モデルのコスト割合（{{count}}モデル）",
+      "modelDistributionCardDesc": "モデル別の累積コスト割合",
       "modelDetails": "モデル詳細統計",
       "modelDetailsDesc": "リクエスト数、コスト、パフォーマンス",
+      "modelDetailsTokenDesc": "モデル別の呼び出し、Token、キャッシュ、コスト",
       "recentActivity": "最近のアクティビティ",
       "recentActivityDesc": "最新のAPI呼び出し記録",
       "dailyStats": "日次統計",
       "dailyStatsDesc": "直近7日間のデータサマリー",
+      "dailyStatsRangeDesc": "選択期間の日次サマリー",
+      "date": "日付",
       "requests": "リクエスト数",
       "cost": "コスト(¥)",
       "requestCount": "リクエスト数",

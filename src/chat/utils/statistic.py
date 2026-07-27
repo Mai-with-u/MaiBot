@@ -57,6 +57,12 @@ def fetch_model_usage_since(*args, **kwargs):
     return impl(*args, **kwargs)
 
 
+def fetch_model_duration_aggregates_since(*args, **kwargs):
+    from src.services.statistics_service import fetch_model_duration_aggregates_since as impl
+
+    return impl(*args, **kwargs)
+
+
 def fetch_online_time_since(*args, **kwargs):
     from src.services.statistics_service import fetch_online_time_since as impl
 
@@ -641,11 +647,6 @@ class StatisticOutputTask(AsyncTask):
         counter[subkey] += amount
 
     @staticmethod
-    def _append_defaultdict_list(stats_period: StatPeriodData, key: str, subkey: str, value: float) -> None:
-        counter = cast(defaultdict[str, list[float]], stats_period[key])
-        counter[subkey].append(value)
-
-    @staticmethod
     def _collect_model_request_for_period(collect_period: list[tuple[str, datetime]]) -> StatPeriodMapping:
         """
         收集指定时间段的LLM请求统计数据
@@ -660,6 +661,15 @@ class StatisticOutputTask(AsyncTask):
 
         stats: StatPeriodMapping = {
             period_key: StatisticOutputTask._build_stat_period_data() for period_key, _ in collect_period
+        }
+        duration_stats: dict[str, dict[str, defaultdict[str, dict[str, float]]]] = {
+            period_key: {
+                "type": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
+                "user": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
+                "model": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
+                "module": defaultdict(lambda: {"count": 0.0, "mean": 0.0, "m2": 0.0}),
+            }
+            for period_key, _ in collect_period
         }
 
         # 以最早的时间戳为起始时间获取记录
@@ -778,46 +788,39 @@ class StatisticOutputTask(AsyncTask):
                         # 收集time_cost数据
                         time_cost = cast(float | None, record["time_cost"]) or 0.0
                         if time_cost > 0:  # 只记录有效的time_cost
-                            StatisticOutputTask._append_defaultdict_list(
-                                stats[period_key], TIME_COST_BY_TYPE, request_type, time_cost
-                            )
-                            StatisticOutputTask._append_defaultdict_list(
-                                stats[period_key], TIME_COST_BY_USER, user_id, time_cost
-                            )
-                            StatisticOutputTask._append_defaultdict_list(
-                                stats[period_key], TIME_COST_BY_MODEL, model_name, time_cost
-                            )
-                            StatisticOutputTask._append_defaultdict_list(
-                                stats[period_key], TIME_COST_BY_MODULE, module_name, time_cost
-                            )
+                            for category, item_name in [
+                                ("type", request_type),
+                                ("user", user_id),
+                                ("model", model_name),
+                                ("module", module_name),
+                            ]:
+                                item_stats = duration_stats[period_key][category][item_name]
+                                item_stats["count"] += 1
+                                delta = time_cost - item_stats["mean"]
+                                item_stats["mean"] += delta / item_stats["count"]
+                                item_stats["m2"] += delta * (time_cost - item_stats["mean"])
                     break
 
         # 计算平均耗时和标准差
         for period_key in stats:
-            for category in [REQ_CNT_BY_TYPE, REQ_CNT_BY_USER, REQ_CNT_BY_MODEL, REQ_CNT_BY_MODULE]:
-                time_cost_key = f"time_costs_by_{category.split('_')[-1]}"
-                avg_key = f"avg_time_costs_by_{category.split('_')[-1]}"
-                std_key = f"std_time_costs_by_{category.split('_')[-1]}"
-
-                category_data = cast(dict[str, int], stats[period_key].get(category, {}))
-                time_cost_data = cast(dict[str, list[float]], stats[period_key].get(time_cost_key, {}))
+            for category, request_count_key, avg_key, std_key in [
+                ("type", REQ_CNT_BY_TYPE, AVG_TIME_COST_BY_TYPE, STD_TIME_COST_BY_TYPE),
+                ("user", REQ_CNT_BY_USER, AVG_TIME_COST_BY_USER, STD_TIME_COST_BY_USER),
+                ("model", REQ_CNT_BY_MODEL, AVG_TIME_COST_BY_MODEL, STD_TIME_COST_BY_MODEL),
+                ("module", REQ_CNT_BY_MODULE, AVG_TIME_COST_BY_MODULE, STD_TIME_COST_BY_MODULE),
+            ]:
+                category_data = cast(dict[str, int], stats[period_key].get(request_count_key, {}))
                 avg_cost_data = cast(dict[str, float], stats[period_key].get(avg_key, {}))
                 std_cost_data = cast(dict[str, float], stats[period_key].get(std_key, {}))
 
                 for item_name in category_data:
-                    time_costs = time_cost_data.get(item_name, [])
-                    if time_costs:
-                        # 计算平均耗时
-                        avg_time_cost = sum(time_costs) / len(time_costs)
+                    item_stats = duration_stats[period_key][category].get(item_name)
+                    if item_stats and item_stats["count"] > 0:
+                        count = item_stats["count"]
+                        avg_time_cost = item_stats["mean"]
                         avg_cost_data[item_name] = round(avg_time_cost, 3)
-
-                        # 计算标准差
-                        if len(time_costs) > 1:
-                            variance = sum((x - avg_time_cost) ** 2 for x in time_costs) / len(time_costs)
-                            std_time_cost = variance**0.5
-                            std_cost_data[item_name] = round(std_time_cost, 3)
-                        else:
-                            std_cost_data[item_name] = 0.0
+                        variance = max(item_stats["m2"] / count, 0.0)
+                        std_cost_data[item_name] = round(variance**0.5, 3)
                     else:
                         avg_cost_data[item_name] = 0.0
                         std_cost_data[item_name] = 0.0
@@ -1032,17 +1035,16 @@ class StatisticOutputTask(AsyncTask):
             "module": defaultdict(lambda: {"count": 0.0, "sum": 0.0, "sum_sq": 0.0}),
         }
 
-        records = fetch_model_usage_since(self.all_time_start_time)
+        records = fetch_model_duration_aggregates_since(self.all_time_start_time)
         for record in records:
-            time_cost = cast(float | None, record["time_cost"]) or 0.0
-            if time_cost <= 0:
-                continue
-
             request_type = cast(str | None, record["request_type"]) or "unknown"
             user_id = cast(str | None, record["model_api_provider_name"]) or "unknown"
             model_assign_name = cast(str | None, record["model_assign_name"])
             model_name = model_assign_name or cast(str | None, record["model_name"]) or "unknown"
             module_name = request_type.split(".")[0] if "." in request_type else request_type
+            count = float(cast(int, record["count"]))
+            time_cost_sum = cast(float, record["sum"])
+            time_cost_sq_sum = cast(float, record["sum_sq"])
 
             for category, item_name in [
                 ("type", request_type),
@@ -1051,9 +1053,9 @@ class StatisticOutputTask(AsyncTask):
                 ("module", module_name),
             ]:
                 item_stats = duration_stats[category][item_name]
-                item_stats["count"] += 1
-                item_stats["sum"] += time_cost
-                item_stats["sum_sq"] += time_cost * time_cost
+                item_stats["count"] += count
+                item_stats["sum"] += time_cost_sum
+                item_stats["sum_sq"] += time_cost_sq_sum
 
         for category, avg_key, std_key in [
             ("type", AVG_TIME_COST_BY_TYPE, STD_TIME_COST_BY_TYPE),
@@ -1123,6 +1125,8 @@ class StatisticOutputTask(AsyncTask):
         """
         # 计算总token数（从所有模型的token数中累加）
         total_tokens = sum(stats[TOTAL_TOK_BY_MODEL].values()) if stats[TOTAL_TOK_BY_MODEL] else 0
+        total_input_tokens = sum(stats[IN_TOK_BY_MODEL].values()) if stats[IN_TOK_BY_MODEL] else 0
+        total_output_tokens = sum(stats[OUT_TOK_BY_MODEL].values()) if stats[OUT_TOK_BY_MODEL] else 0
         cache_hit_tokens = cast(int, stats.get(CACHE_HIT_TOK, 0))
         cache_miss_tokens = cast(int, stats.get(CACHE_MISS_TOK, 0))
 
@@ -1154,8 +1158,11 @@ class StatisticOutputTask(AsyncTask):
             f"总回复数: {_format_large_number(total_replies)}",
             f"总请求数: {_format_large_number(stats[TOTAL_REQ_CNT])}",
             f"总Token数: {_format_large_number(total_tokens)}",
+            f"总输入Token: {_format_large_number(total_input_tokens)}",
+            f"总输出Token: {_format_large_number(total_output_tokens)}",
             f"Prompt缓存命中率: {_format_cache_hit_rate(cache_hit_tokens, cache_miss_tokens)}",
             f"Prompt缓存命中Token: {_format_large_number(cache_hit_tokens)}",
+            f"Prompt缓存未命中Token: {_format_large_number(cache_miss_tokens)}",
             f"总花费: {stats[TOTAL_COST]:.2f}¥",
             f"花费/消息数量: {cost_per_100_messages:.4f}¥/100条" if stats[TOTAL_MSG_CNT] > 0 else "花费/消息数量: N/A",
             f"花费/接受消息数量: {cost_per_100_messages_excluding_replies:.4f}¥/100条"
@@ -1367,6 +1374,8 @@ class StatisticOutputTask(AsyncTask):
 
             # 按模型分类统计
             total_replies = stat_data.get(TOTAL_REPLY_CNT, 0)
+            total_input_tokens = sum(stat_data[IN_TOK_BY_MODEL].values()) if stat_data[IN_TOK_BY_MODEL] else 0
+            total_output_tokens = sum(stat_data[OUT_TOK_BY_MODEL].values()) if stat_data[OUT_TOK_BY_MODEL] else 0
             total_cache_hit_tokens = cast(int, stat_data.get(CACHE_HIT_TOK, 0))
             total_cache_miss_tokens = cast(int, stat_data.get(CACHE_MISS_TOK, 0))
             model_rows = "\n".join(
@@ -1510,12 +1519,24 @@ class StatisticOutputTask(AsyncTask):
                         <div class=\"kpi-value\">{_format_large_number(sum(stat_data[TOTAL_TOK_BY_MODEL].values()) if stat_data[TOTAL_TOK_BY_MODEL] else 0, html=True)}</div>
                     </div>
                     <div class=\"kpi-card\">
+                        <div class=\"kpi-title\">总输入Token</div>
+                        <div class=\"kpi-value\">{_format_large_number(total_input_tokens, html=True)}</div>
+                    </div>
+                    <div class=\"kpi-card\">
+                        <div class=\"kpi-title\">总输出Token</div>
+                        <div class=\"kpi-value\">{_format_large_number(total_output_tokens, html=True)}</div>
+                    </div>
+                    <div class=\"kpi-card\">
                         <div class=\"kpi-title\">Prompt缓存命中率</div>
                         <div class=\"kpi-value\">{_format_cache_hit_rate(total_cache_hit_tokens, total_cache_miss_tokens)}</div>
                     </div>
                     <div class=\"kpi-card\">
                         <div class=\"kpi-title\">Prompt缓存命中Token</div>
                         <div class=\"kpi-value\">{_format_large_number(total_cache_hit_tokens, html=True)}</div>
+                    </div>
+                    <div class=\"kpi-card\">
+                        <div class=\"kpi-title\">Prompt缓存未命中Token</div>
+                        <div class=\"kpi-value\">{_format_large_number(total_cache_miss_tokens, html=True)}</div>
                     </div>
                     <div class=\"kpi-card\">
                         <div class=\"kpi-title\">总花费</div>

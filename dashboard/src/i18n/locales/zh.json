@@ -1089,6 +1089,12 @@
         "low": "低行",
         "high": "高行"
       },
+      "categories": {
+        "status": "运行状态",
+        "statistics": "统计图表",
+        "analysis": "模型分析",
+        "plugin": "插件卡片"
+      },
       "dialog": {
         "title": "管理首页卡片",
         "description": "添加插件或内置提供的卡片，或恢复默认布局。",
@@ -1200,9 +1206,13 @@
     },
     "stats": {
       "overviewTitle": "统计概览",
+      "overviewDesc": "关键运行指标",
+      "timeRange": "统计时间范围",
       "totalRequests": "总请求数",
       "totalCost": "总花费",
       "tokenUsage": "Token消耗",
+      "inputTokens": "输入",
+      "outputTokens": "输出",
       "avgResponse": "平均响应",
       "avgResponseDesc": "API平均耗时",
       "onlineTime": "在线时长",
@@ -1216,6 +1226,14 @@
       "seconds": "秒",
       "hours": "小时",
       "days": "天"
+    },
+    "cache": {
+      "title": "Prompt缓存",
+      "description": "缓存输入Token的命中情况",
+      "hitRate": "缓存命中率",
+      "hitTokens": "命中Token",
+      "missTokens": "未命中Token",
+      "eligibleTokens": "参与统计 {{value}} Token"
     },
     "storage": {
       "title": "存储占用",
@@ -1241,18 +1259,24 @@
       },
       "requestTrend": "请求趋势",
       "requestTrendDesc": "最近{{hours}}小时的请求量变化",
+      "requestTrendDescCompact": "分时请求量变化",
       "costTrend": "花费趋势",
       "costTrendDesc": "API调用成本变化",
       "tokenUsage": "Token消耗",
       "tokenUsageDesc": "Token使用量变化",
+      "tokenUsageSplitDesc": "输入与输出Token变化",
       "modelDistribution": "模型花费分布",
       "modelDistributionDesc": "各模型花费占比 (共 {{count}} 个模型)",
+      "modelDistributionCardDesc": "各模型的累计花费占比",
       "modelDetails": "模型详细统计",
       "modelDetailsDesc": "请求数、花费和性能",
+      "modelDetailsTokenDesc": "模型调用、Token、缓存和费用",
       "recentActivity": "最近活动",
       "recentActivityDesc": "最新的API调用记录",
       "dailyStats": "每日统计",
       "dailyStatsDesc": "最近7天的数据汇总",
+      "dailyStatsRangeDesc": "所选时段的每日汇总",
+      "date": "日期",
       "requests": "请求数",
       "cost": "花费(¥)",
       "requestCount": "请求数",

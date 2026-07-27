@@ -22,6 +22,11 @@ export interface StatisticsSummary {
   total_requests: number
   total_cost: number
   total_tokens: number
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  cache_hit_rate: number | null
   online_time: number
   total_messages: number
   total_replies: number
@@ -35,6 +40,11 @@ export interface ModelStatistics {
   request_count: number
   total_cost: number
   total_tokens: number
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  cache_hit_rate: number | null
   avg_response_time: number
 }
 
@@ -43,6 +53,10 @@ export interface TimeSeriesData {
   requests: number
   cost: number
   tokens: number
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
 }
 
 export interface RecentActivity {
@@ -50,6 +64,10 @@ export interface RecentActivity {
   model: string
   request_type: string
   tokens: number
+  input_tokens: number
+  output_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
   cost: number
   time_cost: number
   status: string

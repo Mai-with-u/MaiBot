@@ -1089,6 +1089,12 @@
         "low": "Low row",
         "high": "High row"
       },
+      "categories": {
+        "status": "Runtime Status",
+        "statistics": "Statistics",
+        "analysis": "Model Analysis",
+        "plugin": "Plugin Cards"
+      },
       "dialog": {
         "title": "Manage Home Cards",
         "description": "Add plugin or built-in cards, or restore the default layout.",
@@ -1202,9 +1208,13 @@
     },
     "stats": {
       "overviewTitle": "Statistics Overview",
+      "overviewDesc": "Key runtime metrics",
+      "timeRange": "Statistics time range",
       "totalRequests": "Total Requests",
       "totalCost": "Total Cost",
       "tokenUsage": "Token Usage",
+      "inputTokens": "Input",
+      "outputTokens": "Output",
       "avgResponse": "Avg Response",
       "avgResponseDesc": "Avg API latency",
       "onlineTime": "Online Time",
@@ -1218,6 +1228,14 @@
       "seconds": "sec",
       "hours": "hours",
       "days": "days"
+    },
+    "cache": {
+      "title": "Prompt Cache",
+      "description": "Cache hits for input tokens",
+      "hitRate": "Cache Hit Rate",
+      "hitTokens": "Hit Tokens",
+      "missTokens": "Miss Tokens",
+      "eligibleTokens": "{{value}} eligible tokens"
     },
     "storage": {
       "title": "Storage Usage",
@@ -1243,18 +1261,24 @@
       },
       "requestTrend": "Request Trend",
       "requestTrendDesc": "Request volume over the last {{hours}} hours",
+      "requestTrendDescCompact": "Request volume over time",
       "costTrend": "Cost Trend",
       "costTrendDesc": "API call cost over time",
       "tokenUsage": "Token Usage",
       "tokenUsageDesc": "Token consumption over time",
+      "tokenUsageSplitDesc": "Input and output tokens over time",
       "modelDistribution": "Model Cost Distribution",
       "modelDistributionDesc": "Cost share per model ({{count}} models)",
+      "modelDistributionCardDesc": "Cumulative cost share by model",
       "modelDetails": "Model Details",
       "modelDetailsDesc": "Requests, cost and performance",
+      "modelDetailsTokenDesc": "Calls, tokens, cache and cost by model",
       "recentActivity": "Recent Activity",
       "recentActivityDesc": "Latest API call records",
       "dailyStats": "Daily Statistics",
       "dailyStatsDesc": "Data summary for the last 7 days",
+      "dailyStatsRangeDesc": "Daily summary for the selected period",
+      "date": "Date",
       "requests": "Requests",
       "cost": "Cost (¥)",
       "requestCount": "Requests",

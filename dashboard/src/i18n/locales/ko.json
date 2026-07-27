@@ -1081,6 +1081,12 @@
         "low": "낮은 행",
         "high": "높은 행"
       },
+      "categories": {
+        "status": "실행 상태",
+        "statistics": "통계 차트",
+        "analysis": "모델 분석",
+        "plugin": "플러그인 카드"
+      },
       "dialog": {
         "title": "홈 카드 관리",
         "description": "플러그인 또는 기본 제공 카드를 추가하거나 기본 레이아웃으로 복원합니다.",
@@ -1194,9 +1200,13 @@
     },
     "stats": {
       "overviewTitle": "통계 개요",
+      "overviewDesc": "주요 실행 지표",
+      "timeRange": "통계 기간",
       "totalRequests": "총 요청 수",
       "totalCost": "총 비용",
       "tokenUsage": "토큰 소비",
+      "inputTokens": "입력",
+      "outputTokens": "출력",
       "avgResponse": "평균 응답",
       "avgResponseDesc": "API 평균 지연",
       "onlineTime": "온라인 시간",
@@ -1210,6 +1220,14 @@
       "seconds": "초",
       "hours": "시간",
       "days": "일"
+    },
+    "cache": {
+      "title": "Prompt 캐시",
+      "description": "입력 토큰 캐시 적중 현황",
+      "hitRate": "캐시 적중률",
+      "hitTokens": "적중 Token",
+      "missTokens": "미적중 Token",
+      "eligibleTokens": "통계 대상 {{value}} Token"
     },
     "storage": {
       "title": "저장소 사용량",
@@ -1235,18 +1253,24 @@
       },
       "requestTrend": "요청 트렌드",
       "requestTrendDesc": "최근 {{hours}}시간의 요청량 변화",
+      "requestTrendDescCompact": "시간별 요청량 변화",
       "costTrend": "비용 트렌드",
       "costTrendDesc": "API 호출 비용 변화",
       "tokenUsage": "토큰 소비",
       "tokenUsageDesc": "토큰 사용량 변화",
+      "tokenUsageSplitDesc": "입력 및 출력 토큰 변화",
       "modelDistribution": "모델 비용 분포",
       "modelDistributionDesc": "모델별 비용 비율 ({{count}}개 모델)",
+      "modelDistributionCardDesc": "모델별 누적 비용 비율",
       "modelDetails": "모델 상세 통계",
       "modelDetailsDesc": "요청 수, 비용 및 성능",
+      "modelDetailsTokenDesc": "모델별 호출, Token, 캐시 및 비용",
       "recentActivity": "최근 활동",
       "recentActivityDesc": "최신 API 호출 기록",
       "dailyStats": "일간 통계",
       "dailyStatsDesc": "최근 7일 데이터 요약",
+      "dailyStatsRangeDesc": "선택한 기간의 일간 요약",
+      "date": "날짜",
       "requests": "요청 수",
       "cost": "비용(¥)",
       "requestCount": "요청 수",
