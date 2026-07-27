@@ -59,6 +59,16 @@ describe('menuSections 菜单结构', () => {
     expect(modelItem?.tourId).toBe('sidebar-model-management')
   })
 
+  it('数据迁移位于扩展与维护分组', () => {
+    const extensionsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+    )
+    const dataTransferItem = extensionsSection?.items.find((item) => item.path === '/data-transfer')
+
+    expect(dataTransferItem?.label).toBe('sidebar.menu.dataTransfer')
+    expect(dataTransferItem?.searchDescription).toBe('search.items.dataTransferDesc')
+  })
+
   it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 

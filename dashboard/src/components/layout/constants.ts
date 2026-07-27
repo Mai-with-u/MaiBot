@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArchiveRestore,
   Box,
   Brain,
   Database,
@@ -32,6 +33,7 @@ const KnowledgeIcon = createStreamlineIcon('user-sticker-square-remix', Database
 const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
+const DataTransferIcon = createStreamlineIcon('database-setting-solid', ArchiveRestore)
 
 export const menuSections: MenuSection[] = [
   {
@@ -112,6 +114,12 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.pluginsDesc',
       },
       { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
+      {
+        icon: DataTransferIcon,
+        label: 'sidebar.menu.dataTransfer',
+        path: '/data-transfer',
+        searchDescription: 'search.items.dataTransferDesc',
+      },
     ],
   },
 ]

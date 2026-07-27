@@ -23,7 +23,7 @@
       "overview": "개요",
       "botConfig": "봇 설정",
       "botResources": "봇 리소스",
-      "extensionsMonitor": "플러그인 및 확장",
+      "extensionsMonitor": "확장 및 유지관리",
       "system": "시스템"
     },
     "menu": {
@@ -45,6 +45,7 @@
       "configTemplate": "설정 템플릿",
       "pluginConfig": "플러그인 관리",
       "mcpSettings": "MCP 설정",
+      "dataTransfer": "데이터 이전",
       "logViewer": "로그 뷰어",
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
@@ -903,6 +904,7 @@
       "statisticsDesc": "사용 통계 보기",
       "plugins": "플러그인 마켓",
       "pluginsDesc": "플러그인 탐색 및 설치",
+      "dataTransferDesc": "MaiBot 데이터 백업, 내보내기 또는 복원",
       "logs": "로그 뷰어",
       "logsDesc": "시스템 로그 보기",
       "reasoningProcessDesc": "Maisaka prompt 추론 로그 보기",

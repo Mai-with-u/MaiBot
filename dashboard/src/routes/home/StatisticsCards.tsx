@@ -27,7 +27,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ChartContainer,
   ChartLegend,
@@ -100,7 +100,6 @@ interface StatisticsCardData {
 
 interface StatisticsCardFrameProps {
   title: string
-  description: string
   icon: ComponentType<{ className?: string }>
   state: StatisticsCardData
   children: (data: DashboardData) => ReactNode
@@ -163,22 +162,15 @@ function TimeRangeTextSwitch({
   )
 }
 
-function StatisticsCardFrame({
-  title,
-  description,
-  icon: Icon,
-  state,
-  children,
-}: StatisticsCardFrameProps) {
+function StatisticsCardFrame({ title, icon: Icon, state, children }: StatisticsCardFrameProps) {
   return (
     <Card className="flex h-full min-h-0 flex-col">
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 pb-3">
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <Icon className="h-4 w-4" />
             {title}
           </CardTitle>
-          <CardDescription>{description}</CardDescription>
         </div>
         <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
       </CardHeader>
@@ -251,12 +243,7 @@ export function StatisticsOverviewCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame
-      title={t('home.stats.overviewTitle')}
-      description={t('home.stats.overviewDesc')}
-      icon={BarChart3}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.stats.overviewTitle')} icon={BarChart3} state={state}>
       {({ summary }) => (
         <div className="grid gap-y-1 lg:grid-cols-2 xl:grid-cols-3 [&>*:not(:nth-child(2n+1))]:lg:border-l [&>*:not(:nth-child(3n+1))]:xl:border-l">
           <SummaryMetric
@@ -305,43 +292,40 @@ export function StatisticsOverviewCard() {
 
 function CacheBreakdown({ summary, locale }: { summary: StatisticsSummary; locale: string }) {
   const { t } = useTranslation()
-  const cacheTotal = summary.cache_hit_tokens + summary.cache_miss_tokens
+  const rates = [
+    {
+      label: t('home.cache.all'),
+      hitRate: summary.cache_hit_rate,
+      total: summary.cache_hit_tokens + summary.cache_miss_tokens,
+    },
+    {
+      label: t('home.cache.chat'),
+      hitRate: summary.chat_cache_hit_rate,
+      total: summary.chat_cache_hit_tokens + summary.chat_cache_miss_tokens,
+    },
+  ]
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <div className="text-muted-foreground text-xs">{t('home.cache.hitRate')}</div>
-          <div className="text-primary mt-1 text-3xl font-bold tracking-tight">
-            {formatCacheRate(summary.cache_hit_rate)}
+    <div className="grid grid-cols-2 gap-3">
+      {rates.map((rate) => (
+        <div key={rate.label} className="flex min-w-0 flex-col rounded-md border p-3">
+          <div className="text-muted-foreground text-xs font-medium">{rate.label}</div>
+          <div className="text-primary mt-1 text-2xl font-bold tracking-tight">
+            {formatCacheRate(rate.hitRate)}
+          </div>
+          <div className="bg-muted mt-3 h-1.5 overflow-hidden rounded-full">
+            <div
+              className="bg-primary h-full transition-[width]"
+              style={{
+                width: `${rate.hitRate === null ? 0 : rate.hitRate * 100}%`,
+              }}
+            />
+          </div>
+          <div className="text-muted-foreground mt-2 truncate text-[11px]">
+            {t('home.cache.eligibleTokens', { value: formatNumber(rate.total, locale) })}
           </div>
         </div>
-        <div className="text-muted-foreground text-right text-xs">
-          {t('home.cache.eligibleTokens', { value: formatNumber(cacheTotal, locale) })}
-        </div>
-      </div>
-      <div className="bg-muted h-2 overflow-hidden rounded-full">
-        <div
-          className="bg-primary h-full transition-[width]"
-          style={{
-            width: `${summary.cache_hit_rate === null ? 0 : summary.cache_hit_rate * 100}%`,
-          }}
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-3 text-xs">
-        <div className="rounded-md border p-3">
-          <div className="text-muted-foreground">{t('home.cache.hitTokens')}</div>
-          <div className="mt-1 text-lg font-semibold">
-            {formatNumber(summary.cache_hit_tokens, locale)}
-          </div>
-        </div>
-        <div className="rounded-md border p-3">
-          <div className="text-muted-foreground">{t('home.cache.missTokens')}</div>
-          <div className="mt-1 text-lg font-semibold">
-            {formatNumber(summary.cache_miss_tokens, locale)}
-          </div>
-        </div>
-      </div>
+      ))}
     </div>
   )
 }
@@ -352,12 +336,7 @@ export function PromptCacheCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame
-      title={t('home.cache.title')}
-      description={t('home.cache.description')}
-      icon={Gauge}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.cache.title')} icon={Gauge} state={state}>
       {({ summary }) => <CacheBreakdown summary={summary} locale={locale} />}
     </StatisticsCardFrame>
   )
@@ -370,17 +349,14 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
   const metadata = {
     requests: {
       title: t('home.charts.requestTrend'),
-      description: t('home.charts.requestTrendDescCompact'),
       icon: Activity,
     },
     cost: {
       title: t('home.charts.costTrend'),
-      description: t('home.charts.costTrendDesc'),
       icon: Coins,
     },
     tokens: {
       title: t('home.charts.tokenUsage'),
-      description: t('home.charts.tokenUsageSplitDesc'),
       icon: Database,
     },
   }[kind]
@@ -517,12 +493,7 @@ export function ModelDistributionCard() {
   const state = useStatisticsCardData()
 
   return (
-    <StatisticsCardFrame
-      title={t('home.charts.modelDistribution')}
-      description={t('home.charts.modelDistributionCardDesc')}
-      icon={Network}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.charts.modelDistribution')} icon={Network} state={state}>
       {({ model_stats: modelStats }) => {
         const data = modelStats.map((item, index) => ({
           name: item.model_name,
@@ -573,12 +544,7 @@ export function ModelDetailsCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame
-      title={t('home.charts.modelDetails')}
-      description={t('home.charts.modelDetailsTokenDesc')}
-      icon={Timer}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.charts.modelDetails')} icon={Timer} state={state}>
       {({ model_stats: modelStats }) => (
         <ScrollArea className="h-full min-h-[240px] pr-3">
           <div className="space-y-2">
@@ -625,12 +591,7 @@ export function RecentActivityCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame
-      title={t('home.charts.recentActivity')}
-      description={t('home.charts.recentActivityDesc')}
-      icon={Zap}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.charts.recentActivity')} icon={Zap} state={state}>
       {({ recent_activity: recentActivity }) => (
         <ScrollArea className="h-full min-h-[240px] pr-3">
           <div className="space-y-2">
@@ -666,12 +627,7 @@ export function DailyStatisticsCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame
-      title={t('home.charts.dailyStats')}
-      description={t('home.charts.dailyStatsRangeDesc')}
-      icon={BarChart3}
-      state={state}
-    >
+    <StatisticsCardFrame title={t('home.charts.dailyStats')} icon={BarChart3} state={state}>
       {({ daily_data: dailyData }) => (
         <ZoomableChart aria-label={t('home.charts.dailyStats')} className="h-full min-h-[240px]">
           <ChartContainer

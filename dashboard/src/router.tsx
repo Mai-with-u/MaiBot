@@ -286,6 +286,13 @@ const mcpSettingsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/mcp-settings'), 'MCPSettingsPage'),
 })
 
+// 数据迁移与备份路由
+const dataTransferRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/data-transfer',
+  component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/settings',
@@ -361,6 +368,7 @@ const routeTree = rootRoute.addChildren([
     pluginConfigRoute,
     pluginMirrorsRoute,
     mcpSettingsRoute,
+    dataTransferRoute,
     logsRoute,
     reasoningProcessRoute,
     plannerMonitorRoute,

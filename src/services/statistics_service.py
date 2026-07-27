@@ -16,7 +16,7 @@ from src.webui.schemas.statistics import DashboardData, ModelStatistics, Statist
 logger = get_logger("statistics_service")
 
 DASHBOARD_STATISTICS_CACHE_KEY = "webui_dashboard_statistics_cache"
-DASHBOARD_STATISTICS_CACHE_VERSION = 3
+DASHBOARD_STATISTICS_CACHE_VERSION = 4
 DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
 _SPARSE_TIME_SERIES_FIELDS = ("hourly_data", "daily_data")
@@ -101,7 +101,9 @@ def get_cached_dashboard_statistics(
         return None
 
 
-def store_dashboard_statistics_cache(entries: dict[int, DashboardData], *, generated_at: datetime | None = None) -> None:
+def store_dashboard_statistics_cache(
+    entries: dict[int, DashboardData], *, generated_at: datetime | None = None
+) -> None:
     """保存 WebUI 仪表盘统计数据快照。"""
     snapshot_time = generated_at or datetime.now()
     local_storage[DASHBOARD_STATISTICS_CACHE_KEY] = {
@@ -295,6 +297,9 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         cache_hit_tokens=0,
         cache_miss_tokens=0,
         cache_hit_rate=None,
+        chat_cache_hit_tokens=0,
+        chat_cache_miss_tokens=0,
+        chat_cache_hit_rate=None,
         online_time=0.0,
         total_messages=0,
         total_replies=0,
@@ -306,6 +311,7 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
     with get_db_session(auto_commit=False) as session:
         cache_hit_tokens_expr = _cache_hit_tokens_expression()
         cache_miss_tokens_expr = _cache_miss_tokens_expression()
+        is_chat_task = col(ModelUsage.task_name).in_(("replyer", "planner"))
         statement = select(
             func.count().label("total_requests"),
             func.sum(col(ModelUsage.cost)).label("total_cost"),
@@ -313,6 +319,8 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
             func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
             func.sum(cache_hit_tokens_expr).label("cache_hit_tokens"),
             func.sum(cache_miss_tokens_expr).label("cache_miss_tokens"),
+            func.sum(case((is_chat_task, cache_hit_tokens_expr), else_=0)).label("chat_cache_hit_tokens"),
+            func.sum(case((is_chat_task, cache_miss_tokens_expr), else_=0)).label("chat_cache_miss_tokens"),
             func.avg(col(ModelUsage.time_cost)).label("avg_response_time"),
         ).where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
         result = session.exec(statement).first()
@@ -325,6 +333,8 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
             output_tokens,
             cache_hit_tokens,
             cache_miss_tokens,
+            chat_cache_hit_tokens,
+            chat_cache_miss_tokens,
             avg_response_time,
         ) = result
         summary.total_requests = total_requests or 0
@@ -334,9 +344,16 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         summary.total_tokens = summary.input_tokens + summary.output_tokens
         summary.cache_hit_tokens = int(cache_hit_tokens or 0)
         summary.cache_miss_tokens = int(cache_miss_tokens or 0)
-        cache_token_total = summary.cache_hit_tokens + summary.cache_miss_tokens
-        if cache_token_total > 0:
-            summary.cache_hit_rate = summary.cache_hit_tokens / cache_token_total
+        summary.cache_hit_rate = _calculate_cache_hit_rate(
+            summary.cache_hit_tokens,
+            summary.cache_miss_tokens,
+        )
+        summary.chat_cache_hit_tokens = int(chat_cache_hit_tokens or 0)
+        summary.chat_cache_miss_tokens = int(chat_cache_miss_tokens or 0)
+        summary.chat_cache_hit_rate = _calculate_cache_hit_rate(
+            summary.chat_cache_hit_tokens,
+            summary.chat_cache_miss_tokens,
+        )
         summary.avg_response_time = float(avg_response_time or 0.0)
 
     with get_db_session(auto_commit=False) as session:

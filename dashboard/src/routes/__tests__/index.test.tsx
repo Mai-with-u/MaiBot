@@ -217,6 +217,7 @@ describe('IndexPage 特征化', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText('home.title')).not.toBeInTheDocument()
     expect(screen.queryByText('home.versionCard.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('MaiBot 数据导入导出')).not.toBeInTheDocument()
 
     await screen.findByText('home.storage.manage')
     expect(screen.queryByText('home.quickActions.title')).not.toBeInTheDocument()
