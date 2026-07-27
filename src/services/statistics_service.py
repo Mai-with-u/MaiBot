@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 import asyncio
 
-from sqlalchemy import desc, func, or_
+from sqlalchemy import case, desc, func, or_
 from sqlmodel import col, select
 
 from src.common.database.database import get_db_session
@@ -16,10 +16,11 @@ from src.webui.schemas.statistics import DashboardData, ModelStatistics, Statist
 logger = get_logger("statistics_service")
 
 DASHBOARD_STATISTICS_CACHE_KEY = "webui_dashboard_statistics_cache"
-DASHBOARD_STATISTICS_CACHE_VERSION = 2
+DASHBOARD_STATISTICS_CACHE_VERSION = 3
 DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
 _SPARSE_TIME_SERIES_FIELDS = ("hourly_data", "daily_data")
+MODEL_USAGE_BATCH_SIZE = 1000
 
 
 async def get_dashboard_statistics(hours: int = 24, *, use_cache: bool = True) -> DashboardData:
@@ -219,6 +220,65 @@ def _is_empty_time_series_item(item: Any) -> bool:
     )
 
 
+def _cache_hit_tokens_expression():
+    """只聚合启用了 Prompt Cache 的命中 token。"""
+    return case(
+        (
+            col(ModelUsage.prompt_cache_enabled).is_(True),
+            func.max(col(ModelUsage.prompt_cache_hit_tokens), 0),
+        ),
+        else_=0,
+    )
+
+
+def _cache_miss_tokens_expression():
+    """按详细统计相同口径补全供应商未返回的缓存未命中 token。"""
+    prompt_tokens = col(ModelUsage.prompt_tokens)
+    hit_tokens = func.max(col(ModelUsage.prompt_cache_hit_tokens), 0)
+    miss_tokens = func.max(col(ModelUsage.prompt_cache_miss_tokens), 0)
+    normalized_miss_tokens = case(
+        (miss_tokens > 0, miss_tokens),
+        (
+            hit_tokens > 0,
+            case((prompt_tokens > hit_tokens, prompt_tokens - hit_tokens), else_=0),
+        ),
+        (prompt_tokens > 0, prompt_tokens),
+        else_=0,
+    )
+    return case(
+        (col(ModelUsage.prompt_cache_enabled).is_(True), normalized_miss_tokens),
+        else_=0,
+    )
+
+
+def _calculate_cache_hit_rate(hit_tokens: Any, miss_tokens: Any) -> float | None:
+    """计算缓存命中率；没有可统计缓存 token 时返回 None。"""
+    normalized_hit_tokens = int(hit_tokens or 0)
+    normalized_miss_tokens = int(miss_tokens or 0)
+    cache_token_total = normalized_hit_tokens + normalized_miss_tokens
+    if cache_token_total <= 0:
+        return None
+    return normalized_hit_tokens / cache_token_total
+
+
+def _normalize_cache_tokens(
+    prompt_tokens: int,
+    cache_enabled: bool,
+    hit_tokens: int,
+    miss_tokens: int,
+) -> tuple[int, int]:
+    """规范化单条调用的缓存 token，供最近活动展示使用。"""
+    if not cache_enabled:
+        return 0, 0
+    normalized_hit_tokens = max(hit_tokens, 0)
+    normalized_miss_tokens = max(miss_tokens, 0)
+    if normalized_miss_tokens == 0 and normalized_hit_tokens > 0:
+        normalized_miss_tokens = max(prompt_tokens - normalized_hit_tokens, 0)
+    if normalized_hit_tokens + normalized_miss_tokens == 0 and prompt_tokens > 0:
+        normalized_miss_tokens = prompt_tokens
+    return normalized_hit_tokens, normalized_miss_tokens
+
+
 async def get_summary_statistics(start_time: datetime, end_time: datetime) -> StatisticsSummary:
     """获取指定时间范围内的摘要统计数据。"""
     return await asyncio.to_thread(_get_summary_statistics_sync, start_time, end_time)
@@ -230,6 +290,11 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
         total_requests=0,
         total_cost=0.0,
         total_tokens=0,
+        input_tokens=0,
+        output_tokens=0,
+        cache_hit_tokens=0,
+        cache_miss_tokens=0,
+        cache_hit_rate=None,
         online_time=0.0,
         total_messages=0,
         total_replies=0,
@@ -239,19 +304,39 @@ def _get_summary_statistics_sync(start_time: datetime, end_time: datetime) -> St
     )
 
     with get_db_session(auto_commit=False) as session:
+        cache_hit_tokens_expr = _cache_hit_tokens_expression()
+        cache_miss_tokens_expr = _cache_miss_tokens_expression()
         statement = select(
             func.count().label("total_requests"),
             func.sum(col(ModelUsage.cost)).label("total_cost"),
-            func.sum(col(ModelUsage.total_tokens)).label("total_tokens"),
+            func.sum(col(ModelUsage.prompt_tokens)).label("input_tokens"),
+            func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
+            func.sum(cache_hit_tokens_expr).label("cache_hit_tokens"),
+            func.sum(cache_miss_tokens_expr).label("cache_miss_tokens"),
             func.avg(col(ModelUsage.time_cost)).label("avg_response_time"),
         ).where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
         result = session.exec(statement).first()
 
     if result:
-        total_requests, total_cost, total_tokens, avg_response_time = result
+        (
+            total_requests,
+            total_cost,
+            input_tokens,
+            output_tokens,
+            cache_hit_tokens,
+            cache_miss_tokens,
+            avg_response_time,
+        ) = result
         summary.total_requests = total_requests or 0
         summary.total_cost = float(total_cost or 0.0)
-        summary.total_tokens = total_tokens or 0
+        summary.input_tokens = int(input_tokens or 0)
+        summary.output_tokens = int(output_tokens or 0)
+        summary.total_tokens = summary.input_tokens + summary.output_tokens
+        summary.cache_hit_tokens = int(cache_hit_tokens or 0)
+        summary.cache_miss_tokens = int(cache_miss_tokens or 0)
+        cache_token_total = summary.cache_hit_tokens + summary.cache_miss_tokens
+        if cache_token_total > 0:
+            summary.cache_hit_rate = summary.cache_hit_tokens / cache_token_total
         summary.avg_response_time = float(avg_response_time or 0.0)
 
     with get_db_session(auto_commit=False) as session:
@@ -292,12 +377,17 @@ async def get_model_statistics(start_time: datetime, end_time: datetime | None =
 def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None = None) -> List[ModelStatistics]:
     """在线程中同步查询指定时间范围内的模型统计数据。"""
     model_name_expr = func.coalesce(col(ModelUsage.model_assign_name), col(ModelUsage.model_name), "unknown")
+    cache_hit_tokens_expr = _cache_hit_tokens_expression()
+    cache_miss_tokens_expr = _cache_miss_tokens_expression()
     statement = (
         select(
             model_name_expr.label("model_name"),
             func.count().label("request_count"),
             func.sum(col(ModelUsage.cost)).label("total_cost"),
-            func.sum(col(ModelUsage.total_tokens)).label("total_tokens"),
+            func.sum(col(ModelUsage.prompt_tokens)).label("input_tokens"),
+            func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
+            func.sum(cache_hit_tokens_expr).label("cache_hit_tokens"),
+            func.sum(cache_miss_tokens_expr).label("cache_miss_tokens"),
             func.avg(col(ModelUsage.time_cost)).label("avg_response_time"),
         )
         .where(col(ModelUsage.timestamp) >= start_time)
@@ -316,8 +406,13 @@ def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None =
             model_name=row[0] or "unknown",
             request_count=int(row[1] or 0),
             total_cost=float(row[2] or 0.0),
-            total_tokens=int(row[3] or 0),
-            avg_response_time=float(row[4] or 0.0),
+            total_tokens=int(row[3] or 0) + int(row[4] or 0),
+            input_tokens=int(row[3] or 0),
+            output_tokens=int(row[4] or 0),
+            cache_hit_tokens=int(row[5] or 0),
+            cache_miss_tokens=int(row[6] or 0),
+            cache_hit_rate=_calculate_cache_hit_rate(row[5], row[6]),
+            avg_response_time=float(row[7] or 0.0),
         )
         for row in rows
     ]
@@ -331,12 +426,17 @@ async def get_hourly_statistics(start_time: datetime, end_time: datetime) -> Lis
 def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
     """在线程中同步执行按小时聚合。"""
     hour_expr = func.strftime("%Y-%m-%dT%H:00:00", col(ModelUsage.timestamp))
+    cache_hit_tokens_expr = _cache_hit_tokens_expression()
+    cache_miss_tokens_expr = _cache_miss_tokens_expression()
     statement = (
         select(
             hour_expr.label("hour"),
             func.count().label("requests"),
             func.sum(col(ModelUsage.cost)).label("cost"),
-            func.sum(col(ModelUsage.total_tokens)).label("tokens"),
+            func.sum(col(ModelUsage.prompt_tokens)).label("input_tokens"),
+            func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
+            func.sum(cache_hit_tokens_expr).label("cache_hit_tokens"),
+            func.sum(cache_miss_tokens_expr).label("cache_miss_tokens"),
         )
         .where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
         .group_by(hour_expr)
@@ -357,7 +457,11 @@ def _get_hourly_statistics_sync(start_time: datetime, end_time: datetime) -> Lis
                     timestamp=hour_str,
                     requests=row[1] or 0,
                     cost=float(row[2] or 0.0),
-                    tokens=row[3] or 0,
+                    tokens=int(row[3] or 0) + int(row[4] or 0),
+                    input_tokens=int(row[3] or 0),
+                    output_tokens=int(row[4] or 0),
+                    cache_hit_tokens=int(row[5] or 0),
+                    cache_miss_tokens=int(row[6] or 0),
                 )
             )
         else:
@@ -375,12 +479,17 @@ async def get_daily_statistics(start_time: datetime, end_time: datetime) -> List
 def _get_daily_statistics_sync(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:
     """在线程中同步执行按天聚合。"""
     day_expr = func.strftime("%Y-%m-%dT00:00:00", col(ModelUsage.timestamp))
+    cache_hit_tokens_expr = _cache_hit_tokens_expression()
+    cache_miss_tokens_expr = _cache_miss_tokens_expression()
     statement = (
         select(
             day_expr.label("day"),
             func.count().label("requests"),
             func.sum(col(ModelUsage.cost)).label("cost"),
-            func.sum(col(ModelUsage.total_tokens)).label("tokens"),
+            func.sum(col(ModelUsage.prompt_tokens)).label("input_tokens"),
+            func.sum(col(ModelUsage.completion_tokens)).label("output_tokens"),
+            func.sum(cache_hit_tokens_expr).label("cache_hit_tokens"),
+            func.sum(cache_miss_tokens_expr).label("cache_miss_tokens"),
         )
         .where(col(ModelUsage.timestamp) >= start_time, col(ModelUsage.timestamp) <= end_time)
         .group_by(day_expr)
@@ -401,7 +510,11 @@ def _get_daily_statistics_sync(start_time: datetime, end_time: datetime) -> List
                     timestamp=day_str,
                     requests=row[1] or 0,
                     cost=float(row[2] or 0.0),
-                    tokens=row[3] or 0,
+                    tokens=int(row[3] or 0) + int(row[4] or 0),
+                    input_tokens=int(row[3] or 0),
+                    output_tokens=int(row[4] or 0),
+                    cache_hit_tokens=int(row[5] or 0),
+                    cache_miss_tokens=int(row[6] or 0),
                 )
             )
         else:
@@ -437,12 +550,24 @@ def _get_recent_activity_sync(
 
     activities = []
     for record in records:
+        input_tokens = record.prompt_tokens
+        output_tokens = record.completion_tokens
+        cache_hit_tokens, cache_miss_tokens = _normalize_cache_tokens(
+            prompt_tokens=input_tokens,
+            cache_enabled=record.prompt_cache_enabled,
+            hit_tokens=record.prompt_cache_hit_tokens,
+            miss_tokens=record.prompt_cache_miss_tokens,
+        )
         activities.append(
             {
                 "timestamp": record.timestamp.isoformat(),
                 "model": record.model_assign_name or record.model_name,
                 "request_type": record.request_type,
-                "tokens": record.total_tokens or 0,
+                "tokens": input_tokens + output_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_hit_tokens": cache_hit_tokens,
+                "cache_miss_tokens": cache_miss_tokens,
                 "cost": record.cost or 0.0,
                 "time_cost": record.time_cost or 0.0,
                 "status": None,
@@ -460,29 +585,111 @@ def fetch_online_time_since(query_start_time: datetime) -> list[tuple[datetime, 
         return [(record.start_timestamp, record.end_timestamp) for record in records]
 
 
-def fetch_model_usage_since(query_start_time: datetime) -> list[dict[str, object]]:
-    """获取指定时间之后的 LLM 使用记录。"""
+def fetch_model_usage_since(
+    query_start_time: datetime,
+    batch_size: int = MODEL_USAGE_BATCH_SIZE,
+) -> Iterator[dict[str, object]]:
+    """分批获取指定时间之后的 LLM 使用记录，避免一次性物化全部明细。"""
+    if batch_size <= 0:
+        raise ValueError("batch_size 必须大于 0")
+
     with get_db_session(auto_commit=False) as session:
-        statement = select(ModelUsage).where(col(ModelUsage.timestamp) >= query_start_time)
-        records = session.exec(statement).all()
-        return [
-            {
-                "timestamp": record.timestamp,
-                "request_type": record.request_type,
-                "model_api_provider_name": record.model_api_provider_name,
-                "model_assign_name": record.model_assign_name,
-                "model_name": record.model_name,
-                "session_id": record.session_id,
-                "prompt_tokens": record.prompt_tokens,
-                "completion_tokens": record.completion_tokens,
-                "prompt_cache_enabled": bool(getattr(record, "prompt_cache_enabled", False)),
-                "prompt_cache_hit_tokens": getattr(record, "prompt_cache_hit_tokens", 0) or 0,
-                "prompt_cache_miss_tokens": getattr(record, "prompt_cache_miss_tokens", 0) or 0,
-                "cost": record.cost,
-                "time_cost": record.time_cost,
+        max_id = session.exec(
+            select(func.max(col(ModelUsage.id))).where(col(ModelUsage.timestamp) >= query_start_time)
+        ).first()
+    if not isinstance(max_id, int):
+        return
+
+    last_id = 0
+    while last_id < max_id:
+        with get_db_session(auto_commit=False) as session:
+            statement = (
+                select(
+                    col(ModelUsage.id),
+                    col(ModelUsage.timestamp),
+                    col(ModelUsage.request_type),
+                    col(ModelUsage.model_api_provider_name),
+                    col(ModelUsage.model_assign_name),
+                    col(ModelUsage.model_name),
+                    col(ModelUsage.session_id),
+                    col(ModelUsage.prompt_tokens),
+                    col(ModelUsage.completion_tokens),
+                    col(ModelUsage.prompt_cache_enabled),
+                    col(ModelUsage.prompt_cache_hit_tokens),
+                    col(ModelUsage.prompt_cache_miss_tokens),
+                    col(ModelUsage.cost),
+                    col(ModelUsage.time_cost),
+                )
+                .where(
+                    col(ModelUsage.timestamp) >= query_start_time,
+                    col(ModelUsage.id) > last_id,
+                    col(ModelUsage.id) <= max_id,
+                )
+                .order_by(col(ModelUsage.id))
+                .limit(batch_size)
+            )
+            records = session.exec(statement).all()
+        if not records:
+            return
+
+        for record in records:
+            yield {
+                "timestamp": record[1],
+                "request_type": record[2],
+                "model_api_provider_name": record[3],
+                "model_assign_name": record[4],
+                "model_name": record[5],
+                "session_id": record[6],
+                "prompt_tokens": record[7],
+                "completion_tokens": record[8],
+                "prompt_cache_enabled": record[9],
+                "prompt_cache_hit_tokens": record[10],
+                "prompt_cache_miss_tokens": record[11],
+                "cost": record[12],
+                "time_cost": record[13],
             }
-            for record in records
-        ]
+
+        last_id = int(records[-1][0])
+
+
+def fetch_model_duration_aggregates_since(query_start_time: datetime) -> list[dict[str, object]]:
+    """在数据库内聚合指定时间之后的模型耗时统计。"""
+    with get_db_session(auto_commit=False) as session:
+        statement = (
+            select(
+                col(ModelUsage.request_type),
+                col(ModelUsage.model_api_provider_name),
+                col(ModelUsage.model_assign_name),
+                col(ModelUsage.model_name),
+                func.count().label("request_count"),
+                func.sum(col(ModelUsage.time_cost)).label("time_cost_sum"),
+                func.sum(col(ModelUsage.time_cost) * col(ModelUsage.time_cost)).label("time_cost_sq_sum"),
+            )
+            .where(
+                col(ModelUsage.timestamp) >= query_start_time,
+                col(ModelUsage.time_cost) > 0,
+            )
+            .group_by(
+                col(ModelUsage.request_type),
+                col(ModelUsage.model_api_provider_name),
+                col(ModelUsage.model_assign_name),
+                col(ModelUsage.model_name),
+            )
+        )
+        records = session.exec(statement).all()
+
+    return [
+        {
+            "request_type": record[0],
+            "model_api_provider_name": record[1],
+            "model_assign_name": record[2],
+            "model_name": record[3],
+            "count": int(record[4] or 0),
+            "sum": float(record[5] or 0.0),
+            "sum_sq": float(record[6] or 0.0),
+        }
+        for record in records
+    ]
 
 
 def fetch_messages_since(query_start_time: datetime) -> list[Messages]:
