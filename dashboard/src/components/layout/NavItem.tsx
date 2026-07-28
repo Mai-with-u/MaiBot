@@ -1,11 +1,7 @@
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import type { MenuItem } from './types'
@@ -19,18 +15,13 @@ interface NavItemProps {
 export function NavItem({ item, sidebarOpen, onMobileMenuClose }: NavItemProps) {
   const { t } = useTranslation()
   const matchRoute = useMatchRoute()
-  const isActive = matchRoute({ to: item.path })
+  const isActive = item.external ? false : matchRoute({ to: item.path })
   const Icon = item.icon
   const label = t(item.label)
 
   const menuItemContent = (
     <>
-      <div
-        className={cn(
-          'flex min-w-0 items-center',
-          sidebarOpen ? 'gap-3' : 'gap-3 lg:gap-0'
-        )}
-      >
+      <div className={cn('flex min-w-0 items-center', sidebarOpen ? 'gap-3' : 'gap-3 lg:gap-0')}>
         <Icon
           data-dashboard-nav-icon="true"
           className={cn('h-5 w-5 flex-shrink-0', isActive && 'text-primary')}
@@ -52,25 +43,31 @@ export function NavItem({ item, sidebarOpen, onMobileMenuClose }: NavItemProps) 
     </>
   )
 
-  const link = (
-    <Link
-      to={item.path}
-      data-tour={item.tourId}
-      data-dashboard-nav-item="true"
-      data-active={isActive ? 'true' : 'false'}
-      style={{
-        height: 'var(--layout-sidebar-nav-item-height)',
-        minHeight: 'var(--layout-sidebar-nav-item-height)',
-      }}
-      className={cn(
-        'relative flex h-[var(--layout-sidebar-nav-item-height)] items-center rounded-lg px-[var(--layout-sidebar-nav-item-padding-x)] py-0 transition-colors duration-150',
-        'hover:bg-accent hover:text-accent-foreground',
-        isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
-        !sidebarOpen &&
-          'lg:mx-auto lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
-      )}
-      onClick={onMobileMenuClose}
-    >
+  const linkClassName = cn(
+    'relative flex h-[var(--layout-sidebar-nav-item-height)] items-center rounded-lg px-[var(--layout-sidebar-nav-item-padding-x)] py-0 transition-colors duration-150',
+    'hover:bg-accent hover:text-accent-foreground',
+    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+    !sidebarOpen &&
+      'lg:mx-auto lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
+  )
+  const commonLinkProps = {
+    'data-tour': item.tourId,
+    'data-dashboard-nav-item': 'true',
+    'data-active': isActive ? 'true' : 'false',
+    style: {
+      height: 'var(--layout-sidebar-nav-item-height)',
+      minHeight: 'var(--layout-sidebar-nav-item-height)',
+    },
+    className: linkClassName,
+    onClick: onMobileMenuClose,
+  } as const
+
+  const link = item.external ? (
+    <a href={item.path} target="_blank" rel="noopener noreferrer" {...commonLinkProps}>
+      {menuItemContent}
+    </a>
+  ) : (
+    <Link to={item.path} {...commonLinkProps}>
       {menuItemContent}
     </Link>
   )

@@ -46,6 +46,7 @@
       "pluginConfig": "プラグイン管理",
       "mcpSettings": "MCP 設定",
       "dataTransfer": "データ移行",
+      "statistics": "詳細統計データ",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
@@ -1082,11 +1083,35 @@
       "30d": "30日間"
     },
     "autoRefresh": "自動更新",
+    "hitokoto": {
+      "title": "一言"
+    },
     "cards": {
       "add": "カードを追加",
       "edit": "カードを編集",
+      "editCard": "カードを編集：{{title}}",
+      "editContent": "カード内容を編集",
       "done": "完了",
       "reset": "既定のレイアウトに戻す",
+      "styles": {
+        "default": {
+          "title": "デフォルト",
+          "description": "現在のテーマの標準カード表示を使用します。"
+        },
+        "orange": {
+          "title": "オレンジ背景",
+          "description": "テーマのオレンジを背景色、ページ背景色を文字色として使用します。"
+        },
+        "borderless": {
+          "title": "枠線・背景なし",
+          "description": "カードの枠線、背景、模様、影を削除します。"
+        }
+      },
+      "styleDialog": {
+        "title": "「{{title}}」を編集",
+        "description": "ホーム画面でのカードの表示スタイルを選択します。",
+        "done": "完了"
+      },
       "row": {
         "low": "低い行",
         "high": "高い行"
@@ -1252,6 +1277,10 @@
       "files": "{{count}} ファイル",
       "filesAndRecords": "{{files}} ファイル · {{records}} 件の記録",
       "databaseDetail": "{{files}} ファイル · {{tables}} テーブル",
+      "sizeMode": "サイズ",
+      "countMode": "件数",
+      "switchDisplay": "ストレージ情報の表示を切り替え",
+      "countSummary": "{{files}} ファイル · {{records}} 件の記録 · {{tables}} テーブル",
       "readingDescription": "ローカルストレージ使用量を読み取り中...",
       "unavailable": "ローカルストレージ使用量を取得できません",
       "manage": "ストレージ管理"

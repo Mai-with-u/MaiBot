@@ -12,7 +12,6 @@
  * - 插件快捷入口的纯函数 helper（id 编解码、schema 解析等）随 hook 一并下沉。
  */
 import {
-  BarChart3,
   ClipboardCheck,
   FileText,
   HardDrive,
@@ -40,8 +39,6 @@ const DEFAULT_QUICK_SHORTCUT_IDS = [
   'action:expression-review',
   'route:logs',
   'route:plugin-market',
-  'route:settings',
-  'external:statistics',
 ]
 
 function loadQuickShortcutIds(): string[] {
@@ -332,14 +329,6 @@ export function useQuickShortcuts({
         href: '/plugin-config',
       },
       {
-        id: 'route:settings',
-        category: 'system',
-        label: t('home.quickActions.systemSettings'),
-        description: t('home.quickActions.descriptions.systemSettings'),
-        icon: Settings,
-        href: '/settings',
-      },
-      {
         id: 'route:settings-appearance',
         category: 'system',
         label: t('home.quickActions.appearanceSettings'),
@@ -402,15 +391,6 @@ export function useQuickShortcuts({
         description: t('home.quickActions.descriptions.expressionManagement'),
         icon: MessageSquare,
         href: '/resource/expression',
-      },
-      {
-        id: 'external:statistics',
-        category: 'external',
-        label: t('home.quickActions.statistics'),
-        description: t('home.quickActions.descriptions.statistics'),
-        icon: BarChart3,
-        href: '/maibot_statistics.html',
-        external: true,
       },
       ...pluginShortcuts,
     ],

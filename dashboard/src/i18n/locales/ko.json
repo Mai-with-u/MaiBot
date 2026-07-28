@@ -46,6 +46,7 @@
       "pluginConfig": "플러그인 관리",
       "mcpSettings": "MCP 설정",
       "dataTransfer": "데이터 이전",
+      "statistics": "상세 통계 데이터",
       "logViewer": "로그 뷰어",
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
@@ -1074,11 +1075,35 @@
       "30d": "30일"
     },
     "autoRefresh": "자동 새로고침",
+    "hitokoto": {
+      "title": "한마디"
+    },
     "cards": {
       "add": "카드 추가",
       "edit": "카드 편집",
+      "editCard": "카드 편집: {{title}}",
+      "editContent": "카드 내용 편집",
       "done": "완료",
       "reset": "기본 레이아웃 복원",
+      "styles": {
+        "default": {
+          "title": "기본 스타일",
+          "description": "현재 테마의 표준 카드 모양을 사용합니다."
+        },
+        "orange": {
+          "title": "주황색 배경",
+          "description": "테마 주황색을 배경으로, 페이지 배경색을 글자색으로 사용합니다."
+        },
+        "borderless": {
+          "title": "테두리와 배경 없음",
+          "description": "카드 테두리, 배경, 무늬 및 그림자를 제거합니다."
+        }
+      },
+      "styleDialog": {
+        "title": "「{{title}}」 편집",
+        "description": "홈 화면에서 이 카드의 표시 스타일을 선택합니다.",
+        "done": "완료"
+      },
       "row": {
         "low": "낮은 행",
         "high": "높은 행"
@@ -1244,6 +1269,10 @@
       "files": "{{count}}개 파일",
       "filesAndRecords": "{{files}}개 파일 · {{records}}개 기록",
       "databaseDetail": "{{files}}개 파일 · {{tables}}개 테이블",
+      "sizeMode": "크기",
+      "countMode": "수량",
+      "switchDisplay": "저장소 정보 표시 전환",
+      "countSummary": "{{files}}개 파일 · {{records}}개 기록 · {{tables}}개 테이블",
       "readingDescription": "로컬 저장소 사용량을 읽는 중...",
       "unavailable": "로컬 저장소 사용량을 가져오지 못했습니다",
       "manage": "저장소 관리"

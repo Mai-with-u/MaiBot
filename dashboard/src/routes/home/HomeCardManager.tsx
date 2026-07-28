@@ -16,8 +16,8 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ExternalLink, GripVertical, Maximize2, Plus, RotateCcw, X } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { ExternalLink, GripVertical, Maximize2, Pencil, Plus, RotateCcw, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
@@ -40,7 +40,8 @@ import type { PluginHomeCard, PluginHomeCardContent, PluginHomeCardWidth } from 
 import { cn } from '@/lib/utils'
 
 const HOME_CARD_LAYOUT_STORAGE_KEY = 'maibot-home-card-layout-v1'
-const HOME_CARD_LOW_ROW_HEIGHT = 236
+const LEGACY_HITOKOTO_STYLE_STORAGE_KEY = 'maibot-home-hitokoto-style'
+const HOME_CARD_LOW_ROW_HEIGHT = 192
 const HOME_CARD_HIGH_ROW_HEIGHT = 360
 const HOME_CARD_GRID_GAP = 16
 const HOME_CARD_SEPARATOR_ROW_HEIGHT = 34
@@ -64,6 +65,7 @@ const DEFAULT_BUILTIN_CARD_ORDER = [
 type HomeCardSource = 'builtin' | 'plugin'
 type HomeCardRowMode = 'low' | 'high'
 type HomeCardCategory = 'status' | 'statistics' | 'analysis' | 'plugin'
+type HomeCardStyle = 'default' | 'orange' | 'borderless'
 
 export interface HomeCardDefinition {
   id: string
@@ -74,6 +76,9 @@ export interface HomeCardDefinition {
   preferredHeight?: HomeCardRowMode
   defaultHidden?: boolean
   category?: HomeCardCategory
+  editLabel?: string
+  onEdit?: () => void
+  variant?: 'card' | 'separator'
   source: HomeCardSource
   render: () => ReactNode
 }
@@ -82,6 +87,7 @@ interface HomeCardLayout {
   order: string[]
   hidden: string[]
   rowModes: Record<string, HomeCardRowMode>
+  styles: Record<string, HomeCardStyle>
   widths: Record<string, PluginHomeCardWidth>
 }
 
@@ -89,7 +95,6 @@ interface HomeCardManagerProps {
   cards: HomeCardDefinition[]
   pluginCards: PluginHomeCard[]
   controlsPortalId?: string
-  firstRowSeparator?: ReactNode
 }
 
 function migrateHomeCardOrder(order: string[]): string[] {
@@ -104,7 +109,7 @@ function migrateHomeCardOrder(order: string[]): string[] {
 
 function loadHomeCardLayout(): HomeCardLayout {
   if (typeof window === 'undefined') {
-    return { order: [], hidden: [], rowModes: {}, widths: {} }
+    return { order: [], hidden: [], rowModes: {}, styles: {}, widths: {} }
   }
 
   try {
@@ -112,16 +117,24 @@ function loadHomeCardLayout(): HomeCardLayout {
     const order = Array.isArray(parsed.order)
       ? parsed.order.filter((item: unknown): item is string => typeof item === 'string')
       : []
+    const styles = normalizeCardStyles(parsed.styles)
+    if (
+      styles['builtin:hitokoto'] === undefined &&
+      localStorage.getItem(LEGACY_HITOKOTO_STYLE_STORAGE_KEY) === 'orange'
+    ) {
+      styles['builtin:hitokoto'] = 'orange'
+    }
     return {
       order: migrateHomeCardOrder(order),
       hidden: Array.isArray(parsed.hidden)
         ? parsed.hidden.filter((item: unknown): item is string => typeof item === 'string')
         : [],
       rowModes: normalizeRowModes(parsed.rowModes),
+      styles,
       widths: normalizeCardWidths(parsed.widths),
     }
   } catch {
-    return { order: [], hidden: [], rowModes: {}, widths: {} }
+    return { order: [], hidden: [], rowModes: {}, styles: {}, widths: {} }
   }
 }
 
@@ -185,6 +198,17 @@ function normalizeCardWidths(value: unknown): Record<string, PluginHomeCardWidth
   )
 }
 
+function normalizeCardStyles(value: unknown): Record<string, HomeCardStyle> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const validStyles = new Set<HomeCardStyle>(['default', 'orange', 'borderless'])
+  return Object.entries(value).reduce<Record<string, HomeCardStyle>>((result, [key, style]) => {
+    if (typeof style === 'string' && validStyles.has(style as HomeCardStyle)) {
+      result[key] = style as HomeCardStyle
+    }
+    return result
+  }, {})
+}
+
 function rowModesEqual(
   left: Record<string, HomeCardRowMode>,
   right: Record<string, HomeCardRowMode>
@@ -200,7 +224,12 @@ function defaultRowMode(rowIndex: number, cards: HomeCardDefinition[] = []): Hom
   return rowIndex === 0 ? 'low' : 'high'
 }
 
-function rowHeight(mode: HomeCardRowMode): number {
+function isSeparatorRow(cards: HomeCardDefinition[]): boolean {
+  return cards.length === 1 && cards[0].variant === 'separator'
+}
+
+function rowHeight(mode: HomeCardRowMode, cards: HomeCardDefinition[]): number {
+  if (isSeparatorRow(cards)) return HOME_CARD_SEPARATOR_ROW_HEIGHT
   return mode === 'high' ? HOME_CARD_HIGH_ROW_HEIGHT : HOME_CARD_LOW_ROW_HEIGHT
 }
 
@@ -247,6 +276,13 @@ function buildAdaptiveCardWidths(
   let currentRowColumns = 0
 
   for (const card of cards) {
+    // 分隔元素在视觉上始终占满整行，不参与普通卡片的自适应缩宽。
+    if (card.variant === 'separator') {
+      widths.set(card.id, 'full')
+      currentRowColumns = 0
+      continue
+    }
+
     const preferredWidth = widthOverrides[card.id] ?? card.width
     const preferredColumns = cardWidthColumns(preferredWidth)
     const remainingColumns = 10 - currentRowColumns
@@ -491,21 +527,53 @@ function stringArraysEqual(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index])
 }
 
+function mergeCardOrder(currentOrder: string[], defaultOrder: string[]): string[] {
+  const knownIds = new Set(defaultOrder)
+  const order = currentOrder.filter((id) => knownIds.has(id))
+
+  for (const id of defaultOrder) {
+    if (order.includes(id)) continue
+    const defaultIndex = defaultOrder.indexOf(id)
+    const previousId = defaultOrder
+      .slice(0, defaultIndex)
+      .reverse()
+      .find((candidate) => order.includes(candidate))
+    if (previousId) {
+      order.splice(order.indexOf(previousId) + 1, 0, id)
+      continue
+    }
+    const nextId = defaultOrder
+      .slice(defaultIndex + 1)
+      .find((candidate) => order.includes(candidate))
+    if (nextId) {
+      order.splice(order.indexOf(nextId), 0, id)
+    } else {
+      order.push(id)
+    }
+  }
+  return order
+}
+
 function SortableHomeCard({
   card,
   displayWidth,
   preferredWidth,
+  cardStyle,
   editing,
+  onEdit,
   onHide,
   onResize,
 }: {
   card: HomeCardDefinition
   displayWidth?: PluginHomeCardWidth
   preferredWidth?: PluginHomeCardWidth
+  cardStyle: HomeCardStyle
   editing: boolean
+  onEdit: (id: string) => void
   onHide: (id: string) => void
   onResize: (id: string) => void
 }) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
     disabled: !editing,
@@ -514,17 +582,22 @@ function SortableHomeCard({
     transform: CSS.Translate.toString(transform),
     transition,
   }
+  const editLabel = t('home.cards.editCard', { title: card.title })
 
   return (
     <div
       ref={setNodeRef}
       style={style}
       data-home-card-id={card.id}
+      data-home-card-style={cardStyle}
       className={cn(
         'relative h-full min-w-0',
-        cardWidthClass(displayWidth ?? card.width),
+        card.variant === 'separator'
+          ? 'lg:col-span-10'
+          : cardWidthClass(displayWidth ?? card.width),
         isDragging && 'z-20 opacity-80'
       )}
+      data-home-card-variant={card.variant ?? 'card'}
     >
       {editing && (
         <div
@@ -545,6 +618,7 @@ function SortableHomeCard({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7 cursor-grab"
+                aria-label={`拖拽排序：${card.title}`}
                 {...attributes}
                 {...listeners}
               >
@@ -560,6 +634,7 @@ function SortableHomeCard({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7"
+                  aria-label={`调整尺寸：${card.title}`}
                   onClick={() => onResize(card.id)}
                 >
                   <Maximize2 className="h-4 w-4" />
@@ -576,6 +651,21 @@ function SortableHomeCard({
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
+                aria-label={t('home.cards.editCard', { title: card.title })}
+                onClick={() => onEdit(card.id)}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{editLabel}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label={`从首页隐藏：${card.title}`}
                 onClick={() => onHide(card.id)}
               >
                 <X className="h-4 w-4" />
@@ -599,16 +689,12 @@ function SortableHomeCard({
   )
 }
 
-export function HomeCardManager({
-  cards,
-  pluginCards,
-  controlsPortalId,
-  firstRowSeparator,
-}: HomeCardManagerProps) {
+export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCardManagerProps) {
   const { t } = useTranslation()
   const [layout, setLayout] = useState<HomeCardLayout>(loadHomeCardLayout)
   const [editing, setEditing] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingCardId, setEditingCardId] = useState<string | null>(null)
   const [controlsContainer, setControlsContainer] = useState<HTMLElement | null>(null)
 
   const sensors = useSensors(
@@ -649,12 +735,15 @@ export function HomeCardManager({
     updateLayout((current) => {
       const knownIds = new Set(allCardIds)
       const newIds = allCardIds.filter((id) => !current.order.includes(id))
-      const order = [...current.order.filter((id) => knownIds.has(id)), ...newIds]
+      const order = mergeCardOrder(current.order, allCardIds)
       const defaultHiddenIds = newIds.filter((id) => cardMap.get(id)?.defaultHidden)
       const hidden = Array.from(
         new Set([...current.hidden.filter((id) => knownIds.has(id)), ...defaultHiddenIds])
       )
       const rowModes = normalizeRowModes(current.rowModes)
+      const styles = Object.fromEntries(
+        Object.entries(normalizeCardStyles(current.styles)).filter(([id]) => knownIds.has(id))
+      )
       const widths = Object.fromEntries(
         Object.entries(normalizeCardWidths(current.widths)).filter(([id]) => knownIds.has(id))
       )
@@ -662,11 +751,12 @@ export function HomeCardManager({
         stringArraysEqual(order, current.order) &&
         stringArraysEqual(hidden, current.hidden) &&
         rowModesEqual(rowModes, current.rowModes) &&
+        JSON.stringify(styles) === JSON.stringify(current.styles) &&
         JSON.stringify(widths) === JSON.stringify(current.widths)
       ) {
         return current
       }
-      return { ...current, order, hidden, rowModes, widths }
+      return { ...current, order, hidden, rowModes, styles, widths }
     })
   }, [allCardIds, cardMap, updateLayout])
 
@@ -703,6 +793,7 @@ export function HomeCardManager({
     }
     return Array.from(groups.entries())
   }, [hiddenCards])
+  const editingCard = editingCardId ? cardMap.get(editingCardId) : undefined
   const adaptiveCardWidths = useMemo(
     () => buildAdaptiveCardWidths(visibleCards, layout.widths),
     [layout.widths, visibleCards]
@@ -716,41 +807,30 @@ export function HomeCardManager({
       cardRows.map((row, index) => layout.rowModes[String(index)] ?? defaultRowMode(index, row)),
     [cardRows, layout.rowModes]
   )
-  const showFirstRowSeparator = Boolean(firstRowSeparator) && cardRows.length > 1
   const rowControls = useMemo(
     () =>
-      rowModes.map((mode, index) => {
-        const top = rowModes
-          .slice(0, index)
-          .reduce(
-            (offset, previousMode, previousIndex) =>
-              offset +
-              rowHeight(previousMode) +
-              HOME_CARD_GRID_GAP +
-              (previousIndex === 0 && showFirstRowSeparator
-                ? HOME_CARD_SEPARATOR_ROW_HEIGHT + HOME_CARD_GRID_GAP
-                : 0),
-            0
-          )
-        return { index, mode, top }
-      }),
-    [rowModes, showFirstRowSeparator]
+      rowModes
+        .map((mode, index) => {
+          const top = rowModes
+            .slice(0, index)
+            .reduce(
+              (offset, previousMode, previousIndex) =>
+                offset + rowHeight(previousMode, cardRows[previousIndex]) + HOME_CARD_GRID_GAP,
+              0
+            )
+          return { index, mode, top }
+        })
+        .filter((row) => !isSeparatorRow(cardRows[row.index])),
+    [cardRows, rowModes]
   )
   const gridStyle =
     cardRows.length > 0
       ? ({
           '--home-card-grid-rows': rowModes
-            .flatMap((mode, index) =>
-              index === 0 && showFirstRowSeparator
-                ? [`${rowHeight(mode)}px`, `${HOME_CARD_SEPARATOR_ROW_HEIGHT}px`]
-                : [`${rowHeight(mode)}px`]
-            )
+            .map((mode, index) => `${rowHeight(mode, cardRows[index])}px`)
             .join(' '),
         } as CSSProperties)
       : undefined
-  const firstRowLastCardId = showFirstRowSeparator
-    ? cardRows[0][cardRows[0].length - 1]?.id
-    : undefined
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -828,11 +908,31 @@ export function HomeCardManager({
     [cardMap, updateLayout]
   )
 
+  const updateCardStyle = useCallback(
+    (id: string, style: HomeCardStyle) => {
+      updateLayout((current) => ({
+        ...current,
+        styles: {
+          ...current.styles,
+          [id]: style,
+        },
+      }))
+    },
+    [updateLayout]
+  )
+
+  const editCardContent = useCallback(() => {
+    if (!editingCard?.onEdit) return
+    setEditingCardId(null)
+    editingCard.onEdit()
+  }, [editingCard])
+
   const resetLayout = useCallback(() => {
     updateLayout(() => ({
       order: allCardIds,
       hidden: allCards.filter((card) => card.defaultHidden).map((card) => card.id),
       rowModes: {},
+      styles: {},
       widths: {},
     }))
   }, [allCardIds, allCards, updateLayout])
@@ -900,21 +1000,17 @@ export function HomeCardManager({
                 style={gridStyle}
               >
                 {visibleCards.map((card) => (
-                  <Fragment key={card.id}>
-                    <SortableHomeCard
-                      card={card}
-                      displayWidth={adaptiveCardWidths.get(card.id)}
-                      preferredWidth={layout.widths[card.id] ?? card.width}
-                      editing={editing}
-                      onHide={hideCard}
-                      onResize={resizeCard}
-                    />
-                    {card.id === firstRowLastCardId && (
-                      <div className="flex min-h-8 items-center lg:col-span-10">
-                        {firstRowSeparator}
-                      </div>
-                    )}
-                  </Fragment>
+                  <SortableHomeCard
+                    key={card.id}
+                    card={card}
+                    displayWidth={adaptiveCardWidths.get(card.id)}
+                    preferredWidth={layout.widths[card.id] ?? card.width}
+                    cardStyle={layout.styles[card.id] ?? 'default'}
+                    editing={editing}
+                    onEdit={setEditingCardId}
+                    onHide={hideCard}
+                    onResize={resizeCard}
+                  />
                 ))}
               </div>
             </SortableContext>
@@ -978,6 +1074,65 @@ export function HomeCardManager({
               </Button>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
                 {t('home.cards.dialog.cancel')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={editingCard !== undefined}
+          onOpenChange={(open) => {
+            if (!open) setEditingCardId(null)
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {t('home.cards.styleDialog.title', { title: editingCard?.title ?? '' })}
+              </DialogTitle>
+              <DialogDescription>{t('home.cards.styleDialog.description')}</DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              {editingCard && (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {(['default', 'orange', 'borderless'] as const).map((style) => {
+                    const selected = (layout.styles[editingCard.id] ?? 'default') === style
+                    return (
+                      <button
+                        key={style}
+                        type="button"
+                        data-selected={selected ? 'true' : 'false'}
+                        className={cn(
+                          'min-h-28 rounded-lg border-2 p-3 text-left transition-colors',
+                          selected ? 'border-primary' : 'border-border hover:border-primary/50',
+                          style === 'orange' && 'bg-primary text-background',
+                          style === 'borderless' && 'border-dashed bg-transparent shadow-none'
+                        )}
+                        onClick={() => updateCardStyle(editingCard.id, style)}
+                      >
+                        <span className="font-medium">{t(`home.cards.styles.${style}.title`)}</span>
+                        <span
+                          className={cn(
+                            'mt-2 block text-xs',
+                            style === 'orange' ? 'text-background/80' : 'text-muted-foreground'
+                          )}
+                        >
+                          {t(`home.cards.styles.${style}.description`)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </DialogBody>
+            <DialogFooter>
+              {editingCard?.onEdit && (
+                <Button variant="outline" onClick={editCardContent} className="mr-auto">
+                  {editingCard.editLabel ?? t('home.cards.editContent')}
+                </Button>
+              )}
+              <Button onClick={() => setEditingCardId(null)}>
+                {t('home.cards.styleDialog.done')}
               </Button>
             </DialogFooter>
           </DialogContent>

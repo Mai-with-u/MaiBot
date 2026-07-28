@@ -69,6 +69,19 @@ describe('menuSections 菜单结构', () => {
     expect(dataTransferItem?.searchDescription).toBe('search.items.dataTransferDesc')
   })
 
+  it('详细统计数据位于扩展与维护分组最底部并使用外部页面', () => {
+    const extensionsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+    )
+    const statisticsItem = extensionsSection?.items.at(-1)
+
+    expect(statisticsItem).toMatchObject({
+      label: 'sidebar.menu.statistics',
+      path: '/maibot_statistics.html',
+      external: true,
+    })
+  })
+
   it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 

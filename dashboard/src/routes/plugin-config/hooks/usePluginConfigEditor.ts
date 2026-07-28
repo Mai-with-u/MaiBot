@@ -24,7 +24,7 @@ import {
 import type { InstalledPlugin, PluginConfigSchema } from '@/lib/plugin-api'
 import { useToast } from '@/hooks/use-toast'
 
-import { setNestedField } from '../utils'
+import { getPluginConfigRoutePath, setNestedField } from '../utils'
 
 export interface UsePluginConfigEditorOptions {
   plugin: InstalledPlugin
@@ -234,7 +234,11 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
     (nextTab: string) => {
       setActiveConfigTab(nextTab)
       const params = new URLSearchParams({ plugin: plugin.id, tab: nextTab })
-      window.history.replaceState(null, '', `/plugin-config?${params.toString()}`)
+      window.history.replaceState(
+        null,
+        '',
+        `${getPluginConfigRoutePath()}?${params.toString()}`
+      )
     },
     [plugin.id]
   )

@@ -33,7 +33,7 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Check PyPI latest dashboard stable package
+      - name: Wait for PyPI dashboard stable package
         run: |
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_stable_dependency.py
 

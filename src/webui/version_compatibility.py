@@ -16,7 +16,7 @@ DASHBOARD_PACKAGE_NAME = "maibot-dashboard"
 WebUICompatibilityStatus = Literal["compatible", "webui_outdated", "main_program_outdated"]
 
 _DASHBOARD_REQUIREMENT_PATTERN = re.compile(
-    rf"^{re.escape(DASHBOARD_PACKAGE_NAME)}\s*>=\s*(?P<version>[^,;\s]+)",
+    rf"^{re.escape(DASHBOARD_PACKAGE_NAME)}\s*(?:>=|==)\s*(?P<version>[^,;\s]+)",
     re.IGNORECASE,
 )
 _VERSION_PATTERN = re.compile(
@@ -106,7 +106,7 @@ def _has_same_release(left: str, right: str) -> bool:
 
 
 def read_required_webui_version(project_root: Path | None = None) -> str:
-    """从 pyproject.toml 读取主程序要求的最低 WebUI 版本。"""
+    """从 pyproject.toml 读取主程序要求的 WebUI 版本。"""
 
     root = project_root or PROJECT_ROOT
     with (root / "pyproject.toml").open("rb") as pyproject_file:
@@ -127,7 +127,9 @@ def read_required_webui_version(project_root: Path | None = None) -> str:
         if match is not None:
             return match.group("version")
 
-    raise ValueError(f"pyproject.toml 未声明 {DASHBOARD_PACKAGE_NAME}>=<version>")
+    raise ValueError(
+        f"pyproject.toml 未声明有效的 {DASHBOARD_PACKAGE_NAME} 版本约束（支持 >= 或 ==）"
+    )
 
 
 def read_local_webui_version(project_root: Path | None = None) -> str:

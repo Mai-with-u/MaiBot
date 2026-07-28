@@ -1,18 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
-import {
-  AlertCircle,
-  CheckCircle2,
-  Database,
-  ExternalLink,
-  FileText,
-  HardDrive,
-  ImageIcon,
-  Plus,
-  Power,
-  RefreshCw,
-  Smile,
-} from 'lucide-react'
+import { AlertCircle, CheckCircle2, ExternalLink, HardDrive, RefreshCw } from 'lucide-react'
 import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,7 +22,6 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
@@ -217,6 +204,7 @@ function IndexPageContent() {
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
   const [platformAccountConfigured, setPlatformAccountConfigured] = useState<boolean | null>(null)
+  const [storageDisplayMode, setStorageDisplayMode] = useState<'size' | 'count'>('size')
 
   const handleRestart = useCallback(async () => {
     await triggerRestart()
@@ -325,6 +313,14 @@ function IndexPageContent() {
   const databaseSize = localCacheStats?.database.total_size ?? 0
   const totalStorageSize =
     localCacheDirectories.reduce((total, item) => total + item.total_size, 0) + databaseSize
+  const totalStorageFileCount =
+    localCacheDirectories.reduce((total, item) => total + item.file_count, 0) +
+    (localCacheStats?.database.files.length ?? 0)
+  const totalStorageRecordCount = localCacheDirectories.reduce(
+    (total, item) => total + item.db_records,
+    0
+  )
+  const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
   const storageDetails = [
     {
@@ -332,7 +328,6 @@ function IndexPageContent() {
       label: t('home.storage.images'),
       size: imageCacheSize,
       detail: t('home.storage.files', { count: imageCacheDirectory?.file_count ?? 0 }),
-      icon: ImageIcon,
     },
     {
       key: 'emoji',
@@ -342,14 +337,12 @@ function IndexPageContent() {
         files: emojiCacheDirectory?.file_count ?? 0,
         records: emojiCacheDirectory?.db_records ?? 0,
       }),
-      icon: Smile,
     },
     {
       key: 'logs',
       label: t('home.storage.logs'),
       size: logCacheSize,
       detail: t('home.storage.files', { count: logCacheDirectory?.file_count ?? 0 }),
-      icon: FileText,
     },
     {
       key: 'database',
@@ -359,7 +352,6 @@ function IndexPageContent() {
         files: localCacheStats?.database.files.length ?? 0,
         tables: localCacheStats?.database.tables.length ?? 0,
       }),
-      icon: Database,
     },
   ]
 
@@ -372,17 +364,7 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex h-5 items-center gap-2 text-sm leading-5 font-medium">
-              <StreamlineIcon
-                name="button-power-circle-1-remix"
-                fallback={Power}
-                className="h-4 w-4"
-              />
-              {t('home.botStatus.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
             <div className="space-y-3">
               {themeConfig.dashboardStyle === 'future-retro' ? (
                 <div className="space-y-2">
@@ -529,21 +511,12 @@ function IndexPageContent() {
       title: t('home.quickActions.title'),
       width: 'medium',
       category: 'status',
+      editLabel: t('home.quickActions.customize'),
+      onEdit: () => setQuickShortcutDialogOpen(true),
       source: 'builtin',
       render: () => (
         <Card className="h-full">
           <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
-            {selectedQuickShortcuts.length > 0 && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setQuickShortcutDialogOpen(true)}
-                aria-label={t('home.quickActions.customize')}
-                className="absolute top-3 right-4 h-8 w-8"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            )}
             {selectedQuickShortcuts.length === 0 ? (
               <div className="text-muted-foreground flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -556,7 +529,7 @@ function IndexPageContent() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2 pr-12">
+              <div className="flex flex-wrap gap-2">
                 {selectedQuickShortcuts.map((shortcut) => {
                   const Icon = shortcut.icon
                   const content = (
@@ -730,12 +703,49 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full xl:self-stretch">
-          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
+          <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+            <button
+              type="button"
+              className="text-muted-foreground/55 hover:text-muted-foreground absolute top-2.5 right-3 flex items-center gap-1 text-[10px] transition-colors"
+              aria-label={t('home.storage.switchDisplay')}
+              onClick={() =>
+                setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))
+              }
+            >
+              <span
+                className={cn(
+                  'transition-colors',
+                  storageDisplayMode === 'size' && 'text-primary font-semibold'
+                )}
+              >
+                {t('home.storage.sizeMode')}
+              </span>
+              <span aria-hidden="true">/</span>
+              <span
+                className={cn(
+                  'transition-colors',
+                  storageDisplayMode === 'count' && 'text-primary font-semibold'
+                )}
+              >
+                {t('home.storage.countMode')}
+              </span>
+            </button>
             <div className="space-y-3">
-              <div>
-                <div className="text-2xl font-bold">
+              <div className="pr-20">
+                <div
+                  className={cn(
+                    'font-bold',
+                    storageDisplayMode === 'size' ? 'text-2xl' : 'text-base'
+                  )}
+                >
                   {hasLocalCacheStats
-                    ? formatStorageBytes(totalStorageSize)
+                    ? storageDisplayMode === 'size'
+                      ? formatStorageBytes(totalStorageSize)
+                      : t('home.storage.countSummary', {
+                          files: totalStorageFileCount,
+                          records: totalStorageRecordCount,
+                          tables: totalStorageTableCount,
+                        })
                     : isLocalCacheStatsLoading
                       ? t('home.storage.reading')
                       : '-'}
@@ -754,30 +764,35 @@ function IndexPageContent() {
                   className="grid grid-cols-1 gap-x-5 gap-y-3 lg:grid-cols-2"
                 >
                   {storageDetails.map((item) => {
-                    const Icon = item.icon
                     const percent = totalStorageSize > 0 ? (item.size / totalStorageSize) * 100 : 0
                     const visiblePercent = item.size > 0 ? Math.max(percent, 2) : 0
                     return (
                       <div key={item.key} className="space-y-1.5">
                         <div className="flex min-w-0 items-center gap-2 text-xs">
-                          <Icon className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
                           <span className="shrink-0 font-bold">{item.label}</span>
-                          <span className="text-primary shrink-0 font-semibold">
-                            {formatStorageBytes(item.size)}
-                          </span>
-                          <span className="text-muted-foreground min-w-0 truncate">
-                            {item.detail}
-                          </span>
-                          <span className="text-muted-foreground ml-auto shrink-0">
-                            {percent.toFixed(percent >= 10 ? 0 : 1)}%
-                          </span>
+                          {storageDisplayMode === 'size' ? (
+                            <>
+                              <span className="text-primary shrink-0 font-semibold">
+                                {formatStorageBytes(item.size)}
+                              </span>
+                              <span className="text-muted-foreground ml-auto shrink-0">
+                                {percent.toFixed(percent >= 10 ? 0 : 1)}%
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground min-w-0 truncate">
+                              {item.detail}
+                            </span>
+                          )}
                         </div>
-                        <div className="bg-muted h-1.5 overflow-hidden rounded-full">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all"
-                            style={{ width: `${visiblePercent}%` }}
-                          />
-                        </div>
+                        {storageDisplayMode === 'size' && (
+                          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+                            <div
+                              className="bg-primary h-full rounded-full transition-all"
+                              style={{ width: `${visiblePercent}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -794,13 +809,56 @@ function IndexPageContent() {
         </Card>
       ),
     },
+    {
+      id: 'builtin:hitokoto',
+      title: t('home.hitokoto.title'),
+      width: 'full',
+      category: 'status',
+      source: 'builtin',
+      variant: 'separator',
+      render: () => (
+        <div
+          data-home-hitokoto="true"
+          className={cn(
+            'bg-muted/20 flex h-full w-full items-center gap-3 rounded-lg px-4',
+            themeConfig.dashboardStyle !== 'future-retro' &&
+              'border-muted-foreground/30 border border-dashed'
+          )}
+        >
+          {hitokotoLoading ? (
+            <Skeleton className="h-5 flex-1" />
+          ) : hitokoto ? (
+            <p
+              className={cn(
+                'text-muted-foreground flex-1 truncate',
+                themeConfig.dashboardStyle === 'future-retro'
+                  ? 'text-[1.05rem] font-medium tracking-wide'
+                  : 'text-sm italic'
+              )}
+              style={
+                themeConfig.dashboardStyle === 'future-retro'
+                  ? {
+                      fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
+                      textShadow: '0 0.035em 0 hsl(var(--background))',
+                    }
+                  : undefined
+              }
+            >
+              "{hitokoto.hitokoto}" —— {hitokoto.from}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
   ]
   const firstRowCardIds = ['builtin:bot-status', 'builtin:quick-actions', 'builtin:storage']
+  const hitokotoCardId = 'builtin:hitokoto'
   const orderedHomeCards = [
     ...firstRowCardIds
       .map((id) => homeCards.find((card) => card.id === id))
       .filter((card): card is HomeCardDefinition => card !== undefined),
-    ...homeCards.filter((card) => !firstRowCardIds.includes(card.id)),
+    ...homeCards.filter((card) => card.id === hitokotoCardId),
+    ...homeCards.filter((card) => !firstRowCardIds.includes(card.id) && card.id !== hitokotoCardId),
   ]
   const maibotUpdateAvailable = Boolean(
     botStatus?.version &&
@@ -881,44 +939,17 @@ function IndexPageContent() {
             </a>
           )}
           {versionsMismatch && <span className="text-sm">{t('home.versionCard.mismatch')}</span>}
+          <span
+            aria-hidden="true"
+            data-home-version-stripes="true"
+            className="ml-auto hidden min-w-24 flex-1 basis-40"
+          />
         </div>
 
         <HomeCardManager
           cards={orderedHomeCards}
           pluginCards={pluginHomeCards}
           controlsPortalId="home-card-controls-bottom"
-          firstRowSeparator={
-            <div
-              className={cn(
-                'bg-muted/20 flex h-full w-full items-center gap-3 rounded-lg px-4',
-                themeConfig.dashboardStyle !== 'future-retro' &&
-                  'border-muted-foreground/30 border border-dashed'
-              )}
-            >
-              {hitokotoLoading ? (
-                <Skeleton className="h-5 flex-1" />
-              ) : hitokoto ? (
-                <p
-                  className={cn(
-                    'text-muted-foreground flex-1 truncate',
-                    themeConfig.dashboardStyle === 'future-retro'
-                      ? 'text-[1.05rem] font-medium tracking-wide'
-                      : 'text-sm italic'
-                  )}
-                  style={
-                    themeConfig.dashboardStyle === 'future-retro'
-                      ? {
-                          fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
-                          textShadow: '0 0.035em 0 hsl(var(--background))',
-                        }
-                      : undefined
-                  }
-                >
-                  "{hitokoto.hitokoto}" —— {hitokoto.from}
-                </p>
-              ) : null}
-            </div>
-          }
         />
 
         <div id="home-card-controls-bottom" className="flex justify-end pt-2" />

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,6 +11,7 @@ import * as configApi from '@/lib/config-api'
 import * as expressionApi from '@/lib/expression-api'
 import * as systemApi from '@/lib/system-api'
 import * as pluginApi from '@/lib/plugin-api'
+import { APP_VERSION } from '@/lib/version'
 
 afterEach(() => {
   cleanup()
@@ -195,6 +196,7 @@ describe('IndexPage 特征化', () => {
   })
 
   it('首页使用精简版本行且不再显示标题和版本卡片', async () => {
+    const user = userEvent.setup()
     window.localStorage.setItem(
       'maibot-home-card-layout-v1',
       JSON.stringify({
@@ -211,7 +213,7 @@ describe('IndexPage 特征化', () => {
     render(<IndexPage />)
 
     expect(await screen.findByText('V1.0.0')).toBeInTheDocument()
-    expect(screen.getByText('V1.6.0')).toBeInTheDocument()
+    expect(screen.getByText(`V${APP_VERSION}`)).toBeInTheDocument()
     expect(
       await screen.findByRole('link', { name: /home\.versionCard\.updateAvailable V2\.0\.0/ })
     ).toBeInTheDocument()
@@ -222,8 +224,19 @@ describe('IndexPage 特征化', () => {
     await screen.findByText('home.storage.manage')
     expect(screen.queryByText('home.quickActions.title')).not.toBeInTheDocument()
     expect(screen.queryByText('home.storage.title')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'home.quickActions.customize' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    const quickActionsCard = document.querySelector('[data-home-card-id="builtin:quick-actions"]')
+    expect(quickActionsCard).toBeInTheDocument()
+    await user.click(
+      within(quickActionsCard as HTMLElement).getByRole('button', {
+        name: 'home.cards.editCard',
+      })
+    )
     const customizeButton = screen.getByRole('button', { name: 'home.quickActions.customize' })
-    expect(customizeButton.parentElement).toHaveAttribute('data-home-titleless-content', 'true')
+    expect(customizeButton).toBeInTheDocument()
     expect(document.querySelector('[data-home-storage-details="true"]')).toHaveClass(
       'lg:grid-cols-2'
     )

@@ -1,6 +1,8 @@
+import { createElement } from 'react'
 import {
   Activity,
   ArchiveRestore,
+  BarChart3,
   Box,
   Brain,
   Database,
@@ -17,7 +19,7 @@ import {
 
 import { createStreamlineIcon } from '@/components/ui/streamline-menu-icon'
 
-import type { MenuSection } from './types'
+import type { MenuIcon, MenuSection } from './types'
 
 const HomeIcon = createStreamlineIcon('allergens-fish-remix', Home)
 const MonitorIcon = createStreamlineIcon('desktop-chat-remix', Activity)
@@ -34,6 +36,7 @@ const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const DataTransferIcon = createStreamlineIcon('database-setting-solid', ArchiveRestore)
+const StatisticsIcon: MenuIcon = (props) => createElement(BarChart3, props)
 
 export const menuSections: MenuSection[] = [
   {
@@ -119,6 +122,12 @@ export const menuSections: MenuSection[] = [
         label: 'sidebar.menu.dataTransfer',
         path: '/data-transfer',
         searchDescription: 'search.items.dataTransferDesc',
+      },
+      {
+        icon: StatisticsIcon,
+        label: 'sidebar.menu.statistics',
+        path: '/maibot_statistics.html',
+        external: true,
       },
     ],
   },

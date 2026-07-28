@@ -46,6 +46,7 @@
       "pluginConfig": "Plugin Management",
       "mcpSettings": "MCP Settings",
       "dataTransfer": "Data Transfer",
+      "statistics": "Detailed Statistics",
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
@@ -1082,11 +1083,35 @@
       "30d": "30 Days"
     },
     "autoRefresh": "Auto Refresh",
+    "hitokoto": {
+      "title": "Quote"
+    },
     "cards": {
       "add": "Add card",
       "edit": "Edit cards",
+      "editCard": "Edit card: {{title}}",
+      "editContent": "Edit card content",
       "done": "Done",
       "reset": "Restore default layout",
+      "styles": {
+        "default": {
+          "title": "Default",
+          "description": "Use the standard card appearance of the current theme."
+        },
+        "orange": {
+          "title": "Orange background",
+          "description": "Use the theme orange as the background and the page background color for text."
+        },
+        "borderless": {
+          "title": "Borderless",
+          "description": "Remove the card border, background, texture, and shadow."
+        }
+      },
+      "styleDialog": {
+        "title": "Edit “{{title}}”",
+        "description": "Choose how this card appears on the home page.",
+        "done": "Done"
+      },
       "row": {
         "low": "Low row",
         "high": "High row"
@@ -1252,6 +1277,10 @@
       "files": "{{count}} files",
       "filesAndRecords": "{{files}} files · {{records}} records",
       "databaseDetail": "{{files}} files · {{tables}} tables",
+      "sizeMode": "Size",
+      "countMode": "Count",
+      "switchDisplay": "Switch storage information display",
+      "countSummary": "{{files}} files · {{records}} records · {{tables}} tables",
       "readingDescription": "Reading local storage usage...",
       "unavailable": "Local storage usage is unavailable",
       "manage": "Manage Storage"

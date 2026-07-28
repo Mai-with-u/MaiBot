@@ -141,4 +141,23 @@ describe('NavItem', () => {
 
     expect(screen.getByRole('link')).not.toHaveAttribute('data-tour')
   })
+
+  it('外部页面使用新窗口原生链接且不参与路由激活匹配', () => {
+    matchRouteMock.mockClear()
+    renderNavItem({
+      item: {
+        external: true,
+        icon: TestIcon,
+        label: 'sidebar.menu.statistics',
+        path: '/maibot_statistics.html',
+      },
+    })
+
+    const link = screen.getByRole('link', { name: 'sidebar.menu.statistics' })
+    expect(link).toHaveAttribute('href', '/maibot_statistics.html')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(link).toHaveAttribute('data-active', 'false')
+    expect(matchRouteMock).not.toHaveBeenCalled()
+  })
 })

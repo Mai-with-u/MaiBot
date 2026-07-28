@@ -52,6 +52,7 @@ const LANGUAGE_NAMES: Record<(typeof LANGUAGE_CODES)[number], string> = {
 }
 const LOG_WORKSPACE_COMPACT_GAP = 12
 const LOG_WORKSPACE_EXPAND_GAP = 96
+const WORKSPACE_HOVER_LEAVE_DELAY_MS = 600
 let searchDialogLoaded = false
 const SearchDialog = lazy(() =>
   import('@/components/search-dialog').then((module) => {
@@ -86,6 +87,8 @@ interface HeaderProps {
   workspaceMode: WorkspaceMode
 }
 
+type HeaderActionId = 'settings' | 'search' | 'docs' | 'language' | 'theme' | 'logout'
+
 export function Header({
   sidebarOpen,
   mobileMenuOpen,
@@ -109,7 +112,13 @@ export function Header({
   const [activeBackendName, setActiveBackendName] = useState<string>('')
   const [focusCompanionEnabled, setFocusCompanionEnabled] = useState(() => getSetting('enableFocusCompanion'))
   const [workspaceTabsCompact, setWorkspaceTabsCompact] = useState(false)
+  const [hoveredWorkspace, setHoveredWorkspace] = useState<WorkspaceMode | null>(null)
+  const [workspaceHoverLocked, setWorkspaceHoverLocked] = useState(false)
+  const [hoveredHeaderAction, setHoveredHeaderAction] = useState<HeaderActionId | null>(null)
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false)
   const workspaceTabsCompactRef = useRef(false)
+  const workspaceHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const headerActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const workspaceTabsRef = useRef<HTMLDivElement | null>(null)
   const workspaceTabsMeasureRef = useRef<HTMLDivElement | null>(null)
 
@@ -123,6 +132,24 @@ export function Header({
   useEffect(() => {
     workspaceTabsCompactRef.current = workspaceTabsCompact
   }, [workspaceTabsCompact])
+
+  useEffect(
+    () => () => {
+      if (workspaceHoverTimerRef.current !== null) {
+        clearTimeout(workspaceHoverTimerRef.current)
+      }
+      if (headerActionTimerRef.current !== null) {
+        clearTimeout(headerActionTimerRef.current)
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!workspaceHoverLocked || hoveredWorkspace !== workspaceMode) return
+    setHoveredWorkspace(null)
+    setWorkspaceHoverLocked(false)
+  }, [hoveredWorkspace, workspaceHoverLocked, workspaceMode])
 
   useEffect(() => {
     const handleSettingsChange = (event: Event) => {
@@ -211,6 +238,44 @@ export function Header({
   const handleLogout = async () => {
     await logout()
   }
+
+  const activeHeaderAction: HeaderActionId | null = languageMenuOpen
+    ? 'language'
+    : searchOpen
+      ? 'search'
+      : pathname === '/settings'
+        ? 'settings'
+        : null
+  const highlightedHeaderAction =
+    hoveredWorkspace === null ? (hoveredHeaderAction ?? activeHeaderAction) : null
+
+  const handleHeaderActionEnter = (action: HeaderActionId) => {
+    if (headerActionTimerRef.current !== null) {
+      clearTimeout(headerActionTimerRef.current)
+      headerActionTimerRef.current = null
+    }
+    setHoveredWorkspace(null)
+    setHoveredHeaderAction(action)
+  }
+
+  const handleHeaderActionLeave = () => {
+    if (headerActionTimerRef.current !== null) {
+      clearTimeout(headerActionTimerRef.current)
+    }
+    headerActionTimerRef.current = setTimeout(() => {
+      setHoveredHeaderAction(null)
+      headerActionTimerRef.current = null
+    }, WORKSPACE_HOVER_LEAVE_DELAY_MS)
+  }
+
+  const renderHeaderActionPill = (action: HeaderActionId) =>
+    highlightedHeaderAction === action ? (
+      <motion.span
+        layoutId="topbar-selection-pill"
+        className="bg-primary pointer-events-none absolute inset-x-1 inset-y-0 -z-10 rounded-sm shadow-sm"
+        transition={{ type: 'spring', stiffness: 480, damping: 38, mass: 0.6 }}
+      />
+    ) : null
 
   return (
     <motion.header
@@ -321,14 +386,14 @@ export function Header({
             </button>
           </div>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-0.5 sm:gap-1">
             {/* 工作区切换：复用 Tabs 组件 + Motion 动画指示器 */}
             <LayoutGroup id="workspace-switcher">
               <div
                 ref={workspaceTabsMeasureRef}
                 data-dashboard-workspace-tabs-measure="true"
                 aria-hidden="true"
-                className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-9 items-center justify-center gap-0.5 rounded-lg border p-1"
+                className="pointer-events-none invisible absolute top-0 left-0 inline-flex h-9 items-center justify-center gap-0.5 rounded-lg p-1"
               >
                 {WORKSPACE_TABS.map(({ value, icon: Icon, labelKey }) => (
                   <div
@@ -346,28 +411,71 @@ export function Header({
                 <TabsList
                   ref={workspaceTabsRef}
                   data-dashboard-workspace-tabs="true"
-                  className="relative h-9 gap-0.5 border bg-transparent p-1 shadow-sm"
+                  className="relative h-9 gap-0.5 border-0 bg-transparent p-1 shadow-none"
+                  onPointerLeave={() => {
+                    if (workspaceHoverTimerRef.current !== null) {
+                      clearTimeout(workspaceHoverTimerRef.current)
+                      workspaceHoverTimerRef.current = null
+                    }
+                    if (workspaceHoverLocked && hoveredWorkspace !== workspaceMode) {
+                      return
+                    }
+                    workspaceHoverTimerRef.current = setTimeout(() => {
+                      setHoveredWorkspace(null)
+                      setWorkspaceHoverLocked(false)
+                      workspaceHoverTimerRef.current = null
+                    }, WORKSPACE_HOVER_LEAVE_DELAY_MS)
+                  }}
                 >
                   {WORKSPACE_TABS.map(({ value, to, icon: Icon, labelKey }) => (
                     <TabsTrigger
                       key={value}
                       asChild
                       value={value}
+                      data-workspace-highlighted={
+                        highlightedHeaderAction === null &&
+                        (hoveredWorkspace ?? workspaceMode) === value
+                          ? 'true'
+                          : 'false'
+                      }
                       className={cn(
-                        'data-[state=active]:text-primary-foreground relative h-7 gap-1.5 bg-transparent text-sm font-medium data-[state=active]:bg-transparent data-[state=active]:shadow-none',
+                        'relative h-7 gap-1.5 bg-transparent text-sm font-medium data-[state=active]:bg-transparent data-[state=active]:shadow-none',
+                        highlightedHeaderAction === null &&
+                          (hoveredWorkspace ?? workspaceMode) === value
+                          ? 'text-primary-foreground'
+                          : 'text-muted-foreground',
                         workspaceTabsCompact ? 'px-2' : 'px-2.5'
                       )}
                     >
                       <Link
                         to={to}
+                        onPointerEnter={() => {
+                          if (!workspaceHoverLocked) {
+                            if (workspaceHoverTimerRef.current !== null) {
+                              clearTimeout(workspaceHoverTimerRef.current)
+                              workspaceHoverTimerRef.current = null
+                            }
+                            setHoveredWorkspace(value)
+                          }
+                        }}
                         onClick={(event) => {
+                          if (workspaceHoverTimerRef.current !== null) {
+                            clearTimeout(workspaceHoverTimerRef.current)
+                            workspaceHoverTimerRef.current = null
+                          }
+                          const isPlainPrimaryClick =
+                            event.button === 0 &&
+                            !event.metaKey &&
+                            !event.ctrlKey &&
+                            !event.shiftKey &&
+                            !event.altKey
+                          if (isPlainPrimaryClick) {
+                            setHoveredWorkspace(value)
+                            setWorkspaceHoverLocked(true)
+                          }
                           if (
                             workspaceMode === value ||
-                            event.button !== 0 ||
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey ||
-                            event.altKey
+                            !isPlainPrimaryClick
                           ) {
                             return
                           }
@@ -375,10 +483,11 @@ export function Header({
                           onWorkspaceNavigate(to)
                         }}
                       >
-                        {workspaceMode === value && (
+                        {highlightedHeaderAction === null &&
+                          (hoveredWorkspace ?? workspaceMode) === value && (
                           <motion.span
-                            layoutId="workspace-tab-pill"
-                            className="bg-primary absolute inset-0 -z-10 rounded-md shadow-sm"
+                            layoutId="topbar-selection-pill"
+                            className="bg-primary absolute inset-x-1 inset-y-0.5 -z-10 rounded-sm shadow-sm"
                             transition={{ type: 'spring', stiffness: 480, damping: 38, mass: 0.6 }}
                           />
                         )}
@@ -396,8 +505,6 @@ export function Header({
                   ))}
                 </TabsList>
               </Tabs>
-            </LayoutGroup>
-
             {focusCompanionEnabled && (
               <>
                 <div className="bg-border hidden h-6 w-px sm:block" />
@@ -419,11 +526,21 @@ export function Header({
               asChild
               variant="ghost"
               size="icon"
-              className={cn(pathname === '/settings' && 'bg-accent text-accent-foreground')}
+              data-dashboard-header-action="true"
+              data-header-action-highlighted={
+                highlightedHeaderAction === 'settings' ? 'true' : 'false'
+              }
+              className="relative isolate border-0 bg-transparent shadow-none"
               title={t('sidebar.menu.settings')}
               aria-label={t('sidebar.menu.settings')}
             >
-              <Link to="/settings">
+              <Link
+                to="/settings"
+                onPointerEnter={() => handleHeaderActionEnter('settings')}
+                onPointerLeave={handleHeaderActionLeave}
+                onClick={() => setHoveredHeaderAction('settings')}
+              >
+                {renderHeaderActionPill('settings')}
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
@@ -450,11 +567,21 @@ export function Header({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => onSearchOpenChange(!searchOpen)}
+              onClick={() => {
+                setHoveredHeaderAction('search')
+                onSearchOpenChange(!searchOpen)
+              }}
               aria-label={t('header.searchPlaceholder')}
               title={t('header.searchPlaceholder')}
-              className="hidden md:inline-flex"
+              data-dashboard-header-action="true"
+              data-header-action-highlighted={
+                highlightedHeaderAction === 'search' ? 'true' : 'false'
+              }
+              onPointerEnter={() => handleHeaderActionEnter('search')}
+              onPointerLeave={handleHeaderActionLeave}
+              className="relative isolate hidden border-0 bg-transparent shadow-none md:inline-flex"
             >
+              {renderHeaderActionPill('search')}
               <Search className="h-4 w-4" />
             </Button>
 
@@ -469,24 +596,43 @@ export function Header({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => window.open('https://docs.mai-mai.org', '_blank')}
-              className="hidden sm:inline-flex"
+              onClick={() => {
+                setHoveredHeaderAction('docs')
+                window.open('https://docs.mai-mai.org', '_blank')
+              }}
+              className="relative isolate hidden border-0 bg-transparent shadow-none sm:inline-flex"
               title={t('header.viewDocs')}
               aria-label={t('header.viewDocs')}
+              data-dashboard-header-action="true"
+              data-header-action-highlighted={
+                highlightedHeaderAction === 'docs' ? 'true' : 'false'
+              }
+              onPointerEnter={() => handleHeaderActionEnter('docs')}
+              onPointerLeave={handleHeaderActionLeave}
             >
+              {renderHeaderActionPill('docs')}
               <BookOpen className="h-4 w-4" />
             </Button>
 
             {/* 语言切换 */}
             <div className="hidden sm:block">
-              <DropdownMenu>
+              <DropdownMenu open={languageMenuOpen} onOpenChange={setLanguageMenuOpen}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
                     title={t('header.switchLanguage')}
                     aria-label={t('header.switchLanguage')}
+                    data-dashboard-header-action="true"
+                    data-header-action-highlighted={
+                      highlightedHeaderAction === 'language' ? 'true' : 'false'
+                    }
+                    onPointerEnter={() => handleHeaderActionEnter('language')}
+                    onPointerLeave={handleHeaderActionLeave}
+                    onClick={() => setHoveredHeaderAction('language')}
+                    className="relative isolate border-0 bg-transparent shadow-none"
                   >
+                    {renderHeaderActionPill('language')}
                     <Globe className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -509,22 +655,32 @@ export function Header({
             </div>
 
             {/* 主题切换按钮 */}
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={(e) => {
+                setHoveredHeaderAction('theme')
                 const newTheme = actualTheme === 'dark' ? 'light' : 'dark'
                 toggleThemeWithTransition(newTheme, onThemeChange, e)
               }}
+              onPointerEnter={() => handleHeaderActionEnter('theme')}
+              onPointerLeave={handleHeaderActionLeave}
+              data-dashboard-header-action="true"
+              data-header-action-highlighted={
+                highlightedHeaderAction === 'theme' ? 'true' : 'false'
+              }
               aria-label={
                 actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')
               }
-              className="hover:bg-accent hidden rounded-lg p-2 sm:inline-flex"
+              className="relative isolate hidden border-0 bg-transparent shadow-none sm:inline-flex"
             >
+              {renderHeaderActionPill('theme')}
               {actualTheme === 'dark' ? (
                 <Sun className="h-5 w-5" />
               ) : (
                 <Moon className="h-5 w-5" />
               )}
-            </button>
+            </Button>
 
             {/* 分隔线 */}
             <div className="bg-border hidden h-6 w-px sm:block" />
@@ -533,13 +689,24 @@ export function Header({
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleLogout}
+              onClick={() => {
+                setHoveredHeaderAction('logout')
+                void handleLogout()
+              }}
               title={t('header.logout')}
               aria-label={t('header.logout')}
-              className="hidden sm:inline-flex"
+              data-dashboard-header-action="true"
+              data-header-action-highlighted={
+                highlightedHeaderAction === 'logout' ? 'true' : 'false'
+              }
+              onPointerEnter={() => handleHeaderActionEnter('logout')}
+              onPointerLeave={handleHeaderActionLeave}
+              className="relative isolate hidden border-0 bg-transparent shadow-none sm:inline-flex"
             >
+              {renderHeaderActionPill('logout')}
               <LogOut className="h-4 w-4" />
             </Button>
+            </LayoutGroup>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
