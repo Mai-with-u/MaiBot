@@ -52,6 +52,7 @@ const expectedPaths = [
   '/plugin-config',
   '/plugin-mirrors',
   '/mcp-settings',
+  '/data-transfer',
   '/logs',
   '/reasoning-process',
   '/planner-monitor',
@@ -75,9 +76,7 @@ function getRootBeforeLoad(): BeforeLoadFn {
 
 describe('router 路由表', () => {
   it('routesByPath 精确注册全部页面路径与通配 404', () => {
-    const actualKeys = Object.keys(
-      router.routesByPath as unknown as Record<string, unknown>
-    ).sort()
+    const actualKeys = Object.keys(router.routesByPath as unknown as Record<string, unknown>).sort()
     // '/*' 是根级通配 404 路由
     const expectedKeys = [...expectedPaths, '/*'].sort()
     expect(actualKeys).toEqual(expectedKeys)

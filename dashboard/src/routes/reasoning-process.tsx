@@ -170,11 +170,21 @@ type StructuredPromptPayload = {
   schema_version?: number
   request?: {
     kind?: string
+    operation?: string
+    request_type?: string
     selection_reason?: string
+    task_name?: string
   }
   metadata?: {
+    client_type?: string
+    created_at?: string
     model_name?: string
     duration_ms?: number
+    provider_name?: string
+    request_id?: string
+    session_id?: string | null
+    status?: string
+    updated_at?: string
   }
   messages?: StructuredPromptMessage[]
   output?: StructuredPromptOutput | null

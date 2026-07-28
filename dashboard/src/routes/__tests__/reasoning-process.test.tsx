@@ -324,6 +324,7 @@ describe('类型总览', () => {
       stem: 'request-123',
       text_path: null,
       json_path: '/prompts/request-123.json',
+      related_json_paths: ['/prompts/request-123.json'],
       display_title: '最终失败 · 上游服务不可用',
       action_preview: null,
     })

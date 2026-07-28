@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlmodel import SQLModel, Session
 
 from src.chat.utils import statistic
-from src.common.database.database_model import ModelUsage
+from src.common.database.database_model import ModelUsage, OnlineTime
 from src.services import statistics_service
 
 
@@ -17,28 +17,34 @@ def _model_usage(
     model_assign_name: str | None = "model-a",
     model_name: str = "upstream-model",
     time_cost: float = 1.0,
+    task_name: str | None = None,
+    prompt_tokens: int = 10,
+    cache_enabled: bool = False,
+    cache_hit_tokens: int = 0,
+    cache_miss_tokens: int = 0,
 ) -> ModelUsage:
     return ModelUsage(
         model_name=model_name,
         model_assign_name=model_assign_name,
         model_api_provider_name=provider_name,
         session_id="session-a",
+        task_name=task_name,
         request_type=request_type,
         time_cost=time_cost,
         timestamp=timestamp,
-        prompt_tokens=10,
+        prompt_tokens=prompt_tokens,
         completion_tokens=5,
-        total_tokens=15,
-        prompt_cache_enabled=False,
-        prompt_cache_hit_tokens=0,
-        prompt_cache_miss_tokens=0,
+        total_tokens=prompt_tokens + 5,
+        prompt_cache_enabled=cache_enabled,
+        prompt_cache_hit_tokens=cache_hit_tokens,
+        prompt_cache_miss_tokens=cache_miss_tokens,
         cost=0.01,
     )
 
 
 def _patch_statistics_database(monkeypatch, tmp_path, records: list[ModelUsage]) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'statistics.db'}")
-    SQLModel.metadata.create_all(engine, tables=[ModelUsage.__table__])
+    SQLModel.metadata.create_all(engine, tables=[ModelUsage.__table__, OnlineTime.__table__])
     with Session(engine) as session:
         session.add_all(records)
         session.commit()
@@ -51,6 +57,50 @@ def _patch_statistics_database(monkeypatch, tmp_path, records: list[ModelUsage])
                 session.commit()
 
     monkeypatch.setattr(statistics_service, "get_db_session", get_test_db_session)
+
+
+def test_summary_cache_rates_separate_all_and_chat_tasks(monkeypatch, tmp_path) -> None:
+    start_time = datetime(2026, 7, 1)
+    records = [
+        _model_usage(
+            start_time + timedelta(seconds=1),
+            task_name="replyer",
+            cache_enabled=True,
+            cache_hit_tokens=80,
+            cache_miss_tokens=20,
+            prompt_tokens=100,
+        ),
+        _model_usage(
+            start_time + timedelta(seconds=2),
+            task_name="planner",
+            cache_enabled=True,
+            cache_hit_tokens=30,
+            cache_miss_tokens=70,
+            prompt_tokens=100,
+        ),
+        _model_usage(
+            start_time + timedelta(seconds=3),
+            task_name="utils",
+            cache_enabled=True,
+            cache_hit_tokens=100,
+            cache_miss_tokens=0,
+            prompt_tokens=100,
+        ),
+    ]
+    _patch_statistics_database(monkeypatch, tmp_path, records)
+    monkeypatch.setattr(statistics_service, "count_messages", lambda **_: 0)
+
+    summary = statistics_service._get_summary_statistics_sync(
+        start_time,
+        start_time + timedelta(hours=1),
+    )
+
+    assert summary.cache_hit_tokens == 210
+    assert summary.cache_miss_tokens == 90
+    assert summary.cache_hit_rate == 0.7
+    assert summary.chat_cache_hit_tokens == 110
+    assert summary.chat_cache_miss_tokens == 90
+    assert summary.chat_cache_hit_rate == 0.55
 
 
 def test_fetch_model_usage_since_reads_records_in_batches(monkeypatch, tmp_path) -> None:

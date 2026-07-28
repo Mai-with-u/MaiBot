@@ -23,7 +23,7 @@
       "overview": "概览",
       "botConfig": "麦麦配置编辑",
       "botResources": "麦麦资源管理",
-      "extensionsMonitor": "插件与扩展",
+      "extensionsMonitor": "扩展与维护",
       "system": "系统"
     },
     "menu": {
@@ -45,6 +45,7 @@
       "configTemplate": "配置模板市场",
       "pluginConfig": "插件管理",
       "mcpSettings": "MCP 设置",
+      "dataTransfer": "数据迁移",
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
@@ -911,6 +912,7 @@
       "statisticsDesc": "查看使用统计",
       "plugins": "插件市场",
       "pluginsDesc": "浏览和安装插件",
+      "dataTransferDesc": "备份、导出或恢复 MaiBot 数据",
       "logs": "日志查看器",
       "logsDesc": "查看系统日志",
       "reasoningProcessDesc": "浏览 Maisaka prompt 推理记录",
@@ -1231,6 +1233,8 @@
       "title": "Prompt缓存",
       "description": "缓存输入Token的命中情况",
       "hitRate": "缓存命中率",
+      "all": "全部",
+      "chat": "聊天",
       "hitTokens": "命中Token",
       "missTokens": "未命中Token",
       "eligibleTokens": "参与统计 {{value}} Token"

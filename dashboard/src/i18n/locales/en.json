@@ -23,7 +23,7 @@
       "overview": "Overview",
       "botConfig": "Bot Configuration",
       "botResources": "Bot Resources",
-      "extensionsMonitor": "Plugins & Extensions",
+      "extensionsMonitor": "Extensions & Maintenance",
       "system": "System"
     },
     "menu": {
@@ -45,6 +45,7 @@
       "configTemplate": "Config Templates",
       "pluginConfig": "Plugin Management",
       "mcpSettings": "MCP Settings",
+      "dataTransfer": "Data Transfer",
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
@@ -911,6 +912,7 @@
       "statisticsDesc": "View usage statistics",
       "plugins": "Plugin Market",
       "pluginsDesc": "Browse and install plugins",
+      "dataTransferDesc": "Back up, export, or restore MaiBot data",
       "logs": "Log Viewer",
       "logsDesc": "View system logs",
       "reasoningProcessDesc": "Browse Maisaka prompt reasoning logs",
@@ -1233,6 +1235,8 @@
       "title": "Prompt Cache",
       "description": "Cache hits for input tokens",
       "hitRate": "Cache Hit Rate",
+      "all": "All",
+      "chat": "Chat",
       "hitTokens": "Hit Tokens",
       "missTokens": "Miss Tokens",
       "eligibleTokens": "{{value}} eligible tokens"

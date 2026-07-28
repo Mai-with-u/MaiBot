@@ -82,6 +82,9 @@ const dashboardData = {
     cache_hit_tokens: 24000,
     cache_miss_tokens: 24000,
     cache_hit_rate: 0.5,
+    chat_cache_hit_tokens: 18000,
+    chat_cache_miss_tokens: 12000,
+    chat_cache_hit_rate: 0.6,
     online_time: 3600,
     total_messages: 100,
     total_replies: 90,
@@ -214,6 +217,7 @@ describe('IndexPage 特征化', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText('home.title')).not.toBeInTheDocument()
     expect(screen.queryByText('home.versionCard.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('MaiBot 数据导入导出')).not.toBeInTheDocument()
 
     await screen.findByText('home.storage.manage')
     expect(screen.queryByText('home.quickActions.title')).not.toBeInTheDocument()
@@ -273,5 +277,17 @@ describe('IndexPage 特征化', () => {
         expect.objectContaining({ query: { hours: 168 } })
       )
     )
+  })
+
+  it('统计卡片隐藏描述并分别显示全部与聊天缓存命中率', async () => {
+    render(<IndexPage />)
+
+    expect(await screen.findByText('50.00%')).toBeInTheDocument()
+    expect(screen.getByText('60.00%')).toBeInTheDocument()
+    expect(screen.getByText('home.cache.all')).toBeInTheDocument()
+    expect(screen.getByText('home.cache.chat')).toBeInTheDocument()
+    expect(screen.queryByText('home.cache.description')).not.toBeInTheDocument()
+    expect(screen.queryByText('home.stats.overviewDesc')).not.toBeInTheDocument()
+    expect(screen.queryByText('home.charts.requestTrendDescCompact')).not.toBeInTheDocument()
   })
 })
