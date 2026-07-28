@@ -24,6 +24,7 @@ import {
 import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
+import { getPluginConfigRoutePath } from '../utils'
 
 type PluginStatusIcon = 'loading' | 'warning' | 'circuit'
 
@@ -133,13 +134,17 @@ export function usePluginList() {
     if (tabId) {
       params.set('tab', tabId)
     }
-    window.history.replaceState(null, '', `/plugin-config?${params.toString()}`)
+    window.history.replaceState(
+      null,
+      '',
+      `${getPluginConfigRoutePath()}?${params.toString()}`
+    )
   }
 
   const closePluginConfig = () => {
     setSelectedPlugin(null)
     setSelectedPluginTab(undefined)
-    window.history.replaceState(null, '', '/plugin-config')
+    window.history.replaceState(null, '', getPluginConfigRoutePath())
     void checkPluginUpdates()
   }
 
