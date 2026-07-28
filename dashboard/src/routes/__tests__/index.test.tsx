@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -228,11 +228,17 @@ describe('IndexPage 特征化', () => {
       screen.queryByRole('button', { name: 'home.quickActions.customize' })
     ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
-    const customizeButton = screen.getByRole('button', { name: 'home.quickActions.customize' })
-    expect(customizeButton.closest('[data-home-card-id]')).toHaveAttribute(
-      'data-home-card-id',
-      'builtin:quick-actions'
+    const quickActionsCard = document.querySelector(
+      '[data-home-card-id="builtin:quick-actions"]'
     )
+    expect(quickActionsCard).toBeInTheDocument()
+    await user.click(
+      within(quickActionsCard as HTMLElement).getByRole('button', {
+        name: 'home.cards.editCard',
+      })
+    )
+    const customizeButton = screen.getByRole('button', { name: 'home.quickActions.customize' })
+    expect(customizeButton).toBeInTheDocument()
     expect(document.querySelector('[data-home-storage-details="true"]')).toHaveClass(
       'lg:grid-cols-2'
     )
