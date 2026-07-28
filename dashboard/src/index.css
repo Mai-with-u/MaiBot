@@ -666,19 +666,9 @@
   }
 }
 
-:root[data-dashboard-style='future-retro'] [data-dashboard-shell='true']::after {
-  --retro-corner-lines-right: 0px;
-  --retro-corner-lines-bottom: 2px;
-  --retro-corner-lines-width: 1024px;
-  --retro-corner-lines-height: 12px;
-
-  content: '';
-  position: absolute;
-  inset: auto var(--retro-corner-lines-right) var(--retro-corner-lines-bottom) auto;
-  z-index: 0;
-  width: var(--retro-corner-lines-width);
-  height: var(--retro-corner-lines-height);
-  pointer-events: none;
+:root[data-dashboard-style='future-retro'] [data-home-version-stripes='true'] {
+  display: block;
+  height: 12px;
   background: linear-gradient(
     to bottom,
     var(--retro-ink) 0 calc(100% / 3),
@@ -689,10 +679,8 @@
 }
 
 @media (max-width: 640px) {
-  :root[data-dashboard-style='future-retro'] [data-dashboard-shell='true']::after {
-    --retro-corner-lines-width: 160px;
-    --retro-corner-lines-height: 9px;
-
+  :root[data-dashboard-style='future-retro'] [data-home-version-stripes='true'] {
+    height: 9px;
     opacity: 0.82;
   }
 }

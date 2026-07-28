@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HomeCardManager, type HomeCardDefinition } from './HomeCardManager'
@@ -39,5 +40,30 @@ describe('HomeCardManager 布局持久化', () => {
 
     view.rerender(<HomeCardManager cards={createCards()} pluginCards={[]} />)
     expect(setItemSpy).not.toHaveBeenCalled()
+  })
+
+  it('编辑模式通过卡片通用接口编辑内容', async () => {
+    const user = userEvent.setup()
+    const onEdit = vi.fn()
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:editable',
+            editLabel: '编辑测试内容',
+            onEdit,
+            render: () => <div>可编辑卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: '编辑测试内容' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    await user.click(screen.getByRole('button', { name: '编辑测试内容' }))
+    expect(onEdit).toHaveBeenCalledOnce()
   })
 })

@@ -16,7 +16,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ExternalLink, GripVertical, Maximize2, Plus, RotateCcw, X } from 'lucide-react'
+import { ExternalLink, GripVertical, Maximize2, Pencil, Plus, RotateCcw, X } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -40,7 +40,7 @@ import type { PluginHomeCard, PluginHomeCardContent, PluginHomeCardWidth } from 
 import { cn } from '@/lib/utils'
 
 const HOME_CARD_LAYOUT_STORAGE_KEY = 'maibot-home-card-layout-v1'
-const HOME_CARD_LOW_ROW_HEIGHT = 236
+const HOME_CARD_LOW_ROW_HEIGHT = 192
 const HOME_CARD_HIGH_ROW_HEIGHT = 360
 const HOME_CARD_GRID_GAP = 16
 const HOME_CARD_SEPARATOR_ROW_HEIGHT = 34
@@ -74,6 +74,8 @@ export interface HomeCardDefinition {
   preferredHeight?: HomeCardRowMode
   defaultHidden?: boolean
   category?: HomeCardCategory
+  editLabel?: string
+  onEdit?: () => void
   source: HomeCardSource
   render: () => ReactNode
 }
@@ -506,6 +508,7 @@ function SortableHomeCard({
   onHide: (id: string) => void
   onResize: (id: string) => void
 }) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
     disabled: !editing,
@@ -514,6 +517,7 @@ function SortableHomeCard({
     transform: CSS.Translate.toString(transform),
     transition,
   }
+  const editLabel = card.editLabel ?? t('home.cards.editContent')
 
   return (
     <div
@@ -568,6 +572,22 @@ function SortableHomeCard({
               <TooltipContent>
                 {preferredWidth ? `调整尺寸（当前 ${preferredWidth}）` : '调整尺寸'}
               </TooltipContent>
+            </Tooltip>
+          )}
+          {card.onEdit && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  aria-label={editLabel}
+                  onClick={card.onEdit}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{editLabel}</TooltipContent>
             </Tooltip>
           )}
           <Tooltip>

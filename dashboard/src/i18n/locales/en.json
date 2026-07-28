@@ -1085,6 +1085,7 @@
     "cards": {
       "add": "Add card",
       "edit": "Edit cards",
+      "editContent": "Edit card content",
       "done": "Done",
       "reset": "Restore default layout",
       "row": {

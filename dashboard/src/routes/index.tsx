@@ -1,18 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
-import {
-  AlertCircle,
-  CheckCircle2,
-  Database,
-  ExternalLink,
-  FileText,
-  HardDrive,
-  ImageIcon,
-  Plus,
-  Power,
-  RefreshCw,
-  Smile,
-} from 'lucide-react'
+import { AlertCircle, CheckCircle2, ExternalLink, HardDrive, RefreshCw } from 'lucide-react'
 import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,7 +22,6 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
@@ -332,7 +319,6 @@ function IndexPageContent() {
       label: t('home.storage.images'),
       size: imageCacheSize,
       detail: t('home.storage.files', { count: imageCacheDirectory?.file_count ?? 0 }),
-      icon: ImageIcon,
     },
     {
       key: 'emoji',
@@ -342,14 +328,12 @@ function IndexPageContent() {
         files: emojiCacheDirectory?.file_count ?? 0,
         records: emojiCacheDirectory?.db_records ?? 0,
       }),
-      icon: Smile,
     },
     {
       key: 'logs',
       label: t('home.storage.logs'),
       size: logCacheSize,
       detail: t('home.storage.files', { count: logCacheDirectory?.file_count ?? 0 }),
-      icon: FileText,
     },
     {
       key: 'database',
@@ -359,7 +343,6 @@ function IndexPageContent() {
         files: localCacheStats?.database.files.length ?? 0,
         tables: localCacheStats?.database.tables.length ?? 0,
       }),
-      icon: Database,
     },
   ]
 
@@ -372,17 +355,7 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex h-5 items-center gap-2 text-sm leading-5 font-medium">
-              <StreamlineIcon
-                name="button-power-circle-1-remix"
-                fallback={Power}
-                className="h-4 w-4"
-              />
-              {t('home.botStatus.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
             <div className="space-y-3">
               {themeConfig.dashboardStyle === 'future-retro' ? (
                 <div className="space-y-2">
@@ -529,21 +502,12 @@ function IndexPageContent() {
       title: t('home.quickActions.title'),
       width: 'medium',
       category: 'status',
+      editLabel: t('home.quickActions.customize'),
+      onEdit: () => setQuickShortcutDialogOpen(true),
       source: 'builtin',
       render: () => (
         <Card className="h-full">
           <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
-            {selectedQuickShortcuts.length > 0 && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setQuickShortcutDialogOpen(true)}
-                aria-label={t('home.quickActions.customize')}
-                className="absolute top-3 right-4 h-8 w-8"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            )}
             {selectedQuickShortcuts.length === 0 ? (
               <div className="text-muted-foreground flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -556,7 +520,7 @@ function IndexPageContent() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2 pr-12">
+              <div className="flex flex-wrap gap-2">
                 {selectedQuickShortcuts.map((shortcut) => {
                   const Icon = shortcut.icon
                   const content = (
@@ -754,13 +718,11 @@ function IndexPageContent() {
                   className="grid grid-cols-1 gap-x-5 gap-y-3 lg:grid-cols-2"
                 >
                   {storageDetails.map((item) => {
-                    const Icon = item.icon
                     const percent = totalStorageSize > 0 ? (item.size / totalStorageSize) * 100 : 0
                     const visiblePercent = item.size > 0 ? Math.max(percent, 2) : 0
                     return (
                       <div key={item.key} className="space-y-1.5">
                         <div className="flex min-w-0 items-center gap-2 text-xs">
-                          <Icon className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
                           <span className="shrink-0 font-bold">{item.label}</span>
                           <span className="text-primary shrink-0 font-semibold">
                             {formatStorageBytes(item.size)}
@@ -881,6 +843,11 @@ function IndexPageContent() {
             </a>
           )}
           {versionsMismatch && <span className="text-sm">{t('home.versionCard.mismatch')}</span>}
+          <span
+            aria-hidden="true"
+            data-home-version-stripes="true"
+            className="ml-auto hidden min-w-24 flex-1 basis-40"
+          />
         </div>
 
         <HomeCardManager

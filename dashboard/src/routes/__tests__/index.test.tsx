@@ -195,6 +195,7 @@ describe('IndexPage 特征化', () => {
   })
 
   it('首页使用精简版本行且不再显示标题和版本卡片', async () => {
+    const user = userEvent.setup()
     window.localStorage.setItem(
       'maibot-home-card-layout-v1',
       JSON.stringify({
@@ -222,8 +223,15 @@ describe('IndexPage 特征化', () => {
     await screen.findByText('home.storage.manage')
     expect(screen.queryByText('home.quickActions.title')).not.toBeInTheDocument()
     expect(screen.queryByText('home.storage.title')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'home.quickActions.customize' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
     const customizeButton = screen.getByRole('button', { name: 'home.quickActions.customize' })
-    expect(customizeButton.parentElement).toHaveAttribute('data-home-titleless-content', 'true')
+    expect(customizeButton.closest('[data-home-card-id]')).toHaveAttribute(
+      'data-home-card-id',
+      'builtin:quick-actions'
+    )
     expect(document.querySelector('[data-home-storage-details="true"]')).toHaveClass(
       'lg:grid-cols-2'
     )
