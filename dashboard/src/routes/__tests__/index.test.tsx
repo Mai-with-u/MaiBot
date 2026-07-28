@@ -228,9 +228,7 @@ describe('IndexPage 特征化', () => {
       screen.queryByRole('button', { name: 'home.quickActions.customize' })
     ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
-    const quickActionsCard = document.querySelector(
-      '[data-home-card-id="builtin:quick-actions"]'
-    )
+    const quickActionsCard = document.querySelector('[data-home-card-id="builtin:quick-actions"]')
     expect(quickActionsCard).toBeInTheDocument()
     await user.click(
       within(quickActionsCard as HTMLElement).getByRole('button', {
