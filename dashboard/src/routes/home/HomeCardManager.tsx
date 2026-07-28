@@ -276,6 +276,13 @@ function buildAdaptiveCardWidths(
   let currentRowColumns = 0
 
   for (const card of cards) {
+    // 分隔元素在视觉上始终占满整行，不参与普通卡片的自适应缩宽。
+    if (card.variant === 'separator') {
+      widths.set(card.id, 'full')
+      currentRowColumns = 0
+      continue
+    }
+
     const preferredWidth = widthOverrides[card.id] ?? card.width
     const preferredColumns = cardWidthColumns(preferredWidth)
     const remainingColumns = 10 - currentRowColumns

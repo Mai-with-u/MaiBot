@@ -11,6 +11,7 @@ import * as configApi from '@/lib/config-api'
 import * as expressionApi from '@/lib/expression-api'
 import * as systemApi from '@/lib/system-api'
 import * as pluginApi from '@/lib/plugin-api'
+import { APP_VERSION } from '@/lib/version'
 
 afterEach(() => {
   cleanup()
@@ -212,7 +213,7 @@ describe('IndexPage 特征化', () => {
     render(<IndexPage />)
 
     expect(await screen.findByText('V1.0.0')).toBeInTheDocument()
-    expect(screen.getByText('V1.6.0')).toBeInTheDocument()
+    expect(screen.getByText(`V${APP_VERSION}`)).toBeInTheDocument()
     expect(
       await screen.findByRole('link', { name: /home\.versionCard\.updateAvailable V2\.0\.0/ })
     ).toBeInTheDocument()
