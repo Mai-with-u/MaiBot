@@ -16,7 +16,9 @@ def _write_project_files(
     main_program_version: str = "1.2.3",
     required_webui_version: str = "2.0.0.dev10",
     local_webui_version: str = "2.0.0.dev10",
+    dashboard_requirement: str | None = None,
 ) -> None:
+    requirement = dashboard_requirement or f"maibot-dashboard>={required_webui_version}"
     (project_root / "dashboard").mkdir()
     (project_root / "pyproject.toml").write_text(
         "\n".join(
@@ -24,7 +26,7 @@ def _write_project_files(
                 "[project]",
                 'name = "MaiBot"',
                 f'version = "{main_program_version}"',
-                f'dependencies = ["maibot-dashboard>={required_webui_version}"]',
+                f'dependencies = ["{requirement}"]',
             ]
         ),
         encoding="utf-8",
@@ -51,8 +53,20 @@ def test_compare_versions(left: str, right: str, expected: int) -> None:
     assert compare_versions(left, right) == expected
 
 
-def test_read_webui_versions_from_project_files(tmp_path: Path) -> None:
-    _write_project_files(tmp_path)
+@pytest.mark.parametrize(
+    "dashboard_requirement",
+    [
+        "maibot-dashboard>=2.0.0.dev10",
+        "maibot-dashboard >= 2.0.0.dev10",
+        "maibot-dashboard==2.0.0.dev10",
+        "maibot-dashboard == 2.0.0.dev10",
+    ],
+)
+def test_read_webui_versions_from_project_files(
+    tmp_path: Path,
+    dashboard_requirement: str,
+) -> None:
+    _write_project_files(tmp_path, dashboard_requirement=dashboard_requirement)
 
     assert read_required_webui_version(tmp_path) == "2.0.0.dev10"
     assert read_local_webui_version(tmp_path) == "2.0.0.dev10"
