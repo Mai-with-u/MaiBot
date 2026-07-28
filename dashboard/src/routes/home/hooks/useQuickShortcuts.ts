@@ -58,7 +58,9 @@ function loadQuickShortcutIds(): string[] {
   try {
     const parsed = JSON.parse(stored)
     if (Array.isArray(parsed)) {
-      const ids = parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      const ids = parsed.filter(
+        (item): item is string => typeof item === 'string' && item.length > 0
+      )
       return ids.length > 0 ? Array.from(new Set(ids)) : fallback
     }
   } catch {
@@ -302,7 +304,8 @@ export function useQuickShortcuts({
         description: t('home.quickActions.descriptions.expressionReview'),
         icon: ClipboardCheck,
         action: onOpenReviewer,
-        badge: uncheckedCount > 0 ? (uncheckedCount > 99 ? '99+' : String(uncheckedCount)) : undefined,
+        badge:
+          uncheckedCount > 0 ? (uncheckedCount > 99 ? '99+' : String(uncheckedCount)) : undefined,
       },
       {
         id: 'route:logs',
@@ -447,7 +450,9 @@ export function useQuickShortcuts({
   const toggleQuickShortcut = useCallback(
     (id: string, checked: boolean) => {
       updateQuickShortcutIds(
-        checked ? [...quickShortcutIds, id] : quickShortcutIds.filter((shortcutId) => shortcutId !== id)
+        checked
+          ? [...quickShortcutIds, id]
+          : quickShortcutIds.filter((shortcutId) => shortcutId !== id)
       )
     },
     [quickShortcutIds, updateQuickShortcutIds]

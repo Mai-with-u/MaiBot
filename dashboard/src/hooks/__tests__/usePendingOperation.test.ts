@@ -69,7 +69,7 @@ describe('usePendingOperation', () => {
       () =>
         new Promise<void>((resolve) => {
           resolveConfirm = resolve
-        }),
+        })
     )
     const { result } = renderHook(() => usePendingOperation<number>({ onConfirm }))
 

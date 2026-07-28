@@ -158,9 +158,7 @@ const setSaturation = (hsl: string, saturation: number): string => {
 export const getReadableForeground = (hsl: string): string => {
   const { h, s, l } = parseHSL(hsl)
   const neutralSaturation = clamp(s * 0.15, 6, 20)
-  return l > 60
-    ? formatHSL(h, neutralSaturation, 10)
-    : formatHSL(h, neutralSaturation, 96)
+  return l > 60 ? formatHSL(h, neutralSaturation, 10) : formatHSL(h, neutralSaturation, 96)
 }
 
 const deriveSurfaceColor = (
@@ -168,12 +166,12 @@ const deriveSurfaceColor = (
   saturationRatio: number,
   lightness: number,
   minSaturation: number,
-  maxSaturation: number,
+  maxSaturation: number
 ): string => {
   return formatHSL(
     accent.h,
     clamp(accent.s * saturationRatio, minSaturation, maxSaturation),
-    lightness,
+    lightness
   )
 }
 
@@ -188,39 +186,23 @@ export const generatePalette = (accentHSL: string, isDark: boolean): ColorTokens
     ? deriveSurfaceColor(accent, 0.14, 97.2, 5, 18)
     : deriveSurfaceColor(accent, 0.28, 9.5, 8, 28)
 
-  const secondary = formatHSL(
-    accent.h,
-    clamp(accent.s * 0.35, 8, 40),
-    isDark ? 17.5 : 96,
-  )
+  const secondary = formatHSL(accent.h, clamp(accent.s * 0.35, 8, 40), isDark ? 17.5 : 96)
 
-  const muted = formatHSL(
-    accent.h,
-    clamp(accent.s * 0.12, 2, 18),
-    isDark ? 17.5 : 96,
-  )
+  const muted = formatHSL(accent.h, clamp(accent.s * 0.12, 2, 18), isDark ? 17.5 : 96)
 
   const accentVariant = formatHSL(
     accent.h + 35,
     clamp(accent.s * 0.6, 20, 85),
-    isDark ? clamp(accent.l * 0.6 + 8, 25, 60) : clamp(accent.l * 0.8 + 14, 40, 75),
+    isDark ? clamp(accent.l * 0.6 + 8, 25, 60) : clamp(accent.l * 0.8 + 14, 40, 75)
   )
 
-  const destructive = formatHSL(
-    0,
-    clamp(accent.s, 60, 90),
-    isDark ? 30.6 : 60.2,
-  )
+  const destructive = formatHSL(0, clamp(accent.s, 60, 90), isDark ? 30.6 : 60.2)
 
-  const border = formatHSL(
-    accent.h,
-    clamp(accent.s * 0.2, 5, 25),
-    isDark ? 17.5 : 91.4,
-  )
+  const border = formatHSL(accent.h, clamp(accent.s * 0.2, 5, 25), isDark ? 17.5 : 91.4)
 
   const mutedForeground = setSaturation(
     setLightness(muted, isDark ? 65.1 : 46.9),
-    clamp(accent.s * 0.2, 10, 30),
+    clamp(accent.s * 0.2, 10, 30)
   )
 
   const chartBase = formatHSL(accent.h, accent.s, accent.l)

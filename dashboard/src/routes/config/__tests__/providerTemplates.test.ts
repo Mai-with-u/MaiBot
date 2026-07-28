@@ -12,7 +12,10 @@ describe('providerTemplates', () => {
   })
 
   it('为未知自定义 Gemini 端点使用 Gemini 解析器', () => {
-    const template = resolveModelFetcherTemplate('https://generativelanguage.example.com/v1beta', 'gemini')
+    const template = resolveModelFetcherTemplate(
+      'https://generativelanguage.example.com/v1beta',
+      'gemini'
+    )
 
     expect(template?.id).toBe('custom-gemini')
     expect(template?.client_type).toBe('gemini')

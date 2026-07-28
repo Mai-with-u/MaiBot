@@ -149,7 +149,7 @@ export const PluginStatus = {
   DISABLED: 'disabled',
 } as const
 
-export type PluginStatusType = typeof PluginStatus[keyof typeof PluginStatus]
+export type PluginStatusType = (typeof PluginStatus)[keyof typeof PluginStatus]
 
 /**
  * 插件搜索筛选参数

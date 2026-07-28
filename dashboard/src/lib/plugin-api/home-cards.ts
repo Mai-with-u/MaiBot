@@ -12,6 +12,7 @@ export interface PluginHomeCard {
   name: string
   plugin_id: string
   title: string
+  show_title?: boolean
   description: string
   content: PluginHomeCardContent
   link_url: string

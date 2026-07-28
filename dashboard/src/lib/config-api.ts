@@ -12,7 +12,10 @@ import type { ConfigSchema } from '@/types/config-schema'
 const API_BASE = '/api/webui/config'
 export const BOT_CONFIG_UPDATED_EVENT = 'maibot:bot-config-updated'
 const schemaRequestCache = new Map<string, Promise<ConfigSchema>>()
-const configDataCache = new Map<string, { timestamp: number; request: Promise<Record<string, unknown>> }>()
+const configDataCache = new Map<
+  string,
+  { timestamp: number; request: Promise<Record<string, unknown>> }
+>()
 const CONFIG_DATA_CACHE_TTL = 30_000
 
 function unwrapConfigResponse(data: unknown): Record<string, unknown> {
@@ -232,10 +235,13 @@ export async function getModelConfigVersions(): Promise<ModelConfigVersionListRe
  * 将当前模型配置保存为副本
  */
 export async function createModelConfigVersion(label: string): Promise<ModelConfigVersionInfo> {
-  const result = await backendApi.post<{ version: ModelConfigVersionInfo }>(`${API_BASE}/model/versions`, {
-    body: { label },
-    errorMessage: '创建模型配置副本失败',
-  })
+  const result = await backendApi.post<{ version: ModelConfigVersionInfo }>(
+    `${API_BASE}/model/versions`,
+    {
+      body: { label },
+      errorMessage: '创建模型配置副本失败',
+    }
+  )
   return result.version
 }
 
@@ -287,10 +293,13 @@ export async function updateBotConfigSection(
   sectionName: string,
   sectionData: unknown
 ): Promise<Record<string, unknown>> {
-  const result = await backendApi.post<Record<string, unknown>>(`${API_BASE}/bot/section/${sectionName}`, {
-    body: sectionData,
-    errorMessage: '更新配置失败',
-  })
+  const result = await backendApi.post<Record<string, unknown>>(
+    `${API_BASE}/bot/section/${sectionName}`,
+    {
+      body: sectionData,
+      errorMessage: '更新配置失败',
+    }
+  )
   invalidateConfigDataCache('bot')
   notifyBotConfigUpdated()
   return result
@@ -303,10 +312,13 @@ export async function updateModelConfigSection(
   sectionName: string,
   sectionData: unknown
 ): Promise<Record<string, unknown>> {
-  const result = await backendApi.post<Record<string, unknown>>(`${API_BASE}/model/section/${sectionName}`, {
-    body: sectionData,
-    errorMessage: '更新配置失败',
-  })
+  const result = await backendApi.post<Record<string, unknown>>(
+    `${API_BASE}/model/section/${sectionName}`,
+    {
+      body: sectionData,
+      errorMessage: '更新配置失败',
+    }
+  )
   invalidateConfigDataCache('model')
   return result
 }
@@ -422,9 +434,7 @@ export interface ModelTestResult {
  * 测试提供商连接状态（通过提供商名称）
  * @param providerName 提供商名称
  */
-export async function testProviderConnection(
-  providerName: string
-): Promise<TestConnectionResult> {
+export async function testProviderConnection(providerName: string): Promise<TestConnectionResult> {
   return backendApi.post<TestConnectionResult>('/api/webui/models/test-connection-by-name', {
     query: { provider_name: providerName },
     errorMessage: '测试提供商连接失败',

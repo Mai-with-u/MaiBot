@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, CheckCircle2, ImageIcon, Plus, Upload, X } from 'lucide-react'
 import Dashboard from '@uppy/react/dashboard'
 import Uppy from '@uppy/core'
@@ -329,7 +329,13 @@ export function EmojiUploadDialog({
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFileInfo[]>([])
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  const createdPreviewUrlsRef = useRef<Set<string>>(new Set())
   const { toast } = useToast()
+
+  const releaseCreatedPreviewUrls = useCallback(() => {
+    createdPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    createdPreviewUrlsRef.current.clear()
+  }, [])
 
   // 创建 Uppy 实例（仅用于文件选择，不自动上传）
   const uppy = useMemo(() => {
@@ -480,14 +486,21 @@ export function EmojiUploadDialog({
       const files = uppy.getFiles()
       if (files.length === 0) return
 
+      releaseCreatedPreviewUrls()
       // 将选择的文件转换为我们的数据结构
-      const fileInfos: UploadedFileInfo[] = files.map((file) => ({
-        id: file.id,
-        name: file.name,
-        previewUrl: file.preview || URL.createObjectURL(file.data as File),
-        tags: [''],
-        file: file.data as File,
-      }))
+      const fileInfos: UploadedFileInfo[] = files.map((file) => {
+        const previewUrl = file.preview || URL.createObjectURL(file.data as File)
+        if (!file.preview) {
+          createdPreviewUrlsRef.current.add(previewUrl)
+        }
+        return {
+          id: file.id,
+          name: file.name,
+          previewUrl,
+          tags: [''],
+          file: file.data as File,
+        }
+      })
 
       setUploadedFiles(fileInfos)
 
@@ -504,18 +517,21 @@ export function EmojiUploadDialog({
     return () => {
       uppy.off('upload', handleUpload)
     }
-  }, [uppy])
+  }, [releaseCreatedPreviewUrls, uppy])
 
   // 对话框关闭时重置状态
   useEffect(() => {
     if (!open) {
+      releaseCreatedPreviewUrls()
       uppy.cancelAll()
       setStep('select')
       setUploadedFiles([])
       setSelectedFileId(null)
       setUploading(false)
     }
-  }, [open, uppy])
+  }, [open, releaseCreatedPreviewUrls, uppy])
+
+  useEffect(() => releaseCreatedPreviewUrls, [releaseCreatedPreviewUrls])
 
   const updateFileTag = useCallback(
     (fileId: string, tagIndex: number, value: string) => {
@@ -571,11 +587,12 @@ export function EmojiUploadDialog({
   // 返回上一步
   const handleBack = useCallback(() => {
     if (step === 'edit-single' || step === 'edit-multiple') {
+      releaseCreatedPreviewUrls()
       setStep('select')
       setUploadedFiles([])
       setSelectedFileId(null)
     }
-  }, [step])
+  }, [releaseCreatedPreviewUrls, step])
 
   // 执行实际上传
   const handleSubmit = useCallback(async () => {

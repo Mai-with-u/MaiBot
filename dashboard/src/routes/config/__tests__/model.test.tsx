@@ -13,7 +13,11 @@ afterEach(() => {
 })
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }))
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => vi.fn(),
+  useRouterState: ({ select }: { select: (state: { location: { searchStr: string } }) => string }) =>
+    select({ location: { searchStr: '' } }),
+}))
 vi.mock('@/lib/restart-context', () => ({
   RestartProvider: ({ children }: { children: React.ReactNode }) => children,
   useRestart: () => ({ isRestarting: false, triggerRestart: vi.fn() }),
@@ -132,6 +136,7 @@ function baseVersions() {
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/config/model')
   vi.mocked(configApi.getModelConfigCached).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfig).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(baseSchema() as never)
@@ -225,6 +230,7 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     await renderModelPage()
 
+    await user.click(screen.getByRole('tab', { name: '模型列表' }))
     await user.click(screen.getByText('edit-model-gpt-4'))
     const nameInput = await screen.findByRole('textbox', { name: '模型名称 *' })
     await user.clear(nameInput)

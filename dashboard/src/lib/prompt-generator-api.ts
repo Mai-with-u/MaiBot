@@ -69,10 +69,13 @@ export async function generatePromptPersona(
   payload: PromptGeneratorRequest
 ): Promise<PromptGeneratorResponse> {
   try {
-    return await backendApi.post<PromptGeneratorResponse>('/api/webui/config/prompt-generator/generate', {
-      body: payload,
-      errorMessage: '生成人设 Prompt 失败',
-    })
+    return await backendApi.post<PromptGeneratorResponse>(
+      '/api/webui/config/prompt-generator/generate',
+      {
+        body: payload,
+        errorMessage: '生成人设 Prompt 失败',
+      }
+    )
   } catch (error) {
     normalizePromptGeneratorError(error)
   }

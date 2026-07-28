@@ -132,3 +132,8 @@ description = "Used during context trimming to summarize removed chat history in
 display_name = "Memory Retrieval ReAct Header"
 advanced = true
 description = "Advanced memory retrieval prompt header used by the ReAct-style memory query flow."
+
+[webui_ai_search]
+display_name = "WebUI AI Search"
+advanced = true
+description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."

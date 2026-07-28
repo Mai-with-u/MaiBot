@@ -167,15 +167,11 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
 
   // 订阅全局 WebSocket 连接
   useEffect(() => {
-    // 初始化时加载缓存的日志
-    const cachedLogs = logWebSocket.getAllLogs()
-    setLogs(cachedLogs)
-    
-    // 订阅日志消息 - 直接使用全局缓存而不是组件状态
-    const unsubscribeLogs = logWebSocket.onLog(() => {
-      // 每次收到新日志，重新从全局缓存加载
-      setLogs(logWebSocket.getAllLogs())
+    // 日志管理器会批量推送快照，避免每条日志都触发一次 React 更新。
+    const unsubscribeLogs = logWebSocket.onLog((nextLogs) => {
+      setLogs(nextLogs)
     })
+    setLogs(logWebSocket.getAllLogs())
 
     // 订阅连接状态
     const unsubscribeConnection = logWebSocket.onConnectionChange((isConnected) => {
@@ -216,7 +212,6 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
   // 清空日志
   const handleClear = () => {
     logWebSocket.clearLogs() // 清空全局缓存
-    setLogs([])
   }
 
   // 导出日志为 TXT 格式

@@ -36,7 +36,6 @@ function shouldSyncRemoteWebUIStyle(): boolean {
 export function ThemeProvider({
   children,
   defaultTheme = 'system',
-  storageKey: _storageKey,
 }: ThemeProviderProps) {
   const [themeMode, setThemeMode] = useState<Theme>(() => {
     const saved = localStorage.getItem(THEME_STORAGE_KEYS.MODE) as Theme | null

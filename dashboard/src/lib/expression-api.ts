@@ -26,6 +26,7 @@ import type {
   ExpressionListResponse,
   ExpressionReviewLogApproveResponse,
   ExpressionReviewLogListResponse,
+  ExpressionStats,
   ExpressionStatsResponse,
   ExpressionUpdateRequest,
   ExpressionUpdateResponse,
@@ -40,9 +41,7 @@ const API_BASE = '/api/webui/expression'
 /**
  * 获取聊天列表
  */
-export async function getChatList(
-  params: { include_legacy?: boolean } = {}
-): Promise<ChatInfo[]> {
+export async function getChatList(params: { include_legacy?: boolean } = {}): Promise<ChatInfo[]> {
   const data = await backendApi.get<ChatListResponse>(`${API_BASE}/chats`, {
     query: { include_legacy: params.include_legacy ? true : undefined },
     errorMessage: '获取聊天列表失败',
@@ -149,10 +148,13 @@ export async function clearExpressions(params: {
 export async function previewLegacyExpressionImport(params: {
   db_path: string
 }): Promise<LegacyExpressionImportPreviewResponse> {
-  return backendApi.post<LegacyExpressionImportPreviewResponse>(`${API_BASE}/legacy-import/preview`, {
-    body: params,
-    errorMessage: '预览旧版导入失败',
-  })
+  return backendApi.post<LegacyExpressionImportPreviewResponse>(
+    `${API_BASE}/legacy-import/preview`,
+    {
+      body: params,
+      errorMessage: '预览旧版导入失败',
+    }
+  )
 }
 
 /**
@@ -192,7 +194,7 @@ export async function importLegacyExpressions(params: {
 /**
  * 获取表达方式详细信息
  */
-export async function getExpressionDetail(expressionId: number): Promise<any> {
+export async function getExpressionDetail(expressionId: number): Promise<Expression> {
   const data = await backendApi.get<ExpressionDetailResponse>(`${API_BASE}/${expressionId}`, {
     errorMessage: '获取表达方式详情失败',
   })
@@ -202,7 +204,7 @@ export async function getExpressionDetail(expressionId: number): Promise<any> {
 /**
  * 创建表达方式
  */
-export async function createExpression(data: ExpressionCreateRequest): Promise<any> {
+export async function createExpression(data: ExpressionCreateRequest): Promise<Expression> {
   const responseData = await backendApi.post<ExpressionCreateResponse>(`${API_BASE}/`, {
     body: data,
     errorMessage: '创建表达方式失败',
@@ -216,7 +218,7 @@ export async function createExpression(data: ExpressionCreateRequest): Promise<a
 export async function updateExpression(
   expressionId: number,
   data: ExpressionUpdateRequest
-): Promise<any> {
+): Promise<Expression | Record<string, never>> {
   const responseData = await backendApi.patch<ExpressionUpdateResponse>(
     `${API_BASE}/${expressionId}`,
     {
@@ -251,7 +253,7 @@ export async function updateExpressionReviewStatus(
 /**
  * 删除表达方式
  */
-export async function deleteExpression(expressionId: number): Promise<any> {
+export async function deleteExpression(expressionId: number): Promise<Record<string, never>> {
   const data = await backendApi.delete<ExpressionDeleteResponse>(`${API_BASE}/${expressionId}`, {
     errorMessage: '删除表达方式失败',
   })
@@ -262,7 +264,9 @@ export async function deleteExpression(expressionId: number): Promise<any> {
 /**
  * 批量删除表达方式
  */
-export async function batchDeleteExpressions(expressionIds: number[]): Promise<any> {
+export async function batchDeleteExpressions(
+  expressionIds: number[]
+): Promise<Record<string, never>> {
   const data = await backendApi.post<ExpressionDeleteResponse>(`${API_BASE}/batch/delete`, {
     body: { ids: expressionIds },
     errorMessage: '批量删除表达方式失败',
@@ -276,7 +280,7 @@ export async function batchDeleteExpressions(expressionIds: number[]): Promise<a
  */
 export async function getExpressionStats(
   params: { include_legacy?: boolean } = {}
-): Promise<any> {
+): Promise<ExpressionStats> {
   const data = await backendApi.get<ExpressionStatsResponse>(`${API_BASE}/stats/summary`, {
     query: { include_legacy: params.include_legacy ? true : undefined },
     errorMessage: '获取统计数据失败',

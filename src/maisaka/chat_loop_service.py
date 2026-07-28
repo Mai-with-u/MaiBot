@@ -470,6 +470,54 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                 allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
+            HookSpec(
+                name="maisaka.reply.before_post_process",
+                description="在 Maisaka 对最终可见回复执行文本后处理前触发，可按本次回复调整后处理策略。",
+                parameters_schema=build_object_schema(
+                    {
+                        "response": {
+                            "type": "string",
+                            "description": "即将执行文本后处理的最终回复正文。",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "当前会话 ID。",
+                        },
+                        "reply_message_id": {
+                            "type": "string",
+                            "description": "被回复消息 ID。",
+                        },
+                        "reply_tool_args": {
+                            "type": "object",
+                            "description": "本次 reply 工具除内部参数外的透传参数。",
+                        },
+                        "skip_post_process": {
+                            "type": "boolean",
+                            "description": "是否跳过本次回复的全部文本后处理。",
+                        },
+                        "enable_splitter": {
+                            "type": "boolean",
+                            "description": "本次回复是否允许按全局配置进行文本拆分。",
+                        },
+                        "enable_chinese_typo": {
+                            "type": "boolean",
+                            "description": "本次回复是否允许按全局配置注入中文错别字。",
+                        },
+                    },
+                    required=[
+                        "response",
+                        "session_id",
+                        "reply_message_id",
+                        "reply_tool_args",
+                        "skip_post_process",
+                        "enable_splitter",
+                        "enable_chinese_typo",
+                    ],
+                ),
+                default_timeout_ms=6000,
+                allow_abort=False,
+                allow_kwargs_mutation=True,
+            ),
         ]
     )
 

@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { ArrowRight, Check, CircleAlert, CircleCheck, CircleX } from 'lucide-react'
 
-import { MarkdownRenderer } from '@/components/markdown-renderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,6 +30,12 @@ import {
 } from '@/lib/system-api'
 
 type NoticeStage = 'update' | 'compatibility' | null
+
+const MarkdownRenderer = lazy(() =>
+  import('@/components/markdown-renderer').then((module) => ({
+    default: module.MarkdownRenderer,
+  }))
+)
 
 function getUpdateStatus(plugin: IncompatiblePluginNotice) {
   if (plugin.update_status === 'available') {
@@ -134,7 +147,15 @@ export function UpdateNoticeDialog() {
             <DialogDescription>查看本次 MaiBot 更新包含的功能与修复。</DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[min(70vh,42rem)]">
-            <MarkdownRenderer content={notice.content} className="[&_h1:first-child]:mt-0" />
+            <Suspense
+              fallback={
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  正在加载更新内容…
+                </div>
+              }
+            >
+              <MarkdownRenderer content={notice.content} className="[&_h1:first-child]:mt-0" />
+            </Suspense>
           </DialogBody>
           <DialogFooter>
             <Button type="button" onClick={finishUpdateNotice}>

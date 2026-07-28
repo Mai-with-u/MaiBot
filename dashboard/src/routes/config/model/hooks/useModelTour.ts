@@ -5,7 +5,11 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 
 import { useTour } from '@/components/tour'
-import { MODEL_ASSIGNMENT_TOUR_ID, STEP_ROUTE_MAP, modelAssignmentTourSteps } from '@/components/tour/tours/model-assignment-tour'
+import {
+  MODEL_ASSIGNMENT_TOUR_ID,
+  STEP_ROUTE_MAP,
+  modelAssignmentTourSteps,
+} from '@/components/tour/tours/model-assignment-tour'
 
 interface UseModelTourOptions {
   /** 打开模型编辑对话框回调 */
@@ -142,22 +146,40 @@ export function useModelTour(options: UseModelTourOptions = {}): UseModelTourRet
       if (currentStep === 1 && didClickTourTarget(event, '[data-tour="providers-tab-trigger"]')) {
         onOpenProvidersTab?.()
         setTimeout(() => goToStep(2), 300)
-      } else if (currentStep === 2 && didClickTourTarget(event, '[data-tour="add-provider-button"]')) {
+      } else if (
+        currentStep === 2 &&
+        didClickTourTarget(event, '[data-tour="add-provider-button"]')
+      ) {
         onOpenProviderDialog?.()
         setTimeout(() => goToStep(3), 300)
-      } else if (currentStep === 9 && didClickTourTarget(event, '[data-tour="provider-cancel-button"]')) {
+      } else if (
+        currentStep === 9 &&
+        didClickTourTarget(event, '[data-tour="provider-cancel-button"]')
+      ) {
         onCloseProviderDialog?.()
         setTimeout(() => goToStep(10), 300)
-      } else if (currentStep === 10 && didClickTourTarget(event, '[data-tour="models-tab-trigger"]')) {
+      } else if (
+        currentStep === 10 &&
+        didClickTourTarget(event, '[data-tour="models-tab-trigger"]')
+      ) {
         onOpenModelsTab?.()
         setTimeout(() => goToStep(11), 300)
-      } else if (currentStep === 11 && didClickTourTarget(event, '[data-tour="add-model-button"]')) {
+      } else if (
+        currentStep === 11 &&
+        didClickTourTarget(event, '[data-tour="add-model-button"]')
+      ) {
         onOpenEditDialog?.()
         setTimeout(() => goToStep(12), 300)
-      } else if (currentStep === 17 && didClickTourTarget(event, '[data-tour="model-cancel-button"]')) {
+      } else if (
+        currentStep === 17 &&
+        didClickTourTarget(event, '[data-tour="model-cancel-button"]')
+      ) {
         onCloseEditDialog?.()
         setTimeout(() => goToStep(18), 300)
-      } else if (currentStep === 18 && didClickTourTarget(event, '[data-tour="tasks-tab-trigger"]')) {
+      } else if (
+        currentStep === 18 &&
+        didClickTourTarget(event, '[data-tour="tasks-tab-trigger"]')
+      ) {
         onOpenTasksTab?.()
         setTimeout(() => goToStep(19), 300)
       }

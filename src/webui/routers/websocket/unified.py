@@ -300,7 +300,7 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
 
     data = _get_request_data(message)
     normalized_user_id = normalize_webui_user_id(cast(Optional[str], data.get("user_id")))
-    current_user_name = str(data.get("user_name") or "WebUI用户")
+    current_user_name = str(data.get("user_name") or "人类")
     client_info = normalize_chat_client_info(cast(Optional[Dict[str, Any]], data.get("client")))
     current_virtual_config = resolve_initial_virtual_identity(
         platform=cast(Optional[str], data.get("platform")),

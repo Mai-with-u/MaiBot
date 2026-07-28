@@ -77,7 +77,7 @@ export interface UseDataListResult<TItem, TFilters, TId> {
 }
 
 export function useDataList<TItem, TFilters, TId = string>(
-  config: UseDataListConfig<TItem, TFilters, TId>,
+  config: UseDataListConfig<TItem, TFilters, TId>
 ): UseDataListResult<TItem, TFilters, TId> {
   const {
     domain,
@@ -131,7 +131,7 @@ export function useDataList<TItem, TFilters, TId = string>(
         clearSelection()
       }
     },
-    [totalPages, clearSelection, preserveSelectionOnParamsChange],
+    [totalPages, clearSelection, preserveSelectionOnParamsChange]
   )
 
   const setSearchInput = useCallback(
@@ -142,7 +142,7 @@ export function useDataList<TItem, TFilters, TId = string>(
         clearSelection()
       }
     },
-    [clearSelection, preserveSelectionOnParamsChange],
+    [clearSelection, preserveSelectionOnParamsChange]
   )
 
   const setPageSize = useCallback(
@@ -153,7 +153,7 @@ export function useDataList<TItem, TFilters, TId = string>(
         clearSelection()
       }
     },
-    [clearSelection, preserveSelectionOnParamsChange],
+    [clearSelection, preserveSelectionOnParamsChange]
   )
 
   const setFilter = useCallback(
@@ -164,7 +164,7 @@ export function useDataList<TItem, TFilters, TId = string>(
         clearSelection()
       }
     },
-    [clearSelection, preserveSelectionOnParamsChange],
+    [clearSelection, preserveSelectionOnParamsChange]
   )
 
   const updateFilters = useCallback(
@@ -175,7 +175,7 @@ export function useDataList<TItem, TFilters, TId = string>(
         clearSelection()
       }
     },
-    [clearSelection, preserveSelectionOnParamsChange],
+    [clearSelection, preserveSelectionOnParamsChange]
   )
 
   const resetFilters = useCallback(() => {

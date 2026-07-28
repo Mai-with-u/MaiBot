@@ -43,12 +43,20 @@ export const IMPORT_STEP_TEXT: Record<string, string> = {
   failed: '失败',
 }
 
-export const IMPORT_KIND_OPTIONS: Array<{ value: MemoryImportTaskKind; label: string; description: string }> = [
+export const IMPORT_KIND_OPTIONS: Array<{
+  value: MemoryImportTaskKind
+  label: string
+  description: string
+}> = [
   { value: 'upload', label: '上传文件', description: '从本地批量上传资料文件' },
   { value: 'paste', label: '粘贴导入', description: '直接粘贴文本或 JSON 内容创建任务' },
   { value: 'raw_scan', label: '本地扫描', description: '按路径别名和匹配规则批量扫描导入' },
   { value: 'lpmm_openie', label: 'LPMM OpenIE', description: '读取 LPMM 数据并抽取关系' },
   { value: 'lpmm_convert', label: 'LPMM 转换', description: '将 LPMM 数据转换到目标目录' },
   { value: 'temporal_backfill', label: '时序回填', description: '为已有数据补充时间字段' },
-  { value: 'maibot_migration', label: 'MaiBot 迁移', description: '从 MaiBot 历史数据迁移长期记忆' },
+  {
+    value: 'maibot_migration',
+    label: 'MaiBot 迁移',
+    description: '从 MaiBot 历史数据迁移长期记忆',
+  },
 ]

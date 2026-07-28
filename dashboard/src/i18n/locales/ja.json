@@ -23,7 +23,7 @@
       "overview": "概要",
       "botConfig": "ボット設定",
       "botResources": "ボットリソース",
-      "extensionsMonitor": "プラグインと拡張",
+      "extensionsMonitor": "拡張とメンテナンス",
       "system": "システム"
     },
     "menu": {
@@ -45,6 +45,7 @@
       "configTemplate": "設定テンプレート",
       "pluginConfig": "プラグイン管理",
       "mcpSettings": "MCP 設定",
+      "dataTransfer": "データ移行",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
@@ -62,7 +63,7 @@
   "chat": {
     "botNameFallback": "麦麦",
     "userFallback": "ユーザー",
-    "userNameFallback": "WebUIユーザー",
+    "userNameFallback": "人間",
     "virtualGroupFallback": "WebUI仮想グループチャット",
     "status": {
       "connected": "接続済み",
@@ -72,6 +73,7 @@
     "actions": {
       "cancel": "キャンセル",
       "addImage": "画像を追加",
+      "openEmojiManager": "ユーザースタンプ",
       "reconnect": "再接続",
       "removeImage": "画像を削除",
       "save": "保存",
@@ -104,6 +106,14 @@
     "composer": {
       "hint": "Enter で送信・Shift + Enter で改行"
     },
+    "emojiManager": {
+      "add": "追加",
+      "delete": "スタンプを削除",
+      "empty": "ユーザースタンプはまだありません。追加して使用できます。",
+      "hint": "スタンプをクリックして送信",
+      "send": "スタンプを送信",
+      "title": "マイスタンプ"
+    },
     "sidebar": {
       "closeConversation": "{{label}} を閉じる",
       "conversations": "チャット会話",
@@ -116,8 +126,11 @@
       "title": "チャット",
       "virtualBadge": "仮想",
       "profileTitle": "自分の身份",
+      "editAvatar": "アバターを変更",
       "editName": "ニックネームを編集",
-      "saveName": "保存"
+      "saveName": "保存",
+      "savingAvatar": "アバターを保存中",
+      "userAvatarAlt": "{{name}}のアバター"
     },
     "dialog": {
       "create": "会話を作成",
@@ -150,6 +163,17 @@
       "videoUnsupported": "お使いのブラウザは動画再生に対応していません"
     },
     "toast": {
+      "avatarSaved": "アバターを保存しました",
+      "avatarSavedDesc": "新しいアバターを麦麦チャットに適用しました。",
+      "avatarSaveFailed": "アバターを保存できませんでした",
+      "avatarSaveFailedDesc": "しばらくしてからもう一度お試しください。",
+      "avatarUnsupported": "このアバターは使用できません",
+      "avatarUnsupportedDesc": "5 MB以下のJPG、PNG、WebP、GIF、BMP画像を選択してください。",
+      "emojiDeleteFailed": "スタンプを削除できませんでした",
+      "emojiLoadFailed": "スタンプを読み込めませんでした",
+      "emojiSendFailed": "スタンプを送信できませんでした",
+      "emojiUnsupportedDesc": "2 MB以下のJPG、PNG、WebP、GIF画像を選択してください。",
+      "emojiUploadFailed": "スタンプを追加できませんでした",
       "backendUnavailable": "バックエンドサービスに接続できません。MaiBot が起動しているか確認してください",
       "backendUnavailableShort": "バックエンドサービスに接続できません",
       "connectionFailed": "接続に失敗しました",
@@ -753,6 +777,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "本体と WebUI のバージョンを確認しています...",
+    "eyebrow": "バージョン互換性の警告",
+    "mainProgramVersion": "本体バージョン",
+    "webuiVersion": "現在の WebUI バージョン",
+    "requiredWebuiVersion": "本体が必要とする WebUI バージョン",
+    "updateTargetLabel": "更新が必要：{{target}}",
+    "riskWarning": "一致しないバージョンを使い続けると、画面の異常、API の利用不能、設定エラーが発生する可能性があります。更新後に続行してください。",
+    "countdownHint": "上記の警告を確認してください。{{seconds}} 秒後にこの画面を閉じられます。",
+    "confirmHint": "リスクを確認して続行できます。",
+    "countdownButton": "{{seconds}} 秒後に確認",
+    "confirmButton": "警告を閉じて続行",
+    "webuiOutdated": {
+      "title": "WebUI のバージョンが古すぎます",
+      "description": "現在の WebUI v{{currentVersion}} は、本体が必要とする v{{requiredVersion}} より古いバージョンです。WebUI の静的リソースパッケージを更新してください。",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "本体のバージョンが古すぎます",
+      "description": "本体 v{{mainVersion}} は WebUI v{{requiredVersion}} を想定していますが、WebUI v{{webuiVersion}} が動作しています。MaiBot 本体を更新してください。",
+      "updateTarget": "MaiBot 本体"
+    }
+  },
   "common": {
     "loading": "読み込み中...",
     "error": "エラー",
@@ -798,14 +845,43 @@
     "copyError": "エラー情報をコピー"
   },
   "search": {
-    "placeholder": "ページを検索...",
+    "placeholder": "ページ、設定、または解決したい問題を検索...",
     "title": "検索",
-    "noResults": "一致するページが見つかりません",
+    "noResults": "一致するページまたは設定項目が見つかりません",
     "startSearch": "キーワードを入力して検索を開始",
     "recent": "最近",
     "navigate": "ナビゲート",
     "select": "選択",
     "close": "閉じる",
+    "aiSearch": "AI 検索",
+    "aiSearching": "AI が解析中",
+    "aiHint": "「MaiBot が話しすぎる」のように、調整したい結果を説明できます",
+    "progressTitle": "検索プロセス",
+    "progressExpand": "検索プロセスを展開",
+    "progressCollapse": "検索プロセスを折りたたむ",
+    "progressStart": "質問を分析しています",
+    "progressPlanning": "第 {{round}} ラウンド：検索を計画",
+    "progressSearchWebui": "ページと設定を検索",
+    "progressReadWebui": "ページと設定の説明を読む",
+    "progressSearchDocs": "公式ドキュメントを検索",
+    "progressReadDocs": "公式ドキュメントを読む",
+    "progressTool": "検索操作を実行",
+    "progressCompleted": "{{action}}完了（{{count}} 件）",
+    "progressFailed": "{{action}}失敗",
+    "progressFinalizing": "閲覧した資料から回答を整理",
+    "progressCorrecting": "根拠不足を検出したため、回答を再整理しています",
+    "progressCacheHit": "同じ質問のキャッシュ結果を使用",
+    "progressAnswerCompleted": "回答の生成が完了しました",
+    "progressAnswerFailed": "回答の生成に失敗しました",
+    "aiShortcut": "Ctrl + Enter",
+    "aiRecommendation": "AI のおすすめ",
+    "aiAnswer": "AI の回答",
+    "aiSuggestions": "提案",
+    "aiSources": "公式ドキュメント",
+    "aiUnderstood": "AI の解釈：{{terms}}",
+    "aiNoResults": "十分に関連するページまたは設定項目が見つかりませんでした",
+    "aiFailed": "AI 検索に失敗しました",
+    "indexLoading": "設定検索インデックスを読み込み中…",
     "categories": {
       "overview": "概要",
       "config": "設定",
@@ -836,6 +912,7 @@
       "statisticsDesc": "使用統計を表示",
       "plugins": "プラグインマーケット",
       "pluginsDesc": "プラグインを閲覧してインストール",
+      "dataTransferDesc": "MaiBot データのバックアップ、エクスポート、復元",
       "logs": "ログビューア",
       "logsDesc": "システムログを表示",
       "reasoningProcessDesc": "Maisaka prompt の推論ログを閲覧",
@@ -1014,6 +1091,12 @@
         "low": "低い行",
         "high": "高い行"
       },
+      "categories": {
+        "status": "稼働状態",
+        "statistics": "統計グラフ",
+        "analysis": "モデル分析",
+        "plugin": "プラグインカード"
+      },
       "dialog": {
         "title": "ホームカード管理",
         "description": "プラグインまたは組み込みのカードを追加するか、既定のレイアウトに戻せます。",
@@ -1036,6 +1119,10 @@
     },
     "versionCard": {
       "title": "MaiBot バージョン",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "バージョン不一致",
       "mainVersion": "本体バージョン",
       "webuiVersion": "WebUI バージョン",
       "latestVersion": "最新バージョン",
@@ -1123,9 +1210,13 @@
     },
     "stats": {
       "overviewTitle": "統計概要",
+      "overviewDesc": "主要な稼働指標",
+      "timeRange": "統計期間",
       "totalRequests": "総リクエスト数",
       "totalCost": "総コスト",
       "tokenUsage": "トークン消費",
+      "inputTokens": "入力",
+      "outputTokens": "出力",
       "avgResponse": "平均応答",
       "avgResponseDesc": "API平均レイテンシ",
       "onlineTime": "オンライン時間",
@@ -1139,6 +1230,16 @@
       "seconds": "秒間",
       "hours": "時間",
       "days": "日"
+    },
+    "cache": {
+      "title": "Promptキャッシュ",
+      "description": "入力トークンのキャッシュヒット状況",
+      "hitRate": "キャッシュヒット率",
+      "all": "すべて",
+      "chat": "チャット",
+      "hitTokens": "ヒットToken",
+      "missTokens": "未ヒットToken",
+      "eligibleTokens": "集計対象 {{value}} Token"
     },
     "storage": {
       "title": "ストレージ使用量",
@@ -1164,18 +1265,24 @@
       },
       "requestTrend": "リクエストトレンド",
       "requestTrendDesc": "直近{{hours}}時間のリクエスト量の変化",
+      "requestTrendDescCompact": "時間別リクエスト量の変化",
       "costTrend": "コストトレンド",
       "costTrendDesc": "API呼び出しコストの変化",
       "tokenUsage": "トークン消費",
       "tokenUsageDesc": "トークン使用量の変化",
+      "tokenUsageSplitDesc": "入力・出力トークンの変化",
       "modelDistribution": "モデルコスト分布",
       "modelDistributionDesc": "各モデルのコスト割合（{{count}}モデル）",
+      "modelDistributionCardDesc": "モデル別の累積コスト割合",
       "modelDetails": "モデル詳細統計",
       "modelDetailsDesc": "リクエスト数、コスト、パフォーマンス",
+      "modelDetailsTokenDesc": "モデル別の呼び出し、Token、キャッシュ、コスト",
       "recentActivity": "最近のアクティビティ",
       "recentActivityDesc": "最新のAPI呼び出し記録",
       "dailyStats": "日次統計",
       "dailyStatsDesc": "直近7日間のデータサマリー",
+      "dailyStatsRangeDesc": "選択期間の日次サマリー",
+      "date": "日付",
       "requests": "リクエスト数",
       "cost": "コスト(¥)",
       "requestCount": "リクエスト数",

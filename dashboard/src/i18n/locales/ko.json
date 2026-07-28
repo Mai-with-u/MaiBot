@@ -23,7 +23,7 @@
       "overview": "개요",
       "botConfig": "봇 설정",
       "botResources": "봇 리소스",
-      "extensionsMonitor": "플러그인 및 확장",
+      "extensionsMonitor": "확장 및 유지관리",
       "system": "시스템"
     },
     "menu": {
@@ -45,6 +45,7 @@
       "configTemplate": "설정 템플릿",
       "pluginConfig": "플러그인 관리",
       "mcpSettings": "MCP 설정",
+      "dataTransfer": "데이터 이전",
       "logViewer": "로그 뷰어",
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
@@ -62,7 +63,7 @@
   "chat": {
     "botNameFallback": "麦麦",
     "userFallback": "사용자",
-    "userNameFallback": "WebUI 사용자",
+    "userNameFallback": "인간",
     "virtualGroupFallback": "WebUI 가상 그룹 채팅",
     "status": {
       "connected": "연결됨",
@@ -71,6 +72,7 @@
     },
     "actions": {
       "cancel": "취소",
+      "openEmojiManager": "사용자 스티커",
       "reconnect": "다시 연결",
       "save": "저장",
       "send": "메시지 보내기"
@@ -102,6 +104,14 @@
     "composer": {
       "hint": "Enter 전송 · Shift + Enter 줄바꿈"
     },
+    "emojiManager": {
+      "add": "추가",
+      "delete": "스티커 삭제",
+      "empty": "사용자 스티커가 없습니다. 추가해서 사용해 보세요.",
+      "hint": "스티커를 클릭하여 전송",
+      "send": "스티커 전송",
+      "title": "내 스티커"
+    },
     "sidebar": {
       "closeConversation": "{{label}} 닫기",
       "conversations": "채팅 대화",
@@ -114,8 +124,11 @@
       "title": "채팅",
       "virtualBadge": "가상",
       "profileTitle": "내 신분",
+      "editAvatar": "아바타 변경",
       "editName": "닉네임 편집",
-      "saveName": "저장"
+      "saveName": "저장",
+      "savingAvatar": "아바타 저장 중",
+      "userAvatarAlt": "{{name}}의 아바타"
     },
     "dialog": {
       "create": "대화 만들기",
@@ -148,6 +161,17 @@
       "videoUnsupported": "브라우저가 비디오 재생을 지원하지 않습니다"
     },
     "toast": {
+      "avatarSaved": "아바타가 저장되었습니다",
+      "avatarSavedDesc": "새 아바타가 마이 채팅에 적용되었습니다.",
+      "avatarSaveFailed": "아바타를 저장하지 못했습니다",
+      "avatarSaveFailedDesc": "잠시 후 다시 시도해 주세요.",
+      "avatarUnsupported": "이 아바타를 사용할 수 없습니다",
+      "avatarUnsupportedDesc": "5MB 이하의 JPG, PNG, WebP, GIF 또는 BMP 이미지를 선택하세요.",
+      "emojiDeleteFailed": "스티커를 삭제하지 못했습니다",
+      "emojiLoadFailed": "스티커를 불러오지 못했습니다",
+      "emojiSendFailed": "스티커를 전송하지 못했습니다",
+      "emojiUnsupportedDesc": "2MB 이하의 JPG, PNG, WebP 또는 GIF 이미지를 선택하세요.",
+      "emojiUploadFailed": "스티커를 추가하지 못했습니다",
       "backendUnavailable": "백엔드 서비스에 연결할 수 없습니다. MaiBot이 실행 중인지 확인하세요.",
       "backendUnavailableShort": "백엔드 서비스에 연결할 수 없습니다",
       "connectionFailed": "연결 실패",
@@ -745,6 +769,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "메인 프로그램과 WebUI 버전을 확인하는 중...",
+    "eyebrow": "버전 호환성 경고",
+    "mainProgramVersion": "메인 프로그램 버전",
+    "webuiVersion": "현재 WebUI 버전",
+    "requiredWebuiVersion": "메인 프로그램이 요구하는 WebUI 버전",
+    "updateTargetLabel": "업데이트 필요: {{target}}",
+    "riskWarning": "일치하지 않는 버전을 계속 사용하면 페이지 오류, API 사용 불가 또는 설정 오류가 발생할 수 있습니다. 업데이트 후 계속하세요.",
+    "countdownHint": "위 경고를 확인하세요. {{seconds}}초 후 이 페이지를 닫을 수 있습니다.",
+    "confirmHint": "이제 위험을 확인하고 계속할 수 있습니다.",
+    "countdownButton": "{{seconds}}초 후 확인",
+    "confirmButton": "경고를 닫고 계속",
+    "webuiOutdated": {
+      "title": "WebUI 버전이 너무 낮습니다",
+      "description": "현재 WebUI v{{currentVersion}}은 메인 프로그램이 요구하는 v{{requiredVersion}}보다 낮습니다. WebUI 정적 리소스 패키지를 업데이트하세요.",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "메인 프로그램 버전이 너무 낮습니다",
+      "description": "메인 프로그램 v{{mainVersion}}은 WebUI v{{requiredVersion}}을 선언하지만 WebUI v{{webuiVersion}}이 실행 중입니다. MaiBot 메인 프로그램을 업데이트하세요.",
+      "updateTarget": "MaiBot 메인 프로그램"
+    }
+  },
   "common": {
     "loading": "불러오는 중...",
     "error": "오류",
@@ -790,14 +837,43 @@
     "copyError": "오류 정보 복사"
   },
   "search": {
-    "placeholder": "페이지 검색...",
+    "placeholder": "페이지, 설정 또는 해결하려는 문제 검색...",
     "title": "검색",
-    "noResults": "일치하는 페이지를 찾을 수 없습니다",
+    "noResults": "일치하는 페이지나 설정 항목을 찾을 수 없습니다",
     "startSearch": "키워드를 입력하여 검색 시작",
     "recent": "최근",
     "navigate": "탐색",
     "select": "선택",
     "close": "닫기",
+    "aiSearch": "AI 검색",
+    "aiSearching": "AI 분석 중",
+    "aiHint": "‘MaiBot이 너무 자주 말해요’처럼 원하는 결과를 설명할 수 있습니다",
+    "progressTitle": "검색 과정",
+    "progressExpand": "검색 과정 펼치기",
+    "progressCollapse": "검색 과정 접기",
+    "progressStart": "질문 분석 시작",
+    "progressPlanning": "{{round}}차: 검색 계획",
+    "progressSearchWebui": "페이지 및 설정 검색",
+    "progressReadWebui": "페이지 및 설정 설명 읽기",
+    "progressSearchDocs": "공식 문서 검색",
+    "progressReadDocs": "공식 문서 읽기",
+    "progressTool": "검색 작업 실행",
+    "progressCompleted": "{{action}} 완료 ({{count}}개)",
+    "progressFailed": "{{action}} 실패",
+    "progressFinalizing": "읽은 자료를 바탕으로 답변 정리",
+    "progressCorrecting": "근거가 부족한 항목을 감지하여 답변을 다시 정리하는 중",
+    "progressCacheHit": "같은 질문의 캐시 결과 사용",
+    "progressAnswerCompleted": "답변 생성 완료",
+    "progressAnswerFailed": "답변 생성 실패",
+    "aiShortcut": "Ctrl + Enter",
+    "aiRecommendation": "AI 추천",
+    "aiAnswer": "AI 답변",
+    "aiSuggestions": "제안",
+    "aiSources": "공식 문서",
+    "aiUnderstood": "AI 해석: {{terms}}",
+    "aiNoResults": "충분히 관련된 페이지나 설정 항목을 찾지 못했습니다",
+    "aiFailed": "AI 검색에 실패했습니다",
+    "indexLoading": "설정 검색 인덱스를 불러오는 중…",
     "categories": {
       "overview": "개요",
       "config": "설정",
@@ -828,6 +904,7 @@
       "statisticsDesc": "사용 통계 보기",
       "plugins": "플러그인 마켓",
       "pluginsDesc": "플러그인 탐색 및 설치",
+      "dataTransferDesc": "MaiBot 데이터 백업, 내보내기 또는 복원",
       "logs": "로그 뷰어",
       "logsDesc": "시스템 로그 보기",
       "reasoningProcessDesc": "Maisaka prompt 추론 로그 보기",
@@ -1006,6 +1083,12 @@
         "low": "낮은 행",
         "high": "높은 행"
       },
+      "categories": {
+        "status": "실행 상태",
+        "statistics": "통계 차트",
+        "analysis": "모델 분석",
+        "plugin": "플러그인 카드"
+      },
       "dialog": {
         "title": "홈 카드 관리",
         "description": "플러그인 또는 기본 제공 카드를 추가하거나 기본 레이아웃으로 복원합니다.",
@@ -1028,6 +1111,10 @@
     },
     "versionCard": {
       "title": "MaiBot 버전",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "버전 불일치",
       "mainVersion": "코어 버전",
       "webuiVersion": "WebUI 버전",
       "latestVersion": "최신 버전",
@@ -1115,9 +1202,13 @@
     },
     "stats": {
       "overviewTitle": "통계 개요",
+      "overviewDesc": "주요 실행 지표",
+      "timeRange": "통계 기간",
       "totalRequests": "총 요청 수",
       "totalCost": "총 비용",
       "tokenUsage": "토큰 소비",
+      "inputTokens": "입력",
+      "outputTokens": "출력",
       "avgResponse": "평균 응답",
       "avgResponseDesc": "API 평균 지연",
       "onlineTime": "온라인 시간",
@@ -1131,6 +1222,16 @@
       "seconds": "초",
       "hours": "시간",
       "days": "일"
+    },
+    "cache": {
+      "title": "Prompt 캐시",
+      "description": "입력 토큰 캐시 적중 현황",
+      "hitRate": "캐시 적중률",
+      "all": "전체",
+      "chat": "채팅",
+      "hitTokens": "적중 Token",
+      "missTokens": "미적중 Token",
+      "eligibleTokens": "통계 대상 {{value}} Token"
     },
     "storage": {
       "title": "저장소 사용량",
@@ -1156,18 +1257,24 @@
       },
       "requestTrend": "요청 트렌드",
       "requestTrendDesc": "최근 {{hours}}시간의 요청량 변화",
+      "requestTrendDescCompact": "시간별 요청량 변화",
       "costTrend": "비용 트렌드",
       "costTrendDesc": "API 호출 비용 변화",
       "tokenUsage": "토큰 소비",
       "tokenUsageDesc": "토큰 사용량 변화",
+      "tokenUsageSplitDesc": "입력 및 출력 토큰 변화",
       "modelDistribution": "모델 비용 분포",
       "modelDistributionDesc": "모델별 비용 비율 ({{count}}개 모델)",
+      "modelDistributionCardDesc": "모델별 누적 비용 비율",
       "modelDetails": "모델 상세 통계",
       "modelDetailsDesc": "요청 수, 비용 및 성능",
+      "modelDetailsTokenDesc": "모델별 호출, Token, 캐시 및 비용",
       "recentActivity": "최근 활동",
       "recentActivityDesc": "최신 API 호출 기록",
       "dailyStats": "일간 통계",
       "dailyStatsDesc": "최근 7일 데이터 요약",
+      "dailyStatsRangeDesc": "선택한 기간의 일간 요약",
+      "date": "날짜",
       "requests": "요청 수",
       "cost": "비용(¥)",
       "requestCount": "요청 수",

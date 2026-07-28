@@ -854,6 +854,38 @@ def _extract_prompt_metadata_from_json_payload(payload: dict[str, Any]) -> dict[
     return _normalize_prompt_metadata(raw_metadata if isinstance(raw_metadata, dict) else {})
 
 
+def _extract_llm_error_display_title(payload: dict[str, Any]) -> str:
+    """生成 LLM 异常记录在文件列表中的简短摘要。"""
+
+    raw_metadata = payload.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    status = str(metadata.get("status") or "").strip()
+    status_labels = {
+        "failed": "请求失败",
+        "final_failed": "最终失败",
+        "retrying": "等待重试",
+        "switching_model": "切换模型",
+        "succeeded": "请求成功",
+        "succeeded_after_retry": "重试后成功",
+    }
+    status_label = status_labels.get(status, status or "请求异常")
+
+    raw_attempts = payload.get("attempts")
+    attempts = raw_attempts if isinstance(raw_attempts, list) else []
+    error_message = ""
+    for raw_attempt in reversed(attempts):
+        if not isinstance(raw_attempt, dict):
+            continue
+        raw_error = raw_attempt.get("error")
+        if not isinstance(raw_error, dict):
+            continue
+        error_message = str(raw_error.get("message") or "").strip()
+        if error_message:
+            break
+
+    return f"{status_label} · {error_message}" if error_message else status_label
+
+
 def _ensure_replay_model_exists(model_name: str) -> str:
     """确认重放模型存在并返回规范化模型名。"""
 
@@ -1577,14 +1609,22 @@ def _hydrate_prompt_file_record(
     stage_name = str(hydrated_record["stage"])
     should_extract_action_preview = include_action_preview and stage_name in {"jargon_learning_update", "planner"}
     should_extract_output_preview = include_output_preview and stage_name == "replyer"
+    should_extract_llm_error_preview = stage_name == "llm_error"
     json_payload: dict[str, Any] | None = None
 
     json_file_path = _resolve_record_file_path(hydrated_record, "json_path", {".json"})
     if json_file_path is not None:
-        if include_previews or should_extract_action_preview or should_extract_output_preview:
+        if (
+            include_previews
+            or should_extract_action_preview
+            or should_extract_output_preview
+            or should_extract_llm_error_preview
+        ):
             json_payload = _load_prompt_json(json_file_path)
             _merge_prompt_metadata(hydrated_record, _extract_prompt_metadata_from_json_payload(json_payload))
-            if stage_name == "replyer" and (include_previews or should_extract_output_preview):
+            if should_extract_llm_error_preview:
+                hydrated_record["display_title"] = _extract_llm_error_display_title(json_payload)
+            elif stage_name == "replyer" and (include_previews or should_extract_output_preview):
                 hydrated_record["output_preview"] = _extract_output_preview_from_json_payload(json_payload)
             elif stage_name == "planner" or _is_jargon_learning_update_preview_payload(json_payload):
                 if not hydrated_record.get("display_title"):

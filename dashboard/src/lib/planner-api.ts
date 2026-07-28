@@ -26,10 +26,27 @@ export interface PlanLogSummary {
   timestamp: number
   filename: string
   action_count: number
-  action_types: string[]  // 动作类型列表
+  action_types: string[] // 动作类型列表
   total_plan_ms: number
   llm_duration_ms: number
   reasoning_preview: string
+}
+
+/**
+ * 规划动作字段值：后端 JSON 中可能是字符串，也可能是任意结构化数据
+ * （消费方按 typeof 判断后再 JSON.stringify），因此不能标成 string。
+ * 不用 unknown 是因为消费方在 JSX 中以 `{value && (...)}` 做条件渲染，
+ * unknown 会让整个表达式退化为 unknown 而无法赋给 ReactNode。
+ */
+export type PlanActionValue = string | number | boolean | object | null
+
+/** 规划日志中的单个执行动作（字段从消费方 planner-monitor 的实际用法核对而来） */
+export interface PlanAction {
+  action_type: string
+  reasoning?: PlanActionValue
+  action_message?: PlanActionValue
+  action_reasoning?: PlanActionValue
+  action_data?: Record<string, unknown>
 }
 
 export interface PlanLogDetail {
@@ -39,14 +56,14 @@ export interface PlanLogDetail {
   prompt: string
   reasoning: string
   raw_output: string
-  actions: any[]
+  actions: PlanAction[]
   timing: {
     prompt_build_ms: number
     llm_duration_ms: number
     total_plan_ms: number
     loop_start_time: number
   }
-  extra: any
+  extra: unknown
 }
 
 export interface PaginatedChatLogs {
@@ -69,7 +86,12 @@ export async function getPlannerOverview(): Promise<PlannerOverview> {
 /**
  * 获取指定聊天的规划日志列表（分页）
  */
-export async function getChatLogs(chatId: string, page = 1, pageSize = 20, search?: string): Promise<PaginatedChatLogs> {
+export async function getChatLogs(
+  chatId: string,
+  page = 1,
+  pageSize = 20,
+  search?: string
+): Promise<PaginatedChatLogs> {
   return backendApi.get<PaginatedChatLogs>(`/api/planner/chat/${chatId}/logs`, {
     query: {
       page,
@@ -192,7 +214,12 @@ export async function getReplierOverview(): Promise<ReplierOverview> {
 /**
  * 获取指定聊天的回复日志列表（分页）
  */
-export async function getReplyChatLogs(chatId: string, page = 1, pageSize = 20, search?: string): Promise<PaginatedReplyLogs> {
+export async function getReplyChatLogs(
+  chatId: string,
+  page = 1,
+  pageSize = 20,
+  search?: string
+): Promise<PaginatedReplyLogs> {
   return backendApi.get<PaginatedReplyLogs>(`/api/replier/chat/${chatId}/logs`, {
     query: {
       page,

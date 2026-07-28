@@ -302,16 +302,22 @@ export async function listBehaviorClusters(params: {
   })
 }
 
-export async function getBehaviorGraphData(params: {
-  session_id?: string
-} = {}): Promise<{ success: boolean; data: BehaviorGraphData }> {
+export async function getBehaviorGraphData(
+  params: {
+    session_id?: string
+  } = {}
+): Promise<{ success: boolean; data: BehaviorGraphData }> {
   return backendApi.get<{ success: boolean; data: BehaviorGraphData }>(`${API_BASE}/graph-data`, {
     query: { session_id: params.session_id || undefined },
   })
 }
 
-export async function getBehaviorPathDetail(pathId: number): Promise<{ success: boolean; data: BehaviorPathDetail }> {
-  return backendApi.get<{ success: boolean; data: BehaviorPathDetail }>(`${API_BASE}/paths/${pathId}`)
+export async function getBehaviorPathDetail(
+  pathId: number
+): Promise<{ success: boolean; data: BehaviorPathDetail }> {
+  return backendApi.get<{ success: boolean; data: BehaviorPathDetail }>(
+    `${API_BASE}/paths/${pathId}`
+  )
 }
 
 export async function debugBehaviorRetrieval(

@@ -2,11 +2,12 @@
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 import mimetypes
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
 from src.webui.dependencies import require_auth
@@ -21,6 +22,8 @@ QQ_GROUP_AVATAR_URL_TEMPLATE = "https://p.qlogo.cn/gh/{group_id}/{group_id}/640"
 SUPPORTED_AVATAR_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 AVATAR_USER_AGENT = "MaiBot-WebUI-Avatar/1.0"
 QQ_COMPATIBLE_PLATFORMS = {"qq", "qqguild", "napcat"}
+WEBUI_AVATAR_PLATFORM = "webui"
+WEBUI_USER_ID_PATTERN = re.compile(r"^webui_[A-Za-z0-9_-]+$")
 AvatarTargetType = Literal["user", "group"]
 
 
@@ -125,6 +128,55 @@ def _guess_avatar_suffix(content_type: str, image_bytes: bytes) -> str:
     return ".jpg"
 
 
+def detect_supported_image_suffix(image_bytes: bytes) -> str | None:
+    """根据文件签名识别 WebUI 允许处理的图片格式。"""
+
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return ".webp"
+    if image_bytes.startswith(b"BM"):
+        return ".bmp"
+    return None
+
+
+def save_webui_user_avatar(user_id: str, content_type: str, image_bytes: bytes) -> Path:
+    """校验并保存 WebUI 本地用户头像。"""
+
+    normalized_user_id = user_id.strip()
+    if not WEBUI_USER_ID_PATTERN.fullmatch(normalized_user_id):
+        raise HTTPException(status_code=400, detail="WebUI 用户 ID 不合法")
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="头像文件为空")
+    if len(image_bytes) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail="头像文件不能超过 5 MB")
+
+    normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+    if normalized_content_type and not normalized_content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="头像文件必须是图片")
+
+    suffix = detect_supported_image_suffix(image_bytes)
+    if suffix is None:
+        raise HTTPException(status_code=415, detail="仅支持 JPG、PNG、WebP、GIF 或 BMP 图片")
+
+    cache_path = _avatar_cache_path(WEBUI_AVATAR_PLATFORM, normalized_user_id, suffix)
+    try:
+        cache_path.relative_to(AVATAR_CACHE_ROOT)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="头像保存路径不合法") from exc
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    for existing_path in _iter_cached_avatar_paths(WEBUI_AVATAR_PLATFORM, normalized_user_id, "user"):
+        if existing_path.is_file():
+            existing_path.unlink()
+    cache_path.write_bytes(image_bytes)
+    return cache_path
+
+
 def _download_qq_avatar_to_cache(platform: str, target_id: str, target_type: AvatarTargetType) -> Path:
     normalized_target_id = target_id.strip()
     if not normalized_target_id.isdigit():
@@ -179,6 +231,28 @@ def resolve_avatar_cache_file(platform: str, target_id: str, target_type: Avatar
     raise HTTPException(status_code=404, detail="当前平台没有可用头像")
 
 
+@router.put("/webui-user")
+async def update_webui_user_avatar(
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """上传并持久化当前浏览器生成的 WebUI 本地用户头像。"""
+
+    try:
+        image_bytes = await file.read(MAX_AVATAR_BYTES + 1)
+    finally:
+        await file.close()
+
+    cache_path = save_webui_user_avatar(user_id, file.content_type or "", image_bytes)
+    return {
+        "success": True,
+        "avatar_url": (
+            f"/api/webui/avatar?platform={WEBUI_AVATAR_PLATFORM}"
+            f"&user_id={quote(user_id.strip())}&v={cache_path.stat().st_mtime_ns}"
+        ),
+    }
+
+
 @router.get("")
 async def get_webui_avatar(
     platform: str = Query(...),
@@ -195,11 +269,14 @@ async def get_webui_avatar(
         raise HTTPException(status_code=400, detail="缺少头像目标 ID")
 
     media_type = mimetypes.guess_type(str(cache_path))[0] or "image/jpeg"
+    normalized_platform = platform.strip().lower()
     return FileResponse(
         cache_path,
         media_type=media_type,
         headers={
-            "Cache-Control": "public, max-age=86400",
+            "Cache-Control": (
+                "private, no-cache" if normalized_platform == WEBUI_AVATAR_PLATFORM else "public, max-age=86400"
+            ),
             "X-Robots-Tag": "noindex, nofollow",
         },
     )

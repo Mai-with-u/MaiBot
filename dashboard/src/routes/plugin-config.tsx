@@ -975,6 +975,36 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
     startDrag(event.clientX, event.clientY)
   }
 
+  const handleDragHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const direction = {
+      ArrowDown: { left: 0, top: 1 },
+      ArrowLeft: { left: -1, top: 0 },
+      ArrowRight: { left: 1, top: 0 },
+      ArrowUp: { left: 0, top: -1 },
+    }[event.key]
+    if (!direction) {
+      return
+    }
+
+    event.preventDefault()
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const panelWidth = panelRect?.width ?? DOCUMENT_PANEL_WIDTH
+    const panelHeight = panelRect?.height ?? DOCUMENT_PANEL_HEIGHT
+    const maxLeft = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerWidth - DOCUMENT_PANEL_MARGIN - panelWidth
+    )
+    const maxTop = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerHeight - DOCUMENT_PANEL_MARGIN - panelHeight
+    )
+    const step = event.shiftKey ? 24 : 8
+    setPosition((current) => ({
+      left: clampPanelValue(current.left + direction.left * step, DOCUMENT_PANEL_MARGIN, maxLeft),
+      top: clampPanelValue(current.top + direction.top * step, DOCUMENT_PANEL_MARGIN, maxTop),
+    }))
+  }
+
   const content = mode === 'readme' ? readme : changelog
   const panelStyle = {
     left: position.left,
@@ -989,9 +1019,13 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
       style={panelStyle}
     >
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="移动插件文档窗口"
         className={`flex touch-none select-none items-center gap-2 border-b bg-muted/70 px-3 py-2 ${
           dragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
+        onKeyDown={handleDragHandleKeyDown}
         onPointerCancel={endDrag}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1454,6 +1488,7 @@ function PluginConfigPageContent() {
     showUpdateOnly,
     setShowUpdateOnly,
     visiblePlugins,
+    visiblePluginGroups,
     actingPluginId,
     setActingPluginId,
     performTogglePlugin,
@@ -1462,6 +1497,7 @@ function PluginConfigPageContent() {
     getPluginRepositoryUrl,
     isPluginDisabled,
     isPluginLoadFailed,
+    isPluginVersionIncompatible,
     getPluginStatusBarClassName,
     getPluginStatusLabel,
     getPluginStatusMeta,
@@ -1694,14 +1730,42 @@ function PluginConfigPageContent() {
             </div>
           </div>
         ) : (
-          <div className="divide-border/80 divide-y">
-            {visiblePlugins.map((plugin) => {
-              const statusMeta = getPluginStatusMeta(plugin)
+          <div className="space-y-4">
+            {visiblePluginGroups.map((group) => (
+              <section key={group.key} aria-labelledby={`plugin-list-group-${group.key}`}>
+                <div className="text-muted-foreground flex items-center gap-2 border-b px-2 pb-1.5 text-xs font-medium">
+                  <span className={`h-2 w-2 rounded-full ${group.dotClassName}`} aria-hidden="true" />
+                  <h2 id={`plugin-list-group-${group.key}`}>{group.label}</h2>
+                  <span aria-label={`${group.plugins.length} 个插件`}>{group.plugins.length}</span>
+                </div>
+                <div className="divide-border/80 divide-y">
+                  {group.plugins.map((plugin) => {
               const pluginActing = actingPluginId === plugin.id
               const pluginDisabled = isPluginDisabled(plugin)
               const updateState = getPluginUpdateState(plugin)
               const pluginLoadFailed = isPluginLoadFailed(plugin)
+              const pluginVersionIncompatible = isPluginVersionIncompatible(plugin)
+              const pluginNeedsUpdate = pluginVersionIncompatible && updateState.hasUpdate
+              const baseStatusMeta = getPluginStatusMeta(plugin)
+              const statusMeta = pluginVersionIncompatible
+                ? {
+                    ...baseStatusMeta,
+                    label: pluginNeedsUpdate ? '需要更新' : '版本不兼容',
+                  }
+                : baseStatusMeta
               const loadFailureReason = plugin.load_error?.trim() || '运行时未返回具体失败原因'
+              const loadFailureTitle = pluginNeedsUpdate
+                ? '当前插件版本需要更新'
+                : pluginVersionIncompatible
+                  ? '当前插件版本已不兼容'
+                  : '插件加载失败'
+              const loadFailureDescription = pluginVersionIncompatible
+                ? checkingUpdates
+                  ? `已安装 v${plugin.manifest.version} 与当前麦麦版本不兼容，正在检查插件市场更新…`
+                  : pluginNeedsUpdate
+                    ? `已安装 v${plugin.manifest.version}，插件市场已有 v${updateState.latestVersion}，请更新后重试。`
+                    : `已安装 v${plugin.manifest.version} 与当前麦麦版本不兼容，请前往插件市场查看兼容版本。`
+                : `失败原因：${loadFailureReason}`
               return (
                 <div
                   key={plugin.id}
@@ -1767,22 +1831,47 @@ function PluginConfigPageContent() {
                         <div className="flex min-w-0 flex-col gap-2 rounded-md border border-red-200 bg-red-50/80 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300 sm:flex-row sm:items-center">
                           <div className="flex min-w-0 flex-1 items-start gap-1.5">
                             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span className="min-w-0 line-clamp-2 break-words">
-                              失败原因：{loadFailureReason}
-                            </span>
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="text-sm font-medium">{loadFailureTitle}</div>
+                              <div className="line-clamp-2 break-words">{loadFailureDescription}</div>
+                            </div>
                           </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 shrink-0 border-red-300 px-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setLoadFailureDetailPlugin(plugin)
-                            }}
-                          >
-                            查看详情
-                          </Button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {pluginNeedsUpdate && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={(event) => openUpdatePluginDialog(plugin, event)}
+                              >
+                                立即更新
+                              </Button>
+                            )}
+                            {pluginVersionIncompatible && !pluginNeedsUpdate && !checkingUpdates && (
+                              <Button
+                                asChild
+                                variant="outline"
+                                size="sm"
+                                className="h-7 border-red-300 px-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                              >
+                                <a href="/plugins" onClick={(event) => event.stopPropagation()}>
+                                  前往插件市场
+                                </a>
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 border-red-300 px-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setLoadFailureDetailPlugin(plugin)
+                              }}
+                            >
+                              查看详情
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1854,7 +1943,10 @@ function PluginConfigPageContent() {
                   </div>
                 </div>
               )
-            })}
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
 

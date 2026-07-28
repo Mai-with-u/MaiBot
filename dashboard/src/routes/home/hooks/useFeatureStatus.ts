@@ -36,19 +36,28 @@ export function useFeatureStatus() {
 
       if (!isMountedRef.current || botConfigResult.status !== 'fulfilled') return
 
-      const botPayload = botConfigResult.value as { config?: Record<string, unknown> } & Record<string, unknown>
+      const botPayload = botConfigResult.value as { config?: Record<string, unknown> } & Record<
+        string,
+        unknown
+      >
       const botConfig = (botPayload.config ?? botPayload) as Record<string, unknown>
       const memorixConfig = (botConfig.a_memorix ?? {}) as Record<string, unknown>
       const memorixPlugin = (memorixConfig.plugin ?? {}) as Record<string, unknown>
 
-      const modelPayload = modelConfigResult.status === 'fulfilled'
-        ? (modelConfigResult.value as { config?: Record<string, unknown> } & Record<string, unknown>)
-        : {}
+      const modelPayload =
+        modelConfigResult.status === 'fulfilled'
+          ? (modelConfigResult.value as { config?: Record<string, unknown> } & Record<
+              string,
+              unknown
+            >)
+          : {}
       const modelConfig = (modelPayload.config ?? modelPayload) as Record<string, unknown>
       const taskConfig = (modelConfig.model_task_config ?? {}) as Record<string, unknown>
       const vlmTask = (taskConfig.vlm ?? {}) as Record<string, unknown>
       const vlmModelList = Array.isArray(vlmTask.model_list) ? vlmTask.model_list : []
-      const hasVlmModel = vlmModelList.some((modelName) => String(modelName ?? '').trim().length > 0)
+      const hasVlmModel = vlmModelList.some(
+        (modelName) => String(modelName ?? '').trim().length > 0
+      )
 
       setFeatureStatus({
         memoryEnabled: memorixPlugin.enabled === true,

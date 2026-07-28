@@ -13,8 +13,8 @@ export interface ModelInfo {
   price_out: number | null
   cache?: boolean
   cache_price_in?: number | null
-  temperature?: number | null  // 模型级别温度，覆盖任务配置中的温度
-  max_tokens?: number | null   // 模型级别最大token数，覆盖任务配置中的max_tokens
+  temperature?: number | null // 模型级别温度，覆盖任务配置中的温度
+  max_tokens?: number | null // 模型级别最大token数，覆盖任务配置中的max_tokens
   visual?: boolean
   force_stream_mode?: boolean
   extra_params?: Record<string, unknown>

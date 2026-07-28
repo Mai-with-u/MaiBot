@@ -830,7 +830,6 @@ class MaisakaReasoningEngine:
             return []
 
         await self._runtime._wait_for_message_quiet_period()
-        self._runtime._mark_message_turn_unscheduled()
         pending_round_messages = self._runtime._collect_pending_messages()
         if pending_round_messages:
             await self._ingest_messages(pending_round_messages)
@@ -893,20 +892,21 @@ class MaisakaReasoningEngine:
                 self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=True))
             await self._ingest_messages(cached_messages)
             trigger_message = cached_messages[-1]
-        else:
-            trigger_message = (
-                self._runtime._consume_proactive_trigger_message()
-                if proactive_triggered
-                else self._runtime.message_cache[-1]
-                if self._runtime.message_cache
-                else None
-            )
+        elif proactive_triggered:
+            trigger_message = self._runtime._consume_proactive_trigger_message()
+            if trigger_message is None:
+                logger.warning(f"{self._runtime.log_prefix} 主动触发缺少对应的触发消息，跳过本轮")
+                return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
+        elif timeout_triggered and self._runtime._has_pending_wait_tool_call():
+            trigger_message = self._runtime.message_cache[-1] if self._runtime.message_cache else None
             if trigger_message is None:
                 logger.warning(f"{self._runtime.log_prefix} wait 超时后没有可复用的触发消息，跳过本轮")
                 return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
             logger.info(f"{self._runtime.log_prefix} 等待结束，再看一眼！")
-            if self._runtime._has_pending_wait_tool_call():
-                self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=False))
+            self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=False))
+        else:
+            logger.debug(f"{self._runtime.log_prefix} 消息已由当前内部轮次处理，忽略过期的轮次触发")
+            return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
 
         return TurnStartContext(
             cached_messages,

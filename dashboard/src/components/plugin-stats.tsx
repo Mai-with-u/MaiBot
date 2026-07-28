@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
 import { Download, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -28,7 +28,11 @@ interface PluginStatsProps {
   compact?: boolean
 }
 
-export function PluginStats({ pluginId, compact = false }: PluginStatsProps) {
+export function PluginStats(props: PluginStatsProps) {
+  return <PluginStatsContent key={props.pluginId} {...props} />
+}
+
+function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
   const [stats, setStats] = useState<PluginStatsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [userRating, setUserRating] = useState(0)
@@ -41,30 +45,40 @@ export function PluginStats({ pluginId, compact = false }: PluginStatsProps) {
   const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false)
   const { toast } = useToast()
 
-  const loadStats = async () => {
-    setLoading(true)
-    const [statsData, userState] = await Promise.all([
+  useEffect(() => {
+    let cancelled = false
+
+    void Promise.all([
       getPluginStats(pluginId),
       getPluginUserState(pluginId),
     ])
+      .then(([statsData, userState]) => {
+        if (cancelled) {
+          return
+        }
 
-    if (statsData) {
-      setStats(statsData)
-    }
-    if (userState) {
-      setLiked(userState.liked)
-      setDisliked(userState.disliked)
-      setUserRating(userState.rating ?? 0)
-      setSavedUserRating(userState.rating ?? 0)
-      setUserComment(userState.comment)
-      setSavedUserComment(userState.comment)
-    }
-    setLoading(false)
-  }
+        setStats(statsData)
+        if (userState) {
+          setLiked(userState.liked)
+          setDisliked(userState.disliked)
+          setUserRating(userState.rating ?? 0)
+          setSavedUserRating(userState.rating ?? 0)
+          setUserComment(userState.comment)
+          setSavedUserComment(userState.comment)
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('加载插件统计失败:', error)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      })
 
-  useEffect(() => {
-    void loadStats()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true
+    }
   }, [pluginId])
 
   const updateVoteStats = (result: VoteStatsResponse) => {

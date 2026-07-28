@@ -228,7 +228,10 @@ export interface LocalCacheDatabaseVacuumResult {
   checkpointed: number
 }
 
-export function getLocalCacheImagePreviewUrl(target: LocalCacheImageTarget, relativePath: string): string {
+export function getLocalCacheImagePreviewUrl(
+  target: LocalCacheImageTarget,
+  relativePath: string
+): string {
   const query = new URLSearchParams({
     target,
     relative_path: relativePath,
@@ -257,7 +260,9 @@ export async function vacuumLocalCacheDatabase(): Promise<LocalCacheDatabaseVacu
   )
 }
 
-export async function getLocalCacheDataEntries(relativePath = ''): Promise<LocalCacheDataEntriesResponse> {
+export async function getLocalCacheDataEntries(
+  relativePath = ''
+): Promise<LocalCacheDataEntriesResponse> {
   return backendApi.get<LocalCacheDataEntriesResponse>(
     '/api/webui/system/local-cache/data-entries',
     {
@@ -267,7 +272,9 @@ export async function getLocalCacheDataEntries(relativePath = ''): Promise<Local
   )
 }
 
-export async function deleteLocalCacheDataEntry(relativePath: string): Promise<LocalCacheCleanupResult> {
+export async function deleteLocalCacheDataEntry(
+  relativePath: string
+): Promise<LocalCacheCleanupResult> {
   return backendApi.delete<LocalCacheCleanupResult>('/api/webui/system/local-cache/data-entries', {
     body: { relative_path: relativePath },
     errorMessage: '删除 data 条目失败',
@@ -363,7 +370,9 @@ export async function getLocalCacheLogDirectories(): Promise<LocalCacheLogDirect
   )
 }
 
-export async function deleteLocalCacheLogDirectory(relativePath: string): Promise<LocalCacheCleanupResult> {
+export async function deleteLocalCacheLogDirectory(
+  relativePath: string
+): Promise<LocalCacheCleanupResult> {
   return backendApi.delete<LocalCacheCleanupResult>(
     '/api/webui/system/local-cache/log-directories',
     {

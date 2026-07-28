@@ -12,6 +12,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  getVersionCompatibility,
+  type VersionCompatibilityResult,
+} from '@/lib/version-compatibility-api'
+
 import type { ReleaseStatus } from '../types'
 
 export function useMaibotVersion() {
@@ -19,6 +24,8 @@ export function useMaibotVersion() {
   const [hitokoto, setHitokoto] = useState<{ hitokoto: string; from: string } | null>(null)
   const [hitokotoLoading, setHitokotoLoading] = useState(true)
   const [maibotStableRelease, setMaibotStableRelease] = useState<ReleaseStatus | null>(null)
+  const [versionCompatibility, setVersionCompatibility] =
+    useState<VersionCompatibilityResult | null>(null)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
   const isMountedRef = useRef(true)
@@ -29,19 +36,42 @@ export function useMaibotVersion() {
     }
   }, [])
 
+  useEffect(() => {
+    const controller = new AbortController()
+
+    const loadVersionCompatibility = async () => {
+      try {
+        const result = await getVersionCompatibility(controller.signal)
+        if (!controller.signal.aborted) {
+          setVersionCompatibility(result)
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.debug('检查版本匹配状态失败:', error)
+        }
+      }
+    }
+
+    void loadVersionCompatibility()
+    return () => controller.abort()
+  }, [])
+
   // 挂载时拉取 GitHub 最新稳定版
   useEffect(() => {
     let mounted = true
 
     const loadLatestVersions = async () => {
       try {
-        const response = await fetch('https://api.github.com/repos/Mai-with-u/MaiBot/releases?per_page=20', {
-          headers: { Accept: 'application/vnd.github+json' },
-        })
+        const response = await fetch(
+          'https://api.github.com/repos/Mai-with-u/MaiBot/releases?per_page=20',
+          {
+            headers: { Accept: 'application/vnd.github+json' },
+          }
+        )
         if (!response.ok) {
           throw new Error(`GitHub release status ${response.status}`)
         }
-        const releases = await response.json() as Array<{
+        const releases = (await response.json()) as Array<{
           draft?: boolean
           prerelease?: boolean
           tag_name?: string
@@ -60,7 +90,6 @@ export function useMaibotVersion() {
       } catch (error) {
         console.debug('检查 MaiBot 最新版本失败:', error)
       }
-
     }
 
     void loadLatestVersions()
@@ -82,7 +111,7 @@ export function useMaibotVersion() {
       if (isMountedRef.current) {
         setHitokoto({
           hitokoto: data.hitokoto,
-          from: data.from || data.from_who || t('home.unknownSource')
+          from: data.from || data.from_who || t('home.unknownSource'),
         })
       }
     } catch (error) {
@@ -90,7 +119,7 @@ export function useMaibotVersion() {
       if (isMountedRef.current) {
         setHitokoto({
           hitokoto: t('home.hitokotoFallback'),
-          from: t('home.hitokotoFallbackFrom')
+          from: t('home.hitokotoFallbackFrom'),
         })
       }
     } finally {
@@ -104,6 +133,7 @@ export function useMaibotVersion() {
     hitokoto,
     hitokotoLoading,
     maibotStableRelease,
+    versionCompatibility,
     fetchHitokoto,
   }
 }

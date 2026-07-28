@@ -46,23 +46,33 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
     let unsubscribe: (() => Promise<void>) | null = null
     let disposed = false
 
-    void pluginProgressClient.subscribe((progress) => {
-      if (disposed) {
-        return
-      }
-      if (progress.operation === 'uninstall' && deletingPlugin && progress.plugin_id === deletingPlugin.id) {
-        setDeleteProgress(progress)
-      }
-      if (progress.operation === 'update' && updatingPlugin && progress.plugin_id === updatingPlugin.id) {
-        setUpdateProgress(progress)
-      }
-    }).then((cleanup) => {
-      if (disposed) {
-        void cleanup()
-        return
-      }
-      unsubscribe = cleanup
-    })
+    void pluginProgressClient
+      .subscribe((progress) => {
+        if (disposed) {
+          return
+        }
+        if (
+          progress.operation === 'uninstall' &&
+          deletingPlugin &&
+          progress.plugin_id === deletingPlugin.id
+        ) {
+          setDeleteProgress(progress)
+        }
+        if (
+          progress.operation === 'update' &&
+          updatingPlugin &&
+          progress.plugin_id === updatingPlugin.id
+        ) {
+          setUpdateProgress(progress)
+        }
+      })
+      .then((cleanup) => {
+        if (disposed) {
+          void cleanup()
+          return
+        }
+        unsubscribe = cleanup
+      })
 
     return () => {
       disposed = true
@@ -78,12 +88,15 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
   }, [])
 
   // ---- 更新/升级 ----
-  const openUpdatePluginDialog = useCallback((plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
-    stopPluginActionEvent(event)
-    setUpdatingPlugin(plugin)
-    setUpdateProgress(null)
-    setUpdateDialogOpen(true)
-  }, [stopPluginActionEvent])
+  const openUpdatePluginDialog = useCallback(
+    (plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
+      stopPluginActionEvent(event)
+      setUpdatingPlugin(plugin)
+      setUpdateProgress(null)
+      setUpdateDialogOpen(true)
+    },
+    [stopPluginActionEvent]
+  )
 
   const closeUpdatePluginDialog = useCallback(() => {
     if (updateProgress?.stage === 'loading') {
@@ -126,7 +139,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       await updatePlugin(updatingPlugin.id, repositoryUrl, 'main')
       toast({
         title: '更新插件成功',
-        description: `${updatingPlugin.manifest.name} 已完成更新/升级`
+        description: `${updatingPlugin.manifest.name} 已完成更新/升级`,
       })
       setUpdateProgress({
         operation: 'update',
@@ -153,7 +166,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       toast({
         title: '更新插件失败',
         description: errorMessage,
-        variant: 'destructive'
+        variant: 'destructive',
       })
     } finally {
       setActingPluginId(null)
@@ -161,12 +174,15 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
   }, [getPluginRepositoryUrl, onChanged, setActingPluginId, toast, updateProgress, updatingPlugin])
 
   // ---- 卸载 ----
-  const openDeletePluginDialog = useCallback((plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
-    stopPluginActionEvent(event)
-    setDeletingPlugin(plugin)
-    setDeleteProgress(null)
-    setDeleteDialogOpen(true)
-  }, [stopPluginActionEvent])
+  const openDeletePluginDialog = useCallback(
+    (plugin: InstalledPlugin, event: React.MouseEvent<HTMLButtonElement>) => {
+      stopPluginActionEvent(event)
+      setDeletingPlugin(plugin)
+      setDeleteProgress(null)
+      setDeleteDialogOpen(true)
+    },
+    [stopPluginActionEvent]
+  )
 
   const closeDeletePluginDialog = useCallback(() => {
     if (deleteProgress?.stage === 'loading') {
@@ -194,7 +210,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       await uninstallPlugin(deletingPlugin.id)
       toast({
         title: '删除插件成功',
-        description: `${deletingPlugin.manifest.name} 已删除`
+        description: `${deletingPlugin.manifest.name} 已删除`,
       })
       setDeleteProgress({
         operation: 'uninstall',
@@ -221,7 +237,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
       toast({
         title: '删除插件失败',
         description: errorMessage,
-        variant: 'destructive'
+        variant: 'destructive',
       })
     } finally {
       setActingPluginId(null)

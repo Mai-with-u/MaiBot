@@ -1,5 +1,5 @@
 import * as React from "react"
-import * as LucideIcons from "lucide-react"
+import { CircleAlert, Plus, Trash2 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { resolveFieldLabel } from "@/lib/config-label"
+import { resolveSchemaIcon } from "@/lib/schema-icons"
 import type { FieldSchema } from "@/types/config-schema"
 
 import { fieldTitleClassName } from "./fieldStyle"
@@ -197,7 +198,7 @@ function TokenListEditor({
           title={`添加${fieldLabel}`}
           onClick={addDraftItems}
         >
-          <LucideIcons.Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
         </Button>
       </div>
       {items.length > 0 && (
@@ -217,7 +218,7 @@ function TokenListEditor({
                 title={`删除${item}`}
                 onClick={() => removeItem(index)}
               >
-                <LucideIcons.Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           ))}
@@ -238,6 +239,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   schema,
   value,
   onChange,
+  fieldPath,
 }) => {
   const { i18n } = useTranslation()
   const fieldLabel = resolveFieldLabel(schema, i18n.language)
@@ -309,7 +311,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   const renderIcon = () => {
     if (!schema['x-icon']) return null
     
-    const IconComponent = LucideIcons[schema['x-icon'] as keyof typeof LucideIcons] as React.ComponentType<{ className?: string }> | undefined
+    const IconComponent = resolveSchemaIcon(schema['x-icon'])
     if (!IconComponent) return null
     
     return <IconComponent className="h-4 w-4" />
@@ -373,7 +375,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
             aria-label={`${fieldLabel} 说明`}
             className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <LucideIcons.CircleAlert className="h-4 w-4" />
+            <CircleAlert className="h-4 w-4" />
           </button>,
           'right',
         )
@@ -485,7 +487,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
     const checked = Boolean(value)
     return (
       <div
-        data-dynamic-field={schema.name}
+        data-dynamic-field={fieldPath ?? schema.name}
         data-dynamic-field-widget="switch"
         className="grid min-h-10 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-1.5"
       >
@@ -782,7 +784,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
   if (supportsInlineRight) {
     return (
       <div
-        data-dynamic-field={schema.name}
+        data-dynamic-field={fieldPath ?? schema.name}
         data-dynamic-field-widget={schema['x-widget'] ?? schema.type}
         className="grid min-h-10 min-w-0 grid-cols-1 items-center gap-1.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3"
         style={{ '--field-input-width': inlineRightInputWidth } as React.CSSProperties}
@@ -799,7 +801,7 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
 
   return (
     <div
-      data-dynamic-field={schema.name}
+      data-dynamic-field={fieldPath ?? schema.name}
       data-dynamic-field-widget={schema['x-widget'] ?? schema.type}
       className="min-w-0 space-y-1.5"
     >

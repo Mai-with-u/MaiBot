@@ -13,14 +13,19 @@ const LOCAL_CACHE_STATS_CACHE_TTL = 15 * 60_000
 let localCacheStatsCache: { timestamp: number; data: LocalCacheStats } | null = null
 
 function getCachedLocalCacheStats(): LocalCacheStats | null {
-  if (!localCacheStatsCache || Date.now() - localCacheStatsCache.timestamp > LOCAL_CACHE_STATS_CACHE_TTL) {
+  if (
+    !localCacheStatsCache ||
+    Date.now() - localCacheStatsCache.timestamp > LOCAL_CACHE_STATS_CACHE_TTL
+  ) {
     return null
   }
   return localCacheStatsCache.data
 }
 
 export function useLocalCacheMetrics() {
-  const [localCacheStats, setLocalCacheStats] = useState<LocalCacheStats | null>(localCacheStatsCache?.data ?? null)
+  const [localCacheStats, setLocalCacheStats] = useState<LocalCacheStats | null>(
+    localCacheStatsCache?.data ?? null
+  )
   const [isLocalCacheStatsLoading, setIsLocalCacheStatsLoading] = useState(!localCacheStatsCache)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏

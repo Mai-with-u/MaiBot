@@ -331,8 +331,10 @@ class LLMServiceClient:
         Returns:
             LLMAudioTranscriptionResult: 音频转写结果对象。
         """
-        del session_id
-        return await self._orchestrator.generate_response_for_voice(voice_base64)
+        return await self._orchestrator.generate_response_for_voice(
+            voice_base64,
+            session_id=self._resolve_effective_session_id(session_id),
+        )
 
     async def embed_text(self, embedding_input: str, *, session_id: str = "") -> EmbeddingResult:
         """兼容旧调用的文本嵌入入口。

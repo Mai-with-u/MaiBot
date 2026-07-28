@@ -30,6 +30,46 @@ def _use_expression_intent() -> bool:
     return config_module.global_config.expression.expression_selection_mode == "vector_intent"
 
 
+def _require_hook_bool(raw_value: Any, option_name: str) -> bool:
+    """读取 Hook 返回的布尔值，并拒绝不符合协议的类型。"""
+
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise TypeError(f"Hook 返回的 {option_name} 必须是布尔值，实际为 {type(raw_value).__name__}")
+
+
+async def _invoke_before_post_process_hook(
+    tool_ctx: BuiltinToolRuntimeContext,
+    reply_text: str,
+    target_message_id: str,
+    reply_tool_args: dict[str, Any],
+) -> tuple[str, dict[str, bool]]:
+    """调用最终回复文本后处理前 Hook，并返回本次回复的后处理策略。"""
+
+    post_process_options = {
+        "skip_post_process": False,
+        "enable_splitter": True,
+        "enable_chinese_typo": True,
+    }
+    before_post_process_result = await tool_ctx.get_runtime_manager().invoke_hook(
+        "maisaka.reply.before_post_process",
+        response=reply_text,
+        session_id=tool_ctx.runtime.session_id,
+        reply_message_id=target_message_id,
+        reply_tool_args=dict(reply_tool_args),
+        **post_process_options,
+    )
+    before_post_process_kwargs = before_post_process_result.kwargs
+    if "response" in before_post_process_kwargs:
+        reply_text = str(before_post_process_kwargs["response"] or "").strip()
+    for option_name in post_process_options:
+        post_process_options[option_name] = _require_hook_bool(
+            before_post_process_kwargs.get(option_name),
+            option_name,
+        )
+    return reply_text, post_process_options
+
+
 async def _run_expression_selector(tool_ctx: BuiltinToolRuntimeContext, system_prompt: str) -> str:
     """运行 replyer 侧表达方式选择子代理，并返回文本结果。"""
     response = await tool_ctx.runtime.run_sub_agent(
@@ -337,13 +377,41 @@ async def handle_tool(
         )
 
     try:
+        reply_text, post_process_options = await _invoke_before_post_process_hook(
+            tool_ctx,
+            reply_text,
+            target_message_id,
+            reply_tool_args,
+        )
+    except Exception as exc:
+        logger.warning(f"{tool_ctx.runtime.log_prefix} 回复文本后处理前 Hook 调用失败，将使用默认策略: {exc}")
+        post_process_options = {
+            "skip_post_process": False,
+            "enable_splitter": True,
+            "enable_chinese_typo": True,
+        }
+
+    if not reply_text:
+        reply_result.completion.response_text = ""
+        reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            "回复文本后处理前 Hook 返回了空回复。",
+            metadata=_build_monitor_metadata(reply_result),
+        )
+
+    try:
         if rich_reply_enabled:
             reply_sequences = await tool_ctx.post_process_rich_reply_message_sequences_async(
                 reply_text,
                 invocation_arguments,
+                **post_process_options,
             )
         else:
-            reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(reply_text)
+            reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(
+                reply_text,
+                **post_process_options,
+            )
     except Exception as exc:
         reply_result.completion.response_text = reply_text
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)

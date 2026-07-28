@@ -80,6 +80,8 @@
   "startup.webui_cors_configured": "✅ CORS 中间件已配置",
   "startup.webui_dashboard_source_missing": "❌ 未找到 WebUI 前端源码目录: {dashboard_root}",
   "startup.webui_dashboard_package_hint": "💡 请安装预构建的 WebUI 静态资源包，例如: {command}",
+  "startup.webui_version_outdated": "⚠️ WebUI 版本过低：当前版本 v{current_version}，主程序要求 v{required_version}。请更新 WebUI，否则可能出现意外问题。",
+  "startup.main_program_version_outdated_for_webui": "⚠️ 主程序版本过低：当前主程序 v{main_version} 仅声明支持 WebUI v{required_version}，但正在加载 WebUI v{current_version}。请更新主程序，否则可能出现意外问题。",
   "startup.webui_disabled": "WebUI 已禁用",
   "startup.webui_index_missing": "❌ 未找到 index.html: {index_path}",
   "startup.webui_manual_build_hint": "💡 自动恢复未能修复前端资源，请在 dashboard 目录安装依赖并手动构建: {command}",

@@ -17,9 +17,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   fetchPluginList,
   getInstalledPlugins,
+  getMaimaiVersion,
+  isPluginCompatible,
   togglePlugin,
 } from '@/lib/plugin-api'
-import type { InstalledPlugin } from '@/lib/plugin-api'
+import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
 
@@ -31,6 +33,45 @@ export interface PluginStatusMeta {
   badgeClassName?: string
   icon?: PluginStatusIcon
   showsBadge?: boolean
+}
+
+export interface PluginUpdateState {
+  canUpdate: boolean
+  hasUpdate: boolean
+  latestVersion?: string
+  title?: string
+}
+
+export interface PluginListGroup {
+  key: 'success' | 'loading' | 'failed' | 'disabled'
+  label: string
+  dotClassName: string
+  plugins: InstalledPlugin[]
+}
+
+interface CompatibilityManifest {
+  manifest_version: number
+  host_application?: {
+    min_version: string
+    max_version?: string
+  }
+}
+
+const VERSION_INCOMPATIBILITY_MARKERS = ['Host 版本不兼容', 'SDK 版本不兼容', 'Manifest 版本不兼容']
+
+function isManifestCompatibleWithMaimai(
+  manifest: CompatibilityManifest,
+  maimaiVersion: MaimaiVersion
+): boolean {
+  if (manifest.manifest_version !== 2 || !manifest.host_application) {
+    return false
+  }
+
+  return isPluginCompatible(
+    manifest.host_application.min_version,
+    manifest.host_application.max_version,
+    maimaiVersion
+  )
 }
 
 function getInitialPluginConfigTarget(): { pluginId: string | null; tabId: string | null } {
@@ -46,8 +87,14 @@ function getInitialPluginConfigTarget(): { pluginId: string | null; tabId: strin
 }
 
 function comparePluginVersions(currentVersion: string, latestVersion: string): number {
-  const currentParts = currentVersion.trim().split('.').map(part => Number.parseInt(part, 10) || 0)
-  const latestParts = latestVersion.trim().split('.').map(part => Number.parseInt(part, 10) || 0)
+  const currentParts = currentVersion
+    .trim()
+    .split('.')
+    .map((part) => Number.parseInt(part, 10) || 0)
+  const latestParts = latestVersion
+    .trim()
+    .split('.')
+    .map((part) => Number.parseInt(part, 10) || 0)
   const maxLength = Math.max(currentParts.length, latestParts.length)
 
   for (let index = 0; index < maxLength; index++) {
@@ -70,9 +117,12 @@ export function usePluginList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showUpdateOnly, setShowUpdateOnly] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<InstalledPlugin | null>(null)
-  const [selectedPluginTab, setSelectedPluginTab] = useState<string | undefined>(initialTarget.tabId ?? undefined)
+  const [selectedPluginTab, setSelectedPluginTab] = useState<string | undefined>(
+    initialTarget.tabId ?? undefined
+  )
   const [actingPluginId, setActingPluginId] = useState<string | null>(null)
   const [marketPluginsById, setMarketPluginsById] = useState<Record<string, PluginInfo>>({})
+  const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const updateCheckStartedRef = useRef(false)
 
@@ -100,7 +150,13 @@ export function usePluginList() {
     updateCheckStartedRef.current = true
     setCheckingUpdates(true)
     try {
-      const marketPlugins = await fetchPluginList()
+      const [marketPlugins, currentMaimaiVersion] = await Promise.all([
+        fetchPluginList(),
+        getMaimaiVersion().catch((error) => {
+          console.warn('获取麦麦版本信息失败，跳过插件更新兼容性检查:', error)
+          return null
+        }),
+      ])
       const nextMarketPluginsById: Record<string, PluginInfo> = {}
       for (const marketPlugin of marketPlugins) {
         nextMarketPluginsById[marketPlugin.id] = marketPlugin
@@ -109,10 +165,12 @@ export function usePluginList() {
         }
       }
       setMarketPluginsById(nextMarketPluginsById)
+      setMaimaiVersion(currentMaimaiVersion?.version === '0.0.0' ? null : currentMaimaiVersion)
     } catch (error) {
       updateCheckStartedRef.current = false
       console.warn('加载插件市场版本信息失败:', error)
       setMarketPluginsById({})
+      setMaimaiVersion(null)
     } finally {
       setCheckingUpdates(false)
     }
@@ -134,7 +192,7 @@ export function usePluginList() {
       toast({
         title: '加载插件列表失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
     } finally {
       setLoading(false)
@@ -146,7 +204,7 @@ export function usePluginList() {
     if (!initialTarget.pluginId) {
       void checkPluginUpdates()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleShowUpdateOnlyChange = (enabled: boolean) => {
@@ -157,7 +215,7 @@ export function usePluginList() {
   }
 
   // 过滤插件
-  const filteredPlugins = plugins.filter(plugin => {
+  const filteredPlugins = plugins.filter((plugin) => {
     const query = searchQuery.toLowerCase()
     return (
       plugin.id.toLowerCase().includes(query) ||
@@ -167,24 +225,37 @@ export function usePluginList() {
   })
 
   // 去重：如果有重复的 plugin.id，只保留第一个
-  const uniqueFilteredPlugins = filteredPlugins.filter((plugin, index, self) =>
-    index === self.findIndex((p) => p.id === plugin.id)
+  const uniqueFilteredPlugins = filteredPlugins.filter(
+    (plugin, index, self) => index === self.findIndex((p) => p.id === plugin.id)
   )
 
   // 统计数据 / 状态派生
-  const isPluginDisabled = (plugin: InstalledPlugin) => plugin.disabled === true || plugin.enabled === false
-  const isPluginLoadSuccess = (plugin: InstalledPlugin) => !isPluginDisabled(plugin) && (
-    plugin.load_status === 'success' || plugin.loaded === true
-  )
-  const isPluginLoading = (plugin: InstalledPlugin) => !isPluginDisabled(plugin) && plugin.load_status === 'loading'
-  const isPluginCircuitOpen = (plugin: InstalledPlugin) => !isPluginDisabled(plugin) && plugin.circuit_status?.state === 'open'
-  const isPluginCircuitHalfOpen = (plugin: InstalledPlugin) => !isPluginDisabled(plugin) && plugin.circuit_status?.state === 'half_open'
-  const isPluginCircuitActive = (plugin: InstalledPlugin) => isPluginCircuitOpen(plugin) || isPluginCircuitHalfOpen(plugin)
-  const isPluginLoadFailed = (plugin: InstalledPlugin) => (
-    !isPluginDisabled(plugin)
-    && !isPluginLoading(plugin)
-    && !isPluginLoadSuccess(plugin)
-  )
+  const isPluginDisabled = (plugin: InstalledPlugin) =>
+    plugin.disabled === true || plugin.enabled === false
+  const isPluginLoadSuccess = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && (plugin.load_status === 'success' || plugin.loaded === true)
+  const isPluginLoading = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && plugin.load_status === 'loading'
+  const isPluginCircuitOpen = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && plugin.circuit_status?.state === 'open'
+  const isPluginCircuitHalfOpen = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && plugin.circuit_status?.state === 'half_open'
+  const isPluginCircuitActive = (plugin: InstalledPlugin) =>
+    isPluginCircuitOpen(plugin) || isPluginCircuitHalfOpen(plugin)
+  const isPluginLoadFailed = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && !isPluginLoading(plugin) && !isPluginLoadSuccess(plugin)
+  const isPluginVersionIncompatible = (plugin: InstalledPlugin) => {
+    if (!isPluginLoadFailed(plugin)) {
+      return false
+    }
+
+    const loadError = plugin.load_error?.trim() || ''
+    if (VERSION_INCOMPATIBILITY_MARKERS.some((marker) => loadError.includes(marker))) {
+      return true
+    }
+
+    return maimaiVersion !== null && !isManifestCompatibleWithMaimai(plugin.manifest, maimaiVersion)
+  }
   const installedCount = plugins.length
   const disabledCount = plugins.filter(isPluginDisabled).length
   const loadSuccessCount = plugins.filter(isPluginLoadSuccess).length
@@ -204,7 +275,9 @@ export function usePluginList() {
     `加载中 ${loadingCount} 个`,
     showsCircuitSummary ? `熔断中 ${circuitOpenCount} 个` : '',
     `加载失败 ${loadFailedCount} 个`,
-  ].filter(Boolean).join('，')
+  ]
+    .filter(Boolean)
+    .join('，')
   const futureRetroPluginSummaryLabel = [
     `已安装 ${installedCount} 个插件`,
     `已启用 ${enabledCount} 个`,
@@ -212,7 +285,9 @@ export function usePluginList() {
     `加载中 ${loadingCount} 个`,
     showsCircuitSummary ? `熔断中 ${circuitOpenCount} 个` : '',
     `启动失败 ${loadFailedCount} 个`,
-  ].filter(Boolean).join('，')
+  ]
+    .filter(Boolean)
+    .join('，')
 
   const getPluginStatusBarClassName = (plugin: InstalledPlugin) => {
     if (isPluginDisabled(plugin)) {
@@ -291,18 +366,31 @@ export function usePluginList() {
     }
   }
   const getPluginRepositoryUrl = (plugin: InstalledPlugin): string | undefined => {
-    const marketPlugin = marketPluginsById[plugin.id] || (plugin.manifest.id ? marketPluginsById[plugin.manifest.id] : undefined)
+    const marketPlugin =
+      marketPluginsById[plugin.id] ||
+      (plugin.manifest.id ? marketPluginsById[plugin.manifest.id] : undefined)
     const urls = plugin.manifest.urls as { repository?: string } | undefined
-    return plugin.manifest.repository_url || urls?.repository || marketPlugin?.manifest.repository_url || marketPlugin?.manifest.urls?.repository
+    return (
+      plugin.manifest.repository_url ||
+      urls?.repository ||
+      marketPlugin?.manifest.repository_url ||
+      marketPlugin?.manifest.urls?.repository
+    )
   }
-  const getPluginUpdateState = (plugin: InstalledPlugin): { canUpdate: boolean; hasUpdate: boolean; title?: string } => {
+  const getPluginUpdateState = (plugin: InstalledPlugin): PluginUpdateState => {
     if (checkingUpdates) {
       return { canUpdate: false, hasUpdate: false, title: '正在检查更新' }
     }
 
-    const marketPlugin = marketPluginsById[plugin.id] || (plugin.manifest.id ? marketPluginsById[plugin.manifest.id] : undefined)
+    const marketPlugin =
+      marketPluginsById[plugin.id] ||
+      (plugin.manifest.id ? marketPluginsById[plugin.manifest.id] : undefined)
     if (!marketPlugin) {
-      return { canUpdate: false, hasUpdate: false, title: '插件市场中没有找到该插件，无法判断新版本' }
+      return {
+        canUpdate: false,
+        hasUpdate: false,
+        title: '插件市场中没有找到该插件，无法判断新版本',
+      }
     }
 
     if (!getPluginRepositoryUrl(plugin)) {
@@ -312,15 +400,57 @@ export function usePluginList() {
     const currentVersion = plugin.manifest.version
     const latestVersion = marketPlugin.manifest.version
     if (comparePluginVersions(currentVersion, latestVersion) <= 0) {
-      return { canUpdate: false, hasUpdate: false, title: '当前已是最新版本' }
+      return { canUpdate: false, hasUpdate: false, latestVersion, title: '当前已是最新版本' }
     }
 
-    return { canUpdate: true, hasUpdate: true, title: `发现新版本 v${latestVersion}` }
+    if (maimaiVersion && !isManifestCompatibleWithMaimai(marketPlugin.manifest, maimaiVersion)) {
+      return {
+        canUpdate: false,
+        hasUpdate: false,
+        latestVersion,
+        title: `插件市场最新版本 v${latestVersion} 与当前麦麦不兼容`,
+      }
+    }
+
+    return {
+      canUpdate: true,
+      hasUpdate: true,
+      latestVersion,
+      title: `发现新版本 v${latestVersion}`,
+    }
   }
 
-  const visiblePlugins = showUpdateOnly
+  const filteredVisiblePlugins = showUpdateOnly
     ? uniqueFilteredPlugins.filter((plugin) => getPluginUpdateState(plugin).hasUpdate)
     : uniqueFilteredPlugins
+
+  const pluginListGroupDefinitions: Array<Omit<PluginListGroup, 'plugins'>> = [
+    { key: 'success', label: '加载成功', dotClassName: 'bg-emerald-500' },
+    { key: 'loading', label: '加载中', dotClassName: 'bg-sky-500' },
+    { key: 'failed', label: '加载失败', dotClassName: 'bg-red-500' },
+    { key: 'disabled', label: '已禁用', dotClassName: 'bg-muted-foreground/45' },
+  ]
+  const getPluginListGroupKey = (plugin: InstalledPlugin): PluginListGroup['key'] => {
+    if (isPluginLoadSuccess(plugin)) {
+      return 'success'
+    }
+    if (isPluginLoading(plugin)) {
+      return 'loading'
+    }
+    if (isPluginLoadFailed(plugin)) {
+      return 'failed'
+    }
+    return 'disabled'
+  }
+  const visiblePluginGroups = pluginListGroupDefinitions
+    .map((group) => ({
+      ...group,
+      plugins: filteredVisiblePlugins.filter(
+        (plugin) => getPluginListGroupKey(plugin) === group.key
+      ),
+    }))
+    .filter((group) => group.plugins.length > 0)
+  const visiblePlugins = visiblePluginGroups.flatMap((group) => group.plugins)
 
   // 列表内启停插件
   const performTogglePlugin = async (plugin: InstalledPlugin) => {
@@ -329,14 +459,14 @@ export function usePluginList() {
       const toggleResult = await togglePlugin(plugin.id)
       toast({
         title: toggleResult.enabled ? '插件已启动' : '插件已关闭',
-        description: toggleResult.message || `${plugin.manifest.name} 状态已更新`
+        description: toggleResult.message || `${plugin.manifest.name} 状态已更新`,
       })
       await loadPlugins()
     } catch (error) {
       toast({
         title: '切换插件状态失败',
         description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive'
+        variant: 'destructive',
       })
     } finally {
       setActingPluginId(null)
@@ -358,6 +488,7 @@ export function usePluginList() {
     showUpdateOnly,
     setShowUpdateOnly: handleShowUpdateOnlyChange,
     visiblePlugins,
+    visiblePluginGroups,
     // 启停
     actingPluginId,
     setActingPluginId,
@@ -369,6 +500,7 @@ export function usePluginList() {
     // 状态派生
     isPluginDisabled,
     isPluginLoadFailed,
+    isPluginVersionIncompatible,
     getPluginStatusBarClassName,
     getPluginStatusLabel,
     getPluginStatusMeta,

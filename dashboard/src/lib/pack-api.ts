@@ -88,7 +88,10 @@ export interface PackListItem {
 /**
  * 完整的 Pack 数据
  */
-export interface ModelPack extends Omit<PackListItem, 'provider_count' | 'model_count' | 'task_count'> {
+export interface ModelPack extends Omit<
+  PackListItem,
+  'provider_count' | 'model_count' | 'task_count'
+> {
   providers: PackProvider[]
   models: PackModel[]
   task_config: PackTaskConfigs
@@ -124,7 +127,8 @@ export interface ApplyPackOptions {
 export interface ApplyPackConflicts {
   existing_providers: Array<{
     pack_provider: PackProvider
-    local_providers: Array<{  // 改为数组，支持多个匹配
+    local_providers: Array<{
+      // 改为数组，支持多个匹配
       name: string
       base_url: string
     }>
@@ -222,7 +226,10 @@ export async function recordPackDownload(packId: string, userId?: string): Promi
 /**
  * 点赞/取消点赞 Pack
  */
-export async function togglePackLike(packId: string, userId: string): Promise<{ likes: number; liked: boolean }> {
+export async function togglePackLike(
+  packId: string,
+  userId: string
+): Promise<{ likes: number; liked: boolean }> {
   const data = await statsApi.post<PackEnvelope & { likes: number; liked: boolean }>('/pack/like', {
     body: { pack_id: packId, user_id: userId },
     errorMessage: '点赞失败',
@@ -249,9 +256,7 @@ export async function checkPackLike(packId: string, userId: string): Promise<boo
 /**
  * 检测应用 Pack 时的冲突
  */
-export async function detectPackConflicts(
-  pack: ModelPack
-): Promise<ApplyPackConflicts> {
+export async function detectPackConflicts(pack: ModelPack): Promise<ApplyPackConflicts> {
   // 获取当前配置
   const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
     errorMessage: '获取当前模型配置失败',
@@ -268,13 +273,11 @@ export async function detectPackConflicts(
   const localProviders = currentConfig.api_providers || []
   for (const packProvider of pack.providers) {
     // 按 URL 匹配 - 找出所有匹配的本地提供商
-    const matchedProviders = localProviders.filter(
-      (p: { base_url: string; name: string }) => {
-        const localNormalized = normalizeUrl(p.base_url)
-        const packNormalized = normalizeUrl(packProvider.base_url)
-        return localNormalized === packNormalized
-      }
-    )
+    const matchedProviders = localProviders.filter((p: { base_url: string; name: string }) => {
+      const localNormalized = normalizeUrl(p.base_url)
+      const packNormalized = normalizeUrl(packProvider.base_url)
+      return localNormalized === packNormalized
+    })
 
     if (matchedProviders.length > 0) {
       conflicts.existing_providers.push({
@@ -292,9 +295,7 @@ export async function detectPackConflicts(
   // 检测模型名称冲突
   const localModels = currentConfig.models || []
   for (const packModel of pack.models) {
-    const conflictModel = localModels.find(
-      (m: { name: string }) => m.name === packModel.name
-    )
+    const conflictModel = localModels.find((m: { name: string }) => m.name === packModel.name)
     if (conflictModel) {
       conflicts.conflicting_models.push({
         pack_model: packModel.name,
@@ -312,8 +313,8 @@ export async function detectPackConflicts(
 export async function applyPack(
   pack: ModelPack,
   options: ApplyPackOptions,
-  providerMapping: Record<string, string>,  // pack_provider_name -> local_provider_name
-  newProviderApiKeys: Record<string, string>,  // provider_name -> api_key
+  providerMapping: Record<string, string>, // pack_provider_name -> local_provider_name
+  newProviderApiKeys: Record<string, string> // provider_name -> api_key
 ): Promise<void> {
   // 获取当前配置
   const responseData = await backendApi.get<ModelConfigResponse>('/api/webui/config/model', {
@@ -324,7 +325,7 @@ export async function applyPack(
   // 1. 处理提供商
   if (options.apply_providers) {
     const providersToApply = options.selected_providers
-      ? pack.providers.filter(p => options.selected_providers!.includes(p.name))
+      ? pack.providers.filter((p) => options.selected_providers!.includes(p.name))
       : pack.providers
 
     for (const packProvider of providersToApply) {
@@ -363,7 +364,7 @@ export async function applyPack(
   // 2. 处理模型
   if (options.apply_models) {
     const modelsToApply = options.selected_models
-      ? pack.models.filter(m => options.selected_models!.includes(m.name))
+      ? pack.models.filter((m) => options.selected_models!.includes(m.name))
       : pack.models
 
     for (const packModel of modelsToApply) {
@@ -399,11 +400,9 @@ export async function applyPack(
       if (!packTaskConfig) continue
 
       // 映射模型名称（如果模型名称被跳过，则从任务列表中移除）
-      const appliedModelNames = new Set(
-        options.selected_models || pack.models.map(m => m.name)
-      )
-      const filteredModelList = packTaskConfig.model_list.filter(
-        name => appliedModelNames.has(name)
+      const appliedModelNames = new Set(options.selected_models || pack.models.map((m) => m.name))
+      const filteredModelList = packTaskConfig.model_list.filter((name) =>
+        appliedModelNames.has(name)
       )
 
       if (filteredModelList.length === 0) continue
@@ -421,10 +420,7 @@ export async function applyPack(
         const existingConfig = currentConfig.model_task_config[taskKey]
         if (existingConfig) {
           // 合并模型列表（去重）
-          const mergedList = [...new Set([
-            ...existingConfig.model_list,
-            ...filteredModelList,
-          ])]
+          const mergedList = [...new Set([...existingConfig.model_list, ...filteredModelList])]
           currentConfig.model_task_config[taskKey] = {
             ...existingConfig,
             model_list: mergedList,

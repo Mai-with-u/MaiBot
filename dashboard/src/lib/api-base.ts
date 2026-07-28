@@ -82,9 +82,7 @@ export async function resolveApiPath(path: string): Promise<string> {
  * @param callback Function called when backend URL changes
  * @returns Unsubscribe function
  */
-export function onBackendUrlChanged(
-  callback: (newUrl: string | null) => void
-): () => void {
+export function onBackendUrlChanged(callback: (newUrl: string | null) => void): () => void {
   if (!isElectron()) {
     // Browser: No-op, return empty unsubscribe function
     return () => {}
