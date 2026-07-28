@@ -182,6 +182,32 @@ describe('PluginConfigPage 特征化', () => {
     expect(screen.getByText(incompatiblePlugin.load_error)).toBeInTheDocument()
   })
 
+  it('嵌入模式保持嵌入路由并跳转到嵌入式插件市场', async () => {
+    const user = userEvent.setup()
+    const incompatiblePlugin = makePlugin('test.embedded', 'Embedded Plugin')
+    incompatiblePlugin.manifest.version = '1.3.2'
+    incompatiblePlugin.manifest.host_application.max_version = '1.0.99'
+    incompatiblePlugin.load_status = 'failed'
+    incompatiblePlugin.load_error =
+      'manifest 校验失败: Host 版本不兼容: 版本 1.1.0 高于最大支持 1.0.99 (当前 Host: 1.1.0)'
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([incompatiblePlugin] as never)
+    window.history.replaceState(null, '', '/plugin-config/embed')
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('当前插件版本已不兼容')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '前往插件市场' })).toHaveAttribute(
+      'href',
+      '/plugins/embed'
+    )
+
+    await user.click(screen.getByRole('button', { name: /Embedded Plugin/ }))
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/plugin-config/embed')
+      expect(window.location.search).toBe('?plugin=test.embedded')
+    })
+  })
+
   it('插件版本不兼容且市场有兼容新版时直接引导更新', async () => {
     const user = userEvent.setup()
     const incompatiblePlugin = makePlugin('test.incompatible', 'Incompatible Plugin')

@@ -77,7 +77,7 @@ import type {
 } from '@/lib/plugin-api'
 import { PluginIcon } from './plugins/PluginIcon'
 import { getPluginTypeLabel } from './plugins/types'
-import { getNestedRecord } from './plugin-config/utils'
+import { getNestedRecord, getPluginMarketplaceRoutePath } from './plugin-config/utils'
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
 import { usePluginConfigEditor } from './plugin-config/hooks/usePluginConfigEditor'
@@ -1854,7 +1854,10 @@ function PluginConfigPageContent() {
                                 size="sm"
                                 className="h-7 border-red-300 px-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
                               >
-                                <a href="/plugins" onClick={(event) => event.stopPropagation()}>
+                                <a
+                                  href={getPluginMarketplaceRoutePath()}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
                                   前往插件市场
                                 </a>
                               </Button>
