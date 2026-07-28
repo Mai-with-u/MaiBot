@@ -204,6 +204,7 @@ function IndexPageContent() {
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
   const [platformAccountConfigured, setPlatformAccountConfigured] = useState<boolean | null>(null)
+  const [storageDisplayMode, setStorageDisplayMode] = useState<'size' | 'count'>('size')
 
   const handleRestart = useCallback(async () => {
     await triggerRestart()
@@ -312,6 +313,14 @@ function IndexPageContent() {
   const databaseSize = localCacheStats?.database.total_size ?? 0
   const totalStorageSize =
     localCacheDirectories.reduce((total, item) => total + item.total_size, 0) + databaseSize
+  const totalStorageFileCount =
+    localCacheDirectories.reduce((total, item) => total + item.file_count, 0) +
+    (localCacheStats?.database.files.length ?? 0)
+  const totalStorageRecordCount = localCacheDirectories.reduce(
+    (total, item) => total + item.db_records,
+    0
+  )
+  const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
   const storageDetails = [
     {
@@ -694,12 +703,49 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full xl:self-stretch">
-          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
+          <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+            <button
+              type="button"
+              className="text-muted-foreground/55 hover:text-muted-foreground absolute top-2.5 right-3 flex items-center gap-1 text-[10px] transition-colors"
+              aria-label={t('home.storage.switchDisplay')}
+              onClick={() =>
+                setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))
+              }
+            >
+              <span
+                className={cn(
+                  'transition-colors',
+                  storageDisplayMode === 'size' && 'text-primary font-semibold'
+                )}
+              >
+                {t('home.storage.sizeMode')}
+              </span>
+              <span aria-hidden="true">/</span>
+              <span
+                className={cn(
+                  'transition-colors',
+                  storageDisplayMode === 'count' && 'text-primary font-semibold'
+                )}
+              >
+                {t('home.storage.countMode')}
+              </span>
+            </button>
             <div className="space-y-3">
-              <div>
-                <div className="text-2xl font-bold">
+              <div className="pr-20">
+                <div
+                  className={cn(
+                    'font-bold',
+                    storageDisplayMode === 'size' ? 'text-2xl' : 'text-base'
+                  )}
+                >
                   {hasLocalCacheStats
-                    ? formatStorageBytes(totalStorageSize)
+                    ? storageDisplayMode === 'size'
+                      ? formatStorageBytes(totalStorageSize)
+                      : t('home.storage.countSummary', {
+                          files: totalStorageFileCount,
+                          records: totalStorageRecordCount,
+                          tables: totalStorageTableCount,
+                        })
                     : isLocalCacheStatsLoading
                       ? t('home.storage.reading')
                       : '-'}
@@ -724,22 +770,29 @@ function IndexPageContent() {
                       <div key={item.key} className="space-y-1.5">
                         <div className="flex min-w-0 items-center gap-2 text-xs">
                           <span className="shrink-0 font-bold">{item.label}</span>
-                          <span className="text-primary shrink-0 font-semibold">
-                            {formatStorageBytes(item.size)}
-                          </span>
-                          <span className="text-muted-foreground min-w-0 truncate">
-                            {item.detail}
-                          </span>
-                          <span className="text-muted-foreground ml-auto shrink-0">
-                            {percent.toFixed(percent >= 10 ? 0 : 1)}%
-                          </span>
+                          {storageDisplayMode === 'size' ? (
+                            <>
+                              <span className="text-primary shrink-0 font-semibold">
+                                {formatStorageBytes(item.size)}
+                              </span>
+                              <span className="text-muted-foreground ml-auto shrink-0">
+                                {percent.toFixed(percent >= 10 ? 0 : 1)}%
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground min-w-0 truncate">
+                              {item.detail}
+                            </span>
+                          )}
                         </div>
-                        <div className="bg-muted h-1.5 overflow-hidden rounded-full">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all"
-                            style={{ width: `${visiblePercent}%` }}
-                          />
-                        </div>
+                        {storageDisplayMode === 'size' && (
+                          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+                            <div
+                              className="bg-primary h-full rounded-full transition-all"
+                              style={{ width: `${visiblePercent}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -756,13 +809,56 @@ function IndexPageContent() {
         </Card>
       ),
     },
+    {
+      id: 'builtin:hitokoto',
+      title: t('home.hitokoto.title'),
+      width: 'full',
+      category: 'status',
+      source: 'builtin',
+      variant: 'separator',
+      render: () => (
+        <div
+          data-home-hitokoto="true"
+          className={cn(
+            'bg-muted/20 flex h-full w-full items-center gap-3 rounded-lg px-4',
+            themeConfig.dashboardStyle !== 'future-retro' &&
+              'border-muted-foreground/30 border border-dashed'
+          )}
+        >
+          {hitokotoLoading ? (
+            <Skeleton className="h-5 flex-1" />
+          ) : hitokoto ? (
+            <p
+              className={cn(
+                'text-muted-foreground flex-1 truncate',
+                themeConfig.dashboardStyle === 'future-retro'
+                  ? 'text-[1.05rem] font-medium tracking-wide'
+                  : 'text-sm italic'
+              )}
+              style={
+                themeConfig.dashboardStyle === 'future-retro'
+                  ? {
+                      fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
+                      textShadow: '0 0.035em 0 hsl(var(--background))',
+                    }
+                  : undefined
+              }
+            >
+              "{hitokoto.hitokoto}" —— {hitokoto.from}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
   ]
   const firstRowCardIds = ['builtin:bot-status', 'builtin:quick-actions', 'builtin:storage']
+  const hitokotoCardId = 'builtin:hitokoto'
   const orderedHomeCards = [
     ...firstRowCardIds
       .map((id) => homeCards.find((card) => card.id === id))
       .filter((card): card is HomeCardDefinition => card !== undefined),
-    ...homeCards.filter((card) => !firstRowCardIds.includes(card.id)),
+    ...homeCards.filter((card) => card.id === hitokotoCardId),
+    ...homeCards.filter((card) => !firstRowCardIds.includes(card.id) && card.id !== hitokotoCardId),
   ]
   const maibotUpdateAvailable = Boolean(
     botStatus?.version &&
@@ -854,38 +950,6 @@ function IndexPageContent() {
           cards={orderedHomeCards}
           pluginCards={pluginHomeCards}
           controlsPortalId="home-card-controls-bottom"
-          firstRowSeparator={
-            <div
-              className={cn(
-                'bg-muted/20 flex h-full w-full items-center gap-3 rounded-lg px-4',
-                themeConfig.dashboardStyle !== 'future-retro' &&
-                  'border-muted-foreground/30 border border-dashed'
-              )}
-            >
-              {hitokotoLoading ? (
-                <Skeleton className="h-5 flex-1" />
-              ) : hitokoto ? (
-                <p
-                  className={cn(
-                    'text-muted-foreground flex-1 truncate',
-                    themeConfig.dashboardStyle === 'future-retro'
-                      ? 'text-[1.05rem] font-medium tracking-wide'
-                      : 'text-sm italic'
-                  )}
-                  style={
-                    themeConfig.dashboardStyle === 'future-retro'
-                      ? {
-                          fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
-                          textShadow: '0 0.035em 0 hsl(var(--background))',
-                        }
-                      : undefined
-                  }
-                >
-                  "{hitokoto.hitokoto}" —— {hitokoto.from}
-                </p>
-              ) : null}
-            </div>
-          }
         />
 
         <div id="home-card-controls-bottom" className="flex justify-end pt-2" />

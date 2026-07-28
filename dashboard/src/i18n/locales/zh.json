@@ -46,6 +46,7 @@
       "pluginConfig": "插件管理",
       "mcpSettings": "MCP 设置",
       "dataTransfer": "数据迁移",
+      "statistics": "详细统计数据",
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
@@ -1082,12 +1083,35 @@
       "30d": "30天"
     },
     "autoRefresh": "自动刷新",
+    "hitokoto": {
+      "title": "一言"
+    },
     "cards": {
       "add": "新增卡片",
       "edit": "编辑卡片",
+      "editCard": "编辑卡片：{{title}}",
       "editContent": "编辑卡片内容",
       "done": "完成编辑",
       "reset": "恢复默认布局",
+      "styles": {
+        "default": {
+          "title": "默认样式",
+          "description": "使用当前主题的标准卡片外观。"
+        },
+        "orange": {
+          "title": "橙色底背景色字",
+          "description": "使用主题橙色作为底色，背景色作为文字颜色。"
+        },
+        "borderless": {
+          "title": "无边框无底纹",
+          "description": "移除卡片边框、底色、底纹和阴影。"
+        }
+      },
+      "styleDialog": {
+        "title": "编辑「{{title}}」",
+        "description": "选择这张卡片在首页中的显示样式。",
+        "done": "完成"
+      },
       "row": {
         "low": "低行",
         "high": "高行"
@@ -1251,6 +1275,10 @@
       "files": "{{count}} 个文件",
       "filesAndRecords": "{{files}} 个文件 · {{records}} 条记录",
       "databaseDetail": "{{files}} 个文件 · {{tables}} 张表",
+      "sizeMode": "大小",
+      "countMode": "数量",
+      "switchDisplay": "切换存储信息显示方式",
+      "countSummary": "{{files}} 文件 · {{records}} 记录 · {{tables}} 表",
       "readingDescription": "正在读取本地存储占用...",
       "unavailable": "暂未获取到本地存储占用",
       "manage": "管理存储"

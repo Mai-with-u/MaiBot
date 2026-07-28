@@ -138,8 +138,8 @@
   transition: outline-color 180ms ease-out;
 }
 
-[data-dashboard-toast="true"]:hover .toast-progress,
-[data-dashboard-toast="true"]:focus-within .toast-progress {
+[data-dashboard-toast='true']:hover .toast-progress,
+[data-dashboard-toast='true']:focus-within .toast-progress {
   animation-play-state: paused;
 }
 
@@ -1170,8 +1170,60 @@
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-workspace-tabs='true'] {
+  border: 0 !important;
   background: transparent !important;
   backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-workspace-tabs='true']
+  [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background: transparent !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-workspace-tabs='true']
+  [data-dashboard-tabs-trigger='true'][data-workspace-highlighted='true'] {
+  color: var(--retro-paper) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-workspace-tabs='true']
+  [data-dashboard-tabs-trigger='true'][data-workspace-highlighted='false'] {
+  color: var(--retro-ink) !important;
+}
+
+:root [data-dashboard-header-action='true'] {
+  width: 2rem !important;
+  height: 2rem !important;
+  top: -1px;
+}
+
+:root [data-dashboard-header-action='true'] svg {
+  width: 1.125rem !important;
+  height: 1.125rem !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-header='true']
+  [data-dashboard-header-action='true'] {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-header='true']
+  [data-dashboard-header-action='true'][data-header-action-highlighted='true'] {
+  color: var(--retro-paper) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-header='true']
+  [data-dashboard-header-action='true'][data-header-action-highlighted='false'] {
+  color: var(--retro-ink) !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-tabs-trigger='true'] {
@@ -2364,6 +2416,76 @@
     /* min-height: 44px;
     min-width: 44px; */
   }
+}
+
+/* 首页卡片编辑器的样式预设需要覆盖各主题及卡片自身的底色。 */
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='orange']
+  [data-dashboard-card='true'],
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='orange']
+  [data-home-hitokoto='true'] {
+  background-color: hsl(var(--primary)) !important;
+  background-image: none !important;
+  color: hsl(var(--background)) !important;
+}
+
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='orange']
+  :is(.text-card-foreground, .text-muted-foreground, .text-primary) {
+  color: hsl(var(--background)) !important;
+}
+
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='orange']
+  [data-home-hitokoto='true'] {
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+  font-weight: 700 !important;
+}
+
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='orange']
+  [data-home-hitokoto='true']
+  p {
+  color: hsl(var(--background)) !important;
+  font-family: inherit !important;
+  font-size: 1rem !important;
+  font-style: normal !important;
+  font-weight: inherit !important;
+  letter-spacing: normal !important;
+  text-shadow: none !important;
+}
+
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='borderless']
+  [data-dashboard-card='true'],
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='borderless']
+  [data-home-hitokoto='true'] {
+  border-color: transparent !important;
+  border-width: 0 !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='borderless']
+  [data-dashboard-card='true']::before,
+:root[data-dashboard-style]
+  [data-dashboard-shell='true']
+  [data-home-card-style='borderless']
+  [data-dashboard-card='true']::after {
+  display: none !important;
+  content: none !important;
 }
 
 /* 3. hover-only 反馈降级
