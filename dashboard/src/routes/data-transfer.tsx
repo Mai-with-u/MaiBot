@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToast } from '@/hooks/use-toast'
+import { LocalCacheTab } from '@/routes/settings/LocalCacheTab'
 import {
   cancelDataExportJob,
   createDataExportJob,
@@ -188,13 +189,6 @@ export function DataTransferPage() {
   return (
     <ScrollArea className="h-full">
       <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
-        <div>
-          <h1 className="text-2xl font-bold sm:text-3xl">数据迁移</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            导出 MaiBot 数据用于备份或迁移，也可以从此前导出的数据包恢复。
-          </p>
-        </div>
-
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -440,6 +434,10 @@ export function DataTransferPage() {
             </div>
           </CardContent>
         </Card>
+
+        <div id="local-cache" className="border-t pt-6">
+          <LocalCacheTab />
+        </div>
       </div>
     </ScrollArea>
   )

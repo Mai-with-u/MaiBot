@@ -45,14 +45,14 @@
       "configTemplate": "配置模板市场",
       "pluginConfig": "插件管理",
       "mcpSettings": "MCP 设置",
-      "dataTransfer": "数据迁移",
+      "dataTransfer": "数据管理",
       "statistics": "详细统计数据",
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
       "chatManagement": "聊天管理",
       "localChat": "本地聊天室",
-      "settings": "系统设置"
+      "settings": "WEBUI设置"
     }
   },
   "workspace": {
@@ -209,7 +209,7 @@
     "dismiss": "关闭 HTTP 安全提示"
   },
   "settings": {
-    "title": "系统设置",
+    "title": "WEBUI设置",
     "description": "管理您的应用偏好设置",
     "tabs": {
       "appearance": "外观",
@@ -532,7 +532,7 @@
     "method2FileHint": "打开此文件，复制 access_token 字段的值",
     "securityTipTitle": "安全提示",
     "securityTip1": "请妥善保管您的 Token，不要泄露给他人",
-    "securityTip2": "如需重置 Token，请在登录后前往系统设置",
+    "securityTip2": "如需重置 Token，请在登录后前往 WEBUI设置",
     "verifyFailed": "Token 验证失败，请检查后重试",
     "connFailed": "连接服务器失败，请检查网络连接",
     "switchToLight": "切换到浅色模式",
@@ -614,7 +614,7 @@
     },
     "skipDialog": {
       "title": "确认跳过配置向导",
-      "description": "您可以随时在系统设置中重新进入配置向导。确定要跳过吗？",
+      "description": "您可以随时在 WEBUI设置中重新进入配置向导。确定要跳过吗？",
       "confirm": "确认跳过"
     },
     "footer": "您可以随时在设置中修改这些配置",
@@ -913,12 +913,12 @@
       "statisticsDesc": "查看使用统计",
       "plugins": "插件市场",
       "pluginsDesc": "浏览和安装插件",
-      "dataTransferDesc": "备份、导出或恢复 MaiBot 数据",
+      "dataTransferDesc": "管理本地缓存，备份、导出或恢复 MaiBot 数据",
       "logs": "日志查看器",
       "logsDesc": "查看系统日志",
       "reasoningProcessDesc": "浏览 Maisaka prompt 推理记录",
-      "settings": "系统设置",
-      "settingsDesc": "配置系统参数"
+      "settings": "WEBUI设置",
+      "settingsDesc": "配置 WEBUI 参数"
     }
   },
   "a11y": {
@@ -1075,14 +1075,6 @@
   "home": {
     "title": "首页",
     "subtitle": "查看基本信息和快捷入口",
-    "signalDesk": {
-      "eyebrow": "MAIBOT OPERATIONS",
-      "title": "麦麦信号台",
-      "description": "系统运行与数据控制中心",
-      "status": "系统状态",
-      "online": "在线",
-      "standby": "待机"
-    },
     "loading": "加载中...",
     "loadingHint": "加载中...",
     "timeRange": {
@@ -1178,7 +1170,7 @@
       "expressionReview": "表达审核",
       "viewLogs": "查看日志",
       "pluginManage": "插件管理",
-      "systemSettings": "系统设置",
+      "systemSettings": "WEBUI设置",
       "pluginConfig": "插件配置",
       "appearanceSettings": "外观设置",
       "localCache": "本地缓存",
@@ -1197,7 +1189,7 @@
         "expressionReview": "打开表达学习审核弹窗",
         "viewLogs": "查看 WebUI 日志",
         "pluginManage": "打开插件市场与插件管理",
-        "systemSettings": "打开系统设置",
+        "systemSettings": "打开 WEBUI设置",
         "pluginConfig": "打开已安装插件配置页面",
         "appearanceSettings": "打开设置 / 外观",
         "localCache": "打开设置 / 本地缓存",

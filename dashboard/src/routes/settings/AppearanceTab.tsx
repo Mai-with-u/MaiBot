@@ -35,7 +35,6 @@ import type {
   BackgroundEffects,
   DashboardStyle,
   FutureRetroStyleConfig,
-  FutureRetroVariant,
   ThemeTokens,
   TypographyTokens,
 } from '@/lib/theme/tokens'
@@ -91,23 +90,6 @@ const dashboardStyleOptions: Array<{
     label: '未来复古',
     description: '使用一键包外壳同款纸面颗粒、硬朗描边和切角面板。',
     icon: ScanLine,
-  },
-]
-
-const futureRetroVariantOptions: Array<{
-  value: FutureRetroVariant
-  label: string
-  description: string
-}> = [
-  {
-    value: 'classic-signal',
-    label: '经典信号台',
-    description: '银灰仪表、柔和圆角与白色控制面板，辅以克制的橙色信号。',
-  },
-  {
-    value: 'paper-console',
-    label: '纸上控制台',
-    description: '纸张颗粒、直角描边与工程图式排版，呈现航天档案般的控制台。',
   },
 ]
 
@@ -1186,39 +1168,6 @@ export function AppearanceTab() {
               {t('settings.appearance.resetDefault')}
             </Button>
           </div>
-          <div className="mb-3 sm:mb-4">
-            <div className="mb-2">
-              <Label className="text-base font-medium">美术方案</Label>
-              <p className="text-muted-foreground mt-1 text-sm">
-                两套方案共享功能结构，可随时切换比较。
-              </p>
-            </div>
-            <div className="grid gap-2 lg:grid-cols-2">
-              {futureRetroVariantOptions.map((option) => {
-                const selected = futureRetroConfig.variant === option.value
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    data-retro-variant-option={option.value}
-                    data-selected={selected ? 'true' : 'false'}
-                    className={cn(
-                      'min-h-28 rounded-lg border-2 p-3 text-left transition-[border-color,background-color,transform] active:translate-y-px',
-                      selected
-                        ? 'border-primary bg-primary/8'
-                        : 'border-border bg-card hover:border-primary/45'
-                    )}
-                    onClick={() => updateFutureRetroConfig({ variant: option.value })}
-                  >
-                    <span className="block text-base font-semibold">{option.label}</span>
-                    <span className="text-muted-foreground mt-2 block text-sm leading-relaxed">
-                      {option.description}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
           <div className="bg-card mb-3 rounded-lg border p-3 sm:mb-4 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <Label>{t('settings.appearance.baseFontSize')}</Label>
@@ -1237,7 +1186,7 @@ export function AppearanceTab() {
               }}
             />
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
+          <div>
             <div className="bg-card rounded-lg border p-3 sm:p-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1 space-y-0.5">
@@ -1253,24 +1202,6 @@ export function AppearanceTab() {
                   id="future-retro-paper-texture"
                   checked={futureRetroConfig.paperTexture}
                   onCheckedChange={(paperTexture) => updateFutureRetroConfig({ paperTexture })}
-                />
-              </div>
-            </div>
-            <div className="bg-card rounded-lg border p-3 sm:p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1 space-y-0.5">
-                  <Label
-                    htmlFor="future-retro-focus-highlight"
-                    className="cursor-pointer text-base font-medium"
-                  >
-                    焦点高亮
-                  </Label>
-                  <p className="text-muted-foreground text-sm">显示键盘焦点的橙色高亮。</p>
-                </div>
-                <Switch
-                  id="future-retro-focus-highlight"
-                  checked={futureRetroConfig.focusHighlight}
-                  onCheckedChange={(focusHighlight) => updateFutureRetroConfig({ focusHighlight })}
                 />
               </div>
             </div>

@@ -67,6 +67,10 @@ type HomeCardRowMode = 'low' | 'high'
 type HomeCardCategory = 'status' | 'statistics' | 'analysis' | 'plugin'
 type HomeCardStyle = 'default' | 'orange' | 'borderless'
 
+function defaultCardStyle(cardId: string): HomeCardStyle {
+  return cardId === 'builtin:hitokoto' ? 'orange' : 'default'
+}
+
 export interface HomeCardDefinition {
   id: string
   title: string
@@ -1005,7 +1009,7 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
                     card={card}
                     displayWidth={adaptiveCardWidths.get(card.id)}
                     preferredWidth={layout.widths[card.id] ?? card.width}
-                    cardStyle={layout.styles[card.id] ?? 'default'}
+                    cardStyle={layout.styles[card.id] ?? defaultCardStyle(card.id)}
                     editing={editing}
                     onEdit={setEditingCardId}
                     onHide={hideCard}
@@ -1096,7 +1100,8 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
               {editingCard && (
                 <div className="grid gap-3 sm:grid-cols-3">
                   {(['default', 'orange', 'borderless'] as const).map((style) => {
-                    const selected = (layout.styles[editingCard.id] ?? 'default') === style
+                    const selected =
+                      (layout.styles[editingCard.id] ?? defaultCardStyle(editingCard.id)) === style
                     return (
                       <button
                         key={style}

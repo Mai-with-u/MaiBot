@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -15,20 +16,57 @@ interface SidebarProps {
   onMobileMenuClose: () => void
 }
 
+const SIDEBAR_HOVER_EXPAND_DELAY_MS = 180
+
 export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: SidebarProps) {
   const { t } = useTranslation()
   const { config: sidebarBg, inheritedFrom } = useBackground('sidebar')
   const inheritsPageBackground = inheritedFrom === 'page'
   const menuSections = useMenuSections()
+  const [hoverExpanded, setHoverExpanded] = useState(false)
+  const hoverExpandTimerRef = useRef<number | null>(null)
+  const visuallyOpen = sidebarOpen || hoverExpanded
+
+  const cancelHoverExpand = useCallback(() => {
+    if (hoverExpandTimerRef.current !== null) {
+      window.clearTimeout(hoverExpandTimerRef.current)
+      hoverExpandTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (sidebarOpen) {
+      cancelHoverExpand()
+      setHoverExpanded(false)
+    }
+    return cancelHoverExpand
+  }, [cancelHoverExpand, sidebarOpen])
 
   return (
     <aside
       data-dashboard-sidebar="true"
+      data-dashboard-sidebar-hover-expanded={hoverExpanded ? 'true' : undefined}
+      onPointerEnter={(event) => {
+        if (!sidebarOpen && event.pointerType === 'mouse') {
+          cancelHoverExpand()
+          hoverExpandTimerRef.current = window.setTimeout(() => {
+            hoverExpandTimerRef.current = null
+            setHoverExpanded(true)
+          }, SIDEBAR_HOVER_EXPAND_DELAY_MS)
+        }
+      }}
+      onPointerLeave={() => {
+        cancelHoverExpand()
+        setHoverExpanded(false)
+      }}
       className={cn(
-        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 lg:relative lg:z-0 lg:h-full lg:transition-none',
+        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 lg:relative lg:z-0 lg:h-full lg:transition-[width] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)]',
         inheritsPageBackground ? 'bg-transparent' : 'bg-card',
-        // 移动端始终显示完整宽度，桌面端根据 sidebarOpen 切换
-        'w-[var(--layout-sidebar-width)] lg:w-full',
+        // 移动端始终显示完整宽度；桌面端折叠后可通过悬停临时覆盖展开。
+        'w-[var(--layout-sidebar-width)]',
+        visuallyOpen
+          ? 'lg:w-[var(--layout-sidebar-width)]'
+          : 'lg:w-[var(--layout-sidebar-collapsed-width)]',
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}
     >
@@ -36,14 +74,14 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
 
       {/* Logo 区域 */}
       <div className="relative z-10">
-        <LogoArea sidebarOpen={sidebarOpen} />
+        <LogoArea sidebarOpen={visuallyOpen} />
       </div>
 
       <ScrollArea
         className={cn(
           'relative z-10',
           'min-h-0 flex-1 overflow-x-hidden',
-          !sidebarOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
+          !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
         )}
         viewportClassName="[&>div]:!block"
       >
@@ -51,15 +89,15 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
           aria-label={t('a11y.sidebarNav')}
           className={cn(
             'p-[var(--layout-sidebar-nav-padding)]',
-            !sidebarOpen &&
-              'lg:w-[var(--layout-sidebar-collapsed-width)] lg:p-[var(--layout-sidebar-nav-padding-collapsed)]'
+            !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]',
+            !sidebarOpen && 'lg:p-[var(--layout-sidebar-nav-padding-collapsed)]'
           )}
         >
           <ul
             className={cn(
               // 移动端始终使用正常间距,桌面端根据 sidebarOpen 切换
               'flex flex-col gap-[var(--layout-sidebar-section-gap)]',
-              !sidebarOpen && 'lg:w-full'
+              !visuallyOpen && 'lg:w-full'
             )}
           >
             {menuSections.map((section, sectionIndex) => (
@@ -71,8 +109,9 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
                     section.title === 'sidebar.groups.overview' && 'hidden',
                     // 移动端始终显示，桌面端根据状态切换
                     'mb-[var(--layout-sidebar-section-title-margin-bottom)]',
+                    !visuallyOpen && 'lg:invisible',
                     !sidebarOpen &&
-                      'lg:invisible lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
+                      'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
                   )}
                 >
                   <h3
@@ -94,7 +133,8 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
                     <NavItem
                       key={item.path}
                       item={item}
-                      sidebarOpen={sidebarOpen}
+                      sidebarOpen={visuallyOpen}
+                      temporarilyExpanded={!sidebarOpen && hoverExpanded}
                       onMobileMenuClose={onMobileMenuClose}
                     />
                   ))}

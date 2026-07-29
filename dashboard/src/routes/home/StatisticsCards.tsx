@@ -2,14 +2,11 @@ import type { ComponentType, ReactNode } from 'react'
 import {
   Activity,
   BarChart3,
-  Clock,
   Coins,
   Database,
   Gauge,
-  MessageSquare,
   Network,
   Timer,
-  Zap,
 } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -244,21 +241,18 @@ function formatCacheRate(value: number | null): string {
 function SummaryMetric({
   label,
   value,
-  icon: Icon,
   detail,
   detailOnHover = false,
 }: {
   label: string
   value: string
-  icon: ComponentType<{ className?: string }>
   detail?: string
   detailOnHover?: boolean
 }) {
   const metricLine = (
-    <div className="flex min-w-0 items-center gap-1.5 text-xs">
-      <Icon className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-      <span className="text-muted-foreground shrink-0 font-bold">{label}</span>
-      <span className="text-primary ml-auto min-w-0 truncate text-right text-[15px] font-bold">
+    <div className="flex min-w-0 items-baseline justify-center gap-2.5 text-base leading-none">
+      <span className="text-muted-foreground min-w-0 truncate font-bold">{label}</span>
+      <span className="text-primary shrink-0 text-xl leading-none font-black">
         {value}
       </span>
     </div>
@@ -267,7 +261,7 @@ function SummaryMetric({
   return (
     <div
       data-home-summary-metric="true"
-      className="border-border flex min-h-12 min-w-0 flex-col justify-center px-2 py-1"
+      className="border-border flex min-h-10 min-w-0 flex-col justify-center px-2 py-0.5"
     >
       {detail && detailOnHover ? (
         <Tooltip>
@@ -347,24 +341,20 @@ export function StatisticsOverviewCard() {
               value={formatNumber(summary.total_tokens, locale)}
               detail={`${t('home.stats.inputTokens')} ${formatNumber(summary.input_tokens, locale)} · ${t('home.stats.outputTokens')} ${formatNumber(summary.output_tokens, locale)}`}
               detailOnHover
-              icon={Database}
             />
             <SummaryMetric
               label={t('home.stats.avgResponse')}
               value={`${summary.avg_response_time.toFixed(2)}s`}
-              icon={Zap}
             />
             <SummaryMetric
               label={t('home.stats.onlineTime')}
               value={`${(summary.online_time / 3600).toFixed(1)}h`}
-              icon={Clock}
             />
             <SummaryMetric
               label={t('home.stats.messageProcessing')}
               value={formatNumber(summary.total_messages, locale)}
               detail={t('home.stats.replied', { num: formatNumber(summary.total_replies, locale) })}
               detailOnHover
-              icon={MessageSquare}
             />
           </div>
         </div>

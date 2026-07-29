@@ -278,18 +278,24 @@ export function Layout({ children }: LayoutProps) {
           {isSettingsWorkspace && (
             <motion.div
               key="settings-sidebar"
-              className="relative z-40 hidden shrink-0 overflow-hidden lg:block"
+              layout="size"
+              className={cn(
+                'relative z-40 hidden shrink-0 will-change-transform lg:block',
+                sidebarExiting ? 'overflow-hidden' : 'overflow-visible'
+              )}
               initial={false}
-              animate={
-                sidebarExiting
-                  ? { width: 0 }
-                  : {
-                      width: sidebarOpen
-                        ? 'var(--layout-sidebar-width)'
-                        : 'var(--layout-sidebar-collapsed-width)',
-                    }
-              }
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              style={{
+                width: sidebarExiting
+                  ? 0
+                  : sidebarOpen
+                    ? 'var(--layout-sidebar-width)'
+                    : 'var(--layout-sidebar-collapsed-width)',
+              }}
+              transition={{
+                layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+                opacity: { duration: 0.18 },
+                x: { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+              }}
             >
               <motion.div
                 className="h-full w-full will-change-transform"
@@ -332,7 +338,11 @@ export function Layout({ children }: LayoutProps) {
             )}
           </AnimatePresence>
           {/* Main content */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <motion.div
+            layout="position"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden will-change-transform"
+            transition={{ layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+          >
             {/* HTTP 安全警告横幅 */}
             <HttpWarningBanner />
 
@@ -402,7 +412,7 @@ export function Layout({ children }: LayoutProps) {
 
             {/* Back to Top Button */}
             {showBackToTop && <BackToTop />}
-          </div>
+          </motion.div>
         </div>
       </div>
       <Suspense fallback={null}>

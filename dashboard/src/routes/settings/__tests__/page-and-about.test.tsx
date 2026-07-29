@@ -82,10 +82,6 @@ vi.mock('../SecurityTab', () => ({
   SecurityTab: () => <div>安全页内容</div>,
 }))
 
-vi.mock('../LocalCacheTab', () => ({
-  LocalCacheTab: () => <div>本地缓存页内容</div>,
-}))
-
 vi.mock('../OtherTab', () => ({
   OtherTab: () => <div>其他页内容</div>,
 }))

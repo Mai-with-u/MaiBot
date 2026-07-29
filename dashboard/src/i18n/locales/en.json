@@ -45,14 +45,14 @@
       "configTemplate": "Config Templates",
       "pluginConfig": "Plugin Management",
       "mcpSettings": "MCP Settings",
-      "dataTransfer": "Data Transfer",
+      "dataTransfer": "Data Management",
       "statistics": "Detailed Statistics",
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
       "chatManagement": "Chat Management",
       "localChat": "Local Chat",
-      "settings": "Settings"
+      "settings": "WebUI Settings"
     }
   },
   "workspace": {
@@ -209,7 +209,7 @@
     "dismiss": "Dismiss HTTP security notice"
   },
   "settings": {
-    "title": "Settings",
+    "title": "WebUI Settings",
     "description": "Manage your application preferences",
     "tabs": {
       "appearance": "Appearance",
@@ -532,7 +532,7 @@
     "method2FileHint": "Open this file and copy the value of the access_token field",
     "securityTipTitle": "Security Notice",
     "securityTip1": "Keep your Token safe and never share it with others",
-    "securityTip2": "To reset the Token, go to System Settings after logging in",
+    "securityTip2": "To reset the Token, go to WebUI Settings after logging in",
     "verifyFailed": "Token verification failed. Please check and try again.",
     "connFailed": "Failed to connect to the server. Please check your network connection.",
     "switchToLight": "Switch to light mode",
@@ -614,7 +614,7 @@
     },
     "skipDialog": {
       "title": "Skip the setup wizard?",
-      "description": "You can reopen the setup wizard anytime from System Settings. Are you sure you want to skip it?",
+      "description": "You can reopen the setup wizard anytime from WebUI Settings. Are you sure you want to skip it?",
       "confirm": "Skip Anyway"
     },
     "footer": "You can change these settings anytime in Settings",
@@ -913,12 +913,12 @@
       "statisticsDesc": "View usage statistics",
       "plugins": "Plugin Market",
       "pluginsDesc": "Browse and install plugins",
-      "dataTransferDesc": "Back up, export, or restore MaiBot data",
+      "dataTransferDesc": "Manage local cache and back up, export, or restore MaiBot data",
       "logs": "Log Viewer",
       "logsDesc": "View system logs",
       "reasoningProcessDesc": "Browse Maisaka prompt reasoning logs",
-      "settings": "Settings",
-      "settingsDesc": "Configure system settings"
+      "settings": "WebUI Settings",
+      "settingsDesc": "Configure WebUI settings"
     }
   },
   "a11y": {
@@ -1075,14 +1075,6 @@
   "home": {
     "title": "Live Monitor",
     "subtitle": "MaiBot runtime status and statistics overview",
-    "signalDesk": {
-      "eyebrow": "MAIBOT OPERATIONS",
-      "title": "MaiBot Signal Desk",
-      "description": "System status and data control center",
-      "status": "System",
-      "online": "Online",
-      "standby": "Standby"
-    },
     "loading": "Loading...",
     "loadingHint": "Loading...",
     "timeRange": {
@@ -1180,7 +1172,7 @@
       "expressionReview": "Expression Review",
       "viewLogs": "View Logs",
       "pluginManage": "Plugins",
-      "systemSettings": "Settings",
+      "systemSettings": "WebUI Settings",
       "pluginConfig": "Plugin Config",
       "appearanceSettings": "Appearance",
       "localCache": "Local Cache",
@@ -1199,7 +1191,7 @@
         "expressionReview": "Open the expression learning review dialog",
         "viewLogs": "View WebUI logs",
         "pluginManage": "Open the plugin marketplace and management page",
-        "systemSettings": "Open system settings",
+        "systemSettings": "Open WebUI settings",
         "pluginConfig": "Open installed plugin configuration",
         "appearanceSettings": "Open Settings / Appearance",
         "localCache": "Open Settings / Local Cache",

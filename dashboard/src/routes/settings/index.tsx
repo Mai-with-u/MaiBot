@@ -1,4 +1,4 @@
-import { HardDrive, Info, Palette, Settings, Shield } from 'lucide-react'
+import { Info, Palette, Settings, Shield } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -7,12 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { AboutTab } from './AboutTab'
 import { AppearanceTab } from './AppearanceTab'
-import { LocalCacheTab } from './LocalCacheTab'
 import { OtherTab } from './OtherTab'
 import { SecurityTab } from './SecurityTab'
 
-type SettingsTab = 'appearance' | 'security' | 'local-cache' | 'other' | 'about'
-const SETTINGS_TABS: SettingsTab[] = ['appearance', 'security', 'local-cache', 'other', 'about']
+type SettingsTab = 'appearance' | 'security' | 'other' | 'about'
+const SETTINGS_TABS: SettingsTab[] = ['appearance', 'security', 'other', 'about']
 const TITLE_COLLAPSE_SCROLL_TOP = 64
 const TITLE_EXPAND_SCROLL_TOP = 4
 
@@ -114,7 +113,7 @@ export function SettingsPage() {
       >
         <div className="-mx-1 shrink-0 overflow-x-auto px-1 pb-1 sm:mx-0 sm:overflow-visible sm:p-0">
           <TabsList
-            className="inline-grid h-auto w-max min-w-full grid-cols-5 gap-1 p-1 sm:w-full"
+            className="inline-grid h-auto w-max min-w-full grid-cols-4 gap-1 p-1 sm:w-full"
           >
             <TabsTrigger
               data-dashboard-settings-tabs="true"
@@ -131,14 +130,6 @@ export function SettingsPage() {
             >
               <Shield className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2} fill="none" />
               <span>{t('settings.tabs.security')}</span>
-            </TabsTrigger>
-            <TabsTrigger
-              data-dashboard-settings-tabs="true"
-              value="local-cache"
-              className="min-w-[5.5rem] gap-1 px-3 text-sm sm:min-w-0 sm:gap-2 sm:text-base"
-            >
-              <HardDrive className="h-3.5 w-3.5 sm:h-4 sm:w-4" strokeWidth={2} fill="none" />
-              <span>本地缓存</span>
             </TabsTrigger>
             <TabsTrigger
               data-dashboard-settings-tabs="true"
@@ -170,10 +161,6 @@ export function SettingsPage() {
 
           <TabsContent value="security" className="mt-0">
             <SecurityTab />
-          </TabsContent>
-
-          <TabsContent value="local-cache" className="mt-0">
-            <LocalCacheTab />
           </TabsContent>
 
           <TabsContent value="other" className="mt-0">

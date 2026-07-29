@@ -117,22 +117,13 @@ function normalizeStyleBackgroundConfig(value: unknown): StyleBackgroundConfigMa
 function normalizeStyleConfig(value: unknown): DashboardStyleConfig {
   const config = isRecord(value) ? value : {}
   const futureRetro = isRecord(config.futureRetro) ? config.futureRetro : {}
-  const variant =
-    futureRetro.variant === 'classic-signal' || futureRetro.variant === 'paper-console'
-      ? futureRetro.variant
-      : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.variant
 
   return {
     futureRetro: {
-      focusHighlight:
-        typeof futureRetro.focusHighlight === 'boolean'
-          ? futureRetro.focusHighlight
-          : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.focusHighlight,
       paperTexture:
         typeof futureRetro.paperTexture === 'boolean'
           ? futureRetro.paperTexture
           : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.paperTexture,
-      variant,
     },
   }
 }

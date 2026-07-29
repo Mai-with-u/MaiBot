@@ -26,6 +26,7 @@ import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { backendApi } from '@/lib/http'
+import { openUpdateNotice } from '@/lib/update-notice-events'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
 
@@ -299,9 +300,6 @@ function IndexPageContent() {
   )
   const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
-  const isSignalDesk =
-    themeConfig.dashboardStyle === 'future-retro' &&
-    (themeConfig.styleConfig?.futureRetro.variant ?? 'classic-signal') === 'classic-signal'
   const botRuntimeState: BotRuntimeState =
     isBotStatusLoading && !botStatus
       ? 'loading'
@@ -359,7 +357,6 @@ function IndexPageContent() {
             className="p-3 sm:p-3"
           >
             <div className="space-y-2">
-              {isSignalDesk && <div data-home-panel-label="true">{t('home.botStatus.title')}</div>}
               <div data-maibot-runtime-status="true" className="flex items-center gap-2.5">
                 <BotActivityOrbit state={botRuntimeState} />
                 <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
@@ -419,7 +416,6 @@ function IndexPageContent() {
       render: () => (
         <Card className="h-full">
           <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
-            {isSignalDesk && <div data-home-panel-label="true">{t('home.quickActions.title')}</div>}
             {selectedQuickShortcuts.length === 0 ? (
               <div className="text-muted-foreground flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -623,7 +619,6 @@ function IndexPageContent() {
               </span>
             </button>
             <div className="flex h-full flex-col gap-3">
-              {isSignalDesk && <div data-home-panel-label="true">{t('home.storage.title')}</div>}
               <div className="pr-20">
                 <div
                   className={cn(
@@ -705,8 +700,8 @@ function IndexPageContent() {
               )}
               <div data-home-storage-action="true" className="mt-auto flex justify-end pt-1">
                 <Link
-                  to="/settings"
-                  search={{ tab: 'local-cache' }}
+                  to="/data-transfer"
+                  hash="local-cache"
                   className="group text-muted-foreground hover:text-primary focus-visible:ring-ring inline-flex shrink-0 items-center gap-1.5 py-1 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
                 >
                   <span>{t('home.storage.manage')}</span>
@@ -822,38 +817,30 @@ function IndexPageContent() {
             versionsMismatch && 'text-amber-600 dark:text-amber-400'
           )}
         >
-          {isSignalDesk && (
-            <div data-home-command-title="true">
-              <span>{t('home.signalDesk.eyebrow')}</span>
-              <strong>{t('home.signalDesk.title')}</strong>
-            </div>
-          )}
-          <span className="inline-flex items-baseline gap-2">
+          <button
+            type="button"
+            data-home-version-button="true"
+            className="inline-flex items-baseline gap-2"
+            onClick={() => openUpdateNotice('maibot')}
+          >
             <span className="text-[11px] tracking-[0.2em] opacity-70">
               {t('home.versionCard.maibotVersion')}
             </span>
             <span className="text-base">
               {botStatus?.version ? `V${botStatus.version}` : t('home.versionCard.unknown')}
             </span>
-          </span>
-          {(!isSignalDesk || versionsMismatch) && (
-            <span className="inline-flex items-baseline gap-2">
-              <span className="text-[11px] tracking-[0.2em] opacity-70">
-                {t('home.versionCard.consoleVersion')}
-              </span>
-              <span className="text-base">V{APP_VERSION}</span>
+          </button>
+          <button
+            type="button"
+            data-home-version-button="true"
+            className="inline-flex items-baseline gap-2"
+            onClick={() => openUpdateNotice('console')}
+          >
+            <span className="text-[11px] tracking-[0.2em] opacity-70">
+              {t('home.versionCard.consoleVersion')}
             </span>
-          )}
-          {isSignalDesk && (
-            <span data-home-command-status="true" className="inline-flex items-baseline gap-2">
-              <span className="text-[11px] tracking-[0.2em] opacity-70">
-                {t('home.signalDesk.status')}
-              </span>
-              <span className="text-base">
-                {botStatus?.running ? t('home.signalDesk.online') : t('home.signalDesk.standby')}
-              </span>
-            </span>
-          )}
+            <span className="text-base">V{APP_VERSION}</span>
+          </button>
           {maibotUpdateAvailable && maibotStableRelease && (
             <a
               href={maibotStableRelease.url}
@@ -870,7 +857,23 @@ function IndexPageContent() {
             aria-hidden="true"
             data-home-version-stripes="true"
             className="ml-auto hidden min-w-24 flex-1 basis-40"
-          />
+          >
+            <svg
+              data-home-version-spectrum="true"
+              viewBox="0 0 1100 180"
+              preserveAspectRatio="none"
+            >
+              <path
+                data-spectrum-line="green"
+                d="M0 84 H740 C850 84 880 18 1010 18 H1100"
+              />
+              <path data-spectrum-line="gold" d="M0 90 H1100" />
+              <path
+                data-spectrum-line="orange"
+                d="M0 96 H740 C850 96 880 162 1010 162 H1100"
+              />
+            </svg>
+          </span>
         </div>
 
         <HomeCardManager

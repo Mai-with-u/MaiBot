@@ -78,15 +78,16 @@ describe('LogoArea 与 Sidebar', () => {
     vi.clearAllMocks()
   })
 
-  it('展开 Logo 时展示完整标题和版本，折叠时增加桌面简写', () => {
+  it('展开 Logo 时展示品牌标题和光谱彩条，折叠时增加桌面简写', () => {
     const { rerender } = render(<LogoArea sidebarOpen />)
 
-    expect(screen.getAllByText('MaiBot WebUI')).toHaveLength(2)
+    expect(screen.getByText('MAIBOT')).toBeInTheDocument()
+    expect(document.querySelector('[data-dashboard-logo-spectrum="true"]')).toBeInTheDocument()
     expect(screen.queryByText('M')).not.toBeInTheDocument()
 
     rerender(<LogoArea sidebarOpen={false} />)
     expect(screen.getByText('M')).toHaveClass('lg:block')
-    expect(screen.getAllByText('MaiBot WebUI')[0].parentElement).toHaveClass('lg:hidden')
+    expect(screen.getByText('MAIBOT').parentElement).toHaveClass('lg:hidden')
   })
 
   it('展开侧栏时渲染独立背景、菜单分组和展开态导航项', () => {

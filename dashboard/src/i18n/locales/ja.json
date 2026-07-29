@@ -45,14 +45,14 @@
       "configTemplate": "設定テンプレート",
       "pluginConfig": "プラグイン管理",
       "mcpSettings": "MCP 設定",
-      "dataTransfer": "データ移行",
+      "dataTransfer": "データ管理",
       "statistics": "詳細統計データ",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
       "chatManagement": "チャット管理",
       "localChat": "ローカルチャット",
-      "settings": "設定"
+      "settings": "WebUI 設定"
     }
   },
   "workspace": {
@@ -209,7 +209,7 @@
     "dismiss": "HTTP セキュリティ通知を閉じる"
   },
   "settings": {
-    "title": "設定",
+    "title": "WebUI 設定",
     "description": "アプリの設定を管理する",
     "tabs": {
       "appearance": "外観",
@@ -913,12 +913,12 @@
       "statisticsDesc": "使用統計を表示",
       "plugins": "プラグインマーケット",
       "pluginsDesc": "プラグインを閲覧してインストール",
-      "dataTransferDesc": "MaiBot データのバックアップ、エクスポート、復元",
+      "dataTransferDesc": "ローカルキャッシュの管理と MaiBot データのバックアップ、エクスポート、復元",
       "logs": "ログビューア",
       "logsDesc": "システムログを表示",
       "reasoningProcessDesc": "Maisaka prompt の推論ログを閲覧",
-      "settings": "設定",
-      "settingsDesc": "システム設定を構成"
+      "settings": "WebUI 設定",
+      "settingsDesc": "WebUI 設定を構成"
     }
   },
   "a11y": {
@@ -1075,14 +1075,6 @@
   "home": {
     "title": "リアルタイムモニター",
     "subtitle": "MaiBotの稼働状況と統計データの一覧",
-    "signalDesk": {
-      "eyebrow": "MAIBOT OPERATIONS",
-      "title": "麦麦シグナルデスク",
-      "description": "システム稼働状況とデータ制御センター",
-      "status": "システム",
-      "online": "オンライン",
-      "standby": "待機"
-    },
     "loading": "統計データを読み込み中...",
     "loadingHint": "読み込み中...",
     "timeRange": {
@@ -1180,7 +1172,7 @@
       "expressionReview": "表現レビュー",
       "viewLogs": "ログを見る",
       "pluginManage": "プラグイン管理",
-      "systemSettings": "システム設定",
+      "systemSettings": "WebUI 設定",
       "pluginConfig": "プラグイン設定",
       "appearanceSettings": "外観設定",
       "localCache": "ローカルキャッシュ",
@@ -1199,7 +1191,7 @@
         "expressionReview": "表現学習レビューのダイアログを開く",
         "viewLogs": "WebUI ログを表示",
         "pluginManage": "プラグインマーケットと管理ページを開く",
-        "systemSettings": "システム設定を開く",
+        "systemSettings": "WebUI 設定を開く",
         "pluginConfig": "インストール済みプラグインの設定ページを開く",
         "appearanceSettings": "設定 / 外観を開く",
         "localCache": "設定 / ローカルキャッシュを開く",

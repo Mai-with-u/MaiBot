@@ -44,9 +44,7 @@ describe('loadThemeConfig', () => {
       dashboardStyle: 'future-retro',
       styleConfig: {
         futureRetro: {
-          focusHighlight: false,
           paperTexture: true,
-          variant: 'classic-signal',
         },
       },
     })
@@ -90,9 +88,7 @@ describe('loadThemeConfig', () => {
     expect(config.styleBackgroundConfig).toEqual({ modern: { card: { type: 'none' } } })
     expect(config.styleConfig).toEqual({
       futureRetro: {
-        focusHighlight: true,
         paperTexture: true,
-        variant: 'classic-signal',
       },
     })
   })
@@ -121,23 +117,6 @@ describe('loadThemeConfig', () => {
     expect(config.accentColor).toBe(DEFAULT_ACCENT_COLOR_HSL)
   })
 
-  it.each(['night-archive', 'signal-desk'])('已移除的 %s 方案迁移到经典信号台', (variant) => {
-    localStorage.setItem(
-      THEME_STORAGE_KEYS.STYLE_CONFIG,
-      JSON.stringify({ futureRetro: { variant } })
-    )
-
-    expect(loadThemeConfig().styleConfig.futureRetro.variant).toBe('classic-signal')
-  })
-
-  it('保留经典信号台方案', () => {
-    localStorage.setItem(
-      THEME_STORAGE_KEYS.STYLE_CONFIG,
-      JSON.stringify({ futureRetro: { variant: 'classic-signal' } })
-    )
-
-    expect(loadThemeConfig().styleConfig.futureRetro.variant).toBe('classic-signal')
-  })
 })
 
 describe('saveThemeConfig', () => {

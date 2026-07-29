@@ -45,14 +45,14 @@
       "configTemplate": "설정 템플릿",
       "pluginConfig": "플러그인 관리",
       "mcpSettings": "MCP 설정",
-      "dataTransfer": "데이터 이전",
+      "dataTransfer": "데이터 관리",
       "statistics": "상세 통계 데이터",
       "logViewer": "로그 뷰어",
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
       "chatManagement": "채팅 관리",
       "localChat": "로컬 채팅",
-      "settings": "설정"
+      "settings": "WebUI 설정"
     }
   },
   "workspace": {
@@ -201,7 +201,7 @@
     "dismiss": "HTTP 보안 알림 닫기"
   },
   "settings": {
-    "title": "설정",
+    "title": "WebUI 설정",
     "description": "앱 환경 설정 관리",
     "tabs": {
       "appearance": "외관",
@@ -905,12 +905,12 @@
       "statisticsDesc": "사용 통계 보기",
       "plugins": "플러그인 마켓",
       "pluginsDesc": "플러그인 탐색 및 설치",
-      "dataTransferDesc": "MaiBot 데이터 백업, 내보내기 또는 복원",
+      "dataTransferDesc": "로컬 캐시 관리 및 MaiBot 데이터 백업, 내보내기 또는 복원",
       "logs": "로그 뷰어",
       "logsDesc": "시스템 로그 보기",
       "reasoningProcessDesc": "Maisaka prompt 추론 로그 보기",
-      "settings": "설정",
-      "settingsDesc": "시스템 설정 구성"
+      "settings": "WebUI 설정",
+      "settingsDesc": "WebUI 설정 구성"
     }
   },
   "a11y": {
@@ -1067,14 +1067,6 @@
   "home": {
     "title": "실시간 모니터",
     "subtitle": "MaiBot 실행 상태 및 통계 데이터 개요",
-    "signalDesk": {
-      "eyebrow": "MAIBOT OPERATIONS",
-      "title": "MaiBot 시그널 데스크",
-      "description": "시스템 상태 및 데이터 제어 센터",
-      "status": "시스템",
-      "online": "온라인",
-      "standby": "대기"
-    },
     "loading": "통계 데이터를 불러오는 중...",
     "loadingHint": "불러오는 중...",
     "timeRange": {
@@ -1172,7 +1164,7 @@
       "expressionReview": "표현 검토",
       "viewLogs": "로그 보기",
       "pluginManage": "플러그인 관리",
-      "systemSettings": "시스템 설정",
+      "systemSettings": "WebUI 설정",
       "pluginConfig": "플러그인 설정",
       "appearanceSettings": "외관 설정",
       "localCache": "로컬 캐시",
@@ -1191,7 +1183,7 @@
         "expressionReview": "표현 학습 검토 대화상자 열기",
         "viewLogs": "WebUI 로그 보기",
         "pluginManage": "플러그인 마켓과 관리 페이지 열기",
-        "systemSettings": "시스템 설정 열기",
+        "systemSettings": "WebUI 설정 열기",
         "pluginConfig": "설치된 플러그인 설정 페이지 열기",
         "appearanceSettings": "설정 / 외관 열기",
         "localCache": "설정 / 로컬 캐시 열기",

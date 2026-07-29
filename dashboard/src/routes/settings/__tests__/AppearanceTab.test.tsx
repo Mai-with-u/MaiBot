@@ -249,40 +249,20 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     expect(screen.queryByText('settings.appearance.customCss')).not.toBeInTheDocument()
     expect(screen.queryByText('settings.appearance.importExportTheme')).not.toBeInTheDocument()
 
-    // 默认：纸面颗粒开、焦点高亮关
+    // 默认开启纸面颗粒，焦点高亮设置已移除。
     const paperSwitch = screen.getByRole('switch', { name: '纸面颗粒' })
     expect(paperSwitch).toBeChecked()
-    expect(screen.getByRole('switch', { name: '焦点高亮' })).not.toBeChecked()
+    expect(screen.queryByRole('switch', { name: '焦点高亮' })).not.toBeInTheDocument()
 
     await user.click(paperSwitch)
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       styleConfig: {
         futureRetro: {
-          focusHighlight: false,
           paperTexture: false,
-          variant: 'classic-signal',
         },
       },
     })
 
-    expect(screen.queryByRole('button', { name: /航天信号台/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /深夜档案/ })).not.toBeInTheDocument()
-    expect(
-      screen.getByText('银灰仪表、柔和圆角与白色控制面板，辅以克制的橙色信号。')
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('纸张颗粒、直角描边与工程图式排版，呈现航天档案般的控制台。')
-    ).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /纸上控制台/ }))
-    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
-      styleConfig: {
-        futureRetro: {
-          focusHighlight: false,
-          paperTexture: true,
-          variant: 'paper-console',
-        },
-      },
-    })
   })
 })
 
