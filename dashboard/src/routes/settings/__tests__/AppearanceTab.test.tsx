@@ -16,11 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppearanceTab } from '../AppearanceTab'
 import type { AnimationSettings } from '@/lib/animation-context'
 import type { ThemeProviderState } from '@/lib/theme-context'
-import {
-  DEFAULT_ACCENT_COLOR_HEX,
-  DEFAULT_ACCENT_COLOR_HSL,
-  hexToHSL,
-} from '@/lib/theme/palette'
+import { DEFAULT_ACCENT_COLOR_HEX, DEFAULT_ACCENT_COLOR_HSL, hexToHSL } from '@/lib/theme/palette'
 import { applyThemePipeline } from '@/lib/theme/pipeline'
 import { exportThemeJSON, importThemeJSON } from '@/lib/theme/storage'
 import {
@@ -199,10 +195,7 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     const user = userEvent.setup()
     render(<AppearanceTab />)
 
-    expect(screen.getByRole('tab', { name: /systemDesc/ })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByRole('tab', { name: /systemDesc/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: /darkDesc/ })).toHaveAttribute('aria-selected', 'false')
 
     await user.click(screen.getByRole('tab', { name: /darkDesc/ }))
@@ -263,7 +256,32 @@ describe('AppearanceTab 主题模式与界面风格', () => {
 
     await user.click(paperSwitch)
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
-      styleConfig: { futureRetro: { focusHighlight: false, paperTexture: false } },
+      styleConfig: {
+        futureRetro: {
+          focusHighlight: false,
+          paperTexture: false,
+          variant: 'classic-signal',
+        },
+      },
+    })
+
+    expect(screen.queryByRole('button', { name: /航天信号台/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /深夜档案/ })).not.toBeInTheDocument()
+    expect(
+      screen.getByText('银灰仪表、柔和圆角与白色控制面板，辅以克制的橙色信号。')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('纸张颗粒、直角描边与工程图式排版，呈现航天档案般的控制台。')
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /纸上控制台/ }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: {
+          focusHighlight: false,
+          paperTexture: true,
+          variant: 'paper-console',
+        },
+      },
     })
   })
 })
@@ -327,9 +345,9 @@ describe('AppearanceTab 主题色', () => {
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       accentColor: DEFAULT_ACCENT_COLOR_HSL,
     })
-    expect(
-      screen.getByRole('textbox', { name: 'settings.appearance.accentPrimary' })
-    ).toHaveValue(DEFAULT_ACCENT_COLOR_HEX)
+    expect(screen.getByRole('textbox', { name: 'settings.appearance.accentPrimary' })).toHaveValue(
+      DEFAULT_ACCENT_COLOR_HEX
+    )
   })
 
   it('主题色已是默认值时重置按钮禁用', () => {
@@ -454,9 +472,7 @@ describe('AppearanceTab 主题导入/导出与重置', () => {
     await user.click(screen.getByRole('button', { name: 'settings.appearance.resetTheme' }))
     expect(await screen.findByText('settings.appearance.confirmResetTheme')).toBeInTheDocument()
 
-    await user.click(
-      screen.getByRole('button', { name: 'settings.appearance.confirmResetAction' })
-    )
+    await user.click(screen.getByRole('button', { name: 'settings.appearance.confirmResetAction' }))
     expect(themeState.resetTheme).toHaveBeenCalledTimes(1)
     expect(toastMock).toHaveBeenCalledWith({
       title: 'settings.appearance.resetSuccess',

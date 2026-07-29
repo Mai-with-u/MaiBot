@@ -5,7 +5,6 @@ import {
   Clock,
   Coins,
   Database,
-  DollarSign,
   Gauge,
   MessageSquare,
   Network,
@@ -38,6 +37,7 @@ import {
 } from '@/components/ui/chart'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ZoomableChart } from '@/components/ui/zoomable-chart'
 import { cn } from '@/lib/utils'
 
@@ -107,6 +107,7 @@ interface StatisticsCardFrameProps {
   title: string
   icon: ComponentType<{ className?: string }>
   state: StatisticsCardData
+  titleless?: boolean
   children: (data: DashboardData) => ReactNode
 }
 
@@ -142,7 +143,11 @@ function TimeRangeTextSwitch({
   }
 
   return (
-    <div className="flex shrink-0 items-center text-xs" aria-label={t('home.stats.timeRange')}>
+    <div
+      data-home-time-range="true"
+      className="flex shrink-0 items-center text-xs"
+      aria-label={t('home.stats.timeRange')}
+    >
       {TIME_RANGES.map((hours, index) => (
         <span key={hours} className="inline-flex items-center">
           {index > 0 && (
@@ -167,19 +172,38 @@ function TimeRangeTextSwitch({
   )
 }
 
-function StatisticsCardFrame({ title, icon: Icon, state, children }: StatisticsCardFrameProps) {
+function StatisticsCardFrame({
+  title,
+  icon: Icon,
+  state,
+  titleless = false,
+  children,
+}: StatisticsCardFrameProps) {
   return (
-    <Card className="flex h-full min-h-0 flex-col">
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 pb-3">
-        <div className="min-w-0">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Icon className="h-4 w-4" />
-            {title}
-          </CardTitle>
-        </div>
-        <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
-      </CardHeader>
-      <CardContent className="flex min-h-0 flex-1 flex-col">
+    <Card className="relative flex h-full min-h-0 flex-col">
+      {!titleless && (
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 pb-3">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Icon className="h-4 w-4" />
+              {title}
+            </CardTitle>
+          </div>
+          <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
+        </CardHeader>
+      )}
+      <CardContent
+        data-home-titleless-content={titleless ? 'true' : undefined}
+        className={cn(
+          'flex min-h-0 flex-1 flex-col',
+          titleless && 'relative pt-4 sm:pt-5'
+        )}
+      >
+        {titleless && (
+          <div className="absolute top-3 right-4 z-10">
+            <TimeRangeTextSwitch value={state.timeRange} onChange={state.setTimeRange} />
+          </div>
+        )}
         {state.loading && !state.data ? (
           <div className="space-y-3">
             <Skeleton className="h-24 w-full" />
@@ -222,22 +246,64 @@ function SummaryMetric({
   value,
   icon: Icon,
   detail,
+  detailOnHover = false,
 }: {
   label: string
   value: string
   icon: ComponentType<{ className?: string }>
   detail?: string
+  detailOnHover?: boolean
+}) {
+  const metricLine = (
+    <div className="flex min-w-0 items-center gap-1.5 text-xs">
+      <Icon className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+      <span className="text-muted-foreground shrink-0 font-bold">{label}</span>
+      <span className="text-primary ml-auto min-w-0 truncate text-right text-[15px] font-bold">
+        {value}
+      </span>
+    </div>
+  )
+
+  return (
+    <div
+      data-home-summary-metric="true"
+      className="border-border flex min-h-12 min-w-0 flex-col justify-center px-2 py-1"
+    >
+      {detail && detailOnHover ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{metricLine}</TooltipTrigger>
+          <TooltipContent sideOffset={1} className="px-2 py-1 leading-none">
+            {detail}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        metricLine
+      )}
+      {detail && !detailOnHover && (
+        <p data-home-metric-detail="true" className="text-muted-foreground text-[11px] leading-4">
+          {detail}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function PrimarySummaryMetric({
+  label,
+  value,
+}: {
+  label: string
+  value: string
 }) {
   return (
-    <div className="border-border flex min-h-12 min-w-0 flex-col justify-center px-2 py-1">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs">
-        <Icon className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-        <span className="text-muted-foreground shrink-0 font-bold">{label}</span>
-        <span className="text-primary ml-auto min-w-0 truncate text-right text-[15px] font-bold">
-          {value}
-        </span>
+    <div
+      data-home-summary-primary="true"
+      className="flex min-h-0 min-w-0 flex-col justify-center px-3 py-1"
+    >
+      <div className="text-muted-foreground truncate text-xs font-bold">{label}</div>
+      <div className="text-primary mt-1 truncate text-3xl leading-none font-black tracking-[-0.04em] tabular-nums">
+        {value}
       </div>
-      {detail && <p className="text-muted-foreground text-[11px] leading-4">{detail}</p>}
     </div>
   )
 }
@@ -248,47 +314,59 @@ export function StatisticsOverviewCard() {
   const locale = i18n.resolvedLanguage || i18n.language
 
   return (
-    <StatisticsCardFrame title={t('home.stats.overviewTitle')} icon={BarChart3} state={state}>
+    <StatisticsCardFrame
+      title={t('home.stats.overviewTitle')}
+      icon={BarChart3}
+      state={state}
+      titleless
+    >
       {({ summary }) => (
-        <div className="grid gap-y-1 lg:grid-cols-2 xl:grid-cols-3 [&>*:not(:nth-child(2n+1))]:lg:border-l [&>*:not(:nth-child(3n+1))]:xl:border-l">
-          <SummaryMetric
-            label={t('home.stats.totalRequests')}
-            value={formatNumber(summary.total_requests, locale)}
-            icon={Activity}
-          />
-          <SummaryMetric
-            label={t('home.stats.totalCost')}
-            value={`¥${summary.total_cost.toFixed(2)}`}
-            detail={
-              summary.cost_per_hour > 0
-                ? t('home.stats.perHour', { value: `¥${summary.cost_per_hour.toFixed(2)}` })
-                : t('home.stats.noData')
-            }
-            icon={DollarSign}
-          />
-          <SummaryMetric
-            label={t('home.stats.tokenUsage')}
-            value={formatNumber(summary.total_tokens, locale)}
-            detail={`${t('home.stats.inputTokens')} ${formatNumber(summary.input_tokens, locale)} · ${t('home.stats.outputTokens')} ${formatNumber(summary.output_tokens, locale)}`}
-            icon={Database}
-          />
-          <SummaryMetric
-            label={t('home.stats.avgResponse')}
-            value={`${summary.avg_response_time.toFixed(2)}s`}
-            detail={t('home.stats.avgResponseDesc')}
-            icon={Zap}
-          />
-          <SummaryMetric
-            label={t('home.stats.onlineTime')}
-            value={`${(summary.online_time / 3600).toFixed(1)}h`}
-            icon={Clock}
-          />
-          <SummaryMetric
-            label={t('home.stats.messageProcessing')}
-            value={formatNumber(summary.total_messages, locale)}
-            detail={t('home.stats.replied', { num: formatNumber(summary.total_replies, locale) })}
-            icon={MessageSquare}
-          />
+        <div
+          data-home-statistics-overview="true"
+          className="grid min-h-0 flex-1 grid-rows-2"
+        >
+          <div
+            data-home-summary-primary-group="true"
+            className="divide-border grid min-h-0 w-full grid-cols-2 divide-x pr-28 sm:w-3/5"
+          >
+            <PrimarySummaryMetric
+              label={t('home.stats.totalRequests')}
+              value={formatNumber(summary.total_requests, locale)}
+            />
+            <PrimarySummaryMetric
+              label={t('home.stats.totalCost')}
+              value={`¥${summary.total_cost.toFixed(2)}`}
+            />
+          </div>
+          <div
+            data-home-summary-secondary="true"
+            className="border-border grid min-h-0 grid-cols-4 border-t pt-1"
+          >
+            <SummaryMetric
+              label={t('home.stats.tokenUsage')}
+              value={formatNumber(summary.total_tokens, locale)}
+              detail={`${t('home.stats.inputTokens')} ${formatNumber(summary.input_tokens, locale)} · ${t('home.stats.outputTokens')} ${formatNumber(summary.output_tokens, locale)}`}
+              detailOnHover
+              icon={Database}
+            />
+            <SummaryMetric
+              label={t('home.stats.avgResponse')}
+              value={`${summary.avg_response_time.toFixed(2)}s`}
+              icon={Zap}
+            />
+            <SummaryMetric
+              label={t('home.stats.onlineTime')}
+              value={`${(summary.online_time / 3600).toFixed(1)}h`}
+              icon={Clock}
+            />
+            <SummaryMetric
+              label={t('home.stats.messageProcessing')}
+              value={formatNumber(summary.total_messages, locale)}
+              detail={t('home.stats.replied', { num: formatNumber(summary.total_replies, locale) })}
+              detailOnHover
+              icon={MessageSquare}
+            />
+          </div>
         </div>
       )}
     </StatisticsCardFrame>
@@ -311,7 +389,7 @@ function CacheBreakdown({ summary, locale }: { summary: StatisticsSummary; local
   ]
 
   return (
-    <div className="divide-border grid grid-cols-2 divide-x">
+    <div data-home-cache-breakdown="true" className="divide-border grid grid-cols-2 divide-x">
       {rates.map((rate) => (
         <div key={rate.label} className="flex min-w-0 flex-col px-3 py-1">
           <div className="text-muted-foreground text-xs font-medium">{rate.label}</div>
@@ -370,6 +448,19 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
     <StatisticsCardFrame {...metadata} state={state}>
       {(data) => {
         const chartData = selectChartTimeSeries(data, state.timeRange)
+        const chartGuide = (
+          <ChartLegend
+            verticalAlign="top"
+            height={28}
+            content={
+              <ChartLegendContent
+                data-home-chart-guide="true"
+                verticalAlign="top"
+                className="justify-start px-2 pb-2 text-[11px]"
+              />
+            }
+          />
+        )
         return (
           <ZoomableChart aria-label={metadata.title} className="h-full min-h-[240px]">
             <ChartContainer
@@ -408,6 +499,7 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
                       />
                     }
                   />
+                  {chartGuide}
                   <Line
                     type="monotone"
                     dataKey="requests"
@@ -443,6 +535,7 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
                       />
                     }
                   />
+                  {chartGuide}
                   <Bar dataKey="cost" fill="var(--color-cost)" />
                 </BarChart>
               ) : (
@@ -472,7 +565,7 @@ function ChartCard({ kind }: { kind: 'requests' | 'cost' | 'tokens' }) {
                       />
                     }
                   />
-                  <ChartLegend content={<ChartLegendContent />} />
+                  {chartGuide}
                   <Bar dataKey="input_tokens" stackId="tokens" fill="var(--color-input_tokens)" />
                   <Bar dataKey="output_tokens" stackId="tokens" fill="var(--color-output_tokens)" />
                 </BarChart>
@@ -584,42 +677,6 @@ export function ModelDetailsCard() {
                     {t('home.charts.avgTime')}:{' '}
                     <strong>{stat.avg_response_time.toFixed(2)}s</strong>
                   </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-      )}
-    </StatisticsCardFrame>
-  )
-}
-
-export function RecentActivityCard() {
-  const { t, i18n } = useTranslation()
-  const state = useStatisticsCardData()
-  const locale = i18n.resolvedLanguage || i18n.language
-
-  return (
-    <StatisticsCardFrame title={t('home.charts.recentActivity')} icon={Zap} state={state}>
-      {({ recent_activity: recentActivity }) => (
-        <ScrollArea className="h-full min-h-[240px] pr-3">
-          <div className="space-y-2">
-            {recentActivity.map((activity) => (
-              <div
-                key={`${activity.timestamp}-${activity.model}-${activity.request_type}`}
-                className="grid gap-1 rounded-md border p-3 text-xs sm:grid-cols-[minmax(0,1fr)_auto]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-semibold">{activity.model}</div>
-                  <div className="text-muted-foreground truncate">{activity.request_type}</div>
-                </div>
-                <div className="text-muted-foreground sm:text-right">
-                  <div>{formatDateTime(activity.timestamp, locale)}</div>
-                  <div>
-                    {t('home.stats.inputTokens')} {formatNumber(activity.input_tokens, locale)}
-                    {' · '}
-                    {t('home.stats.outputTokens')} {formatNumber(activity.output_tokens, locale)}
-                  </div>
                 </div>
               </div>
             ))}

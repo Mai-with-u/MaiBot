@@ -1075,6 +1075,14 @@
   "home": {
     "title": "リアルタイムモニター",
     "subtitle": "MaiBotの稼働状況と統計データの一覧",
+    "signalDesk": {
+      "eyebrow": "MAIBOT OPERATIONS",
+      "title": "麦麦シグナルデスク",
+      "description": "システム稼働状況とデータ制御センター",
+      "status": "システム",
+      "online": "オンライン",
+      "standby": "待機"
+    },
     "loading": "統計データを読み込み中...",
     "loadingHint": "読み込み中...",
     "timeRange": {
@@ -1135,10 +1143,13 @@
     "botStatus": {
       "title": "MaiBot ステータス",
       "loading": "読み取り中",
-      "running": "稼働中",
+      "running": "アクティブ",
       "stopped": "停止中",
       "unknown": "不明",
-      "uptime": "稼働 {{time}}",
+      "uptimeLabel": "稼働時間",
+      "uptime": "{{time}}",
+      "enabled": "有効",
+      "disabled": "無効",
       "visualEnabled": "ビジョン有効",
       "memoryEnabled": "メモリ有効"
     },
@@ -1245,7 +1256,7 @@
       "avgResponse": "平均応答",
       "avgResponseDesc": "API平均レイテンシ",
       "onlineTime": "オンライン時間",
-      "messageProcessing": "メッセージ処理",
+      "messageProcessing": "メッセージ",
       "costEfficiency": "コスト効率",
       "recentPeriod": "直近{{range}}",
       "perHour": "{{value}}/時",
@@ -1306,8 +1317,6 @@
       "modelDetails": "モデル詳細統計",
       "modelDetailsDesc": "リクエスト数、コスト、パフォーマンス",
       "modelDetailsTokenDesc": "モデル別の呼び出し、Token、キャッシュ、コスト",
-      "recentActivity": "最近のアクティビティ",
-      "recentActivityDesc": "最新のAPI呼び出し記録",
       "dailyStats": "日次統計",
       "dailyStatsDesc": "直近7日間のデータサマリー",
       "dailyStatsRangeDesc": "選択期間の日次サマリー",

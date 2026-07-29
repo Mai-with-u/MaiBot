@@ -195,6 +195,34 @@ describe('IndexPage 特征化', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('hitokoto')))
   })
 
+  it('运行状态与精简运行时长左右对齐，并与功能灯分层展示', async () => {
+    render(<IndexPage />)
+
+    const runtimeLabel = await screen.findByText('home.botStatus.running')
+    expect(runtimeLabel).toHaveAttribute('data-maibot-runtime-label', 'true')
+    expect(runtimeLabel).toHaveClass('text-primary')
+    expect(runtimeLabel).not.toHaveClass('text-green-600')
+    expect(document.querySelector('[data-maibot-activity-orbit="true"]')).toHaveAttribute(
+      'data-state',
+      'running'
+    )
+    const runtimeUptime = screen.getByText('home.botStatus.uptime')
+    expect(runtimeUptime).toHaveAttribute('data-maibot-runtime-uptime', 'true')
+    expect(runtimeUptime).toHaveClass('text-xs', 'text-right', 'tabular-nums', 'whitespace-nowrap')
+    expect(runtimeLabel).toHaveClass('whitespace-nowrap')
+    expect(runtimeLabel.parentElement).toHaveClass('justify-between', 'items-baseline')
+    expect(screen.queryByText('home.botStatus.uptimeLabel')).not.toBeInTheDocument()
+
+    const featureLights = document.querySelector('[data-maibot-feature-lights="true"]')
+    expect(featureLights).toHaveClass('grid-cols-2')
+    expect(within(featureLights as HTMLElement).getAllByRole('status')).toHaveLength(2)
+    for (const light of featureLights?.querySelectorAll(
+      '[data-dashboard-feature-status-light="true"]'
+    ) ?? []) {
+      expect(light).toHaveClass('rounded-full', 'border-0')
+    }
+  })
+
   it('首页使用精简版本行且不再显示标题和版本卡片', async () => {
     const user = userEvent.setup()
     window.localStorage.setItem(
@@ -240,6 +268,12 @@ describe('IndexPage 特征化', () => {
     expect(document.querySelector('[data-home-storage-details="true"]')).toHaveClass(
       'lg:grid-cols-2'
     )
+    const storageRows = document.querySelectorAll('[data-home-storage-row="true"]')
+    expect(storageRows).toHaveLength(4)
+    for (const row of storageRows) {
+      expect(row).toHaveClass('grid', 'items-center')
+      expect(row.querySelector('[data-home-storage-progress="true"]')).toBeInTheDocument()
+    }
     const cardIds = Array.from(document.querySelectorAll('[data-home-card-id]')).map((card) =>
       card.getAttribute('data-home-card-id')
     )
@@ -248,6 +282,14 @@ describe('IndexPage 特征化', () => {
       'builtin:quick-actions',
       'builtin:storage',
     ])
+  })
+
+  it('存储管理入口使用完整文案和方向箭头', async () => {
+    render(<IndexPage />)
+
+    expect(await screen.findByText('home.storage.manage')).toBeInTheDocument()
+    expect(document.querySelector('[data-home-storage-action="true"]')).toBeInTheDocument()
+    expect(document.querySelector('[data-home-storage-action-line="true"]')).not.toBeInTheDocument()
   })
 
   it('插件首页卡片可以隐藏卡面标题', async () => {
@@ -302,5 +344,7 @@ describe('IndexPage 特征化', () => {
     expect(screen.queryByText('home.cache.description')).not.toBeInTheDocument()
     expect(screen.queryByText('home.stats.overviewDesc')).not.toBeInTheDocument()
     expect(screen.queryByText('home.charts.requestTrendDescCompact')).not.toBeInTheDocument()
+    expect(document.querySelectorAll('[data-home-summary-primary="true"]')).toHaveLength(2)
+    expect(document.querySelector('[data-home-summary-secondary="true"]')?.children).toHaveLength(4)
   })
 })

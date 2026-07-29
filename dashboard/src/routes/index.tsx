@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
-import { AlertCircle, CheckCircle2, ExternalLink, HardDrive, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowRight, ExternalLink, RefreshCw } from 'lucide-react'
 import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -44,7 +44,6 @@ import {
   ModelDetailsCard,
   ModelDistributionCard,
   PromptCacheCard,
-  RecentActivityCard,
   RequestTrendCard,
   StatisticsOverviewCard,
   TokenTrendCard,
@@ -85,72 +84,50 @@ function hasConfiguredPlatformAccount(config: BotPlatformConfig | undefined): bo
 }
 
 // 内部实现组件
-function FeatureStatusIndicator({
-  accent,
-  detail,
-  enabled,
-  label,
-}: {
-  accent: 'green' | 'orange' | 'yellow' | 'red'
-  detail?: string
-  enabled: boolean
-  label: string
-}) {
-  const enabledColorClass = {
-    green: 'text-green-600',
-    orange: 'text-orange-600',
-    yellow: 'text-yellow-600',
-    red: 'text-red-600',
-  }[accent]
-  const enabledBarClass = {
-    green: 'bg-green-500',
-    orange: 'bg-orange-500',
-    yellow: 'bg-yellow-400',
-    red: 'bg-red-500',
-  }[accent]
+type BotRuntimeState = 'loading' | 'running' | 'stopped' | 'unknown'
 
+function BotActivityOrbit({ state }: { state: BotRuntimeState }) {
   return (
     <div
-      data-dashboard-feature-status="true"
-      data-accent={accent}
-      data-enabled={enabled ? 'true' : 'false'}
-      className={cn(
-        'flex min-h-9 w-full items-center gap-2.5 px-1 py-1 font-sans text-base font-bold transition-colors',
-        enabled ? enabledColorClass : 'text-muted-foreground/55'
-      )}
+      aria-hidden="true"
+      data-maibot-activity-orbit="true"
+      data-state={state}
+      className="relative h-[72px] w-[72px] shrink-0"
     >
-      <span
-        data-dashboard-feature-status-bar="true"
-        className={cn(
-          'h-8 w-2.5 shrink-0 rounded-[2px] transition-colors',
-          enabled ? enabledBarClass : 'bg-muted-foreground/25'
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate">
-        {label}
-        {detail && <span className="ml-2 text-sm font-semibold opacity-75">· {detail}</span>}
-      </span>
+      <span />
+      <span />
+      <span />
     </div>
   )
 }
 
-function FeatureStatusLight({ enabled, label }: { enabled: boolean; label: string }) {
+function FeatureStatusLight({
+  disabledLabel,
+  enabled,
+  enabledLabel,
+  label,
+}: {
+  disabledLabel: string
+  enabled: boolean
+  enabledLabel: string
+  label: string
+}) {
   return (
     <div
       data-dashboard-feature-status="true"
       data-enabled={enabled ? 'true' : 'false'}
-      className="bg-background text-muted-foreground inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+      role="status"
+      aria-label={`${label}：${enabled ? enabledLabel : disabledLabel}`}
+      className="text-muted-foreground inline-flex min-w-0 items-center gap-2 text-xs font-medium"
     >
       <span
         data-dashboard-feature-status-light="true"
         className={cn(
-          'h-2.5 w-2.5 rounded-full',
-          enabled
-            ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-            : 'bg-muted-foreground/30'
+          'h-2.5 w-2.5 shrink-0 rounded-full border-0 transition-[background-color,opacity]',
+          enabled ? 'bg-primary opacity-100' : 'bg-muted-foreground/25 opacity-45'
         )}
       />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </div>
   )
 }
@@ -322,6 +299,18 @@ function IndexPageContent() {
   )
   const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
+  const isSignalDesk =
+    themeConfig.dashboardStyle === 'future-retro' &&
+    (themeConfig.styleConfig?.futureRetro.variant ?? 'classic-signal') === 'classic-signal'
+  const botRuntimeState: BotRuntimeState =
+    isBotStatusLoading && !botStatus
+      ? 'loading'
+      : botStatus?.running === true
+        ? 'running'
+        : botStatus
+          ? 'stopped'
+          : 'unknown'
+  const botRuntimeLabel = t(`home.botStatus.${botRuntimeState}`)
   const storageDetails = [
     {
       key: 'images',
@@ -364,143 +353,56 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full">
-          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
-            <div className="space-y-3">
-              {themeConfig.dashboardStyle === 'future-retro' ? (
-                <div className="space-y-2">
-                  {isBotStatusLoading && !botStatus ? (
-                    <FeatureStatusIndicator
-                      enabled={false}
-                      accent="green"
-                      label={t('home.botStatus.loading')}
-                    />
-                  ) : botStatus?.running === true ? (
-                    <FeatureStatusIndicator
-                      enabled
-                      accent="green"
-                      label={t('home.botStatus.running')}
-                      detail={t('home.botStatus.uptime', {
-                        time: formatTime(botStatus?.uptime ?? 0),
-                      })}
-                    />
-                  ) : botStatus ? (
-                    <FeatureStatusIndicator
-                      enabled
-                      accent="red"
-                      label={t('home.botStatus.stopped')}
-                    />
-                  ) : (
-                    <FeatureStatusIndicator
-                      enabled={false}
-                      accent="green"
-                      label={t('home.botStatus.unknown')}
-                    />
-                  )}
-                  <FeatureStatusIndicator
-                    accent="orange"
-                    enabled={featureStatus.visualEnabled}
-                    label={t('home.botStatus.visualEnabled')}
-                  />
-                  <FeatureStatusIndicator
-                    accent="yellow"
-                    enabled={featureStatus.memoryEnabled}
-                    label={t('home.botStatus.memoryEnabled')}
-                  />
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      {isBotStatusLoading && !botStatus ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="loading"
-                            className="bg-muted-foreground/40 h-3 w-3 animate-pulse rounded-full"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="loading"
-                            variant="outline"
-                            className="text-muted-foreground whitespace-nowrap"
-                          >
-                            <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
-                            {t('home.botStatus.loading')}
-                          </Badge>
-                        </>
-                      ) : botStatus?.running === true ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="running"
-                            className="h-3 w-3 animate-pulse rounded-full bg-green-500"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="running"
-                            variant="outline"
-                            className="border-green-300 bg-green-50 whitespace-nowrap text-green-600"
-                          >
-                            <CheckCircle2 className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.running')}
-                          </Badge>
-                        </>
-                      ) : botStatus ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="stopped"
-                            className="h-3 w-3 rounded-full bg-red-500"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="stopped"
-                            variant="outline"
-                            className="border-red-300 bg-red-50 whitespace-nowrap text-red-600"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.stopped')}
-                          </Badge>
-                        </>
-                      ) : (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="unknown"
-                            className="bg-muted-foreground/40 h-3 w-3 rounded-full"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="unknown"
-                            variant="outline"
-                            className="text-muted-foreground whitespace-nowrap"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.unknown')}
-                          </Badge>
-                        </>
-                      )}
-                    </div>
-                    {botStatus && (
-                      <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                        <span>
-                          {t('home.botStatus.uptime', { time: formatTime(botStatus?.uptime ?? 0) })}
-                        </span>
-                      </div>
+          <CardContent
+            data-home-titleless-content="true"
+            data-maibot-status-card-content="true"
+            className="p-3 sm:p-3"
+          >
+            <div className="space-y-2">
+              {isSignalDesk && <div data-home-panel-label="true">{t('home.botStatus.title')}</div>}
+              <div data-maibot-runtime-status="true" className="flex items-center gap-2.5">
+                <BotActivityOrbit state={botRuntimeState} />
+                <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
+                  <div
+                    data-maibot-runtime-label="true"
+                    className={cn(
+                      'min-w-0 text-[32px] leading-none font-black tracking-[-0.05em] whitespace-nowrap',
+                      botRuntimeState === 'running' && 'text-primary',
+                      botRuntimeState === 'stopped' && 'text-destructive',
+                      botRuntimeState !== 'running' &&
+                        botRuntimeState !== 'stopped' &&
+                        'text-muted-foreground'
                     )}
+                  >
+                    {botRuntimeLabel}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <FeatureStatusLight
-                      enabled={featureStatus.visualEnabled}
-                      label={t('home.botStatus.visualEnabled')}
-                    />
-                    <FeatureStatusLight
-                      enabled={featureStatus.memoryEnabled}
-                      label={t('home.botStatus.memoryEnabled')}
-                    />
-                  </div>
-                </>
-              )}
+                  {botStatus && (
+                    <div
+                      data-maibot-runtime-uptime="true"
+                      className="text-muted-foreground shrink-0 text-left text-xs font-bold tracking-tight whitespace-nowrap tabular-nums"
+                    >
+                      {t('home.botStatus.uptime', { time: formatTime(botStatus.uptime) })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div
+                data-maibot-feature-lights="true"
+                className="grid grid-cols-2 gap-2 border-t pt-2"
+              >
+                <FeatureStatusLight
+                  disabledLabel={t('home.botStatus.disabled')}
+                  enabled={featureStatus.visualEnabled}
+                  enabledLabel={t('home.botStatus.enabled')}
+                  label={t('home.botStatus.visualEnabled')}
+                />
+                <FeatureStatusLight
+                  disabledLabel={t('home.botStatus.disabled')}
+                  enabled={featureStatus.memoryEnabled}
+                  enabledLabel={t('home.botStatus.enabled')}
+                  label={t('home.botStatus.memoryEnabled')}
+                />
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -517,6 +419,7 @@ function IndexPageContent() {
       render: () => (
         <Card className="h-full">
           <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+            {isSignalDesk && <div data-home-panel-label="true">{t('home.quickActions.title')}</div>}
             {selectedQuickShortcuts.length === 0 ? (
               <div className="text-muted-foreground flex flex-col gap-3 rounded-lg border border-dashed p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span>{t('home.quickActions.empty')}</span>
@@ -529,7 +432,7 @@ function IndexPageContent() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div data-home-quick-actions-list="true" className="flex flex-wrap gap-2">
                 {selectedQuickShortcuts.map((shortcut) => {
                   const Icon = shortcut.icon
                   const content = (
@@ -672,18 +575,6 @@ function IndexPageContent() {
       render: () => <ModelDetailsCard />,
     },
     {
-      id: 'builtin:recent-activity',
-      title: t('home.charts.recentActivity'),
-      description: t('home.charts.recentActivityDesc'),
-      width: 'full',
-      allowedWidths: ['wide', 'full'],
-      preferredHeight: 'high',
-      category: 'analysis',
-      source: 'builtin',
-      defaultHidden: true,
-      render: () => <RecentActivityCard />,
-    },
-    {
       id: 'builtin:daily-statistics',
       title: t('home.charts.dailyStats'),
       description: t('home.charts.dailyStatsRangeDesc'),
@@ -703,14 +594,15 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full xl:self-stretch">
-          <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+          <CardContent
+            data-home-titleless-content="true"
+            className="relative flex h-full flex-col pt-4 sm:pt-5"
+          >
             <button
               type="button"
               className="text-muted-foreground/55 hover:text-muted-foreground absolute top-2.5 right-3 flex items-center gap-1 text-[10px] transition-colors"
               aria-label={t('home.storage.switchDisplay')}
-              onClick={() =>
-                setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))
-              }
+              onClick={() => setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))}
             >
               <span
                 className={cn(
@@ -730,7 +622,8 @@ function IndexPageContent() {
                 {t('home.storage.countMode')}
               </span>
             </button>
-            <div className="space-y-3">
+            <div className="flex h-full flex-col gap-3">
+              {isSignalDesk && <div data-home-panel-label="true">{t('home.storage.title')}</div>}
               <div className="pr-20">
                 <div
                   className={cn(
@@ -761,32 +654,44 @@ function IndexPageContent() {
               {hasLocalCacheStats && (
                 <div
                   data-home-storage-details="true"
-                  className="grid grid-cols-1 gap-x-5 gap-y-3 lg:grid-cols-2"
+                  className="grid flex-1 grid-cols-1 content-center gap-x-7 gap-y-4 lg:grid-cols-2"
                 >
                   {storageDetails.map((item) => {
                     const percent = totalStorageSize > 0 ? (item.size / totalStorageSize) * 100 : 0
                     const visiblePercent = item.size > 0 ? Math.max(percent, 2) : 0
                     return (
-                      <div key={item.key} className="space-y-1.5">
-                        <div className="flex min-w-0 items-center gap-2 text-xs">
-                          <span className="shrink-0 font-bold">{item.label}</span>
+                      <div
+                        key={item.key}
+                        data-home-storage-row="true"
+                        className={cn(
+                          'min-w-0 text-sm',
+                          storageDisplayMode === 'size'
+                            ? 'grid grid-cols-[auto_1fr_auto] items-baseline gap-x-3 gap-y-2'
+                            : 'flex items-baseline justify-between gap-3'
+                        )}
+                      >
+                        <>
+                          <span className="shrink-0 text-sm font-bold">{item.label}</span>
                           {storageDisplayMode === 'size' ? (
                             <>
-                              <span className="text-primary shrink-0 font-semibold">
+                              <span className="text-primary text-base font-bold">
                                 {formatStorageBytes(item.size)}
                               </span>
-                              <span className="text-muted-foreground ml-auto shrink-0">
+                              <span className="text-muted-foreground shrink-0 text-right text-sm font-medium tabular-nums">
                                 {percent.toFixed(percent >= 10 ? 0 : 1)}%
                               </span>
                             </>
                           ) : (
-                            <span className="text-muted-foreground min-w-0 truncate">
+                            <span className="text-muted-foreground min-w-0 truncate text-right text-sm font-medium">
                               {item.detail}
                             </span>
                           )}
-                        </div>
+                        </>
                         {storageDisplayMode === 'size' && (
-                          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+                          <div
+                            data-home-storage-progress="true"
+                            className="bg-muted col-span-3 h-1.5 min-w-0 overflow-hidden rounded-full"
+                          >
                             <div
                               className="bg-primary h-full rounded-full transition-all"
                               style={{ width: `${visiblePercent}%` }}
@@ -798,12 +703,16 @@ function IndexPageContent() {
                   })}
                 </div>
               )}
-              <Button variant="outline" size="sm" asChild className="w-full justify-start gap-2">
-                <Link to="/settings" search={{ tab: 'local-cache' }}>
-                  <HardDrive className="h-4 w-4" />
-                  {t('home.storage.manage')}
+              <div data-home-storage-action="true" className="mt-auto flex justify-end pt-1">
+                <Link
+                  to="/settings"
+                  search={{ tab: 'local-cache' }}
+                  className="group text-muted-foreground hover:text-primary focus-visible:ring-ring inline-flex shrink-0 items-center gap-1.5 py-1 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                >
+                  <span>{t('home.storage.manage')}</span>
+                  <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5 motion-reduce:transition-none" />
                 </Link>
-              </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -867,10 +776,9 @@ function IndexPageContent() {
   )
   const versionsMismatch =
     versionCompatibility?.status !== undefined && versionCompatibility.status !== 'compatible'
-
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-2 p-4 sm:space-y-4 sm:p-6">
+      <div data-home-page="true" className="space-y-2 p-4 sm:space-y-4 sm:p-6">
         {dashboardError && (
           <Card className="border-destructive/50 bg-destructive/5">
             <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -908,11 +816,18 @@ function IndexPageContent() {
         )}
 
         <div
+          data-home-command-strip="true"
           className={cn(
             'text-primary flex flex-wrap items-center gap-x-7 gap-y-2 font-sans font-black tracking-[0.12em] uppercase',
             versionsMismatch && 'text-amber-600 dark:text-amber-400'
           )}
         >
+          {isSignalDesk && (
+            <div data-home-command-title="true">
+              <span>{t('home.signalDesk.eyebrow')}</span>
+              <strong>{t('home.signalDesk.title')}</strong>
+            </div>
+          )}
           <span className="inline-flex items-baseline gap-2">
             <span className="text-[11px] tracking-[0.2em] opacity-70">
               {t('home.versionCard.maibotVersion')}
@@ -921,12 +836,24 @@ function IndexPageContent() {
               {botStatus?.version ? `V${botStatus.version}` : t('home.versionCard.unknown')}
             </span>
           </span>
-          <span className="inline-flex items-baseline gap-2">
-            <span className="text-[11px] tracking-[0.2em] opacity-70">
-              {t('home.versionCard.consoleVersion')}
+          {(!isSignalDesk || versionsMismatch) && (
+            <span className="inline-flex items-baseline gap-2">
+              <span className="text-[11px] tracking-[0.2em] opacity-70">
+                {t('home.versionCard.consoleVersion')}
+              </span>
+              <span className="text-base">V{APP_VERSION}</span>
             </span>
-            <span className="text-base">V{APP_VERSION}</span>
-          </span>
+          )}
+          {isSignalDesk && (
+            <span data-home-command-status="true" className="inline-flex items-baseline gap-2">
+              <span className="text-[11px] tracking-[0.2em] opacity-70">
+                {t('home.signalDesk.status')}
+              </span>
+              <span className="text-base">
+                {botStatus?.running ? t('home.signalDesk.online') : t('home.signalDesk.standby')}
+              </span>
+            </span>
+          )}
           {maibotUpdateAvailable && maibotStableRelease && (
             <a
               href={maibotStableRelease.url}

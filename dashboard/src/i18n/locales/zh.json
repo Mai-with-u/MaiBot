@@ -1075,6 +1075,14 @@
   "home": {
     "title": "首页",
     "subtitle": "查看基本信息和快捷入口",
+    "signalDesk": {
+      "eyebrow": "MAIBOT OPERATIONS",
+      "title": "麦麦信号台",
+      "description": "系统运行与数据控制中心",
+      "status": "系统状态",
+      "online": "在线",
+      "standby": "待机"
+    },
     "loading": "加载中...",
     "loadingHint": "加载中...",
     "timeRange": {
@@ -1135,10 +1143,13 @@
     "botStatus": {
       "title": "麦麦状态",
       "loading": "读取中",
-      "running": "运行中",
+      "running": "活动",
       "stopped": "已停止",
       "unknown": "未知",
+      "uptimeLabel": "运行时间",
       "uptime": "{{time}}",
+      "enabled": "已启用",
+      "disabled": "未启用",
       "visualEnabled": "启用视觉",
       "memoryEnabled": "启用记忆"
     },
@@ -1243,7 +1254,7 @@
       "avgResponse": "平均响应",
       "avgResponseDesc": "API平均耗时",
       "onlineTime": "在线时长",
-      "messageProcessing": "消息处理",
+      "messageProcessing": "消息",
       "costEfficiency": "成本效率",
       "recentPeriod": "最近{{range}}",
       "perHour": "{{value}}/小时",
@@ -1304,8 +1315,6 @@
       "modelDetails": "模型详细统计",
       "modelDetailsDesc": "请求数、花费和性能",
       "modelDetailsTokenDesc": "模型调用、Token、缓存和费用",
-      "recentActivity": "最近活动",
-      "recentActivityDesc": "最新的API调用记录",
       "dailyStats": "每日统计",
       "dailyStatsDesc": "最近7天的数据汇总",
       "dailyStatsRangeDesc": "所选时段的每日汇总",
@@ -1319,7 +1328,7 @@
       "status": "状态"
     },
     "time": {
-      "hoursMinutes": "{{hours}}小时{{minutes}}分钟"
+      "hoursMinutes": "{{hours}}小时{{minutes}}分"
     },
     "hitokotoFallback": "人生就像一盒巧克力，你永远不知道下一颗是什么味道。",
     "hitokotoFallbackFrom": "阿甘正传",

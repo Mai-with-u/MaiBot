@@ -1075,6 +1075,14 @@
   "home": {
     "title": "Live Monitor",
     "subtitle": "MaiBot runtime status and statistics overview",
+    "signalDesk": {
+      "eyebrow": "MAIBOT OPERATIONS",
+      "title": "MaiBot Signal Desk",
+      "description": "System status and data control center",
+      "status": "System",
+      "online": "Online",
+      "standby": "Standby"
+    },
     "loading": "Loading...",
     "loadingHint": "Loading...",
     "timeRange": {
@@ -1135,10 +1143,13 @@
     "botStatus": {
       "title": "MaiBot Status",
       "loading": "Reading",
-      "running": "Running",
+      "running": "Active",
       "stopped": "Stopped",
       "unknown": "Unknown",
-      "uptime": "Up {{time}}",
+      "uptimeLabel": "Runtime",
+      "uptime": "{{time}}",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
       "visualEnabled": "Vision enabled",
       "memoryEnabled": "Memory enabled"
     },
@@ -1306,8 +1317,6 @@
       "modelDetails": "Model Details",
       "modelDetailsDesc": "Requests, cost and performance",
       "modelDetailsTokenDesc": "Calls, tokens, cache and cost by model",
-      "recentActivity": "Recent Activity",
-      "recentActivityDesc": "Latest API call records",
       "dailyStats": "Daily Statistics",
       "dailyStatsDesc": "Data summary for the last 7 days",
       "dailyStatsRangeDesc": "Daily summary for the selected period",

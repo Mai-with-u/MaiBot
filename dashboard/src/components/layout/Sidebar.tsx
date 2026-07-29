@@ -15,11 +15,7 @@ interface SidebarProps {
   onMobileMenuClose: () => void
 }
 
-export function Sidebar({
-  sidebarOpen,
-  mobileMenuOpen,
-  onMobileMenuClose,
-}: SidebarProps) {
+export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: SidebarProps) {
   const { t } = useTranslation()
   const { config: sidebarBg, inheritedFrom } = useBackground('sidebar')
   const inheritsPageBackground = inheritedFrom === 'page'
@@ -79,7 +75,10 @@ export function Sidebar({
                       'lg:invisible lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
                   )}
                 >
-                  <h3 className="text-muted-foreground/60 text-sm font-semibold tracking-wider whitespace-nowrap uppercase">
+                  <h3
+                    data-dashboard-sidebar-section-title="true"
+                    className="text-muted-foreground/60 text-sm font-semibold tracking-wider whitespace-nowrap uppercase"
+                  >
                     {t(section.title)}
                   </h3>
                 </div>

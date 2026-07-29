@@ -1067,6 +1067,14 @@
   "home": {
     "title": "실시간 모니터",
     "subtitle": "MaiBot 실행 상태 및 통계 데이터 개요",
+    "signalDesk": {
+      "eyebrow": "MAIBOT OPERATIONS",
+      "title": "MaiBot 시그널 데스크",
+      "description": "시스템 상태 및 데이터 제어 센터",
+      "status": "시스템",
+      "online": "온라인",
+      "standby": "대기"
+    },
     "loading": "통계 데이터를 불러오는 중...",
     "loadingHint": "불러오는 중...",
     "timeRange": {
@@ -1127,10 +1135,13 @@
     "botStatus": {
       "title": "MaiBot 상태",
       "loading": "읽는 중",
-      "running": "실행 중",
+      "running": "활동",
       "stopped": "중지됨",
       "unknown": "알 수 없음",
-      "uptime": "가동 {{time}}",
+      "uptimeLabel": "가동 시간",
+      "uptime": "{{time}}",
+      "enabled": "켜짐",
+      "disabled": "꺼짐",
       "visualEnabled": "비전 활성화",
       "memoryEnabled": "메모리 활성화"
     },
@@ -1237,7 +1248,7 @@
       "avgResponse": "평균 응답",
       "avgResponseDesc": "API 평균 지연",
       "onlineTime": "온라인 시간",
-      "messageProcessing": "메시지 처리",
+      "messageProcessing": "메시지",
       "costEfficiency": "비용 효율",
       "recentPeriod": "최근 {{range}}",
       "perHour": "{{value}}/시간",
@@ -1298,8 +1309,6 @@
       "modelDetails": "모델 상세 통계",
       "modelDetailsDesc": "요청 수, 비용 및 성능",
       "modelDetailsTokenDesc": "모델별 호출, Token, 캐시 및 비용",
-      "recentActivity": "최근 활동",
-      "recentActivityDesc": "최신 API 호출 기록",
       "dailyStats": "일간 통계",
       "dailyStatsDesc": "최근 7일 데이터 요약",
       "dailyStatsRangeDesc": "선택한 기간의 일간 요약",

@@ -267,7 +267,10 @@ export function Layout({ children }: LayoutProps) {
       {isElectron() && <TitleBar />}
       <div
         data-dashboard-shell="true"
-        className={cn('relative isolate flex h-screen overflow-hidden overscroll-none', isElectron() && 'pt-8')}
+        className={cn(
+          'relative isolate flex h-[100dvh] overflow-hidden overscroll-none',
+          isElectron() && 'pt-8'
+        )}
       >
         <BackgroundLayer config={pageBg} layerId="page" />
         <div className="relative z-10 flex h-full min-h-0 w-full overflow-hidden">

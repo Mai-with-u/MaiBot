@@ -35,6 +35,7 @@ import type {
   BackgroundEffects,
   DashboardStyle,
   FutureRetroStyleConfig,
+  FutureRetroVariant,
   ThemeTokens,
   TypographyTokens,
 } from '@/lib/theme/tokens'
@@ -93,6 +94,23 @@ const dashboardStyleOptions: Array<{
   },
 ]
 
+const futureRetroVariantOptions: Array<{
+  value: FutureRetroVariant
+  label: string
+  description: string
+}> = [
+  {
+    value: 'classic-signal',
+    label: '经典信号台',
+    description: '银灰仪表、柔和圆角与白色控制面板，辅以克制的橙色信号。',
+  },
+  {
+    value: 'paper-console',
+    label: '纸上控制台',
+    description: '纸张颗粒、直角描边与工程图式排版，呈现航天档案般的控制台。',
+  },
+]
+
 const themeModeOptions: Array<{
   value: ThemeMode
   labelKey: string
@@ -138,7 +156,9 @@ function getTokenValue<T>(
   return (sectionTokens[key] ?? defaultValue) as T
 }
 
-function buildFontSizeTokens(basePx: number): Pick<
+function buildFontSizeTokens(
+  basePx: number
+): Pick<
   TypographyTokens,
   | 'font-size-xs'
   | 'font-size-sm'
@@ -518,7 +538,9 @@ export function AppearanceTab() {
                   <Icon
                     className={cn(
                       'h-4 w-4 transition-colors',
-                      selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                      selected
+                        ? 'text-primary'
+                        : 'text-muted-foreground group-hover:text-foreground'
                     )}
                     strokeWidth={2}
                   />
@@ -756,9 +778,7 @@ export function AppearanceTab() {
                     <div className="space-y-4">
                       <div className="flex justify-between">
                         <Label>{t('settings.appearance.baseFontSize')}</Label>
-                        <span className="text-muted-foreground text-sm">
-                          {baseFontSizePx}px
-                        </span>
+                        <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
                       </div>
                       <Slider
                         defaultValue={[16]}
@@ -1166,7 +1186,40 @@ export function AppearanceTab() {
               {t('settings.appearance.resetDefault')}
             </Button>
           </div>
-          <div className="mb-3 rounded-lg border bg-card p-3 sm:mb-4 sm:p-4">
+          <div className="mb-3 sm:mb-4">
+            <div className="mb-2">
+              <Label className="text-base font-medium">美术方案</Label>
+              <p className="text-muted-foreground mt-1 text-sm">
+                两套方案共享功能结构，可随时切换比较。
+              </p>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-2">
+              {futureRetroVariantOptions.map((option) => {
+                const selected = futureRetroConfig.variant === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    data-retro-variant-option={option.value}
+                    data-selected={selected ? 'true' : 'false'}
+                    className={cn(
+                      'min-h-28 rounded-lg border-2 p-3 text-left transition-[border-color,background-color,transform] active:translate-y-px',
+                      selected
+                        ? 'border-primary bg-primary/8'
+                        : 'border-border bg-card hover:border-primary/45'
+                    )}
+                    onClick={() => updateFutureRetroConfig({ variant: option.value })}
+                  >
+                    <span className="block text-base font-semibold">{option.label}</span>
+                    <span className="text-muted-foreground mt-2 block text-sm leading-relaxed">
+                      {option.description}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className="bg-card mb-3 rounded-lg border p-3 sm:mb-4 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <Label>{t('settings.appearance.baseFontSize')}</Label>
               <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
@@ -1369,9 +1422,7 @@ export function AppearanceTab() {
               className="hidden"
             />
 
-            <p className="text-muted-foreground text-xs">
-              {t('settings.appearance.exportDesc')}
-            </p>
+            <p className="text-muted-foreground text-xs">{t('settings.appearance.exportDesc')}</p>
           </div>
         </div>
       )}
