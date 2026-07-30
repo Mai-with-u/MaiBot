@@ -31,11 +31,14 @@ import {
   type UpdateHistoryEntry,
   type UpdateNoticeResponse,
 } from '@/lib/system-api'
+import { UPDATE_NOTICE_OPEN_EVENT, type UpdateNoticeTarget } from '@/lib/update-notice-events'
+
 import {
-  UPDATE_NOTICE_OPEN_EVENT,
-  type UpdateNoticeTarget,
-} from '@/lib/update-notice-events'
-import { APP_VERSION } from '@/lib/version'
+  extractWebuiSections,
+  extractWebuiVersion,
+  removeTopLevelHeadings,
+  removeWebuiVersions,
+} from './update-notice-markdown'
 
 type NoticeStage = 'update' | 'compatibility' | null
 
@@ -44,40 +47,6 @@ const MarkdownRenderer = lazy(() =>
     default: module.MarkdownRenderer,
   }))
 )
-
-function extractWebuiSections(markdown: string): string {
-  const lines = markdown.split(/\r?\n/)
-  const sections: string[] = []
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const heading = /^(#{2,6})\s+(.+?)\s*$/.exec(lines[index])
-    if (!heading || !/webui/i.test(heading[2])) {
-      continue
-    }
-
-    const headingLevel = heading[1].length
-    let end = index + 1
-    while (end < lines.length) {
-      const nextHeading = /^(#{1,6})\s+/.exec(lines[end])
-      if (nextHeading && nextHeading[1].length <= headingLevel) {
-        break
-      }
-      end += 1
-    }
-    sections.push(lines.slice(index, end).join('\n').trim())
-    index = end - 1
-  }
-
-  return sections.join('\n\n')
-}
-
-function removeTopLevelHeadings(markdown: string): string {
-  return markdown
-    .split(/\r?\n/)
-    .filter((line) => !/^#\s+/.test(line))
-    .join('\n')
-    .trim()
-}
 
 function getUpdateStatus(plugin: IncompatiblePluginNotice) {
   if (plugin.update_status === 'available') {
@@ -121,6 +90,7 @@ export function UpdateNoticeDialog() {
   const [historyOffset, setHistoryOffset] = useState(0)
   const [historyHasMore, setHistoryHasMore] = useState(true)
   const [noticeBodyHeight, setNoticeBodyHeight] = useState<number>()
+  const [activeManualVersion, setActiveManualVersion] = useState<string | null>(null)
   const ackedRef = useRef(false)
   const historyRequestedRef = useRef(false)
   const noticeContentRef = useRef<HTMLDivElement>(null)
@@ -164,6 +134,7 @@ export function UpdateNoticeDialog() {
       setHistoryOffset(0)
       setHistoryHasMore(true)
       setNoticeBodyHeight(undefined)
+      setActiveManualVersion(null)
       historyRequestedRef.current = false
       setStage('update')
 
@@ -237,7 +208,7 @@ export function UpdateNoticeDialog() {
     historyLoading,
     historyOffset,
     manualTarget,
-    notice?.current_version,
+    notice?.versions,
   ])
 
   const shouldLoadMoreHistory = useCallback(() => {
@@ -251,6 +222,32 @@ export function UpdateNoticeDialog() {
     )
   }, [historyLoaded])
 
+  const syncActiveManualVersion = useCallback(() => {
+    const viewport = noticeViewportRef.current
+    if (!viewport || !manualTarget) {
+      return
+    }
+
+    const versionSections = Array.from(
+      viewport.querySelectorAll<HTMLElement>('[data-update-notice-version]')
+    )
+    if (versionSections.length === 0) {
+      return
+    }
+
+    const viewportTop = viewport.getBoundingClientRect().top
+    let activeVersion = versionSections[0].dataset.updateNoticeVersion
+    for (const section of versionSections) {
+      if (section.getBoundingClientRect().top > viewportTop + 1) {
+        break
+      }
+      activeVersion = section.dataset.updateNoticeVersion
+    }
+    if (activeVersion) {
+      setActiveManualVersion((current) => (current === activeVersion ? current : activeVersion))
+    }
+  }, [manualTarget])
+
   useEffect(() => {
     const viewport = noticeViewportRef.current
     if (!viewport || !manualTarget || stage !== 'update') {
@@ -258,13 +255,14 @@ export function UpdateNoticeDialog() {
     }
 
     const handleScroll = () => {
+      syncActiveManualVersion()
       if (viewport.scrollTop > 0 && shouldLoadMoreHistory()) {
         void revealHistory()
       }
     }
     viewport.addEventListener('scroll', handleScroll, { passive: true })
     return () => viewport.removeEventListener('scroll', handleScroll)
-  }, [manualTarget, revealHistory, shouldLoadMoreHistory, stage])
+  }, [manualTarget, revealHistory, shouldLoadMoreHistory, stage, syncActiveManualVersion])
 
   useEffect(() => {
     const content = noticeContentRef.current
@@ -305,6 +303,7 @@ export function UpdateNoticeDialog() {
     if (manualTarget) {
       setStage(null)
       setManualTarget(null)
+      setActiveManualVersion(null)
       return
     }
     if (alwaysShowUpdateNotice || (notice?.incompatible_plugins?.length ?? 0) > 0) {
@@ -330,6 +329,14 @@ export function UpdateNoticeDialog() {
       : notice?.content
   const displayedCurrentContent =
     manualTarget && currentContent ? removeTopLevelHeadings(currentContent) : currentContent
+  const currentWebuiVersion =
+    manualTarget === 'console' && notice ? extractWebuiVersion(notice.content) : null
+  const currentManualVersion =
+    manualTarget === 'console' ? (currentWebuiVersion ?? '—') : (notice?.current_version ?? '—')
+  const renderedCurrentContent =
+    manualTarget === 'maibot' && displayedCurrentContent
+      ? removeWebuiVersions(displayedCurrentContent)
+      : displayedCurrentContent
 
   return (
     <>
@@ -355,7 +362,7 @@ export function UpdateNoticeDialog() {
                   className="text-4xl leading-none font-black tracking-tight"
                   style={{ color: 'var(--retro-rust)' }}
                 >
-                  {manualTarget === 'console' ? APP_VERSION : notice?.current_version ?? '—'}
+                  {activeManualVersion ?? currentManualVersion}
                 </span>
               </DialogTitle>
             ) : (
@@ -397,10 +404,12 @@ export function UpdateNoticeDialog() {
                 }
               >
                 <div ref={noticeContentRef}>
-                  <MarkdownRenderer
-                    content={displayedCurrentContent ?? ''}
-                    className="[&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
-                  />
+                  <div data-update-notice-version={currentManualVersion}>
+                    <MarkdownRenderer
+                      content={renderedCurrentContent ?? ''}
+                      className="[&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
+                    />
+                  </div>
                   {manualTarget && !historyLoaded && !historyLoading && (
                     <motion.div
                       aria-hidden="true"
@@ -427,6 +436,11 @@ export function UpdateNoticeDialog() {
                         {historyEntries.map((entry, index) => (
                           <motion.article
                             key={entry.version}
+                            data-update-notice-version={
+                              manualTarget === 'console'
+                                ? (extractWebuiVersion(entry.content) ?? '—')
+                                : entry.version
+                            }
                             layout="position"
                             initial={{ opacity: 0, y: 24, filter: 'blur(4px)' }}
                             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
@@ -438,13 +452,16 @@ export function UpdateNoticeDialog() {
                             className="py-8 first:pt-0 last:pb-0"
                           >
                             <h3 className="mb-4 text-2xl font-bold tracking-tight">
-                              v{entry.version}
+                              v
+                              {manualTarget === 'console'
+                                ? (extractWebuiVersion(entry.content) ?? '—')
+                                : entry.version}
                             </h3>
                             <MarkdownRenderer
                               content={
                                 manualTarget === 'console'
                                   ? extractWebuiSections(entry.content)
-                                  : entry.content
+                                  : removeWebuiVersions(entry.content)
                               }
                               className="[&_h1]:hidden [&_h2]:!text-xl [&_h3]:!text-lg [&_h2:first-child]:!mt-0 [&_h3:first-child]:!mt-0"
                             />

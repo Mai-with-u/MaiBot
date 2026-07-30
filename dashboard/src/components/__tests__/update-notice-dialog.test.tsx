@@ -2,9 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { IncompatiblePluginNotice, UpdateNoticeResponse } from '@/lib/system-api'
+import { ackUpdateNotice, getUpdateHistory, getUpdateNotice } from '@/lib/system-api'
 
+import { extractWebuiVersion, removeWebuiVersions } from '../update-notice-markdown'
 import { UpdateNoticeDialog } from '../update-notice-dialog'
-import { ackUpdateNotice, getUpdateNotice } from '@/lib/system-api'
 
 // 路由导航桩
 const navigateMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
@@ -20,6 +21,7 @@ vi.mock('@/lib/settings-manager', () => ({
 
 vi.mock('@/lib/system-api', () => ({
   getUpdateNotice: vi.fn(),
+  getUpdateHistory: vi.fn(),
   ackUpdateNotice: vi.fn(),
 }))
 
@@ -59,19 +61,38 @@ function makePlugin(overrides: Partial<IncompatiblePluginNotice> = {}): Incompat
 
 beforeEach(() => {
   settingState.alwaysShow = false
+  document.documentElement.style.fontSize = '16px'
   vi.mocked(ackUpdateNotice).mockResolvedValue({
     success: true,
     message: 'ok',
     version: '0.12.0',
+  })
+  vi.mocked(getUpdateHistory).mockResolvedValue({
+    entries: [],
+    next_offset: 0,
+    has_more: false,
   })
 })
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  document.documentElement.style.removeProperty('font-size')
 })
 
 describe('UpdateNoticeDialog', () => {
+  it('忽略 WebUI 标题大小写并读取项目版本号', () => {
+    expect(
+      extractWebuiVersion(`# [1.1.3] - 2026-7-28
+
+## wEbUi [1.6.2]
+
+- 优化首页`)
+    ).toBe('1.6.2')
+    expect(extractWebuiVersion('## WEBUI\n\n- 旧格式没有项目版本号')).toBeNull()
+    expect(removeWebuiVersions('## wEbUi [1.6.2]\n\n- 优化首页')).toBe('## wEbUi\n\n- 优化首页')
+  })
+
   it('无待展示公告时不渲染任何对话框', async () => {
     vi.mocked(getUpdateNotice).mockResolvedValue(makeNotice({ pending: false }))
     render(<UpdateNoticeDialog />)
@@ -100,6 +121,117 @@ describe('UpdateNoticeDialog', () => {
     expect(await screen.findByText('更新内容')).toBeInTheDocument()
     expect(await screen.findByTestId('markdown-content')).toHaveTextContent('更新亮点内容')
     expect(screen.getByText('查看本次 MaiBot 更新包含的功能与修复。')).toBeInTheDocument()
+  })
+
+  it('手动展开 CONSOLE 版本说明时显示 Changelog 中的 WebUI 版本', async () => {
+    vi.mocked(getUpdateNotice).mockResolvedValue(
+      makeNotice({
+        content: `# [1.1.3] - 2026-7-28
+
+## WEBUI [1.6.2]
+
+- 优化首页
+
+## Maisaka
+
+- 主程序更新`,
+      })
+    )
+    render(<UpdateNoticeDialog />)
+
+    await waitFor(() => expect(getUpdateNotice).toHaveBeenCalledWith(false))
+    fireEvent(
+      window,
+      new CustomEvent('maibot-open-update-notice', {
+        detail: 'console',
+      })
+    )
+
+    await waitFor(() => expect(getUpdateNotice).toHaveBeenCalledWith(true))
+    expect(await screen.findByText('CONSOLE 版本')).toBeInTheDocument()
+    expect(screen.getByText('1.6.2')).toBeInTheDocument()
+    expect(await screen.findByTestId('markdown-content')).toHaveTextContent('优化首页')
+    expect(screen.getByTestId('markdown-content')).not.toHaveTextContent('主程序更新')
+  })
+
+  it('滚动到历史条目时顶部 CONSOLE 版本随当前条目变化', async () => {
+    vi.mocked(getUpdateNotice).mockResolvedValue(
+      makeNotice({
+        content: '# [1.1.3]\n\n## Webui [1.6.2]\n\n- 当前版本',
+      })
+    )
+    vi.mocked(getUpdateHistory).mockResolvedValue({
+      entries: [
+        {
+          version: '1.1.2',
+          title: '# [1.1.2]',
+          content: '# [1.1.2]\n\n## Webui [1.6.1]\n\n- 历史版本',
+        },
+      ],
+      next_offset: 1,
+      has_more: false,
+    })
+    render(<UpdateNoticeDialog />)
+
+    await waitFor(() => expect(getUpdateNotice).toHaveBeenCalledWith(false))
+    fireEvent(
+      window,
+      new CustomEvent('maibot-open-update-notice', {
+        detail: 'console',
+      })
+    )
+    expect(await screen.findByText('1.6.2')).toBeInTheDocument()
+
+    const viewport = document.querySelector<HTMLElement>(
+      '[data-dashboard-scrollbar-viewport="true"]'
+    )
+    expect(viewport).not.toBeNull()
+    fireEvent.wheel(viewport!, { deltaY: 120 })
+
+    const historicalSection = await waitFor(() => {
+      const section = document.querySelector<HTMLElement>('[data-update-notice-version="1.6.1"]')
+      expect(section).not.toBeNull()
+      return section!
+    })
+    const currentSection = document.querySelector<HTMLElement>(
+      '[data-update-notice-version="1.6.2"]'
+    )
+    expect(currentSection).not.toBeNull()
+
+    vi.spyOn(viewport!, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+    } as DOMRect)
+    vi.spyOn(currentSection!, 'getBoundingClientRect').mockReturnValue({
+      top: -200,
+    } as DOMRect)
+    vi.spyOn(historicalSection, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+    } as DOMRect)
+    Object.defineProperty(viewport!, 'scrollTop', { configurable: true, value: 300 })
+    fireEvent.scroll(viewport!)
+
+    expect(await screen.findByText('1.6.1')).toBeInTheDocument()
+  })
+
+  it('MAIBOT 版本说明会隐藏 WebUI 子项目版本号', async () => {
+    vi.mocked(getUpdateNotice).mockResolvedValue(
+      makeNotice({
+        content: '# [1.1.3]\n\n## Webui [1.6.2]\n\n- 优化首页',
+      })
+    )
+    render(<UpdateNoticeDialog />)
+
+    await waitFor(() => expect(getUpdateNotice).toHaveBeenCalledWith(false))
+    fireEvent(
+      window,
+      new CustomEvent('maibot-open-update-notice', {
+        detail: 'maibot',
+      })
+    )
+
+    expect(await screen.findByText('MAIBOT 版本')).toBeInTheDocument()
+    expect(await screen.findByTestId('markdown-content')).toHaveTextContent('## Webui')
+    expect(screen.getByTestId('markdown-content')).not.toHaveTextContent('[1.6.2]')
   })
 
   it('无兼容性问题时点击知道了直接确认公告并关闭', async () => {
