@@ -629,15 +629,14 @@ class MaisakaReasoningEngine:
     ) -> tuple[int, bool]:
         """处理 Planner 响应中的工具调用，或无工具输出策略。"""
 
-        reasoning_content = self._get_effective_planner_thought(response)
-        if self._should_replace_reasoning(reasoning_content):
-            reasoning_content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
-            response.content = reasoning_content
-            response.reasoning = reasoning_content
-            response.raw_message.content = reasoning_content
+        planner_content = self._get_planner_content(response)
+        if self._should_replace_reasoning(planner_content):
+            planner_content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
+            response.content = planner_content
+            response.raw_message.content = planner_content
             logger.info(f"{self._runtime.log_prefix} 当前思考与上一轮过于相似，已替换为重新思考提示")
 
-        self._last_reasoning_content = reasoning_content
+        self._last_reasoning_content = planner_content
         self._runtime._chat_history.append(response.raw_message)
 
         if response.tool_calls:
@@ -651,7 +650,7 @@ class MaisakaReasoningEngine:
                 tool_monitor_results,
             ) = await self._handle_tool_calls(
                 response.tool_calls,
-                reasoning_content,
+                planner_content,
             )
             cycle_detail.time_records["tool_calls"] = time.time() - tool_started_at
             state.tool_result_summaries = tool_result_summaries
@@ -797,13 +796,10 @@ class MaisakaReasoningEngine:
         return PlannerInterruptResult(interrupted_response, extra_lines, interrupted_messages)
 
     @staticmethod
-    def _get_effective_planner_thought(response: ChatResponse) -> str:
-        """获取本轮 planner 可用于工具上下文的思考文本。"""
+    def _get_planner_content(response: ChatResponse) -> str:
+        """获取 Planner 显式输出、可用于工具上下文的正文。"""
 
-        response_content = str(response.content or "").strip()
-        if response_content:
-            return response_content
-        return str(response.reasoning or "").strip()
+        return str(response.content or "").strip()
 
     @staticmethod
     def _cycle_end_for_pause_tool(pause_tool_name: Optional[str]) -> CycleEnd:
