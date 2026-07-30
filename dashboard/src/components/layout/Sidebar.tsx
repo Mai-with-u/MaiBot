@@ -1,10 +1,11 @@
+import { ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { cn } from '@/lib/utils'
-import { useBackground } from '@/hooks/use-background'
 import { BackgroundLayer } from '@/components/background-layer'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { useBackground } from '@/hooks/use-background'
+import { cn } from '@/lib/utils'
 
 import { LogoArea } from './LogoArea'
 import { NavItem } from './NavItem'
@@ -14,18 +15,25 @@ interface SidebarProps {
   sidebarOpen: boolean
   mobileMenuOpen: boolean
   onMobileMenuClose: () => void
+  onSidebarFix: () => void
 }
 
 const SIDEBAR_HOVER_EXPAND_DELAY_MS = 180
 
-export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: SidebarProps) {
+export function Sidebar({
+  sidebarOpen,
+  mobileMenuOpen,
+  onMobileMenuClose,
+  onSidebarFix,
+}: SidebarProps) {
   const { t } = useTranslation()
   const { config: sidebarBg, inheritedFrom } = useBackground('sidebar')
   const inheritsPageBackground = inheritedFrom === 'page'
   const menuSections = useMenuSections()
   const [hoverExpanded, setHoverExpanded] = useState(false)
+  const [fixTransitionActive, setFixTransitionActive] = useState(false)
   const hoverExpandTimerRef = useRef<number | null>(null)
-  const visuallyOpen = sidebarOpen || hoverExpanded
+  const visuallyOpen = sidebarOpen || hoverExpanded || fixTransitionActive
 
   const cancelHoverExpand = useCallback(() => {
     if (hoverExpandTimerRef.current !== null) {
@@ -38,6 +46,7 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
     if (sidebarOpen) {
       cancelHoverExpand()
       setHoverExpanded(false)
+      setFixTransitionActive(false)
     }
     return cancelHoverExpand
   }, [cancelHoverExpand, sidebarOpen])
@@ -46,6 +55,10 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
     <aside
       data-dashboard-sidebar="true"
       data-dashboard-sidebar-hover-expanded={hoverExpanded ? 'true' : undefined}
+      data-dashboard-sidebar-mobile-open={mobileMenuOpen ? 'true' : 'false'}
+      data-dashboard-sidebar-mode={sidebarOpen ? 'fixed' : 'hover'}
+      data-dashboard-sidebar-fix-transition={fixTransitionActive ? 'true' : undefined}
+      data-dashboard-sidebar-visually-open={visuallyOpen ? 'true' : 'false'}
       onPointerEnter={(event) => {
         if (!sidebarOpen && event.pointerType === 'mouse') {
           cancelHoverExpand()
@@ -75,9 +88,30 @@ export function Sidebar({ sidebarOpen, mobileMenuOpen, onMobileMenuClose }: Side
       {/* Logo 区域 */}
       <div className="relative z-10">
         <LogoArea sidebarOpen={visuallyOpen} />
+        {!sidebarOpen && hoverExpanded && (
+          <button
+            type="button"
+            data-dashboard-sidebar-fix-switch="true"
+            aria-label={t('header.switchSidebarToFixed')}
+            title={t('header.switchSidebarToFixed')}
+            onClick={() => {
+              // 在父级切到固定模式前保持展开，避免 pointerleave 造成一帧收缩闪烁。
+              setFixTransitionActive(true)
+              onSidebarFix()
+            }}
+            className="text-muted-foreground/55 hover:text-primary focus-visible:ring-ring absolute right-4 bottom-3 z-20 hidden h-7 w-7 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-colors focus-visible:ring-2 focus-visible:outline-none lg:flex"
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className="h-5 w-5"
+              strokeWidth={2.25}
+            />
+          </button>
+        )}
       </div>
 
       <ScrollArea
+        scrollbars="vertical"
         className={cn(
           'relative z-10',
           'min-h-0 flex-1 overflow-x-hidden',

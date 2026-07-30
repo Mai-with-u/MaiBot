@@ -59,6 +59,7 @@ export function Layout({ children }: LayoutProps) {
   const showBackToTop = isSettingsWorkspace && pathname !== '/planner-monitor'
 
   const [sidebarOpen, setSidebarOpen] = useState(() => loadStoredBoolean(SIDEBAR_OPEN_STORAGE_KEY, true))
+  const [skipSidebarResizeAnimation, setSkipSidebarResizeAnimation] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => loadStoredBoolean(TOPBAR_COLLAPSED_STORAGE_KEY, false))
@@ -81,6 +82,7 @@ export function Layout({ children }: LayoutProps) {
 
       if (immersive) {
         immersiveRestoreRef.current ??= shellStateRef.current
+        setSkipSidebarResizeAnimation(false)
         setSidebarOpen(false)
         setTopbarCollapsed(true)
         setMobileMenuOpen(false)
@@ -88,6 +90,7 @@ export function Layout({ children }: LayoutProps) {
       }
 
       if (immersiveRestoreRef.current) {
+        setSkipSidebarResizeAnimation(false)
         setSidebarOpen(immersiveRestoreRef.current.sidebarOpen)
         setTopbarCollapsed(immersiveRestoreRef.current.topbarCollapsed)
         immersiveRestoreRef.current = null
@@ -221,6 +224,7 @@ export function Layout({ children }: LayoutProps) {
     }
 
     setMobileMenuOpen(false)
+    setSkipSidebarResizeAnimation(false)
     setWorkspaceTransitionTarget(to === '/chat' ? 'chat' : to === '/logs' ? 'logs' : 'settings')
 
     const enterWorkspace = () => {
@@ -251,6 +255,15 @@ export function Layout({ children }: LayoutProps) {
     workspaceTransitionStage !== 'idle' &&
     workspaceTransitionStage !== 'page-enter'
   const sidebarExiting = workspaceTransitionStage === 'sidebar-exit'
+  const handleSidebarFix = () => {
+    // 悬浮展开已处于完整宽度；固定时跳过外层 FLIP 尺寸缩放，避免整条侧栏先缩后展。
+    setSkipSidebarResizeAnimation(true)
+    setSidebarOpen(true)
+  }
+  const handleSidebarModeToggle = () => {
+    setSkipSidebarResizeAnimation(false)
+    setSidebarOpen((currentSidebarOpen) => !currentSidebarOpen)
+  }
 
   // 认证检查中，显示加载状态
   if (checking) {
@@ -278,7 +291,8 @@ export function Layout({ children }: LayoutProps) {
           {isSettingsWorkspace && (
             <motion.div
               key="settings-sidebar"
-              layout="size"
+              data-dashboard-sidebar-layout="true"
+              layout={skipSidebarResizeAnimation ? false : 'size'}
               className={cn(
                 'relative z-40 hidden shrink-0 will-change-transform lg:block',
                 sidebarExiting ? 'overflow-hidden' : 'overflow-visible'
@@ -307,6 +321,7 @@ export function Layout({ children }: LayoutProps) {
                   sidebarOpen={sidebarOpen}
                   mobileMenuOpen={mobileMenuOpen}
                   onMobileMenuClose={() => setMobileMenuOpen(false)}
+                  onSidebarFix={handleSidebarFix}
                 />
               </motion.div>
             </motion.div>
@@ -319,6 +334,7 @@ export function Layout({ children }: LayoutProps) {
                 sidebarOpen={sidebarOpen}
                 mobileMenuOpen={mobileMenuOpen}
                 onMobileMenuClose={() => setMobileMenuOpen(false)}
+                onSidebarFix={handleSidebarFix}
               />
             </div>
           )}
@@ -352,7 +368,7 @@ export function Layout({ children }: LayoutProps) {
               mobileMenuOpen={mobileMenuOpen}
               searchOpen={searchOpen}
               actualTheme={actualTheme}
-              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+              onSidebarToggle={handleSidebarModeToggle}
               onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
               onSearchOpenChange={setSearchOpen}
               onThemeChange={setTheme}

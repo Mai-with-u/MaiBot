@@ -800,10 +800,10 @@ class MaisakaReasoningEngine:
     def _get_effective_planner_thought(response: ChatResponse) -> str:
         """获取本轮 planner 可用于工具上下文的思考文本。"""
 
-        reasoning_content = str(response.reasoning or "").strip()
-        if reasoning_content:
-            return reasoning_content
-        return str(response.content or "").strip()
+        response_content = str(response.content or "").strip()
+        if response_content:
+            return response_content
+        return str(response.reasoning or "").strip()
 
     @staticmethod
     def _cycle_end_for_pause_tool(pause_tool_name: Optional[str]) -> CycleEnd:

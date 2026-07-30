@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
+    "switchSidebarToFixed": "Switch to fixed mode",
+    "switchSidebarToHover": "Switch to hover mode",
     "collapseTopbar": "Collapse topbar",
     "expandTopbar": "Expand topbar",
     "toggleConnection": "Toggle backend connection",

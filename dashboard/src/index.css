@@ -869,13 +869,15 @@
   letter-spacing: 0;
 }
 
-:root[data-dashboard-style='future-retro'] [data-dashboard-sidebar='true'] [data-orientation] {
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-sidebar='true']
+  [data-dashboard-scrollbar='true'][data-orientation] {
   opacity: 0;
 }
 
 :root[data-dashboard-style='future-retro']
-  [data-dashboard-sidebar='true']:hover
-  [data-orientation] {
+  [data-dashboard-sidebar='true'][data-dashboard-sidebar-visually-open='true']
+  [data-dashboard-scrollbar='true'][data-orientation] {
   opacity: 1;
 }
 
@@ -1201,7 +1203,7 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-button='true']:not(:disabled):hover,
 :root[data-dashboard-style='future-retro']
   [data-dashboard-header='true']
-  button:not(:disabled):hover {
+  button:not(:disabled):not([data-dashboard-sidebar-mode-switch='true']):hover {
   transform: translateY(-1px);
 }
 
@@ -2408,6 +2410,35 @@
   height: 0;
 }
 
+[data-dashboard-sidebar='true']
+  [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+  right: 0;
+  left: auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-dashboard-sidebar='true'][data-dashboard-sidebar-visually-open='true']
+  [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 1023px) {
+  [data-dashboard-sidebar='true'][data-dashboard-sidebar-mobile-open='true']
+    [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  :root[data-dashboard-style='future-retro']
+    [data-dashboard-sidebar='true'][data-dashboard-sidebar-mobile-open='true']
+    [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 :root[data-dashboard-style='future-retro'] [data-dashboard-scrollbar='true'] {
   background: transparent !important;
   border-color: transparent !important;
@@ -2436,8 +2467,8 @@
 :root[data-dashboard-style='future-retro']
   [data-dashboard-sidebar='true']
   [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
-  right: auto !important;
-  left: 0 !important;
+  right: 0 !important;
+  left: auto !important;
   width: 5px !important;
   padding-right: 1px !important;
 }

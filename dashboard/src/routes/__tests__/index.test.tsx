@@ -195,7 +195,7 @@ describe('IndexPage 特征化', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('hitokoto')))
   })
 
-  it('运行状态与精简运行时长左右对齐，并与功能灯分层展示', async () => {
+  it('运行状态与精简运行时长纵向排列，并与功能灯分层展示', async () => {
     render(<IndexPage />)
 
     const runtimeLabel = await screen.findByText('home.botStatus.running')
@@ -208,9 +208,9 @@ describe('IndexPage 特征化', () => {
     )
     const runtimeUptime = screen.getByText('home.botStatus.uptime')
     expect(runtimeUptime).toHaveAttribute('data-maibot-runtime-uptime', 'true')
-    expect(runtimeUptime).toHaveClass('text-xs', 'text-right', 'tabular-nums', 'whitespace-nowrap')
+    expect(runtimeUptime).toHaveClass('text-xs', 'text-left', 'tabular-nums', 'whitespace-nowrap')
     expect(runtimeLabel).toHaveClass('whitespace-nowrap')
-    expect(runtimeLabel.parentElement).toHaveClass('justify-between', 'items-baseline')
+    expect(runtimeLabel.parentElement).toHaveClass('flex-col', 'items-start')
     expect(screen.queryByText('home.botStatus.uptimeLabel')).not.toBeInTheDocument()
 
     const featureLights = document.querySelector('[data-maibot-feature-lights="true"]')
@@ -271,7 +271,7 @@ describe('IndexPage 特征化', () => {
     const storageRows = document.querySelectorAll('[data-home-storage-row="true"]')
     expect(storageRows).toHaveLength(4)
     for (const row of storageRows) {
-      expect(row).toHaveClass('grid', 'items-center')
+      expect(row).toHaveClass('grid', 'items-baseline')
       expect(row.querySelector('[data-home-storage-progress="true"]')).toBeInTheDocument()
     }
     const cardIds = Array.from(document.querySelectorAll('[data-home-card-id]')).map((card) =>

@@ -224,7 +224,11 @@ describe('Header', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'a11y.closeMenu' }))
-    fireEvent.click(screen.getByRole('button', { name: 'header.collapseSidebar' }))
+    const sidebarModeButton = screen.getByRole('button', {
+      name: 'header.switchSidebarToHover',
+    })
+    expect(sidebarModeButton.querySelector('svg')).toHaveClass('lucide-chevron-left', 'h-5', 'w-5')
+    fireEvent.click(sidebarModeButton)
     fireEvent.click(screen.getByRole('button', { name: 'header.collapseTopbar' }))
     fireEvent.click(screen.getByRole('button', { name: 'header.searchPlaceholder' }))
     fireEvent.click(screen.getByRole('button', { name: 'header.viewDocs' }))
@@ -265,7 +269,7 @@ describe('Header', () => {
     expect(screen.queryAllByRole('link', { name: 'sidebar.menu.focusCompanion' })).toHaveLength(0)
   })
 
-  it('折叠态仅保留展开条和侧栏控制，并尊重页面背景继承', () => {
+  it('悬浮模式不显示顶栏侧栏按钮，并尊重页面背景继承', () => {
     mocks.inheritedFrom = 'page'
     const props = makeProps({ topbarCollapsed: true, sidebarOpen: false })
     const { container } = render(<Header {...props} />)
@@ -274,9 +278,9 @@ describe('Header', () => {
     expect(screen.queryByTestId('background-header')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'header.searchPlaceholder' })).toHaveClass('hidden')
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'header.expandSidebar' })[0])
+    expect(screen.queryByRole('button', { name: 'header.expandSidebar' })).not.toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'header.expandTopbar' })[0])
-    expect(props.onSidebarToggle).toHaveBeenCalledOnce()
+    expect(props.onSidebarToggle).not.toHaveBeenCalled()
     expect(props.onTopbarToggle).toHaveBeenCalledOnce()
   })
 

@@ -37,14 +37,16 @@ vi.mock('motion/react', () => {
     HTMLAttributes<HTMLDivElement> & {
       animate?: unknown
       initial?: unknown
+      layout?: boolean | 'position' | 'size'
       transition?: unknown
       variants?: unknown
     }
-  >(({ animate, initial, transition, variants, ...props }, ref) => (
+  >(({ animate, initial, layout, transition, variants, ...props }, ref) => (
     <div
       ref={ref}
+      data-motion-layout={layout === false ? 'false' : layout}
       data-motion-configured={
-        [animate, initial, transition, variants].some(Boolean) ? 'true' : undefined
+        [animate, initial, layout, transition, variants].some(Boolean) ? 'true' : undefined
       }
       {...props}
     />
@@ -101,17 +103,36 @@ vi.mock('@/lib/runtime', () => ({
 }))
 vi.mock('./Header', () => ({
   Header: ({
+    onSidebarToggle,
     onWorkspaceNavigate,
   }: {
+    onSidebarToggle: () => void
     onWorkspaceNavigate: (to: '/' | '/chat' | '/logs') => void
   }) => (
-    <button type="button" onClick={() => onWorkspaceNavigate('/chat')}>
-      切换到麦麦聊天
-    </button>
+    <>
+      <button type="button" onClick={onSidebarToggle}>
+        切换侧栏模式
+      </button>
+      <button type="button" onClick={() => onWorkspaceNavigate('/chat')}>
+        切换到麦麦聊天
+      </button>
+    </>
   ),
 }))
 vi.mock('./Sidebar', () => ({
-  Sidebar: () => <div>侧栏</div>,
+  Sidebar: ({
+    onSidebarFix,
+    sidebarOpen,
+  }: {
+    onSidebarFix: () => void
+    sidebarOpen: boolean
+  }) => (
+    <div data-testid="sidebar" data-sidebar-open={String(sidebarOpen)}>
+      <button type="button" onClick={onSidebarFix}>
+        切换为固定模式
+      </button>
+    </div>
+  ),
 }))
 vi.mock('./use-menu-sections', () => ({
   useMenuSections: () => [],
@@ -121,6 +142,7 @@ describe('Layout 工作区切换', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    localStorage.clear()
     routerMocks.pathname = '/'
     routerMocks.status = 'idle'
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -176,5 +198,33 @@ describe('Layout 工作区切换', () => {
     expect(workspaceContent).not.toHaveClass('invisible')
     expect(screen.queryByText('首页内容')).not.toBeInTheDocument()
     expect(screen.getByText('聊天内容')).toBeInTheDocument()
+  })
+
+  it('悬浮转固定时跳过外层尺寸缩放，下一次模式切换恢复布局动画', () => {
+    localStorage.setItem('maibot-layout-sidebar-open', 'false')
+    const view = render(
+      <Layout>
+        <div>首页内容</div>
+      </Layout>
+    )
+
+    const sidebarLayout = view.container.querySelector(
+      '[data-dashboard-sidebar-layout="true"]'
+    )
+    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'size')
+    expect(sidebarLayout).toHaveStyle({
+      width: 'var(--layout-sidebar-collapsed-width)',
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: '切换为固定模式' })[0])
+    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'false')
+    expect(sidebarLayout).toHaveStyle({ width: 'var(--layout-sidebar-width)' })
+    expect(screen.getAllByTestId('sidebar')[0]).toHaveAttribute('data-sidebar-open', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '切换侧栏模式' }))
+    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'size')
+    expect(sidebarLayout).toHaveStyle({
+      width: 'var(--layout-sidebar-collapsed-width)',
+    })
   })
 })

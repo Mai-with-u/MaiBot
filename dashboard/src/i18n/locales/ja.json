@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開する",
+    "switchSidebarToFixed": "固定モードに切り替える",
+    "switchSidebarToHover": "ホバーモードに切り替える",
     "collapseTopbar": "トップバーを折りたたむ",
     "expandTopbar": "トップバーを展開する",
     "toggleConnection": "バックエンド接続を切り替える",
