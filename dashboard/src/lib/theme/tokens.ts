@@ -157,9 +157,14 @@ export type StyleTokenOverrides = Partial<Record<DashboardStyle, Partial<ThemeTo
 export type StyleCustomCSS = Partial<Record<DashboardStyle, string>>
 export type StyleBackgroundConfigMap = Partial<Record<DashboardStyle, BackgroundConfigMap>>
 
+export type FutureRetroTextureStyle = 'fine' | 'coarse' | 'dot-grid' | 'ruled' | 'none'
+
 export type FutureRetroStyleConfig = {
-  focusHighlight: boolean
-  paperTexture: boolean
+  paperWarmth: number
+  textureStyle: FutureRetroTextureStyle
+  textureIntensity: number
+  panelDepth: number
+  strokeScale: number
 }
 
 export type DashboardStyleConfig = {
@@ -169,8 +174,11 @@ export type DashboardStyleConfig = {
 export const DEFAULT_DASHBOARD_STYLE: DashboardStyle = 'future-retro'
 
 export const DEFAULT_FUTURE_RETRO_STYLE_CONFIG: FutureRetroStyleConfig = {
-  focusHighlight: false,
-  paperTexture: true,
+  paperWarmth: 100,
+  textureStyle: 'fine',
+  textureIntensity: 55,
+  panelDepth: 100,
+  strokeScale: 100,
 }
 
 export const DEFAULT_DASHBOARD_STYLE_CONFIG: DashboardStyleConfig = {

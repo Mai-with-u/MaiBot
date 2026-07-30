@@ -1,7 +1,6 @@
 import { Link, useMatchRoute } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import type { MenuItem } from './types'
@@ -12,7 +11,11 @@ interface NavItemProps {
   onMobileMenuClose: () => void
 }
 
-export function NavItem({ item, sidebarOpen, onMobileMenuClose }: NavItemProps) {
+export function NavItem({
+  item,
+  sidebarOpen,
+  onMobileMenuClose,
+}: NavItemProps) {
   const { t } = useTranslation()
   const matchRoute = useMatchRoute()
   const isActive = item.external ? false : matchRoute({ to: item.path })
@@ -47,8 +50,10 @@ export function NavItem({ item, sidebarOpen, onMobileMenuClose }: NavItemProps) 
     'relative flex h-[var(--layout-sidebar-nav-item-height)] items-center rounded-lg px-[var(--layout-sidebar-nav-item-padding-x)] py-0 transition-colors duration-150',
     'hover:bg-accent hover:text-accent-foreground',
     isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+    sidebarOpen &&
+      'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]',
     !sidebarOpen &&
-      'lg:mx-auto lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
+      'lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
   )
   const commonLinkProps = {
     'data-tour': item.tourId,
@@ -72,16 +77,5 @@ export function NavItem({ item, sidebarOpen, onMobileMenuClose }: NavItemProps) 
     </Link>
   )
 
-  return (
-    <li className="relative">
-      {sidebarOpen ? (
-        link
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>{link}</TooltipTrigger>
-          <TooltipContent side="right">{label}</TooltipContent>
-        </Tooltip>
-      )}
-    </li>
-  )
+  return <li className="relative">{link}</li>
 }

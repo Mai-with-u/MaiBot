@@ -16,11 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppearanceTab } from '../AppearanceTab'
 import type { AnimationSettings } from '@/lib/animation-context'
 import type { ThemeProviderState } from '@/lib/theme-context'
-import {
-  DEFAULT_ACCENT_COLOR_HEX,
-  DEFAULT_ACCENT_COLOR_HSL,
-  hexToHSL,
-} from '@/lib/theme/palette'
+import { DEFAULT_ACCENT_COLOR_HEX, DEFAULT_ACCENT_COLOR_HSL, hexToHSL } from '@/lib/theme/palette'
 import { applyThemePipeline } from '@/lib/theme/pipeline'
 import { exportThemeJSON, importThemeJSON } from '@/lib/theme/storage'
 import {
@@ -199,10 +195,7 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     const user = userEvent.setup()
     render(<AppearanceTab />)
 
-    expect(screen.getByRole('tab', { name: /systemDesc/ })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByRole('tab', { name: /systemDesc/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: /darkDesc/ })).toHaveAttribute('aria-selected', 'false')
 
     await user.click(screen.getByRole('tab', { name: /darkDesc/ }))
@@ -242,28 +235,33 @@ describe('AppearanceTab 主题模式与界面风格', () => {
       expect(screen.getByText(tokenName)).toBeInTheDocument()
     }
     // 未来复古专属配置不应出现
-    expect(screen.queryByText('未来复古配置')).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.appearance.retroConfig')).not.toBeInTheDocument()
     // 自定义 CSS 为空时清除按钮禁用
     expect(screen.getByRole('button', { name: /clearCss/ })).toBeDisabled()
   })
 
-  it('未来复古风格隐藏 modern 区块并可切换纸面颗粒开关', async () => {
+  it('未来复古风格隐藏 modern 区块并可切换纸面纹理', async () => {
     const user = userEvent.setup()
     themeState = makeThemeState({ dashboardStyle: 'future-retro' })
     render(<AppearanceTab />)
 
-    expect(screen.getByText('未来复古配置')).toBeInTheDocument()
+    expect(screen.getByText('settings.appearance.retroConfig')).toBeInTheDocument()
     expect(screen.queryByText('settings.appearance.customCss')).not.toBeInTheDocument()
     expect(screen.queryByText('settings.appearance.importExportTheme')).not.toBeInTheDocument()
 
-    // 默认：纸面颗粒开、焦点高亮关
-    const paperSwitch = screen.getByRole('switch', { name: '纸面颗粒' })
-    expect(paperSwitch).toBeChecked()
-    expect(screen.getByRole('switch', { name: '焦点高亮' })).not.toBeChecked()
-
-    await user.click(paperSwitch)
+    expect(
+      screen.getByRole('button', { name: 'settings.appearance.retroTextureFine' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await user.click(
+      screen.getByRole('button', { name: 'settings.appearance.retroTextureDots' })
+    )
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
-      styleConfig: { futureRetro: { focusHighlight: false, paperTexture: false } },
+      styleConfig: {
+        futureRetro: {
+          ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
+          textureStyle: 'dot-grid',
+        },
+      },
     })
   })
 })
@@ -327,9 +325,9 @@ describe('AppearanceTab 主题色', () => {
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       accentColor: DEFAULT_ACCENT_COLOR_HSL,
     })
-    expect(
-      screen.getByRole('textbox', { name: 'settings.appearance.accentPrimary' })
-    ).toHaveValue(DEFAULT_ACCENT_COLOR_HEX)
+    expect(screen.getByRole('textbox', { name: 'settings.appearance.accentPrimary' })).toHaveValue(
+      DEFAULT_ACCENT_COLOR_HEX
+    )
   })
 
   it('主题色已是默认值时重置按钮禁用', () => {
@@ -454,9 +452,7 @@ describe('AppearanceTab 主题导入/导出与重置', () => {
     await user.click(screen.getByRole('button', { name: 'settings.appearance.resetTheme' }))
     expect(await screen.findByText('settings.appearance.confirmResetTheme')).toBeInTheDocument()
 
-    await user.click(
-      screen.getByRole('button', { name: 'settings.appearance.confirmResetAction' })
-    )
+    await user.click(screen.getByRole('button', { name: 'settings.appearance.confirmResetAction' }))
     expect(themeState.resetTheme).toHaveBeenCalledTimes(1)
     expect(toastMock).toHaveBeenCalledWith({
       title: 'settings.appearance.resetSuccess',

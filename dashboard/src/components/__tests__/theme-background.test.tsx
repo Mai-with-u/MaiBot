@@ -173,7 +173,12 @@ describe('ThemeProvider', () => {
     document.documentElement.classList.remove('light', 'dark')
     delete document.documentElement.dataset.dashboardStyle
     delete document.documentElement.dataset.retroFocusHighlight
-    delete document.documentElement.dataset.retroPaperTexture
+    delete document.documentElement.dataset.retroTextureStyle
+    document.documentElement.style.removeProperty('--retro-paper-warmth')
+    document.documentElement.style.removeProperty('--retro-panel-depth')
+    document.documentElement.style.removeProperty('--retro-stroke-scale')
+    document.documentElement.style.removeProperty('--retro-configured-paper-texture')
+    document.documentElement.style.removeProperty('--retro-paper-texture-size')
     vi.clearAllMocks()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()

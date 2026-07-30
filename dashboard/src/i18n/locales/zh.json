@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
+    "switchSidebarToFixed": "切换为固定模式",
+    "switchSidebarToHover": "切换为悬浮模式",
     "collapseTopbar": "收起顶栏",
     "expandTopbar": "展开顶栏",
     "toggleConnection": "切换后端连接",
@@ -45,14 +47,14 @@
       "configTemplate": "配置模板市场",
       "pluginConfig": "插件管理",
       "mcpSettings": "MCP 设置",
-      "dataTransfer": "数据迁移",
+      "dataTransfer": "数据管理",
       "statistics": "详细统计数据",
       "logViewer": "日志查看器",
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
       "chatManagement": "聊天管理",
       "localChat": "本地聊天室",
-      "settings": "系统设置"
+      "settings": "WEBUI设置"
     }
   },
   "workspace": {
@@ -209,7 +211,7 @@
     "dismiss": "关闭 HTTP 安全提示"
   },
   "settings": {
-    "title": "系统设置",
+    "title": "WEBUI设置",
     "description": "管理您的应用偏好设置",
     "tabs": {
       "appearance": "外观",
@@ -303,7 +305,25 @@
       "visualGroup": "视觉效果 (Visual)",
       "layoutGroup": "布局 (Layout)",
       "animationGroup": "动画 (Animation)",
-      "backgroundGroup": "背景设置 (Backgrounds)"
+      "backgroundGroup": "背景设置 (Backgrounds)",
+      "retroConfig": "未来复古质感",
+      "retroConfigDesc": "微调纸张、纹理和界面层次，所有变化都会即时预览。",
+      "retroPaperWarmth": "纸张暖度",
+      "retroPaperWarmthDesc": "从纯白逐渐过渡到当前的暖黄色纸面。",
+      "retroPaperWhite": "纯白",
+      "retroPaperWarm": "暖黄",
+      "retroTexture": "纸面纹理",
+      "retroTextureDesc": "选择颗粒、草稿纸点阵、横线，或保持干净背景。",
+      "retroTextureFine": "细磨砂",
+      "retroTextureCoarse": "粗磨砂",
+      "retroTextureDots": "点阵纸",
+      "retroTextureRuled": "横线纸",
+      "retroTextureNone": "无纹理",
+      "retroTextureIntensity": "纹理强度",
+      "retroPanelDepth": "面板层次",
+      "retroPanelDepthDesc": "控制凹陷区域与阴影的可见程度。",
+      "retroStrokeScale": "描边力度",
+      "retroStrokeScaleDesc": "调节卡片和控件硬朗描边的粗细。"
     },
     "security": {
       "currentToken": "当前 Access Token",
@@ -532,7 +552,7 @@
     "method2FileHint": "打开此文件，复制 access_token 字段的值",
     "securityTipTitle": "安全提示",
     "securityTip1": "请妥善保管您的 Token，不要泄露给他人",
-    "securityTip2": "如需重置 Token，请在登录后前往系统设置",
+    "securityTip2": "如需重置 Token，请在登录后前往 WEBUI设置",
     "verifyFailed": "Token 验证失败，请检查后重试",
     "connFailed": "连接服务器失败，请检查网络连接",
     "switchToLight": "切换到浅色模式",
@@ -614,7 +634,7 @@
     },
     "skipDialog": {
       "title": "确认跳过配置向导",
-      "description": "您可以随时在系统设置中重新进入配置向导。确定要跳过吗？",
+      "description": "您可以随时在 WEBUI设置中重新进入配置向导。确定要跳过吗？",
       "confirm": "确认跳过"
     },
     "footer": "您可以随时在设置中修改这些配置",
@@ -913,12 +933,12 @@
       "statisticsDesc": "查看使用统计",
       "plugins": "插件市场",
       "pluginsDesc": "浏览和安装插件",
-      "dataTransferDesc": "备份、导出或恢复 MaiBot 数据",
+      "dataTransferDesc": "管理本地缓存，备份、导出或恢复 MaiBot 数据",
       "logs": "日志查看器",
       "logsDesc": "查看系统日志",
       "reasoningProcessDesc": "浏览 Maisaka prompt 推理记录",
-      "settings": "系统设置",
-      "settingsDesc": "配置系统参数"
+      "settings": "WEBUI设置",
+      "settingsDesc": "配置 WEBUI 参数"
     }
   },
   "a11y": {
@@ -1084,7 +1104,26 @@
     },
     "autoRefresh": "自动刷新",
     "hitokoto": {
-      "title": "一言"
+      "title": "一言",
+      "edit": "编辑一言",
+      "editor": {
+        "title": "编辑一言",
+        "description": "管理首页展示的一言来源与自定义内容。",
+        "defaultSource": "使用默认一言",
+        "defaultSourceDescription": "开启后会从一言接口获取内容，并与自定义内容轮换展示。",
+        "customList": "自定义内容",
+        "customListDescription": "可添加多条内容，出处可以留空。",
+        "add": "新增内容",
+        "empty": "还没有自定义内容，点击添加第一条",
+        "item": "内容 {{index}}",
+        "remove": "删除内容 {{index}}",
+        "content": "内容 {{index}} 正文",
+        "contentPlaceholder": "输入想在首页展示的内容",
+        "source": "内容 {{index}} 出处",
+        "sourcePlaceholder": "出处（可选）",
+        "blankHint": "默认一言已停用且自定义列表为空，首页一言区域将保持留白。",
+        "saving": "保存中..."
+      }
     },
     "cards": {
       "add": "新增卡片",
@@ -1092,7 +1131,7 @@
       "editCard": "编辑卡片：{{title}}",
       "editContent": "编辑卡片内容",
       "done": "完成编辑",
-      "reset": "恢复默认布局",
+      "reset": "恢复默认",
       "styles": {
         "default": {
           "title": "默认样式",
@@ -1135,12 +1174,23 @@
     "botStatus": {
       "title": "麦麦状态",
       "loading": "读取中",
-      "running": "运行中",
+      "running": "活动",
       "stopped": "已停止",
       "unknown": "未知",
+      "uptimeLabel": "运行时间",
       "uptime": "{{time}}",
+      "enabled": "已启用",
+      "disabled": "未启用",
       "visualEnabled": "启用视觉",
-      "memoryEnabled": "启用记忆"
+      "memoryEnabled": "启用记忆",
+      "recentOnline": "最近在线",
+      "recentOnlineRange": "最近 24 小时",
+      "recentOnlineChart": "最近 24 小时在线时长图表",
+      "recentOnlineTotal": "在线 {{time}}",
+      "online": "在线",
+      "clickToReturn": "点击返回状态",
+      "showRecentOnline": "查看最近在线图表",
+      "showStatus": "返回活动状态"
     },
     "versionCard": {
       "title": "麦麦版本",
@@ -1167,7 +1217,7 @@
       "expressionReview": "表达审核",
       "viewLogs": "查看日志",
       "pluginManage": "插件管理",
-      "systemSettings": "系统设置",
+      "systemSettings": "WEBUI设置",
       "pluginConfig": "插件配置",
       "appearanceSettings": "外观设置",
       "localCache": "本地缓存",
@@ -1186,7 +1236,7 @@
         "expressionReview": "打开表达学习审核弹窗",
         "viewLogs": "查看 WebUI 日志",
         "pluginManage": "打开插件市场与插件管理",
-        "systemSettings": "打开系统设置",
+        "systemSettings": "打开 WEBUI设置",
         "pluginConfig": "打开已安装插件配置页面",
         "appearanceSettings": "打开设置 / 外观",
         "localCache": "打开设置 / 本地缓存",
@@ -1243,7 +1293,7 @@
       "avgResponse": "平均响应",
       "avgResponseDesc": "API平均耗时",
       "onlineTime": "在线时长",
-      "messageProcessing": "消息处理",
+      "messageProcessing": "消息",
       "costEfficiency": "成本效率",
       "recentPeriod": "最近{{range}}",
       "perHour": "{{value}}/小时",
@@ -1304,8 +1354,6 @@
       "modelDetails": "模型详细统计",
       "modelDetailsDesc": "请求数、花费和性能",
       "modelDetailsTokenDesc": "模型调用、Token、缓存和费用",
-      "recentActivity": "最近活动",
-      "recentActivityDesc": "最新的API调用记录",
       "dailyStats": "每日统计",
       "dailyStatsDesc": "最近7天的数据汇总",
       "dailyStatsRangeDesc": "所选时段的每日汇总",
@@ -1319,7 +1367,7 @@
       "status": "状态"
     },
     "time": {
-      "hoursMinutes": "{{hours}}小时{{minutes}}分钟"
+      "hoursMinutes": "{{hours}}小时{{minutes}}分"
     },
     "hitokotoFallback": "人生就像一盒巧克力，你永远不知道下一颗是什么味道。",
     "hitokotoFallbackFrom": "阿甘正传",

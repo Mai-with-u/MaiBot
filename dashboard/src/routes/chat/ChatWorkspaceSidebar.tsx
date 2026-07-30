@@ -167,18 +167,6 @@ export function ChatWorkspaceSidebar({
         className
       )}
     >
-      {/* 头部 */}
-      <div className="border-b px-4 pt-5 pb-4">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold tracking-tight">
-            {t('chat.sidebar.title')}
-          </h2>
-          <p className="text-muted-foreground mt-0.5 truncate text-xs">
-            {t('chat.sidebar.subtitle', { count: tabs.length })}
-          </p>
-        </div>
-      </div>
-
       {/* 会话列表 */}
       <ScrollArea
         className="min-h-0 flex-1"

@@ -295,6 +295,7 @@ describe('PluginMarketplacePage 初始加载与数据合并', () => {
     expect(screen.getByTestId('plugin-plugin-a')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-plugin-b')).toBeInTheDocument()
     expect(getCountBadgeText()).toBe('全部插件 2')
+    expect(screen.queryByRole('heading', { name: '插件市场' })).not.toBeInTheDocument()
   })
 
   it('合并已安装信息：市场插件标记已安装版本，本地独有插件追加为 local 来源', async () => {

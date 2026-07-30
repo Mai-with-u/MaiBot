@@ -44,6 +44,7 @@ class TimeSeriesData(BaseModel):
     """时间序列数据"""
 
     timestamp: str
+    online_seconds: float = Field(0.0, description="在线时间（秒）")
     requests: int = 0
     cost: float = 0.0
     tokens: int = 0

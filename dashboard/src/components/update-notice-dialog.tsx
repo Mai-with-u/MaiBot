@@ -8,7 +8,8 @@ import {
   type CSSProperties,
 } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { ArrowRight, Check, CircleAlert, CircleCheck, CircleX } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, CircleAlert, CircleCheck, CircleX } from 'lucide-react'
+import { motion } from 'motion/react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,10 +25,20 @@ import {
 import { getSetting } from '@/lib/settings-manager'
 import {
   ackUpdateNotice,
+  getUpdateHistory,
   getUpdateNotice,
   type IncompatiblePluginNotice,
+  type UpdateHistoryEntry,
   type UpdateNoticeResponse,
 } from '@/lib/system-api'
+import { UPDATE_NOTICE_OPEN_EVENT, type UpdateNoticeTarget } from '@/lib/update-notice-events'
+
+import {
+  extractWebuiSections,
+  extractWebuiVersion,
+  removeTopLevelHeadings,
+  removeWebuiVersions,
+} from './update-notice-markdown'
 
 type NoticeStage = 'update' | 'compatibility' | null
 
@@ -71,7 +82,19 @@ export function UpdateNoticeDialog() {
   const alwaysShowUpdateNotice = getSetting('alwaysShowUpdateNotice')
   const [notice, setNotice] = useState<UpdateNoticeResponse | null>(null)
   const [stage, setStage] = useState<NoticeStage>(null)
+  const [manualTarget, setManualTarget] = useState<UpdateNoticeTarget | null>(null)
+  const [manualLoading, setManualLoading] = useState(false)
+  const [historyEntries, setHistoryEntries] = useState<UpdateHistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [historyOffset, setHistoryOffset] = useState(0)
+  const [historyHasMore, setHistoryHasMore] = useState(true)
+  const [noticeBodyHeight, setNoticeBodyHeight] = useState<number>()
+  const [noticeContentElement, setNoticeContentElement] = useState<HTMLDivElement | null>(null)
+  const [activeManualVersion, setActiveManualVersion] = useState<string | null>(null)
   const ackedRef = useRef(false)
+  const historyRequestedRef = useRef(false)
+  const noticeViewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -83,6 +106,7 @@ export function UpdateNoticeDialog() {
           return
         }
         ackedRef.current = false
+        setManualTarget(null)
         setNotice(response)
         setStage('update')
       } catch (error) {
@@ -96,6 +120,170 @@ export function UpdateNoticeDialog() {
       cancelled = true
     }
   }, [alwaysShowUpdateNotice])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const handleManualOpen = (event: Event) => {
+      const target = (event as CustomEvent<UpdateNoticeTarget>).detail
+      setManualTarget(target)
+      setManualLoading(true)
+      setHistoryEntries([])
+      setHistoryLoading(false)
+      setHistoryLoaded(false)
+      setHistoryOffset(0)
+      setHistoryHasMore(true)
+      setNoticeBodyHeight(undefined)
+      setActiveManualVersion(null)
+      historyRequestedRef.current = false
+      setStage('update')
+
+      void getUpdateNotice(true)
+        .then((response) => {
+          if (!cancelled) {
+            setNotice(response)
+          }
+        })
+        .catch((error) => {
+          console.error('[UpdateNotice] 手动获取更新公告失败:', error)
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setManualLoading(false)
+          }
+        })
+    }
+
+    window.addEventListener(UPDATE_NOTICE_OPEN_EVENT, handleManualOpen)
+    return () => {
+      cancelled = true
+      window.removeEventListener(UPDATE_NOTICE_OPEN_EVENT, handleManualOpen)
+    }
+  }, [])
+
+  const revealHistory = useCallback(async () => {
+    if (
+      !manualTarget ||
+      historyRequestedRef.current ||
+      historyLoading ||
+      (historyLoaded && !historyHasMore)
+    ) {
+      return
+    }
+
+    historyRequestedRef.current = true
+    setHistoryLoading(true)
+    try {
+      const displayedVersions = notice?.versions ?? []
+      const oldestDisplayedVersion = displayedVersions[displayedVersions.length - 1]
+      const response = await getUpdateHistory(
+        historyOffset,
+        3,
+        oldestDisplayedVersion,
+        manualTarget === 'console' ? 'webui' : undefined
+      )
+      const historicalEntries = response.entries
+      const scopedEntries =
+        manualTarget === 'console'
+          ? historicalEntries.filter((entry) => extractWebuiSections(entry.content))
+          : historicalEntries
+      setHistoryEntries((currentEntries) => [
+        ...currentEntries,
+        ...scopedEntries.filter(
+          (entry) => !currentEntries.some((currentEntry) => currentEntry.version === entry.version)
+        ),
+      ])
+      setHistoryOffset(response.next_offset)
+      setHistoryHasMore(response.has_more)
+      setHistoryLoaded(true)
+    } catch (error) {
+      console.error('[UpdateNotice] 获取历史更新记录失败:', error)
+    } finally {
+      historyRequestedRef.current = false
+      setHistoryLoading(false)
+    }
+  }, [
+    historyHasMore,
+    historyLoaded,
+    historyLoading,
+    historyOffset,
+    manualTarget,
+    notice?.versions,
+  ])
+
+  const shouldLoadMoreHistory = useCallback(() => {
+    const viewport = noticeViewportRef.current
+    if (!viewport) {
+      return !historyLoaded
+    }
+    return (
+      !historyLoaded ||
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96
+    )
+  }, [historyLoaded])
+
+  const syncActiveManualVersion = useCallback(() => {
+    const viewport = noticeViewportRef.current
+    if (!viewport || !manualTarget) {
+      return
+    }
+
+    const versionSections = Array.from(
+      viewport.querySelectorAll<HTMLElement>('[data-update-notice-version]')
+    )
+    if (versionSections.length === 0) {
+      return
+    }
+
+    const viewportTop = viewport.getBoundingClientRect().top
+    let activeVersion = versionSections[0].dataset.updateNoticeVersion
+    for (const section of versionSections) {
+      if (section.getBoundingClientRect().top > viewportTop + 1) {
+        break
+      }
+      activeVersion = section.dataset.updateNoticeVersion
+    }
+    if (activeVersion) {
+      setActiveManualVersion((current) => (current === activeVersion ? current : activeVersion))
+    }
+  }, [manualTarget])
+
+  useEffect(() => {
+    const viewport = noticeViewportRef.current
+    if (!viewport || !manualTarget || stage !== 'update') {
+      return
+    }
+
+    const handleScroll = () => {
+      syncActiveManualVersion()
+      if (viewport.scrollTop > 0 && shouldLoadMoreHistory()) {
+        void revealHistory()
+      }
+    }
+    viewport.addEventListener('scroll', handleScroll, { passive: true })
+    return () => viewport.removeEventListener('scroll', handleScroll)
+  }, [manualTarget, revealHistory, shouldLoadMoreHistory, stage, syncActiveManualVersion])
+
+  useEffect(() => {
+    if (!noticeContentElement || stage !== 'update' || manualLoading) {
+      return
+    }
+
+    const updateBodyHeight = () => {
+      const rootFontSize = Number.parseFloat(
+        window.getComputedStyle(document.documentElement).fontSize
+      )
+      const maxBodyHeight = Math.min(window.innerHeight * 0.7, rootFontSize * 42)
+      setNoticeBodyHeight(
+        Math.min(Math.ceil(noticeContentElement.getBoundingClientRect().height), maxBodyHeight)
+      )
+    }
+    const resizeObserver = new ResizeObserver(updateBodyHeight)
+    resizeObserver.observe(noticeContentElement)
+    updateBodyHeight()
+
+    return () => resizeObserver.disconnect()
+  }, [manualLoading, noticeContentElement, stage])
 
   const acknowledgeNoticeSequence = useCallback(async () => {
     if (ackedRef.current) {
@@ -113,23 +301,43 @@ export function UpdateNoticeDialog() {
   }, [])
 
   const finishUpdateNotice = useCallback(() => {
+    if (manualTarget) {
+      setStage(null)
+      setManualTarget(null)
+      setActiveManualVersion(null)
+      return
+    }
     if (alwaysShowUpdateNotice || (notice?.incompatible_plugins?.length ?? 0) > 0) {
       setStage('compatibility')
       return
     }
     void acknowledgeNoticeSequence()
-  }, [acknowledgeNoticeSequence, alwaysShowUpdateNotice, notice])
+  }, [acknowledgeNoticeSequence, alwaysShowUpdateNotice, manualTarget, notice])
 
   const openPluginManagement = useCallback(async () => {
     await acknowledgeNoticeSequence()
     await navigate({ to: '/plugin-config' })
   }, [acknowledgeNoticeSequence, navigate])
 
-  if (!notice) {
+  if (!notice && !manualLoading) {
     return null
   }
 
-  const incompatiblePlugins = notice.incompatible_plugins ?? []
+  const incompatiblePlugins = notice?.incompatible_plugins ?? []
+  const currentContent =
+    manualTarget === 'console' && notice
+      ? extractWebuiSections(notice.content) || '当前版本没有 WebUI 子项目的更新记录。'
+      : notice?.content
+  const displayedCurrentContent =
+    manualTarget && currentContent ? removeTopLevelHeadings(currentContent) : currentContent
+  const currentWebuiVersion =
+    manualTarget === 'console' && notice ? extractWebuiVersion(notice.content) : null
+  const currentManualVersion =
+    manualTarget === 'console' ? (currentWebuiVersion ?? '—') : (notice?.current_version ?? '—')
+  const renderedCurrentContent =
+    manualTarget === 'maibot' && displayedCurrentContent
+      ? removeWebuiVersions(displayedCurrentContent)
+      : displayedCurrentContent
 
   return (
     <>
@@ -143,26 +351,143 @@ export function UpdateNoticeDialog() {
       >
         <DialogContent style={{ '--dialog-width': '44rem' } as CSSProperties}>
           <DialogHeader>
-            <DialogTitle>更新内容</DialogTitle>
-            <DialogDescription>查看本次 MaiBot 更新包含的功能与修复。</DialogDescription>
+            {manualTarget ? (
+              <DialogTitle className="flex flex-col items-start gap-2">
+                <span
+                  className="text-2xl leading-tight font-bold tracking-wide"
+                  style={{ color: 'var(--retro-ink)' }}
+                >
+                  {manualTarget === 'console' ? 'CONSOLE 版本' : 'MAIBOT 版本'}
+                </span>
+                <span
+                  className="text-4xl leading-none font-black tracking-tight"
+                  style={{ color: 'var(--retro-rust)' }}
+                >
+                  {activeManualVersion ?? currentManualVersion}
+                </span>
+              </DialogTitle>
+            ) : (
+              <DialogTitle>更新内容</DialogTitle>
+            )}
+            {!manualTarget && (
+              <DialogDescription>
+                查看本次 MaiBot 更新包含的功能与修复。
+              </DialogDescription>
+            )}
           </DialogHeader>
-          <DialogBody className="max-h-[min(70vh,42rem)]">
-            <Suspense
-              fallback={
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  正在加载更新内容…
-                </div>
+          <DialogBody
+            className="max-h-[min(70vh,42rem)] flex-none"
+            viewportRef={noticeViewportRef}
+            style={
+              noticeBodyHeight === undefined
+                ? undefined
+                : {
+                    height: noticeBodyHeight,
+                    transition: 'height 480ms cubic-bezier(0.22, 1, 0.36, 1)',
+                  }
+            }
+            onWheelCapture={(event) => {
+              if (event.deltaY > 0 && shouldLoadMoreHistory()) {
+                void revealHistory()
               }
-            >
-              <MarkdownRenderer content={notice.content} className="[&_h1:first-child]:mt-0" />
-            </Suspense>
+            }}
+          >
+            {manualLoading || !notice ? (
+              <div className="text-muted-foreground py-8 text-center text-sm">
+                正在加载更新内容…
+              </div>
+            ) : (
+              <Suspense
+                fallback={
+                  <div className="text-muted-foreground py-8 text-center text-sm">
+                    正在加载更新内容…
+                  </div>
+                }
+              >
+                <div ref={setNoticeContentElement}>
+                  <div data-update-notice-version={currentManualVersion}>
+                    <MarkdownRenderer
+                      content={renderedCurrentContent ?? ''}
+                      className="[&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
+                    />
+                  </div>
+                  {manualTarget && !historyLoaded && !historyLoading && (
+                    <motion.div
+                      aria-hidden="true"
+                      className="text-primary/60 pointer-events-none sticky bottom-1 flex h-8 items-center justify-center"
+                      animate={{ y: [0, 5, 0], opacity: [0.55, 0.9, 0.55] }}
+                      transition={{
+                        duration: 1.6,
+                        ease: 'easeInOut',
+                        repeat: Infinity,
+                      }}
+                    >
+                      <ChevronDown className="h-5 w-5" strokeWidth={2} />
+                    </motion.div>
+                  )}
+                  {historyLoading && !historyLoaded && (
+                    <div className="text-muted-foreground border-t py-5 text-center text-sm">
+                      正在加载历史版本…
+                    </div>
+                  )}
+                  {historyLoaded && historyEntries.length > 0 && (
+                    <section className="mt-8 border-t pt-6">
+                      <h2 className="mb-5 text-base font-semibold">历史版本</h2>
+                      <div className="divide-border divide-y">
+                        {historyEntries.map((entry, index) => (
+                          <motion.article
+                            key={entry.version}
+                            data-update-notice-version={
+                              manualTarget === 'console'
+                                ? (extractWebuiVersion(entry.content) ?? '—')
+                                : entry.version
+                            }
+                            layout="position"
+                            initial={{ opacity: 0, y: 24, filter: 'blur(4px)' }}
+                            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                            transition={{
+                              duration: 0.45,
+                              delay: (index % 3) * 0.08,
+                              ease: [0.22, 1, 0.36, 1],
+                            }}
+                            className="py-8 first:pt-0 last:pb-0"
+                          >
+                            <h3 className="mb-4 text-2xl font-bold tracking-tight">
+                              v
+                              {manualTarget === 'console'
+                                ? (extractWebuiVersion(entry.content) ?? '—')
+                                : entry.version}
+                            </h3>
+                            <MarkdownRenderer
+                              content={
+                                manualTarget === 'console'
+                                  ? extractWebuiSections(entry.content)
+                                  : removeWebuiVersions(entry.content)
+                              }
+                              className="[&_h1]:hidden [&_h2]:!text-xl [&_h3]:!text-lg [&_h2:first-child]:!mt-0 [&_h3:first-child]:!mt-0"
+                            />
+                          </motion.article>
+                        ))}
+                      </div>
+                      {historyLoading && (
+                        <div className="text-muted-foreground border-t py-5 text-center text-sm">
+                          正在加载更多历史版本…
+                        </div>
+                      )}
+                    </section>
+                  )}
+                </div>
+              </Suspense>
+            )}
           </DialogBody>
-          <DialogFooter>
-            <Button type="button" onClick={finishUpdateNotice}>
-              <Check className="h-4 w-4" />
-              知道了
-            </Button>
-          </DialogFooter>
+          {!manualTarget && (
+            <DialogFooter>
+              <Button type="button" disabled={manualLoading} onClick={finishUpdateNotice}>
+                <Check className="h-4 w-4" />
+                知道了
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -179,8 +504,8 @@ export function UpdateNoticeDialog() {
             <DialogTitle>插件兼容性提醒</DialogTitle>
             <DialogDescription>
               {incompatiblePlugins.length > 0
-                ? `以下插件在 MaiBot 更新到 v${notice.current_version} 后不再兼容，请更新插件或暂时停用。`
-                : `已完成 MaiBot v${notice.current_version} 的插件兼容性检查。`}
+                ? `以下插件在 MaiBot 更新到 v${notice?.current_version ?? '—'} 后不再兼容，请更新插件或暂时停用。`
+                : `已完成 MaiBot v${notice?.current_version ?? '—'} 的插件兼容性检查。`}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="max-h-[min(65vh,36rem)]">

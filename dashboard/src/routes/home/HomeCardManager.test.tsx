@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -40,6 +40,47 @@ describe('HomeCardManager 布局持久化', () => {
 
     view.rerender(<HomeCardManager cards={createCards()} pluginCards={[]} />)
     expect(setItemSpy).not.toHaveBeenCalled()
+  })
+
+  it('自动清理已移除卡片残留的布局配置', async () => {
+    window.localStorage.setItem(
+      'maibot-home-card-layout-v1',
+      JSON.stringify({
+        hidden: ['builtin:removed'],
+        order: ['builtin:removed', 'builtin:test'],
+        rowModes: {
+          0: 'low',
+        },
+        styles: { 'builtin:removed': 'orange' },
+        widths: { 'builtin:removed': 'full' },
+      })
+    )
+
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:test',
+            render: () => <div>测试卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem('maibot-home-card-layout-v1') ?? '{}')).toEqual(
+        {
+          hidden: [],
+          order: ['builtin:test'],
+          rowModes: { 0: 'low' },
+          styles: {},
+          widths: {},
+        }
+      )
+    })
   })
 
   it('编辑模式通过卡片通用接口编辑内容', async () => {

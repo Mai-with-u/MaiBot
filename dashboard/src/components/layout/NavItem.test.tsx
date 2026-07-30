@@ -123,15 +123,22 @@ describe('NavItem', () => {
     expect(screen.getByRole('link')).not.toHaveAttribute('data-state')
   })
 
-  it('侧边栏收起时链接包裹在 Tooltip 触发器中且标签在桌面端隐藏', () => {
+  it('侧边栏收起时不再包裹 Tooltip 且标签在桌面端隐藏', () => {
     matchRouteMock.mockReturnValue(false)
     const { container } = renderNavItem({ sidebarOpen: false })
 
     const link = screen.getByRole('link')
-    // Radix TooltipTrigger asChild 会给触发元素注入 data-state 属性
-    expect(link).toHaveAttribute('data-state', 'closed')
+    expect(link).not.toHaveAttribute('data-state')
     const label = container.querySelector('[data-dashboard-nav-label="true"]')
     expect(label).toHaveClass('lg:opacity-0')
+  })
+
+  it('展开状态使用固定的图标横向轨道', () => {
+    matchRouteMock.mockReturnValue(false)
+    renderNavItem({ sidebarOpen: true })
+    expect(screen.getByRole('link')).toHaveClass(
+      'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]'
+    )
   })
 
   it('未提供 tourId 时不渲染 data-tour 属性', () => {

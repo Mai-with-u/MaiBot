@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.chat.utils.utils import ProcessedResponseSegment
 from src.maisaka.builtin_tool import context as context_module
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
-from src.maisaka.builtin_tool.reply import _invoke_before_post_process_hook
+from src.maisaka.builtin_tool.reply import _invoke_before_post_process_hook, _resolve_segment_reply_context
 from src.maisaka.chat_loop_service import register_maisaka_hook_specs
 from src.plugin_runtime.host.hook_spec_registry import HookSpecRegistry
 
@@ -55,6 +56,53 @@ def test_before_post_process_hook_exposes_per_reply_options() -> None:
     assert properties["skip_post_process"]["type"] == "boolean"
     assert properties["enable_splitter"]["type"] == "boolean"
     assert properties["enable_chinese_typo"]["type"] == "boolean"
+
+
+def test_typo_correction_uses_previous_sent_message_as_quote_target() -> None:
+    target_message = object()
+    previous_sent_message = object()
+
+    set_quote, reply_message = _resolve_segment_reply_context(
+        index=1,
+        quote_previous=True,
+        effective_set_quote=False,
+        target_message=target_message,
+        previous_sent_message=previous_sent_message,
+    )
+
+    assert set_quote is True
+    assert reply_message is previous_sent_message
+
+
+def test_regular_followup_segment_keeps_original_reply_context() -> None:
+    target_message = object()
+    previous_sent_message = object()
+
+    set_quote, reply_message = _resolve_segment_reply_context(
+        index=1,
+        quote_previous=False,
+        effective_set_quote=True,
+        target_message=target_message,
+        previous_sent_message=previous_sent_message,
+    )
+
+    assert set_quote is False
+    assert reply_message is target_message
+
+
+def test_post_process_message_items_keep_typo_quote_metadata(monkeypatch) -> None:
+    def fake_process(*_args, **_kwargs) -> list[ProcessedResponseSegment]:
+        return [
+            ProcessedResponseSegment("今田见"),
+            ProcessedResponseSegment("天", quote_previous=True),
+        ]
+
+    monkeypatch.setattr(context_module, "process_llm_response_segments", fake_process)
+    tool_ctx = object.__new__(BuiltinToolRuntimeContext)
+
+    items = tool_ctx.post_process_reply_message_items("今天见")
+
+    assert [item.quote_previous for item in items] == [False, True]
 
 
 @pytest.mark.asyncio

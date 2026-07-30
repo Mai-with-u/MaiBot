@@ -223,6 +223,23 @@ def _build_send_result(
     }
 
 
+def _resolve_segment_reply_context(
+    *,
+    index: int,
+    quote_previous: bool,
+    effective_set_quote: bool,
+    target_message: Any,
+    previous_sent_message: Any,
+) -> tuple[bool, Any]:
+    """确定当前分段是否引用，以及引用所使用的真实消息对象。"""
+
+    if index == 0:
+        return effective_set_quote, target_message
+    if quote_previous and previous_sent_message is not None:
+        return True, previous_sent_message
+    return False, target_message
+
+
 def _extract_guided_reply_text(message: SessionBackedMessage) -> str:
     """提取 bot 已发送 guided reply 的可见正文。"""
 
@@ -402,13 +419,13 @@ async def handle_tool(
 
     try:
         if rich_reply_enabled:
-            reply_sequences = await tool_ctx.post_process_rich_reply_message_sequences_async(
+            reply_items = await tool_ctx.post_process_rich_reply_message_items_async(
                 reply_text,
                 invocation_arguments,
                 **post_process_options,
             )
         else:
-            reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(
+            reply_items = await tool_ctx.post_process_reply_message_items_async(
                 reply_text,
                 **post_process_options,
             )
@@ -422,6 +439,7 @@ async def handle_tool(
             f"解析回复附件失败：{exc}",
             metadata=reply_metadata,
         )
+    reply_sequences = [item.sequence for item in reply_items]
     reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
     combined_reply_text = "".join(reply_segments)
     reply_result.completion.response_text = combined_reply_text
@@ -445,15 +463,23 @@ async def handle_tool(
                 )
             sent = True
         else:
-            for index, reply_sequence in enumerate(reply_sequences):
+            previous_sent_message = None
+            for index, reply_item in enumerate(reply_items):
+                reply_sequence = reply_item.sequence
                 segment = reply_segments[index]
-                segment_set_quote = effective_set_quote if index == 0 else False
+                segment_set_quote, segment_reply_message = _resolve_segment_reply_context(
+                    index=index,
+                    quote_previous=reply_item.quote_previous,
+                    effective_set_quote=effective_set_quote,
+                    target_message=target_message,
+                    previous_sent_message=previous_sent_message,
+                )
                 sent_message = await send_service._send_to_target_with_message(
                     message_sequence=reply_sequence,
                     stream_id=tool_ctx.runtime.session_id,
                     processed_plain_text=segment,
                     set_reply=segment_set_quote,
-                    reply_message=target_message,
+                    reply_message=segment_reply_message,
                     selected_expressions=reply_result.selected_expression_ids or None,
                     typing=index > 0,
                     sync_to_maisaka_history=True,
@@ -482,6 +508,7 @@ async def handle_tool(
                         message_id=sent_message_id,
                     )
                 )
+                previous_sent_message = sent_message
     except Exception:
         logger.exception(f"{tool_ctx.runtime.log_prefix} 发送文字消息时发生异常，目标消息编号={target_message_id}")
         return tool_ctx.build_failure_result(

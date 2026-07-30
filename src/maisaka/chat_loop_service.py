@@ -92,7 +92,7 @@ class ChatResponse:
     duration_ms: float = 0.0
     prompt_section: Optional[RenderableType] = None
     prompt_html_uri: Optional[str] = None
-    reasoning: str = ""
+    reasoning: str = ""  # Provider 原生推理，仅用于观测，不代表 Planner 显式正文。
 
 
 logger = get_logger("maisaka_chat_loop")
@@ -599,15 +599,6 @@ class MaisakaChatLoopService:
         return llm_client
 
     @staticmethod
-    def _resolve_planner_response_content(response: str, reasoning: str) -> str:
-        """在模型只把思考放入原生 reasoning 字段时，仍保留可传给工具的 planner 文本。"""
-
-        normalized_response = str(response or "").strip()
-        if normalized_response:
-            return response
-        return str(reasoning or "").strip()
-
-    @staticmethod
     def _get_runtime_manager() -> Any:
         """获取插件运行时管理器。
 
@@ -1031,8 +1022,9 @@ class MaisakaChatLoopService:
             prompt_cache_miss_tokens=getattr(generation_result, "prompt_cache_miss_tokens", 0) or 0,
         )
 
+        # Provider 原生推理与 Planner 显式正文语义不同，必须分别保留。
         final_reasoning = generation_result.reasoning or ""
-        final_response = self._resolve_planner_response_content(generation_result.response or "", final_reasoning)
+        final_response = generation_result.response or ""
         final_tool_calls = list(generation_result.tool_calls or [])
         after_response_result = await self._get_runtime_manager().invoke_hook(
             "maisaka.planner.after_response",

@@ -59,6 +59,7 @@ export function Layout({ children }: LayoutProps) {
   const showBackToTop = isSettingsWorkspace && pathname !== '/planner-monitor'
 
   const [sidebarOpen, setSidebarOpen] = useState(() => loadStoredBoolean(SIDEBAR_OPEN_STORAGE_KEY, true))
+  const [skipSidebarResizeAnimation, setSkipSidebarResizeAnimation] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [topbarCollapsed, setTopbarCollapsed] = useState(() => loadStoredBoolean(TOPBAR_COLLAPSED_STORAGE_KEY, false))
@@ -81,6 +82,7 @@ export function Layout({ children }: LayoutProps) {
 
       if (immersive) {
         immersiveRestoreRef.current ??= shellStateRef.current
+        setSkipSidebarResizeAnimation(false)
         setSidebarOpen(false)
         setTopbarCollapsed(true)
         setMobileMenuOpen(false)
@@ -88,6 +90,7 @@ export function Layout({ children }: LayoutProps) {
       }
 
       if (immersiveRestoreRef.current) {
+        setSkipSidebarResizeAnimation(false)
         setSidebarOpen(immersiveRestoreRef.current.sidebarOpen)
         setTopbarCollapsed(immersiveRestoreRef.current.topbarCollapsed)
         immersiveRestoreRef.current = null
@@ -221,6 +224,7 @@ export function Layout({ children }: LayoutProps) {
     }
 
     setMobileMenuOpen(false)
+    setSkipSidebarResizeAnimation(false)
     setWorkspaceTransitionTarget(to === '/chat' ? 'chat' : to === '/logs' ? 'logs' : 'settings')
 
     const enterWorkspace = () => {
@@ -251,6 +255,15 @@ export function Layout({ children }: LayoutProps) {
     workspaceTransitionStage !== 'idle' &&
     workspaceTransitionStage !== 'page-enter'
   const sidebarExiting = workspaceTransitionStage === 'sidebar-exit'
+  const handleSidebarFix = () => {
+    // 悬浮展开已处于完整宽度；固定时跳过占位宽度过渡，避免已经展开的侧栏出现二次动画。
+    setSkipSidebarResizeAnimation(true)
+    setSidebarOpen(true)
+  }
+  const handleSidebarModeToggle = () => {
+    setSkipSidebarResizeAnimation(false)
+    setSidebarOpen((currentSidebarOpen) => !currentSidebarOpen)
+  }
 
   // 认证检查中，显示加载状态
   if (checking) {
@@ -267,7 +280,10 @@ export function Layout({ children }: LayoutProps) {
       {isElectron() && <TitleBar />}
       <div
         data-dashboard-shell="true"
-        className={cn('relative isolate flex h-screen overflow-hidden overscroll-none', isElectron() && 'pt-8')}
+        className={cn(
+          'relative isolate flex h-[100dvh] overflow-hidden overscroll-none',
+          isElectron() && 'pt-8'
+        )}
       >
         <BackgroundLayer config={pageBg} layerId="page" />
         <div className="relative z-10 flex h-full min-h-0 w-full overflow-hidden">
@@ -275,18 +291,21 @@ export function Layout({ children }: LayoutProps) {
           {isSettingsWorkspace && (
             <motion.div
               key="settings-sidebar"
-              className="relative z-40 hidden shrink-0 overflow-hidden lg:block"
+              data-dashboard-sidebar-layout="true"
+              layout={false}
+              className={cn(
+                'relative z-40 hidden shrink-0 transition-[width] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:block',
+                sidebarExiting ? 'overflow-hidden' : 'overflow-visible',
+                skipSidebarResizeAnimation && 'transition-none'
+              )}
               initial={false}
-              animate={
-                sidebarExiting
-                  ? { width: 0 }
-                  : {
-                      width: sidebarOpen
-                        ? 'var(--layout-sidebar-width)'
-                        : 'var(--layout-sidebar-collapsed-width)',
-                    }
-              }
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              style={{
+                width: sidebarExiting
+                  ? 0
+                  : sidebarOpen
+                    ? 'var(--layout-sidebar-width)'
+                    : 'var(--layout-sidebar-collapsed-width)',
+              }}
             >
               <motion.div
                 className="h-full w-full will-change-transform"
@@ -298,6 +317,7 @@ export function Layout({ children }: LayoutProps) {
                   sidebarOpen={sidebarOpen}
                   mobileMenuOpen={mobileMenuOpen}
                   onMobileMenuClose={() => setMobileMenuOpen(false)}
+                  onSidebarFix={handleSidebarFix}
                 />
               </motion.div>
             </motion.div>
@@ -310,6 +330,7 @@ export function Layout({ children }: LayoutProps) {
                 sidebarOpen={sidebarOpen}
                 mobileMenuOpen={mobileMenuOpen}
                 onMobileMenuClose={() => setMobileMenuOpen(false)}
+                onSidebarFix={handleSidebarFix}
               />
             </div>
           )}
@@ -329,7 +350,10 @@ export function Layout({ children }: LayoutProps) {
             )}
           </AnimatePresence>
           {/* Main content */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <motion.div
+            layout={false}
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          >
             {/* HTTP 安全警告横幅 */}
             <HttpWarningBanner />
 
@@ -339,7 +363,7 @@ export function Layout({ children }: LayoutProps) {
               mobileMenuOpen={mobileMenuOpen}
               searchOpen={searchOpen}
               actualTheme={actualTheme}
-              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+              onSidebarToggle={handleSidebarModeToggle}
               onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
               onSearchOpenChange={setSearchOpen}
               onThemeChange={setTheme}
@@ -399,7 +423,7 @@ export function Layout({ children }: LayoutProps) {
 
             {/* Back to Top Button */}
             {showBackToTop && <BackToTop />}
-          </div>
+          </motion.div>
         </div>
       </div>
       <Suspense fallback={null}>

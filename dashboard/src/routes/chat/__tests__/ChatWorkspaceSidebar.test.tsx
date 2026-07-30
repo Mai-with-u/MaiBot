@@ -99,8 +99,8 @@ describe('ChatWorkspaceSidebar', () => {
       activeTabId: 'virtual-a',
     })
 
-    // 会话数量副标题
-    expect(screen.getByText('chat.sidebar.subtitle:2')).toBeInTheDocument()
+    expect(screen.queryByText('chat.sidebar.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('chat.sidebar.subtitle:2')).not.toBeInTheDocument()
     // webui 会话展示机器人名称，空消息展示占位预览
     expect(screen.getByText('机器人-webui-default')).toBeInTheDocument()
     expect(screen.getByText('chat.sidebar.emptyPreview')).toBeInTheDocument()

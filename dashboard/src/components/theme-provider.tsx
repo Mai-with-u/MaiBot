@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { getBotConfig, updateBotConfigSection } from '@/lib/config-api'
+import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { DEFAULT_DASHBOARD_STYLE, DEFAULT_FUTURE_RETRO_STYLE_CONFIG } from '@/lib/theme/tokens'
 import type { DashboardStyle, UserThemeConfig } from '@/lib/theme/tokens'
 import {
@@ -74,8 +75,26 @@ export function ThemeProvider({
     }
 
     root.dataset.dashboardStyle = dashboardStyle
-    root.dataset.retroFocusHighlight = futureRetroConfig.focusHighlight ? 'true' : 'false'
-    root.dataset.retroPaperTexture = futureRetroConfig.paperTexture ? 'true' : 'false'
+    root.dataset.retroTextureStyle = futureRetroConfig.textureStyle
+    root.style.setProperty('--retro-paper-warmth', `${futureRetroConfig.paperWarmth}%`)
+    root.style.setProperty('--retro-panel-depth', String(futureRetroConfig.panelDepth / 100))
+    root.style.setProperty('--retro-stroke-scale', String(futureRetroConfig.strokeScale / 100))
+    root.style.setProperty(
+      '--retro-configured-paper-texture',
+      buildFutureRetroTexture(
+        futureRetroConfig.textureStyle,
+        futureRetroConfig.textureIntensity,
+        isDark
+      )
+    )
+    const textureSize = {
+      fine: '180px 180px',
+      coarse: '260px 260px',
+      'dot-grid': '24px 24px',
+      ruled: '40px 28px',
+      none: 'auto',
+    }[futureRetroConfig.textureStyle]
+    root.style.setProperty('--retro-paper-texture-size', textureSize)
 
     applyThemePipeline(themeConfig, isDark)
   }, [resolvedTheme, themeConfig])

@@ -123,6 +123,19 @@ describe('PluginConfigPage 特征化', () => {
     expect(screen.queryByText(/A_Memorix/i)).not.toBeInTheDocument()
   })
 
+  it('删除按钮使用透明底色与主题色边框和图标', async () => {
+    render(<PluginConfigPage />)
+
+    const deleteButton = await screen.findByRole('button', { name: '删除' })
+    expect(deleteButton).toHaveClass(
+      'border-current',
+      'bg-transparent',
+      'text-primary',
+      'shadow-none'
+    )
+    expect(deleteButton.querySelector('svg')).not.toHaveClass('text-primary')
+  })
+
   it('无插件时显示空态提示', async () => {
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([] as never)
     render(<PluginConfigPage />)

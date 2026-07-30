@@ -24,7 +24,12 @@ import time
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
-from src.common.update_notice import build_debug_update_notice, get_pending_update_notice, mark_update_notice_seen
+from src.common.update_notice import (
+    build_debug_update_notice,
+    get_changelog_history,
+    get_pending_update_notice,
+    mark_update_notice_seen,
+)
 from src.common.utils.image_path import (
     StoredImagePathError,
     resolve_stored_image_path,
@@ -169,6 +174,22 @@ class UpdateNoticeAckResponse(BaseModel):
     success: bool
     message: str
     version: str
+
+
+class UpdateHistoryEntryResponse(BaseModel):
+    """单个历史版本的更新记录。"""
+
+    version: str
+    title: str
+    content: str
+
+
+class UpdateHistoryResponse(BaseModel):
+    """历史版本更新记录响应。"""
+
+    entries: List[UpdateHistoryEntryResponse] = Field(default_factory=list)
+    next_offset: int
+    has_more: bool
 
 
 class CacheDirectoryStats(BaseModel):
@@ -1526,6 +1547,41 @@ async def ack_update_notice() -> UpdateNoticeAckResponse:
     except Exception as e:
         logger.exception(f"确认更新公告失败: {e}")
         raise HTTPException(status_code=500, detail=f"确认更新公告失败: {str(e)}") from e
+
+
+@router.get("/update-history", response_model=UpdateHistoryResponse)
+async def get_update_history(
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=10)] = 3,
+    before_version: str | None = None,
+    section: Literal["webui"] | None = None,
+) -> UpdateHistoryResponse:
+    """按需读取历史版本更新记录。"""
+
+    try:
+        entries = get_changelog_history(
+            MMC_VERSION,
+            limit=limit + 1,
+            offset=offset,
+            before_version=before_version,
+            section_heading=section,
+        )
+        visible_entries = entries[:limit]
+        return UpdateHistoryResponse(
+            entries=[
+                UpdateHistoryEntryResponse(
+                    version=entry.version,
+                    title=entry.title,
+                    content=entry.markdown,
+                )
+                for entry in visible_entries
+            ],
+            next_offset=offset + len(visible_entries),
+            has_more=len(entries) > limit,
+        )
+    except Exception as e:
+        logger.exception(f"获取历史更新记录失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取历史更新记录失败: {str(e)}") from e
 
 
 @router.get("/local-cache", response_model=LocalCacheStatsResponse)

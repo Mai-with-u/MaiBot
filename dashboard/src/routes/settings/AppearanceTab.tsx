@@ -16,6 +16,7 @@ import { useAnimation } from '@/hooks/use-animation'
 import { useTheme } from '@/components/use-theme'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -35,6 +36,7 @@ import type {
   BackgroundEffects,
   DashboardStyle,
   FutureRetroStyleConfig,
+  FutureRetroTextureStyle,
   ThemeTokens,
   TypographyTokens,
 } from '@/lib/theme/tokens'
@@ -119,6 +121,17 @@ const themeModeOptions: Array<{
   },
 ]
 
+const futureRetroTextureOptions: Array<{
+  value: FutureRetroTextureStyle
+  labelKey: string
+}> = [
+  { value: 'fine', labelKey: 'settings.appearance.retroTextureFine' },
+  { value: 'coarse', labelKey: 'settings.appearance.retroTextureCoarse' },
+  { value: 'dot-grid', labelKey: 'settings.appearance.retroTextureDots' },
+  { value: 'ruled', labelKey: 'settings.appearance.retroTextureRuled' },
+  { value: 'none', labelKey: 'settings.appearance.retroTextureNone' },
+]
+
 /**
  * 安全访问当前风格 token 覆盖中的子属性值
  * @param overrides - Partial<ThemeTokens>
@@ -138,7 +151,9 @@ function getTokenValue<T>(
   return (sectionTokens[key] ?? defaultValue) as T
 }
 
-function buildFontSizeTokens(basePx: number): Pick<
+function buildFontSizeTokens(
+  basePx: number
+): Pick<
   TypographyTokens,
   | 'font-size-xs'
   | 'font-size-sm'
@@ -518,7 +533,9 @@ export function AppearanceTab() {
                   <Icon
                     className={cn(
                       'h-4 w-4 transition-colors',
-                      selected ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
+                      selected
+                        ? 'text-primary'
+                        : 'text-muted-foreground group-hover:text-foreground'
                     )}
                     strokeWidth={2}
                   />
@@ -756,9 +773,7 @@ export function AppearanceTab() {
                     <div className="space-y-4">
                       <div className="flex justify-between">
                         <Label>{t('settings.appearance.baseFontSize')}</Label>
-                        <span className="text-muted-foreground text-sm">
-                          {baseFontSizePx}px
-                        </span>
+                        <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
                       </div>
                       <Slider
                         defaultValue={[16]}
@@ -1154,72 +1169,186 @@ export function AppearanceTab() {
       {themeConfig.dashboardStyle === 'future-retro' && (
         <div>
           <div className="mb-3 flex items-center justify-between gap-3 sm:mb-4">
-            <h3 className="text-base font-semibold sm:text-lg">未来复古配置</h3>
+            <div>
+              <h3 className="text-base font-semibold sm:text-lg">
+                {t('settings.appearance.retroConfig')}
+              </h3>
+              <p className="text-muted-foreground mt-1 text-sm">
+                {t('settings.appearance.retroConfigDesc')}
+              </p>
+            </div>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => resetTokenSection('typography')}
-              disabled={!activeTokenOverrides?.typography}
+              onClick={() => {
+                resetTokenSection('typography')
+                updateFutureRetroConfig(DEFAULT_FUTURE_RETRO_STYLE_CONFIG)
+              }}
               className="h-8"
             >
               <RotateCcw className="mr-2 h-3.5 w-3.5" />
               {t('settings.appearance.resetDefault')}
             </Button>
           </div>
-          <div className="mb-3 rounded-lg border bg-card p-3 sm:mb-4 sm:p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <Label>{t('settings.appearance.baseFontSize')}</Label>
-              <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="bg-card rounded-lg border p-3 sm:p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <Label>{t('settings.appearance.baseFontSize')}</Label>
+                <span className="text-muted-foreground text-sm">{baseFontSizePx}px</span>
+              </div>
+              <Slider
+                aria-label={t('settings.appearance.baseFontSize')}
+                value={[baseFontSizePx]}
+                min={12}
+                max={20}
+                step={1}
+                onValueChange={(vals) => {
+                  updateTokenSection('typography', {
+                    ...buildFontSizeTokens(vals[0]),
+                  })
+                }}
+              />
             </div>
-            <Slider
-              defaultValue={[16]}
-              value={[baseFontSizePx]}
-              min={12}
-              max={20}
-              step={1}
-              onValueChange={(vals) => {
-                updateTokenSection('typography', {
-                  ...buildFontSizeTokens(vals[0]),
-                })
-              }}
-            />
+
+            <div className="bg-card rounded-lg border p-3 sm:p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <Label>{t('settings.appearance.retroPaperWarmth')}</Label>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {t('settings.appearance.retroPaperWarmthDesc')}
+                  </p>
+                </div>
+                <span className="text-muted-foreground text-sm">
+                  {futureRetroConfig.paperWarmth}%
+                </span>
+              </div>
+              <Slider
+                aria-label={t('settings.appearance.retroPaperWarmth')}
+                value={[futureRetroConfig.paperWarmth]}
+                min={0}
+                max={100}
+                step={1}
+                onValueChange={([paperWarmth]) => updateFutureRetroConfig({ paperWarmth })}
+              />
+              <div className="text-muted-foreground mt-2 flex justify-between text-[11px]">
+                <span>{t('settings.appearance.retroPaperWhite')}</span>
+                <span>{t('settings.appearance.retroPaperWarm')}</span>
+              </div>
+            </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
-            <div className="bg-card rounded-lg border p-3 sm:p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1 space-y-0.5">
-                  <Label
-                    htmlFor="future-retro-paper-texture"
-                    className="cursor-pointer text-base font-medium"
-                  >
-                    纸面颗粒
-                  </Label>
-                  <p className="text-muted-foreground text-sm">启用纸面噪点。</p>
-                </div>
-                <Switch
-                  id="future-retro-paper-texture"
-                  checked={futureRetroConfig.paperTexture}
-                  onCheckedChange={(paperTexture) => updateFutureRetroConfig({ paperTexture })}
-                />
-              </div>
+
+          <div className="bg-card mt-3 rounded-lg border p-3 sm:p-4">
+            <div>
+              <Label>{t('settings.appearance.retroTexture')}</Label>
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                {t('settings.appearance.retroTextureDesc')}
+              </p>
             </div>
-            <div className="bg-card rounded-lg border p-3 sm:p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1 space-y-0.5">
-                  <Label
-                    htmlFor="future-retro-focus-highlight"
-                    className="cursor-pointer text-base font-medium"
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {futureRetroTextureOptions.map((option) => {
+                const selected = futureRetroConfig.textureStyle === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={selected}
+                    data-retro-texture-option="true"
+                    data-selected={selected ? 'true' : 'false'}
+                    className={cn(
+                      'overflow-hidden rounded-md border text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                      selected
+                        ? 'border-primary ring-primary/25 ring-2'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                    onClick={() => updateFutureRetroConfig({ textureStyle: option.value })}
                   >
-                    焦点高亮
-                  </Label>
-                  <p className="text-muted-foreground text-sm">显示键盘焦点的橙色高亮。</p>
-                </div>
-                <Switch
-                  id="future-retro-focus-highlight"
-                  checked={futureRetroConfig.focusHighlight}
-                  onCheckedChange={(focusHighlight) => updateFutureRetroConfig({ focusHighlight })}
-                />
+                    <span
+                      aria-hidden
+                      className="block h-12 border-b"
+                      style={{
+                        backgroundColor: resolvedTheme === 'dark' ? '#110906' : '#f3e3cc',
+                        backgroundImage:
+                          option.value === 'none'
+                            ? 'none'
+                            : buildFutureRetroTexture(
+                                option.value,
+                                futureRetroConfig.textureIntensity,
+                                resolvedTheme === 'dark'
+                              ),
+                      }}
+                    />
+                    <span className="block px-2 py-1.5 text-xs font-medium">
+                      {t(option.labelKey)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-3 flex items-center justify-between">
+                <Label>{t('settings.appearance.retroTextureIntensity')}</Label>
+                <span className="text-muted-foreground text-sm">
+                  {futureRetroConfig.textureIntensity}%
+                </span>
               </div>
+              <Slider
+                aria-label={t('settings.appearance.retroTextureIntensity')}
+                disabled={futureRetroConfig.textureStyle === 'none'}
+                value={[futureRetroConfig.textureIntensity]}
+                min={10}
+                max={100}
+                step={1}
+                onValueChange={([textureIntensity]) =>
+                  updateFutureRetroConfig({ textureIntensity })
+                }
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="bg-card rounded-lg border p-3 sm:p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <Label>{t('settings.appearance.retroPanelDepth')}</Label>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {t('settings.appearance.retroPanelDepthDesc')}
+                  </p>
+                </div>
+                <span className="text-muted-foreground text-sm">
+                  {futureRetroConfig.panelDepth}%
+                </span>
+              </div>
+              <Slider
+                aria-label={t('settings.appearance.retroPanelDepth')}
+                value={[futureRetroConfig.panelDepth]}
+                min={0}
+                max={100}
+                step={1}
+                onValueChange={([panelDepth]) => updateFutureRetroConfig({ panelDepth })}
+              />
+            </div>
+
+            <div className="bg-card rounded-lg border p-3 sm:p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <Label>{t('settings.appearance.retroStrokeScale')}</Label>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {t('settings.appearance.retroStrokeScaleDesc')}
+                  </p>
+                </div>
+                <span className="text-muted-foreground text-sm">
+                  {futureRetroConfig.strokeScale}%
+                </span>
+              </div>
+              <Slider
+                aria-label={t('settings.appearance.retroStrokeScale')}
+                value={[futureRetroConfig.strokeScale]}
+                min={50}
+                max={100}
+                step={1}
+                onValueChange={([strokeScale]) => updateFutureRetroConfig({ strokeScale })}
+              />
             </div>
           </div>
         </div>
@@ -1369,9 +1498,7 @@ export function AppearanceTab() {
               className="hidden"
             />
 
-            <p className="text-muted-foreground text-xs">
-              {t('settings.appearance.exportDesc')}
-            </p>
+            <p className="text-muted-foreground text-xs">{t('settings.appearance.exportDesc')}</p>
           </div>
         </div>
       )}

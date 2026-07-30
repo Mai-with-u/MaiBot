@@ -68,6 +68,18 @@ export interface UpdateNoticeAckResponse {
   version: string
 }
 
+export interface UpdateHistoryEntry {
+  version: string
+  title: string
+  content: string
+}
+
+export interface UpdateHistoryResponse {
+  entries: UpdateHistoryEntry[]
+  next_offset: number
+  has_more: boolean
+}
+
 export async function getUpdateNotice(force = false): Promise<UpdateNoticeResponse> {
   return backendApi.get<UpdateNoticeResponse>('/api/webui/system/update-notice', {
     errorMessage: '获取更新公告失败',
@@ -78,6 +90,18 @@ export async function getUpdateNotice(force = false): Promise<UpdateNoticeRespon
 export async function ackUpdateNotice(): Promise<UpdateNoticeAckResponse> {
   return backendApi.post<UpdateNoticeAckResponse>('/api/webui/system/update-notice/ack', {
     errorMessage: '确认更新公告失败',
+  })
+}
+
+export async function getUpdateHistory(
+  offset = 0,
+  limit = 3,
+  beforeVersion?: string,
+  section?: 'webui'
+): Promise<UpdateHistoryResponse> {
+  return backendApi.get<UpdateHistoryResponse>('/api/webui/system/update-history', {
+    errorMessage: '获取历史更新记录失败',
+    query: { offset, limit, before_version: beforeVersion, section },
   })
 }
 

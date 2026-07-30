@@ -1928,9 +1928,10 @@ function PluginConfigPageContent() {
                       )}
                     </Button>
                     <Button
-                      variant="destructive"
+                      variant="outline"
                       size="sm"
-                      className="h-9 w-9 p-0"
+                      data-plugin-delete-button="true"
+                      className="text-primary h-9 w-9 border-current bg-transparent p-0 shadow-none hover:bg-transparent hover:text-primary/80"
                       disabled={pluginActing}
                       title="删除"
                       aria-label="删除"

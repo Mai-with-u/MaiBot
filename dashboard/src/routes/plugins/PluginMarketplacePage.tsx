@@ -947,18 +947,6 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   return (
     <ScrollArea className="h-full" viewportRef={scrollViewportRef}>
       <div className="space-y-6 p-4 sm:p-6">
-        {/* 标题 */}
-        <div
-          data-plugin-market-header="true"
-          className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4"
-        >
-          <div>
-            <h1 data-plugin-market-title="true" className="text-2xl sm:text-3xl font-bold">
-              插件市场
-            </h1>
-          </div>
-        </div>
-
         {/* 安装提示 */}
         {restartNoticeVisible && (
           <Card className="border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900">

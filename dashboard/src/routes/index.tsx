@@ -1,8 +1,10 @@
 import type { CSSProperties } from 'react'
 import { Link } from '@tanstack/react-router'
-import { AlertCircle, CheckCircle2, ExternalLink, HardDrive, RefreshCw } from 'lucide-react'
+import { AlertCircle, ArrowRight, ExternalLink, Pencil, RefreshCw } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
 import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { RestartOverlay } from '@/components/restart-overlay'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +28,7 @@ import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
 import { backendApi } from '@/lib/http'
+import { openUpdateNotice } from '@/lib/update-notice-events'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
 
@@ -34,6 +37,7 @@ import { useDashboardData } from './home/hooks/useDashboardData'
 import { useFeatureStatus } from './home/hooks/useFeatureStatus'
 import { useLocalCacheMetrics } from './home/hooks/useLocalCacheMetrics'
 import { useMaibotVersion } from './home/hooks/useMaibotVersion'
+import { HitokotoEditorDialog } from './home/HitokotoEditorDialog'
 import { HomeCardManager, type HomeCardDefinition } from './home/HomeCardManager'
 import { usePluginHomeCards } from './home/hooks/usePluginHomeCards'
 import { useQuickShortcuts } from './home/hooks/useQuickShortcuts'
@@ -44,11 +48,11 @@ import {
   ModelDetailsCard,
   ModelDistributionCard,
   PromptCacheCard,
-  RecentActivityCard,
   RequestTrendCard,
   StatisticsOverviewCard,
   TokenTrendCard,
 } from './home/StatisticsCards'
+import type { TimeSeriesData } from './home/types'
 
 const ExpressionReviewer = lazy(() =>
   import('@/components/expression-reviewer').then((module) => ({
@@ -85,73 +89,246 @@ function hasConfiguredPlatformAccount(config: BotPlatformConfig | undefined): bo
 }
 
 // 内部实现组件
-function FeatureStatusIndicator({
-  accent,
-  detail,
-  enabled,
-  label,
-}: {
-  accent: 'green' | 'orange' | 'yellow' | 'red'
-  detail?: string
-  enabled: boolean
-  label: string
-}) {
-  const enabledColorClass = {
-    green: 'text-green-600',
-    orange: 'text-orange-600',
-    yellow: 'text-yellow-600',
-    red: 'text-red-600',
-  }[accent]
-  const enabledBarClass = {
-    green: 'bg-green-500',
-    orange: 'bg-orange-500',
-    yellow: 'bg-yellow-400',
-    red: 'bg-red-500',
-  }[accent]
+type BotRuntimeState = 'loading' | 'running' | 'stopped' | 'unknown'
 
+function BotActivityOrbit({ state }: { state: BotRuntimeState }) {
   return (
     <div
-      data-dashboard-feature-status="true"
-      data-accent={accent}
-      data-enabled={enabled ? 'true' : 'false'}
-      className={cn(
-        'flex min-h-9 w-full items-center gap-2.5 px-1 py-1 font-sans text-base font-bold transition-colors',
-        enabled ? enabledColorClass : 'text-muted-foreground/55'
-      )}
+      aria-hidden="true"
+      data-maibot-activity-orbit="true"
+      data-state={state}
+      className="relative h-[72px] w-[72px] shrink-0"
     >
-      <span
-        data-dashboard-feature-status-bar="true"
-        className={cn(
-          'h-8 w-2.5 shrink-0 rounded-[2px] transition-colors',
-          enabled ? enabledBarClass : 'bg-muted-foreground/25'
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate">
-        {label}
-        {detail && <span className="ml-2 text-sm font-semibold opacity-75">· {detail}</span>}
-      </span>
+      <span />
+      <span />
+      <span />
     </div>
   )
 }
 
-function FeatureStatusLight({ enabled, label }: { enabled: boolean; label: string }) {
+function FeatureStatusLight({
+  disabledLabel,
+  enabled,
+  enabledLabel,
+  label,
+}: {
+  disabledLabel: string
+  enabled: boolean
+  enabledLabel: string
+  label: string
+}) {
   return (
     <div
       data-dashboard-feature-status="true"
       data-enabled={enabled ? 'true' : 'false'}
-      className="bg-background text-muted-foreground inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
+      role="status"
+      aria-label={`${label}：${enabled ? enabledLabel : disabledLabel}`}
+      className="text-muted-foreground inline-flex min-w-0 items-center gap-2 text-xs font-medium"
     >
       <span
         data-dashboard-feature-status-light="true"
         className={cn(
-          'h-2.5 w-2.5 rounded-full',
-          enabled
-            ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-            : 'bg-muted-foreground/30'
+          'h-2.5 w-2.5 shrink-0 rounded-full border-0 transition-[background-color,opacity]',
+          enabled ? 'bg-primary opacity-100' : 'bg-muted-foreground/25 opacity-45'
         )}
       />
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </div>
+  )
+}
+
+function BotStatusFlipCard({
+  botRuntimeLabel,
+  botRuntimeState,
+  memoryEnabled,
+  onlineData,
+  uptime,
+  visualEnabled,
+}: {
+  botRuntimeLabel: string
+  botRuntimeState: BotRuntimeState
+  memoryEnabled: boolean
+  onlineData: TimeSeriesData[]
+  uptime: string | null
+  visualEnabled: boolean
+}) {
+  const { i18n, t } = useTranslation()
+  const prefersReducedMotion = useReducedMotion()
+  const [isFlipped, setIsFlipped] = useState(false)
+  const recentOnlineData = onlineData.slice(-24)
+  const recentOnlineSeconds = recentOnlineData.reduce(
+    (total, item) => total + item.online_seconds,
+    0
+  )
+  const formatOnlineTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.round((seconds % 3600) / 60)
+    return t('home.time.hoursMinutes', { hours, minutes })
+  }
+  const faceClassName =
+    'absolute inset-0 isolate h-full overflow-visible rounded-lg [backface-visibility:hidden] [will-change:transform]'
+  const cardClassName =
+    'relative z-10 h-full overflow-hidden transition-[border-color,background-color,box-shadow] duration-300'
+
+  return (
+    <button
+      type="button"
+      data-maibot-status-flip-card="true"
+      aria-label={t(isFlipped ? 'home.botStatus.showStatus' : 'home.botStatus.showRecentOnline')}
+      aria-pressed={isFlipped}
+      className="group focus-visible:ring-primary/55 focus-visible:ring-offset-background relative isolate block h-full min-h-[136px] w-full overflow-visible rounded-lg text-left [perspective:900px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+      onClick={() => setIsFlipped((current) => !current)}
+    >
+      <motion.div
+        data-maibot-status-rotor="true"
+        className="relative z-10 h-full min-h-[136px] w-full [transform-style:preserve-3d] [will-change:transform]"
+        animate={{ rotateY: prefersReducedMotion ? 0 : isFlipped ? 180 : 0 }}
+        transition={{ duration: prefersReducedMotion ? 0 : 0.46, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <motion.div
+          data-maibot-status-face="front"
+          aria-hidden={isFlipped}
+          className={faceClassName}
+          animate={{ opacity: prefersReducedMotion && isFlipped ? 0 : 1 }}
+          transition={{ duration: prefersReducedMotion ? 0.12 : 0 }}
+        >
+          <span
+            aria-hidden="true"
+            data-maibot-status-glow="true"
+            className="pointer-events-none absolute -inset-4 z-0 rounded-[1.5rem]"
+          />
+          <Card data-maibot-status-surface="true" className={cardClassName}>
+            <CardContent
+              data-home-titleless-content="true"
+              data-maibot-status-card-content="true"
+              className="p-3 sm:p-3"
+            >
+              <div className="space-y-2">
+                <div data-maibot-runtime-status="true" className="flex items-center gap-2.5">
+                  <BotActivityOrbit state={botRuntimeState} />
+                  <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
+                    <div
+                      data-maibot-runtime-label="true"
+                      className={cn(
+                        'min-w-0 text-[32px] leading-none font-black tracking-[-0.05em] whitespace-nowrap',
+                        botRuntimeState === 'running' && 'text-primary',
+                        botRuntimeState === 'stopped' && 'text-destructive',
+                        botRuntimeState !== 'running' &&
+                          botRuntimeState !== 'stopped' &&
+                          'text-muted-foreground'
+                      )}
+                    >
+                      {botRuntimeLabel}
+                    </div>
+                    {uptime && (
+                      <div
+                        data-maibot-runtime-uptime="true"
+                        className="text-muted-foreground shrink-0 text-left text-xs font-bold tracking-tight whitespace-nowrap tabular-nums"
+                      >
+                        {uptime}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div
+                  data-maibot-feature-lights="true"
+                  className="grid grid-cols-2 gap-2 border-t pt-2"
+                >
+                  <FeatureStatusLight
+                    disabledLabel={t('home.botStatus.disabled')}
+                    enabled={visualEnabled}
+                    enabledLabel={t('home.botStatus.enabled')}
+                    label={t('home.botStatus.visualEnabled')}
+                  />
+                  <FeatureStatusLight
+                    disabledLabel={t('home.botStatus.disabled')}
+                    enabled={memoryEnabled}
+                    enabledLabel={t('home.botStatus.enabled')}
+                    label={t('home.botStatus.memoryEnabled')}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div
+          data-maibot-status-face="back"
+          aria-hidden={!isFlipped}
+          className={faceClassName}
+          style={{ transform: prefersReducedMotion ? 'none' : 'rotateY(180deg)' }}
+          animate={{ opacity: prefersReducedMotion && !isFlipped ? 0 : 1 }}
+          transition={{ duration: prefersReducedMotion ? 0.12 : 0 }}
+        >
+          <Card data-maibot-status-surface="true" className={cardClassName}>
+            <CardContent
+              data-home-titleless-content="true"
+              className="flex h-full flex-col px-3 pt-2.5 pb-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-sm font-black tracking-tight">
+                  {t('home.botStatus.recentOnline')}
+                </div>
+                <div className="text-muted-foreground text-[10px] font-semibold tracking-wide">
+                  {t('home.botStatus.recentOnlineRange')}
+                </div>
+              </div>
+              <div
+                role="img"
+                aria-label={t('home.botStatus.recentOnlineChart')}
+                className="mt-1 min-h-0 flex-1"
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={recentOnlineData}
+                    margin={{ top: 5, right: 0, bottom: 0, left: 0 }}
+                  >
+                    <XAxis dataKey="timestamp" hide />
+                    <YAxis domain={[0, 3600]} hide />
+                    <Tooltip
+                      cursor={{ fill: 'hsl(var(--muted) / 0.32)' }}
+                      contentStyle={{
+                        background: 'hsl(var(--popover))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: 8,
+                        color: 'hsl(var(--popover-foreground))',
+                        fontSize: 11,
+                      }}
+                      formatter={(value) => [
+                        formatOnlineTime(Number(value)),
+                        t('home.botStatus.online'),
+                      ]}
+                      labelFormatter={(value) =>
+                        new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        }).format(new Date(String(value)))
+                      }
+                    />
+                    <Bar
+                      dataKey="online_seconds"
+                      fill="hsl(var(--primary) / 0.68)"
+                      maxBarSize={7}
+                      radius={[3, 3, 1, 1]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t pt-1.5">
+                <span className="text-muted-foreground text-[10px]">
+                  {t('home.botStatus.clickToReturn')}
+                </span>
+                <span className="text-xs font-bold tabular-nums">
+                  {t('home.botStatus.recentOnlineTotal', {
+                    time: formatOnlineTime(recentOnlineSeconds),
+                  })}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </motion.div>
+    </button>
   )
 }
 
@@ -198,11 +375,19 @@ function IndexPageContent() {
   const { featureStatus, fetchFeatureStatus } = useFeatureStatus()
   const { localCacheStats, isLocalCacheStatsLoading, fetchLocalCacheStats } = useLocalCacheMetrics()
   const { uncheckedCount, fetchReviewStats } = useReviewStats()
-  const { hitokoto, hitokotoLoading, maibotStableRelease, versionCompatibility, fetchHitokoto } =
-    useMaibotVersion()
+  const {
+    hitokoto,
+    hitokotoLoading,
+    hitokotoSettings,
+    maibotStableRelease,
+    versionCompatibility,
+    fetchHitokoto,
+    saveHitokotoSettings,
+  } = useMaibotVersion()
   const { pluginHomeCards } = usePluginHomeCards()
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
+  const [hitokotoEditorOpen, setHitokotoEditorOpen] = useState(false)
   const [platformAccountConfigured, setPlatformAccountConfigured] = useState<boolean | null>(null)
   const [storageDisplayMode, setStorageDisplayMode] = useState<'size' | 'count'>('size')
 
@@ -322,6 +507,15 @@ function IndexPageContent() {
   )
   const totalStorageTableCount = localCacheStats?.database.tables.length ?? 0
   const hasLocalCacheStats = localCacheStats !== null
+  const botRuntimeState: BotRuntimeState =
+    isBotStatusLoading && !botStatus
+      ? 'loading'
+      : botStatus?.running === true
+        ? 'running'
+        : botStatus
+          ? 'stopped'
+          : 'unknown'
+  const botRuntimeLabel = t(`home.botStatus.${botRuntimeState}`)
   const storageDetails = [
     {
       key: 'images',
@@ -363,147 +557,16 @@ function IndexPageContent() {
       category: 'status',
       source: 'builtin',
       render: () => (
-        <Card className="h-full">
-          <CardContent data-home-titleless-content="true" className="pt-4 sm:pt-5">
-            <div className="space-y-3">
-              {themeConfig.dashboardStyle === 'future-retro' ? (
-                <div className="space-y-2">
-                  {isBotStatusLoading && !botStatus ? (
-                    <FeatureStatusIndicator
-                      enabled={false}
-                      accent="green"
-                      label={t('home.botStatus.loading')}
-                    />
-                  ) : botStatus?.running === true ? (
-                    <FeatureStatusIndicator
-                      enabled
-                      accent="green"
-                      label={t('home.botStatus.running')}
-                      detail={t('home.botStatus.uptime', {
-                        time: formatTime(botStatus?.uptime ?? 0),
-                      })}
-                    />
-                  ) : botStatus ? (
-                    <FeatureStatusIndicator
-                      enabled
-                      accent="red"
-                      label={t('home.botStatus.stopped')}
-                    />
-                  ) : (
-                    <FeatureStatusIndicator
-                      enabled={false}
-                      accent="green"
-                      label={t('home.botStatus.unknown')}
-                    />
-                  )}
-                  <FeatureStatusIndicator
-                    accent="orange"
-                    enabled={featureStatus.visualEnabled}
-                    label={t('home.botStatus.visualEnabled')}
-                  />
-                  <FeatureStatusIndicator
-                    accent="yellow"
-                    enabled={featureStatus.memoryEnabled}
-                    label={t('home.botStatus.memoryEnabled')}
-                  />
-                </div>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      {isBotStatusLoading && !botStatus ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="loading"
-                            className="bg-muted-foreground/40 h-3 w-3 animate-pulse rounded-full"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="loading"
-                            variant="outline"
-                            className="text-muted-foreground whitespace-nowrap"
-                          >
-                            <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
-                            {t('home.botStatus.loading')}
-                          </Badge>
-                        </>
-                      ) : botStatus?.running === true ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="running"
-                            className="h-3 w-3 animate-pulse rounded-full bg-green-500"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="running"
-                            variant="outline"
-                            className="border-green-300 bg-green-50 whitespace-nowrap text-green-600"
-                          >
-                            <CheckCircle2 className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.running')}
-                          </Badge>
-                        </>
-                      ) : botStatus ? (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="stopped"
-                            className="h-3 w-3 rounded-full bg-red-500"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="stopped"
-                            variant="outline"
-                            className="border-red-300 bg-red-50 whitespace-nowrap text-red-600"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.stopped')}
-                          </Badge>
-                        </>
-                      ) : (
-                        <>
-                          <div
-                            data-dashboard-status-dot="true"
-                            data-state="unknown"
-                            className="bg-muted-foreground/40 h-3 w-3 rounded-full"
-                          />
-                          <Badge
-                            data-dashboard-status-badge="true"
-                            data-state="unknown"
-                            variant="outline"
-                            className="text-muted-foreground whitespace-nowrap"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            {t('home.botStatus.unknown')}
-                          </Badge>
-                        </>
-                      )}
-                    </div>
-                    {botStatus && (
-                      <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                        <span>
-                          {t('home.botStatus.uptime', { time: formatTime(botStatus?.uptime ?? 0) })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <FeatureStatusLight
-                      enabled={featureStatus.visualEnabled}
-                      label={t('home.botStatus.visualEnabled')}
-                    />
-                    <FeatureStatusLight
-                      enabled={featureStatus.memoryEnabled}
-                      label={t('home.botStatus.memoryEnabled')}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <BotStatusFlipCard
+          botRuntimeLabel={botRuntimeLabel}
+          botRuntimeState={botRuntimeState}
+          memoryEnabled={featureStatus.memoryEnabled}
+          onlineData={dashboardData.hourly_data}
+          uptime={
+            botStatus ? t('home.botStatus.uptime', { time: formatTime(botStatus.uptime) }) : null
+          }
+          visualEnabled={featureStatus.visualEnabled}
+        />
       ),
     },
     {
@@ -529,7 +592,7 @@ function IndexPageContent() {
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div data-home-quick-actions-list="true" className="flex flex-wrap gap-2">
                 {selectedQuickShortcuts.map((shortcut) => {
                   const Icon = shortcut.icon
                   const content = (
@@ -672,18 +735,6 @@ function IndexPageContent() {
       render: () => <ModelDetailsCard />,
     },
     {
-      id: 'builtin:recent-activity',
-      title: t('home.charts.recentActivity'),
-      description: t('home.charts.recentActivityDesc'),
-      width: 'full',
-      allowedWidths: ['wide', 'full'],
-      preferredHeight: 'high',
-      category: 'analysis',
-      source: 'builtin',
-      defaultHidden: true,
-      render: () => <RecentActivityCard />,
-    },
-    {
       id: 'builtin:daily-statistics',
       title: t('home.charts.dailyStats'),
       description: t('home.charts.dailyStatsRangeDesc'),
@@ -703,14 +754,15 @@ function IndexPageContent() {
       source: 'builtin',
       render: () => (
         <Card className="h-full xl:self-stretch">
-          <CardContent data-home-titleless-content="true" className="relative pt-4 sm:pt-5">
+          <CardContent
+            data-home-titleless-content="true"
+            className="relative flex h-full flex-col pt-4 sm:pt-5"
+          >
             <button
               type="button"
               className="text-muted-foreground/55 hover:text-muted-foreground absolute top-2.5 right-3 flex items-center gap-1 text-[10px] transition-colors"
               aria-label={t('home.storage.switchDisplay')}
-              onClick={() =>
-                setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))
-              }
+              onClick={() => setStorageDisplayMode((mode) => (mode === 'size' ? 'count' : 'size'))}
             >
               <span
                 className={cn(
@@ -730,7 +782,7 @@ function IndexPageContent() {
                 {t('home.storage.countMode')}
               </span>
             </button>
-            <div className="space-y-3">
+            <div className="flex h-full flex-col gap-3">
               <div className="pr-20">
                 <div
                   className={cn(
@@ -761,32 +813,44 @@ function IndexPageContent() {
               {hasLocalCacheStats && (
                 <div
                   data-home-storage-details="true"
-                  className="grid grid-cols-1 gap-x-5 gap-y-3 lg:grid-cols-2"
+                  className="grid flex-1 grid-cols-1 content-center gap-x-7 gap-y-4 lg:grid-cols-2"
                 >
                   {storageDetails.map((item) => {
                     const percent = totalStorageSize > 0 ? (item.size / totalStorageSize) * 100 : 0
                     const visiblePercent = item.size > 0 ? Math.max(percent, 2) : 0
                     return (
-                      <div key={item.key} className="space-y-1.5">
-                        <div className="flex min-w-0 items-center gap-2 text-xs">
-                          <span className="shrink-0 font-bold">{item.label}</span>
+                      <div
+                        key={item.key}
+                        data-home-storage-row="true"
+                        className={cn(
+                          'min-w-0 text-sm',
+                          storageDisplayMode === 'size'
+                            ? 'grid grid-cols-[auto_1fr_auto] items-baseline gap-x-3 gap-y-2'
+                            : 'flex items-baseline justify-between gap-3'
+                        )}
+                      >
+                        <>
+                          <span className="shrink-0 text-sm font-bold">{item.label}</span>
                           {storageDisplayMode === 'size' ? (
                             <>
-                              <span className="text-primary shrink-0 font-semibold">
+                              <span className="text-primary text-base font-bold">
                                 {formatStorageBytes(item.size)}
                               </span>
-                              <span className="text-muted-foreground ml-auto shrink-0">
+                              <span className="text-muted-foreground shrink-0 text-right text-sm font-medium tabular-nums">
                                 {percent.toFixed(percent >= 10 ? 0 : 1)}%
                               </span>
                             </>
                           ) : (
-                            <span className="text-muted-foreground min-w-0 truncate">
+                            <span className="text-muted-foreground min-w-0 truncate text-right text-sm font-medium">
                               {item.detail}
                             </span>
                           )}
-                        </div>
+                        </>
                         {storageDisplayMode === 'size' && (
-                          <div className="bg-muted h-1.5 overflow-hidden rounded-full">
+                          <div
+                            data-home-storage-progress="true"
+                            className="bg-muted col-span-3 h-1.5 min-w-0 overflow-hidden rounded-full"
+                          >
                             <div
                               className="bg-primary h-full rounded-full transition-all"
                               style={{ width: `${visiblePercent}%` }}
@@ -798,12 +862,16 @@ function IndexPageContent() {
                   })}
                 </div>
               )}
-              <Button variant="outline" size="sm" asChild className="w-full justify-start gap-2">
-                <Link to="/settings" search={{ tab: 'local-cache' }}>
-                  <HardDrive className="h-4 w-4" />
-                  {t('home.storage.manage')}
+              <div data-home-storage-action="true" className="mt-auto flex justify-end pt-1">
+                <Link
+                  to="/data-transfer"
+                  hash="local-cache"
+                  className="group text-muted-foreground hover:text-primary focus-visible:ring-ring inline-flex shrink-0 items-center gap-1.5 py-1 text-xs font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                >
+                  <span>{t('home.storage.manage')}</span>
+                  <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5 motion-reduce:transition-none" />
                 </Link>
-              </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -814,6 +882,8 @@ function IndexPageContent() {
       title: t('home.hitokoto.title'),
       width: 'full',
       category: 'status',
+      editLabel: t('home.hitokoto.edit'),
+      onEdit: () => setHitokotoEditorOpen(true),
       source: 'builtin',
       variant: 'separator',
       render: () => (
@@ -825,28 +895,40 @@ function IndexPageContent() {
               'border-muted-foreground/30 border border-dashed'
           )}
         >
-          {hitokotoLoading ? (
-            <Skeleton className="h-5 flex-1" />
-          ) : hitokoto ? (
-            <p
-              className={cn(
-                'text-muted-foreground flex-1 truncate',
-                themeConfig.dashboardStyle === 'future-retro'
-                  ? 'text-[1.05rem] font-medium tracking-wide'
-                  : 'text-sm italic'
-              )}
-              style={
-                themeConfig.dashboardStyle === 'future-retro'
-                  ? {
-                      fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
-                      textShadow: '0 0.035em 0 hsl(var(--background))',
-                    }
-                  : undefined
-              }
-            >
-              "{hitokoto.hitokoto}" —— {hitokoto.from}
-            </p>
-          ) : null}
+          <div className="min-w-0 flex-1">
+            {hitokotoLoading ? (
+              <Skeleton className="h-5 w-full" />
+            ) : hitokoto ? (
+              <p
+                className={cn(
+                  'text-muted-foreground truncate',
+                  themeConfig.dashboardStyle === 'future-retro'
+                    ? 'text-[1.05rem] font-medium tracking-wide'
+                    : 'text-sm italic'
+                )}
+                style={
+                  themeConfig.dashboardStyle === 'future-retro'
+                    ? {
+                        fontFamily: '"MaiRetroQuote", "Noto Serif SC", "SimSun", serif',
+                        textShadow: '0 0.035em 0 hsl(var(--background))',
+                      }
+                    : undefined
+                }
+              >
+                "{hitokoto.hitokoto}"{hitokoto.from ? ` —— ${hitokoto.from}` : ''}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            data-home-hitokoto-edit="true"
+            aria-label={t('home.hitokoto.edit')}
+            title={t('home.hitokoto.edit')}
+            className="text-muted-foreground/55 hover:bg-accent/50 hover:text-foreground focus-visible:ring-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none"
+            onClick={() => setHitokotoEditorOpen(true)}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
         </div>
       ),
     },
@@ -867,10 +949,9 @@ function IndexPageContent() {
   )
   const versionsMismatch =
     versionCompatibility?.status !== undefined && versionCompatibility.status !== 'compatible'
-
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-2 p-4 sm:space-y-4 sm:p-6">
+      <div data-home-page="true" className="space-y-2 p-4 sm:space-y-4 sm:p-6">
         {dashboardError && (
           <Card className="border-destructive/50 bg-destructive/5">
             <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -908,25 +989,36 @@ function IndexPageContent() {
         )}
 
         <div
+          data-home-command-strip="true"
           className={cn(
             'text-primary flex flex-wrap items-center gap-x-7 gap-y-2 font-sans font-black tracking-[0.12em] uppercase',
             versionsMismatch && 'text-amber-600 dark:text-amber-400'
           )}
         >
-          <span className="inline-flex items-baseline gap-2">
+          <button
+            type="button"
+            data-home-version-button="true"
+            className="inline-flex items-baseline gap-2"
+            onClick={() => openUpdateNotice('maibot')}
+          >
             <span className="text-[11px] tracking-[0.2em] opacity-70">
               {t('home.versionCard.maibotVersion')}
             </span>
             <span className="text-base">
               {botStatus?.version ? `V${botStatus.version}` : t('home.versionCard.unknown')}
             </span>
-          </span>
-          <span className="inline-flex items-baseline gap-2">
+          </button>
+          <button
+            type="button"
+            data-home-version-button="true"
+            className="inline-flex items-baseline gap-2"
+            onClick={() => openUpdateNotice('console')}
+          >
             <span className="text-[11px] tracking-[0.2em] opacity-70">
               {t('home.versionCard.consoleVersion')}
             </span>
             <span className="text-base">V{APP_VERSION}</span>
-          </span>
+          </button>
           {maibotUpdateAvailable && maibotStableRelease && (
             <a
               href={maibotStableRelease.url}
@@ -943,7 +1035,17 @@ function IndexPageContent() {
             aria-hidden="true"
             data-home-version-stripes="true"
             className="ml-auto hidden min-w-24 flex-1 basis-40"
-          />
+          >
+            <svg
+              data-home-version-spectrum="true"
+              viewBox="0 0 1100 180"
+              preserveAspectRatio="none"
+            >
+              <path data-spectrum-line="green" d="M0 84 H740 C850 84 880 18 1010 18 H1100" />
+              <path data-spectrum-line="gold" d="M0 90 H1100" />
+              <path data-spectrum-line="orange" d="M0 96 H740 C850 96 880 162 1010 162 H1100" />
+            </svg>
+          </span>
         </div>
 
         <HomeCardManager
@@ -1021,6 +1123,14 @@ function IndexPageContent() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {hitokotoEditorOpen && (
+          <HitokotoEditorDialog
+            initialSettings={hitokotoSettings}
+            onOpenChange={setHitokotoEditorOpen}
+            onSave={saveHitokotoSettings}
+          />
+        )}
 
         {/* 重启遮罩层 */}
         <RestartOverlay />

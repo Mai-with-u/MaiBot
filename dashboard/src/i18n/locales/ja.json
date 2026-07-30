@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開する",
+    "switchSidebarToFixed": "固定モードに切り替える",
+    "switchSidebarToHover": "ホバーモードに切り替える",
     "collapseTopbar": "トップバーを折りたたむ",
     "expandTopbar": "トップバーを展開する",
     "toggleConnection": "バックエンド接続を切り替える",
@@ -45,14 +47,14 @@
       "configTemplate": "設定テンプレート",
       "pluginConfig": "プラグイン管理",
       "mcpSettings": "MCP 設定",
-      "dataTransfer": "データ移行",
+      "dataTransfer": "データ管理",
       "statistics": "詳細統計データ",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
       "chatManagement": "チャット管理",
       "localChat": "ローカルチャット",
-      "settings": "設定"
+      "settings": "WebUI 設定"
     }
   },
   "workspace": {
@@ -209,7 +211,7 @@
     "dismiss": "HTTP セキュリティ通知を閉じる"
   },
   "settings": {
-    "title": "設定",
+    "title": "WebUI 設定",
     "description": "アプリの設定を管理する",
     "tabs": {
       "appearance": "外観",
@@ -303,7 +305,25 @@
       "visualGroup": "視覚効果 (Visual)",
       "layoutGroup": "レイアウト (Layout)",
       "animationGroup": "アニメーション (Animation)",
-      "backgroundGroup": "背景設定 (Backgrounds)"
+      "backgroundGroup": "背景設定 (Backgrounds)",
+      "retroConfig": "フューチャーレトロの質感",
+      "retroConfigDesc": "紙、テクスチャ、面の奥行きを調整し、すぐにプレビューできます。",
+      "retroPaperWarmth": "紙の暖かさ",
+      "retroPaperWarmthDesc": "純白から現在の暖かい黄色の紙面まで調整します。",
+      "retroPaperWhite": "純白",
+      "retroPaperWarm": "暖色",
+      "retroTexture": "紙面テクスチャ",
+      "retroTextureDesc": "細粒、粗粒、ドット方眼、横罫、または無地を選択します。",
+      "retroTextureFine": "細かい粒子",
+      "retroTextureCoarse": "粗い粒子",
+      "retroTextureDots": "ドット方眼",
+      "retroTextureRuled": "横罫",
+      "retroTextureNone": "なし",
+      "retroTextureIntensity": "テクスチャ強度",
+      "retroPanelDepth": "パネルの奥行き",
+      "retroPanelDepthDesc": "くぼみと影の見え方を調整します。",
+      "retroStrokeScale": "線の太さ",
+      "retroStrokeScaleDesc": "カードとコントロールの輪郭線を調整します。"
     },
     "security": {
       "currentToken": "現在のアクセストークン",
@@ -913,12 +933,12 @@
       "statisticsDesc": "使用統計を表示",
       "plugins": "プラグインマーケット",
       "pluginsDesc": "プラグインを閲覧してインストール",
-      "dataTransferDesc": "MaiBot データのバックアップ、エクスポート、復元",
+      "dataTransferDesc": "ローカルキャッシュの管理と MaiBot データのバックアップ、エクスポート、復元",
       "logs": "ログビューア",
       "logsDesc": "システムログを表示",
       "reasoningProcessDesc": "Maisaka prompt の推論ログを閲覧",
-      "settings": "設定",
-      "settingsDesc": "システム設定を構成"
+      "settings": "WebUI 設定",
+      "settingsDesc": "WebUI 設定を構成"
     }
   },
   "a11y": {
@@ -1084,7 +1104,26 @@
     },
     "autoRefresh": "自動更新",
     "hitokoto": {
-      "title": "一言"
+      "title": "一言",
+      "edit": "一言を編集",
+      "editor": {
+        "title": "一言を編集",
+        "description": "ホームに表示する一言の取得元とカスタム内容を管理します。",
+        "defaultSource": "既定の一言を使用",
+        "defaultSourceDescription": "一言 API から取得し、カスタム内容と順番に表示します。",
+        "customList": "カスタム内容",
+        "customListDescription": "複数の内容を追加できます。出典は空欄でも構いません。",
+        "add": "内容を追加",
+        "empty": "カスタム内容はありません。クリックして最初の内容を追加します。",
+        "item": "内容 {{index}}",
+        "remove": "内容 {{index}} を削除",
+        "content": "内容 {{index}} の本文",
+        "contentPlaceholder": "ホームに表示する内容を入力",
+        "source": "内容 {{index}} の出典",
+        "sourcePlaceholder": "出典（任意）",
+        "blankHint": "既定の一言が無効でカスタム一覧も空のため、一言エリアは空欄になります。",
+        "saving": "保存中..."
+      }
     },
     "cards": {
       "add": "カードを追加",
@@ -1092,7 +1131,7 @@
       "editCard": "カードを編集：{{title}}",
       "editContent": "カード内容を編集",
       "done": "完了",
-      "reset": "既定のレイアウトに戻す",
+      "reset": "既定に戻す",
       "styles": {
         "default": {
           "title": "デフォルト",
@@ -1135,12 +1174,23 @@
     "botStatus": {
       "title": "MaiBot ステータス",
       "loading": "読み取り中",
-      "running": "稼働中",
+      "running": "アクティブ",
       "stopped": "停止中",
       "unknown": "不明",
-      "uptime": "稼働 {{time}}",
+      "uptimeLabel": "稼働時間",
+      "uptime": "{{time}}",
+      "enabled": "有効",
+      "disabled": "無効",
       "visualEnabled": "ビジョン有効",
-      "memoryEnabled": "メモリ有効"
+      "memoryEnabled": "メモリ有効",
+      "recentOnline": "最近のオンライン",
+      "recentOnlineRange": "過去 24 時間",
+      "recentOnlineChart": "過去 24 時間のオンライン時間グラフ",
+      "recentOnlineTotal": "オンライン {{time}}",
+      "online": "オンライン",
+      "clickToReturn": "クリックして戻る",
+      "showRecentOnline": "最近のオンライングラフを表示",
+      "showStatus": "活動状態に戻る"
     },
     "versionCard": {
       "title": "MaiBot バージョン",
@@ -1169,7 +1219,7 @@
       "expressionReview": "表現レビュー",
       "viewLogs": "ログを見る",
       "pluginManage": "プラグイン管理",
-      "systemSettings": "システム設定",
+      "systemSettings": "WebUI 設定",
       "pluginConfig": "プラグイン設定",
       "appearanceSettings": "外観設定",
       "localCache": "ローカルキャッシュ",
@@ -1188,7 +1238,7 @@
         "expressionReview": "表現学習レビューのダイアログを開く",
         "viewLogs": "WebUI ログを表示",
         "pluginManage": "プラグインマーケットと管理ページを開く",
-        "systemSettings": "システム設定を開く",
+        "systemSettings": "WebUI 設定を開く",
         "pluginConfig": "インストール済みプラグインの設定ページを開く",
         "appearanceSettings": "設定 / 外観を開く",
         "localCache": "設定 / ローカルキャッシュを開く",
@@ -1245,7 +1295,7 @@
       "avgResponse": "平均応答",
       "avgResponseDesc": "API平均レイテンシ",
       "onlineTime": "オンライン時間",
-      "messageProcessing": "メッセージ処理",
+      "messageProcessing": "メッセージ",
       "costEfficiency": "コスト効率",
       "recentPeriod": "直近{{range}}",
       "perHour": "{{value}}/時",
@@ -1306,8 +1356,6 @@
       "modelDetails": "モデル詳細統計",
       "modelDetailsDesc": "リクエスト数、コスト、パフォーマンス",
       "modelDetailsTokenDesc": "モデル別の呼び出し、Token、キャッシュ、コスト",
-      "recentActivity": "最近のアクティビティ",
-      "recentActivityDesc": "最新のAPI呼び出し記録",
       "dailyStats": "日次統計",
       "dailyStatsDesc": "直近7日間のデータサマリー",
       "dailyStatsRangeDesc": "選択期間の日次サマリー",

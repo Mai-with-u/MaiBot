@@ -4689,6 +4689,40 @@ class ChineseTypoConfig(ConfigBase):
     )
     """让麦麦偶尔打错字，更像真人聊天。"""
 
+    enable_correction_quote: bool = Field(
+        default=True,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "错别字纠正时引用原消息",
+                "en_US": "Quote typo message when correcting",
+                "ja_JP": "誤字訂正時に元メッセージを引用",
+            },
+            "x-widget": "switch",
+            "x-icon": "quote",
+            "x-row": "typo-correction-quote",
+        },
+    )
+    """纠正错别字时，是否引用上一条包含错别字的消息。"""
+
+    correction_quote_probability: float = Field(
+        default=1.0,
+        ge=0,
+        le=1,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "错别字纠正引用概率",
+                "en_US": "Typo correction quote chance",
+                "ja_JP": "誤字訂正の引用確率",
+            },
+            "x-widget": "slider",
+            "x-icon": "percent",
+            "x-row": "typo-correction-quote",
+            "step": 0.01,
+            "advanced": True,
+        },
+    )
+    """生成纠正消息时，引用上一条错别字消息的概率。"""
+
     error_rate: float = Field(
         default=0.01,
         ge=0,
