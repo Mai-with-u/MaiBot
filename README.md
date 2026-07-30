@@ -46,31 +46,6 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 - 🔌 **插件系统**：提供强大的 API 和事件系统，拥有无限扩展可能。  
   <sub><sup><strong>Plugin system</strong>: Provides powerful APIs and an event system with virtually unlimited room for extension.</sup></sub>
 
-### 快速导航
-<sub><sup>Quick Navigation</sup></sub>
-
-<p>
-  <a href="https://www.bilibili.com/video/BV1amAneGE3P">🌟 演示视频 <sub>Demo Video</sub></a> &nbsp;|&nbsp;
-  <a href="#-更新和安装--updates-and-installation">📦 快速入门 <sub>Quick Start</sub></a> &nbsp;|&nbsp;
-  <a href="#-部署教程--deployment-guide">📃 核心文档 <sub>Core Documentation</sub></a> &nbsp;|&nbsp;
-  <a href="#-讨论与社区--discussion-and-community">💬 加入社区 <sub>Join Community</sub></a>
-</p>
-
-<!-- Clear float to ensure subsequent content starts below the image area if text is short -->
-<br clear="both">
-
-<div align="center">
-  <br>
-  <a href="https://www.bilibili.com/video/BV1amAneGE3P" target="_blank">
-    <picture>
-      <source media="(max-width: 600px)" srcset="depends-data/video.png" width="100%">
-      <img src="depends-data/video.png" width="60%" alt="麦麦演示视频" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-    </picture>
-    <br>
-    <small>前往观看麦麦演示视频 / Watch the MaiSaka demo video</small>
-  </a>
-</div>
-
 <div align="center">
   <br>
   <img src="depends-data/webui-showcase.jpg" width="90%" alt="MaiBot WebUI 界面" style="box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
@@ -107,6 +82,19 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 - **[📚 麦麦文档](https://docs.mai-mai.org)**：最全面的文档中心，了解麦麦的一切。  
   <sub><sup><strong><a href="https://docs.mai-mai.org">📚 Documentation</a></strong>: The most comprehensive documentation hub for everything about MaiSaka.</sup></sub>
+
+
+- **[演示视频]**
+<div>
+  <a href="https://www.bilibili.com/video/BV1amAneGE3P" target="_blank">
+    <picture>
+      <source media="(max-width: 600px)" srcset="depends-data/video.png" width="100%">
+      <img src="depends-data/video.png" width="40%" alt="麦麦演示视频" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(2, 1, 1, 0.1);">
+    </picture>
+    <br>
+    <small>前往麦麦演示视频 / Watch the MaiSaka video</small>
+  </a>
+</div>
 
 ---
 
