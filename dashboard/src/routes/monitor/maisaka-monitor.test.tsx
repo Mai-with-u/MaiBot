@@ -44,6 +44,10 @@ const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }))
 
+const toastMocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+}))
+
 // 虚拟滚动桩：直接渲染全部行，并暴露 scrollToIndex 供滚动断言
 const virtualizerMocks = vi.hoisted(() => ({
   measureElement: vi.fn(),
@@ -70,6 +74,10 @@ vi.mock('@tanstack/react-virtual', () => ({
     measureElement: virtualizerMocks.measureElement,
     scrollToIndex: virtualizerMocks.scrollToIndex,
   }),
+}))
+
+vi.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({ toast: toastMocks.toast }),
 }))
 
 // 头像解析依赖设置项与后端地址解析，桩为无头像（仅渲染回退字符/图标）。
@@ -324,7 +332,9 @@ describe('MaisakaMonitor 空态与侧边栏', () => {
     expect(screen.getByText('聊天流')).toBeInTheDocument()
     expect(screen.getByText('等待 MaiSaka 会话…')).toBeInTheDocument()
     expect(screen.getByText('等待 MaiSaka 推理事件…')).toBeInTheDocument()
-    expect(screen.getByText('当 MaiSaka 处理新消息时，推理过程会实时展示在这里')).toBeInTheDocument()
+    expect(
+      screen.getByText('当 MaiSaka 处理新消息时，推理过程会实时展示在这里')
+    ).toBeInTheDocument()
     expect(screen.getByText('当前聊天流暂无阶段状态')).toBeInTheDocument()
     // connected=true 时侧边栏标题旁渲染绿色连接圆点
     expect(container.querySelector('.bg-emerald-500')).not.toBeNull()
@@ -574,10 +584,75 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('[空消息]')).toBeInTheDocument()
   })
 
+  it('点击引用回复可跳转并高亮当前时间线中的原始消息', async () => {
+    const user = userEvent.setup()
+    const timeline = [
+      makeEntry(
+        'message.ingested',
+        makeIngested({
+          message_id: 'm-9',
+          speaker_name: '李四',
+          content: '原始消息',
+        })
+      ),
+      makeEntry(
+        'message.sent',
+        makeSent({
+          message_id: 'm-10',
+          content: '这是回复',
+          reply_to: { message_id: 'm-9', sender_name: '李四', content: '原始消息' },
+        })
+      ),
+    ]
+    setupMonitorState({ timeline })
+    render(<MaisakaMonitor />)
+    virtualizerMocks.scrollToIndex.mockClear()
+
+    await user.click(screen.getByRole('button', { name: /回复 李四/ }))
+
+    expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(0, {
+      align: 'center',
+      behavior: 'smooth',
+    })
+    expect(document.querySelector('[data-maisaka-message-id="m-9"]')).toHaveAttribute(
+      'data-jump-highlighted',
+      'true'
+    )
+  })
+
+  it('引用的原始消息不在当前时间线时给出提示', async () => {
+    const user = userEvent.setup()
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'message.sent',
+          makeSent({
+            reply_to: { message_id: 'missing', sender_name: '李四', content: '原始消息' },
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    await user.click(screen.getByRole('button', { name: /回复 李四/ }))
+
+    expect(toastMocks.toast).toHaveBeenCalledWith({
+      title: '原始消息不在当前时间线',
+      description: '该消息可能已被清除、尚未加载，或不属于当前聊天流。',
+      variant: 'destructive',
+    })
+  })
+
   it('媒体消息可在识别文本与原文件之间切换，无原文件的媒体不可切换', async () => {
     const user = userEvent.setup()
     const media: MaisakaMessageMedia[] = [
-      { kind: 'emoji', hash: 'h1', text: '滑稽表情', url: '', data_url: 'data:image/png;base64,abc' },
+      {
+        kind: 'emoji',
+        hash: 'h1',
+        text: '滑稽表情',
+        url: '',
+        data_url: 'data:image/png;base64,abc',
+      },
       { kind: 'image', hash: 'h2', text: '', url: '' },
     ]
     setupMonitorState({
@@ -611,11 +686,22 @@ describe('时间线事件卡片', () => {
 
   it('反应门卡片按动作渲染徽章与耗时', () => {
     const timeline = [
-      makeEntry('timing_gate.result', makeTimingGate({ cycle_id: 1, action: 'continue', duration_ms: 500 })),
-      makeEntry('timing_gate.result', makeTimingGate({ cycle_id: 2, action: 'wait', duration_ms: 1234 })),
       makeEntry(
         'timing_gate.result',
-        makeTimingGate({ cycle_id: 3, action: 'no_action', content: '现在不适合回复', duration_ms: 80 })
+        makeTimingGate({ cycle_id: 1, action: 'continue', duration_ms: 500 })
+      ),
+      makeEntry(
+        'timing_gate.result',
+        makeTimingGate({ cycle_id: 2, action: 'wait', duration_ms: 1234 })
+      ),
+      makeEntry(
+        'timing_gate.result',
+        makeTimingGate({
+          cycle_id: 3,
+          action: 'no_action',
+          content: '现在不适合回复',
+          duration_ms: 80,
+        })
       ),
     ]
     setupMonitorState({ timeline })
@@ -724,7 +810,10 @@ describe('时间线事件卡片', () => {
     const timeline = [
       makeEntry(
         'planner.finalized',
-        makeFinalized({ cycle_id: 1, tools: [makeToolResult({ tool_name: 'finish', summary: '' })] })
+        makeFinalized({
+          cycle_id: 1,
+          tools: [makeToolResult({ tool_name: 'finish', summary: '' })],
+        })
       ),
       makeEntry(
         'planner.finalized',
@@ -732,7 +821,11 @@ describe('时间线事件卡片', () => {
           cycle_id: 2,
           tools: [
             makeToolResult({ tool_call_id: 'tc-f', tool_name: 'Finish' }),
-            makeToolResult({ tool_call_id: 'tc-r', tool_name: 'web_search', summary: '找到了结果' }),
+            makeToolResult({
+              tool_call_id: 'tc-r',
+              tool_name: 'web_search',
+              summary: '找到了结果',
+            }),
           ],
         })
       ),
@@ -824,7 +917,10 @@ describe('时间线事件卡片', () => {
         'timing_gate.result',
         makeTimingGate({ cycle_id: 5, action: 'no_action', content: '现在不适合回复' })
       ),
-      makeEntry('planner.response', makePlannerResponse({ cycle_id: 5, content: '不应显示的思考' })),
+      makeEntry(
+        'planner.response',
+        makePlannerResponse({ cycle_id: 5, content: '不应显示的思考' })
+      ),
       makeEntry(
         'planner.finalized',
         makeFinalized({ cycle_id: 5, planner: makePlannerBlock({ content: '不应显示的决策' }) })
@@ -851,7 +947,10 @@ describe('时间线事件卡片', () => {
           },
         })
       ),
-      makeEntry('planner.response', makePlannerResponse({ cycle_id: 6, content: '正常展示的思考' })),
+      makeEntry(
+        'planner.response',
+        makePlannerResponse({ cycle_id: 6, content: '正常展示的思考' })
+      ),
       // 不支持展示的事件类型直接从可见时间线剔除
       makeEntry('session.start', {
         session_id: 's1',
@@ -960,7 +1059,8 @@ describe('推理记录跳转', () => {
           'planner.finalized',
           makeFinalized({
             planner: makePlannerBlock({
-              prompt_html_uri: '/api/webui/config/maisaka-prompt-preview?path=planner/sess-1/rec-01.html',
+              prompt_html_uri:
+                '/api/webui/config/maisaka-prompt-preview?path=planner/sess-1/rec-01.html',
             }),
           })
         ),
@@ -991,7 +1091,8 @@ describe('推理记录跳转', () => {
           makeFinalized({
             tools: [
               makeToolResult({
-                prompt_html_uri: '/api/webui/config/maisaka-prompt-preview?path=tool/sess-2/rec-02.json',
+                prompt_html_uri:
+                  '/api/webui/config/maisaka-prompt-preview?path=tool/sess-2/rec-02.json',
               }),
             ],
           })

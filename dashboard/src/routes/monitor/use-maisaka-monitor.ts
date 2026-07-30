@@ -100,6 +100,7 @@ let activeConsumerCount = 0
 let monitorSubscriptionStarted = false
 let monitorSubscriptionPromise: Promise<void> | null = null
 let monitorUnsubscribe: (() => Promise<void>) | null = null
+let monitorInitialSyncPending = false
 const storeListeners = new Set<() => void>()
 let persistSnapshotTimer: ReturnType<typeof setTimeout> | null = null
 let monitorDbPromise: Promise<IDBPDatabase<MaisakaMonitorDb>> | null = null
@@ -176,6 +177,11 @@ function toStageStatusInfo(raw: Record<string, unknown>): StageStatusInfo | null
 }
 
 function notifyStoreListeners() {
+  // 首次订阅会连续补发积压事件。此时只更新模块缓存，待订阅完成后一次性刷新界面，
+  // 避免会话列表反复重排、时间线逐条自动滚动。
+  if (monitorInitialSyncPending) {
+    return
+  }
   storeListeners.forEach((listener) => listener())
 }
 
@@ -605,6 +611,7 @@ function handleMonitorEvent(event: MaisakaMonitorEvent) {
 
   if (event.type === 'stage.snapshot') {
     updateStageStatus(event)
+    monitorInitialSyncPending = false
     notifyStoreListeners()
     return
   }
@@ -655,6 +662,7 @@ function ensureMonitorSubscription() {
     return
   }
 
+  monitorInitialSyncPending = true
   monitorSubscriptionPromise = maisakaMonitorClient
     .subscribe(handleMonitorEvent)
     .then((unsub) => {
@@ -663,16 +671,15 @@ function ensureMonitorSubscription() {
         monitorUnsubscribe = null
         void unsub()
         cachedConnected = false
-        notifyStoreListeners()
         return
       }
       monitorSubscriptionStarted = true
       cachedConnected = true
-      notifyStoreListeners()
     })
     .catch((error) => {
       console.error('MaiSaka 监控订阅失败:', error)
       cachedConnected = false
+      monitorInitialSyncPending = false
       notifyStoreListeners()
     })
     .finally(() => {

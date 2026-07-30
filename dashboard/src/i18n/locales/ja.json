@@ -305,7 +305,25 @@
       "visualGroup": "視覚効果 (Visual)",
       "layoutGroup": "レイアウト (Layout)",
       "animationGroup": "アニメーション (Animation)",
-      "backgroundGroup": "背景設定 (Backgrounds)"
+      "backgroundGroup": "背景設定 (Backgrounds)",
+      "retroConfig": "フューチャーレトロの質感",
+      "retroConfigDesc": "紙、テクスチャ、面の奥行きを調整し、すぐにプレビューできます。",
+      "retroPaperWarmth": "紙の暖かさ",
+      "retroPaperWarmthDesc": "純白から現在の暖かい黄色の紙面まで調整します。",
+      "retroPaperWhite": "純白",
+      "retroPaperWarm": "暖色",
+      "retroTexture": "紙面テクスチャ",
+      "retroTextureDesc": "細粒、粗粒、ドット方眼、横罫、または無地を選択します。",
+      "retroTextureFine": "細かい粒子",
+      "retroTextureCoarse": "粗い粒子",
+      "retroTextureDots": "ドット方眼",
+      "retroTextureRuled": "横罫",
+      "retroTextureNone": "なし",
+      "retroTextureIntensity": "テクスチャ強度",
+      "retroPanelDepth": "パネルの奥行き",
+      "retroPanelDepthDesc": "くぼみと影の見え方を調整します。",
+      "retroStrokeScale": "線の太さ",
+      "retroStrokeScaleDesc": "カードとコントロールの輪郭線を調整します。"
     },
     "security": {
       "currentToken": "現在のアクセストークン",
@@ -1086,7 +1104,26 @@
     },
     "autoRefresh": "自動更新",
     "hitokoto": {
-      "title": "一言"
+      "title": "一言",
+      "edit": "一言を編集",
+      "editor": {
+        "title": "一言を編集",
+        "description": "ホームに表示する一言の取得元とカスタム内容を管理します。",
+        "defaultSource": "既定の一言を使用",
+        "defaultSourceDescription": "一言 API から取得し、カスタム内容と順番に表示します。",
+        "customList": "カスタム内容",
+        "customListDescription": "複数の内容を追加できます。出典は空欄でも構いません。",
+        "add": "内容を追加",
+        "empty": "カスタム内容はありません。クリックして最初の内容を追加します。",
+        "item": "内容 {{index}}",
+        "remove": "内容 {{index}} を削除",
+        "content": "内容 {{index}} の本文",
+        "contentPlaceholder": "ホームに表示する内容を入力",
+        "source": "内容 {{index}} の出典",
+        "sourcePlaceholder": "出典（任意）",
+        "blankHint": "既定の一言が無効でカスタム一覧も空のため、一言エリアは空欄になります。",
+        "saving": "保存中..."
+      }
     },
     "cards": {
       "add": "カードを追加",
@@ -1094,7 +1131,7 @@
       "editCard": "カードを編集：{{title}}",
       "editContent": "カード内容を編集",
       "done": "完了",
-      "reset": "既定のレイアウトに戻す",
+      "reset": "既定に戻す",
       "styles": {
         "default": {
           "title": "デフォルト",
@@ -1145,7 +1182,15 @@
       "enabled": "有効",
       "disabled": "無効",
       "visualEnabled": "ビジョン有効",
-      "memoryEnabled": "メモリ有効"
+      "memoryEnabled": "メモリ有効",
+      "recentOnline": "最近のオンライン",
+      "recentOnlineRange": "過去 24 時間",
+      "recentOnlineChart": "過去 24 時間のオンライン時間グラフ",
+      "recentOnlineTotal": "オンライン {{time}}",
+      "online": "オンライン",
+      "clickToReturn": "クリックして戻る",
+      "showRecentOnline": "最近のオンライングラフを表示",
+      "showStatus": "活動状態に戻る"
     },
     "versionCard": {
       "title": "MaiBot バージョン",

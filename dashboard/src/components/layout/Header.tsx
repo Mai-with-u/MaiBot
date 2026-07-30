@@ -288,7 +288,7 @@ export function Header({
       className={cn(
         'sticky top-0 isolate z-30 min-w-0 overflow-visible',
         topbarCollapsed ? 'h-4' : 'flex h-12 flex-col border-b px-3 backdrop-blur-md sm:px-4',
-        topbarCollapsed || inheritsPageBackground ? 'bg-transparent' : 'bg-card/80'
+        topbarCollapsed || inheritsPageBackground ? 'bg-transparent' : 'bg-background'
       )}
     >
       {topbarCollapsed && (
@@ -296,7 +296,7 @@ export function Header({
           data-dashboard-header-strip="true"
           className={cn(
             'relative z-30 flex h-4 min-w-0 items-center justify-end px-3 backdrop-blur-md sm:px-15',
-            inheritsPageBackground ? 'bg-transparent' : 'bg-card/80'
+            inheritsPageBackground ? 'bg-transparent' : 'bg-background'
           )}
         >
           {!inheritsPageBackground && <BackgroundLayer config={headerBg} layerId="header" />}

@@ -305,7 +305,25 @@
       "visualGroup": "Visual Effects",
       "layoutGroup": "Layout",
       "animationGroup": "Animation",
-      "backgroundGroup": "Background Settings"
+      "backgroundGroup": "Background Settings",
+      "retroConfig": "Future Retro Material",
+      "retroConfigDesc": "Fine-tune paper, texture, and surface depth with an instant preview.",
+      "retroPaperWarmth": "Paper Warmth",
+      "retroPaperWarmthDesc": "Move from pure white to the current warm yellow paper.",
+      "retroPaperWhite": "Pure white",
+      "retroPaperWarm": "Warm yellow",
+      "retroTexture": "Paper Texture",
+      "retroTextureDesc": "Choose grain, drafting dots, ruled lines, or a clean background.",
+      "retroTextureFine": "Fine grain",
+      "retroTextureCoarse": "Coarse grain",
+      "retroTextureDots": "Dot grid",
+      "retroTextureRuled": "Ruled",
+      "retroTextureNone": "None",
+      "retroTextureIntensity": "Texture Strength",
+      "retroPanelDepth": "Panel Depth",
+      "retroPanelDepthDesc": "Controls the visibility of recessed surfaces and shadows.",
+      "retroStrokeScale": "Stroke Weight",
+      "retroStrokeScaleDesc": "Adjusts the bold outlines used by cards and controls."
     },
     "security": {
       "currentToken": "Current Access Token",
@@ -1086,7 +1104,26 @@
     },
     "autoRefresh": "Auto Refresh",
     "hitokoto": {
-      "title": "Quote"
+      "title": "Quote",
+      "edit": "Edit quote",
+      "editor": {
+        "title": "Edit quote",
+        "description": "Manage the quote sources and custom content shown on the home page.",
+        "defaultSource": "Use default quotes",
+        "defaultSourceDescription": "Fetch quotes from Hitokoto and rotate them with your custom entries.",
+        "customList": "Custom content",
+        "customListDescription": "Add multiple entries. Sources are optional.",
+        "add": "Add content",
+        "empty": "No custom content yet. Click to add the first entry.",
+        "item": "Entry {{index}}",
+        "remove": "Remove entry {{index}}",
+        "content": "Entry {{index}} content",
+        "contentPlaceholder": "Enter content to display on the home page",
+        "source": "Entry {{index}} source",
+        "sourcePlaceholder": "Source (optional)",
+        "blankHint": "Default quotes are disabled and the custom list is empty, so the quote area will remain blank.",
+        "saving": "Saving..."
+      }
     },
     "cards": {
       "add": "Add card",
@@ -1094,7 +1131,7 @@
       "editCard": "Edit card: {{title}}",
       "editContent": "Edit card content",
       "done": "Done",
-      "reset": "Restore default layout",
+      "reset": "Restore defaults",
       "styles": {
         "default": {
           "title": "Default",
@@ -1145,7 +1182,15 @@
       "enabled": "Enabled",
       "disabled": "Disabled",
       "visualEnabled": "Vision enabled",
-      "memoryEnabled": "Memory enabled"
+      "memoryEnabled": "Memory enabled",
+      "recentOnline": "Recent online",
+      "recentOnlineRange": "Last 24 hours",
+      "recentOnlineChart": "Online duration over the last 24 hours",
+      "recentOnlineTotal": "Online {{time}}",
+      "online": "Online",
+      "clickToReturn": "Click to return",
+      "showRecentOnline": "Show recent online chart",
+      "showStatus": "Return to activity status"
     },
     "versionCard": {
       "title": "MaiBot Version",

@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { motion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 
 import { cn } from '@/lib/utils'
 
@@ -7,8 +7,17 @@ interface LogoAreaProps {
   sidebarOpen: boolean
 }
 
+const SIDEBAR_SPECTRUM_TRANSITION = {
+  duration: 0.22,
+  ease: [0.22, 1, 0.36, 1] as const,
+}
+
 export function LogoArea({ sidebarOpen }: LogoAreaProps) {
   const spectrumLayoutId = useId()
+  const prefersReducedMotion = useReducedMotion()
+  const spectrumTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : SIDEBAR_SPECTRUM_TRANSITION
 
   return (
     <div
@@ -37,13 +46,13 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
               aria-hidden="true"
               data-dashboard-logo-spectrum="true"
               className="flex h-2 w-28 max-w-full translate-y-1 items-end"
-              transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
+              transition={spectrumTransition}
             >
               {Array.from({ length: 6 }, (_, index) => (
                 <motion.span
                   key={index}
                   layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-                  transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
+                  transition={spectrumTransition}
                 />
               ))}
             </motion.span>
@@ -58,13 +67,13 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
           data-dashboard-logo-spectrum="true"
           data-dashboard-logo-spectrum-block="true"
           className="pointer-events-none absolute top-[1.625rem] left-[var(--layout-sidebar-nav-padding-collapsed)] flex h-7 w-[var(--layout-sidebar-nav-item-collapsed-width)] items-stretch overflow-hidden max-lg:hidden"
-          transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
+          transition={spectrumTransition}
         >
           {Array.from({ length: 6 }, (_, index) => (
             <motion.span
               key={index}
               layoutId={`sidebar-logo-spectrum-band-${spectrumLayoutId}-${index}`}
-              transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
+              transition={spectrumTransition}
             />
           ))}
         </motion.span>

@@ -682,7 +682,8 @@ function SortableHomeCard({
       <div
         aria-hidden={editing}
         className={cn(
-          'h-full overflow-hidden transition-[filter,opacity] duration-150',
+          'h-full transition-[filter,opacity] duration-150',
+          card.id === 'builtin:bot-status' && !editing ? 'overflow-visible' : 'overflow-hidden',
           editing && 'pointer-events-none opacity-75 blur-[2.5px] select-none'
         )}
         inert={editing}

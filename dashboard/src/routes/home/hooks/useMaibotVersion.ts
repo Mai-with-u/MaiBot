@@ -19,13 +19,80 @@ import {
 
 import type { ReleaseStatus } from '../types'
 
+const HITOKOTO_SETTINGS_STORAGE_KEY = 'maibot-home-hitokoto-settings-v1'
+const HITOKOTO_INDEX_STORAGE_KEY = 'maibot-home-hitokoto-index-v1'
+
+export interface CustomHitokoto {
+  id: string
+  content: string
+  source: string
+}
+
+export interface HitokotoSettings {
+  defaultEnabled: boolean
+  customItems: CustomHitokoto[]
+}
+
+const DEFAULT_HITOKOTO_SETTINGS: HitokotoSettings = {
+  defaultEnabled: true,
+  customItems: [],
+}
+
+function normalizeHitokotoSettings(value: unknown): HitokotoSettings {
+  if (!value || typeof value !== 'object') return DEFAULT_HITOKOTO_SETTINGS
+
+  const candidate = value as Partial<HitokotoSettings>
+  const customItems = Array.isArray(candidate.customItems)
+    ? candidate.customItems
+        .filter(
+          (item): item is CustomHitokoto =>
+            Boolean(item) &&
+            typeof item.id === 'string' &&
+            typeof item.content === 'string' &&
+            typeof item.source === 'string'
+        )
+        .map((item) => ({
+          id: item.id,
+          content: item.content.trim(),
+          source: item.source.trim(),
+        }))
+        .filter((item) => item.content.length > 0)
+    : []
+
+  return {
+    defaultEnabled:
+      typeof candidate.defaultEnabled === 'boolean'
+        ? candidate.defaultEnabled
+        : DEFAULT_HITOKOTO_SETTINGS.defaultEnabled,
+    customItems,
+  }
+}
+
+function loadHitokotoSettings(): HitokotoSettings {
+  try {
+    const stored = localStorage.getItem(HITOKOTO_SETTINGS_STORAGE_KEY)
+    return stored ? normalizeHitokotoSettings(JSON.parse(stored)) : DEFAULT_HITOKOTO_SETTINGS
+  } catch (error) {
+    console.error('读取一言设置失败:', error)
+    return DEFAULT_HITOKOTO_SETTINGS
+  }
+}
+
+function loadHitokotoIndex(): number {
+  const value = Number.parseInt(localStorage.getItem(HITOKOTO_INDEX_STORAGE_KEY) ?? '0', 10)
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
 export function useMaibotVersion() {
   const { t } = useTranslation()
   const [hitokoto, setHitokoto] = useState<{ hitokoto: string; from: string } | null>(null)
   const [hitokotoLoading, setHitokotoLoading] = useState(true)
+  const [hitokotoSettings, setHitokotoSettings] = useState(loadHitokotoSettings)
   const [maibotStableRelease, setMaibotStableRelease] = useState<ReleaseStatus | null>(null)
   const [versionCompatibility, setVersionCompatibility] =
     useState<VersionCompatibilityResult | null>(null)
+  const hitokotoIndexRef = useRef(loadHitokotoIndex())
+  const hitokotoSettingsRef = useRef(hitokotoSettings)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
   const isMountedRef = useRef(true)
@@ -99,41 +166,81 @@ export function useMaibotVersion() {
     }
   }, [])
 
-  // 获取一言
+  const loadHitokoto = useCallback(
+    async (settings: HitokotoSettings) => {
+      try {
+        setHitokotoLoading(true)
+        const candidates = settings.customItems.map((item) => ({
+          hitokoto: item.content,
+          from: item.source,
+        }))
+
+        if (settings.defaultEnabled) {
+          try {
+            const response = await fetch('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k')
+            if (!response.ok) {
+              throw new Error(`一言接口返回 HTTP ${response.status}`)
+            }
+            const data = await response.json()
+            candidates.push({
+              hitokoto: String(data.hitokoto),
+              from: String(data.from || data.from_who || t('home.unknownSource')),
+            })
+          } catch (error) {
+            console.error('获取默认一言失败:', error)
+            if (candidates.length === 0) {
+              candidates.push({
+                hitokoto: t('home.hitokotoFallback'),
+                from: t('home.hitokotoFallbackFrom'),
+              })
+            }
+          }
+        }
+
+        if (isMountedRef.current) {
+          if (candidates.length === 0) {
+            setHitokoto(null)
+          } else {
+            const index = hitokotoIndexRef.current % candidates.length
+            hitokotoIndexRef.current += 1
+            localStorage.setItem(HITOKOTO_INDEX_STORAGE_KEY, String(hitokotoIndexRef.current))
+            setHitokoto(candidates[index])
+          }
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setHitokotoLoading(false)
+        }
+      }
+    },
+    [t]
+  )
+
+  // 获取下一条一言
   const fetchHitokoto = useCallback(async () => {
-    try {
-      setHitokotoLoading(true)
-      const response = await fetch('https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=h&c=i&c=k')
-      if (!response.ok) {
-        throw new Error(`一言接口返回 HTTP ${response.status}`)
-      }
-      const data = await response.json()
-      if (isMountedRef.current) {
-        setHitokoto({
-          hitokoto: data.hitokoto,
-          from: data.from || data.from_who || t('home.unknownSource'),
-        })
-      }
-    } catch (error) {
-      console.error('获取一言失败:', error)
-      if (isMountedRef.current) {
-        setHitokoto({
-          hitokoto: t('home.hitokotoFallback'),
-          from: t('home.hitokotoFallbackFrom'),
-        })
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setHitokotoLoading(false)
-      }
-    }
-  }, [t])
+    await loadHitokoto(hitokotoSettingsRef.current)
+  }, [loadHitokoto])
+
+  const saveHitokotoSettings = useCallback(
+    async (settings: HitokotoSettings) => {
+      const normalizedSettings = normalizeHitokotoSettings(settings)
+      localStorage.setItem(HITOKOTO_SETTINGS_STORAGE_KEY, JSON.stringify(normalizedSettings))
+      hitokotoSettingsRef.current = normalizedSettings
+      setHitokotoSettings(normalizedSettings)
+      hitokotoIndexRef.current = 0
+      localStorage.setItem(HITOKOTO_INDEX_STORAGE_KEY, '0')
+      await loadHitokoto(normalizedSettings)
+    },
+    [loadHitokoto]
+  )
 
   return {
     hitokoto,
     hitokotoLoading,
+    hitokotoSettings,
     maibotStableRelease,
     versionCompatibility,
     fetchHitokoto,
+    saveHitokotoSettings,
   }
 }

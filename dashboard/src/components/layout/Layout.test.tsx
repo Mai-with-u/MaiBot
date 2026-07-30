@@ -200,7 +200,7 @@ describe('Layout 工作区切换', () => {
     expect(screen.getByText('聊天内容')).toBeInTheDocument()
   })
 
-  it('悬浮转固定时跳过外层尺寸缩放，下一次模式切换恢复布局动画', () => {
+  it('侧栏宽度使用 CSS 过渡且不启用会拉伸内容的 FLIP 尺寸缩放', () => {
     localStorage.setItem('maibot-layout-sidebar-open', 'false')
     const view = render(
       <Layout>
@@ -211,18 +211,21 @@ describe('Layout 工作区切换', () => {
     const sidebarLayout = view.container.querySelector(
       '[data-dashboard-sidebar-layout="true"]'
     )
-    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'size')
+    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'false')
+    expect(sidebarLayout).toHaveClass('transition-[width]', 'duration-[220ms]')
     expect(sidebarLayout).toHaveStyle({
       width: 'var(--layout-sidebar-collapsed-width)',
     })
 
     fireEvent.click(screen.getAllByRole('button', { name: '切换为固定模式' })[0])
     expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'false')
+    expect(sidebarLayout).toHaveClass('transition-none')
     expect(sidebarLayout).toHaveStyle({ width: 'var(--layout-sidebar-width)' })
     expect(screen.getAllByTestId('sidebar')[0]).toHaveAttribute('data-sidebar-open', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换侧栏模式' }))
-    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'size')
+    expect(sidebarLayout).toHaveAttribute('data-motion-layout', 'false')
+    expect(sidebarLayout).not.toHaveClass('transition-none')
     expect(sidebarLayout).toHaveStyle({
       width: 'var(--layout-sidebar-collapsed-width)',
     })

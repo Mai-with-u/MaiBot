@@ -90,10 +90,10 @@ export function UpdateNoticeDialog() {
   const [historyOffset, setHistoryOffset] = useState(0)
   const [historyHasMore, setHistoryHasMore] = useState(true)
   const [noticeBodyHeight, setNoticeBodyHeight] = useState<number>()
+  const [noticeContentElement, setNoticeContentElement] = useState<HTMLDivElement | null>(null)
   const [activeManualVersion, setActiveManualVersion] = useState<string | null>(null)
   const ackedRef = useRef(false)
   const historyRequestedRef = useRef(false)
-  const noticeContentRef = useRef<HTMLDivElement>(null)
   const noticeViewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -265,8 +265,7 @@ export function UpdateNoticeDialog() {
   }, [manualTarget, revealHistory, shouldLoadMoreHistory, stage, syncActiveManualVersion])
 
   useEffect(() => {
-    const content = noticeContentRef.current
-    if (!content || stage !== 'update' || manualLoading) {
+    if (!noticeContentElement || stage !== 'update' || manualLoading) {
       return
     }
 
@@ -275,14 +274,16 @@ export function UpdateNoticeDialog() {
         window.getComputedStyle(document.documentElement).fontSize
       )
       const maxBodyHeight = Math.min(window.innerHeight * 0.7, rootFontSize * 42)
-      setNoticeBodyHeight(Math.min(Math.ceil(content.getBoundingClientRect().height), maxBodyHeight))
+      setNoticeBodyHeight(
+        Math.min(Math.ceil(noticeContentElement.getBoundingClientRect().height), maxBodyHeight)
+      )
     }
     const resizeObserver = new ResizeObserver(updateBodyHeight)
-    resizeObserver.observe(content)
+    resizeObserver.observe(noticeContentElement)
     updateBodyHeight()
 
     return () => resizeObserver.disconnect()
-  }, [manualLoading, notice, stage])
+  }, [manualLoading, noticeContentElement, stage])
 
   const acknowledgeNoticeSequence = useCallback(async () => {
     if (ackedRef.current) {
@@ -403,7 +404,7 @@ export function UpdateNoticeDialog() {
                   </div>
                 }
               >
-                <div ref={noticeContentRef}>
+                <div ref={setNoticeContentElement}>
                   <div data-update-notice-version={currentManualVersion}>
                     <MarkdownRenderer
                       content={renderedCurrentContent ?? ''}

@@ -8,14 +8,12 @@ import type { MenuItem } from './types'
 interface NavItemProps {
   item: MenuItem
   sidebarOpen: boolean
-  temporarilyExpanded?: boolean
   onMobileMenuClose: () => void
 }
 
 export function NavItem({
   item,
   sidebarOpen,
-  temporarilyExpanded = false,
   onMobileMenuClose,
 }: NavItemProps) {
   const { t } = useTranslation()
@@ -52,10 +50,10 @@ export function NavItem({
     'relative flex h-[var(--layout-sidebar-nav-item-height)] items-center rounded-lg px-[var(--layout-sidebar-nav-item-padding-x)] py-0 transition-colors duration-150',
     'hover:bg-accent hover:text-accent-foreground',
     isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+    sidebarOpen &&
+      'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]',
     !sidebarOpen &&
-      'lg:mx-auto lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0',
-    temporarilyExpanded &&
-      'lg:justify-start lg:pr-[var(--layout-sidebar-nav-item-padding-x)] lg:pl-[calc(var(--layout-sidebar-nav-item-padding-x)+0.125rem)]'
+      'lg:w-[var(--layout-sidebar-nav-item-collapsed-width)] lg:justify-center lg:px-0'
   )
   const commonLinkProps = {
     'data-tour': item.tourId,

@@ -133,6 +133,14 @@ describe('NavItem', () => {
     expect(label).toHaveClass('lg:opacity-0')
   })
 
+  it('展开状态使用固定的图标横向轨道', () => {
+    matchRouteMock.mockReturnValue(false)
+    renderNavItem({ sidebarOpen: true })
+    expect(screen.getByRole('link')).toHaveClass(
+      'lg:pl-[calc(var(--layout-sidebar-nav-icon-left)-var(--layout-sidebar-nav-padding-collapsed))]'
+    )
+  })
+
   it('未提供 tourId 时不渲染 data-tour 属性', () => {
     matchRouteMock.mockReturnValue(false)
     const itemWithoutTour: MenuItem = { icon: TestIcon, label: baseItem.label, path: baseItem.path }

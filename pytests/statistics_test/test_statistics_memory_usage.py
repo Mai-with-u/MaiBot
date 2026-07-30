@@ -42,7 +42,7 @@ def _model_usage(
     )
 
 
-def _patch_statistics_database(monkeypatch, tmp_path, records: list[ModelUsage]) -> None:
+def _patch_statistics_database(monkeypatch, tmp_path, records: list[SQLModel]) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'statistics.db'}")
     SQLModel.metadata.create_all(engine, tables=[ModelUsage.__table__, OnlineTime.__table__])
     with Session(engine) as session:
@@ -57,6 +57,35 @@ def _patch_statistics_database(monkeypatch, tmp_path, records: list[ModelUsage])
                 session.commit()
 
     monkeypatch.setattr(statistics_service, "get_db_session", get_test_db_session)
+
+
+def test_hourly_online_seconds_splits_and_merges_intervals(monkeypatch, tmp_path) -> None:
+    start_time = datetime(2026, 7, 1)
+    records = [
+        OnlineTime(
+            timestamp=start_time,
+            duration_minutes=1200,
+            start_timestamp=start_time + timedelta(minutes=50),
+            end_timestamp=start_time + timedelta(minutes=70),
+        ),
+        OnlineTime(
+            timestamp=start_time,
+            duration_minutes=1200,
+            start_timestamp=start_time + timedelta(minutes=60),
+            end_timestamp=start_time + timedelta(minutes=80),
+        ),
+    ]
+    _patch_statistics_database(monkeypatch, tmp_path, records)
+
+    result = statistics_service._get_hourly_online_seconds_sync(
+        start_time,
+        start_time + timedelta(hours=2),
+    )
+
+    assert result == {
+        "2026-07-01T00:00:00": 600.0,
+        "2026-07-01T01:00:00": 1200.0,
+    }
 
 
 def test_summary_cache_rates_separate_all_and_chat_tasks(monkeypatch, tmp_path) -> None:

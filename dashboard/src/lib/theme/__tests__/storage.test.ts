@@ -44,7 +44,11 @@ describe('loadThemeConfig', () => {
       dashboardStyle: 'future-retro',
       styleConfig: {
         futureRetro: {
-          paperTexture: true,
+          paperWarmth: 100,
+          textureStyle: 'fine',
+          textureIntensity: 55,
+          panelDepth: 100,
+          strokeScale: 100,
         },
       },
     })
@@ -72,10 +76,17 @@ describe('loadThemeConfig', () => {
       THEME_STORAGE_KEYS.STYLE_BACKGROUND_CONFIG,
       JSON.stringify({ modern: { card: { type: 'none' } }, junk: 1 })
     )
-    // 非布尔的 paperTexture 应回退到默认值 true
+    // 旧版关闭纸面颗粒会迁移为无纹理，其余非法字段回退或限制在有效范围。
     localStorage.setItem(
       THEME_STORAGE_KEYS.STYLE_CONFIG,
-      JSON.stringify({ futureRetro: { focusHighlight: true, paperTexture: 'yes' } })
+      JSON.stringify({
+        futureRetro: {
+          paperTexture: false,
+          paperWarmth: 180,
+          textureIntensity: -20,
+          panelDepth: 'deep',
+        },
+      })
     )
 
     const config = loadThemeConfig()
@@ -88,7 +99,11 @@ describe('loadThemeConfig', () => {
     expect(config.styleBackgroundConfig).toEqual({ modern: { card: { type: 'none' } } })
     expect(config.styleConfig).toEqual({
       futureRetro: {
-        paperTexture: true,
+        paperWarmth: 100,
+        textureStyle: 'none',
+        textureIntensity: 0,
+        panelDepth: 100,
+        strokeScale: 100,
       },
     })
   })

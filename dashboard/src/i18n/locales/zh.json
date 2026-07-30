@@ -305,7 +305,25 @@
       "visualGroup": "视觉效果 (Visual)",
       "layoutGroup": "布局 (Layout)",
       "animationGroup": "动画 (Animation)",
-      "backgroundGroup": "背景设置 (Backgrounds)"
+      "backgroundGroup": "背景设置 (Backgrounds)",
+      "retroConfig": "未来复古质感",
+      "retroConfigDesc": "微调纸张、纹理和界面层次，所有变化都会即时预览。",
+      "retroPaperWarmth": "纸张暖度",
+      "retroPaperWarmthDesc": "从纯白逐渐过渡到当前的暖黄色纸面。",
+      "retroPaperWhite": "纯白",
+      "retroPaperWarm": "暖黄",
+      "retroTexture": "纸面纹理",
+      "retroTextureDesc": "选择颗粒、草稿纸点阵、横线，或保持干净背景。",
+      "retroTextureFine": "细磨砂",
+      "retroTextureCoarse": "粗磨砂",
+      "retroTextureDots": "点阵纸",
+      "retroTextureRuled": "横线纸",
+      "retroTextureNone": "无纹理",
+      "retroTextureIntensity": "纹理强度",
+      "retroPanelDepth": "面板层次",
+      "retroPanelDepthDesc": "控制凹陷区域与阴影的可见程度。",
+      "retroStrokeScale": "描边力度",
+      "retroStrokeScaleDesc": "调节卡片和控件硬朗描边的粗细。"
     },
     "security": {
       "currentToken": "当前 Access Token",
@@ -1086,7 +1104,26 @@
     },
     "autoRefresh": "自动刷新",
     "hitokoto": {
-      "title": "一言"
+      "title": "一言",
+      "edit": "编辑一言",
+      "editor": {
+        "title": "编辑一言",
+        "description": "管理首页展示的一言来源与自定义内容。",
+        "defaultSource": "使用默认一言",
+        "defaultSourceDescription": "开启后会从一言接口获取内容，并与自定义内容轮换展示。",
+        "customList": "自定义内容",
+        "customListDescription": "可添加多条内容，出处可以留空。",
+        "add": "新增内容",
+        "empty": "还没有自定义内容，点击添加第一条",
+        "item": "内容 {{index}}",
+        "remove": "删除内容 {{index}}",
+        "content": "内容 {{index}} 正文",
+        "contentPlaceholder": "输入想在首页展示的内容",
+        "source": "内容 {{index}} 出处",
+        "sourcePlaceholder": "出处（可选）",
+        "blankHint": "默认一言已停用且自定义列表为空，首页一言区域将保持留白。",
+        "saving": "保存中..."
+      }
     },
     "cards": {
       "add": "新增卡片",
@@ -1094,7 +1131,7 @@
       "editCard": "编辑卡片：{{title}}",
       "editContent": "编辑卡片内容",
       "done": "完成编辑",
-      "reset": "恢复默认布局",
+      "reset": "恢复默认",
       "styles": {
         "default": {
           "title": "默认样式",
@@ -1145,7 +1182,15 @@
       "enabled": "已启用",
       "disabled": "未启用",
       "visualEnabled": "启用视觉",
-      "memoryEnabled": "启用记忆"
+      "memoryEnabled": "启用记忆",
+      "recentOnline": "最近在线",
+      "recentOnlineRange": "最近 24 小时",
+      "recentOnlineChart": "最近 24 小时在线时长图表",
+      "recentOnlineTotal": "在线 {{time}}",
+      "online": "在线",
+      "clickToReturn": "点击返回状态",
+      "showRecentOnline": "查看最近在线图表",
+      "showStatus": "返回活动状态"
     },
     "versionCard": {
       "title": "麦麦版本",

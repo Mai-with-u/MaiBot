@@ -115,12 +115,21 @@ describe('UpdateNoticeDialog', () => {
   })
 
   it('存在待展示公告时弹出更新内容对话框并渲染 Markdown', async () => {
+    const observeSpy = vi.spyOn(ResizeObserver.prototype, 'observe')
     vi.mocked(getUpdateNotice).mockResolvedValue(makeNotice())
     render(<UpdateNoticeDialog />)
 
     expect(await screen.findByText('更新内容')).toBeInTheDocument()
-    expect(await screen.findByTestId('markdown-content')).toHaveTextContent('更新亮点内容')
+    const markdownContent = await screen.findByTestId('markdown-content')
+    expect(markdownContent).toHaveTextContent('更新亮点内容')
     expect(screen.getByText('查看本次 MaiBot 更新包含的功能与修复。')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        observeSpy.mock.calls.some(
+          ([element]) => element instanceof HTMLElement && element.contains(markdownContent)
+        )
+      ).toBe(true)
+    )
   })
 
   it('手动展开 CONSOLE 版本说明时显示 Changelog 中的 WebUI 版本', async () => {

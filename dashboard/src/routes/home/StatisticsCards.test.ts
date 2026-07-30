@@ -10,6 +10,7 @@ import type { TimeSeriesData } from './types'
 function makePoint(timestamp: string): TimeSeriesData {
   return {
     timestamp,
+    online_seconds: 0,
     requests: 1,
     cost: 1,
     tokens: 1,

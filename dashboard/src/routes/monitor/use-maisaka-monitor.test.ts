@@ -154,10 +154,13 @@ async function importHookModule(): Promise<MonitorHookModule> {
   return hookModule
 }
 
-/** 挂载 hook 并在 act 内让订阅 Promise 落定，避免 connected 更新脱离 act */
-async function mountMonitor(hookModule: MonitorHookModule) {
+/** 挂载 hook，并模拟后端在历史补发末尾发送阶段快照。 */
+async function mountMonitor(hookModule: MonitorHookModule, completeInitialSync = true) {
   const view = renderHook(() => hookModule.useMaisakaMonitor())
   await act(async () => {})
+  if (completeInitialSync) {
+    emitMonitorEvent('stage.snapshot', { entries: [], timestamp: 100 })
+  }
   return view
 }
 
@@ -312,6 +315,45 @@ describe('订阅生命周期', () => {
     expect(view.result.current.connected).toBe(false)
 
     await act(async () => {})
+    emitMonitorEvent('stage.snapshot', { entries: [], timestamp: 100 })
+    expect(view.result.current.connected).toBe(true)
+  })
+
+  it('首次订阅积压事件完成前不逐条刷新，完成后一次性展示最新状态', async () => {
+    const deferred = createDeferred<() => Promise<void>>()
+    clientMocks.subscribe.mockImplementation((listener: MaisakaEventListener) => {
+      capturedHandler = listener
+      return deferred.promise
+    })
+    const hookModule = await importHookModule()
+    const view = renderHook(() => hookModule.useMaisakaMonitor())
+
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: 101, session_id: 'session-a', timestamp: 100 })
+    )
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: 102, session_id: 'session-b', timestamp: 200 })
+    )
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: 103, session_id: 'session-a', timestamp: 300 })
+    )
+
+    // 补发期间缓存照常入账，但界面保持稳定，不逐条触发侧栏重排和自动滚动。
+    expect(view.result.current.allTimeline).toHaveLength(0)
+    expect(view.result.current.sessions.size).toBe(0)
+
+    deferred.resolve(unsubscribeMock)
+    await act(async () => {})
+    expect(view.result.current.allTimeline).toHaveLength(0)
+
+    emitMonitorEvent('stage.snapshot', { entries: [], timestamp: 300 })
+
+    expect(view.result.current.allTimeline).toHaveLength(3)
+    expect(view.result.current.sessions.size).toBe(2)
+    expect(view.result.current.sessions.get('session-a')?.lastActivity).toBe(300)
     expect(view.result.current.connected).toBe(true)
   })
 
@@ -320,7 +362,7 @@ describe('订阅生命周期', () => {
     clientMocks.subscribe.mockRejectedValue(new Error('订阅通道不可用'))
     const hookModule = await importHookModule()
 
-    const view = await mountMonitor(hookModule)
+    const view = await mountMonitor(hookModule, false)
 
     expect(view.result.current.connected).toBe(false)
     expect(consoleErrorSpy).toHaveBeenCalledWith('MaiSaka 监控订阅失败:', expect.any(Error))

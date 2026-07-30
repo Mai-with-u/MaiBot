@@ -16,7 +16,7 @@ from src.webui.schemas.statistics import DashboardData, ModelStatistics, Statist
 logger = get_logger("statistics_service")
 
 DASHBOARD_STATISTICS_CACHE_KEY = "webui_dashboard_statistics_cache"
-DASHBOARD_STATISTICS_CACHE_VERSION = 4
+DASHBOARD_STATISTICS_CACHE_VERSION = 5
 DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
 _SPARSE_TIME_SERIES_FIELDS = ("hourly_data", "daily_data")
@@ -55,6 +55,9 @@ async def compute_dashboard_statistics(hours: int = 24) -> DashboardData:
     summary = await get_summary_statistics(start_time, now)
     model_stats = await get_model_statistics(start_time, now)
     hourly_data = await get_hourly_statistics(start_time, now)
+    hourly_online_seconds = await get_hourly_online_seconds(start_time, now)
+    for item in hourly_data:
+        item.online_seconds = hourly_online_seconds.get(item.timestamp, 0.0)
     daily_data = await get_daily_statistics(start_time, now)
     recent_activity = await get_recent_activity(start_time=start_time, end_time=now, limit=10)
 
@@ -201,7 +204,15 @@ def _expand_time_series(
         if isinstance(item, dict):
             result.append(item)
         else:
-            result.append({"timestamp": timestamp, "requests": 0, "cost": 0.0, "tokens": 0})
+            result.append(
+                {
+                    "timestamp": timestamp,
+                    "online_seconds": 0.0,
+                    "requests": 0,
+                    "cost": 0.0,
+                    "tokens": 0,
+                }
+            )
         current += step
     return result
 
@@ -219,6 +230,7 @@ def _is_empty_time_series_item(item: Any) -> bool:
         int(item.get("requests") or 0) == 0
         and float(item.get("cost") or 0.0) == 0.0
         and int(item.get("tokens") or 0) == 0
+        and float(item.get("online_seconds") or 0.0) == 0.0
     )
 
 
@@ -433,6 +445,52 @@ def _get_model_statistics_sync(start_time: datetime, end_time: datetime | None =
         )
         for row in rows
     ]
+
+
+async def get_hourly_online_seconds(start_time: datetime, end_time: datetime) -> Dict[str, float]:
+    """按小时聚合麦麦在线时间。"""
+    return await asyncio.to_thread(_get_hourly_online_seconds_sync, start_time, end_time)
+
+
+def _get_hourly_online_seconds_sync(start_time: datetime, end_time: datetime) -> Dict[str, float]:
+    """在线程中查询在线区间，并拆分到对应的小时桶。"""
+    statement = select(OnlineTime.start_timestamp, OnlineTime.end_timestamp).where(
+        col(OnlineTime.start_timestamp) <= end_time,
+        col(OnlineTime.end_timestamp) >= start_time,
+    )
+    with get_db_session(auto_commit=False) as session:
+        online_intervals = session.exec(statement).all()
+
+    clipped_intervals = sorted(
+        (
+            max(record_start, start_time),
+            min(record_end, end_time),
+        )
+        for record_start, record_end in online_intervals
+        if min(record_end, end_time) > max(record_start, start_time)
+    )
+    merged_intervals: list[tuple[datetime, datetime]] = []
+    for interval_start, interval_end in clipped_intervals:
+        if merged_intervals and interval_start <= merged_intervals[-1][1]:
+            previous_start, previous_end = merged_intervals[-1]
+            merged_intervals[-1] = (previous_start, max(previous_end, interval_end))
+        else:
+            merged_intervals.append((interval_start, interval_end))
+
+    hourly_seconds: Dict[str, float] = {}
+    for interval_start, interval_end in merged_intervals:
+        current = interval_start
+        while current < interval_end:
+            hour_start = current.replace(minute=0, second=0, microsecond=0)
+            next_hour = hour_start + timedelta(hours=1)
+            segment_end = min(interval_end, next_hour)
+            hour_key = hour_start.strftime("%Y-%m-%dT%H:00:00")
+            hourly_seconds[hour_key] = hourly_seconds.get(hour_key, 0.0) + (
+                segment_end - current
+            ).total_seconds()
+            current = segment_end
+
+    return hourly_seconds
 
 
 async def get_hourly_statistics(start_time: datetime, end_time: datetime) -> List[TimeSeriesData]:

@@ -53,6 +53,7 @@ export interface ModelStatistics {
 
 export interface TimeSeriesData {
   timestamp: string
+  online_seconds: number
   requests: number
   cost: number
   tokens: number

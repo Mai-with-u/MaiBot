@@ -178,6 +178,20 @@ describe('LogoArea 与 Sidebar', () => {
     act(() => vi.advanceTimersByTime(SIDEBAR_HOVER_EXPAND_DELAY_MS))
     expect(aside).toHaveAttribute('data-dashboard-sidebar-hover-expanded', 'true')
     expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'true')
+    const hoverNavigation = screen.getByRole('navigation')
+    const hoverNavigationClassName = hoverNavigation.className
+    expect(hoverNavigation).toHaveClass(
+      'px-[var(--layout-sidebar-nav-padding-collapsed)]',
+      'py-[var(--layout-sidebar-nav-padding)]'
+    )
+    expect(screen.getByText('sidebar.groups.resources').parentElement).not.toHaveClass(
+      'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
+    )
+    expect(container.querySelector('.border-t')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '首页' })).toHaveAttribute(
+      'data-sidebar-open',
+      'true'
+    )
 
     const fixButton = screen.getByRole('button', { name: 'header.switchSidebarToFixed' })
     expect(fixButton).toHaveClass(
@@ -207,6 +221,7 @@ describe('LogoArea 与 Sidebar', () => {
     expect(aside).toHaveAttribute('data-dashboard-sidebar-mode', 'fixed')
     expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'true')
     expect(aside).not.toHaveAttribute('data-dashboard-sidebar-fix-transition')
+    expect(screen.getByRole('navigation').className).toBe(hoverNavigationClassName)
     expect(
       screen.queryByRole('button', { name: 'header.switchSidebarToFixed' })
     ).not.toBeInTheDocument()

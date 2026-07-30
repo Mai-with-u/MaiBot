@@ -117,13 +117,39 @@ function normalizeStyleBackgroundConfig(value: unknown): StyleBackgroundConfigMa
 function normalizeStyleConfig(value: unknown): DashboardStyleConfig {
   const config = isRecord(value) ? value : {}
   const futureRetro = isRecord(config.futureRetro) ? config.futureRetro : {}
+  const textureStyles = new Set(['fine', 'coarse', 'dot-grid', 'ruled', 'none'])
+  const clampPercent = (candidate: unknown, fallback: number) =>
+    typeof candidate === 'number' && Number.isFinite(candidate)
+      ? Math.max(0, Math.min(100, candidate))
+      : fallback
+  const legacyTextureStyle =
+    futureRetro.paperTexture === false
+      ? 'none'
+      : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.textureStyle
 
   return {
     futureRetro: {
-      paperTexture:
-        typeof futureRetro.paperTexture === 'boolean'
-          ? futureRetro.paperTexture
-          : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.paperTexture,
+      paperWarmth: clampPercent(
+        futureRetro.paperWarmth,
+        DEFAULT_FUTURE_RETRO_STYLE_CONFIG.paperWarmth
+      ),
+      textureStyle:
+        typeof futureRetro.textureStyle === 'string' &&
+        textureStyles.has(futureRetro.textureStyle)
+          ? (futureRetro.textureStyle as DashboardStyleConfig['futureRetro']['textureStyle'])
+          : legacyTextureStyle,
+      textureIntensity: clampPercent(
+        futureRetro.textureIntensity,
+        DEFAULT_FUTURE_RETRO_STYLE_CONFIG.textureIntensity
+      ),
+      panelDepth: clampPercent(
+        futureRetro.panelDepth,
+        DEFAULT_FUTURE_RETRO_STYLE_CONFIG.panelDepth
+      ),
+      strokeScale: clampPercent(
+        futureRetro.strokeScale,
+        DEFAULT_FUTURE_RETRO_STYLE_CONFIG.strokeScale
+      ),
     },
   }
 }

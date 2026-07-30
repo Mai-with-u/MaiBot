@@ -256,7 +256,7 @@ export function Layout({ children }: LayoutProps) {
     workspaceTransitionStage !== 'page-enter'
   const sidebarExiting = workspaceTransitionStage === 'sidebar-exit'
   const handleSidebarFix = () => {
-    // 悬浮展开已处于完整宽度；固定时跳过外层 FLIP 尺寸缩放，避免整条侧栏先缩后展。
+    // 悬浮展开已处于完整宽度；固定时跳过占位宽度过渡，避免已经展开的侧栏出现二次动画。
     setSkipSidebarResizeAnimation(true)
     setSidebarOpen(true)
   }
@@ -292,10 +292,11 @@ export function Layout({ children }: LayoutProps) {
             <motion.div
               key="settings-sidebar"
               data-dashboard-sidebar-layout="true"
-              layout={skipSidebarResizeAnimation ? false : 'size'}
+              layout={false}
               className={cn(
-                'relative z-40 hidden shrink-0 will-change-transform lg:block',
-                sidebarExiting ? 'overflow-hidden' : 'overflow-visible'
+                'relative z-40 hidden shrink-0 transition-[width] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:block',
+                sidebarExiting ? 'overflow-hidden' : 'overflow-visible',
+                skipSidebarResizeAnimation && 'transition-none'
               )}
               initial={false}
               style={{
@@ -304,11 +305,6 @@ export function Layout({ children }: LayoutProps) {
                   : sidebarOpen
                     ? 'var(--layout-sidebar-width)'
                     : 'var(--layout-sidebar-collapsed-width)',
-              }}
-              transition={{
-                layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
-                opacity: { duration: 0.18 },
-                x: { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
               }}
             >
               <motion.div
@@ -355,9 +351,8 @@ export function Layout({ children }: LayoutProps) {
           </AnimatePresence>
           {/* Main content */}
           <motion.div
-            layout="position"
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden will-change-transform"
-            transition={{ layout: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+            layout={false}
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
             {/* HTTP 安全警告横幅 */}
             <HttpWarningBanner />

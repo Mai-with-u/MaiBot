@@ -73,7 +73,7 @@ export function Sidebar({
         setHoverExpanded(false)
       }}
       className={cn(
-        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 lg:relative lg:z-0 lg:h-full lg:transition-[width] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)]',
+        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 motion-reduce:transition-none lg:relative lg:z-0 lg:h-full lg:transition-[width] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)]',
         inheritsPageBackground ? 'bg-transparent' : 'bg-card',
         // 移动端始终显示完整宽度；桌面端折叠后可通过悬停临时覆盖展开。
         'w-[var(--layout-sidebar-width)]',
@@ -122,9 +122,8 @@ export function Sidebar({
         <nav
           aria-label={t('a11y.sidebarNav')}
           className={cn(
-            'p-[var(--layout-sidebar-nav-padding)]',
-            !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]',
-            !sidebarOpen && 'lg:p-[var(--layout-sidebar-nav-padding-collapsed)]'
+            'px-[var(--layout-sidebar-nav-padding-collapsed)] py-[var(--layout-sidebar-nav-padding)]',
+            !visuallyOpen && 'lg:w-[var(--layout-sidebar-collapsed-width)]'
           )}
         >
           <ul
@@ -144,7 +143,7 @@ export function Sidebar({
                     // 移动端始终显示，桌面端根据状态切换
                     'mb-[var(--layout-sidebar-section-title-margin-bottom)]',
                     !visuallyOpen && 'lg:invisible',
-                    !sidebarOpen &&
+                    !visuallyOpen &&
                       'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
                   )}
                 >
@@ -157,7 +156,7 @@ export function Sidebar({
                 </div>
 
                 {/* 分割线 - 仅在桌面端折叠时显示 */}
-                {!sidebarOpen && sectionIndex > 0 && (
+                {!visuallyOpen && sectionIndex > 0 && (
                   <div className="border-border mb-2 hidden border-t lg:block" />
                 )}
 
@@ -168,7 +167,6 @@ export function Sidebar({
                       key={item.path}
                       item={item}
                       sidebarOpen={visuallyOpen}
-                      temporarilyExpanded={!sidebarOpen && hoverExpanded}
                       onMobileMenuClose={onMobileMenuClose}
                     />
                   ))}

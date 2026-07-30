@@ -297,7 +297,25 @@
       "visualGroup": "시각 효과 (Visual)",
       "layoutGroup": "레이아웃 (Layout)",
       "animationGroup": "애니메이션 (Animation)",
-      "backgroundGroup": "배경 설정 (Backgrounds)"
+      "backgroundGroup": "배경 설정 (Backgrounds)",
+      "retroConfig": "퓨처 레트로 질감",
+      "retroConfigDesc": "종이, 텍스처와 표면 깊이를 조절하고 즉시 미리 봅니다.",
+      "retroPaperWarmth": "종이 온기",
+      "retroPaperWarmthDesc": "순백색부터 현재의 따뜻한 노란 종이까지 조절합니다.",
+      "retroPaperWhite": "순백색",
+      "retroPaperWarm": "따뜻한 노랑",
+      "retroTexture": "종이 텍스처",
+      "retroTextureDesc": "고운 입자, 굵은 입자, 도트 그리드, 줄무늬 또는 없음을 선택합니다.",
+      "retroTextureFine": "고운 입자",
+      "retroTextureCoarse": "굵은 입자",
+      "retroTextureDots": "도트 그리드",
+      "retroTextureRuled": "가로줄",
+      "retroTextureNone": "없음",
+      "retroTextureIntensity": "텍스처 강도",
+      "retroPanelDepth": "패널 깊이",
+      "retroPanelDepthDesc": "오목한 표면과 그림자의 가시성을 조절합니다.",
+      "retroStrokeScale": "외곽선 굵기",
+      "retroStrokeScaleDesc": "카드와 컨트롤의 외곽선 굵기를 조절합니다."
     },
     "security": {
       "currentToken": "현재 액세스 토큰",
@@ -1078,7 +1096,26 @@
     },
     "autoRefresh": "자동 새로고침",
     "hitokoto": {
-      "title": "한마디"
+      "title": "한마디",
+      "edit": "한마디 편집",
+      "editor": {
+        "title": "한마디 편집",
+        "description": "홈에 표시할 한마디 출처와 사용자 지정 내용을 관리합니다.",
+        "defaultSource": "기본 한마디 사용",
+        "defaultSourceDescription": "한마디 API에서 가져와 사용자 지정 내용과 번갈아 표시합니다.",
+        "customList": "사용자 지정 내용",
+        "customListDescription": "여러 내용을 추가할 수 있으며 출처는 비워둘 수 있습니다.",
+        "add": "내용 추가",
+        "empty": "사용자 지정 내용이 없습니다. 클릭하여 첫 내용을 추가하세요.",
+        "item": "내용 {{index}}",
+        "remove": "내용 {{index}} 삭제",
+        "content": "내용 {{index}} 본문",
+        "contentPlaceholder": "홈에 표시할 내용을 입력하세요",
+        "source": "내용 {{index}} 출처",
+        "sourcePlaceholder": "출처(선택)",
+        "blankHint": "기본 한마디가 꺼져 있고 사용자 지정 목록이 비어 있어 한마디 영역이 비어 있습니다.",
+        "saving": "저장 중..."
+      }
     },
     "cards": {
       "add": "카드 추가",
@@ -1086,7 +1123,7 @@
       "editCard": "카드 편집: {{title}}",
       "editContent": "카드 내용 편집",
       "done": "완료",
-      "reset": "기본 레이아웃 복원",
+      "reset": "기본값 복원",
       "styles": {
         "default": {
           "title": "기본 스타일",
@@ -1137,7 +1174,15 @@
       "enabled": "켜짐",
       "disabled": "꺼짐",
       "visualEnabled": "비전 활성화",
-      "memoryEnabled": "메모리 활성화"
+      "memoryEnabled": "메모리 활성화",
+      "recentOnline": "최근 온라인",
+      "recentOnlineRange": "최근 24시간",
+      "recentOnlineChart": "최근 24시간 온라인 시간 차트",
+      "recentOnlineTotal": "온라인 {{time}}",
+      "online": "온라인",
+      "clickToReturn": "클릭하여 돌아가기",
+      "showRecentOnline": "최근 온라인 차트 보기",
+      "showStatus": "활동 상태로 돌아가기"
     },
     "versionCard": {
       "title": "MaiBot 버전",

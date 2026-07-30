@@ -218,6 +218,8 @@ describe('Header', () => {
     render(<Header {...props} />)
 
     expect(screen.getByTestId('background-header')).toBeInTheDocument()
+    expect(document.querySelector('[data-dashboard-header="true"]')).toHaveClass('bg-background')
+    expect(document.querySelector('[data-dashboard-header="true"]')).not.toHaveClass('bg-card/80')
     expect(screen.getAllByRole('link', { name: 'sidebar.menu.focusCompanion' })[0]).toHaveAttribute(
       'href',
       '/focus'

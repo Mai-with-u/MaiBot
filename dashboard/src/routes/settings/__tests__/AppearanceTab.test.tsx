@@ -235,34 +235,34 @@ describe('AppearanceTab 主题模式与界面风格', () => {
       expect(screen.getByText(tokenName)).toBeInTheDocument()
     }
     // 未来复古专属配置不应出现
-    expect(screen.queryByText('未来复古配置')).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.appearance.retroConfig')).not.toBeInTheDocument()
     // 自定义 CSS 为空时清除按钮禁用
     expect(screen.getByRole('button', { name: /clearCss/ })).toBeDisabled()
   })
 
-  it('未来复古风格隐藏 modern 区块并可切换纸面颗粒开关', async () => {
+  it('未来复古风格隐藏 modern 区块并可切换纸面纹理', async () => {
     const user = userEvent.setup()
     themeState = makeThemeState({ dashboardStyle: 'future-retro' })
     render(<AppearanceTab />)
 
-    expect(screen.getByText('未来复古配置')).toBeInTheDocument()
+    expect(screen.getByText('settings.appearance.retroConfig')).toBeInTheDocument()
     expect(screen.queryByText('settings.appearance.customCss')).not.toBeInTheDocument()
     expect(screen.queryByText('settings.appearance.importExportTheme')).not.toBeInTheDocument()
 
-    // 默认开启纸面颗粒，焦点高亮设置已移除。
-    const paperSwitch = screen.getByRole('switch', { name: '纸面颗粒' })
-    expect(paperSwitch).toBeChecked()
-    expect(screen.queryByRole('switch', { name: '焦点高亮' })).not.toBeInTheDocument()
-
-    await user.click(paperSwitch)
+    expect(
+      screen.getByRole('button', { name: 'settings.appearance.retroTextureFine' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    await user.click(
+      screen.getByRole('button', { name: 'settings.appearance.retroTextureDots' })
+    )
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       styleConfig: {
         futureRetro: {
-          paperTexture: false,
+          ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
+          textureStyle: 'dot-grid',
         },
       },
     })
-
   })
 })
 
