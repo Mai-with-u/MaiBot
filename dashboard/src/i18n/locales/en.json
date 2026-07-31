@@ -57,6 +57,118 @@
       "settings": "WebUI Settings"
     }
   },
+  "statisticsPage": {
+    "title": "Detailed Statistics",
+    "description": "Review model calls, tokens, costs, messages, and uptime across MaiBot's runtime.",
+    "generatedAt": "Statistics through: {{time}}",
+    "periodRange": "Period: {{start}} to {{end}}",
+    "empty": "No data for this period",
+    "actions": {
+      "refresh": "Refresh",
+      "openHtml": "Open HTML report"
+    },
+    "error": {
+      "title": "Failed to load detailed statistics",
+      "description": "Please try again later"
+    },
+    "periods": {
+      "all_time": "Since deployment",
+      "last_30_days": "Last 30 days",
+      "last_7_days": "Last 7 days",
+      "last_3_days": "Last 3 days",
+      "last_24_hours": "Last day",
+      "last_3_hours": "Last 3 hours",
+      "last_hour": "Last hour",
+      "last_15_minutes": "Last 15 minutes"
+    },
+    "tabs": {
+      "trends": "Charts",
+      "metrics": "Metric trends"
+    },
+    "sections": {
+      "breakdowns": "Breakdowns",
+      "distributions": "Distributions"
+    },
+    "breakdowns": {
+      "models": "By model",
+      "modules": "By module",
+      "requestTypes": "By request type",
+      "chats": "Chat messages"
+    },
+    "summary": {
+      "onlineTime": "Total uptime",
+      "messages": "Messages",
+      "replies": "Replies",
+      "requests": "Requests",
+      "tokens": "Total tokens",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "cacheHitRate": "Prompt cache hit rate",
+      "cacheHitTokens": "Cache hit tokens",
+      "cacheMissTokens": "Cache miss tokens",
+      "totalCost": "Total cost",
+      "costPerMessages": "Cost/messages",
+      "costPerReceivedMessages": "Cost/received messages",
+      "costPerReplies": "Cost/replies",
+      "costPerHour": "Cost/hour",
+      "tokensPerHour": "Tokens/hour"
+    },
+    "units": {
+      "per100": "per 100",
+      "perHour": "per hour"
+    },
+    "table": {
+      "name": "Name",
+      "requests": "Calls",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "totalTokens": "Total tokens",
+      "cacheHitTokens": "Cache hit tokens",
+      "cacheMissTokens": "Cache miss tokens",
+      "cacheHitRate": "Cache hit rate",
+      "cost": "Total cost",
+      "avgTime": "Average time",
+      "stdTime": "Time deviation",
+      "callsPerReply": "Calls per reply",
+      "tokensPerReply": "Tokens per reply",
+      "tokensPerCall": "Tokens per call",
+      "chat": "Contact/group",
+      "messages": "Messages"
+    },
+    "distributions": {
+      "ownerCosts": "Call source cost distribution",
+      "modelCosts": "Model cost distribution",
+      "moduleCosts": "Module cost distribution",
+      "requestTypeCosts": "Request type cost distribution",
+      "chatMessages": "Chat message distribution",
+      "chatCosts": "Chat stream cost distribution"
+    },
+    "charts": {
+      "timeRange": "Time range",
+      "timeScale": "Time scale",
+      "toggleSeries": "Show or hide {{name}}"
+    },
+    "ranges": {
+      "6h": "6 hours",
+      "12h": "12 hours",
+      "24h": "24 hours",
+      "48h": "48 hours",
+      "7d": "7 days",
+      "30d": "30 days"
+    },
+    "trends": {
+      "totalCost": "Total cost trend",
+      "moduleCosts": "Module cost trends",
+      "modelCosts": "Model cost trends",
+      "chatMessages": "Chat message trends"
+    },
+    "metrics": {
+      "costPerMessages": "Cost per message trend",
+      "costPerHour": "Cost per hour trend",
+      "tokensPerHour": "Tokens per hour trend",
+      "costPerReplies": "Cost per reply trend"
+    }
+  },
   "workspace": {
     "switcherLabel": "Switch MaiBot workspace",
     "settings": "Mai Settings",

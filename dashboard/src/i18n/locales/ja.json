@@ -57,6 +57,46 @@
       "settings": "WebUI 設定"
     }
   },
+  "statisticsPage": {
+    "title": "詳細統計データ",
+    "description": "MaiBotの実行中に発生したモデル呼び出し、Token、費用、メッセージ、稼働時間を確認します。",
+    "generatedAt": "統計截止時刻：{{time}}",
+    "periodRange": "統計期間：{{start}} から {{end}}",
+    "empty": "この期間のデータはありません",
+    "actions": { "refresh": "更新", "openHtml": "HTML版を開く" },
+    "error": { "title": "詳細統計を読み込めませんでした", "description": "しばらくしてから再試行してください" },
+    "periods": {
+      "all_time": "デプロイ以降", "last_30_days": "過去30日", "last_7_days": "過去7日",
+      "last_3_days": "過去3日", "last_24_hours": "過去1日", "last_3_hours": "過去3時間",
+      "last_hour": "過去1時間", "last_15_minutes": "過去15分"
+    },
+    "tabs": { "trends": "データグラフ", "metrics": "指標トレンド" },
+    "sections": { "breakdowns": "分類統計", "distributions": "データ分布" },
+    "breakdowns": { "models": "モデル別", "modules": "モジュール別", "requestTypes": "リクエスト種別", "chats": "チャットメッセージ" },
+    "summary": {
+      "onlineTime": "総稼働時間", "messages": "総メッセージ数", "replies": "総返信数", "requests": "総リクエスト数",
+      "tokens": "総Token数", "inputTokens": "入力Token", "outputTokens": "出力Token", "cacheHitRate": "Promptキャッシュヒット率",
+      "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken", "totalCost": "総費用",
+      "costPerMessages": "費用/メッセージ", "costPerReceivedMessages": "費用/受信メッセージ", "costPerReplies": "費用/返信",
+      "costPerHour": "費用/時間", "tokensPerHour": "Token/時間"
+    },
+    "units": { "per100": "100件あたり", "perHour": "1時間あたり" },
+    "table": {
+      "name": "名前", "requests": "呼び出し回数", "inputTokens": "入力Token", "outputTokens": "出力Token",
+      "totalTokens": "総Token", "cacheHitTokens": "キャッシュヒットToken", "cacheMissTokens": "キャッシュミスToken",
+      "cacheHitRate": "キャッシュヒット率", "cost": "累計費用", "avgTime": "平均時間", "stdTime": "時間標準偏差",
+      "callsPerReply": "返信あたりの呼び出し", "tokensPerReply": "返信あたりのToken", "tokensPerCall": "呼び出しあたりのToken",
+      "chat": "連絡先/グループ", "messages": "メッセージ数"
+    },
+    "distributions": {
+      "ownerCosts": "呼び出し元の費用分布", "modelCosts": "モデル費用分布", "moduleCosts": "モジュール費用分布",
+      "requestTypeCosts": "リクエスト種別の費用分布", "chatMessages": "チャットメッセージ分布", "chatCosts": "チャットストリーム費用分布"
+    },
+    "charts": { "timeRange": "時間範囲", "timeScale": "時間尺度", "toggleSeries": "{{name}} の表示を切り替える" },
+    "ranges": { "6h": "6時間", "12h": "12時間", "24h": "24時間", "48h": "48時間", "7d": "7日", "30d": "30日" },
+    "trends": { "totalCost": "総費用トレンド", "moduleCosts": "モジュール別費用トレンド", "modelCosts": "モデル別費用トレンド", "chatMessages": "チャット別メッセージトレンド" },
+    "metrics": { "costPerMessages": "メッセージあたり費用トレンド", "costPerHour": "時間あたり費用トレンド", "tokensPerHour": "時間あたりTokenトレンド", "costPerReplies": "返信あたり費用トレンド" }
+  },
   "workspace": {
     "switcherLabel": "麦麦ワークスペースを切り替え",
     "settings": "麦麦設定",

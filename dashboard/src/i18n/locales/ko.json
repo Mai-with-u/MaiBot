@@ -57,6 +57,44 @@
       "settings": "WebUI 설정"
     }
   },
+  "statisticsPage": {
+    "title": "상세 통계 데이터",
+    "description": "MaiBot 실행 중의 모델 호출, Token, 비용, 메시지 및 온라인 시간을 확인합니다.",
+    "generatedAt": "통계 기준 시각: {{time}}",
+    "periodRange": "통계 기간: {{start}}부터 {{end}}까지",
+    "empty": "이 기간에는 데이터가 없습니다",
+    "actions": { "refresh": "새로고침", "openHtml": "HTML 버전 열기" },
+    "error": { "title": "상세 통계를 불러오지 못했습니다", "description": "잠시 후 다시 시도해 주세요" },
+    "periods": {
+      "all_time": "배포 이후", "last_30_days": "최근 30일", "last_7_days": "최근 7일", "last_3_days": "최근 3일",
+      "last_24_hours": "최근 1일", "last_3_hours": "최근 3시간", "last_hour": "최근 1시간", "last_15_minutes": "최근 15분"
+    },
+    "tabs": { "trends": "데이터 차트", "metrics": "지표 추이" },
+    "sections": { "breakdowns": "분류 통계", "distributions": "데이터 분포" },
+    "breakdowns": { "models": "모델별", "modules": "모듈별", "requestTypes": "요청 유형별", "chats": "채팅 메시지" },
+    "summary": {
+      "onlineTime": "총 온라인 시간", "messages": "총 메시지 수", "replies": "총 답변 수", "requests": "총 요청 수",
+      "tokens": "총 Token 수", "inputTokens": "입력 Token", "outputTokens": "출력 Token", "cacheHitRate": "Prompt 캐시 적중률",
+      "cacheHitTokens": "캐시 적중 Token", "cacheMissTokens": "캐시 미적중 Token", "totalCost": "총 비용",
+      "costPerMessages": "비용/메시지", "costPerReceivedMessages": "비용/수신 메시지", "costPerReplies": "비용/답변",
+      "costPerHour": "비용/시간", "tokensPerHour": "Token/시간"
+    },
+    "units": { "per100": "100개당", "perHour": "시간당" },
+    "table": {
+      "name": "이름", "requests": "호출 횟수", "inputTokens": "입력 Token", "outputTokens": "출력 Token", "totalTokens": "총 Token",
+      "cacheHitTokens": "캐시 적중 Token", "cacheMissTokens": "캐시 미적중 Token", "cacheHitRate": "캐시 적중률", "cost": "누적 비용",
+      "avgTime": "평균 시간", "stdTime": "시간 표준편차", "callsPerReply": "답변당 호출 수", "tokensPerReply": "답변당 Token",
+      "tokensPerCall": "호출당 Token", "chat": "연락처/그룹", "messages": "메시지 수"
+    },
+    "distributions": {
+      "ownerCosts": "호출 소스 비용 분포", "modelCosts": "모델 비용 분포", "moduleCosts": "모듈 비용 분포",
+      "requestTypeCosts": "요청 유형 비용 분포", "chatMessages": "채팅 메시지 분포", "chatCosts": "채팅 스트림 비용 분포"
+    },
+    "charts": { "timeRange": "시간 범위", "timeScale": "시간 척도", "toggleSeries": "{{name}} 표시 전환" },
+    "ranges": { "6h": "6시간", "12h": "12시간", "24h": "24시간", "48h": "48시간", "7d": "7일", "30d": "30일" },
+    "trends": { "totalCost": "총 비용 추이", "moduleCosts": "모듈별 비용 추이", "modelCosts": "모델별 비용 추이", "chatMessages": "채팅별 메시지 추이" },
+    "metrics": { "costPerMessages": "메시지당 비용 추이", "costPerHour": "시간당 비용 추이", "tokensPerHour": "시간당 Token 추이", "costPerReplies": "답변당 비용 추이" }
+  },
   "workspace": {
     "switcherLabel": "MaiBot 작업 공간 전환",
     "settings": "麦麦 설정",

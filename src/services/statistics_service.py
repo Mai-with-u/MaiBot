@@ -11,7 +11,13 @@ from src.common.database.database_model import Messages, ModelUsage, OnlineTime,
 from src.common.logger import get_logger
 from src.common.message_repository import count_messages
 from src.manager.local_store_manager import local_storage
-from src.webui.schemas.statistics import DashboardData, ModelStatistics, StatisticsSummary, TimeSeriesData
+from src.webui.schemas.statistics import (
+    DashboardData,
+    DetailedStatisticsData,
+    ModelStatistics,
+    StatisticsSummary,
+    TimeSeriesData,
+)
 
 logger = get_logger("statistics_service")
 
@@ -21,6 +27,21 @@ DEFAULT_DASHBOARD_CACHE_MAX_AGE_SECONDS = 20 * 60
 DEFAULT_DASHBOARD_CACHE_HOURS = (24, 168, 720)
 _SPARSE_TIME_SERIES_FIELDS = ("hourly_data", "daily_data")
 MODEL_USAGE_BATCH_SIZE = 1000
+
+_detailed_statistics_snapshot: DetailedStatisticsData | None = None
+
+
+def get_detailed_statistics_snapshot() -> DetailedStatisticsData | None:
+    """返回最近一次 HTML 报告生成时同步发布的详细统计快照。"""
+
+    return _detailed_statistics_snapshot
+
+
+def store_detailed_statistics_snapshot(snapshot: DetailedStatisticsData) -> None:
+    """保存详细统计快照，供 WebUI 原生页面读取。"""
+
+    global _detailed_statistics_snapshot
+    _detailed_statistics_snapshot = snapshot
 
 
 async def get_dashboard_statistics(hours: int = 24, *, use_cache: bool = True) -> DashboardData:

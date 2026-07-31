@@ -74,7 +74,7 @@ describe('menuSections 菜单结构', () => {
     expect(dataTransferIndex).toBeLessThan(mcpIndex)
   })
 
-  it('详细统计数据位于扩展与维护分组最底部并使用外部页面', () => {
+  it('详细统计数据位于扩展与维护分组最底部并使用站内页面', () => {
     const extensionsSection = menuSections.find(
       (section) => section.title === 'sidebar.groups.extensionsMonitor'
     )
@@ -82,9 +82,9 @@ describe('menuSections 菜单结构', () => {
 
     expect(statisticsItem).toMatchObject({
       label: 'sidebar.menu.statistics',
-      path: '/maibot_statistics.html',
-      external: true,
+      path: '/statistics',
     })
+    expect(statisticsItem?.external).toBeUndefined()
   })
 
   it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {

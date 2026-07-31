@@ -3,13 +3,28 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.common.logger import get_logger
-from src.services.statistics_service import get_dashboard_statistics, get_model_statistics, get_summary_statistics
+from src.services.statistics_service import (
+    get_dashboard_statistics,
+    get_detailed_statistics_snapshot,
+    get_model_statistics,
+    get_summary_statistics,
+)
 from src.webui.dependencies import require_auth
-from src.webui.schemas.statistics import DashboardData
+from src.webui.schemas.statistics import DashboardData, DetailedStatisticsData
 
 logger = get_logger("webui.statistics")
 
 router = APIRouter(prefix="/statistics", tags=["statistics"], dependencies=[Depends(require_auth)])
+
+
+@router.get("/detailed", response_model=DetailedStatisticsData)
+async def get_detailed_statistics() -> DetailedStatisticsData:
+    """获取与 HTML 报告同源的详细统计快照。"""
+
+    snapshot = get_detailed_statistics_snapshot()
+    if snapshot is None:
+        raise HTTPException(status_code=503, detail="详细统计正在生成，请稍后重试")
+    return snapshot
 
 
 @router.get("/dashboard", response_model=DashboardData)
