@@ -65,8 +65,6 @@ class _RuntimeComponentManagerProtocol(Protocol):
         self, name: str, component_type: str
     ) -> tuple[Optional["ComponentEntry"], Optional[str]]: ...
 
-    def _find_duplicate_plugin_ids(self, plugin_dirs: List[Path]) -> Dict[str, List[Path]]: ...
-
     def _iter_plugin_dirs(self) -> Iterable[Path]: ...
 
     async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool: ...
@@ -753,13 +751,6 @@ class RuntimeComponentCapabilityMixin:
         if not plugin_name:
             return {"success": False, "error": "缺少必要参数 plugin_name"}
 
-        if duplicate_plugin_ids := self._find_duplicate_plugin_ids(list(self._iter_plugin_dirs())):
-            details = "; ".join(
-                f"{conflict_plugin_id}: {', '.join(str(path) for path in paths)}"
-                for conflict_plugin_id, paths in sorted(duplicate_plugin_ids.items())
-            )
-            return {"success": False, "error": f"检测到重复插件 ID，拒绝热重载: {details}"}
-
         try:
             loaded = await self.load_plugin_globally(plugin_name, reason=f"load {plugin_name}")
         except Exception as e:
@@ -781,13 +772,6 @@ class RuntimeComponentCapabilityMixin:
         plugin_name: str = args.get("plugin_name", "")
         if not plugin_name:
             return {"success": False, "error": "缺少必要参数 plugin_name"}
-
-        if duplicate_plugin_ids := self._find_duplicate_plugin_ids(list(self._iter_plugin_dirs())):
-            details = "; ".join(
-                f"{conflict_plugin_id}: {', '.join(str(path) for path in paths)}"
-                for conflict_plugin_id, paths in sorted(duplicate_plugin_ids.items())
-            )
-            return {"success": False, "error": f"检测到重复插件 ID，拒绝热重载: {details}"}
 
         try:
             reloaded = await self.reload_plugins_globally([plugin_name], reason=f"reload {plugin_name}")

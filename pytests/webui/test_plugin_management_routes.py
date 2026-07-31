@@ -57,6 +57,32 @@ def test_installed_plugins_only_scan_plugins_dir_and_exclude_a_memorix(client: T
     assert all("/src/plugins/built_in/" not in plugin["path"] for plugin in payload["plugins"])
 
 
+def test_installed_plugins_expose_duplicate_id_failure_reason(client: TestClient, monkeypatch) -> None:
+    plugins_dir = support_module.get_plugins_dir()
+    (plugins_dir / "demo_plugin" / "config.toml").write_text("[plugin]\nenabled = false\n", encoding="utf-8")
+    duplicate_dir = plugins_dir / "demo_plugin_copy"
+    duplicate_dir.mkdir()
+    duplicate_manifest = json.loads((plugins_dir / "demo_plugin" / "_manifest.json").read_text(encoding="utf-8"))
+    (duplicate_dir / "_manifest.json").write_text(json.dumps(duplicate_manifest), encoding="utf-8")
+    failure_reason = (
+        "插件 ID 重复，已阻止加载；冲突目录: "
+        f"{plugins_dir / 'demo_plugin'}, {duplicate_dir}"
+    )
+    monkeypatch.setattr(management_module, "_get_runtime_plugin_load_statuses", lambda: {"test.demo": "failed"})
+    monkeypatch.setattr(
+        management_module,
+        "_get_runtime_plugin_load_failure_reasons",
+        lambda: {"test.demo": failure_reason},
+    )
+    response = client.get("/api/webui/plugins/installed")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["plugins"][0]["load_status"] == "failed"
+    assert payload["plugins"][0]["load_error"] == failure_reason
+
+
 def test_resolve_installed_plugin_path_falls_back_to_manifest_id(client: TestClient):
     plugin_path = support_module.resolve_installed_plugin_path("test.demo")
 

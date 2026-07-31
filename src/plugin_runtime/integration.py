@@ -177,11 +177,16 @@ class PluginRuntimeManager(
         return validator.build_plugin_dependency_map(plugin_dirs)
 
     @classmethod
-    def _discover_llm_provider_conflicts(cls, plugin_dirs: Iterable[Path]) -> Dict[str, str]:
+    def _discover_llm_provider_conflicts(
+        cls,
+        plugin_dirs: Iterable[Path],
+        excluded_plugin_ids: Optional[Set[str]] = None,
+    ) -> Dict[str, str]:
         """扫描插件 Manifest，发现 LLM Provider client_type 冲突。
 
         Args:
             plugin_dirs: 需要扫描的插件根目录集合。
+            excluded_plugin_ids: 已因其他原因被隔离、不参与 Provider 冲突判定的插件 ID。
 
         Returns:
             Dict[str, str]: 需要阻止加载的插件 ID 与原因映射。
@@ -191,8 +196,11 @@ class PluginRuntimeManager(
             log_errors=False,
             log_compat_warnings=False,
         )
+        excluded_ids = excluded_plugin_ids or set()
         provider_owners: Dict[str, List[str]] = {}
         for _plugin_path, manifest in validator.iter_plugin_manifests(plugin_dirs, require_entrypoint=True):
+            if manifest.id in excluded_ids:
+                continue
             for client_type in manifest.llm_provider_client_types:
                 provider_owners.setdefault(client_type, []).append(manifest.id)
 
@@ -230,12 +238,25 @@ class PluginRuntimeManager(
         cls,
         builtin_dirs: Sequence[Path],
         third_party_dirs: Sequence[Path],
+        excluded_plugin_ids: Optional[Set[str]] = None,
     ) -> tuple[bool, bool]:
         """返回内置组与第三方组之间的跨 Supervisor 依赖关系。"""
 
         builtin_dependencies = cls._discover_plugin_dependency_map(builtin_dirs)
         third_party_dependencies = cls._discover_plugin_dependency_map(third_party_dirs)
         adapter_plugin_ids = cls._discover_plugin_ids_by_type(third_party_dirs, "adapter")
+        excluded_ids = excluded_plugin_ids or set()
+        builtin_dependencies = {
+            plugin_id: dependencies
+            for plugin_id, dependencies in builtin_dependencies.items()
+            if plugin_id not in excluded_ids
+        }
+        third_party_dependencies = {
+            plugin_id: dependencies
+            for plugin_id, dependencies in third_party_dependencies.items()
+            if plugin_id not in excluded_ids
+        }
+        adapter_plugin_ids.difference_update(excluded_ids)
         builtin_plugin_ids = set(builtin_dependencies)
         third_party_plugin_ids = set(third_party_dependencies)
 
@@ -258,12 +279,14 @@ class PluginRuntimeManager(
         cls,
         builtin_dirs: Sequence[Path],
         third_party_dirs: Sequence[Path],
+        excluded_plugin_ids: Optional[Set[str]] = None,
     ) -> List[str]:
         """根据跨 Supervisor 依赖关系决定 Runner 启动顺序。"""
 
         builtin_needs_third_party, third_party_needs_builtin = cls._get_group_dependency_flags(
             builtin_dirs,
             third_party_dirs,
+            excluded_plugin_ids=excluded_plugin_ids,
         )
 
         if builtin_needs_third_party and third_party_needs_builtin:
@@ -364,11 +387,25 @@ class PluginRuntimeManager(
             DependencySyncState: 同步后的环境变更状态与阻止列表变化集合。
         """
 
-        result = await self._plugin_dependency_pipeline.execute(plugin_dirs)
-        blocked_plugin_reasons = {
-            **result.blocked_plugin_reasons,
-            **self._discover_llm_provider_conflicts(plugin_dirs),
-        }
+        duplicate_plugin_reasons = self._build_duplicate_plugin_block_reasons(plugin_dirs)
+        if duplicate_plugin_reasons:
+            details = "; ".join(
+                f"{plugin_id}: {reason}" for plugin_id, reason in sorted(duplicate_plugin_reasons.items())
+            )
+            logger.error(f"检测到重复插件 ID，冲突插件将被隔离，其余插件继续加载: {details}")
+
+        result = await self._plugin_dependency_pipeline.execute(
+            plugin_dirs,
+            initial_blocked_plugin_reasons=duplicate_plugin_reasons,
+        )
+        blocked_plugin_reasons = dict(result.blocked_plugin_reasons)
+        llm_provider_conflicts = self._discover_llm_provider_conflicts(
+            plugin_dirs,
+            excluded_plugin_ids=set(blocked_plugin_reasons),
+        )
+        for plugin_id, reason in llm_provider_conflicts.items():
+            existing_reason = blocked_plugin_reasons.get(plugin_id)
+            blocked_plugin_reasons[plugin_id] = f"{existing_reason}；{reason}" if existing_reason else reason
         changed_plugin_ids = self._set_blocked_plugin_reasons(blocked_plugin_reasons)
         return DependencySyncState(
             blocked_changed_plugin_ids=changed_plugin_ids,
@@ -430,7 +467,7 @@ class PluginRuntimeManager(
             return False
 
         if not entries:
-            return False
+            return True
 
         allowed_names = {".git", "__pycache__"}
         entry_names = {entry.name for entry in entries}
@@ -485,10 +522,16 @@ class PluginRuntimeManager(
             "builtin": self._builtin_supervisor,
             "third_party": self._third_party_supervisor,
         }
-        start_order = self._build_group_start_order(builtin_dirs, third_party_dirs)
+        excluded_plugin_ids = set(self._blocked_plugin_reasons)
+        start_order = self._build_group_start_order(
+            builtin_dirs,
+            third_party_dirs,
+            excluded_plugin_ids=excluded_plugin_ids,
+        )
         builtin_needs_third_party, third_party_needs_builtin = self._get_group_dependency_flags(
             builtin_dirs,
             third_party_dirs,
+            excluded_plugin_ids=excluded_plugin_ids,
         )
 
         try:
@@ -563,14 +606,6 @@ class PluginRuntimeManager(
 
         builtin_dirs, third_party_dirs = self._resolve_runtime_plugin_dirs()
         self._cleanup_plugin_load_residue_dirs(third_party_dirs)
-        if duplicate_plugin_ids := self._find_duplicate_plugin_ids(builtin_dirs + third_party_dirs):
-            details = "; ".join(
-                f"{plugin_id}: {', '.join(str(path) for path in paths)}"
-                for plugin_id, paths in sorted(duplicate_plugin_ids.items())
-            )
-            logger.error(f"检测到重复插件 ID，拒绝执行 Supervisor 重启: {details}")
-            return False
-
         logger.info(f"开始重启插件运行时 Supervisor: {reason}")
         await self._stop_supervisors()
         self._build_supervisors(builtin_dirs, third_party_dirs)
@@ -603,14 +638,6 @@ class PluginRuntimeManager(
 
         builtin_dirs, third_party_dirs = self._resolve_runtime_plugin_dirs()
         self._cleanup_plugin_load_residue_dirs(third_party_dirs)
-
-        if duplicate_plugin_ids := self._find_duplicate_plugin_ids(builtin_dirs + third_party_dirs):
-            details = "; ".join(
-                f"{plugin_id}: {', '.join(str(p) for p in paths)}"
-                for plugin_id, paths in sorted(duplicate_plugin_ids.items())
-            )
-            logger.error(f"检测到重复插件 ID，拒绝启动插件运行时: {details}")
-            return
 
         if not builtin_dirs and not third_party_dirs:
             logger.info("未找到任何插件目录，跳过插件运行时启动")
@@ -825,12 +852,14 @@ class PluginRuntimeManager(
         statuses: Dict[str, str] = {}
         for supervisor in self.supervisors:
             statuses.update(supervisor.get_plugin_load_statuses())
+        for plugin_id in self._blocked_plugin_reasons:
+            statuses[plugin_id] = "failed"
         return statuses
 
     def get_plugin_load_failure_reasons(self) -> Dict[str, str]:
         """汇总所有 Supervisor 上报的插件加载失败原因。"""
 
-        reasons: Dict[str, str] = {}
+        reasons: Dict[str, str] = dict(self._blocked_plugin_reasons)
         for supervisor in self.supervisors:
             get_reasons = getattr(supervisor, "get_plugin_load_failure_reasons", None)
             if callable(get_reasons):
@@ -1459,6 +1488,16 @@ class PluginRuntimeManager(
             if len(set(paths)) > 1
         }
 
+    @classmethod
+    def _build_duplicate_plugin_block_reasons(cls, plugin_dirs: Sequence[Path]) -> Dict[str, str]:
+        """为每个重复插件 ID 构建可直接展示给 WebUI 的隔离原因。"""
+
+        duplicate_plugin_ids = cls._find_duplicate_plugin_ids(list(plugin_dirs))
+        return {
+            plugin_id: f"插件 ID 重复，已阻止加载；冲突目录: {', '.join(str(path) for path in paths)}"
+            for plugin_id, paths in sorted(duplicate_plugin_ids.items())
+        }
+
     async def _start_plugin_file_watcher(self) -> None:
         """启动插件文件监视器，并建立源码与配置两类订阅。"""
         if self._plugin_file_watcher is not None and self._plugin_file_watcher.running:
@@ -1743,14 +1782,6 @@ class PluginRuntimeManager(
             return
 
         plugin_dirs = list(self._iter_plugin_dirs())
-        if duplicate_plugin_ids := self._find_duplicate_plugin_ids(plugin_dirs):
-            details = "; ".join(
-                f"{plugin_id}: {', '.join(str(path) for path in paths)}"
-                for plugin_id, paths in sorted(duplicate_plugin_ids.items())
-            )
-            logger.error(f"检测到重复插件 ID，跳过本次插件热重载: {details}")
-            return
-
         relevant_source_changes = [
             change.path.resolve()
             for change in changes
