@@ -113,47 +113,47 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     # 模型相关
     "model_utils": ("#d700d7", None, False),
     # A_Memorix 记忆系统
-    "a_memorix.host_service": ("#5f5fff", None, False),
-    "A_Memorix.SDKMemoryKernel": ("#5f5fd7", None, False),
-    "A_Memorix.LifecycleOrchestrator": ("#5f5faf", None, False),
-    "A_Memorix.RuntimeSelfCheck": ("#5f7aff", None, False),
-    "A_Memorix.MemoryMonitor": ("#5f87ff", None, False),
-    "A_Memorix.ModelRouting": ("#5f87d7", None, False),
-    "A_Memorix.EmbeddingManager": ("#5f87af", None, False),
-    "A_Memorix.VectorStore": ("#5faaff", None, False),
-    "A_Memorix.MetadataStore": ("#5faad7", None, False),
-    "A_Memorix.MetadataSchema": ("#5fad7f", None, False),
-    "A_Memorix.MetadataFTS": ("#5faaa5", None, False),
-    "A_Memorix.DualPathRetriever": ("#5fd7aa", None, False),
-    "A_Memorix.SearchRuntimeInitializer": ("#5fd7d7", None, False),
-    "A_Memorix.SearchExecutionService": ("#5fd7ff", None, False),
-    "A_Memorix.SearchHitProcessingService": ("#5fffd7", None, False),
-    "A_Memorix.DynamicThresholdFilter": ("#5fffaa", None, False),
-    "A_Memorix.SparseBM25": ("#5fff5f", None, False),
-    "A_Memorix.GraphRelationRecall": ("#7aff5f", None, False),
-    "A_Memorix.Matcher": ("#7affaa", None, False),
-    "A_Memorix.AggregateQueryService": ("#7affd7", None, False),
-    "A_Memorix.PersonalizedPageRank": ("#7ad7ff", None, False),
-    "A_Memorix.Quantization": ("#7aaaff", None, False),
-    "A_Memorix.EpisodeService": ("#7a7aff", None, False),
-    "A_Memorix.EpisodeSegmentationService": ("#7a5fff", None, False),
-    "A_Memorix.EpisodeRetrievalService": ("#9a5fff", None, False),
-    "A_Memorix.PersonProfileService": ("#9a7aff", None, False),
-    "A_Memorix.RelationWriteService": ("#9aaaff", None, False),
-    "A_Memorix.RetrievalTuningManager": ("#9ad7ff", None, False),
-    "A_Memorix.SummaryImporter": ("#9affd7", None, False),
-    "A_Memorix.WebImportManager": ("#9affaa", None, False),
-    "A_Memorix.LPMMImport": ("#9aff5f", None, False),
-    "A_Memorix.LPMMConverter": ("#9ad75f", None, False),
-    "A_Memorix.FormatMigration": ("#9aaa5f", None, False),
-    "A_Memorix.MaiBotMigration": ("#9a7a5f", None, False),
-    "A_Memorix.AutoImport": ("#9a5f5f", None, False),
-    # Maisaka 麦酒
-    "maisaka_chat_history_visual_refresher": ("#0fd5d5", None, False),
-    "maisaka_cli_sender": ("#1bb2ed", None, False),
-    "maisaka_expression_selector": ("#5fd7af", None, False),
-    "maisaka_heuristic_memory": ("#5fd7d7", None, False),
-    "maisaka_idle_backoff": ("#5fd5a0", None, False),
+    "a_memorix.host_service": ("#5f5fff", None, False),    # 记忆主服务
+    "A_Memorix.SDKMemoryKernel": ("#5f5fd7", None, False),    # 记忆系统内核
+    "A_Memorix.LifecycleOrchestrator": ("#5f5faf", None, False),    # 生命周期编排
+    "A_Memorix.RuntimeSelfCheck": ("#5f7aff", None, False),    # 运行时自检
+    "A_Memorix.MemoryMonitor": ("#5f87ff", None, False),    # 记忆监控
+    "A_Memorix.ModelRouting": ("#5f87d7", None, False),    # 模型路由
+    "A_Memorix.EmbeddingManager": ("#5f87af", None, False),    # 嵌入管理
+    "A_Memorix.VectorStore": ("#5faaff", None, False),    # 向量存储
+    "A_Memorix.MetadataStore": ("#5faad7", None, False),    # 元数据存储
+    "A_Memorix.MetadataSchema": ("#5fad7f", None, False),    # 元数据Schema
+    "A_Memorix.MetadataFTS": ("#5faaa5", None, False),    # 元数据全文检索
+    "A_Memorix.DualPathRetriever": ("#5fd7aa", None, False),    # 双池检索
+    "A_Memorix.SearchRuntimeInitializer": ("#5fd7d7", None, False),    # 检索运行时初始化
+    "A_Memorix.SearchExecutionService": ("#5fd7ff", None, False),    # 检索执行
+    "A_Memorix.SearchHitProcessingService": ("#5fffd7", None, False),    # 检索命中处理
+    "A_Memorix.DynamicThresholdFilter": ("#5fffaa", None, False),    # 动态阈值
+    "A_Memorix.SparseBM25": ("#5fff5f", None, False),    # 稀疏检索
+    "A_Memorix.GraphRelationRecall": ("#7aff5f", None, False),    # 记忆图关系召回
+    "A_Memorix.Matcher": ("#7affaa", None, False),    # 匹配器
+    "A_Memorix.AggregateQueryService": ("#7affd7", None, False),    # 聚合查询
+    "A_Memorix.PersonalizedPageRank": ("#7ad7ff", None, False),    # 个性化PageRank
+    "A_Memorix.Quantization": ("#7aaaff", None, False),    # 量化
+    "A_Memorix.EpisodeService": ("#7a7aff", None, False),    # 情景记忆
+    "A_Memorix.EpisodeSegmentationService": ("#7a5fff", None, False),    # 情景切分
+    "A_Memorix.EpisodeRetrievalService": ("#9a5fff", None, False),    # 情景检索
+    "A_Memorix.PersonProfileService": ("#9a7aff", None, False),    # 人物画像
+    "A_Memorix.RelationWriteService": ("#9aaaff", None, False),    # 关系写入
+    "A_Memorix.RetrievalTuningManager": ("#9ad7ff", None, False),    # 记忆调优
+    "A_Memorix.SummaryImporter": ("#9affd7", None, False),    # 摘要导入
+    "A_Memorix.WebImportManager": ("#9affaa", None, False),    # Web导入
+    "A_Memorix.LPMMImport": ("#9aff5f", None, False),    # LPMM导入
+    "A_Memorix.LPMMConverter": ("#9ad75f", None, False),    # LPMM转换
+    "A_Memorix.FormatMigration": ("#9aaa5f", None, False),    # 格式迁移
+    "A_Memorix.MaiBotMigration": ("#9a7a5f", None, False),    # MaiBot迁移
+    "A_Memorix.AutoImport": ("#9a5f5f", None, False),    # 自动导入
+    # Maisaka 推理引擎
+    "maisaka_chat_history_visual_refresher": ("#0fd5d5", None, False),    # Maisaka推理引擎
+    "maisaka_cli_sender": ("#1bb2ed", None, False),    # Maisaka聊天循环
+    "maisaka_expression_selector": ("#5fd7af", None, False),    # 聊天历史刷新
+    "maisaka_heuristic_memory": ("#5fd7d7", None, False),    # CLI发送器
+    "maisaka_idle_backoff": ("#5fd5a0", None, False),    # 表达选择
     "maisaka_jargon_context": ("#5fafaf", None, False),
     "maisaka_mid_term_memory": ("#5faaaa", None, False),
     "maisaka_monitor": ("#5faa87", None, False),
