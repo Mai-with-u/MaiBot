@@ -149,26 +149,26 @@ MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "A_Memorix.MaiBotMigration": ("#9a7a5f", None, False),    # MaiBot迁移
     "A_Memorix.AutoImport": ("#9a5f5f", None, False),    # 自动导入
     # Maisaka 推理引擎
-    "maisaka_chat_history_visual_refresher": ("#0fd5d5", None, False),    # Maisaka推理引擎
-    "maisaka_cli_sender": ("#1bb2ed", None, False),    # Maisaka聊天循环
-    "maisaka_expression_selector": ("#5fd7af", None, False),    # 聊天历史刷新
-    "maisaka_heuristic_memory": ("#5fd7d7", None, False),    # CLI发送器
-    "maisaka_idle_backoff": ("#5fd5a0", None, False),    # 表达选择
-    "maisaka_jargon_context": ("#5fafaf", None, False),
-    "maisaka_mid_term_memory": ("#5faaaa", None, False),
-    "maisaka_monitor": ("#5faa87", None, False),
-    "maisaka_monitor_event_store": ("#5faa5f", None, False),
-    "maisaka_monitor_message_payload": ("#5fd75f", None, False),
-    "maisaka_person_profile_injector": ("#5fd787", None, False),
-    "maisaka_tool_post_execution": ("#5fd7aa", None, False),
-    "maisaka_visual_mode": ("#5fd7c5", None, False),
-    "maisaka_builtin_context": ("#5fd5d5", None, False),
-    "maisaka_builtin_query_memory": ("#5fd5af", None, False),
-    "maisaka_builtin_reply": ("#5fd587", None, False),
-    "maisaka_builtin_send_emoji": ("#5fd55f", None, False),
-    "maisaka_builtin_send_image": ("#5fd57a", None, False),
-    "maisaka_builtin_view_forward_message": ("#5fd5aa", None, False),
-    "maisaka.browser_tool": ("#1bd5c5", None, False),
+    "maisaka_chat_history_visual_refresher": ("#0fd5d5", None, False),   # 聊天历史刷新
+    "maisaka_cli_sender": ("#1bb2ed", None, False),    # CLI发送器
+    "maisaka_expression_selector": ("#5fd7af", None, False),   # 表达选择 
+    "maisaka_heuristic_memory": ("#5fd7d7", None, False),    # 启发式记忆
+    "maisaka_idle_backoff": ("#5fd5a0", None, False),     #    空闲回避
+    "maisaka_jargon_context": ("#5fafaf", None, False),    # 黑话上下文
+    "maisaka_mid_term_memory": ("#5faaaa", None, False),    # 中期记忆
+    "maisaka_monitor": ("#5faa87", None, False),    # Maisaka监控
+    "maisaka_monitor_event_store": ("#5faa5f", None, False),    # 监控事件监控
+    "maisaka_monitor_message_payload": ("#5fd75f", None, False),    # 监控消息载荷
+    "maisaka_person_profile_injector": ("#5fd787", None, False),    # 人物画像注入
+    "maisaka_tool_post_execution": ("#5fd7aa", None, False),    # 工具后执行
+    "maisaka_visual_mode": ("#5fd7c5", None, False),    # 视觉模式
+    "maisaka_builtin_context": ("#5fd5d5", None, False),    # 内置上下文
+    "maisaka_builtin_query_memory": ("#5fd5af", None, False),    # 内置查询记忆
+    "maisaka_builtin_reply": ("#5fd587", None, False),    # 内置回复
+    "maisaka_builtin_send_emoji": ("#5fd55f", None, False),    # 内置发表情
+    "maisaka_builtin_send_image": ("#5fd57a", None, False),    # 内置发图
+    "maisaka_builtin_view_forward_message": ("#5fd5aa", None, False),    # 内置查看转发
+    "maisaka.browser_tool": ("#1bd5c5", None, False),    # 浏览器工具
     # 服务层
     "database": ("#00d700", None, False),
     "database_migration": ("#00d75f", None, False),
