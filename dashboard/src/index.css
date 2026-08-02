@@ -2883,10 +2883,13 @@
   }
 }
 
-/* 首页卡片使用轻量拟物层次；无边框预设保持完全平面。 */
+/* 首页和插件商店卡片共用轻量拟物层次；首页无边框预设保持完全平面。 */
 :root
-  [data-home-summary-cards='true']
-  [data-home-card-style]:not([data-home-card-style='borderless']) {
+  :is(
+    [data-home-summary-cards='true']
+      [data-home-card-style]:not([data-home-card-style='borderless']),
+    [data-plugin-market-card='true']
+  ) {
   border-radius: var(--visual-radius-lg);
   box-shadow:
     0 3px 0 rgb(63 45 24 / 0.2),
@@ -2901,16 +2904,22 @@
 }
 
 :root.dark
-  [data-home-summary-cards='true']
-  [data-home-card-style]:not([data-home-card-style='borderless']) {
+  :is(
+    [data-home-summary-cards='true']
+      [data-home-card-style]:not([data-home-card-style='borderless']),
+    [data-plugin-market-card='true']
+  ) {
   box-shadow:
     0 3px 0 rgb(0 0 0 / 0.42),
     0 6px 10px rgb(0 0 0 / 0.26) !important;
 }
 
 :root[data-dashboard-style='future-retro']
-  [data-home-summary-cards='true']
-  [data-home-card-style]:not([data-home-card-style='borderless']) {
+  :is(
+    [data-home-summary-cards='true']
+      [data-home-card-style]:not([data-home-card-style='borderless']),
+    [data-plugin-market-card='true']
+  ) {
   border-radius: 0 !important;
 }
 
