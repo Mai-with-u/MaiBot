@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Check,
   ChevronLeft,
@@ -43,6 +43,10 @@ import {
   updateBotConfigRaw,
 } from '@/lib/config-api'
 import { fieldHooks } from '@/lib/field-hooks'
+import {
+  getConfigSearchField,
+  scrollToConfigSearchField,
+} from '@/lib/config-search-navigation'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { cn } from '@/lib/utils'
 
@@ -182,6 +186,8 @@ function BotConfigPageContent() {
   )
   const { toast } = useToast()
   const { triggerRestart, isRestarting } = useRestart()
+  const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
+  const searchFieldPath = useMemo(() => getConfigSearchField(routeSearch), [routeSearch])
 
   const [sectionValues, setSectionValues] = useState<Record<string, ConfigSectionData | null>>({})
 
@@ -320,7 +326,7 @@ function BotConfigPageContent() {
   }, [toast])
 
   // 加载配置
-  const loadConfig = useCallback(async () => {
+  const loadConfig = useCallback(async (): Promise<boolean> => {
     try {
       setLoading(true)
       // 用 allSettled：主配置为必需，schema 为可选，二者失败互不影响
@@ -335,7 +341,7 @@ function BotConfigPageContent() {
           variant: 'destructive',
         })
         setLoading(false)
-        return
+        return false
       }
       parseAndSetConfig(result.value)
       if (schemaResult.status === 'fulfilled' && schemaResult.value) {
@@ -345,6 +351,7 @@ function BotConfigPageContent() {
       }
       setHasUnsavedChanges(false)
       initialLoadRef.current = false
+      return true
     } catch (error) {
       console.error('加载配置失败:', error)
       toast({
@@ -352,13 +359,14 @@ function BotConfigPageContent() {
         description: '无法加载配置文件',
         variant: 'destructive',
       })
+      return false
     } finally {
       setLoading(false)
     }
   }, [toast, parseAndSetConfig])
 
   useEffect(() => {
-    loadConfig()
+    void loadConfig()
   }, [loadConfig])
 
   useEffect(() => {
@@ -402,11 +410,12 @@ function BotConfigPageContent() {
     }
   })
 
-  const { triggerAutoSave, cancelPendingAutoSave } = useAutoSave(
-    initialLoadRef.current,
-    setAutoSaving,
-    setHasUnsavedChanges
-  )
+  const {
+    triggerAutoSave,
+    cancelPendingAutoSave,
+    resetAutoSaveState,
+    runWithAutoSaveBarrier,
+  } = useAutoSave(initialLoadRef.current, setAutoSaving, setHasUnsavedChanges)
 
   const dismissFileModeNotice = useCallback(() => {
     localStorage.setItem(FILE_MODE_NOTICE_DISMISSED_KEY, 'true')
@@ -454,7 +463,9 @@ function BotConfigPageContent() {
         description: '配置已保存',
       })
       // 重新加载可视化配置
-      await loadConfig()
+      if (await loadConfig()) {
+        resetAutoSaveState()
+      }
     } catch (error) {
       setHasTomlError(true)
       const errorMsg = error instanceof Error ? error.message : '保存配置失败'
@@ -488,6 +499,7 @@ function BotConfigPageContent() {
       try {
         const result = await getBotConfig()
         parseAndSetConfig(result)
+        resetAutoSaveState()
         setHasUnsavedChanges(false)
       } catch (error) {
         console.error('加载配置失败:', error)
@@ -504,11 +516,8 @@ function BotConfigPageContent() {
   const saveConfig = async () => {
     try {
       setSaving(true)
-      // 取消待处理的自动保存
-      cancelPendingAutoSave()
-
-      await updateBotConfig(buildFullConfig())
-      setHasUnsavedChanges(false)
+      const configToSave = buildFullConfig()
+      await runWithAutoSaveBarrier(() => updateBotConfig(configToSave))
       toast({
         title: '保存成功',
         description: '麦麦设置已保存',
@@ -526,12 +535,15 @@ function BotConfigPageContent() {
   }
 
   const handleReloadFromFile = async () => {
-    cancelPendingAutoSave()
-    await loadConfig()
+    await cancelPendingAutoSave()
+    const loaded = await loadConfig()
+    if (!loaded) {
+      return
+    }
+    resetAutoSaveState()
     if (editMode === 'source') {
       await loadSourceCode()
     }
-    setHasUnsavedChanges(false)
     toast({
       title: '已刷新',
       description: '已从 bot_config.toml 重新读取配置',
@@ -547,11 +559,8 @@ function BotConfigPageContent() {
   const handleSaveAndRestart = async () => {
     try {
       setSaving(true)
-      // 取消待处理的自动保存
-      cancelPendingAutoSave()
-
-      await updateBotConfig(buildFullConfig())
-      setHasUnsavedChanges(false)
+      const configToSave = buildFullConfig()
+      await runWithAutoSaveBarrier(() => updateBotConfig(configToSave))
       toast({
         title: '保存成功',
         description: '配置已保存，即将重启麦麦...',
@@ -578,6 +587,15 @@ function BotConfigPageContent() {
     if (!configSchema) return []
     return buildTabGroupsFromSchema(configSchema)
   }, [configSchema])
+
+  useEffect(() => {
+    if (!searchFieldPath) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => setEditMode('detail'))
+    return () => window.cancelAnimationFrame(frameId)
+  }, [searchFieldPath])
 
   const setSectionValue = useCallback((sectionName: string, value: ConfigSectionData) => {
     setSectionValues((current) => ({
@@ -757,6 +775,7 @@ function BotConfigPageContent() {
             sectionValues={sectionValues}
             setSectionValue={setSectionValue}
             setHasUnsavedChanges={setHasUnsavedChanges}
+            searchFieldPath={searchFieldPath}
           />
         )}
 
@@ -804,10 +823,18 @@ interface DynamicConfigTabsProps {
   sectionValues: Record<string, ConfigSectionData | null>
   setSectionValue: (sectionName: string, value: ConfigSectionData) => void
   setHasUnsavedChanges: (v: boolean) => void
+  searchFieldPath: string
 }
 
 function DynamicConfigTabs(props: DynamicConfigTabsProps) {
-  const { configSchema, sectionValues, setHasUnsavedChanges, setSectionValue, tabGroups } = props
+  const {
+    configSchema,
+    searchFieldPath,
+    sectionValues,
+    setHasUnsavedChanges,
+    setSectionValue,
+    tabGroups,
+  } = props
   const initialActiveTab = tabGroups[0]?.id ?? ''
   const [expanded, setExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState(initialActiveTab)
@@ -822,12 +849,69 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
       initialActiveTab === 'experimental' &&
       localStorage.getItem(EXPERIMENTAL_FEATURES_NOTICE_DISMISSED_KEY) !== 'true'
   )
+  const scrolledSearchFieldRef = useRef('')
 
   useEffect(() => {
     if (!tabGroups.some((tab) => tab.id === activeTab)) {
       setActiveTab(tabGroups[0]?.id ?? '')
     }
   }, [activeTab, tabGroups])
+
+  useEffect(() => {
+    if (!searchFieldPath) {
+      return
+    }
+
+    const [sectionName, subcategoryName] = searchFieldPath.split('.')
+    const targetTab = tabGroups.find((tab) => tab.sections.includes(sectionName))
+    if (!targetTab) {
+      return
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setActiveTab(targetTab.id)
+      setAdvancedVisible(true)
+      if (targetTab.advanced) {
+        setExpanded(true)
+      }
+
+      if (subcategoryName) {
+        const subtabId = `${sectionName}.${subcategoryName}`
+        setActiveSubtabByGroup((current) => ({
+          ...current,
+          [targetTab.id]: subtabId,
+        }))
+        setExpandedSubtabGroups((current) => ({
+          ...current,
+          [targetTab.id]: true,
+        }))
+      }
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [searchFieldPath, tabGroups])
+
+  useEffect(() => {
+    if (!searchFieldPath || scrolledSearchFieldRef.current === searchFieldPath) {
+      return
+    }
+
+    let nestedFrameId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      nestedFrameId = window.requestAnimationFrame(() => {
+        if (scrollToConfigSearchField(searchFieldPath)) {
+          scrolledSearchFieldRef.current = searchFieldPath
+        }
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      if (nestedFrameId) {
+        window.cancelAnimationFrame(nestedFrameId)
+      }
+    }
+  }, [activeSubtabByGroup, activeTab, advancedVisible, expanded, searchFieldPath])
 
   if (tabGroups.length === 0 || !configSchema?.nested) {
     return null

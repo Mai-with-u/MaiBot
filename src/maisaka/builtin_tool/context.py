@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from base64 import b64decode
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 
-from src.chat.utils.utils import process_llm_response
+from src.chat.utils.utils import ProcessedResponseSegment, process_llm_response, process_llm_response_segments
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     EmojiComponent,
@@ -17,21 +18,29 @@ from src.common.data_models.message_component_data_model import (
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
-from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-from src.maisaka.context.messages import SessionBackedMessage
 from src.maisaka.context.message_adapter import format_speaker_content
+from src.maisaka.context.messages import SessionBackedMessage
 from src.maisaka.context.planner_messages import (
     build_planner_prefix,
     build_session_backed_text_message,
     extract_quote_ids_from_message_sequence,
 )
+from src.plugin_runtime.integration import get_plugin_runtime_manager
 
 if TYPE_CHECKING:
     from src.maisaka.reasoning_engine import MaisakaReasoningEngine
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 logger = get_logger("maisaka_builtin_context")
+
+
+@dataclass
+class PostProcessedReplyMessage:
+    """一条待发送的后处理回复及其引用提示。"""
+
+    sequence: MessageSequence
+    quote_previous: bool = False
+
 
 class BuiltinToolRuntimeContext:
     """为拆分后的内置工具提供统一运行时能力。"""
@@ -133,11 +142,24 @@ class BuiltinToolRuntimeContext:
         return normalized_results
 
     @staticmethod
-    def post_process_reply_text(reply_text: str) -> List[str]:
+    def post_process_reply_text(
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[str]:
         """沿用旧回复链的文本后处理，执行分段与错别字注入。"""
 
+        if skip_post_process:
+            return [reply_text]
+
         processed_segments: List[str] = []
-        for segment in process_llm_response(reply_text):
+        for segment in process_llm_response(
+            reply_text,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        ):
             normalized_segment = segment.strip()
             if normalized_segment:
                 processed_segments.append(normalized_segment)
@@ -146,15 +168,114 @@ class BuiltinToolRuntimeContext:
             return processed_segments
         return [reply_text.strip()]
 
-    async def post_process_reply_message_sequences_async(self, reply_text: str) -> List[MessageSequence]:
+    @staticmethod
+    def post_process_reply_segments(
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[ProcessedResponseSegment]:
+        """执行文本后处理，并保留错别字纠正段的引用提示。"""
+
+        if skip_post_process:
+            return [ProcessedResponseSegment(reply_text.strip())]
+
+        processed_segments: List[ProcessedResponseSegment] = []
+        for segment in process_llm_response_segments(
+            reply_text,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        ):
+            normalized_text = segment.text.strip()
+            if normalized_text:
+                processed_segments.append(
+                    ProcessedResponseSegment(
+                        normalized_text,
+                        quote_previous=segment.quote_previous,
+                    )
+                )
+
+        if processed_segments:
+            return processed_segments
+        return [ProcessedResponseSegment(reply_text.strip())]
+
+    async def post_process_reply_message_items_async(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[PostProcessedReplyMessage]:
+        """将 replyer 输出处理为带发送提示的组件序列。"""
+
+        return self.post_process_reply_message_items(
+            reply_text,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
+
+    def post_process_reply_message_items(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[PostProcessedReplyMessage]:
+        """将纯文本回复处理为带发送提示的组件序列。"""
+
+        return [
+            PostProcessedReplyMessage(
+                sequence=MessageSequence([TextComponent(segment.text)]),
+                quote_previous=segment.quote_previous,
+            )
+            for segment in self.post_process_reply_segments(
+                reply_text,
+                skip_post_process=skip_post_process,
+                enable_splitter=enable_splitter,
+                enable_chinese_typo=enable_chinese_typo,
+            )
+        ]
+
+    async def post_process_reply_message_sequences_async(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[MessageSequence]:
         """将 replyer 输出处理为可发送组件序列。"""
 
-        return self.post_process_reply_message_sequences(reply_text)
+        return self.post_process_reply_message_sequences(
+            reply_text,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
 
-    def post_process_reply_message_sequences(self, reply_text: str) -> List[MessageSequence]:
+    def post_process_reply_message_sequences(
+        self,
+        reply_text: str,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[MessageSequence]:
         """将纯文本回复处理为可发送组件序列。"""
 
-        return [MessageSequence([TextComponent(segment)]) for segment in self.post_process_reply_text(reply_text)]
+        return [
+            item.sequence
+            for item in self.post_process_reply_message_items(
+                reply_text,
+                skip_post_process=skip_post_process,
+                enable_splitter=enable_splitter,
+                enable_chinese_typo=enable_chinese_typo,
+            )
+        ]
 
     def _resolve_at_attachment(self, raw_target: Any) -> AtComponent:
         """把 attach_at 参数解析为对目标消息发送者的 at 组件。"""
@@ -255,10 +376,39 @@ class BuiltinToolRuntimeContext:
         self,
         reply_text: str,
         attachments: Optional[Dict[str, Any]] = None,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
     ) -> List[MessageSequence]:
         """将 replyer 正文和 reply 动作附件参数处理为可发送组件序列。"""
 
-        sequences = self.post_process_reply_message_sequences(reply_text)
+        items = await self.post_process_rich_reply_message_items_async(
+            reply_text,
+            attachments,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
+        return [item.sequence for item in items]
+
+    async def post_process_rich_reply_message_items_async(
+        self,
+        reply_text: str,
+        attachments: Optional[Dict[str, Any]] = None,
+        *,
+        skip_post_process: bool = False,
+        enable_splitter: bool = True,
+        enable_chinese_typo: bool = True,
+    ) -> List[PostProcessedReplyMessage]:
+        """处理 replyer 正文和附件，并保留每条消息的发送提示。"""
+
+        items = self.post_process_reply_message_items(
+            reply_text,
+            skip_post_process=skip_post_process,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
         attachment_args = dict(attachments or {})
 
         at_components = [
@@ -273,12 +423,12 @@ class BuiltinToolRuntimeContext:
         emoji_components = [await self._resolve_emoji_attachment(raw_emoji)] if str(raw_emoji or "").strip() else []
 
         if not at_components and not image_components and not emoji_components:
-            return sequences
+            return items
 
-        sequences[0].components = at_components + sequences[0].components
-        sequences[-1].components.extend(image_components)
-        sequences[-1].components.extend(emoji_components)
-        return sequences
+        items[0].sequence.components = at_components + items[0].sequence.components
+        items[-1].sequence.components.extend(image_components)
+        items[-1].sequence.components.extend(emoji_components)
+        return items
 
     def get_runtime_manager(self) -> Any:
         """获取插件运行时管理器。"""

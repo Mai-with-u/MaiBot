@@ -1,6 +1,6 @@
 /**
  * 模型提供商模板配置
- * 
+ *
  * 这些预设模板帮助用户快速配置常用的 API 提供商
  */
 
@@ -193,13 +193,14 @@ export function normalizeUrl(url: string): string {
  */
 export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null {
   if (!baseUrl) return null
-  
+
   const normalizedUrl = normalizeUrl(baseUrl)
-  
-  return PROVIDER_TEMPLATES.find(template => 
-    template.id !== 'custom' && 
-    normalizeUrl(template.base_url) === normalizedUrl
-  ) || null
+
+  return (
+    PROVIDER_TEMPLATES.find(
+      (template) => template.id !== 'custom' && normalizeUrl(template.base_url) === normalizedUrl
+    ) || null
+  )
 }
 
 /**
@@ -208,7 +209,10 @@ export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null 
  * 未命中内置模板时，自定义端点默认按 OpenAI 兼容格式尝试 /models；
  * Gemini 自定义端点继续使用 Gemini 的响应解析方式。
  */
-export function resolveModelFetcherTemplate(baseUrl: string, clientType = 'openai'): ProviderTemplate | null {
+export function resolveModelFetcherTemplate(
+  baseUrl: string,
+  clientType = 'openai'
+): ProviderTemplate | null {
   const matchedTemplate = findTemplateByBaseUrl(baseUrl)
   if (matchedTemplate) return matchedTemplate
   if (!baseUrl) return null

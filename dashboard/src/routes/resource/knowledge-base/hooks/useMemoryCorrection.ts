@@ -97,10 +97,22 @@ function readNestedValue(source: unknown, path: string[]): unknown {
   return current
 }
 
-function resolveConfiguredCandidateLimit(runtimeConfig?: MemoryRuntimeConfigPayload | null): number | null {
-  return normalizePositiveInteger(runtimeConfig?.fuzzy_modify_candidate_limit)
-    ?? normalizePositiveInteger(readNestedValue(runtimeConfig?.config, ['integration', 'fuzzy_modify_candidate_limit']))
-    ?? normalizePositiveInteger(readNestedValue(runtimeConfig?.config, ['a_memorix', 'integration', 'fuzzy_modify_candidate_limit']))
+function resolveConfiguredCandidateLimit(
+  runtimeConfig?: MemoryRuntimeConfigPayload | null
+): number | null {
+  return (
+    normalizePositiveInteger(runtimeConfig?.fuzzy_modify_candidate_limit) ??
+    normalizePositiveInteger(
+      readNestedValue(runtimeConfig?.config, ['integration', 'fuzzy_modify_candidate_limit'])
+    ) ??
+    normalizePositiveInteger(
+      readNestedValue(runtimeConfig?.config, [
+        'a_memorix',
+        'integration',
+        'fuzzy_modify_candidate_limit',
+      ])
+    )
+  )
 }
 
 function formatCandidateLimit(value: number | null): string {
@@ -148,7 +160,7 @@ export function useMemoryCorrection({
   const { toast } = useToast()
   const configuredCandidateLimit = useMemo(
     () => resolveConfiguredCandidateLimit(runtimeConfig),
-    [runtimeConfig],
+    [runtimeConfig]
   )
 
   const plansQuery = useQuery({
@@ -168,7 +180,9 @@ export function useMemoryCorrection({
   const [personId, setPersonId] = useState(initialPersonId)
   const [personKeyword, setPersonKeyword] = useState('')
   const [chatId, setChatId] = useState(initialChatId)
-  const [candidateLimit, setCandidateLimitValue] = useState(() => formatCandidateLimit(configuredCandidateLimit))
+  const [candidateLimit, setCandidateLimitValue] = useState(() =>
+    formatCandidateLimit(configuredCandidateLimit)
+  )
   const [candidateLimitEdited, setCandidateLimitEdited] = useState(false)
   const [correctionReason, setCorrectionReason] = useState('')
   const [planSearch, setPlanSearch] = useState(initialPlanId || initialPersonId || initialChatId)
@@ -176,7 +190,9 @@ export function useMemoryCorrection({
   const [planScopeFilter, setPlanScopeFilter] = useState('all')
   const [planPage, setPlanPage] = useState(1)
   const [selectedPlanId, setSelectedPlanId] = useState(initialPlanId)
-  const [selectedPlanDetail, setSelectedPlanDetail] = useState<MemoryCorrectionPlanPayload | null>(null)
+  const [selectedPlanDetail, setSelectedPlanDetail] = useState<MemoryCorrectionPlanPayload | null>(
+    null
+  )
   const [selectedPlanLoading, setSelectedPlanLoading] = useState(false)
   const [selectedPlanError, setSelectedPlanError] = useState('')
   const [previewPayload, setPreviewPayload] = useState<MemoryCorrectionPreviewPayload | null>(null)
@@ -184,12 +200,15 @@ export function useMemoryCorrection({
   const [executingPlanId, setExecutingPlanId] = useState('')
   const [rollingBackPlanId, setRollingBackPlanId] = useState('')
 
-  const setCandidateLimit = useCallback<React.Dispatch<React.SetStateAction<string>>>((nextValue) => {
-    setCandidateLimitEdited(true)
-    setCandidateLimitValue((current) => (
-      typeof nextValue === 'function' ? nextValue(current) : nextValue
-    ))
-  }, [])
+  const setCandidateLimit = useCallback<React.Dispatch<React.SetStateAction<string>>>(
+    (nextValue) => {
+      setCandidateLimitEdited(true)
+      setCandidateLimitValue((current) =>
+        typeof nextValue === 'function' ? nextValue(current) : nextValue
+      )
+    },
+    []
+  )
 
   useEffect(() => {
     if (!candidateLimitEdited) {
@@ -199,7 +218,7 @@ export function useMemoryCorrection({
 
   const plans = useMemo(
     () => (plansQuery.data?.items ?? []).filter((plan) => Boolean(plan?.plan_id)),
-    [plansQuery.data?.items],
+    [plansQuery.data?.items]
   )
   const correctionErrorText = plansQuery.error
     ? plansQuery.error instanceof Error
@@ -208,7 +227,7 @@ export function useMemoryCorrection({
     : ''
   const chatTargets = useMemo(
     () => chatTargetsQuery.data?.data ?? [],
-    [chatTargetsQuery.data?.data],
+    [chatTargetsQuery.data?.data]
   )
   const chatTargetsErrorText = chatTargetsQuery.error
     ? chatTargetsQuery.error instanceof Error
@@ -219,8 +238,12 @@ export function useMemoryCorrection({
   const filteredPlans = useMemo(() => {
     const keyword = planSearch.trim().toLowerCase()
     return plans.filter((plan) => {
-      const status = String(plan.status ?? '').trim().toLowerCase()
-      const itemScope = String(plan.scope ?? '').trim().toLowerCase()
+      const status = String(plan.status ?? '')
+        .trim()
+        .toLowerCase()
+      const itemScope = String(plan.scope ?? '')
+        .trim()
+        .toLowerCase()
       if (planStatusFilter !== 'all' && status !== planStatusFilter) {
         return false
       }
@@ -252,9 +275,11 @@ export function useMemoryCorrection({
 
   const selectedPlanFromList = useMemo(() => {
     if (selectedPlanId) {
-      return filteredPlans.find((plan) => plan.plan_id === selectedPlanId)
-        ?? plans.find((plan) => plan.plan_id === selectedPlanId)
-        ?? null
+      return (
+        filteredPlans.find((plan) => plan.plan_id === selectedPlanId) ??
+        plans.find((plan) => plan.plan_id === selectedPlanId) ??
+        null
+      )
     }
     return pagedPlans[0] ?? null
   }, [filteredPlans, pagedPlans, plans, selectedPlanId])
@@ -319,7 +344,11 @@ export function useMemoryCorrection({
   }, [active, selectedPlanFromList?.plan_id, selectedPlanId])
 
   const selectedPlan = useMemo<MemoryCorrectionPlanPayload | null>(() => {
-    if (selectedPlanDetail && selectedPlanFromList && selectedPlanDetail.plan_id === selectedPlanFromList.plan_id) {
+    if (
+      selectedPlanDetail &&
+      selectedPlanFromList &&
+      selectedPlanDetail.plan_id === selectedPlanFromList.plan_id
+    ) {
       return {
         ...selectedPlanFromList,
         ...selectedPlanDetail,
@@ -329,7 +358,11 @@ export function useMemoryCorrection({
   }, [selectedPlanDetail, selectedPlanFromList])
 
   const selectedPreview = useMemo<MemoryCorrectionPreviewContentPayload | null>(() => {
-    if (previewPayload?.plan_id && previewPayload.plan_id === selectedPlan?.plan_id && previewPayload.preview) {
+    if (
+      previewPayload?.plan_id &&
+      previewPayload.plan_id === selectedPlan?.plan_id &&
+      previewPayload.preview
+    ) {
       return previewPayload.preview
     }
     return selectedPlan?.preview ?? null
@@ -339,13 +372,16 @@ export function useMemoryCorrection({
     await plansQuery.refetch()
   }, [plansQuery])
 
-  const warnSyncFailure = useCallback((title: string, error?: unknown) => {
-    toast({
-      title,
-      description: error instanceof Error ? error.message : '请手动刷新后确认最新状态',
-      variant: 'destructive',
-    })
-  }, [toast])
+  const warnSyncFailure = useCallback(
+    (title: string, error?: unknown) => {
+      toast({
+        title,
+        description: error instanceof Error ? error.message : '请手动刷新后确认最新状态',
+        variant: 'destructive',
+      })
+    },
+    [toast]
+  )
 
   const submitPreview = useCallback(async () => {
     const trimmedRequest = requestText.trim()
@@ -423,103 +459,125 @@ export function useMemoryCorrection({
     warnSyncFailure,
   ])
 
-  const executePlan = useCallback(async (planId = selectedPlan?.plan_id || '') => {
-    const targetPlanId = planId.trim()
-    if (!targetPlanId) {
-      return
-    }
-    try {
-      setExecutingPlanId(targetPlanId)
-      const payload = await executeMemoryCorrection({
-        plan_id: targetPlanId,
-        confirmed: true,
-        requested_by: 'knowledge_base',
-        reason: correctionReason.trim(),
-      })
-      if (!payload.success) {
-        throw new Error(payload.error || '执行记忆修正失败')
+  const executePlan = useCallback(
+    async (planId = selectedPlan?.plan_id || '') => {
+      const targetPlanId = planId.trim()
+      if (!targetPlanId) {
+        return
       }
-      toast({
-        title: '记忆修正已执行',
-        description: `计划 ${targetPlanId} 已写入执行结果`,
-      })
-      if (payload.plan) {
-        setSelectedPlanDetail(payload.plan)
-      } else {
-        try {
-          const detailPayload = await getMemoryCorrectionPlan(targetPlanId)
-          setSelectedPlanDetail(detailPayload.plan ?? null)
-        } catch (syncError) {
-          warnSyncFailure('执行已完成，但详情同步失败', syncError)
+      try {
+        setExecutingPlanId(targetPlanId)
+        const payload = await executeMemoryCorrection({
+          plan_id: targetPlanId,
+          confirmed: true,
+          requested_by: 'knowledge_base',
+          reason: correctionReason.trim(),
+        })
+        if (!payload.success) {
+          throw new Error(payload.error || '执行记忆修正失败')
         }
+        toast({
+          title: '记忆修正已执行',
+          description: `计划 ${targetPlanId} 已写入执行结果`,
+        })
+        if (payload.plan) {
+          setSelectedPlanDetail(payload.plan)
+        } else {
+          try {
+            const detailPayload = await getMemoryCorrectionPlan(targetPlanId)
+            setSelectedPlanDetail(detailPayload.plan ?? null)
+          } catch (syncError) {
+            warnSyncFailure('执行已完成，但详情同步失败', syncError)
+          }
+        }
+        const syncResults = await Promise.allSettled([
+          plansQuery.refetch(),
+          onSourcesChanged?.(),
+          onRuntimeChanged?.(),
+        ])
+        const failedSync = syncResults.find((result) => result.status === 'rejected')
+        if (failedSync?.status === 'rejected') {
+          warnSyncFailure('执行已完成，但界面同步未完全成功', failedSync.reason)
+        }
+      } catch (error) {
+        toast({
+          title: '执行记忆修正失败',
+          description: error instanceof Error ? error.message : '未知错误',
+          variant: 'destructive',
+        })
+      } finally {
+        setExecutingPlanId('')
       }
-      const syncResults = await Promise.allSettled([
-        plansQuery.refetch(),
-        onSourcesChanged?.(),
-        onRuntimeChanged?.(),
-      ])
-      const failedSync = syncResults.find((result) => result.status === 'rejected')
-      if (failedSync?.status === 'rejected') {
-        warnSyncFailure('执行已完成，但界面同步未完全成功', failedSync.reason)
-      }
-    } catch (error) {
-      toast({
-        title: '执行记忆修正失败',
-        description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
-      })
-    } finally {
-      setExecutingPlanId('')
-    }
-  }, [correctionReason, onRuntimeChanged, onSourcesChanged, plansQuery, selectedPlan?.plan_id, toast, warnSyncFailure])
+    },
+    [
+      correctionReason,
+      onRuntimeChanged,
+      onSourcesChanged,
+      plansQuery,
+      selectedPlan?.plan_id,
+      toast,
+      warnSyncFailure,
+    ]
+  )
 
-  const rollbackPlan = useCallback(async (planId = selectedPlan?.plan_id || '') => {
-    const targetPlanId = planId.trim()
-    if (!targetPlanId) {
-      return
-    }
-    try {
-      setRollingBackPlanId(targetPlanId)
-      const payload = await rollbackMemoryCorrectionPlan(targetPlanId, {
-        requested_by: 'knowledge_base',
-        reason: correctionReason.trim(),
-      })
-      if (!payload.success) {
-        throw new Error(payload.error || '回滚记忆修正失败')
+  const rollbackPlan = useCallback(
+    async (planId = selectedPlan?.plan_id || '') => {
+      const targetPlanId = planId.trim()
+      if (!targetPlanId) {
+        return
       }
-      toast({
-        title: '记忆修正已回滚',
-        description: `计划 ${targetPlanId} 的回滚结果已写入日志`,
-      })
-      if (payload.plan) {
-        setSelectedPlanDetail(payload.plan)
-      } else {
-        try {
-          const detailPayload = await getMemoryCorrectionPlan(targetPlanId)
-          setSelectedPlanDetail(detailPayload.plan ?? null)
-        } catch (syncError) {
-          warnSyncFailure('回滚已完成，但详情同步失败', syncError)
+      try {
+        setRollingBackPlanId(targetPlanId)
+        const payload = await rollbackMemoryCorrectionPlan(targetPlanId, {
+          requested_by: 'knowledge_base',
+          reason: correctionReason.trim(),
+        })
+        if (!payload.success) {
+          throw new Error(payload.error || '回滚记忆修正失败')
         }
+        toast({
+          title: '记忆修正已回滚',
+          description: `计划 ${targetPlanId} 的回滚结果已写入日志`,
+        })
+        if (payload.plan) {
+          setSelectedPlanDetail(payload.plan)
+        } else {
+          try {
+            const detailPayload = await getMemoryCorrectionPlan(targetPlanId)
+            setSelectedPlanDetail(detailPayload.plan ?? null)
+          } catch (syncError) {
+            warnSyncFailure('回滚已完成，但详情同步失败', syncError)
+          }
+        }
+        const syncResults = await Promise.allSettled([
+          plansQuery.refetch(),
+          onSourcesChanged?.(),
+          onRuntimeChanged?.(),
+        ])
+        const failedSync = syncResults.find((result) => result.status === 'rejected')
+        if (failedSync?.status === 'rejected') {
+          warnSyncFailure('回滚已完成，但界面同步未完全成功', failedSync.reason)
+        }
+      } catch (error) {
+        toast({
+          title: '回滚记忆修正失败',
+          description: error instanceof Error ? error.message : '未知错误',
+          variant: 'destructive',
+        })
+      } finally {
+        setRollingBackPlanId('')
       }
-      const syncResults = await Promise.allSettled([
-        plansQuery.refetch(),
-        onSourcesChanged?.(),
-        onRuntimeChanged?.(),
-      ])
-      const failedSync = syncResults.find((result) => result.status === 'rejected')
-      if (failedSync?.status === 'rejected') {
-        warnSyncFailure('回滚已完成，但界面同步未完全成功', failedSync.reason)
-      }
-    } catch (error) {
-      toast({
-        title: '回滚记忆修正失败',
-        description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
-      })
-    } finally {
-      setRollingBackPlanId('')
-    }
-  }, [correctionReason, onRuntimeChanged, onSourcesChanged, plansQuery, selectedPlan?.plan_id, toast, warnSyncFailure])
+    },
+    [
+      correctionReason,
+      onRuntimeChanged,
+      onSourcesChanged,
+      plansQuery,
+      selectedPlan?.plan_id,
+      toast,
+      warnSyncFailure,
+    ]
+  )
 
   return {
     requestText,

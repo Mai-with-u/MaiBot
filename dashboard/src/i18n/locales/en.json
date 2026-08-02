@@ -2,6 +2,8 @@
   "header": {
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
+    "switchSidebarToFixed": "Switch to fixed mode",
+    "switchSidebarToHover": "Switch to hover mode",
     "collapseTopbar": "Collapse topbar",
     "expandTopbar": "Expand topbar",
     "toggleConnection": "Toggle backend connection",
@@ -23,7 +25,7 @@
       "overview": "Overview",
       "botConfig": "Bot Configuration",
       "botResources": "Bot Resources",
-      "extensionsMonitor": "Plugins & Extensions",
+      "extensionsMonitor": "Extensions & Maintenance",
       "system": "System"
     },
     "menu": {
@@ -45,12 +47,126 @@
       "configTemplate": "Config Templates",
       "pluginConfig": "Plugin Management",
       "mcpSettings": "MCP Settings",
+      "dataTransfer": "Data Management",
+      "statistics": "Detailed Statistics",
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
       "chatManagement": "Chat Management",
       "localChat": "Local Chat",
-      "settings": "Settings"
+      "settings": "WebUI Settings"
+    }
+  },
+  "statisticsPage": {
+    "title": "Detailed Statistics",
+    "description": "Review model calls, tokens, costs, messages, and uptime across MaiBot's runtime.",
+    "generatedAt": "Statistics through: {{time}}",
+    "periodRange": "Period: {{start}} to {{end}}",
+    "empty": "No data for this period",
+    "actions": {
+      "refresh": "Refresh",
+      "openHtml": "Open HTML report"
+    },
+    "error": {
+      "title": "Failed to load detailed statistics",
+      "description": "Please try again later"
+    },
+    "periods": {
+      "all_time": "Since deployment",
+      "last_30_days": "Last 30 days",
+      "last_7_days": "Last 7 days",
+      "last_3_days": "Last 3 days",
+      "last_24_hours": "Last day",
+      "last_3_hours": "Last 3 hours",
+      "last_hour": "Last hour",
+      "last_15_minutes": "Last 15 minutes"
+    },
+    "tabs": {
+      "trends": "Charts",
+      "metrics": "Metric trends"
+    },
+    "sections": {
+      "breakdowns": "Breakdowns",
+      "distributions": "Distributions"
+    },
+    "breakdowns": {
+      "models": "By model",
+      "modules": "By module",
+      "requestTypes": "By request type",
+      "chats": "Chat messages"
+    },
+    "summary": {
+      "onlineTime": "Total uptime",
+      "messages": "Messages",
+      "replies": "Replies",
+      "requests": "Requests",
+      "tokens": "Total tokens",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "cacheHitRate": "Prompt cache hit rate",
+      "cacheHitTokens": "Cache hit tokens",
+      "cacheMissTokens": "Cache miss tokens",
+      "totalCost": "Total cost",
+      "costPerMessages": "Cost/messages",
+      "costPerReceivedMessages": "Cost/received messages",
+      "costPerReplies": "Cost/replies",
+      "costPerHour": "Cost/hour",
+      "tokensPerHour": "Tokens/hour"
+    },
+    "units": {
+      "per100": "per 100",
+      "perHour": "per hour"
+    },
+    "table": {
+      "name": "Name",
+      "requests": "Calls",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "totalTokens": "Total tokens",
+      "cacheHitTokens": "Cache hit tokens",
+      "cacheMissTokens": "Cache miss tokens",
+      "cacheHitRate": "Cache hit rate",
+      "cost": "Total cost",
+      "avgTime": "Average time",
+      "stdTime": "Time deviation",
+      "callsPerReply": "Calls per reply",
+      "tokensPerReply": "Tokens per reply",
+      "tokensPerCall": "Tokens per call",
+      "chat": "Contact/group",
+      "messages": "Messages"
+    },
+    "distributions": {
+      "ownerCosts": "Call source cost distribution",
+      "modelCosts": "Model cost distribution",
+      "moduleCosts": "Module cost distribution",
+      "requestTypeCosts": "Request type cost distribution",
+      "chatMessages": "Chat message distribution",
+      "chatCosts": "Chat stream cost distribution"
+    },
+    "charts": {
+      "timeRange": "Time range",
+      "timeScale": "Time scale",
+      "toggleSeries": "Show or hide {{name}}"
+    },
+    "ranges": {
+      "6h": "6 hours",
+      "12h": "12 hours",
+      "24h": "24 hours",
+      "48h": "48 hours",
+      "7d": "7 days",
+      "30d": "30 days"
+    },
+    "trends": {
+      "totalCost": "Total cost trend",
+      "moduleCosts": "Module cost trends",
+      "modelCosts": "Model cost trends",
+      "chatMessages": "Chat message trends"
+    },
+    "metrics": {
+      "costPerMessages": "Cost per message trend",
+      "costPerHour": "Cost per hour trend",
+      "tokensPerHour": "Tokens per hour trend",
+      "costPerReplies": "Cost per reply trend"
     }
   },
   "workspace": {
@@ -62,7 +178,7 @@
   "chat": {
     "botNameFallback": "Mai",
     "userFallback": "User",
-    "userNameFallback": "WebUI User",
+    "userNameFallback": "Human",
     "virtualGroupFallback": "WebUI Virtual Group",
     "status": {
       "connected": "Connected",
@@ -72,6 +188,7 @@
     "actions": {
       "cancel": "Cancel",
       "addImage": "Add image",
+      "openEmojiManager": "User stickers",
       "reconnect": "Reconnect",
       "removeImage": "Remove image",
       "save": "Save",
@@ -104,6 +221,14 @@
     "composer": {
       "hint": "Enter to send · Shift + Enter for newline"
     },
+    "emojiManager": {
+      "add": "Add",
+      "delete": "Delete sticker",
+      "empty": "No user stickers yet. Add one to get started.",
+      "hint": "Click a sticker to send it",
+      "send": "Send sticker",
+      "title": "My stickers"
+    },
     "sidebar": {
       "closeConversation": "Close {{label}}",
       "conversations": "Chat conversations",
@@ -116,8 +241,11 @@
       "title": "Chats",
       "virtualBadge": "Virtual",
       "profileTitle": "My identity",
+      "editAvatar": "Change avatar",
       "editName": "Edit nickname",
-      "saveName": "Save"
+      "saveName": "Save",
+      "savingAvatar": "Saving avatar",
+      "userAvatarAlt": "{{name}}'s avatar"
     },
     "dialog": {
       "create": "Create chat",
@@ -150,6 +278,17 @@
       "videoUnsupported": "Your browser does not support video playback"
     },
     "toast": {
+      "avatarSaved": "Avatar saved",
+      "avatarSavedDesc": "Your new avatar is now used in Mai Chat.",
+      "avatarSaveFailed": "Failed to save avatar",
+      "avatarSaveFailedDesc": "Please try again later.",
+      "avatarUnsupported": "This avatar cannot be used",
+      "avatarUnsupportedDesc": "Choose a JPG, PNG, WebP, GIF, or BMP image up to 5 MB.",
+      "emojiDeleteFailed": "Failed to delete sticker",
+      "emojiLoadFailed": "Failed to load stickers",
+      "emojiSendFailed": "Failed to send sticker",
+      "emojiUnsupportedDesc": "Choose a JPG, PNG, WebP, or GIF image up to 2 MB.",
+      "emojiUploadFailed": "Failed to add sticker",
       "backendUnavailable": "Cannot connect to the backend. Make sure MaiBot is running.",
       "backendUnavailableShort": "Cannot connect to the backend",
       "connectionFailed": "Connection failed",
@@ -184,7 +323,7 @@
     "dismiss": "Dismiss HTTP security notice"
   },
   "settings": {
-    "title": "Settings",
+    "title": "WebUI Settings",
     "description": "Manage your application preferences",
     "tabs": {
       "appearance": "Appearance",
@@ -278,7 +417,25 @@
       "visualGroup": "Visual Effects",
       "layoutGroup": "Layout",
       "animationGroup": "Animation",
-      "backgroundGroup": "Background Settings"
+      "backgroundGroup": "Background Settings",
+      "retroConfig": "Future Retro Material",
+      "retroConfigDesc": "Fine-tune paper, texture, and surface depth with an instant preview.",
+      "retroPaperWarmth": "Paper Warmth",
+      "retroPaperWarmthDesc": "Move from pure white to the current warm yellow paper.",
+      "retroPaperWhite": "Pure white",
+      "retroPaperWarm": "Warm yellow",
+      "retroTexture": "Paper Texture",
+      "retroTextureDesc": "Choose grain, drafting dots, ruled lines, or a clean background.",
+      "retroTextureFine": "Fine grain",
+      "retroTextureCoarse": "Coarse grain",
+      "retroTextureDots": "Dot grid",
+      "retroTextureRuled": "Ruled",
+      "retroTextureNone": "None",
+      "retroTextureIntensity": "Texture Strength",
+      "retroPanelDepth": "Panel Depth",
+      "retroPanelDepthDesc": "Controls the visibility of recessed surfaces and shadows.",
+      "retroStrokeScale": "Stroke Weight",
+      "retroStrokeScaleDesc": "Adjusts the bold outlines used by cards and controls."
     },
     "security": {
       "currentToken": "Current Access Token",
@@ -507,7 +664,7 @@
     "method2FileHint": "Open this file and copy the value of the access_token field",
     "securityTipTitle": "Security Notice",
     "securityTip1": "Keep your Token safe and never share it with others",
-    "securityTip2": "To reset the Token, go to System Settings after logging in",
+    "securityTip2": "To reset the Token, go to WebUI Settings after logging in",
     "verifyFailed": "Token verification failed. Please check and try again.",
     "connFailed": "Failed to connect to the server. Please check your network connection.",
     "switchToLight": "Switch to light mode",
@@ -589,7 +746,7 @@
     },
     "skipDialog": {
       "title": "Skip the setup wizard?",
-      "description": "You can reopen the setup wizard anytime from System Settings. Are you sure you want to skip it?",
+      "description": "You can reopen the setup wizard anytime from WebUI Settings. Are you sure you want to skip it?",
       "confirm": "Skip Anyway"
     },
     "footer": "You can change these settings anytime in Settings",
@@ -753,6 +910,29 @@
       }
     }
   },
+  "versionCompatibility": {
+    "checking": "Checking MaiBot and WebUI versions...",
+    "eyebrow": "Version compatibility warning",
+    "mainProgramVersion": "MaiBot version",
+    "webuiVersion": "Current WebUI version",
+    "requiredWebuiVersion": "WebUI version required by MaiBot",
+    "updateTargetLabel": "Update required: {{target}}",
+    "riskWarning": "Using mismatched versions may cause broken pages, unavailable APIs, or configuration errors. Update before continuing.",
+    "countdownHint": "Please read this warning. You can close this page in {{seconds}} seconds.",
+    "confirmHint": "You can now acknowledge the risk and continue.",
+    "countdownButton": "Confirm in {{seconds}}s",
+    "confirmButton": "Close warning and continue",
+    "webuiOutdated": {
+      "title": "WebUI is outdated",
+      "description": "WebUI v{{currentVersion}} is older than v{{requiredVersion}}, which this MaiBot version requires. Update the WebUI static package.",
+      "updateTarget": "WebUI"
+    },
+    "mainProgramOutdated": {
+      "title": "MaiBot is outdated",
+      "description": "MaiBot v{{mainVersion}} declares WebUI v{{requiredVersion}}, but WebUI v{{webuiVersion}} is running. Update the MaiBot main program.",
+      "updateTarget": "MaiBot main program"
+    }
+  },
   "common": {
     "loading": "Loading...",
     "error": "Error",
@@ -798,14 +978,43 @@
     "copyError": "Copy error info"
   },
   "search": {
-    "placeholder": "Search pages...",
+    "placeholder": "Search pages, settings, or describe a problem...",
     "title": "Search",
-    "noResults": "No matching pages found",
+    "noResults": "No matching pages or settings found",
     "startSearch": "Type a keyword to start searching",
     "recent": "Recent",
     "navigate": "Navigate",
     "select": "Select",
     "close": "Close",
+    "aiSearch": "AI Search",
+    "aiSearching": "Understanding",
+    "aiHint": "Describe the outcome you want, such as “MaiBot talks too much”",
+    "progressTitle": "Search progress",
+    "progressExpand": "Expand search progress",
+    "progressCollapse": "Collapse search progress",
+    "progressStart": "Analyzing the question",
+    "progressPlanning": "Round {{round}}: planning searches",
+    "progressSearchWebui": "Search pages and settings",
+    "progressReadWebui": "Read page and setting details",
+    "progressSearchDocs": "Search official documentation",
+    "progressReadDocs": "Read official documentation",
+    "progressTool": "Run search operation",
+    "progressCompleted": "{{action}} completed ({{count}} items)",
+    "progressFailed": "{{action}} failed",
+    "progressFinalizing": "Preparing an answer from the sources read",
+    "progressCorrecting": "Unsupported claims detected; rewriting the answer",
+    "progressCacheHit": "Used a cached result for the same question",
+    "progressAnswerCompleted": "Answer generated",
+    "progressAnswerFailed": "Answer generation failed",
+    "aiShortcut": "Ctrl + Enter",
+    "aiRecommendation": "AI Pick",
+    "aiAnswer": "AI Answer",
+    "aiSuggestions": "Suggestions",
+    "aiSources": "Official documentation",
+    "aiUnderstood": "AI understood: {{terms}}",
+    "aiNoResults": "AI could not find a sufficiently relevant page or setting",
+    "aiFailed": "AI search failed",
+    "indexLoading": "Loading the configuration search index…",
     "categories": {
       "overview": "Overview",
       "config": "Config",
@@ -836,11 +1045,12 @@
       "statisticsDesc": "View usage statistics",
       "plugins": "Plugin Market",
       "pluginsDesc": "Browse and install plugins",
+      "dataTransferDesc": "Manage local cache and back up, export, or restore MaiBot data",
       "logs": "Log Viewer",
       "logsDesc": "View system logs",
       "reasoningProcessDesc": "Browse Maisaka prompt reasoning logs",
-      "settings": "Settings",
-      "settingsDesc": "Configure system settings"
+      "settings": "WebUI Settings",
+      "settingsDesc": "Configure WebUI settings"
     }
   },
   "a11y": {
@@ -1005,14 +1215,63 @@
       "30d": "30 Days"
     },
     "autoRefresh": "Auto Refresh",
+    "hitokoto": {
+      "title": "Quote",
+      "edit": "Edit quote",
+      "editor": {
+        "title": "Edit quote",
+        "description": "Manage the quote sources and custom content shown on the home page.",
+        "defaultSource": "Use default quotes",
+        "defaultSourceDescription": "Fetch quotes from Hitokoto and rotate them with your custom entries.",
+        "customList": "Custom content",
+        "customListDescription": "Add multiple entries. Sources are optional.",
+        "add": "Add content",
+        "empty": "No custom content yet. Click to add the first entry.",
+        "item": "Entry {{index}}",
+        "remove": "Remove entry {{index}}",
+        "content": "Entry {{index}} content",
+        "contentPlaceholder": "Enter content to display on the home page",
+        "source": "Entry {{index}} source",
+        "sourcePlaceholder": "Source (optional)",
+        "blankHint": "Default quotes are disabled and the custom list is empty, so the quote area will remain blank.",
+        "saving": "Saving..."
+      }
+    },
     "cards": {
       "add": "Add card",
       "edit": "Edit cards",
+      "editCard": "Edit card: {{title}}",
+      "editContent": "Edit card content",
       "done": "Done",
-      "reset": "Restore default layout",
+      "reset": "Restore defaults",
+      "styles": {
+        "default": {
+          "title": "Default",
+          "description": "Use the standard card appearance of the current theme."
+        },
+        "orange": {
+          "title": "Orange background",
+          "description": "Use the theme orange as the background and the page background color for text."
+        },
+        "borderless": {
+          "title": "Borderless",
+          "description": "Remove the card border, background, texture, and shadow."
+        }
+      },
+      "styleDialog": {
+        "title": "Edit “{{title}}”",
+        "description": "Choose how this card appears on the home page.",
+        "done": "Done"
+      },
       "row": {
         "low": "Low row",
         "high": "High row"
+      },
+      "categories": {
+        "status": "Runtime Status",
+        "statistics": "Statistics",
+        "analysis": "Model Analysis",
+        "plugin": "Plugin Cards"
       },
       "dialog": {
         "title": "Manage Home Cards",
@@ -1027,15 +1286,30 @@
     "botStatus": {
       "title": "MaiBot Status",
       "loading": "Reading",
-      "running": "Running",
+      "running": "Active",
       "stopped": "Stopped",
       "unknown": "Unknown",
-      "uptime": "Up {{time}}",
+      "uptimeLabel": "Runtime",
+      "uptime": "{{time}}",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
       "visualEnabled": "Vision enabled",
-      "memoryEnabled": "Memory enabled"
+      "memoryEnabled": "Memory enabled",
+      "recentOnline": "Recent online",
+      "recentOnlineRange": "Last 24 hours",
+      "recentOnlineChart": "Online duration over the last 24 hours",
+      "recentOnlineTotal": "Online {{time}}",
+      "online": "Online",
+      "clickToReturn": "Click to return",
+      "showRecentOnline": "Show recent online chart",
+      "showStatus": "Return to activity status"
     },
     "versionCard": {
       "title": "MaiBot Version",
+      "maibotVersion": "MAIBOT",
+      "consoleVersion": "CONSOLE",
+      "updateAvailable": "UPDATE",
+      "mismatch": "Version mismatch",
       "mainVersion": "Core version",
       "webuiVersion": "WebUI version",
       "latestVersion": "Latest version",
@@ -1057,7 +1331,7 @@
       "expressionReview": "Expression Review",
       "viewLogs": "View Logs",
       "pluginManage": "Plugins",
-      "systemSettings": "Settings",
+      "systemSettings": "WebUI Settings",
       "pluginConfig": "Plugin Config",
       "appearanceSettings": "Appearance",
       "localCache": "Local Cache",
@@ -1076,7 +1350,7 @@
         "expressionReview": "Open the expression learning review dialog",
         "viewLogs": "View WebUI logs",
         "pluginManage": "Open the plugin marketplace and management page",
-        "systemSettings": "Open system settings",
+        "systemSettings": "Open WebUI settings",
         "pluginConfig": "Open installed plugin configuration",
         "appearanceSettings": "Open Settings / Appearance",
         "localCache": "Open Settings / Local Cache",
@@ -1123,9 +1397,13 @@
     },
     "stats": {
       "overviewTitle": "Statistics Overview",
+      "overviewDesc": "Key runtime metrics",
+      "timeRange": "Statistics time range",
       "totalRequests": "Total Requests",
       "totalCost": "Total Cost",
       "tokenUsage": "Token Usage",
+      "inputTokens": "Input",
+      "outputTokens": "Output",
       "avgResponse": "Avg Response",
       "avgResponseDesc": "Avg API latency",
       "onlineTime": "Online Time",
@@ -1140,6 +1418,16 @@
       "hours": "hours",
       "days": "days"
     },
+    "cache": {
+      "title": "Prompt Cache",
+      "description": "Cache hits for input tokens",
+      "hitRate": "Cache Hit Rate",
+      "all": "All",
+      "chat": "Chat",
+      "hitTokens": "Hit Tokens",
+      "missTokens": "Miss Tokens",
+      "eligibleTokens": "{{value}} eligible tokens"
+    },
     "storage": {
       "title": "Storage Usage",
       "reading": "Reading",
@@ -1151,6 +1439,10 @@
       "files": "{{count}} files",
       "filesAndRecords": "{{files}} files · {{records}} records",
       "databaseDetail": "{{files}} files · {{tables}} tables",
+      "sizeMode": "Size",
+      "countMode": "Count",
+      "switchDisplay": "Switch storage information display",
+      "countSummary": "{{files}} files · {{records}} records · {{tables}} tables",
       "readingDescription": "Reading local storage usage...",
       "unavailable": "Local storage usage is unavailable",
       "manage": "Manage Storage"
@@ -1164,18 +1456,22 @@
       },
       "requestTrend": "Request Trend",
       "requestTrendDesc": "Request volume over the last {{hours}} hours",
+      "requestTrendDescCompact": "Request volume over time",
       "costTrend": "Cost Trend",
       "costTrendDesc": "API call cost over time",
       "tokenUsage": "Token Usage",
       "tokenUsageDesc": "Token consumption over time",
+      "tokenUsageSplitDesc": "Input and output tokens over time",
       "modelDistribution": "Model Cost Distribution",
       "modelDistributionDesc": "Cost share per model ({{count}} models)",
+      "modelDistributionCardDesc": "Cumulative cost share by model",
       "modelDetails": "Model Details",
       "modelDetailsDesc": "Requests, cost and performance",
-      "recentActivity": "Recent Activity",
-      "recentActivityDesc": "Latest API call records",
+      "modelDetailsTokenDesc": "Calls, tokens, cache and cost by model",
       "dailyStats": "Daily Statistics",
       "dailyStatsDesc": "Data summary for the last 7 days",
+      "dailyStatsRangeDesc": "Daily summary for the selected period",
+      "date": "Date",
       "requests": "Requests",
       "cost": "Cost (¥)",
       "requestCount": "Requests",

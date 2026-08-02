@@ -146,6 +146,7 @@ def _serialize_home_card_entry(component: HomeCardEntry) -> Dict[str, Any]:
         "name": component.name,
         "plugin_id": component.plugin_id,
         "title": _truncate_text(metadata.get("title", component.title), MAX_HOME_CARD_SHORT_TEXT_LENGTH),
+        "show_title": metadata.get("show_title") is not False,
         "description": _truncate_text(metadata.get("description", component.description), 300),
         "content": _sanitize_home_card_content(metadata.get("content", "")),
         "link_url": _sanitize_home_card_link(metadata.get("link_url", "")),

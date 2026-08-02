@@ -67,9 +67,7 @@ export function useExpressionReview({
       try {
         // 用 allSettled 而非 all：单条失败不应中断其余项，仍需汇总成功/失败数
         const results = await Promise.allSettled(
-          expressionIds.map((expressionId) =>
-            updateExpressionReviewStatus(expressionId, approved)
-          )
+          expressionIds.map((expressionId) => updateExpressionReviewStatus(expressionId, approved))
         )
         const updatedCount = results.filter((result) => result.status === 'fulfilled').length
         const failedCount = results.length - updatedCount

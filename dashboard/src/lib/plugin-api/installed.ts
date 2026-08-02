@@ -22,10 +22,11 @@ let installedPluginsRequest: Promise<InstalledPlugin[]> | null = null
 async function fetchInstalledPluginsUncached(): Promise<InstalledPlugin[]> {
   let data: { success: boolean; plugins?: InstalledPlugin[]; message?: string }
   try {
-    data = await backendApi.get<{ success: boolean; plugins?: InstalledPlugin[]; message?: string }>(
-      '/api/webui/plugins/installed',
-      { errorMessage: '获取已安装插件列表失败' }
-    )
+    data = await backendApi.get<{
+      success: boolean
+      plugins?: InstalledPlugin[]
+      message?: string
+    }>('/api/webui/plugins/installed', { errorMessage: '获取已安装插件列表失败' })
   } catch (error) {
     if (error instanceof ApiError && error.status !== undefined && error.status !== 401) {
       return []
@@ -40,11 +41,13 @@ async function fetchInstalledPluginsUncached(): Promise<InstalledPlugin[]> {
   return data.plugins || []
 }
 
-export async function getInstalledPlugins(options: { forceRefresh?: boolean } = {}): Promise<InstalledPlugin[]> {
+export async function getInstalledPlugins(
+  options: { forceRefresh?: boolean } = {}
+): Promise<InstalledPlugin[]> {
   if (
-    !options.forceRefresh
-    && installedPluginsCache
-    && Date.now() - installedPluginsCache.timestamp < INSTALLED_PLUGINS_CACHE_TTL
+    !options.forceRefresh &&
+    installedPluginsCache &&
+    Date.now() - installedPluginsCache.timestamp < INSTALLED_PLUGINS_CACHE_TTL
   ) {
     return installedPluginsCache.result
   }
@@ -98,15 +101,21 @@ export async function getLocalPluginChangelog(pluginId: string): Promise<string>
 /**
  * 检查插件是否已安装
  */
-export function checkPluginInstalled(pluginId: string, installedPlugins: InstalledPlugin[]): boolean {
-  return installedPlugins.some(p => p.id === pluginId)
+export function checkPluginInstalled(
+  pluginId: string,
+  installedPlugins: InstalledPlugin[]
+): boolean {
+  return installedPlugins.some((p) => p.id === pluginId)
 }
 
 /**
  * 获取已安装插件的版本
  */
-export function getInstalledPluginVersion(pluginId: string, installedPlugins: (InstalledPlugin | LegacyInstalledPlugin)[]): string | undefined {
-  const plugin = installedPlugins.find(p => p.id === pluginId)
+export function getInstalledPluginVersion(
+  pluginId: string,
+  installedPlugins: (InstalledPlugin | LegacyInstalledPlugin)[]
+): string | undefined {
+  const plugin = installedPlugins.find((p) => p.id === pluginId)
   if (!plugin) return undefined
 
   // 兼容两种格式：新格式有 manifest，旧格式直接有 version

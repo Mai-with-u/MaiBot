@@ -123,10 +123,72 @@ describe('PluginConfigPage 特征化', () => {
     expect(screen.queryByText(/A_Memorix/i)).not.toBeInTheDocument()
   })
 
+  it('删除按钮使用透明底色与主题色边框和图标', async () => {
+    render(<PluginConfigPage />)
+
+    const deleteButton = await screen.findByRole('button', { name: '删除' })
+    expect(deleteButton).toHaveClass(
+      'border-current',
+      'bg-transparent',
+      'text-primary',
+      'shadow-none'
+    )
+    expect(deleteButton.querySelector('svg')).not.toHaveClass('text-primary')
+  })
+
   it('无插件时显示空态提示', async () => {
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([] as never)
     render(<PluginConfigPage />)
     await waitFor(() => expect(screen.getByText('暂无已安装的插件')).toBeInTheDocument())
+  })
+
+  it('按照加载成功、加载中、加载失败的顺序分层展示插件', async () => {
+    const failedPlugin = makePlugin('test.failed', 'Failed Plugin')
+    failedPlugin.load_status = 'failed'
+    const disabledPlugin = makePlugin('test.disabled', 'Disabled Plugin')
+    disabledPlugin.enabled = false
+    const loadingPlugin = makePlugin('test.loading', 'Loading Plugin')
+    loadingPlugin.load_status = 'loading'
+    const successPlugin = makePlugin('test.success', 'Success Plugin')
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([
+      failedPlugin,
+      disabledPlugin,
+      loadingPlugin,
+      successPlugin,
+    ] as never)
+
+    const { container } = render(<PluginConfigPage />)
+
+    await screen.findByText('Success Plugin')
+    const pluginNames = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-plugin-list-item="true"] h3')
+    ).map((element) => element.textContent)
+    expect(pluginNames).toEqual([
+      'Success Plugin',
+      'Loading Plugin',
+      'Failed Plugin',
+      'Disabled Plugin',
+    ])
+    expect(screen.getByRole('heading', { level: 2, name: '加载成功' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '加载中' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '加载失败' })).toBeInTheDocument()
+  })
+
+  it('重复插件 ID 被隔离时展示冲突目录', async () => {
+    const user = userEvent.setup()
+    const duplicatePlugin = makePlugin('test.duplicate', 'Duplicate Plugin')
+    duplicatePlugin.load_status = 'failed'
+    duplicatePlugin.load_error =
+      '插件 ID 重复，已阻止加载；冲突目录: C:\\plugins\\duplicate_a, C:\\plugins\\duplicate_b'
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([duplicatePlugin] as never)
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('插件加载失败')).toBeInTheDocument()
+    expect(screen.getByText(`失败原因：${duplicatePlugin.load_error}`)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }))
+    expect(screen.getByText(duplicatePlugin.load_error)).toBeInTheDocument()
   })
 
   it('插件版本不兼容时优先展示用户可理解的结论并保留技术详情', async () => {
@@ -148,6 +210,32 @@ describe('PluginConfigPage 特征化', () => {
 
     await user.click(screen.getByRole('button', { name: '查看详情' }))
     expect(screen.getByText(incompatiblePlugin.load_error)).toBeInTheDocument()
+  })
+
+  it('嵌入模式保持嵌入路由并跳转到嵌入式插件市场', async () => {
+    const user = userEvent.setup()
+    const incompatiblePlugin = makePlugin('test.embedded', 'Embedded Plugin')
+    incompatiblePlugin.manifest.version = '1.3.2'
+    incompatiblePlugin.manifest.host_application.max_version = '1.0.99'
+    incompatiblePlugin.load_status = 'failed'
+    incompatiblePlugin.load_error =
+      'manifest 校验失败: Host 版本不兼容: 版本 1.1.0 高于最大支持 1.0.99 (当前 Host: 1.1.0)'
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([incompatiblePlugin] as never)
+    window.history.replaceState(null, '', '/plugin-config/embed')
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('当前插件版本已不兼容')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '前往插件市场' })).toHaveAttribute(
+      'href',
+      '/plugins/embed'
+    )
+
+    await user.click(screen.getByRole('button', { name: /Embedded Plugin/ }))
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/plugin-config/embed')
+      expect(window.location.search).toBe('?plugin=test.embedded')
+    })
   })
 
   it('插件版本不兼容且市场有兼容新版时直接引导更新', async () => {

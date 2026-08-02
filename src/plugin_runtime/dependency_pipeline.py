@@ -83,17 +83,25 @@ class PluginDependencyPipeline:
             log_compat_warnings=False,
         )
 
-    async def execute(self, plugin_dirs: Iterable[Path]) -> DependencyPipelineResult:
+    async def execute(
+        self,
+        plugin_dirs: Iterable[Path],
+        initial_blocked_plugin_reasons: Optional[Dict[str, str]] = None,
+    ) -> DependencyPipelineResult:
         """执行完整的依赖分析与自动安装流程。
 
         Args:
             plugin_dirs: 需要扫描的插件根目录集合。
+            initial_blocked_plugin_reasons: 依赖分析前已确定需要隔离的插件及原因。
 
         Returns:
             DependencyPipelineResult: 最终的阻止加载结果与环境变更状态。
         """
 
-        plan = self.build_plan(plugin_dirs)
+        plan = self.build_plan(
+            plugin_dirs,
+            initial_blocked_plugin_reasons=initial_blocked_plugin_reasons,
+        )
         if not plan.install_requirements:
             return DependencyPipelineResult(
                 blocked_plugin_reasons=dict(plan.blocked_plugin_reasons),
@@ -130,18 +138,29 @@ class PluginDependencyPipeline:
             install_requirements=plan.install_requirements,
         )
 
-    def build_plan(self, plugin_dirs: Iterable[Path]) -> DependencyPipelinePlan:
+    def build_plan(
+        self,
+        plugin_dirs: Iterable[Path],
+        initial_blocked_plugin_reasons: Optional[Dict[str, str]] = None,
+    ) -> DependencyPipelinePlan:
         """构建依赖分析计划。
 
         Args:
             plugin_dirs: 需要扫描的插件根目录集合。
+            initial_blocked_plugin_reasons: 依赖分析前已确定需要隔离的插件及原因。
 
         Returns:
             DependencyPipelinePlan: 分析后的阻止加载列表与安装计划。
         """
 
         manifests = self._collect_manifests(plugin_dirs)
-        blocked_plugin_reasons = self._detect_host_conflicts(manifests)
+        blocked_plugin_reasons = {
+            str(plugin_id or "").strip(): str(reason or "").strip()
+            for plugin_id, reason in (initial_blocked_plugin_reasons or {}).items()
+            if str(plugin_id or "").strip() and str(reason or "").strip()
+        }
+        for plugin_id, reason in self._detect_host_conflicts(manifests).items():
+            self._append_block_reason(blocked_plugin_reasons, plugin_id, reason)
         plugin_conflict_reasons = self._detect_plugin_conflicts(manifests, blocked_plugin_reasons)
         for plugin_id, reason in plugin_conflict_reasons.items():
             self._append_block_reason(blocked_plugin_reasons, plugin_id, reason)

@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any, Dict, Optional, cast
 
+import asyncio
+
 from fastapi import APIRouter, Cookie, HTTPException
 import tomlkit
 
@@ -25,6 +27,9 @@ from .support import (
 logger = get_logger("webui.plugin_routes")
 
 router = APIRouter()
+
+_PLUGIN_RUNTIME_TOGGLE_TIMEOUT_SECONDS = 16.0
+_PLUGIN_RUNTIME_TOGGLE_POLL_INTERVAL_SECONDS = 0.1
 
 
 def _to_builtin_data(obj: Any) -> Any:
@@ -330,6 +335,44 @@ async def _validate_plugin_config_via_runtime(plugin_id: str, config_data: Dict[
 
     runtime_manager = get_plugin_runtime_manager()
     return await run_on_main_loop(runtime_manager.validate_plugin_config(plugin_id, config_data))
+
+
+async def _wait_for_plugin_runtime_toggle(
+    plugin_id: str,
+    enabled: bool,
+    *,
+    timeout_seconds: float = _PLUGIN_RUNTIME_TOGGLE_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = _PLUGIN_RUNTIME_TOGGLE_POLL_INTERVAL_SECONDS,
+) -> Optional[str]:
+    """等待配置监听器把插件启停状态同步到运行时。
+
+    WebUI 写入 ``enabled`` 后，插件运行时会通过文件监听器异步完成加载或卸载。
+    这里等待运行时给出终态，避免接口返回后前端立即刷新，把启用前遗留的
+    ``inactive`` 状态误判成加载失败。
+
+    Args:
+        plugin_id: 插件 ID。
+        enabled: 目标启用状态。
+        timeout_seconds: 最长等待时间。
+        poll_interval_seconds: 状态轮询间隔。
+
+    Returns:
+        Optional[str]: 运行时终态；超时则返回 ``None``。
+    """
+
+    from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+    runtime_manager = get_plugin_runtime_manager()
+    terminal_statuses = {"success", "failed"} if enabled else {"inactive"}
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+
+    while True:
+        runtime_status = runtime_manager.get_plugin_load_statuses().get(plugin_id)
+        if runtime_status in terminal_statuses:
+            return runtime_status
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(poll_interval_seconds)
 
 
 @router.get("/config/{plugin_id}/bundle")
@@ -700,13 +743,27 @@ async def toggle_plugin(plugin_id: str, maibot_session: Optional[str] = Cookie(N
         config_path.parent.mkdir(parents=True, exist_ok=True)
         save_toml_with_format(config, str(config_path))
 
+        runtime_status = None
+        if runtime_snapshot is not None:
+            runtime_status = await run_on_main_loop(
+                _wait_for_plugin_runtime_toggle(plugin_id, new_enabled)
+            )
+            if runtime_status is None:
+                logger.warning(f"插件 {plugin_id} 配置已写入，但等待运行时同步启停状态超时")
+
         status = "启用" if new_enabled else "禁用"
         logger.info(f"已{status}插件: {plugin_id}")
+        if runtime_snapshot is None:
+            runtime_note = "状态更改将在插件运行时启动后生效"
+        elif runtime_status is None:
+            runtime_note = "运行时状态同步仍在进行"
+        else:
+            runtime_note = "状态更改已同步到插件运行时"
         return {
             "success": True,
             "enabled": new_enabled,
             "message": f"插件已{status}",
-            "note": "状态更改将自动热更新到对应插件",
+            "note": runtime_note,
         }
     except HTTPException:
         raise

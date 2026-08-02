@@ -53,7 +53,10 @@ export function getPlatformModifierAriaLabel(): string {
   return isMacLikePlatform() ? 'Command' : 'Control'
 }
 
-export function matchesShortcut(event: KeyboardEvent | React.KeyboardEvent, keys: ShortcutKey[]): boolean {
+export function matchesShortcut(
+  event: KeyboardEvent | React.KeyboardEvent,
+  keys: ShortcutKey[]
+): boolean {
   const normalizedKeys = keys.map((key) => key.toLowerCase())
   const eventKey = event.key.toLowerCase()
 

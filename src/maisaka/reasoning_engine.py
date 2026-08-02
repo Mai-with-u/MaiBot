@@ -629,15 +629,14 @@ class MaisakaReasoningEngine:
     ) -> tuple[int, bool]:
         """处理 Planner 响应中的工具调用，或无工具输出策略。"""
 
-        reasoning_content = self._get_effective_planner_thought(response)
-        if self._should_replace_reasoning(reasoning_content):
-            reasoning_content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
-            response.content = reasoning_content
-            response.reasoning = reasoning_content
-            response.raw_message.content = reasoning_content
+        planner_content = self._get_planner_content(response)
+        if self._should_replace_reasoning(planner_content):
+            planner_content = "我应该根据我上面思考的内容进行反思，重新思考我下一步的行动，我需要分析当前场景，对话，然后直接输出我的想法："
+            response.content = planner_content
+            response.raw_message.content = planner_content
             logger.info(f"{self._runtime.log_prefix} 当前思考与上一轮过于相似，已替换为重新思考提示")
 
-        self._last_reasoning_content = reasoning_content
+        self._last_reasoning_content = planner_content
         self._runtime._chat_history.append(response.raw_message)
 
         if response.tool_calls:
@@ -651,7 +650,7 @@ class MaisakaReasoningEngine:
                 tool_monitor_results,
             ) = await self._handle_tool_calls(
                 response.tool_calls,
-                reasoning_content,
+                planner_content,
             )
             cycle_detail.time_records["tool_calls"] = time.time() - tool_started_at
             state.tool_result_summaries = tool_result_summaries
@@ -797,12 +796,9 @@ class MaisakaReasoningEngine:
         return PlannerInterruptResult(interrupted_response, extra_lines, interrupted_messages)
 
     @staticmethod
-    def _get_effective_planner_thought(response: ChatResponse) -> str:
-        """获取本轮 planner 可用于工具上下文的思考文本。"""
+    def _get_planner_content(response: ChatResponse) -> str:
+        """获取 Planner 显式输出、可用于工具上下文的正文。"""
 
-        reasoning_content = str(response.reasoning or "").strip()
-        if reasoning_content:
-            return reasoning_content
         return str(response.content or "").strip()
 
     @staticmethod
@@ -830,7 +826,6 @@ class MaisakaReasoningEngine:
             return []
 
         await self._runtime._wait_for_message_quiet_period()
-        self._runtime._mark_message_turn_unscheduled()
         pending_round_messages = self._runtime._collect_pending_messages()
         if pending_round_messages:
             await self._ingest_messages(pending_round_messages)
@@ -893,20 +888,21 @@ class MaisakaReasoningEngine:
                 self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=True))
             await self._ingest_messages(cached_messages)
             trigger_message = cached_messages[-1]
-        else:
-            trigger_message = (
-                self._runtime._consume_proactive_trigger_message()
-                if proactive_triggered
-                else self._runtime.message_cache[-1]
-                if self._runtime.message_cache
-                else None
-            )
+        elif proactive_triggered:
+            trigger_message = self._runtime._consume_proactive_trigger_message()
+            if trigger_message is None:
+                logger.warning(f"{self._runtime.log_prefix} 主动触发缺少对应的触发消息，跳过本轮")
+                return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
+        elif timeout_triggered and self._runtime._has_pending_wait_tool_call():
+            trigger_message = self._runtime.message_cache[-1] if self._runtime.message_cache else None
             if trigger_message is None:
                 logger.warning(f"{self._runtime.log_prefix} wait 超时后没有可复用的触发消息，跳过本轮")
                 return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
             logger.info(f"{self._runtime.log_prefix} 等待结束，再看一眼！")
-            if self._runtime._has_pending_wait_tool_call():
-                self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=False))
+            self._runtime._chat_history.append(self._build_wait_completed_message(has_new_messages=False))
+        else:
+            logger.debug(f"{self._runtime.log_prefix} 消息已由当前内部轮次处理，忽略过期的轮次触发")
+            return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
 
         return TurnStartContext(
             cached_messages,

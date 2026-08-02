@@ -30,6 +30,46 @@ def _use_expression_intent() -> bool:
     return config_module.global_config.expression.expression_selection_mode == "vector_intent"
 
 
+def _require_hook_bool(raw_value: Any, option_name: str) -> bool:
+    """读取 Hook 返回的布尔值，并拒绝不符合协议的类型。"""
+
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise TypeError(f"Hook 返回的 {option_name} 必须是布尔值，实际为 {type(raw_value).__name__}")
+
+
+async def _invoke_before_post_process_hook(
+    tool_ctx: BuiltinToolRuntimeContext,
+    reply_text: str,
+    target_message_id: str,
+    reply_tool_args: dict[str, Any],
+) -> tuple[str, dict[str, bool]]:
+    """调用最终回复文本后处理前 Hook，并返回本次回复的后处理策略。"""
+
+    post_process_options = {
+        "skip_post_process": False,
+        "enable_splitter": True,
+        "enable_chinese_typo": True,
+    }
+    before_post_process_result = await tool_ctx.get_runtime_manager().invoke_hook(
+        "maisaka.reply.before_post_process",
+        response=reply_text,
+        session_id=tool_ctx.runtime.session_id,
+        reply_message_id=target_message_id,
+        reply_tool_args=dict(reply_tool_args),
+        **post_process_options,
+    )
+    before_post_process_kwargs = before_post_process_result.kwargs
+    if "response" in before_post_process_kwargs:
+        reply_text = str(before_post_process_kwargs["response"] or "").strip()
+    for option_name in post_process_options:
+        post_process_options[option_name] = _require_hook_bool(
+            before_post_process_kwargs.get(option_name),
+            option_name,
+        )
+    return reply_text, post_process_options
+
+
 async def _run_expression_selector(tool_ctx: BuiltinToolRuntimeContext, system_prompt: str) -> str:
     """运行 replyer 侧表达方式选择子代理，并返回文本结果。"""
     response = await tool_ctx.runtime.run_sub_agent(
@@ -181,6 +221,23 @@ def _build_send_result(
         "success": success,
         "message_id": message_id,
     }
+
+
+def _resolve_segment_reply_context(
+    *,
+    index: int,
+    quote_previous: bool,
+    effective_set_quote: bool,
+    target_message: Any,
+    previous_sent_message: Any,
+) -> tuple[bool, Any]:
+    """确定当前分段是否引用，以及引用所使用的真实消息对象。"""
+
+    if index == 0:
+        return effective_set_quote, target_message
+    if quote_previous and previous_sent_message is not None:
+        return True, previous_sent_message
+    return False, target_message
 
 
 def _extract_guided_reply_text(message: SessionBackedMessage) -> str:
@@ -337,13 +394,41 @@ async def handle_tool(
         )
 
     try:
+        reply_text, post_process_options = await _invoke_before_post_process_hook(
+            tool_ctx,
+            reply_text,
+            target_message_id,
+            reply_tool_args,
+        )
+    except Exception as exc:
+        logger.warning(f"{tool_ctx.runtime.log_prefix} 回复文本后处理前 Hook 调用失败，将使用默认策略: {exc}")
+        post_process_options = {
+            "skip_post_process": False,
+            "enable_splitter": True,
+            "enable_chinese_typo": True,
+        }
+
+    if not reply_text:
+        reply_result.completion.response_text = ""
+        reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            "回复文本后处理前 Hook 返回了空回复。",
+            metadata=_build_monitor_metadata(reply_result),
+        )
+
+    try:
         if rich_reply_enabled:
-            reply_sequences = await tool_ctx.post_process_rich_reply_message_sequences_async(
+            reply_items = await tool_ctx.post_process_rich_reply_message_items_async(
                 reply_text,
                 invocation_arguments,
+                **post_process_options,
             )
         else:
-            reply_sequences = await tool_ctx.post_process_reply_message_sequences_async(reply_text)
+            reply_items = await tool_ctx.post_process_reply_message_items_async(
+                reply_text,
+                **post_process_options,
+            )
     except Exception as exc:
         reply_result.completion.response_text = reply_text
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
@@ -354,6 +439,7 @@ async def handle_tool(
             f"解析回复附件失败：{exc}",
             metadata=reply_metadata,
         )
+    reply_sequences = [item.sequence for item in reply_items]
     reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
     combined_reply_text = "".join(reply_segments)
     reply_result.completion.response_text = combined_reply_text
@@ -377,15 +463,23 @@ async def handle_tool(
                 )
             sent = True
         else:
-            for index, reply_sequence in enumerate(reply_sequences):
+            previous_sent_message = None
+            for index, reply_item in enumerate(reply_items):
+                reply_sequence = reply_item.sequence
                 segment = reply_segments[index]
-                segment_set_quote = effective_set_quote if index == 0 else False
+                segment_set_quote, segment_reply_message = _resolve_segment_reply_context(
+                    index=index,
+                    quote_previous=reply_item.quote_previous,
+                    effective_set_quote=effective_set_quote,
+                    target_message=target_message,
+                    previous_sent_message=previous_sent_message,
+                )
                 sent_message = await send_service._send_to_target_with_message(
                     message_sequence=reply_sequence,
                     stream_id=tool_ctx.runtime.session_id,
                     processed_plain_text=segment,
                     set_reply=segment_set_quote,
-                    reply_message=target_message,
+                    reply_message=segment_reply_message,
                     selected_expressions=reply_result.selected_expression_ids or None,
                     typing=index > 0,
                     sync_to_maisaka_history=True,
@@ -414,6 +508,7 @@ async def handle_tool(
                         message_id=sent_message_id,
                     )
                 )
+                previous_sent_message = sent_message
     except Exception:
         logger.exception(f"{tool_ctx.runtime.log_prefix} 发送文字消息时发生异常，目标消息编号={target_message_id}")
         return tool_ctx.build_failure_result(

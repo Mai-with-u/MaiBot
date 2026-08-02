@@ -1,4 +1,5 @@
 import { useContext } from 'react'
+
 import { AnimationContext } from '@/lib/animation-context'
 
 export const useAnimation = () => {

@@ -68,6 +68,18 @@ export interface UpdateNoticeAckResponse {
   version: string
 }
 
+export interface UpdateHistoryEntry {
+  version: string
+  title: string
+  content: string
+}
+
+export interface UpdateHistoryResponse {
+  entries: UpdateHistoryEntry[]
+  next_offset: number
+  has_more: boolean
+}
+
 export async function getUpdateNotice(force = false): Promise<UpdateNoticeResponse> {
   return backendApi.get<UpdateNoticeResponse>('/api/webui/system/update-notice', {
     errorMessage: '获取更新公告失败',
@@ -78,6 +90,18 @@ export async function getUpdateNotice(force = false): Promise<UpdateNoticeRespon
 export async function ackUpdateNotice(): Promise<UpdateNoticeAckResponse> {
   return backendApi.post<UpdateNoticeAckResponse>('/api/webui/system/update-notice/ack', {
     errorMessage: '确认更新公告失败',
+  })
+}
+
+export async function getUpdateHistory(
+  offset = 0,
+  limit = 3,
+  beforeVersion?: string,
+  section?: 'webui'
+): Promise<UpdateHistoryResponse> {
+  return backendApi.get<UpdateHistoryResponse>('/api/webui/system/update-history', {
+    errorMessage: '获取历史更新记录失败',
+    query: { offset, limit, before_version: beforeVersion, section },
   })
 }
 
@@ -228,7 +252,10 @@ export interface LocalCacheDatabaseVacuumResult {
   checkpointed: number
 }
 
-export function getLocalCacheImagePreviewUrl(target: LocalCacheImageTarget, relativePath: string): string {
+export function getLocalCacheImagePreviewUrl(
+  target: LocalCacheImageTarget,
+  relativePath: string
+): string {
   const query = new URLSearchParams({
     target,
     relative_path: relativePath,
@@ -257,7 +284,9 @@ export async function vacuumLocalCacheDatabase(): Promise<LocalCacheDatabaseVacu
   )
 }
 
-export async function getLocalCacheDataEntries(relativePath = ''): Promise<LocalCacheDataEntriesResponse> {
+export async function getLocalCacheDataEntries(
+  relativePath = ''
+): Promise<LocalCacheDataEntriesResponse> {
   return backendApi.get<LocalCacheDataEntriesResponse>(
     '/api/webui/system/local-cache/data-entries',
     {
@@ -267,7 +296,9 @@ export async function getLocalCacheDataEntries(relativePath = ''): Promise<Local
   )
 }
 
-export async function deleteLocalCacheDataEntry(relativePath: string): Promise<LocalCacheCleanupResult> {
+export async function deleteLocalCacheDataEntry(
+  relativePath: string
+): Promise<LocalCacheCleanupResult> {
   return backendApi.delete<LocalCacheCleanupResult>('/api/webui/system/local-cache/data-entries', {
     body: { relative_path: relativePath },
     errorMessage: '删除 data 条目失败',
@@ -363,7 +394,9 @@ export async function getLocalCacheLogDirectories(): Promise<LocalCacheLogDirect
   )
 }
 
-export async function deleteLocalCacheLogDirectory(relativePath: string): Promise<LocalCacheCleanupResult> {
+export async function deleteLocalCacheLogDirectory(
+  relativePath: string
+): Promise<LocalCacheCleanupResult> {
   return backendApi.delete<LocalCacheCleanupResult>(
     '/api/webui/system/local-cache/log-directories',
     {

@@ -21,11 +21,18 @@ const rootRoute = createRootRoute({
       {import.meta.env.DEV && <TanStackRouterDevtools />}
     </>
   ),
-  beforeLoad: () => {
-    // 如果访问根路径且未认证，重定向到认证页面
-    if (window.location.pathname === '/' && !checkAuth()) {
-      throw redirect({ to: '/auth' })
+  beforeLoad: ({ location }) => {
+    // 只在目标路由确实是首页时异步鉴权。使用 window.location 会读到导航前的旧路径，
+    // 并让离开首页的工作区切换无故进入 pending 状态。
+    if (location.pathname !== '/') {
+      return
     }
+
+    return checkAuth().then((authenticated) => {
+      if (!authenticated) {
+        throw redirect({ to: '/auth' })
+      }
+    })
   },
 })
 
@@ -60,6 +67,13 @@ const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/',
   component: lazyRouteComponent(() => import('./routes/index'), 'IndexPage'),
+})
+
+// 详细统计路由
+const statisticsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/statistics',
+  component: lazyRouteComponent(() => import('./routes/statistics'), 'StatisticsPage'),
 })
 
 // 沉浸专注陪伴路由
@@ -279,6 +293,13 @@ const mcpSettingsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/mcp-settings'), 'MCPSettingsPage'),
 })
 
+// 数据迁移与备份路由
+const dataTransferRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/data-transfer',
+  component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
+})
+
 const settingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/settings',
@@ -337,6 +358,7 @@ const routeTree = rootRoute.addChildren([
   pluginMirrorsEmbedRoute,
   protectedRoute.addChildren([
     indexRoute,
+    statisticsRoute,
     focusCompanionRoute,
     botConfigRoute,
     modelConfigRoute,
@@ -354,6 +376,7 @@ const routeTree = rootRoute.addChildren([
     pluginConfigRoute,
     pluginMirrorsRoute,
     mcpSettingsRoute,
+    dataTransferRoute,
     logsRoute,
     reasoningProcessRoute,
     plannerMonitorRoute,

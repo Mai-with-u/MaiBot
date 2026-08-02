@@ -46,7 +46,7 @@ export interface InstalledPlugin {
     plugin_type?: PluginType | string
     display?: PluginDisplay
     changelog?: string
-    [key: string]: unknown  // 允许其他字段
+    [key: string]: unknown // 允许其他字段
   }
   path: string
   changelog?: string | null
@@ -77,7 +77,7 @@ export interface LegacyInstalledPlugin {
 export interface PluginLoadProgress {
   operation: 'idle' | 'fetch' | 'install' | 'uninstall' | 'update'
   stage: 'idle' | 'loading' | 'success' | 'error'
-  progress: number  // 0-100
+  progress: number // 0-100
   message: string
   error?: string
   plugin_id?: string
@@ -143,7 +143,7 @@ export interface ConfigFieldSchema {
   depends_on?: string
   depends_value?: unknown
   // 列表类型专用
-  item_type?: string  // "string" | "number" | "object"
+  item_type?: string // "string" | "number" | "object"
   item_fields?: Record<string, ItemFieldDefinition>
   min_items?: number
   max_items?: number

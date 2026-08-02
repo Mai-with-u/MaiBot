@@ -338,7 +338,7 @@ export function KnowledgeGraphPage({ embedded = false, initialParagraphHash = ''
         title: '全库检索完成',
         description: `命中 ${payload.count ?? items.length} 条结果`,
       })
-    } catch (error) {
+    } catch {
       const filtered = filterGraphData(fullGraph, nextQuery)
       setSearchResults([])
       setSearchFallbackMode(true)

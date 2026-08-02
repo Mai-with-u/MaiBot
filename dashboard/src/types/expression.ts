@@ -14,7 +14,7 @@ export interface Expression {
   chat_name?: string | null
   create_date: number | null
   checked: boolean
-  modified_by: 'ai' | 'user' | null  // 最后修改来源
+  modified_by: 'ai' | 'user' | null // 最后修改来源
 }
 
 /**

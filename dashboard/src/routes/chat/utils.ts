@@ -1,6 +1,8 @@
 import { VIRTUAL_TABS_STORAGE_KEY } from './types'
 import type { ChatTab, SavedVirtualTab } from './types'
 
+const USER_AVATAR_VERSION_STORAGE_KEY = 'maibot_webui_user_avatar_version'
+
 // 生成唯一用户 ID
 export function generateUserId(): string {
   return 'webui_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now().toString(36)
@@ -19,12 +21,21 @@ export function getOrCreateUserId(): string {
 
 // 从 localStorage 获取用户昵称
 export function getStoredUserName(): string {
-  return localStorage.getItem('maibot_webui_user_name') || 'WebUI用户'
+  return localStorage.getItem('maibot_webui_user_name') || '人类'
 }
 
 // 保存用户昵称到 localStorage
 export function saveUserName(name: string): void {
   localStorage.setItem('maibot_webui_user_name', name)
+}
+
+export function getStoredUserAvatarVersion(): number | undefined {
+  const value = Number(localStorage.getItem(USER_AVATAR_VERSION_STORAGE_KEY))
+  return Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+export function saveUserAvatarVersion(version: number): void {
+  localStorage.setItem(USER_AVATAR_VERSION_STORAGE_KEY, String(version))
 }
 
 // 从 localStorage 获取保存的虚拟标签页

@@ -25,7 +25,9 @@ const API_BASE = '/api/webui/jargon'
 /**
  * 获取聊天列表（有黑话记录的聊天）
  */
-export async function getJargonChatList(params: { include_empty?: boolean } = {}): Promise<JargonChatListResponse> {
+export async function getJargonChatList(
+  params: { include_empty?: boolean } = {}
+): Promise<JargonChatListResponse> {
   return backendApi.get<JargonChatListResponse>(`${API_BASE}/chats`, {
     query: { include_empty: params.include_empty },
     errorMessage: '获取聊天列表失败',
@@ -98,9 +100,7 @@ export async function importJargons(data: JargonImportRequest): Promise<JargonIm
 /**
  * 创建黑话
  */
-export async function createJargon(
-  data: JargonCreateRequest
-): Promise<JargonCreateResponse> {
+export async function createJargon(data: JargonCreateRequest): Promise<JargonCreateResponse> {
   return backendApi.post<JargonCreateResponse>(`${API_BASE}/`, {
     body: data,
     errorMessage: '创建黑话失败',

@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { isPluginCompatible } from './marketplace'
 import type { MaimaiVersion } from './types'
 
-function maimaiVersion(version: string, major: number, minor: number, patch: number): MaimaiVersion {
+function maimaiVersion(
+  version: string,
+  major: number,
+  minor: number,
+  patch: number
+): MaimaiVersion {
   return {
     version,
     version_major: major,

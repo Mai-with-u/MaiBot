@@ -77,7 +77,7 @@ import type {
 } from '@/lib/plugin-api'
 import { PluginIcon } from './plugins/PluginIcon'
 import { getPluginTypeLabel } from './plugins/types'
-import { getNestedRecord } from './plugin-config/utils'
+import { getNestedRecord, getPluginMarketplaceRoutePath } from './plugin-config/utils'
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
 import { usePluginConfigEditor } from './plugin-config/hooks/usePluginConfigEditor'
@@ -975,6 +975,36 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
     startDrag(event.clientX, event.clientY)
   }
 
+  const handleDragHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const direction = {
+      ArrowDown: { left: 0, top: 1 },
+      ArrowLeft: { left: -1, top: 0 },
+      ArrowRight: { left: 1, top: 0 },
+      ArrowUp: { left: 0, top: -1 },
+    }[event.key]
+    if (!direction) {
+      return
+    }
+
+    event.preventDefault()
+    const panelRect = panelRef.current?.getBoundingClientRect()
+    const panelWidth = panelRect?.width ?? DOCUMENT_PANEL_WIDTH
+    const panelHeight = panelRect?.height ?? DOCUMENT_PANEL_HEIGHT
+    const maxLeft = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerWidth - DOCUMENT_PANEL_MARGIN - panelWidth
+    )
+    const maxTop = Math.max(
+      DOCUMENT_PANEL_MARGIN,
+      window.innerHeight - DOCUMENT_PANEL_MARGIN - panelHeight
+    )
+    const step = event.shiftKey ? 24 : 8
+    setPosition((current) => ({
+      left: clampPanelValue(current.left + direction.left * step, DOCUMENT_PANEL_MARGIN, maxLeft),
+      top: clampPanelValue(current.top + direction.top * step, DOCUMENT_PANEL_MARGIN, maxTop),
+    }))
+  }
+
   const content = mode === 'readme' ? readme : changelog
   const panelStyle = {
     left: position.left,
@@ -989,9 +1019,13 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
       style={panelStyle}
     >
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="移动插件文档窗口"
         className={`flex touch-none select-none items-center gap-2 border-b bg-muted/70 px-3 py-2 ${
           dragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
+        onKeyDown={handleDragHandleKeyDown}
         onPointerCancel={endDrag}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1454,6 +1488,7 @@ function PluginConfigPageContent() {
     showUpdateOnly,
     setShowUpdateOnly,
     visiblePlugins,
+    visiblePluginGroups,
     actingPluginId,
     setActingPluginId,
     performTogglePlugin,
@@ -1695,8 +1730,16 @@ function PluginConfigPageContent() {
             </div>
           </div>
         ) : (
-          <div className="divide-border/80 divide-y">
-            {visiblePlugins.map((plugin) => {
+          <div className="space-y-4">
+            {visiblePluginGroups.map((group) => (
+              <section key={group.key} aria-labelledby={`plugin-list-group-${group.key}`}>
+                <div className="text-muted-foreground flex items-center gap-2 border-b px-2 pb-1.5 text-xs font-medium">
+                  <span className={`h-2 w-2 rounded-full ${group.dotClassName}`} aria-hidden="true" />
+                  <h2 id={`plugin-list-group-${group.key}`}>{group.label}</h2>
+                  <span aria-label={`${group.plugins.length} 个插件`}>{group.plugins.length}</span>
+                </div>
+                <div className="divide-border/80 divide-y">
+                  {group.plugins.map((plugin) => {
               const pluginActing = actingPluginId === plugin.id
               const pluginDisabled = isPluginDisabled(plugin)
               const updateState = getPluginUpdateState(plugin)
@@ -1811,7 +1854,10 @@ function PluginConfigPageContent() {
                                 size="sm"
                                 className="h-7 border-red-300 px-2 text-xs text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
                               >
-                                <a href="/plugins" onClick={(event) => event.stopPropagation()}>
+                                <a
+                                  href={getPluginMarketplaceRoutePath()}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
                                   前往插件市场
                                 </a>
                               </Button>
@@ -1882,9 +1928,10 @@ function PluginConfigPageContent() {
                       )}
                     </Button>
                     <Button
-                      variant="destructive"
+                      variant="outline"
                       size="sm"
-                      className="h-9 w-9 p-0"
+                      data-plugin-delete-button="true"
+                      className="text-primary h-9 w-9 border-current bg-transparent p-0 shadow-none hover:bg-transparent hover:text-primary/80"
                       disabled={pluginActing}
                       title="删除"
                       aria-label="删除"
@@ -1900,7 +1947,10 @@ function PluginConfigPageContent() {
                   </div>
                 </div>
               )
-            })}
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
 

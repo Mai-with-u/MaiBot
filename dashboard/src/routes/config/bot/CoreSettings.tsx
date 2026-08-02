@@ -39,6 +39,20 @@ function requireStringField(section: ConfigSectionData, field: string): string {
   return value
 }
 
+function resolveBehaviorStyle(personality: ConfigSectionData): string {
+  const behaviorStyle = personality.behavior_style
+  if (behaviorStyle === undefined) {
+    // 兼容行为风格拆分前的配置：旧版 Planner 原本直接使用人格配置。
+    return requireStringField(personality, 'personality')
+  }
+
+  if (typeof behaviorStyle !== 'string') {
+    throw new TypeError('核心设置字段 behavior_style 必须是字符串')
+  }
+
+  return behaviorStyle
+}
+
 function CoreSettingCard({
   accentClassName,
   description,
@@ -98,10 +112,12 @@ export function CoreSettings({
   const bot = requireSection(botSection, 'bot')
   const personality = requireSection(personalitySection, 'personality')
   const botName = requireStringField(bot, 'nickname')
+  const behaviorStyle = resolveBehaviorStyle(personality)
 
   const updateCoreSetting = (field: CoreSettingField, value: string) => {
     onPersonalitySectionChange({
       ...personality,
+      behavior_style: behaviorStyle,
       [field]: value,
     })
   }
@@ -200,7 +216,7 @@ export function CoreSettings({
             placeholder="例如：只在被提及或确实能推进话题时参与……"
             title="行为风格"
             transformClassName="xl:-rotate-[0.35deg]"
-            value={requireStringField(personality, 'behavior_style')}
+            value={behaviorStyle}
           />
         </div>
       </div>

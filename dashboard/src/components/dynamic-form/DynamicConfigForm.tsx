@@ -135,7 +135,7 @@ function DynamicConfigSection({
   const contentVisible = !collapsible || !collapsed
 
   return (
-    <Card className="min-w-0">
+    <Card className="min-w-0" data-config-field-path={basePath}>
       <CardHeader className={contentVisible ? 'border-b border-border/50 pb-3' : 'pb-3'}>
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
@@ -215,7 +215,10 @@ function NestedDynamicConfigSection({
   const contentVisible = !collapsible || !collapsed
 
   return (
-    <Card className="min-w-0 border-border/70 bg-muted/20 shadow-none">
+    <Card
+      className="min-w-0 border-border/70 bg-muted/20 shadow-none"
+      data-config-field-path={basePath}
+    >
       <CardHeader className={contentVisible ? 'border-b border-border/50 px-3 py-2.5' : 'px-3 py-2.5'}>
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
@@ -302,6 +305,23 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
 
       if (hookEntry.type === 'replace') {
         return (
+          <div data-config-field-path={fieldPath} className="min-w-0">
+            <HookComponent
+              fieldPath={fieldPath}
+              value={values[field.name]}
+              onChange={(v) => onChange(field.name, v)}
+              onParentChange={onChange}
+              schema={field}
+              nestedSchema={nestedSchema}
+              parentValues={values}
+              advancedVisible={resolvedAdvancedVisible}
+            />
+          </div>
+        )
+      }
+
+      return (
+        <div data-config-field-path={fieldPath} className="min-w-0">
           <HookComponent
             fieldPath={fieldPath}
             value={values[field.name]}
@@ -311,28 +331,15 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
             nestedSchema={nestedSchema}
             parentValues={values}
             advancedVisible={resolvedAdvancedVisible}
-          />
-        )
-      }
-
-      return (
-        <HookComponent
-          fieldPath={fieldPath}
-          value={values[field.name]}
-          onChange={(v) => onChange(field.name, v)}
-          onParentChange={onChange}
-          schema={field}
-          nestedSchema={nestedSchema}
-          parentValues={values}
-          advancedVisible={resolvedAdvancedVisible}
-        >
-          <DynamicField
-            schema={field}
-            value={values[field.name]}
-            onChange={(v) => onChange(field.name, v)}
-            fieldPath={fieldPath}
-          />
-        </HookComponent>
+          >
+            <DynamicField
+              schema={field}
+              value={values[field.name]}
+              onChange={(v) => onChange(field.name, v)}
+              fieldPath={fieldPath}
+            />
+          </HookComponent>
+        </div>
       )
     }
 

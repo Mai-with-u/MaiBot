@@ -92,7 +92,7 @@ class ChatResponse:
     duration_ms: float = 0.0
     prompt_section: Optional[RenderableType] = None
     prompt_html_uri: Optional[str] = None
-    reasoning: str = ""
+    reasoning: str = ""  # Provider 原生推理，仅用于观测，不代表 Planner 显式正文。
 
 
 logger = get_logger("maisaka_chat_loop")
@@ -470,6 +470,54 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                 allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
+            HookSpec(
+                name="maisaka.reply.before_post_process",
+                description="在 Maisaka 对最终可见回复执行文本后处理前触发，可按本次回复调整后处理策略。",
+                parameters_schema=build_object_schema(
+                    {
+                        "response": {
+                            "type": "string",
+                            "description": "即将执行文本后处理的最终回复正文。",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "当前会话 ID。",
+                        },
+                        "reply_message_id": {
+                            "type": "string",
+                            "description": "被回复消息 ID。",
+                        },
+                        "reply_tool_args": {
+                            "type": "object",
+                            "description": "本次 reply 工具除内部参数外的透传参数。",
+                        },
+                        "skip_post_process": {
+                            "type": "boolean",
+                            "description": "是否跳过本次回复的全部文本后处理。",
+                        },
+                        "enable_splitter": {
+                            "type": "boolean",
+                            "description": "本次回复是否允许按全局配置进行文本拆分。",
+                        },
+                        "enable_chinese_typo": {
+                            "type": "boolean",
+                            "description": "本次回复是否允许按全局配置注入中文错别字。",
+                        },
+                    },
+                    required=[
+                        "response",
+                        "session_id",
+                        "reply_message_id",
+                        "reply_tool_args",
+                        "skip_post_process",
+                        "enable_splitter",
+                        "enable_chinese_typo",
+                    ],
+                ),
+                default_timeout_ms=6000,
+                allow_abort=False,
+                allow_kwargs_mutation=True,
+            ),
         ]
     )
 
@@ -549,15 +597,6 @@ class MaisakaChatLoopService:
             )
             self._llm_chat_clients[client_key] = llm_client
         return llm_client
-
-    @staticmethod
-    def _resolve_planner_response_content(response: str, reasoning: str) -> str:
-        """在模型只把思考放入原生 reasoning 字段时，仍保留可传给工具的 planner 文本。"""
-
-        normalized_response = str(response or "").strip()
-        if normalized_response:
-            return response
-        return str(reasoning or "").strip()
 
     @staticmethod
     def _get_runtime_manager() -> Any:
@@ -983,8 +1022,9 @@ class MaisakaChatLoopService:
             prompt_cache_miss_tokens=getattr(generation_result, "prompt_cache_miss_tokens", 0) or 0,
         )
 
+        # Provider 原生推理与 Planner 显式正文语义不同，必须分别保留。
         final_reasoning = generation_result.reasoning or ""
-        final_response = self._resolve_planner_response_content(generation_result.response or "", final_reasoning)
+        final_response = generation_result.response or ""
         final_tool_calls = list(generation_result.tool_calls or [])
         after_response_result = await self._get_runtime_manager().invoke_hook(
             "maisaka.planner.after_response",

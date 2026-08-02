@@ -3,10 +3,7 @@
  * 提供内置的亮色和暗色主题预设
  */
 
-import {
-	defaultDarkTokens,
-	defaultLightTokens,
-} from './tokens'
+import { defaultDarkTokens, defaultLightTokens } from './tokens'
 import type { ThemePreset } from './tokens'
 
 // ============================================================================
@@ -14,11 +11,11 @@ import type { ThemePreset } from './tokens'
 // ============================================================================
 
 export const defaultLightPreset: ThemePreset = {
-	id: 'light',
-	name: '默认亮色',
-	description: '默认亮色主题',
-	tokens: defaultLightTokens,
-	isDark: false,
+  id: 'light',
+  name: '默认亮色',
+  description: '默认亮色主题',
+  tokens: defaultLightTokens,
+  isDark: false,
 }
 
 // ============================================================================
@@ -26,21 +23,18 @@ export const defaultLightPreset: ThemePreset = {
 // ============================================================================
 
 export const defaultDarkPreset: ThemePreset = {
-	id: 'dark',
-	name: '默认暗色',
-	description: '默认暗色主题',
-	tokens: defaultDarkTokens,
-	isDark: true,
+  id: 'dark',
+  name: '默认暗色',
+  description: '默认暗色主题',
+  tokens: defaultDarkTokens,
+  isDark: true,
 }
 
 // ============================================================================
 // Built-in Presets Collection
 // ============================================================================
 
-export const builtInPresets: ThemePreset[] = [
-	defaultLightPreset,
-	defaultDarkPreset,
-]
+export const builtInPresets: ThemePreset[] = [defaultLightPreset, defaultDarkPreset]
 
 // ============================================================================
 // Default Preset ID
@@ -58,5 +52,5 @@ export const DEFAULT_PRESET_ID = 'light'
  * @returns 对应的预设，如果不存在则返回 undefined
  */
 export function getPresetById(id: string): ThemePreset | undefined {
-	return builtInPresets.find((preset) => preset.id === id)
+  return builtInPresets.find((preset) => preset.id === id)
 }

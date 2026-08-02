@@ -19,6 +19,7 @@ _DATA_DIR = PROJECT_ROOT / "data"
 _STATE_PATH = _DATA_DIR / "update_notice_state.json"
 _CHANGELOG_PATH = PROJECT_ROOT / "changelogs" / "changelog.md"
 _VERSION_HEADING_RE = re.compile(r"^# \[(?P<version>[^\]]+)\](?P<suffix>[^\n]*)$", re.MULTILINE)
+_SECTION_HEADING_RE = re.compile(r"^#{2,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 _TERMINAL_NOTICE_REPEAT_COUNT = 3
 _TERMINAL_NOTICE_VERSION_KEY = "terminal_notice_version"
 _TERMINAL_NOTICE_COUNT_KEY = "terminal_notice_count"
@@ -160,6 +161,33 @@ def parse_changelog_entries(changelog_path: Path = _CHANGELOG_PATH) -> list[Chan
         version = match.group("version").strip()
         entries.append(ChangelogEntry(version=version, title=title, markdown=block))
     return entries
+
+
+def get_changelog_history(
+    current_version: str,
+    limit: int = 20,
+    changelog_path: Path = _CHANGELOG_PATH,
+    offset: int = 0,
+    before_version: str | None = None,
+    section_heading: str | None = None,
+) -> list[ChangelogEntry]:
+    """读取不高于当前版本的历史更新记录，并按版本从新到旧排列。"""
+
+    entries = [
+        entry
+        for entry in parse_changelog_entries(changelog_path)
+        if not _is_version_newer(entry.version, current_version)
+        and (before_version is None or _is_version_newer(before_version, entry.version))
+        and (
+            section_heading is None
+            or any(
+                section_heading.casefold() in match.group("title").casefold()
+                for match in _SECTION_HEADING_RE.finditer(entry.markdown)
+            )
+        )
+    ]
+    entries.sort(key=lambda entry: _version_key(entry.version), reverse=True)
+    return entries[offset : offset + limit]
 
 
 def build_update_notice(

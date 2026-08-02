@@ -16,7 +16,9 @@ export default defineConfig({
         output: {
           format: 'cjs',
         },
-        external: ['electron', 'electron-store'],
+        // electron-store 是 ESM-only 且位于 devDependencies，必须打进主进程产物。
+        // 只保留 Electron 运行时本身为 external，避免 CJS require ESM 及打包后缺包。
+        external: ['electron'],
       },
     },
     resolve: {
@@ -127,7 +129,6 @@ export default defineConfig({
               'clsx',
               'tailwind-merge',
               'class-variance-authority',
-              'axios',
             ],
 
             misc: ['react-joyride', 'react-day-picker', 'cmdk'],

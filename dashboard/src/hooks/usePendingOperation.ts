@@ -30,7 +30,7 @@ export interface UsePendingOperationResult<T> {
 }
 
 export function usePendingOperation<T>(
-  options: UsePendingOperationOptions<T>,
+  options: UsePendingOperationOptions<T>
 ): UsePendingOperationResult<T> {
   const { onConfirm } = options
   const [pending, setPending] = useState<T | null>(null)

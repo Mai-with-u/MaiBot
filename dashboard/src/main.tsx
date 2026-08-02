@@ -14,6 +14,7 @@ import { TourProvider } from './components/tour/tour-provider'
 import { LazyTourRenderer } from './components/tour/lazy-tour-renderer'
 import { ErrorBoundary } from './components/error-boundary'
 import { Toaster } from './components/ui/toaster'
+import { VersionCompatibilityDialog } from './components/version-compatibility-dialog'
 import { isElectron } from './lib/runtime'
 import { queryClient } from './lib/query'
 import { router } from './router'
@@ -25,6 +26,7 @@ createRoot(document.getElementById('root')!).render(
         <AnnouncerProvider>
           <AssetStoreProvider>
             <ThemeProvider defaultTheme="system">
+              <VersionCompatibilityDialog />
               <AnimationProvider>
                 <TourProvider>
                   {isElectron() && <ElectronShell />}

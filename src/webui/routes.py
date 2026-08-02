@@ -1,6 +1,6 @@
 """WebUI API 路由"""
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from src.common.logger import get_logger
@@ -21,14 +21,21 @@ from src.webui.routers.emoji import router as emoji_router
 from src.webui.routers.expression import router as expression_router
 from src.webui.routers.jargon import router as jargon_router
 from src.webui.routers.memory import router as memory_router
+from src.webui.routers.mcp import router as mcp_router
 from src.webui.routers.model import router as model_router
 from src.webui.routers.person import router as person_router
 from src.webui.routers.plugin import router as plugin_router
 from src.webui.routers.reasoning_process import router as reasoning_process_router
+from src.webui.routers.search import router as search_router
 from src.webui.routers.statistics import router as statistics_router
 from src.webui.routers.system import router as system_router
+from src.webui.routers.user_emoji import router as user_emoji_router
 from src.webui.routers.websocket.auth import router as ws_auth_router
 from src.webui.routers.websocket.unified import router as unified_ws_router
+from src.webui.version_compatibility import (
+    WebUICompatibilityStatus,
+    get_webui_version_compatibility,
+)
 
 logger = get_logger("webui.api")
 
@@ -37,6 +44,7 @@ router = APIRouter(prefix="/api/webui", tags=["WebUI"])
 
 # 注册配置管理路由
 router.include_router(config_router)
+router.include_router(mcp_router)
 # 注册统计数据路由
 router.include_router(statistics_router)
 # 注册人物信息管理路由
@@ -49,12 +57,14 @@ router.include_router(jargon_router)
 router.include_router(behavior_router)
 router.include_router(emoji_router)
 router.include_router(avatar_router)
+router.include_router(user_emoji_router)
 # 注册插件管理路由
 router.include_router(plugin_router)
 # 注册系统控制路由
 router.include_router(system_router)
 router.include_router(data_transfer_router)
 router.include_router(reasoning_process_router)
+router.include_router(search_router)
 # 注册模型列表获取路由
 router.include_router(model_router)
 # 注册长期记忆管理路由
@@ -125,10 +135,38 @@ class ResetSetupResponse(BaseModel):
     message: str = Field(..., description="结果消息")
 
 
+class VersionCompatibilityResponse(BaseModel):
+    """主程序与 WebUI 的版本兼容性。"""
+
+    status: WebUICompatibilityStatus
+    main_program_version: str
+    webui_version: str
+    required_webui_version: str
+
+
 @router.get("/health")
 async def health_check():
     """健康检查"""
     return {"status": "healthy", "service": "MaiBot WebUI"}
+
+
+@router.get("/version-compatibility", response_model=VersionCompatibilityResponse)
+async def get_version_compatibility(
+    webui_version: str = Query(..., min_length=1, max_length=64),
+) -> VersionCompatibilityResponse:
+    """比较当前 WebUI 版本与主程序在 pyproject.toml 中声明的版本。"""
+
+    try:
+        compatibility = get_webui_version_compatibility(webui_version)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return VersionCompatibilityResponse(
+        status=compatibility.status,
+        main_program_version=compatibility.main_program_version,
+        webui_version=compatibility.webui_version,
+        required_webui_version=compatibility.required_webui_version,
+    )
 
 
 @router.post("/auth/verify", response_model=TokenVerifyResponse)

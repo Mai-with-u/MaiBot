@@ -65,8 +65,8 @@ export async function submitSurvey(
       allowMultiple: options?.allowMultiple,
       metadata: {
         userAgent: navigator.userAgent,
-        language: navigator.language
-      }
+        language: navigator.language,
+      },
     }
 
     const data = await statsApi.post<{ submissionId?: string; message?: string }>(
@@ -80,7 +80,7 @@ export async function submitSurvey(
     return {
       success: true,
       submissionId: data.submissionId,
-      message: data.message
+      message: data.message,
     }
   } catch (error) {
     if (error instanceof ApiError) {

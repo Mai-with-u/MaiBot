@@ -19,27 +19,36 @@ export function useBackendConnections() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { 
-    refresh() 
+  useEffect(() => {
+    refresh()
   }, [refresh])
 
-  const addBackend = useCallback(async (conn: Omit<BackendConnection, 'id'>) => {
-    if (!isElectron()) return
-    await window.electronAPI!.addBackend(conn)
-    await refresh()
-  }, [refresh])
+  const addBackend = useCallback(
+    async (conn: Omit<BackendConnection, 'id'>) => {
+      if (!isElectron()) return
+      await window.electronAPI!.addBackend(conn)
+      await refresh()
+    },
+    [refresh]
+  )
 
-  const updateBackend = useCallback(async (id: string, patch: Partial<BackendConnection>) => {
-    if (!isElectron()) return
-    await window.electronAPI!.updateBackend(id, patch)
-    await refresh()
-  }, [refresh])
+  const updateBackend = useCallback(
+    async (id: string, patch: Partial<BackendConnection>) => {
+      if (!isElectron()) return
+      await window.electronAPI!.updateBackend(id, patch)
+      await refresh()
+    },
+    [refresh]
+  )
 
-  const removeBackend = useCallback(async (id: string) => {
-    if (!isElectron()) return
-    await window.electronAPI!.removeBackend(id)
-    await refresh()
-  }, [refresh])
+  const removeBackend = useCallback(
+    async (id: string) => {
+      if (!isElectron()) return
+      await window.electronAPI!.removeBackend(id)
+      await refresh()
+    },
+    [refresh]
+  )
 
   const switchBackend = useCallback(async (id: string) => {
     if (!isElectron()) return
@@ -49,14 +58,14 @@ export function useBackendConnections() {
     window.location.reload()
   }, [])
 
-  return { 
-    backends, 
-    activeId, 
-    loading, 
-    addBackend, 
-    updateBackend, 
-    removeBackend, 
-    switchBackend, 
-    refresh 
+  return {
+    backends,
+    activeId,
+    loading,
+    addBackend,
+    updateBackend,
+    removeBackend,
+    switchBackend,
+    refresh,
   }
 }

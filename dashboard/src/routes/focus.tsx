@@ -468,6 +468,11 @@ function FocusThreeScene({ mood, progress, running }: FocusThreeSceneProps) {
 
     let animationFrame = 0
     const animate = () => {
+      if (document.hidden) {
+        animationFrame = 0
+        return
+      }
+
       const elapsed = clock.getElapsedTime()
       const current = stateRef.current
       const energy = current.running ? 0.55 + current.progress * 0.35 : 0.28
@@ -495,10 +500,24 @@ function FocusThreeScene({ mood, progress, running }: FocusThreeSceneProps) {
       renderer.render(scene, camera)
       animationFrame = requestAnimationFrame(animate)
     }
-    animate()
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animationFrame)
+        animationFrame = 0
+        clock.stop()
+      } else if (animationFrame === 0) {
+        clock.start()
+        animationFrame = requestAnimationFrame(animate)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    animationFrame = requestAnimationFrame(animate)
 
     return () => {
       cancelAnimationFrame(animationFrame)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       resizeObserver.disconnect()
       mount.removeEventListener('pointermove', handlePointerMove)
       mount.removeChild(renderer.domElement)
@@ -1159,6 +1178,11 @@ function FocusModelViewer({ kind, mood, modelUrl, onLoadStateChange }: FocusMode
     )
 
     const animate = () => {
+      if (document.hidden) {
+        animationFrame = 0
+        return
+      }
+
       const delta = clock.getDelta()
       const elapsed = clock.getElapsedTime()
       const { mood: currentMood, playing: currentPlaying } = stateRef.current
@@ -1195,11 +1219,25 @@ function FocusModelViewer({ kind, mood, modelUrl, onLoadStateChange }: FocusMode
       renderer.render(scene, camera)
       animationFrame = requestAnimationFrame(animate)
     }
-    animate()
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animationFrame)
+        animationFrame = 0
+        clock.stop()
+      } else if (animationFrame === 0) {
+        clock.start()
+        animationFrame = requestAnimationFrame(animate)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    animationFrame = requestAnimationFrame(animate)
 
     return () => {
       disposed = true
       cancelAnimationFrame(animationFrame)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       resizeObserver.disconnect()
       window.removeEventListener('pointermove', handlePointerMove)
       mount.removeChild(renderer.domElement)

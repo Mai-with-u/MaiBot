@@ -1,30 +1,8 @@
 import type { ReactNode } from 'react'
-import { createContext, useCallback, useContext, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
-type Politeness = 'polite' | 'assertive'
-
-interface AnnouncerContextValue {
-  announce: (message: string, politeness?: Politeness) => void
-}
-
-const AnnouncerContext = createContext<AnnouncerContextValue | null>(null)
-
-/**
- * useAnnounce — 向屏幕阅读器播报消息
- *
- * @example
- * const announce = useAnnounce()
- * announce('保存成功')                    // polite（默认）
- * announce('操作失败，请重试', 'assertive') // assertive（立即打断）
- */
-export function useAnnounce(): (message: string, politeness?: Politeness) => void {
-  const ctx = useContext(AnnouncerContext)
-  if (!ctx) {
-    // 未在 AnnouncerProvider 内时静默降级，不抛错
-    return () => {}
-  }
-  return ctx.announce
-}
+import { AnnouncerContext } from './announcer-context'
+import type { Politeness } from './announcer-context'
 
 interface AnnouncerState {
   polite: string

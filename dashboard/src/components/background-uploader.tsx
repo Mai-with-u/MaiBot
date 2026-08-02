@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, Loader2, Trash2, Upload } from 'lucide-react'
 
-import { useAssetStore } from '@/components/asset-provider'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { addAsset, getAsset } from '@/lib/asset-store'
+import { useAssetStore } from '@/lib/asset-store-context'
 import { cn } from '@/lib/utils'
 
 type BackgroundUploaderProps = {

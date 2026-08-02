@@ -22,12 +22,14 @@ export async function getPluginConfigBundle(pluginId: string): Promise<PluginCon
     config?: Record<string, unknown>
     raw_config?: string
     message?: string
-  }>(
-    `${API_BASE}/${pluginId}/bundle`,
-    { errorMessage: '获取插件配置初始化数据失败' }
-  )
+  }>(`${API_BASE}/${pluginId}/bundle`, { errorMessage: '获取插件配置初始化数据失败' })
   const checked = requireSuccess(data, '获取插件配置初始化数据失败')
-  if (!checked.schema || checked.config === undefined || checked.config === null || typeof checked.raw_config !== 'string') {
+  if (
+    !checked.schema ||
+    checked.config === undefined ||
+    checked.config === null ||
+    typeof checked.raw_config !== 'string'
+  ) {
     throw new ApiError(checked.message || '获取插件配置初始化数据失败', { detail: checked })
   }
   return {
@@ -42,10 +44,11 @@ export async function getPluginConfigBundle(pluginId: string): Promise<PluginCon
  * 获取插件配置 Schema
  */
 export async function getPluginConfigSchema(pluginId: string): Promise<PluginConfigSchema> {
-  const data = await backendApi.get<{ success: boolean; schema?: PluginConfigSchema; message?: string }>(
-    `${API_BASE}/${pluginId}/schema`,
-    { errorMessage: '获取配置 Schema 失败' }
-  )
+  const data = await backendApi.get<{
+    success: boolean
+    schema?: PluginConfigSchema
+    message?: string
+  }>(`${API_BASE}/${pluginId}/schema`, { errorMessage: '获取配置 Schema 失败' })
   const checked = requireSuccess(data, '获取配置 Schema 失败')
   if (!checked.schema) {
     throw new ApiError(checked.message || '获取配置 Schema 失败', { detail: checked })
@@ -57,10 +60,11 @@ export async function getPluginConfigSchema(pluginId: string): Promise<PluginCon
  * 获取插件当前配置值
  */
 export async function getPluginConfig(pluginId: string): Promise<Record<string, unknown>> {
-  const data = await backendApi.get<{ success: boolean; config?: Record<string, unknown>; message?: string }>(
-    `${API_BASE}/${pluginId}`,
-    { errorMessage: '获取配置失败' }
-  )
+  const data = await backendApi.get<{
+    success: boolean
+    config?: Record<string, unknown>
+    message?: string
+  }>(`${API_BASE}/${pluginId}`, { errorMessage: '获取配置失败' })
   const checked = requireSuccess(data, '获取配置失败')
   if (!checked.config) {
     throw new ApiError(checked.message || '获取配置失败', { detail: checked })
@@ -90,10 +94,13 @@ export async function updatePluginConfig(
   pluginId: string,
   config: Record<string, unknown>
 ): Promise<{ success: boolean; message: string; note?: string }> {
-  return backendApi.put<{ success: boolean; message: string; note?: string }>(`${API_BASE}/${pluginId}`, {
-    body: { config },
-    errorMessage: '更新插件配置失败',
-  })
+  return backendApi.put<{ success: boolean; message: string; note?: string }>(
+    `${API_BASE}/${pluginId}`,
+    {
+      body: { config },
+      errorMessage: '更新插件配置失败',
+    }
+  )
 }
 
 /**
@@ -103,10 +110,13 @@ export async function updatePluginConfigRaw(
   pluginId: string,
   configToml: string
 ): Promise<{ success: boolean; message: string; note?: string }> {
-  return backendApi.put<{ success: boolean; message: string; note?: string }>(`${API_BASE}/${pluginId}/raw`, {
-    body: { config: configToml },
-    errorMessage: '更新插件配置失败',
-  })
+  return backendApi.put<{ success: boolean; message: string; note?: string }>(
+    `${API_BASE}/${pluginId}/raw`,
+    {
+      body: { config: configToml },
+      errorMessage: '更新插件配置失败',
+    }
+  )
 }
 
 /**
@@ -115,9 +125,12 @@ export async function updatePluginConfigRaw(
 export async function resetPluginConfig(
   pluginId: string
 ): Promise<{ success: boolean; message: string; backup?: string }> {
-  return backendApi.post<{ success: boolean; message: string; backup?: string }>(`${API_BASE}/${pluginId}/reset`, {
-    errorMessage: '重置插件配置失败',
-  })
+  return backendApi.post<{ success: boolean; message: string; backup?: string }>(
+    `${API_BASE}/${pluginId}/reset`,
+    {
+      errorMessage: '重置插件配置失败',
+    }
+  )
 }
 
 /**
@@ -135,7 +148,9 @@ export async function togglePlugin(
 /**
  * 获取插件当前注册的运行时组件
  */
-export async function getPluginRuntimeComponents(pluginId: string): Promise<PluginRuntimeComponent[]> {
+export async function getPluginRuntimeComponents(
+  pluginId: string
+): Promise<PluginRuntimeComponent[]> {
   const data = await backendApi.get<{
     success: boolean
     components?: PluginRuntimeComponent[]

@@ -39,10 +39,13 @@ export async function createDataExportJob(options: DataExportOptions): Promise<D
 }
 
 export async function getDataTransferJob(jobId: string): Promise<DataTransferJob> {
-  return backendApi.get<DataTransferJob>(`/api/webui/data-transfer/jobs/${encodeURIComponent(jobId)}`, {
-    cache: 'no-store',
-    errorMessage: '获取数据迁移任务进度失败',
-  })
+  return backendApi.get<DataTransferJob>(
+    `/api/webui/data-transfer/jobs/${encodeURIComponent(jobId)}`,
+    {
+      cache: 'no-store',
+      errorMessage: '获取数据迁移任务进度失败',
+    }
+  )
 }
 
 export async function downloadDataExport(job: DataTransferJob): Promise<void> {

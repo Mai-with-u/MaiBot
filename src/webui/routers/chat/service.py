@@ -1193,6 +1193,7 @@ async def handle_chat_message(
         {
             "type": "user_message",
             "content": display_content,
+            "raw_content": content,
             "images": images,
             "emojis": emojis,
             "files": files,

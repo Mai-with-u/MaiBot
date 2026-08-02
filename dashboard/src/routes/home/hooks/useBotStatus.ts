@@ -29,6 +29,7 @@ function getCachedBotStatus(): BotStatus | null {
 export function useBotStatus() {
   const [botStatus, setBotStatus] = useState<BotStatus | null>(botStatusCache?.data ?? null)
   const [isBotStatusLoading, setIsBotStatusLoading] = useState(!botStatusCache)
+  const inFlightRequestRef = useRef<Promise<void> | null>(null)
 
   // 使用 ref 跟踪组件是否已卸载，防止内存泄漏
   const isMountedRef = useRef(true)
@@ -40,54 +41,100 @@ export function useBotStatus() {
   }, [])
 
   // 获取机器人状态
-  const fetchBotStatus = useCallback(async (force = false) => {
+  const fetchBotStatus = useCallback((force = false): Promise<void> => {
     const cachedStatus = force ? null : getCachedBotStatus()
     if (cachedStatus) {
       setBotStatus(cachedStatus)
       setIsBotStatusLoading(false)
-      return
+      return Promise.resolve()
+    }
+
+    if (inFlightRequestRef.current) {
+      return inFlightRequestRef.current
     }
 
     setIsBotStatusLoading(true)
-    try {
-      const data = await backendApi.get<BotStatus>('/api/webui/system/status')
-      if (!isMountedRef.current) return
-      botStatusCache = { timestamp: Date.now(), data }
-      setBotStatus(data)
-    } catch (error) {
-      console.error('获取机器人状态失败:', error)
-      if (isMountedRef.current && !botStatusCache) {
-        setBotStatus(null)
+    const request = (async () => {
+      try {
+        const data = await backendApi.get<BotStatus>('/api/webui/system/status')
+        if (!isMountedRef.current) return
+        botStatusCache = { timestamp: Date.now(), data }
+        setBotStatus(data)
+      } catch (error) {
+        console.error('获取机器人状态失败:', error)
+        if (isMountedRef.current && !botStatusCache) {
+          setBotStatus(null)
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setIsBotStatusLoading(false)
+        }
       }
-    } finally {
-      if (isMountedRef.current) {
-        setIsBotStatusLoading(false)
+    })()
+
+    inFlightRequestRef.current = request
+    void request.finally(() => {
+      if (inFlightRequestRef.current === request) {
+        inFlightRequestRef.current = null
       }
-    }
+    })
+    return request
   }, [])
 
-  // 30s 轮询 + 可见性 / 焦点恢复时刷新
+  // 上一次请求完成后再开始 30s 计时；页面隐藏时暂停轮询。
   useEffect(() => {
-    const refreshBotStatus = () => {
-      if (isMountedRef.current) {
-        fetchBotStatus(true)
+    let cancelled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const clearScheduledRefresh = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId)
+        timeoutId = null
       }
+    }
+
+    const scheduleRefresh = () => {
+      clearScheduledRefresh()
+      if (cancelled || document.visibilityState !== 'visible') {
+        return
+      }
+      timeoutId = setTimeout(() => {
+        void refreshBotStatus()
+      }, BOT_STATUS_CACHE_TTL)
+    }
+
+    const refreshBotStatus = async () => {
+      clearScheduledRefresh()
+      if (cancelled || document.visibilityState !== 'visible') {
+        return
+      }
+      await fetchBotStatus(true)
+      scheduleRefresh()
     }
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        refreshBotStatus()
+        void refreshBotStatus()
+      } else {
+        clearScheduledRefresh()
       }
     }
 
-    const intervalId = setInterval(refreshBotStatus, 30000)
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshBotStatus()
+      }
+    }
+
+    scheduleRefresh()
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', refreshBotStatus)
+    window.addEventListener('focus', handleFocus)
 
     return () => {
-      clearInterval(intervalId)
+      cancelled = true
+      clearScheduledRefresh()
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('focus', refreshBotStatus)
+      window.removeEventListener('focus', handleFocus)
     }
   }, [fetchBotStatus])
 

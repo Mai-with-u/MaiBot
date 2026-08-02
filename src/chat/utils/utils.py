@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -25,6 +26,14 @@ if TYPE_CHECKING:
 logger = get_logger("chat_utils")
 _warned_unconfigured_platforms: set[str] = set()
 WEBUI_BOT_USER_ID = "self"
+
+
+@dataclass(frozen=True)
+class ProcessedResponseSegment:
+    """回复后处理产生的单条消息及其发送提示。"""
+
+    text: str
+    quote_previous: bool = False
 
 
 def is_english_letter(char: str) -> bool:
@@ -483,6 +492,51 @@ def merge_sentences_to_max_count(sentences: list[str], max_count: int) -> list[s
     return merged_sentences
 
 
+def _merge_processed_segments_to_max_count(
+    segments: list[ProcessedResponseSegment],
+    max_count: int,
+) -> list[ProcessedResponseSegment]:
+    """压缩回复段数量，并优先让需要引用的纠正内容保持在消息开头。"""
+
+    if len(segments) <= max_count:
+        return segments
+    if max_count <= 0:
+        return []
+
+    segment_count = len(segments)
+    required_starts = [index for index, segment in enumerate(segments) if index > 0 and segment.quote_previous]
+    group_starts = {0, *required_starts[: max_count - 1]}
+
+    # 在保留纠正消息边界后，沿用原来的均匀分组策略填充其余可用分组。
+    evenly_spaced_starts: list[int] = []
+    start_index = 0
+    for group_index in range(max_count):
+        remaining_segments = segment_count - start_index
+        remaining_groups = max_count - group_index
+        group_size = (remaining_segments + remaining_groups - 1) // remaining_groups
+        evenly_spaced_starts.append(start_index)
+        start_index += group_size
+
+    for candidate_start in evenly_spaced_starts:
+        if len(group_starts) >= max_count:
+            break
+        group_starts.add(candidate_start)
+
+    sorted_starts = sorted(group_starts)
+    merged_segments: list[ProcessedResponseSegment] = []
+    for group_index, group_start in enumerate(sorted_starts):
+        group_end = sorted_starts[group_index + 1] if group_index + 1 < len(sorted_starts) else segment_count
+        group = segments[group_start:group_end]
+        merged_segments.append(
+            ProcessedResponseSegment(
+                text="".join(segment.text for segment in group),
+                quote_previous=group[0].quote_previous,
+            )
+        )
+
+    return merged_segments
+
+
 def random_remove_punctuation(text: str) -> str:
     """随机处理标点符号，模拟人类打字习惯
 
@@ -524,9 +578,15 @@ def _get_random_default_reply() -> str:
     return random.choice(default_replies)
 
 
-def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese_typo: bool = True) -> list[str]:
+def process_llm_response_segments(
+    text: str,
+    enable_splitter: bool = True,
+    enable_chinese_typo: bool = True,
+) -> list[ProcessedResponseSegment]:
+    """处理回复文本，并保留错别字纠正消息的引用提示。"""
+
     if not global_config.response_post_process.enable_response_post_process:
-        return [text]
+        return [ProcessedResponseSegment(text)]
 
     # 先保护颜文字
     if global_config.response_splitter.enable_kaomoji_protection:
@@ -542,7 +602,7 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     cleaned_text = pattern.sub("", protected_text)
 
     if cleaned_text == "":
-        return ["呃呃"]
+        return [ProcessedResponseSegment("呃呃")]
 
     logger.debug(f"{text}去除括号处理后的文本: {cleaned_text}")
 
@@ -553,7 +613,7 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     # 如果基本上是中文，则进行长度过滤
     if get_western_ratio(cleaned_text) < 0.1 and len(cleaned_text) > max_length:
         logger.warning(f"回复过长 ({len(cleaned_text)} 字符)，返回默认回复")
-        return [_get_random_default_reply()]
+        return [ProcessedResponseSegment(_get_random_default_reply())]
 
     typo_generator = ChineseTypoGenerator(
         error_rate=global_config.chinese_typo.error_rate,
@@ -567,32 +627,41 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
     else:
         split_sentences = [cleaned_text]
 
-    sentences: List[str] = []
+    segments: list[ProcessedResponseSegment] = []
     for sentence in split_sentences:
         if global_config.chinese_typo.enable and enable_chinese_typo:
             typoed_text, typo_corrections = typo_generator.create_typo_sentence(sentence)
             if typo_corrections:
                 # 50%概率新增正确字/词，50%概率用正确分句替换错别字分句
                 if random.random() < 0.5:
-                    sentences.append(typoed_text)
-                    sentences.append(typo_corrections)
+                    quote_previous = (
+                        global_config.chinese_typo.enable_correction_quote
+                        and random.random() < global_config.chinese_typo.correction_quote_probability
+                    )
+                    segments.append(ProcessedResponseSegment(typoed_text))
+                    segments.append(
+                        ProcessedResponseSegment(
+                            typo_corrections,
+                            quote_previous=quote_previous,
+                        )
+                    )
                 else:
                     # 用正确的分句替换错别字分句
-                    sentences.append(sentence)
+                    segments.append(ProcessedResponseSegment(sentence))
             else:
-                sentences.append(typoed_text)
+                segments.append(ProcessedResponseSegment(typoed_text))
         else:
-            sentences.append(sentence)
+            segments.append(ProcessedResponseSegment(sentence))
 
-    if len(sentences) > max_sentence_num:
+    if len(segments) > max_sentence_num:
         if global_config.response_splitter.enable_overflow_return_all:
-            logger.warning(f"分割后消息数量过多 ({len(sentences)} 条)，直接返回原文")
-            sentences = [cleaned_text]
+            logger.warning(f"分割后消息数量过多 ({len(segments)} 条)，直接返回原文")
+            segments = [ProcessedResponseSegment(cleaned_text)]
         else:
-            logger.warning(f"分割后消息数量过多 ({len(sentences)} 条)，返回默认回复")
-            return [_get_random_default_reply()]
+            logger.warning(f"分割后消息数量过多 ({len(segments)} 条)，返回默认回复")
+            return [ProcessedResponseSegment(_get_random_default_reply())]
 
-    sentences = merge_sentences_to_max_count(sentences, max_split_num)
+    segments = _merge_processed_segments_to_max_count(segments, max_split_num)
 
     # if extracted_contents:
     #     for content in extracted_contents:
@@ -600,9 +669,29 @@ def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese
 
     # 在所有句子处理完毕后，对包含占位符的列表进行恢复
     if global_config.response_splitter.enable_kaomoji_protection:
-        sentences = recover_kaomoji(sentences, kaomoji_mapping)
+        recovered_sentences = recover_kaomoji([segment.text for segment in segments], kaomoji_mapping)
+        segments = [
+            ProcessedResponseSegment(
+                text=recovered_text,
+                quote_previous=segment.quote_previous,
+            )
+            for segment, recovered_text in zip(segments, recovered_sentences, strict=True)
+        ]
 
-    return sentences
+    return segments
+
+
+def process_llm_response(text: str, enable_splitter: bool = True, enable_chinese_typo: bool = True) -> list[str]:
+    """处理回复文本，并返回兼容旧调用链的纯文本列表。"""
+
+    return [
+        segment.text
+        for segment in process_llm_response_segments(
+            text,
+            enable_splitter=enable_splitter,
+            enable_chinese_typo=enable_chinese_typo,
+        )
+    ]
 
 
 def calculate_typing_time(

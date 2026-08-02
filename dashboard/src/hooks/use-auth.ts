@@ -20,12 +20,14 @@ function readCachedAuthStatus(): AuthStatus | undefined {
 }
 
 async function resolveEntryRedirect(): Promise<'auth' | 'setup' | null> {
-  authStatusPromise ??= getAuthStatus().then((status) => {
-    cachedAuthStatus = { ...status, checkedAt: Date.now() }
-    return status
-  }).finally(() => {
-    authStatusPromise = null
-  })
+  authStatusPromise ??= getAuthStatus()
+    .then((status) => {
+      cachedAuthStatus = { ...status, checkedAt: Date.now() }
+      return status
+    })
+    .finally(() => {
+      authStatusPromise = null
+    })
 
   const status = await authStatusPromise
   if (!status.authenticated) {
@@ -53,7 +55,7 @@ export function useAuthGuard() {
         cancelled = true
       }
     }
-    
+
     const verifyAuth = async () => {
       try {
         const redirectTarget = await resolveEntryRedirect()
@@ -76,14 +78,14 @@ export function useAuthGuard() {
         }
       }
     }
-    
+
     verifyAuth()
-    
+
     return () => {
       cancelled = true
     }
   }, [navigate])
-  
+
   return { checking }
 }
 

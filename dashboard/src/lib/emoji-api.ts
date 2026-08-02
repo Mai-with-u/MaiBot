@@ -203,7 +203,9 @@ export async function cleanupThumbnailCache(): Promise<ThumbnailCleanupResponse>
  * 预热缩略图缓存
  * @param limit 最多预热数量 (1-1000)
  */
-export async function preheatThumbnailCache(limit: number = 100): Promise<ThumbnailPreheatResponse> {
+export async function preheatThumbnailCache(
+  limit: number = 100
+): Promise<ThumbnailPreheatResponse> {
   return backendApi.post<ThumbnailPreheatResponse>(`${API_BASE}/thumbnail-cache/preheat`, {
     query: { limit },
     errorMessage: '预热缩略图缓存失败',

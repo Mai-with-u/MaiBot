@@ -17,12 +17,12 @@ export interface TourContextType {
   state: TourState
   // 注册的所有 Tour 步骤
   tours: Map<TourId, Step[]>
-  
+
   // 注册一个 Tour
   registerTour: (tourId: TourId, steps: Step[]) => void
   // 注销一个 Tour
   unregisterTour: (tourId: TourId) => void
-  
+
   // 开始一个 Tour
   startTour: (tourId: TourId, startIndex?: number) => void
   // 停止当前 Tour
@@ -33,13 +33,13 @@ export interface TourContextType {
   nextStep: () => void
   // 上一步
   prevStep: () => void
-  
+
   // 获取当前 Tour 的步骤
   getCurrentSteps: () => Step[]
-  
+
   // Joyride 回调处理
   handleJoyrideCallback: (data: CallBackProps) => void
-  
+
   // 检查用户是否已完成某个 Tour
   isTourCompleted: (tourId: TourId) => boolean
   // 标记 Tour 已完成

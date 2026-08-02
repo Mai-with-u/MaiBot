@@ -9,6 +9,7 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
+import asyncio
 import httpx
 
 from src.cli.console import console
@@ -94,6 +95,8 @@ class MCPConnection:
         config: MCPServerRuntimeConfig,
         client_config: MCPClientRuntimeConfig,
         host_callbacks: Optional[MCPHostCallbacks] = None,
+        *,
+        discover_extended_features: bool = True,
     ) -> None:
         """初始化单个 MCP 连接。
 
@@ -101,11 +104,13 @@ class MCPConnection:
             config: 当前服务器的运行时配置。
             client_config: MCP 客户端宿主能力运行时配置。
             host_callbacks: 宿主侧能力回调集合。
+            discover_extended_features: 是否在连接时发现 Prompt 和 Resource。
         """
 
         self.config = config
         self.client_config = client_config
         self.host_callbacks = host_callbacks or MCPHostCallbacks()
+        self.discover_extended_features = discover_extended_features
 
         self.session: Optional[Any] = None
         self.server_capabilities: Optional[Any] = None
@@ -114,6 +119,7 @@ class MCPConnection:
         self.resources: list[Any] = []
         self.resource_templates: list[Any] = []
         self.protocol_version: str = ""
+        self.last_error: str = ""
 
         self._http_client: Optional[httpx.AsyncClient] = None
         self._session_id_getter: Optional[Callable[[], str | None]] = None
@@ -139,9 +145,14 @@ class MCPConnection:
         """
 
         if not MCP_AVAILABLE:
+            self.last_error = "未安装 mcp SDK"
             console.print("[warning]⚠️ 未安装 mcp SDK，请运行: pip install mcp[/warning]")
             return False
 
+        if self.session is not None:
+            return True
+
+        self.last_error = ""
         try:
             await self._exit_stack.__aenter__()
             read_stream, write_stream = await self._connect_transport()
@@ -155,6 +166,7 @@ class MCPConnection:
             return True
 
         except Exception as exc:
+            self.last_error = str(exc).strip() or exc.__class__.__name__
             console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 连接失败: {exc}[/warning]")
             await self.close()
             return False
@@ -415,21 +427,44 @@ class MCPConnection:
         """根据服务端能力声明加载工具、Prompt 与 Resource。"""
 
         self.tools = await self._list_tools() if self.supports_tools() else []
-        self.prompts = await self._list_prompts() if self.supports_prompts() else []
-        self.resources = await self._list_resources() if self.supports_resources() else []
-        self.resource_templates = []
-        if self.supports_resources():
-            # list_resource_templates 在 MCP spec 中是 OPTIONAL，部分 server（如 moegirl-wiki-mcp）
-            # 仅实现 list_resources，遇到 METHOD_NOT_FOUND 时按空集合处理避免毁掉整个连接。
-            try:
-                self.resource_templates = await self._list_resource_templates()
-            except McpError as exc:
-                if exc.error.code != mcp_types.METHOD_NOT_FOUND:
-                    raise
-                console.print(
-                    f"[warning]⚠️ MCP 服务器 '{self.config.name}' 未实现 "
-                    f"list_resource_templates，按空集合处理[/warning]"
-                )
+        if not self.discover_extended_features:
+            self.prompts = []
+            self.resources = []
+            self.resource_templates = []
+            return
+
+        prompt_task = self._list_prompts() if self.supports_prompts() else self._empty_feature_list()
+        resource_task = self._list_resources() if self.supports_resources() else self._empty_feature_list()
+        template_task = self._load_resource_templates()
+        self.prompts, self.resources, self.resource_templates = await asyncio.gather(
+            prompt_task,
+            resource_task,
+            template_task,
+        )
+
+    @staticmethod
+    async def _empty_feature_list() -> list[Any]:
+        """为并行能力发现返回空列表。"""
+
+        return []
+
+    async def _load_resource_templates(self) -> list[Any]:
+        """加载可选 Resource Template，并兼容未实现该方法的服务端。"""
+
+        if not self.supports_resources():
+            return []
+        # list_resource_templates 在 MCP spec 中是 OPTIONAL，部分 server（如 moegirl-wiki-mcp）
+        # 仅实现 list_resources，遇到 METHOD_NOT_FOUND 时按空集合处理避免毁掉整个连接。
+        try:
+            return await self._list_resource_templates()
+        except McpError as exc:
+            if exc.error.code != mcp_types.METHOD_NOT_FOUND:
+                raise
+            console.print(
+                f"[warning]⚠️ MCP 服务器 '{self.config.name}' 未实现 "
+                f"list_resource_templates，按空集合处理[/warning]"
+            )
+            return []
 
     def supports_tools(self) -> bool:
         """判断服务端是否声明支持 Tools。
@@ -638,8 +673,8 @@ class MCPConnection:
 
         try:
             await self._exit_stack.aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            console.print(f"[warning]⚠️ MCP 服务器 '{self.config.name}' 关闭连接失败: {exc}[/warning]")
 
         self.session = None
         self.server_capabilities = None
@@ -650,3 +685,4 @@ class MCPConnection:
         self.protocol_version = ""
         self._http_client = None
         self._session_id_getter = None
+        self._exit_stack = AsyncExitStack()

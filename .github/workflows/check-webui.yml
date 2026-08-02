@@ -1,0 +1,56 @@
+name: Check WebUI
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/check-webui.yml"
+  push:
+    branches:
+      - main
+      - dev
+      - r-dev
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/check-webui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.1"
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        working-directory: dashboard
+        run: bun run typecheck
+
+      - name: Lint
+        working-directory: dashboard
+        run: bun run lint
+
+      - name: Test
+        working-directory: dashboard
+        run: bun run test:run
+
+      - name: Build
+        working-directory: dashboard
+        run: bun run build
+
+      - name: Build Electron
+        working-directory: dashboard
+        run: |
+          bun run electron:build
+          bun run electron:verify

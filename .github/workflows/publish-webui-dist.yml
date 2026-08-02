@@ -25,10 +25,13 @@ jobs:
         with:
           bun-version: "1.2.1"
 
-      - name: Build dashboard
+      - name: Check and build dashboard
         working-directory: dashboard
         run: |
-          bun install
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run lint
+          bun run test:run
           bun run build
 
       - name: Prepare dist package

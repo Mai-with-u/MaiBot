@@ -323,46 +323,59 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   const importSettings: MemoryImportSettings = settingsQuery.data?.settings ?? {}
   const importPathAliases = useMemo(
     () => pathAliasesQuery.data?.path_aliases ?? {},
-    [pathAliasesQuery.data?.path_aliases],
+    [pathAliasesQuery.data?.path_aliases]
   )
   const importChatTargets = useMemo(
     () => chatTargetsQuery.data?.data ?? [],
-    [chatTargetsQuery.data?.data],
+    [chatTargetsQuery.data?.data]
   )
 
   const importAliasKeys = useMemo(
     () => Object.keys(importPathAliases).sort((left, right) => left.localeCompare(right)),
-    [importPathAliases],
+    [importPathAliases]
   )
 
   // 服务端默认值 seed：settings 首次到达时按默认值回填通用参数与 maibot 源库一次。
   // 用「渲染期版本标记」模式（React 官方推荐）替代 effect 内 setState，避免级联渲染告警。
-  const settingsVersion = settingsQuery.data !== undefined ? String(settingsQuery.dataUpdatedAt) : null
+  const settingsVersion =
+    settingsQuery.data !== undefined ? String(settingsQuery.dataUpdatedAt) : null
   const [seededSettingsVersion, setSeededSettingsVersion] = useState<string | null>(null)
   if (settingsVersion !== null && settingsVersion !== seededSettingsVersion) {
     setSeededSettingsVersion(settingsVersion)
 
     const defaultFileConcurrency = String(importSettings.default_file_concurrency ?? '').trim()
     const defaultChunkConcurrency = String(importSettings.default_chunk_concurrency ?? '').trim()
-    const defaultNarrativeWindowSize = String(importSettings.default_narrative_window_size ?? '').trim()
+    const defaultNarrativeWindowSize = String(
+      importSettings.default_narrative_window_size ?? ''
+    ).trim()
     const defaultNarrativeOverlap = String(importSettings.default_narrative_overlap ?? '').trim()
     const defaultFactualTargetSize = String(importSettings.default_factual_target_size ?? '').trim()
     const defaultSourceDb = String(importSettings.maibot_source_db_default ?? '').trim()
 
     if (defaultFileConcurrency) {
-      setImportCommonFileConcurrency((current) => (current === '2' ? defaultFileConcurrency : current))
+      setImportCommonFileConcurrency((current) =>
+        current === '2' ? defaultFileConcurrency : current
+      )
     }
     if (defaultChunkConcurrency) {
-      setImportCommonChunkConcurrency((current) => (current === '4' ? defaultChunkConcurrency : current))
+      setImportCommonChunkConcurrency((current) =>
+        current === '4' ? defaultChunkConcurrency : current
+      )
     }
     if (defaultNarrativeWindowSize) {
-      setImportCommonNarrativeWindowSize((current) => (current === '1600' ? defaultNarrativeWindowSize : current))
+      setImportCommonNarrativeWindowSize((current) =>
+        current === '1600' ? defaultNarrativeWindowSize : current
+      )
     }
     if (defaultNarrativeOverlap) {
-      setImportCommonNarrativeOverlap((current) => (current === '400' ? defaultNarrativeOverlap : current))
+      setImportCommonNarrativeOverlap((current) =>
+        current === '400' ? defaultNarrativeOverlap : current
+      )
     }
     if (defaultFactualTargetSize) {
-      setImportCommonFactualTargetSize((current) => (current === '1200' ? defaultFactualTargetSize : current))
+      setImportCommonFactualTargetSize((current) =>
+        current === '1200' ? defaultFactualTargetSize : current
+      )
     }
     if (defaultSourceDb) {
       setMaibotSourceDb((current) => (current.trim() ? current : defaultSourceDb))
@@ -554,7 +567,16 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     } finally {
       setCreatingImport(false)
     }
-  }, [buildCommonImportPayload, onCreated, rawAlias, rawGlob, rawInputMode, rawRecursive, rawRelativePath, toast])
+  }, [
+    buildCommonImportPayload,
+    onCreated,
+    rawAlias,
+    rawGlob,
+    rawInputMode,
+    rawRecursive,
+    rawRelativePath,
+    toast,
+  ])
 
   const submitOpenieImport = useCallback(async () => {
     try {
@@ -584,7 +606,14 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     } finally {
       setCreatingImport(false)
     }
-  }, [buildCommonImportPayload, onCreated, openieAlias, openieIncludeAllJson, openieRelativePath, toast])
+  }, [
+    buildCommonImportPayload,
+    onCreated,
+    openieAlias,
+    openieIncludeAllJson,
+    openieRelativePath,
+    toast,
+  ])
 
   const submitConvertImport = useCallback(async () => {
     try {

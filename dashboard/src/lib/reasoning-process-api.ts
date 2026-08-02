@@ -151,10 +151,15 @@ export async function listReasoningPromptStages(): Promise<ReasoningPromptStages
   })
 }
 
-export async function clearReasoningPromptStage(stage: string): Promise<ReasoningPromptClearStageResponse> {
-  return backendApi.delete<ReasoningPromptClearStageResponse>(`${API_BASE}/stages/${encodeURIComponent(stage)}`, {
-    errorMessage: '清空推理过程失败',
-  })
+export async function clearReasoningPromptStage(
+  stage: string
+): Promise<ReasoningPromptClearStageResponse> {
+  return backendApi.delete<ReasoningPromptClearStageResponse>(
+    `${API_BASE}/stages/${encodeURIComponent(stage)}`,
+    {
+      errorMessage: '清空推理过程失败',
+    }
+  )
 }
 
 export async function getReasoningPromptFile(

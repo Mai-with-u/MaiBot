@@ -1,0 +1,176 @@
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { HomeCardManager, type HomeCardDefinition } from './HomeCardManager'
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  window.localStorage.clear()
+})
+
+describe('HomeCardManager 布局持久化', () => {
+  it('卡片定义引用变化但布局内容不变时不重复写入 localStorage', () => {
+    window.localStorage.setItem(
+      'maibot-home-card-layout-v1',
+      JSON.stringify({
+        hidden: [],
+        order: ['builtin:test'],
+        rowModes: {},
+      })
+    )
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const createCards = (): HomeCardDefinition[] => [
+      {
+        id: 'builtin:test',
+        render: () => <div>测试卡片</div>,
+        source: 'builtin',
+        title: '测试',
+      },
+    ]
+
+    const view = render(<HomeCardManager cards={createCards()} pluginCards={[]} />)
+    expect(screen.getByText('测试卡片')).toBeInTheDocument()
+    expect(setItemSpy).not.toHaveBeenCalled()
+
+    view.rerender(<HomeCardManager cards={createCards()} pluginCards={[]} />)
+    expect(setItemSpy).not.toHaveBeenCalled()
+  })
+
+  it('自动清理已移除卡片残留的布局配置', async () => {
+    window.localStorage.setItem(
+      'maibot-home-card-layout-v1',
+      JSON.stringify({
+        hidden: ['builtin:removed'],
+        order: ['builtin:removed', 'builtin:test'],
+        rowModes: {
+          0: 'low',
+        },
+        styles: { 'builtin:removed': 'orange' },
+        widths: { 'builtin:removed': 'full' },
+      })
+    )
+
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:test',
+            render: () => <div>测试卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(JSON.parse(window.localStorage.getItem('maibot-home-card-layout-v1') ?? '{}')).toEqual(
+        {
+          hidden: [],
+          order: ['builtin:test'],
+          rowModes: { 0: 'low' },
+          styles: {},
+          widths: {},
+        }
+      )
+    })
+  })
+
+  it('编辑模式通过卡片通用接口编辑内容', async () => {
+    const user = userEvent.setup()
+    const onEdit = vi.fn()
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:editable',
+            editLabel: '编辑测试内容',
+            onEdit,
+            render: () => <div>可编辑卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: '编辑测试内容' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    await user.click(screen.getByRole('button', { name: 'home.cards.editCard' }))
+    await user.click(screen.getByRole('button', { name: '编辑测试内容' }))
+    expect(onEdit).toHaveBeenCalledOnce()
+  })
+
+  it('所有卡片都能通过通用编辑入口切换并保存样式', async () => {
+    const user = userEvent.setup()
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:test',
+            render: () => <div>测试卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    await user.click(screen.getByRole('button', { name: 'home.cards.editCard' }))
+    await user.click(screen.getByRole('button', { name: /home.cards.styles.orange.title/ }))
+
+    expect(screen.getByText('测试卡片').closest('[data-home-card-id]')).toHaveAttribute(
+      'data-home-card-style',
+      'orange'
+    )
+    expect(
+      JSON.parse(window.localStorage.getItem('maibot-home-card-layout-v1') ?? '{}')
+    ).toMatchObject({
+      styles: { 'builtin:test': 'orange' },
+    })
+  })
+
+  it('分隔元素使用紧凑行，并可在编辑模式拖拽和隐藏', async () => {
+    const user = userEvent.setup()
+    render(
+      <HomeCardManager
+        cards={[
+          {
+            id: 'builtin:test',
+            render: () => <div>普通卡片</div>,
+            source: 'builtin',
+            title: '测试',
+          },
+          {
+            id: 'builtin:hitokoto',
+            render: () => <div>一言内容</div>,
+            source: 'builtin',
+            title: '一言',
+            variant: 'separator',
+            width: 'full',
+          },
+        ]}
+        pluginCards={[]}
+      />
+    )
+
+    const separator = screen.getByText('一言内容').closest('[data-home-card-id]')
+    expect(separator).toHaveAttribute('data-home-card-variant', 'separator')
+    expect(separator?.parentElement?.getAttribute('style')).toContain('34px')
+
+    await user.click(screen.getByRole('button', { name: 'home.cards.edit' }))
+    expect(screen.getByRole('button', { name: '拖拽排序：一言' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '从首页隐藏：一言' }))
+    expect(screen.queryByText('一言内容')).not.toBeInTheDocument()
+  })
+})

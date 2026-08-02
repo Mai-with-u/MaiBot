@@ -56,7 +56,10 @@ export interface UseMemoryTuningResult {
   tuningErrorText: string
 }
 
-export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOptions): UseMemoryTuningResult {
+export function useMemoryTuning({
+  active,
+  onRuntimeChanged,
+}: UseMemoryTuningOptions): UseMemoryTuningResult {
   const { toast } = useToast()
 
   const [tuningObjective, setTuningObjective] = useState('precision_priority')
@@ -84,7 +87,11 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
       runtime: profileQuery.data?.runtime_profile ?? profileQuery.data?.profile ?? {},
       persistable: profileQuery.data?.persistable_profile ?? profileQuery.data?.profile ?? {},
     }),
-    [profileQuery.data?.persistable_profile, profileQuery.data?.profile, profileQuery.data?.runtime_profile],
+    [
+      profileQuery.data?.persistable_profile,
+      profileQuery.data?.profile,
+      profileQuery.data?.runtime_profile,
+    ]
   )
   const tuningProfileToml = profileQuery.data?.toml ?? ''
   const tuningTasks = useMemo(() => tasksQuery.data?.items ?? [], [tasksQuery.data?.items])
@@ -135,7 +142,9 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
         await Promise.all([profileQuery.refetch(), tasksQuery.refetch(), onRuntimeChanged?.()])
         toast({
           title: '最佳参数已应用',
-          description: result.persisted ? `任务 ${taskId} 的最佳轮次已经写入运行时和配置文件` : `任务 ${taskId} 的最佳轮次已经写入运行时`,
+          description: result.persisted
+            ? `任务 ${taskId} 的最佳轮次已经写入运行时和配置文件`
+            : `任务 ${taskId} 的最佳轮次已经写入运行时`,
         })
       } catch (error) {
         toast({
@@ -145,7 +154,7 @@ export function useMemoryTuning({ active, onRuntimeChanged }: UseMemoryTuningOpt
         })
       }
     },
-    [onRuntimeChanged, persistBestProfile, profileQuery, tasksQuery, toast],
+    [onRuntimeChanged, persistBestProfile, profileQuery, tasksQuery, toast]
   )
 
   return {

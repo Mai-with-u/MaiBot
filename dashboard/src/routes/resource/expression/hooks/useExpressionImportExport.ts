@@ -13,11 +13,7 @@ import type { ChangeEvent } from 'react'
 
 import { useToast } from '@/hooks/use-toast'
 
-import {
-  clearExpressions,
-  exportExpressions,
-  importExpressions,
-} from '@/lib/expression-api'
+import { clearExpressions, exportExpressions, importExpressions } from '@/lib/expression-api'
 
 import type { ChatInfo, ExpressionExportItem } from '@/types/expression'
 
@@ -83,43 +79,40 @@ export function useExpressionImportExport({
     return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'chat'
   }, [])
 
-  const exportSelectedExpressionsToFile = useCallback(
-    async () => {
-      const chatId = getImportExportChatId()
-      if (!chatId || !currentChat) return
-      if (selectedIds.size === 0) {
-        toast({
-          title: '没有选中项目',
-          description: '请先选择要导出的表达方式',
-          variant: 'destructive',
-        })
-        return
-      }
-
-      let result
-      try {
-        result = await exportExpressions({
-          chat_id: chatId,
-          ids: Array.from(selectedIds),
-        })
-      } catch (error) {
-        toast({
-          title: '导出失败',
-          description: error instanceof Error ? error.message : '导出表达方式失败',
-          variant: 'destructive',
-        })
-        return
-      }
-
-      const filename = `expressions-${sanitizeFilename(currentChat.chat_name)}-selected.json`
-      downloadJson(filename, result)
+  const exportSelectedExpressionsToFile = useCallback(async () => {
+    const chatId = getImportExportChatId()
+    if (!chatId || !currentChat) return
+    if (selectedIds.size === 0) {
       toast({
-        title: '导出成功',
-        description: `已导出 ${result.count} 个表达方式`,
+        title: '没有选中项目',
+        description: '请先选择要导出的表达方式',
+        variant: 'destructive',
       })
-    },
-    [currentChat, downloadJson, getImportExportChatId, sanitizeFilename, selectedIds, toast]
-  )
+      return
+    }
+
+    let result
+    try {
+      result = await exportExpressions({
+        chat_id: chatId,
+        ids: Array.from(selectedIds),
+      })
+    } catch (error) {
+      toast({
+        title: '导出失败',
+        description: error instanceof Error ? error.message : '导出表达方式失败',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const filename = `expressions-${sanitizeFilename(currentChat.chat_name)}-selected.json`
+    downloadJson(filename, result)
+    toast({
+      title: '导出成功',
+      description: `已导出 ${result.count} 个表达方式`,
+    })
+  }, [currentChat, downloadJson, getImportExportChatId, sanitizeFilename, selectedIds, toast])
 
   // 规范化导入载荷：兼容裸数组与 { expressions: [...] } 两种形态
   const normalizeImportItems = useCallback((payload: unknown): ExpressionExportItem[] => {
