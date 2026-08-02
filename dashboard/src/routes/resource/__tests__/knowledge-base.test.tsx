@@ -1337,6 +1337,12 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitForConsoleReady()
     await openImportTab()
+    const createButton = screen.getByRole('button', { name: '创建导入任务' })
+    expect(createButton).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
+    await user.click(screen.getByRole('combobox', { name: '资料类别' }))
+    await user.click(screen.getByRole('option', { name: '叙事资料' }))
+    expect(createButton).toBeEnabled()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     const uploadFiles = [
@@ -1390,7 +1396,8 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(uploadPayload).toMatchObject({
       input_mode: 'text',
       llm_enabled: true,
-      strategy_override: 'auto',
+      strategy_override: 'narrative',
+      chat_log: false,
       dedupe_policy: 'content_hash',
     })
   }, 60_000)

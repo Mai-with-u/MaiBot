@@ -42,6 +42,38 @@ import {
 const DATE_TIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/
 
+export type ImportContentCategory = '' | 'narrative' | 'factual' | 'quote' | 'chat_log'
+
+function importTaskRequiresContentCategory(taskKind: MemoryImportTaskKind): boolean {
+  return (
+    taskKind === 'upload' ||
+    taskKind === 'paste' ||
+    taskKind === 'raw_scan' ||
+    taskKind === 'lpmm_openie'
+  )
+}
+
+function getImportContentCategoryPayload(
+  category: ImportContentCategory,
+): { strategy_override: string; chat_log: boolean } {
+  switch (category) {
+    case 'narrative':
+      return { strategy_override: 'narrative', chat_log: false }
+    case 'factual':
+      return { strategy_override: 'factual', chat_log: false }
+    case 'quote':
+      return { strategy_override: 'quote', chat_log: false }
+    case 'chat_log':
+      return { strategy_override: 'narrative', chat_log: true }
+    case '':
+      throw new Error('请先选择资料类别')
+    default: {
+      const invalidCategory: never = category
+      throw new Error(`不支持的资料类别：${String(invalidCategory)}`)
+    }
+  }
+}
+
 function parseMaibotPositiveInt(input: string, fieldName: string): number | undefined {
   const value = input.trim()
   if (!value) {
@@ -113,12 +145,11 @@ export interface UseImportFormResult {
   setImportCommonFactualTargetSize: React.Dispatch<React.SetStateAction<string>>
   importCommonLlmEnabled: boolean
   setImportCommonLlmEnabled: React.Dispatch<React.SetStateAction<boolean>>
-  importCommonStrategyOverride: string
-  setImportCommonStrategyOverride: React.Dispatch<React.SetStateAction<string>>
+  importContentCategory: ImportContentCategory
+  setImportContentCategory: React.Dispatch<React.SetStateAction<ImportContentCategory>>
+  importContentCategoryMissing: boolean
   importCommonDedupePolicy: string
   setImportCommonDedupePolicy: React.Dispatch<React.SetStateAction<string>>
-  importCommonChatLog: boolean
-  setImportCommonChatLog: React.Dispatch<React.SetStateAction<boolean>>
   importCommonChatId: string
   setImportCommonChatId: React.Dispatch<React.SetStateAction<string>>
   importCommonChatReferenceTime: string
@@ -243,13 +274,14 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   const [importCommonNarrativeOverlap, setImportCommonNarrativeOverlap] = useState('400')
   const [importCommonFactualTargetSize, setImportCommonFactualTargetSize] = useState('1200')
   const [importCommonLlmEnabled, setImportCommonLlmEnabled] = useState(true)
-  const [importCommonStrategyOverride, setImportCommonStrategyOverride] = useState('auto')
+  const [importContentCategory, setImportContentCategory] = useState<ImportContentCategory>('')
   const [importCommonDedupePolicy, setImportCommonDedupePolicy] = useState('content_hash')
-  const [importCommonChatLog, setImportCommonChatLog] = useState(false)
   const [importCommonChatId, setImportCommonChatId] = useState('')
   const [importCommonChatReferenceTime, setImportCommonChatReferenceTime] = useState('')
   const [importCommonForce, setImportCommonForce] = useState(false)
   const [importCommonClearManifest, setImportCommonClearManifest] = useState(false)
+  const importContentCategoryMissing =
+    importTaskRequiresContentCategory(importCreateMode) && importContentCategory === ''
 
   const [uploadInputMode, setUploadInputMode] = useState<MemoryImportInputMode>('text')
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
@@ -407,11 +439,13 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
 
   const buildCommonImportPayload = useCallback((): Record<string, unknown> => {
     const chatId = importCommonChatId.trim()
+    const contentCategoryPayload = importContentCategory
+      ? getImportContentCategoryPayload(importContentCategory)
+      : { strategy_override: 'auto', chat_log: false }
     const payload: Record<string, unknown> = {
       llm_enabled: importCommonLlmEnabled,
-      strategy_override: importCommonStrategyOverride,
+      ...contentCategoryPayload,
       dedupe_policy: importCommonDedupePolicy,
-      chat_log: importCommonChatLog,
       force: importCommonForce,
       clear_manifest: importCommonClearManifest,
     }
@@ -444,8 +478,8 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     }
     return payload
   }, [
+    importContentCategory,
     importCommonChatId,
-    importCommonChatLog,
     importCommonChatReferenceTime,
     importCommonChunkConcurrency,
     importCommonClearManifest,
@@ -456,7 +490,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     importCommonLlmEnabled,
     importCommonNarrativeOverlap,
     importCommonNarrativeWindowSize,
-    importCommonStrategyOverride,
   ])
 
   const submitUploadImport = useCallback(async () => {
@@ -776,6 +809,14 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     if (creatingImport) {
       return
     }
+    if (importContentCategoryMissing) {
+      toast({
+        title: '请选择资料类别',
+        description: '新建内容导入任务前需要明确选择资料类别',
+        variant: 'destructive',
+      })
+      return
+    }
     switch (importCreateMode) {
       case 'upload':
         await submitUploadImport()
@@ -803,6 +844,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     }
   }, [
     creatingImport,
+    importContentCategoryMissing,
     importCreateMode,
     submitBackfillImport,
     submitConvertImport,
@@ -811,6 +853,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     submitPasteImport,
     submitRawScanImport,
     submitUploadImport,
+    toast,
   ])
 
   const resolveImportPath = useCallback(async () => {
@@ -860,12 +903,11 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     setImportCommonFactualTargetSize,
     importCommonLlmEnabled,
     setImportCommonLlmEnabled,
-    importCommonStrategyOverride,
-    setImportCommonStrategyOverride,
+    importContentCategory,
+    setImportContentCategory,
+    importContentCategoryMissing,
     importCommonDedupePolicy,
     setImportCommonDedupePolicy,
-    importCommonChatLog,
-    setImportCommonChatLog,
     importCommonChatId,
     setImportCommonChatId,
     importCommonChatReferenceTime,

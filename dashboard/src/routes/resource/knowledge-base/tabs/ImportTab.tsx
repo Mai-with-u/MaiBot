@@ -26,7 +26,7 @@ import type {
 } from '@/lib/memory-api'
 
 import { IMPORT_CHUNK_PAGE_SIZE, IMPORT_KIND_OPTIONS, RUNNING_IMPORT_STATUS } from '../constants'
-import type { UseImportFormResult } from '../hooks/useImportForm'
+import type { ImportContentCategory, UseImportFormResult } from '../hooks/useImportForm'
 import type { UseImportQueueResult } from '../hooks/useImportQueue'
 import {
   formatImportTime,
@@ -168,12 +168,11 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setImportCommonFactualTargetSize,
     importCommonLlmEnabled,
     setImportCommonLlmEnabled,
-    importCommonStrategyOverride,
-    setImportCommonStrategyOverride,
+    importContentCategory,
+    setImportContentCategory,
+    importContentCategoryMissing,
     importCommonDedupePolicy,
     setImportCommonDedupePolicy,
-    importCommonChatLog,
-    setImportCommonChatLog,
     importCommonChatId,
     setImportCommonChatId,
     importCommonChatReferenceTime,
@@ -359,15 +358,25 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     </div>
                     <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">需要模型参与抽取，质量更高但耗时更长。</div>
                   </div>
-                  <div className="rounded-md border bg-background/70 px-2.5 py-2">
-                    <div className="flex items-center gap-2 text-sm font-medium leading-tight">
-                      <Checkbox
-                        checked={importCommonChatLog}
-                        onCheckedChange={(value) => setImportCommonChatLog(Boolean(value))}
-                      />
-                      按聊天日志解析
-                    </div>
-                    <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">适合导入聊天记录，会尽量保留时间和对话上下文。</div>
+                  <div className="grid gap-2 rounded-md border bg-background/70 p-3">
+                    <Label>资料类别</Label>
+                    <Select
+                      value={importContentCategory}
+                      onValueChange={(value) => setImportContentCategory(value as ImportContentCategory)}
+                    >
+                      <SelectTrigger aria-label="资料类别" aria-invalid={importContentCategoryMissing}>
+                        <SelectValue placeholder="请选择资料类别" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="narrative">叙事资料</SelectItem>
+                        <SelectItem value="factual">事实资料</SelectItem>
+                        <SelectItem value="quote">语录与短句</SelectItem>
+                        <SelectItem value="chat_log">聊天记录</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {importContentCategoryMissing ? (
+                      <div className="text-xs text-destructive" role="status">请选择资料类别</div>
+                    ) : null}
                   </div>
                   <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
                     <div className="min-w-0">
@@ -480,13 +489,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           默认 {Number(importSettings.default_factual_target_size ?? 1200)}，用于 factual 结构感知切分。
                         </div>
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>指定抽取策略</Label>
-                      <Input
-                        value={importCommonStrategyOverride}
-                        onChange={(event) => setImportCommonStrategyOverride(event.target.value)}
-                      />
                     </div>
                     <div className="space-y-1">
                       <Label>去重策略</Label>
@@ -891,7 +893,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
 
               </Tabs>
 
-              <Button onClick={() => void submitImportByMode()} disabled={creatingImport}>
+              <Button onClick={() => void submitImportByMode()} disabled={creatingImport || importContentCategoryMissing}>
                 {creatingImport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                 创建导入任务
               </Button>
