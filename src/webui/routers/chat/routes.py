@@ -115,13 +115,17 @@ def _get_chat_target_id(chat_session: ChatSession) -> str:
 def _get_chat_display_name(chat_session: ChatSession, latest_message: Optional[Any]) -> str:
     """优先展示聊天流实际名称，缺失时再退回到可读的 ID 名称。"""
 
-    if latest_message:
-        group_name = str(latest_message.group_name or "").strip()
-        if latest_message.group_id and group_name:
-            return group_name
-        if latest_message.group_id:
-            return f"群聊{latest_message.group_id}"
+    if chat_session.group_id:
+        # 群聊会话只能使用仍带群聊身份的消息补齐名称，避免发送侧消息缺少群信息时显示成私聊。
+        if latest_message and latest_message.group_id:
+            group_name = str(latest_message.group_name or "").strip()
+            if group_name:
+                return group_name
+        if chat_session.group_name:
+            return chat_session.group_name
+        return f"群聊{chat_session.group_id}"
 
+    if latest_message and not latest_message.group_id:
         private_name = str(
             latest_message.user_cardname
             or latest_message.user_nickname
@@ -129,11 +133,6 @@ def _get_chat_display_name(chat_session: ChatSession, latest_message: Optional[A
         ).strip()
         if private_name:
             return f"{private_name}的私聊"
-
-    if chat_session.group_name:
-        return chat_session.group_name
-    if chat_session.group_id:
-        return f"群聊{chat_session.group_id}"
 
     private_name = chat_session.user_cardname or chat_session.user_nickname or (
         f"用户{chat_session.user_id}" if chat_session.user_id else ""

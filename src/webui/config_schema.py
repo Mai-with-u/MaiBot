@@ -365,7 +365,7 @@ class ConfigSchemaGenerator:
         if options := cls._extract_options(annotation):
             schema["options"] = options
 
-        # Task 1c: Merge json_schema_extra (x-widget, x-icon, step, etc.)
+        # 合并 json_schema_extra（x-widget、step 等）
         if hasattr(field_info, "json_schema_extra") and field_info.json_schema_extra:
             schema.update(field_info.json_schema_extra)
 

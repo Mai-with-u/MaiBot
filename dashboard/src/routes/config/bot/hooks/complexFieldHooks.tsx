@@ -99,7 +99,6 @@ const LEARNING_ITEM_FALLBACK_SCHEMA: ConfigSchema = {
       required: false,
       default: '',
       'x-widget': 'input',
-      'x-icon': 'wifi',
     },
     {
       name: 'item_id',
@@ -113,7 +112,6 @@ const LEARNING_ITEM_FALLBACK_SCHEMA: ConfigSchema = {
       required: false,
       default: '',
       'x-widget': 'input',
-      'x-icon': 'hash',
     },
     {
       name: 'type',
@@ -128,7 +126,6 @@ const LEARNING_ITEM_FALLBACK_SCHEMA: ConfigSchema = {
       default: 'group',
       options: ['group', 'private'],
       'x-widget': 'select',
-      'x-icon': 'users',
       'x-option-descriptions': {
         group: '群聊',
         private: '私聊',
@@ -146,7 +143,6 @@ const LEARNING_ITEM_FALLBACK_SCHEMA: ConfigSchema = {
       required: false,
       default: true,
       'x-widget': 'switch',
-      'x-icon': 'message-square',
     },
     {
       name: 'learn',
@@ -160,7 +156,6 @@ const LEARNING_ITEM_FALLBACK_SCHEMA: ConfigSchema = {
       required: false,
       default: true,
       'x-widget': 'switch',
-      'x-icon': 'graduation-cap',
     },
   ],
 }
@@ -498,7 +493,11 @@ const normalizeSharedMemoryChatStreams = (chats: ChatStream[]) => {
     if (!chat.platform || !targetId || !['group', 'private'].includes(chat.chat_type)) {
       return
     }
-    optionMap.set(chatStreamOptionKey(chat), chat)
+    const optionKey = chatStreamOptionKey(chat)
+    if (!optionMap.has(optionKey)) {
+      // 接口按最近活跃时间倒序返回；保留首条，避免旧版无账号聊天流覆盖当前真实聊天流。
+      optionMap.set(optionKey, chat)
+    }
   })
 
   return Array.from(optionMap.values()).sort((left, right) => {
@@ -1021,7 +1020,7 @@ function SharedMemoryChatStreamSelect({
   )
 }
 
-function SharedMemoryManualFields({
+function ChatTargetFields({
   onChange,
   target,
 }: {
@@ -1072,26 +1071,33 @@ function SharedMemoryManualFields({
   )
 }
 
-function AddGroupTargetDialog({
+function AddTargetScopeDialog<TScopeKind extends string>({
+  description,
+  defaultScope,
   open,
   onAdd,
   onOpenChange,
   scopeOptions,
   title,
 }: {
+  description: string
+  defaultScope: TScopeKind
   open: boolean
-  onAdd: (scopeKind: GroupScopeKind, ruleType: ExpressionRuleType) => void
+  onAdd: (scopeKind: TScopeKind, ruleType: ExpressionRuleType) => void
   onOpenChange: (open: boolean) => void
   scopeOptions: Array<{
     description: string
-    kind: GroupScopeKind
+    kind: TScopeKind
     title: string
   }>
   title: string
 }) {
-  const [selectedScope, setSelectedScope] = useState<GroupScopeKind>('chat')
+  const [selectedScope, setSelectedScope] = useState<TScopeKind>(defaultScope)
   const [ruleType, setRuleType] = useState<ExpressionRuleType>('group')
-  const fallbackScope = scopeOptions.find((option) => option.kind === 'chat')?.kind ?? scopeOptions[0]?.kind ?? 'chat'
+  const fallbackScope = scopeOptions.find((option) => option.kind === defaultScope)?.kind ?? scopeOptions[0]?.kind
+  if (fallbackScope === undefined) {
+    throw new Error('聊天流范围选择器至少需要一个可选范围')
+  }
   const activeScope = scopeOptions.some((option) => option.kind === selectedScope) ? selectedScope : fallbackScope
 
   return (
@@ -1099,6 +1105,7 @@ function AddGroupTargetDialog({
       <DialogContent style={{ '--dialog-width': '44rem' } as CSSProperties}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid gap-2 md:grid-cols-2">
@@ -1144,6 +1151,38 @@ function AddGroupTargetDialog({
   )
 }
 
+const SharedMemoryManualFields = ChatTargetFields
+
+function AddGroupTargetDialog({
+  open,
+  onAdd,
+  onOpenChange,
+  scopeOptions,
+  title,
+}: {
+  open: boolean
+  onAdd: (scopeKind: GroupScopeKind, ruleType: ExpressionRuleType) => void
+  onOpenChange: (open: boolean) => void
+  scopeOptions: Array<{
+    description: string
+    kind: GroupScopeKind
+    title: string
+  }>
+  title: string
+}) {
+  return (
+    <AddTargetScopeDialog
+      defaultScope="chat"
+      description="选择成员作用范围和聊天类型；可选范围由当前配置能力决定。"
+      open={open}
+      onAdd={onAdd}
+      onOpenChange={onOpenChange}
+      scopeOptions={scopeOptions}
+      title={title}
+    />
+  )
+}
+
 function AddLearningRuleDialog({
   open,
   onAdd,
@@ -1153,57 +1192,16 @@ function AddLearningRuleDialog({
   onAdd: (scopeKind: LearningScopeKind, ruleType: ExpressionRuleType) => void
   onOpenChange: (open: boolean) => void
 }) {
-  const [selectedScope, setSelectedScope] = useState<LearningScopeKind>('chat')
-  const [ruleType, setRuleType] = useState<ExpressionRuleType>('group')
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent style={{ '--dialog-width': '48rem' } as CSSProperties}>
-        <DialogHeader>
-          <DialogTitle>添加学习规则</DialogTitle>
-          <DialogDescription>选择规则作用范围和聊天类型。添加后范围与类型不可直接修改，需要删除后重新添加。</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {LEARNING_SCOPE_OPTIONS.map((option) => (
-              <button
-                key={option.kind}
-                type="button"
-                className={`rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  selectedScope === option.kind
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'bg-muted/20 hover:bg-muted/40'
-                }`}
-                onClick={() => setSelectedScope(option.kind)}
-              >
-                <span className="block text-sm font-semibold">{option.title}</span>
-                <span className="mt-1 block text-xs leading-5 opacity-75">{option.description}</span>
-              </button>
-            ))}
-          </div>
-          <div className="max-w-40 space-y-1">
-            <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
-            <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
-              <SelectTrigger className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="group">群聊</SelectItem>
-                <SelectItem value="private">私聊</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button type="button" onClick={() => onAdd(selectedScope, ruleType)}>
-            添加
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <AddTargetScopeDialog
+      defaultScope="chat"
+      description="选择规则作用范围和聊天类型。添加后范围与类型不可直接修改，需要删除后重新添加。"
+      open={open}
+      onAdd={onAdd}
+      onOpenChange={onOpenChange}
+      scopeOptions={LEARNING_SCOPE_OPTIONS}
+      title="添加学习规则"
+    />
   )
 }
 
@@ -2440,54 +2438,21 @@ function TalkValueRuleEditor({
               先指定平台、聊天流 ID 和聊天类型，再创建该聊天区域的默认时间段轨道。
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-xs font-medium">平台</Label>
-              <Input
-                value={addDraft.platform}
-                placeholder="例如 qq"
-                onChange={(event) =>
-                  setAddDraft((current) => ({
-                    ...current,
-                    platform: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium">聊天流 ID</Label>
-              <Input
-                value={addDraft.itemId}
-                placeholder="群号或用户 ID"
-                onChange={(event) =>
-                  setAddDraft((current) => ({
-                    ...current,
-                    itemId: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-medium">聊天类型</Label>
-              <Select
-                value={addDraft.ruleType}
-                onValueChange={(value) =>
-                  setAddDraft((current) => ({
-                    ...current,
-                    ruleType: value,
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="group">群聊</SelectItem>
-                  <SelectItem value="private">私聊</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <ChatTargetFields
+            target={{
+              platform: addDraft.platform,
+              item_id: addDraft.itemId,
+              rule_type: normalizeExpressionRuleType(addDraft.ruleType),
+            }}
+            onChange={(patch) =>
+              setAddDraft((current) => ({
+                ...current,
+                ...(patch.platform === undefined ? {} : { platform: patch.platform }),
+                ...(patch.item_id === undefined ? {} : { itemId: patch.item_id }),
+                ...(patch.rule_type === undefined ? {} : { ruleType: patch.rule_type }),
+              }))
+            }
+          />
           <DialogFooter>
             <Button
               type="button"
@@ -2782,7 +2747,6 @@ export const ChatPromptsHook = createListItemEditorHook({
       'x-layout': 'inline-right',
     },
   },
-  iconName: 'file-text',
   itemTitle: (item) => {
     return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)}`
   },
@@ -3278,10 +3242,6 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
             title={globalMemorySharingEnabled ? '全局共享开启时不需要配置共享组' : `添加${groupLabel}`}
             disabled={globalMemorySharingEnabled}
             onClick={() => {
-              if (isSharedMemoryGroup) {
-                addGroup('chat', 'group')
-                return
-              }
               setShowAddGroupPanel(true)
             }}
           >
@@ -3291,7 +3251,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
       </div>
 
       <AddGroupTargetDialog
-        open={showAddGroupPanel && !globalMemorySharingEnabled && !isSharedMemoryGroup}
+        open={showAddGroupPanel && !globalMemorySharingEnabled}
         title={`选择${groupLabel}的第一个成员`}
         onAdd={addGroup}
         onOpenChange={(open) => {
@@ -3341,11 +3301,9 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
                       title={globalMemorySharingEnabled ? '全局共享开启时共享组已折叠' : '添加成员'}
                       disabled={globalMemorySharingEnabled}
                       onClick={() =>
-                        isSharedMemoryGroup
-                          ? addMember(groupIndex, 'chat', 'group')
-                          : setAddingMemberGroupIndex((currentGroupIndex) =>
-                              currentGroupIndex === groupIndex ? null : groupIndex,
-                            )
+                        setAddingMemberGroupIndex((currentGroupIndex) =>
+                          currentGroupIndex === groupIndex ? null : groupIndex,
+                        )
                       }
                     >
                       <Plus className="h-4 w-4" />
@@ -3416,7 +3374,7 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
         </div>
       )}
       <AddGroupTargetDialog
-        open={addingMemberGroupIndex !== null && !globalMemorySharingEnabled && !isSharedMemoryGroup}
+        open={addingMemberGroupIndex !== null && !globalMemorySharingEnabled}
         title={`选择${groupLabel} ${
           addingMemberGroupIndex === null ? '' : addingMemberGroupIndex + 1
         } 的新成员`}
