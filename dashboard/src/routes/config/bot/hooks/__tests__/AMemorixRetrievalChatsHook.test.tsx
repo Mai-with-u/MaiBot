@@ -8,63 +8,61 @@ import {
   buildAMemorixRetrievalChatTokenOptions,
   resolveAMemorixRetrievalChatsCopy,
 } from '../AMemorixRetrievalChatsHook.utils'
-import type { MemoryImportChatTargetPayload } from '@/lib/memory-api'
+import type { ChatStream } from '@/lib/chat-management-api'
 
-vi.mock('@/lib/memory-api', () => ({
-  getMemoryImportChatTargets: vi.fn(async () => ({
-    success: true,
-    data: [
-      {
-        chat_id: 'session-group',
-        chat_name: '测试群',
-        platform: 'qq',
-        group_id: '10001',
-        user_id: '',
-        is_group: true,
-      },
-      {
-        chat_id: 'session-private',
-        chat_name: '小明的私聊',
-        platform: 'qq',
-        group_id: '',
-        user_id: '20002',
-        is_group: false,
-      },
-    ],
-  })),
+vi.mock('@/lib/chat-management-api', () => ({
+  getChatStreams: vi.fn(async () => [
+    {
+      session_id: 'session-group',
+      display_name: '测试群',
+      chat_type: 'group',
+      target_id: '10001',
+      platform: 'qq',
+      group_id: '10001',
+      user_id: null,
+    },
+    {
+      session_id: 'session-private',
+      display_name: '小明的私聊',
+      chat_type: 'private',
+      target_id: '20002',
+      platform: 'qq',
+      group_id: null,
+      user_id: '20002',
+    },
+  ] as ChatStream[]),
 }))
 
 describe('AMemorixRetrievalChatsHook', () => {
-  it('builds stream, group, private and user token options from chat targets', () => {
+  it('builds only exact stream token options from known chats', () => {
     const options = buildAMemorixRetrievalChatTokenOptions([
       {
-        chat_id: 'session-group',
-        chat_name: '测试群',
+        session_id: 'session-group',
+        display_name: '测试群',
+        chat_type: 'group',
+        target_id: '10001',
         platform: 'qq',
         group_id: '10001',
-        user_id: '',
-        is_group: true,
+        user_id: null,
       },
       {
-        chat_id: 'session-private',
-        chat_name: '小明的私聊',
+        session_id: 'session-private',
+        display_name: '小明的私聊',
+        chat_type: 'private',
+        target_id: '20002',
         platform: 'qq',
-        group_id: '',
+        group_id: null,
         user_id: '20002',
-        is_group: false,
       },
-    ] as MemoryImportChatTargetPayload[])
+    ] as ChatStream[])
 
     expect(options.map((item) => item.token)).toEqual([
       'stream:session-group',
       'stream:session-private',
-      'group:10001',
-      'user:20002',
-      'private:20002',
     ])
   })
 
-  it('lets users add manual tokens when editing retrieval filter chats', async () => {
+  it('adds exact streams while preserving existing legacy tokens', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
 
@@ -79,18 +77,20 @@ describe('AMemorixRetrievalChatsHook', () => {
           description: '聊天流列表',
           required: false,
         }}
-        value={['stream:session-group']}
+        value={['group:legacy-group']}
       />,
     )
 
-    await waitFor(() => {
-      expect(screen.getByLabelText('选择 group:10001')).toBeInTheDocument()
-    })
+    expect(screen.queryByLabelText('选择 stream:session-group')).not.toBeInTheDocument()
+    expect(screen.getByText('group:legacy-group')).toBeInTheDocument()
 
-    await user.type(screen.getByPlaceholderText('手动添加，如 group:123 或 stream:session_id'), 'group:10001')
-    await user.click(screen.getByRole('button', { name: '添加' }))
+    await user.click(screen.getByRole('button', { name: '添加聊天流' }))
 
-    expect(onChange).toHaveBeenLastCalledWith(['stream:session-group', 'group:10001'])
+    expect(await screen.findByLabelText('选择 stream:session-group')).toBeInTheDocument()
+    await user.click(screen.getByLabelText('选择 stream:session-group'))
+    await user.click(screen.getByRole('button', { name: '添加 1 个聊天流' }))
+
+    expect(onChange).toHaveBeenLastCalledWith(['group:legacy-group', 'stream:session-group'])
   })
 
   it('uses distinct labels for each retrieval result type', () => {
@@ -104,7 +104,9 @@ describe('AMemorixRetrievalChatsHook', () => {
       .toBe('Episode 跨聊天流过滤范围')
   })
 
-  it('uses the token selector for entry chat filter chats', async () => {
+  it('keeps the entry filter chat list inside the add dialog', async () => {
+    const user = userEvent.setup()
+
     render(
       <AMemorixRetrievalChatsHook
         fieldPath="a_memorix.filter.chats"
@@ -119,12 +121,16 @@ describe('AMemorixRetrievalChatsHook', () => {
       />,
     )
 
-    await waitFor(() => {
-      expect(screen.getByLabelText('选择 group:10001')).toBeInTheDocument()
-    })
     expect(screen.getByText('聊天过滤范围')).toBeInTheDocument()
     expect(screen.getByText('入口过滤')).toBeInTheDocument()
     expect(screen.getByText(/影响当前聊天流是否允许使用记忆能力/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('选择 stream:session-group')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '添加聊天流' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('选择 stream:session-group')).toBeInTheDocument()
+    })
   })
 
   it('renders the cross-chat retrieval filter summary above subtype configs', () => {

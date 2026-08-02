@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { resolveFieldLabel } from "@/lib/config-label"
-import { resolveSchemaIcon } from "@/lib/schema-icons"
 import type { FieldSchema } from "@/types/config-schema"
 
 import { fieldTitleClassName } from "./fieldStyle"
@@ -305,18 +304,6 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
     )
   }
 
-  /**
-   * 渲染字段图标
-   */
-  const renderIcon = () => {
-    if (!schema['x-icon']) return null
-    
-    const IconComponent = resolveSchemaIcon(schema['x-icon'])
-    if (!IconComponent) return null
-    
-    return <IconComponent className="h-4 w-4" />
-  }
-
   const optionDescriptions = schema['x-option-descriptions'] ?? {}
   const optionLabels = schema['x-option-labels'] ?? {}
   const hasOptionDescriptions = Object.keys(optionDescriptions).length > 0
@@ -358,7 +345,6 @@ export const DynamicField: React.FC<DynamicFieldProps> = ({
               descriptionDisplay === 'label-hover' && fieldDescription && "cursor-help",
             )}
           >
-            {renderIcon()}
             <span className="break-words">{fieldLabel}</span>
             {schema.required && <span className="text-destructive">*</span>}
           </Label>

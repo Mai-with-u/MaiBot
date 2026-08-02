@@ -276,6 +276,7 @@ describe('ProviderForm 客户端类型选项', () => {
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
     expect(await screen.findByRole('option', { name: 'plugin-llm (pluginA)' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'openai' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'openai_responses' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'gemini' })).toBeInTheDocument()
 
     // 选择插件类型后触发器展示新值
@@ -283,7 +284,7 @@ describe('ProviderForm 客户端类型选项', () => {
     expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent('plugin-llm')
   })
 
-  it('客户端类型拉取失败时降级为内置 openai/gemini 选项', async () => {
+  it('客户端类型拉取失败时降级为全部内置客户端选项', async () => {
     const user = userEvent.setup()
     vi.mocked(configApi.fetchModelClientTypes).mockRejectedValue(new Error('network'))
     renderForm()
@@ -291,6 +292,7 @@ describe('ProviderForm 客户端类型选项', () => {
 
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
     expect(await screen.findByRole('option', { name: 'openai' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'openai_responses' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'gemini' })).toBeInTheDocument()
   })
 })

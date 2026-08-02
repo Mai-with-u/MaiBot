@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { ExpressionGroupsHook, MultipleReplyStyleHook } from '../complexFieldHooks'
@@ -230,6 +230,43 @@ describe('custom bot config hooks', () => {
     expect(onParentChange).toHaveBeenLastCalledWith('global_memory_sharing_enabled', true)
   })
 
+  it('uses the shared scope selector while limiting memory groups to exact chats', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+
+    render(
+      <ExpressionGroupsHook
+        fieldPath="a_memorix.shared_memory_groups"
+        onChange={onChange}
+        parentValues={{ global_memory_sharing_enabled: false }}
+        schema={sharedMemorySchema}
+        value={[]}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('添加共享记忆组'))
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: /指定聊天流/ })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /全局通配/ })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /指定平台/ })).not.toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /默认兜底/ })).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '添加' }))
+
+    expect(onChange).toHaveBeenLastCalledWith([
+      {
+        targets: [
+          {
+            platform: 'qq',
+            item_id: '',
+            rule_type: 'group',
+          },
+        ],
+      },
+    ])
+  })
+
   it('selects shared memory group members from known group or private chats inline', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
@@ -297,6 +334,53 @@ describe('custom bot config hooks', () => {
         ],
       },
     ])
+  })
+
+  it('keeps the newest chat stream when legacy and account-specific sessions share one target', async () => {
+    const user = userEvent.setup()
+    const currentChat = {
+      ...createChatStream(1, 'group'),
+      session_id: 'current-session',
+      display_name: '麦麦脑电图｜技术交流群｜部署/配置',
+      target_id: '571780722',
+      group_id: '571780722',
+      group_name: '麦麦脑电图｜技术交流群｜部署/配置',
+      account_id: '2814567326',
+    }
+    const legacyChat = {
+      ...currentChat,
+      id: 2,
+      session_id: 'legacy-session',
+      display_name: '麦麦的私聊',
+      group_name: null,
+      account_id: null,
+    }
+    vi.mocked(getChatStreams).mockResolvedValueOnce([currentChat, legacyChat])
+
+    render(
+      <ExpressionGroupsHook
+        fieldPath="a_memorix.shared_memory_groups"
+        onChange={vi.fn()}
+        parentValues={{ global_memory_sharing_enabled: false }}
+        schema={sharedMemorySchema}
+        value={[
+          {
+            targets: [
+              {
+                platform: 'qq',
+                item_id: '571780722',
+                rule_type: 'group',
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByLabelText('展开共享记忆组 1'))
+
+    expect(await screen.findByText('麦麦脑电图｜技术交流群｜部署/配置')).toBeInTheDocument()
+    expect(screen.queryByText('麦麦的私聊')).not.toBeInTheDocument()
   })
 
   it('keeps private chat matches visible when group matches exceed the display limit', async () => {

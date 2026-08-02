@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Tuple
 
+from .provider_state import ProviderState
 from .tool_option import ToolCall
 
 
@@ -77,6 +78,7 @@ class Message:
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_calls: List[ToolCall] | None = None
+    provider_state: ProviderState | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """执行消息对象的基础校验。
@@ -90,6 +92,8 @@ class Message:
             raise ValueError("Tool 角色的工具调用 ID 不能为空")
         if self.tool_name and self.role != RoleType.Tool:
             raise ValueError("仅当角色为 Tool 时才能设置工具名称")
+        if self.provider_state is not None and self.role != RoleType.Assistant:
+            raise ValueError("仅当角色为 Assistant 时才能携带 ProviderState")
 
     @property
     def content(self) -> str | List[Tuple[str, str] | str]:
@@ -139,6 +143,7 @@ class MessageBuilder:
         self.__tool_call_id: str | None = None
         self.__tool_name: str | None = None
         self.__tool_calls: List[ToolCall] | None = None
+        self.__provider_state: ProviderState | None = None
 
     def set_role(self, role: RoleType = RoleType.User) -> "MessageBuilder":
         """设置消息角色。
@@ -279,6 +284,13 @@ class MessageBuilder:
         self.__tool_calls = list(tool_calls)
         return self
 
+    def set_provider_state(self, provider_state: ProviderState) -> "MessageBuilder":
+        """设置 assistant 消息携带的 Provider 原生状态。"""
+        if self.__role != RoleType.Assistant:
+            raise ValueError("仅当角色为 Assistant 时才能设置 ProviderState")
+        self.__provider_state = provider_state
+        return self
+
     def build(self) -> Message:
         """构建消息对象。
 
@@ -291,4 +303,5 @@ class MessageBuilder:
             tool_call_id=self.__tool_call_id,
             tool_name=self.__tool_name,
             tool_calls=list(self.__tool_calls) if self.__tool_calls else None,
+            provider_state=self.__provider_state,
         )

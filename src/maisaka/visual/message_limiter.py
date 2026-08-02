@@ -45,6 +45,7 @@ def limit_latest_images_in_messages(
                 tool_call_id=message.tool_call_id,
                 tool_name=message.tool_name,
                 tool_calls=message.tool_calls,
+                provider_state=message.provider_state if limited_parts == message.parts else None,
             )
         )
 

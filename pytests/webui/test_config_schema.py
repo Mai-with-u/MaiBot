@@ -45,7 +45,7 @@ def test_json_schema_extra_merged():
 
     # Verify UI metadata fields from json_schema_extra exist
     assert talk_value.get("x-widget") == "slider"
-    assert talk_value.get("x-icon") == "message-circle"
+    assert "x-icon" not in talk_value
     assert talk_value.get("step") == 0.001
 
 
@@ -135,10 +135,9 @@ def test_field_without_extra_metadata():
     assert "label" in plain_field
     assert "required" in plain_field
 
-    # Verify no x-widget or x-icon from json_schema_extra (since field has none)
+    # Verify no x-widget from json_schema_extra (since field has none)
     # These fields should only be present if explicitly defined in json_schema_extra
     assert not plain_field.get("x-widget")
-    assert not plain_field.get("x-icon")
 
 
 def test_all_top_level_sections_have_ui_metadata():
@@ -182,11 +181,9 @@ def test_memory_query_config_fields_are_exposed():
 
     assert enable_field["type"] == "boolean"
     assert enable_field.get("x-widget") == "switch"
-    assert enable_field.get("x-icon") == "database"
 
     assert limit_field["type"] == "integer"
     assert limit_field.get("x-widget") == "input"
-    assert limit_field.get("x-icon") == "hash"
     assert limit_field.get("minValue") == 1
     assert limit_field.get("maxValue") == 20
 

@@ -11,6 +11,7 @@ import asyncio
 
 from src.common.data_models import BaseDataModel
 from src.llm_models.payload_content.resp_format import RespFormat
+from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ class LLMResponseResult(BaseDataModel):
     total_tokens: int = 0
     prompt_cache_hit_tokens: int = 0
     prompt_cache_miss_tokens: int = 0
+    provider_state: ProviderState | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)

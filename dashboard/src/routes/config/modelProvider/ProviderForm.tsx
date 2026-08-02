@@ -97,14 +97,14 @@ export function ProviderForm({
     const options = [...clientTypes]
     const knownTypes = new Set(options.map((item) => item.client_type))
 
-    for (const clientType of ['openai', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
+    for (const clientType of ['openai', 'openai_responses', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
       if (!knownTypes.has(clientType)) {
         options.push({
           client_type: clientType,
           owner_plugin_id: null,
           version: '',
           description: '',
-          builtin: clientType === 'openai' || clientType === 'gemini',
+          builtin: clientType === 'openai' || clientType === 'openai_responses' || clientType === 'gemini',
         })
         knownTypes.add(clientType)
       }
@@ -404,6 +404,7 @@ export function ProviderForm({
                       <p>指定与提供商通信时使用的 API 协议格式。</p>
                       <ul className="list-disc list-inside space-y-1 text-xs">
                         <li><strong>OpenAI：</strong>兼容 OpenAI API 格式的提供商</li>
+                        <li><strong>OpenAI Responses：</strong>OpenAI Responses API 原生格式</li>
                         <li><strong>Gemini：</strong>Google Gemini 专用格式</li>
                         <li>已加载的插件可以在这里提供新的客户端类型</li>
                       </ul>

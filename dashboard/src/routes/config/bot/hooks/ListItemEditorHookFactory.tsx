@@ -19,7 +19,6 @@ import { DynamicConfigForm } from '@/components/dynamic-form/DynamicConfigForm'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { resolveLocalizedText } from '@/lib/config-label'
 import type { FieldHookComponent } from '@/lib/field-hooks'
-import { resolveSchemaIcon } from '@/lib/schema-icons'
 import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
 
 /**
@@ -39,8 +38,6 @@ export interface ListItemEditorOptions {
   infoText?: string
   /** 列表为空时的占位说明 */
   emptyText?: string
-  /** 顶部图标（覆盖 schema 自带的 x-icon） */
-  iconName?: string
   /** 紧凑布局：把指定字段放在同一行展示 */
   fieldRows?: string[][]
   /** Hook-local field UI metadata overrides */
@@ -109,21 +106,6 @@ function resolveDescription(schema?: ConfigSchema | FieldSchema): string {
   if ('description' in schema && schema.description) return schema.description
   if ('classDoc' in schema && schema.classDoc) return schema.classDoc
   return ''
-}
-
-function resolveIconName(
-  iconOverride: string | undefined,
-  schema?: ConfigSchema | FieldSchema,
-): string | undefined {
-  if (iconOverride) return iconOverride
-  if (schema && 'x-icon' in schema && schema['x-icon']) return schema['x-icon']
-  return undefined
-}
-
-function renderLucideIcon(iconName: string | undefined, className: string) {
-  const Icon = resolveSchemaIcon(iconName)
-  if (!Icon) return null
-  return <Icon className={className} />
 }
 
 /** 根据 itemSchema 字段默认值构造一个新 item */
@@ -351,7 +333,6 @@ export function createListItemEditorHook(
 
     const label = resolveLabel(schema, fieldPath)
     const description = resolveDescription(schema)
-    const iconName = resolveIconName(options.iconName, schema)
     const addButtonPlacement = options.addButtonPlacement ?? 'bottom'
     const shouldCollapse = options.collapseWhen?.({ parentValues }) ?? false
     const [manuallyExpanded, setManuallyExpanded] = useState(false)
@@ -395,7 +376,6 @@ export function createListItemEditorHook(
         <CardHeader className="space-y-2 pb-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              {renderLucideIcon(iconName, 'h-5 w-5 flex-shrink-0 text-muted-foreground')}
               <CardTitle className={fieldTitleClassName(schema, 'truncate text-base')}>{label}</CardTitle>
               {options.infoText && (
                 <TooltipProvider delayDuration={150}>

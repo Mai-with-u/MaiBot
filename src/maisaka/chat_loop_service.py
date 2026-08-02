@@ -1,5 +1,6 @@
 ﻿"""Maisaka 对话循环服务。"""
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List, Optional, Sequence
@@ -976,9 +977,10 @@ class MaisakaChatLoopService:
             )
             all_tools = [*get_builtin_tools(availability_context), *self._extra_tools]
 
+        serialized_messages = serialize_prompt_messages(built_messages)
         before_request_result = await self._get_runtime_manager().invoke_hook(
             "maisaka.planner.before_request",
-            messages=serialize_prompt_messages(built_messages),
+            messages=deepcopy(serialized_messages),
             tool_definitions=serialize_tool_definitions(all_tools),
             selected_history_count=len(selected_history),
             built_message_count=len(built_messages),
@@ -987,7 +989,7 @@ class MaisakaChatLoopService:
         )
         before_request_kwargs = before_request_result.kwargs
         raw_messages = before_request_kwargs.get("messages")
-        if isinstance(raw_messages, list):
+        if isinstance(raw_messages, list) and raw_messages != serialized_messages:
             try:
                 built_messages = deserialize_prompt_messages(raw_messages)
             except Exception as exc:
@@ -1026,10 +1028,12 @@ class MaisakaChatLoopService:
         final_reasoning = generation_result.reasoning or ""
         final_response = generation_result.response or ""
         final_tool_calls = list(generation_result.tool_calls or [])
+        original_response = final_response
+        serialized_final_tool_calls = serialize_tool_calls(final_tool_calls)
         after_response_result = await self._get_runtime_manager().invoke_hook(
             "maisaka.planner.after_response",
             response=final_response,
-            tool_calls=serialize_tool_calls(final_tool_calls),
+            tool_calls=deepcopy(serialized_final_tool_calls),
             selected_history_count=len(selected_history),
             built_message_count=len(built_messages),
             selection_reason=selection_reason,
@@ -1047,6 +1051,9 @@ class MaisakaChatLoopService:
                 final_tool_calls = deserialize_tool_calls(raw_tool_calls)
             except Exception as exc:
                 logger.warning(f"Hook maisaka.planner.after_response 返回的 tool_calls 无法反序列化，已忽略: {exc}")
+        provider_state = generation_result.provider_state
+        if final_response != original_response or serialize_tool_calls(final_tool_calls) != serialized_final_tool_calls:
+            provider_state = None
         prompt_tokens = self._coerce_int(after_response_kwargs.get("prompt_tokens"), generation_result.prompt_tokens)
         completion_tokens = self._coerce_int(
             after_response_kwargs.get("completion_tokens"),
@@ -1081,6 +1088,7 @@ class MaisakaChatLoopService:
             content=final_response,
             timestamp=datetime.now(),
             tool_calls=final_tool_calls,
+            provider_state=provider_state,
         )
         return ChatResponse(
             content=final_response or None,

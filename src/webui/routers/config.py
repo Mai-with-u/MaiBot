@@ -2275,9 +2275,9 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
             ModelConfig.from_dict(AttributeData(), copy.deepcopy(plain_config_data))
         except Exception as e:
             logger.error(f"配置数据验证失败，详细错误: {str(e)}")
-            allow_orphaned_provider_save = False
-            # 特殊处理：如果是更新 api_providers，检查是否有模型引用了已删除的provider
-            if section_name == "api_providers" and "api_provider" in str(e):
+            allow_incomplete_provider_save = False
+            # 更新 api_providers 时只校验该小节，允许用户从模型列表为空等不完整状态中恢复配置。
+            if section_name == "api_providers":
                 _validate_api_provider_section(section_data)
                 original_orphaned = _collect_orphaned_model_api_providers(original_plain_config_data)
                 orphaned_models = _collect_orphaned_model_api_providers(plain_config_data)
@@ -2287,7 +2287,15 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
                     if original_orphaned.get(model_name) != api_provider
                 ]
 
-                if orphaned_models and not introduced_orphaned_models:
+                if introduced_orphaned_models:
+                    error_msg = (
+                        "以下模型引用了已删除的提供商: "
+                        f"{', '.join(introduced_orphaned_models)}。"
+                        "请先在模型管理页面删除这些模型，或重新分配它们的提供商。"
+                    )
+                    raise HTTPException(status_code=400, detail=error_msg) from e
+
+                if orphaned_models:
                     logger.warning(
                         "api_providers 已保存，但模型配置中仍存在历史无效引用: "
                         + ", ".join(
@@ -2295,17 +2303,13 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
                             for model_name, api_provider in orphaned_models.items()
                         )
                     )
-                    allow_orphaned_provider_save = True
-                elif introduced_orphaned_models:
-                    error_msg = (
-                        "以下模型引用了已删除的提供商: "
-                        f"{', '.join(introduced_orphaned_models)}。"
-                        "请先在模型管理页面删除这些模型，或重新分配它们的提供商。"
-                    )
-                    raise HTTPException(status_code=400, detail=error_msg) from e
+                    allow_incomplete_provider_save = True
+                elif not plain_config_data.get("models"):
+                    logger.warning("api_providers 已保存，但模型列表仍为空，请继续添加模型")
+                    allow_incomplete_provider_save = True
                 else:
                     raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
-            if not allow_orphaned_provider_save:
+            if not allow_incomplete_provider_save:
                 raise HTTPException(status_code=400, detail=f"配置数据验证失败: {str(e)}") from e
 
         config_data = plain_config_data

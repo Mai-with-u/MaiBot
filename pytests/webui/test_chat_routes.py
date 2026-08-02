@@ -1,8 +1,10 @@
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
 
+from src.common.database.database_model import ChatSession
 from src.webui.routers.chat import routes
 
 
@@ -70,3 +72,21 @@ async def test_get_persons_by_platform_serializes_before_session_closes(monkeypa
         ],
         "total": 1,
     }
+
+
+def test_group_display_name_ignores_private_latest_message_identity() -> None:
+    chat_session = ChatSession(
+        session_id="group-session",
+        platform="qq",
+        group_id="571780722",
+        group_name="麦麦脑电图｜技术交流群｜部署/配置",
+    )
+    latest_message = SimpleNamespace(
+        group_id=None,
+        group_name=None,
+        user_id="2814567326",
+        user_nickname="麦麦",
+        user_cardname=None,
+    )
+
+    assert routes._get_chat_display_name(chat_session, latest_message) == "麦麦脑电图｜技术交流群｜部署/配置"

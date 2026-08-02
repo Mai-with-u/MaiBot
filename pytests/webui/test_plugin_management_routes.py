@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Tuple
 
 import asyncio
 import json
@@ -9,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.webui.services import git_mirror_service as mirror_service_module
+from src.webui.routers.plugin import config_routes as config_routes_module
 from src.webui.routers.plugin import icon_routes as icon_routes_module
 from src.webui.routers.plugin import management as management_module
 from src.webui.routers.plugin import support as support_module
@@ -81,6 +83,75 @@ def test_installed_plugins_expose_duplicate_id_failure_reason(client: TestClient
     assert payload["total"] == 1
     assert payload["plugins"][0]["load_status"] == "failed"
     assert payload["plugins"][0]["load_error"] == failure_reason
+
+
+def test_toggle_plugin_waits_until_runtime_applies_enabled_state(client: TestClient, monkeypatch) -> None:
+    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    assert plugin_path is not None
+    (plugin_path / "config.toml").write_text("[plugin]\nenabled = false\n", encoding="utf-8")
+    waited_states: List[Tuple[str, bool]] = []
+
+    async def fake_inspect_plugin_config(
+        plugin_id: str,
+        config_data: Optional[Dict[str, Any]] = None,
+        *,
+        use_provided_config: bool = False,
+    ) -> SimpleNamespace:
+        assert plugin_id == "test.demo"
+        assert config_data is None
+        assert use_provided_config is False
+        return SimpleNamespace(
+            enabled=False,
+            normalized_config={"plugin": {"enabled": False}},
+        )
+
+    async def fake_wait_for_runtime(plugin_id: str, enabled: bool) -> str:
+        waited_states.append((plugin_id, enabled))
+        assert "enabled = true" in (plugin_path / "config.toml").read_text(encoding="utf-8")
+        return "success"
+
+    monkeypatch.setattr(config_routes_module, "_inspect_plugin_config_via_runtime", fake_inspect_plugin_config)
+    monkeypatch.setattr(config_routes_module, "_wait_for_plugin_runtime_toggle", fake_wait_for_runtime)
+    monkeypatch.setattr(config_routes_module, "require_plugin_token", lambda _: "ok")
+
+    app = FastAPI()
+    app.include_router(config_routes_module.router, prefix="/api/webui/plugins")
+
+    response = TestClient(app).post("/api/webui/plugins/config/test.demo/toggle")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "success": True,
+        "enabled": True,
+        "message": "插件已启用",
+        "note": "状态更改已同步到插件运行时",
+    }
+    assert waited_states == [("test.demo", True)]
+
+
+def test_wait_for_plugin_runtime_toggle_ignores_inactive_until_enabled_plugin_loads(
+    monkeypatch,
+) -> None:
+    from src.plugin_runtime import integration as integration_module
+
+    runtime_statuses = iter(["inactive", "inactive", "success"])
+
+    class FakeRuntimeManager:
+        def get_plugin_load_statuses(self) -> Dict[str, str]:
+            return {"test.demo": next(runtime_statuses)}
+
+    monkeypatch.setattr(integration_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+
+    runtime_status = asyncio.run(
+        config_routes_module._wait_for_plugin_runtime_toggle(
+            "test.demo",
+            True,
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+    )
+
+    assert runtime_status == "success"
 
 
 def test_resolve_installed_plugin_path_falls_back_to_manifest_id(client: TestClient):

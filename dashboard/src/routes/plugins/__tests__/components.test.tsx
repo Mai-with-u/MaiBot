@@ -201,9 +201,22 @@ describe('PluginCard', () => {
     const props = cardProps(plugin)
     render(<PluginCard {...props} />)
 
-    expect(screen.getByText('插件-alpha')).toBeInTheDocument()
-    expect(screen.getByText('99')).toBeInTheDocument()
-    expect(screen.getByText('4.8')).toBeInTheDocument()
+    const card = screen.getByText('插件-alpha').closest('[data-dashboard-card="true"]')
+    expect(card).toHaveAttribute('data-plugin-market-card', 'true')
+    expect(screen.getByText('插件-alpha')).toHaveClass('line-clamp-2')
+    expect(screen.getByText('插件-alpha').parentElement).toHaveClass('h-[4.125rem]')
+    const pluginIcon = screen.getByTestId('plugin-icon-alpha')
+    const pluginTypeLabel = screen.getByText('通用扩展')
+    expect(pluginIcon.nextElementSibling).toBe(pluginTypeLabel)
+    expect(pluginTypeLabel).toHaveAttribute('data-plugin-type-label', 'true')
+    expect(pluginTypeLabel).toHaveClass('text-primary', 'text-xs')
+    expect(pluginTypeLabel.parentElement).toHaveClass('h-[4.125rem]', 'w-12')
+    expect(pluginTypeLabel).not.toHaveAttribute('data-dashboard-badge')
+    expect(screen.getByText('alpha 描述')).toHaveClass('line-clamp-3', 'min-h-[3.09375rem]')
+    expect(document.querySelector('[data-plugin-stat-value="downloads"]')).toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="rating"]')).toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="likes"]')).toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="reviews"]')).toHaveClass('text-primary')
     expect(screen.getByText('+1')).toBeInTheDocument()
     expect(screen.getByText('v1.2.0 · 测试作者')).toBeInTheDocument()
 
@@ -213,6 +226,20 @@ describe('PluginCard', () => {
     expect(props.onLike).toHaveBeenCalledWith(plugin)
     expect(props.onDetail).toHaveBeenCalledWith(plugin)
     expect(props.onInstall).toHaveBeenCalledWith(plugin)
+  })
+
+  it('统计数值为零时不使用主题橙色', () => {
+    const plugin = makePlugin('zero', { downloads: 0, rating: 0 })
+    const props = cardProps(plugin)
+    props.pluginStats = {
+      zero: makeStats('zero', { downloads: 0, rating: 0, rating_count: 0, likes: 0 }),
+    }
+    render(<PluginCard {...props} />)
+
+    expect(document.querySelector('[data-plugin-stat-value="downloads"]')).not.toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="rating"]')).not.toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="likes"]')).not.toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="reviews"]')).not.toHaveClass('text-primary')
   })
 
   it('不兼容或其他插件正在安装时禁用安装并暴露原因', () => {
