@@ -10,6 +10,7 @@ from src.common.logger import get_logger
 from src.config.config import config_manager
 from src.config.model_configs import APIProvider, ModelInfo
 from src.llm_models.payload_content.message import Message
+from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolOption
 
@@ -67,6 +68,9 @@ class APIResponse:
 
     raw_data: Any = None
     """响应原始数据"""
+
+    provider_state: ProviderState | None = field(default=None, repr=False)
+    """供后续同 Provider、同模型请求原样续接的原生状态。"""
 
 
 UsageTuple = Tuple[int, ...]

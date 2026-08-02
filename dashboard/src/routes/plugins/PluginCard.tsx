@@ -52,6 +52,7 @@ export function PluginCard({
   const likeCount = stats?.likes ?? 0
   const downloadCount = stats?.downloads ?? plugin.downloads ?? 0
   const ratingValue = stats?.rating ?? plugin.rating ?? 0
+  const reviewCount = stats?.rating_count ?? plugin.review_count ?? 0
   const isLiked = stats?.liked === true
   const isLiking = likingPluginIds.has(plugin.manifest?.id || plugin.id)
   const isInstalling = loadProgress?.operation === 'install'
@@ -101,7 +102,7 @@ export function PluginCard({
       <CardContent className="flex-1 px-4 pb-2.5">
         <div className="space-y-2">
           {/* 统计信息 */}
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
               <span>下载</span>
               <span
@@ -127,6 +128,15 @@ export function PluginCard({
                 className={likeCount !== 0 ? 'text-primary' : undefined}
               >
                 {likeCount.toLocaleString()}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span>评论</span>
+              <span
+                data-plugin-stat-value="reviews"
+                className={reviewCount !== 0 ? 'text-primary' : undefined}
+              >
+                {reviewCount.toLocaleString()}
               </span>
             </div>
           </div>

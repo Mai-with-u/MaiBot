@@ -2,8 +2,17 @@
 
 # [1.1.4] - 2026-8-2
 
+## 主程序
+
+- 新增 `openai_responses` 模型客户端，支持 OpenAI Responses API 的文本、图片、结构化输出、函数工具、原生工具、流式事件与用量统计，同时保留原有 Chat Completions 客户端。
+
+## Maisaka
+
+- Maisaka 可透明保留并校验 Responses 原生 output items，同一模型续接工具循环时原样回放推理与调用状态，消息被 Hook 改写、裁剪或切换 Provider 后自动停止使用旧状态。
+
 ## Webui [1.6.3]
 
+- 模型厂商配置新增 `openai_responses` 客户端类型。
 - WebUI 插件管理页会展示重复插件的冲突目录和明确的加载失败原因。
 - 修复 WebUI 启用插件后立即刷新运行时状态，修复实际加载成功误报为加载失败的问题。
 - 修复模型与模型厂商列表均为空时，WebUI 无法重新添加模型厂商的问题。

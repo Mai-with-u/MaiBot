@@ -216,6 +216,7 @@ describe('PluginCard', () => {
     expect(document.querySelector('[data-plugin-stat-value="downloads"]')).toHaveClass('text-primary')
     expect(document.querySelector('[data-plugin-stat-value="rating"]')).toHaveClass('text-primary')
     expect(document.querySelector('[data-plugin-stat-value="likes"]')).toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="reviews"]')).toHaveClass('text-primary')
     expect(screen.getByText('+1')).toBeInTheDocument()
     expect(screen.getByText('v1.2.0 · 测试作者')).toBeInTheDocument()
 
@@ -230,12 +231,15 @@ describe('PluginCard', () => {
   it('统计数值为零时不使用主题橙色', () => {
     const plugin = makePlugin('zero', { downloads: 0, rating: 0 })
     const props = cardProps(plugin)
-    props.pluginStats = { zero: makeStats('zero', { downloads: 0, rating: 0, likes: 0 }) }
+    props.pluginStats = {
+      zero: makeStats('zero', { downloads: 0, rating: 0, rating_count: 0, likes: 0 }),
+    }
     render(<PluginCard {...props} />)
 
     expect(document.querySelector('[data-plugin-stat-value="downloads"]')).not.toHaveClass('text-primary')
     expect(document.querySelector('[data-plugin-stat-value="rating"]')).not.toHaveClass('text-primary')
     expect(document.querySelector('[data-plugin-stat-value="likes"]')).not.toHaveClass('text-primary')
+    expect(document.querySelector('[data-plugin-stat-value="reviews"]')).not.toHaveClass('text-primary')
   })
 
   it('不兼容或其他插件正在安装时禁用安装并暴露原因', () => {
