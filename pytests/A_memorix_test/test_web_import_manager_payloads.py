@@ -466,6 +466,30 @@ async def test_persist_processed_chunk_skips_invalid_nested_items() -> None:
 
 
 @pytest.mark.asyncio
+async def test_persist_processed_chunk_accepts_hash_shaped_business_names() -> None:
+    manager, metadata_store = _build_manager()
+    file_record = SimpleNamespace(source_path="", source_kind="paste", name="demo.txt")
+    subject = "a" * 64
+    obj = "b" * 32
+
+    await manager._persist_processed_chunk(
+        file_record,
+        _build_chunk(
+            {
+                "entities": [subject],
+                "relations": [
+                    {"subject": subject, "predicate": "映射到", "object": obj},
+                ],
+            }
+        ),
+    )
+
+    assert len(metadata_store.paragraphs) == 1
+    assert set(metadata_store.entities) >= {subject, obj}
+    assert metadata_store.relations == [(subject, "映射到", obj)]
+
+
+@pytest.mark.asyncio
 async def test_persist_processed_chunk_writes_chat_id_metadata() -> None:
     manager, metadata_store = _build_manager()
     file_record = SimpleNamespace(source_path="", source_kind="paste", name="demo.txt")

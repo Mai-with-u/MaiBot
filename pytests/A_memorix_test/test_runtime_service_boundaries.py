@@ -1048,14 +1048,19 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_persist", lambda *args, **kwargs: None)
+    monkeypatch.setattr(kernel, "_mark_person_active", lambda person_id: None)
+    monkeypatch.setattr(kernel, "_enqueue_person_profile_refresh", lambda person_id, reason="": True)
     monkeypatch.setattr(kernel, "_write_paragraph_vector_or_enqueue", patched_write)
     monkeypatch.setattr(kernel, "_ensure_entity_vector", patched_entity)
 
+    hex_entity_name = "a" * 64
     result = await kernel._ingest_service.ingest_text(
         external_id="external-1",
         source_type="manual",
         text="Alice 喜欢绿茶",
-        entities=["Alice"],
+        entities=["Alice", hex_entity_name],
+        person_ids=["person-internal-id"],
+        participants=["person-internal-id", "Alice 显示名"],
     )
 
     assert result["stored_ids"] == ["paragraph-1"]
@@ -1066,7 +1071,13 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
             "context": "ingest_text",
         }
     ]
-    assert entity_calls == [{"hash": "entity:Alice:paragraph-1", "name": "Alice"}]
+    assert entity_calls == [
+        {"hash": "entity:Alice:paragraph-1", "name": "Alice"},
+        {"hash": f"entity:{hex_entity_name}:paragraph-1", "name": hex_entity_name},
+        {"hash": "entity:Alice 显示名:paragraph-1", "name": "Alice 显示名"},
+    ]
+    assert kernel.metadata_store.paragraph["metadata"]["person_ids"] == ["person-internal-id"]
+    assert kernel.metadata_store.paragraph["metadata"]["participants"] == ["Alice 显示名"]
 
 
 @pytest.mark.asyncio

@@ -364,8 +364,9 @@ class MemoryIngestService(KernelServiceBase):
             }
 
         person_tokens = tokens(person_ids)
-        participant_tokens = tokens(participants)
-        entity_tokens = merge_tokens(entities, person_tokens, participant_tokens)
+        person_token_set = set(person_tokens)
+        participant_tokens = [token for token in tokens(participants) if token not in person_token_set]
+        entity_tokens = merge_tokens(entities, participant_tokens)
         source = build_source(source_type, chat_id, person_tokens)
         paragraph_meta = coerce_metadata_dict(metadata)
         paragraph_meta.update(

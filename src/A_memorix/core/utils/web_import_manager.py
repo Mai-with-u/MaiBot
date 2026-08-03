@@ -3463,9 +3463,6 @@ class ImportTaskManager:
                             n = str(name or "").strip()
                             if not n:
                                 continue
-                            if is_probable_hash_token(n):
-                                chunk_warnings.append(f"跳过分块[{chunk_id}]中的实体：疑似哈希值 ({n[:32]})")
-                                continue
                             await self._add_entity_with_vector(n, source_paragraph=para_hash)
                         for rel in unit.get("relations", []) or []:
                             if not isinstance(rel, dict):
@@ -3475,19 +3472,11 @@ class ImportTaskManager:
                             o = str(rel.get("object", "")).strip()
                             if not (s and p and o):
                                 continue
-                            if any(is_probable_hash_token(token) for token in (s, p, o)):
-                                chunk_warnings.append(
-                                    f"跳过分块[{chunk_id}]中的关系：疑似哈希值 ({s[:24]}|{p[:24]}|{o[:24]})"
-                                )
-                                continue
                             await self._add_relation(s, p, o, source_paragraph=para_hash)
                 elif kind == "entity":
                     entity_name = str(unit.get("name", "")).strip()
                     if not entity_name:
                         chunk_warnings.append(f"跳过分块[{chunk_id}]：实体名为空")
-                        skip_write = True
-                    elif is_probable_hash_token(entity_name):
-                        chunk_warnings.append(f"跳过分块[{chunk_id}]：实体名疑似哈希值")
                         skip_write = True
                     if not skip_write:
                         await self._add_entity_with_vector(entity_name)
@@ -3497,9 +3486,6 @@ class ImportTaskManager:
                     obj = str(unit.get("object", "")).strip()
                     if not (subject and predicate and obj):
                         chunk_warnings.append(f"跳过分块[{chunk_id}]：关系字段不完整")
-                        skip_write = True
-                    elif any(is_probable_hash_token(token) for token in (subject, predicate, obj)):
-                        chunk_warnings.append(f"跳过分块[{chunk_id}]：关系字段疑似哈希值")
                         skip_write = True
                     if not skip_write:
                         await self._add_relation(subject, predicate, obj)
@@ -3620,9 +3606,6 @@ class ImportTaskManager:
             name_token = str(name or "").strip()
             if not name_token:
                 continue
-            if is_probable_hash_token(name_token):
-                logger.warning(f"跳过疑似哈希实体写入: entity={name_token[:32]}")
-                continue
             normalized_names.append(name_token)
         if not normalized_names:
             return {}
@@ -3705,11 +3688,6 @@ class ImportTaskManager:
             )
             if not all(tokens):
                 continue
-            if any(is_probable_hash_token(token) for token in tokens):
-                logger.warning(
-                    f"跳过疑似哈希关系写入: {tokens[0][:24]} | {tokens[1][:24]} | {tokens[2][:24]}"
-                )
-                continue
             normalized_relations.append(tokens)
         if not normalized_relations:
             return []
@@ -3756,11 +3734,6 @@ class ImportTaskManager:
         predicate_token = str(predicate or "").strip()
         object_token = str(obj or "").strip()
         if not (subject_token and predicate_token and object_token):
-            return ""
-        if any(is_probable_hash_token(token) for token in (subject_token, predicate_token, object_token)):
-            logger.warning(
-                f"跳过疑似哈希关系写入: {subject_token[:24]} | {predicate_token[:24]} | {object_token[:24]}",
-            )
             return ""
 
         await self._add_entity_with_vector(subject_token, source_paragraph=source_paragraph)
