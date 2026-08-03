@@ -679,6 +679,7 @@ class JargonLearner:
                 output_title="黑话抽取 LLM 输出",
                 output_content=output_content,
                 metadata={"model_name": generation_result.model_name},
+                provider_response=generation_result.provider_response,
             )
         except Exception as exc:
             logger.warning(f"{self.session_id} 黑话抽取 Prompt 保存失败: {exc}")

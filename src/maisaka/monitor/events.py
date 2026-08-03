@@ -230,6 +230,38 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return serialized_tools
 
 
+def _serialize_native_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
+    """序列化 Provider 原生工具摘要，不读取完整 ProviderState。"""
+
+    serialized_calls: List[Dict[str, Any]] = []
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict):
+            tool_type = tool_call.get("tool_type", "")
+            call_id = tool_call.get("call_id", "")
+            status = tool_call.get("status", "")
+            action_type = tool_call.get("action_type", "")
+            details = tool_call.get("details", [])
+            source_count = tool_call.get("source_count", 0)
+        else:
+            tool_type = getattr(tool_call, "tool_type", "")
+            call_id = getattr(tool_call, "call_id", "")
+            status = getattr(tool_call, "status", "")
+            action_type = getattr(tool_call, "action_type", "")
+            details = getattr(tool_call, "details", [])
+            source_count = getattr(tool_call, "source_count", 0)
+        serialized_calls.append(
+            {
+                "tool_type": str(tool_type),
+                "call_id": str(call_id),
+                "status": str(status),
+                "action_type": str(action_type),
+                "details": [str(item) for item in list(details or [])],
+                "source_count": int(source_count or 0),
+            }
+        )
+    return serialized_calls
+
+
 def _serialize_request_block(
     messages: Optional[List[Any]],
     selected_history_count: Optional[int],
@@ -250,6 +282,7 @@ def _serialize_request_block(
 def _serialize_planner_block(
     content: Optional[str],
     tool_calls: Optional[List[Any]],
+    native_tool_calls: Optional[List[Any]],
     prompt_tokens: Optional[int],
     completion_tokens: Optional[int],
     total_tokens: Optional[int],
@@ -261,6 +294,7 @@ def _serialize_planner_block(
     if (
         content is None
         and tool_calls is None
+        and native_tool_calls is None
         and prompt_tokens is None
         and completion_tokens is None
         and total_tokens is None
@@ -272,6 +306,7 @@ def _serialize_planner_block(
     return {
         "content": content,
         "tool_calls": _serialize_tool_calls_from_objects(list(tool_calls or [])),
+        "native_tool_calls": _serialize_native_tool_calls(list(native_tool_calls or [])),
         "prompt_tokens": int(prompt_tokens or 0),
         "completion_tokens": int(completion_tokens or 0),
         "total_tokens": int(total_tokens or 0),
@@ -511,6 +546,7 @@ async def emit_planner_finalized(
     planner_tool_count: Optional[int],
     planner_content: Optional[str],
     planner_tool_calls: Optional[List[Any]],
+    planner_native_tool_calls: Optional[List[Any]],
     planner_prompt_tokens: Optional[int],
     planner_completion_tokens: Optional[int],
     planner_total_tokens: Optional[int],
@@ -537,6 +573,7 @@ async def emit_planner_finalized(
         "planner": _serialize_planner_block(
             planner_content,
             planner_tool_calls,
+            planner_native_tool_calls,
             planner_prompt_tokens,
             planner_completion_tokens,
             planner_total_tokens,

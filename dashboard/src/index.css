@@ -851,7 +851,6 @@
     var(--retro-paper-texture-size) !important;
   border-color: var(--retro-line) !important;
   color: var(--retro-ink) !important;
-  backdrop-filter: none !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-header-collapsed='true'] {
@@ -2959,4 +2958,43 @@
   box-shadow:
     0 3px 0 rgb(0 0 0 / 0.42),
     0 6px 10px rgb(0 0 0 / 0.26) !important;
+}
+
+/* 模型配置页使用页面本身的背景，移除标签栏、配置控件及表格各层的二次着色。 */
+:root
+  [data-dashboard-shell='true']
+  [data-model-config-page='true']
+  :is(
+    [data-model-config-tabs-list='true'],
+    [data-model-config-tabs-list='true'] [data-dashboard-tabs-trigger='true'],
+    [data-model-config-tabs-bar='true'] [data-dashboard-select-trigger='true'],
+    [data-dashboard-input='true'],
+    [data-model-config-table-surface='true'],
+    [data-model-config-table-surface='true'] > div,
+    [data-model-config-table-surface='true'] [data-dashboard-table-wrapper='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table-header='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table-body='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table-row='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table-head='true'],
+    [data-model-config-table-surface='true'] [data-dashboard-table-cell='true']
+  ) {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+:root
+  [data-dashboard-shell='true']
+  [data-model-config-page='true']
+  [data-model-config-tabs-list='true']
+  [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: inset 0 -2px 0 hsl(var(--primary)) !important;
+  color: hsl(var(--foreground)) !important;
 }

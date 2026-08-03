@@ -8,6 +8,7 @@ from openai import APIConnectionError, APIStatusError, AsyncStream
 from openai._types import omit
 from openai.types.responses import Response, ResponseStreamEvent
 
+from src.common.logger import get_logger
 from src.llm_models.exceptions import (
     EmptyResponseException,
     NetworkConnectionError,
@@ -17,6 +18,7 @@ from src.llm_models.exceptions import (
 )
 from src.llm_models.openai_compat import split_openai_request_overrides
 from src.llm_models.payload_content.message import ImageMessagePart, Message, RoleType, TextMessagePart
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.provider_state import (
     PROVIDER_STATE_SCHEMA_VERSION,
     ProviderState,
@@ -50,6 +52,10 @@ from .openai_client import (
 RESPONSES_CLIENT_TYPE = "openai_responses"
 RESPONSES_OPERATION = "responses.create"
 RESPONSES_ENDPOINT = "/responses"
+NATIVE_TOOL_DETAIL_LIMIT = 500
+NATIVE_TOOL_DETAIL_COUNT_LIMIT = 5
+
+logger = get_logger("llm_models")
 
 
 def _serialize_response_item(item: Any) -> Dict[str, Any]:
@@ -63,6 +69,29 @@ def _serialize_response_item(item: Any) -> Dict[str, Any]:
         if isinstance(payload, dict):
             return payload
     raise RespParseException(item, f"Responses output item 无法序列化: {type(item).__name__}")
+
+
+def _serialize_response(response: Any) -> Dict[str, Any]:
+    """完整序列化 SDK Response，保留空值和未知扩展字段供诊断记录使用。"""
+
+    if isinstance(response, dict):
+        return deepcopy(response)
+    model_dump = getattr(response, "model_dump", None)
+    if callable(model_dump):
+        payload = model_dump(mode="json", exclude_none=False)
+        if isinstance(payload, dict):
+            return payload
+    try:
+        payload = {
+            key: deepcopy(value)
+            for key, value in vars(response).items()
+            if not key.startswith("_")
+        }
+    except TypeError as exc:
+        raise RespParseException(response, f"Responses 响应无法序列化: {type(response).__name__}") from exc
+    if payload:
+        return payload
+    raise RespParseException(response, f"Responses 响应无法序列化: {type(response).__name__}")
 
 
 def _get_value(value: Any, key: str, default: Any = None) -> Any:
@@ -287,6 +316,90 @@ def _extract_reasoning_summary(item: Any) -> List[str]:
     return summary_parts
 
 
+def _normalize_native_tool_detail(value: Any) -> str:
+    """将原生工具可观测字段压缩为适合日志和 WebUI 的单行摘要。"""
+
+    detail = " ".join(str(value or "").split()).strip()
+    if len(detail) <= NATIVE_TOOL_DETAIL_LIMIT:
+        return detail
+    return detail[: NATIVE_TOOL_DETAIL_LIMIT - 3] + "..."
+
+
+def _extract_web_search_summary(item: Any) -> NativeToolCallSummary:
+    """从标准 web_search_call item 提取不含原始搜索结果的安全摘要。"""
+
+    action = _get_value(item, "action")
+    action_type = str(_get_value(action, "type", "") or "").strip()
+    details: List[str] = []
+    source_count = 0
+
+    if action_type == "search":
+        raw_queries = _get_value(action, "queries")
+        if not isinstance(raw_queries, list) or not raw_queries:
+            raw_queries = [_get_value(action, "query")]
+        for raw_query in raw_queries:
+            query = _normalize_native_tool_detail(raw_query)
+            if query:
+                details.append(f"查询：{query}")
+        sources = _get_value(action, "sources")
+        if isinstance(sources, list):
+            source_count = len(sources)
+    elif action_type == "open_page":
+        url = _normalize_native_tool_detail(_get_value(action, "url"))
+        if url:
+            details.append(f"页面：{url}")
+    elif action_type == "find_in_page":
+        pattern = _normalize_native_tool_detail(_get_value(action, "pattern"))
+        url = _normalize_native_tool_detail(_get_value(action, "url"))
+        if pattern:
+            details.append(f"页内查找：{pattern}")
+        if url:
+            details.append(f"页面：{url}")
+
+    return NativeToolCallSummary(
+        tool_type="web_search",
+        call_id=str(_get_value(item, "id", "") or "").strip(),
+        status=str(_get_value(item, "status", "") or "").strip(),
+        action_type=action_type,
+        details=details[:NATIVE_TOOL_DETAIL_COUNT_LIMIT],
+        source_count=source_count,
+    )
+
+
+def _extract_native_tool_summaries(output: Sequence[Any]) -> List[NativeToolCallSummary]:
+    """仅从本次响应 output 提取原生工具摘要，并按调用 ID 去重。"""
+
+    summaries: List[NativeToolCallSummary] = []
+    seen_call_keys: set[str] = set()
+    for index, item in enumerate(output):
+        item_type = str(_get_value(item, "type", "") or "")
+        if item_type != "web_search_call":
+            continue
+        summary = _extract_web_search_summary(item)
+        call_key = summary.call_id or f"{item_type}:{index}"
+        if call_key in seen_call_keys:
+            continue
+        seen_call_keys.add(call_key)
+        summaries.append(summary)
+    return summaries
+
+
+def _format_native_tool_log(summaries: Sequence[NativeToolCallSummary]) -> str:
+    """生成一条有界的原生工具调用日志文本。"""
+
+    formatted_calls: List[str] = []
+    for summary in summaries:
+        labels = [label for label in (summary.action_type, summary.status) if label]
+        header = summary.tool_type
+        if labels:
+            header += f"[{', '.join(labels)}]"
+        detail = "；".join(summary.details)
+        if summary.source_count:
+            detail = f"{detail}；来源 {summary.source_count} 个" if detail else f"来源 {summary.source_count} 个"
+        formatted_calls.append(f"{header}({detail})" if detail else header)
+    return ", ".join(formatted_calls)
+
+
 def _parse_completed_response(
     response: Response | Any,
     request: ResponseRequest,
@@ -377,6 +490,8 @@ def _parse_completed_response(
             "status": status,
         },
         provider_state=provider_state,
+        provider_response=_serialize_response(response),
+        native_tool_calls=_extract_native_tool_summaries(output),
     )
     return api_response, _extract_usage_record(_get_value(response, "usage"))
 
@@ -505,6 +620,13 @@ class OpenAIResponsesClient(OpenaiClient):
                 self.api_provider.base_url,
                 self.tool_argument_parse_mode,
             )
+            if response.native_tool_calls:
+                logger.info(
+                    "Responses 原生工具调用: "
+                    f"provider={self.api_provider.name} model={model_info.model_identifier} "
+                    f"response={response.raw_data.get('response_id', '')} "
+                    f"calls={_format_native_tool_log(response.native_tool_calls)}"
+                )
             if usage_record is not None:
                 response.usage = self._build_usage_record(model_info, usage_record)
             return response

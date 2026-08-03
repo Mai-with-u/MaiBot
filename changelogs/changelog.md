@@ -9,6 +9,8 @@
 ## Maisaka
 
 - Maisaka 可透明保留并校验 Responses 原生 output items，同一模型续接工具循环时原样回放推理与调用状态，消息被 Hook 改写、裁剪或切换 Provider 后自动停止使用旧状态。
+- Maisaka Prompt 日志完整保存 Responses 原生响应结构，WebUI 按 `output[]` 顺序展示多段推理、消息和原生工具调用；超过 64 KiB 的 Base64 或二进制数据以大小和哈希占位，原生响应不进入业务历史。
+- Maisaka 监控页与普通日志新增 Responses 原生联网搜索摘要，展示本轮查询、动作、状态和来源数量。
 
 ## Webui [1.6.3]
 

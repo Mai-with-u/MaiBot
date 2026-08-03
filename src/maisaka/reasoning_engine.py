@@ -274,6 +274,7 @@ class MaisakaReasoningEngine:
                     f"选中历史数: {response.selected_history_count}"
                 ),
                 output_content=output_content,
+                provider_response=response.provider_response,
                 metadata={
                     "model_name": response.model_name,
                     "duration_ms": response.duration_ms,
@@ -951,6 +952,7 @@ class MaisakaReasoningEngine:
             planner_tool_count=response.tool_count if response is not None else None,
             planner_content=response.content if response is not None else None,
             planner_tool_calls=response.tool_calls if response is not None else None,
+            planner_native_tool_calls=response.native_tool_calls if response is not None else None,
             planner_prompt_tokens=response.prompt_tokens if response is not None else None,
             planner_completion_tokens=response.completion_tokens if response is not None else None,
             planner_total_tokens=response.total_tokens if response is not None else None,

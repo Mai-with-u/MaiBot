@@ -51,6 +51,7 @@ from src.llm_models.request_snapshot import (
     update_failed_request_attempt,
 )
 from src.llm_models.payload_content.message import Message, MessageBuilder
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import (
@@ -282,6 +283,8 @@ class LLMOrchestrator:
         tool_calls: List[ToolCall] | None,
         usage: UsageRecord | None = None,
         provider_state: ProviderState | None = None,
+        provider_response: Dict[str, Any] | None = None,
+        native_tool_calls: List[NativeToolCallSummary] | None = None,
     ) -> LLMResponseResult:
         """构建统一的文本响应结果。
 
@@ -305,6 +308,8 @@ class LLMOrchestrator:
             prompt_cache_hit_tokens=usage.prompt_cache_hit_tokens if usage is not None else 0,
             prompt_cache_miss_tokens=usage.prompt_cache_miss_tokens if usage is not None else 0,
             provider_state=provider_state,
+            provider_response=provider_response,
+            native_tool_calls=list(native_tool_calls or []),
         )
 
     async def generate_response_for_image(
@@ -376,6 +381,8 @@ class LLMOrchestrator:
             tool_calls,
             response.usage,
             response.provider_state,
+            response.provider_response,
+            response.native_tool_calls,
         )
 
     async def generate_response_for_voice(
@@ -477,6 +484,8 @@ class LLMOrchestrator:
             tool_calls,
             response.usage,
             response.provider_state,
+            response.provider_response,
+            response.native_tool_calls,
         )
 
     async def generate_response_with_message_async(
@@ -553,6 +562,8 @@ class LLMOrchestrator:
             tool_calls,
             response.usage,
             response.provider_state,
+            response.provider_response,
+            response.native_tool_calls,
         )
 
     async def get_embedding(self, embedding_input: str, *, session_id: str = "") -> LLMEmbeddingResult:

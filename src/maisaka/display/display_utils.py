@@ -2,11 +2,15 @@
 
 from typing import Any
 
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.tool_option import (
     TOOL_CALL_SOURCE_EXTRA_KEY,
     TOOL_CALL_SOURCE_REASONING,
     TOOL_CALL_SOURCE_RESPONSE,
 )
+
+
+_TOOL_CALL_SOURCE_PROVIDER = "provider"
 
 
 _REQUEST_PANEL_STYLE_MAP: dict[str, tuple[str, str]] = {
@@ -78,12 +82,35 @@ def format_tool_call_for_display(tool_call: Any) -> dict[str, Any]:
     }
 
 
+def format_native_tool_call_for_display(tool_call: NativeToolCallSummary) -> dict[str, Any]:
+    """将 Provider 原生工具摘要投影为现有推理记录使用的工具调用结构。"""
+
+    arguments: dict[str, Any] = {}
+    if tool_call.action_type:
+        arguments["action_type"] = tool_call.action_type
+    if tool_call.status:
+        arguments["status"] = tool_call.status
+    if tool_call.details:
+        arguments["details"] = list(tool_call.details)
+    if tool_call.source_count:
+        arguments["source_count"] = tool_call.source_count
+    return {
+        "id": tool_call.call_id,
+        "name": tool_call.tool_type,
+        "arguments": arguments,
+        "source": _TOOL_CALL_SOURCE_PROVIDER,
+        "source_label": "Provider 原生调用",
+    }
+
+
 def _normalize_tool_call_source(source: Any) -> str:
     normalized_source = str(source or "").strip().lower()
     if normalized_source in {TOOL_CALL_SOURCE_REASONING, "thinking", "reasoning_content"}:
         return TOOL_CALL_SOURCE_REASONING
     if normalized_source in {TOOL_CALL_SOURCE_RESPONSE, "content", "output", "text"}:
         return TOOL_CALL_SOURCE_RESPONSE
+    if normalized_source in {_TOOL_CALL_SOURCE_PROVIDER, "native", "provider_native"}:
+        return _TOOL_CALL_SOURCE_PROVIDER
     return ""
 
 
@@ -95,6 +122,8 @@ def format_tool_call_source_label(source: str) -> str:
         return "推理中调用"
     if normalized_source == TOOL_CALL_SOURCE_RESPONSE:
         return "正文调用"
+    if normalized_source == _TOOL_CALL_SOURCE_PROVIDER:
+        return "Provider 原生调用"
     return "未知来源"
 
 

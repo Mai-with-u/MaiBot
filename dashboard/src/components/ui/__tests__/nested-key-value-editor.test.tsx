@@ -122,6 +122,34 @@ describe('NestedKeyValueEditor 增删改', () => {
     expect(onChange).toHaveBeenLastCalledWith({ nick: 'mai' })
   })
 
+  it('同层键名重复时显示错误且不覆盖父级值', () => {
+    const onChange = vi.fn()
+    const onValidationChange = vi.fn()
+    render(
+      <NestedKeyValueEditor
+        value={{ first: 'a', second: 'b' }}
+        onChange={onChange}
+        onValidationChange={onValidationChange}
+      />
+    )
+
+    fireEvent.change(screen.getByDisplayValue('second'), { target: { value: 'first' } })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('检测到重复键：first')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(onValidationChange).toHaveBeenLastCalledWith('检测到重复键：first')
+  })
+
+  it('嵌套对象中的同层重复键会标出完整路径', () => {
+    const onChange = vi.fn()
+    render(<NestedKeyValueEditor value={{ config: { first: 'a', second: 'b' } }} onChange={onChange} />)
+
+    fireEvent.change(screen.getByDisplayValue('second'), { target: { value: 'first' } })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('config.first')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('数字值转换为 number，清空时落到 0（特征化现状）', () => {
     const onChange = vi.fn()
     render(<NestedKeyValueEditor value={{ n: 3 }} onChange={onChange} />)

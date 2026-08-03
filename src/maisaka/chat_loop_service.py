@@ -1,7 +1,7 @@
 ﻿"""Maisaka 对话循环服务。"""
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, List, Optional, Sequence
 
@@ -19,6 +19,7 @@ from src.config.config import global_config
 from src.core.tooling import ToolAvailabilityContext, ToolRegistry
 from src.llm_models.model_client.base_client import BaseClient
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput, ToolOption, normalize_tool_options
 from src.plugin_runtime.hook_payloads import (
@@ -43,6 +44,7 @@ from src.maisaka.context.messages import (
     ToolResultMessage,
     build_llm_message_from_context,
 )
+from src.maisaka.display.display_utils import format_native_tool_call_for_display
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.focus import focus_mode_manager
@@ -94,6 +96,8 @@ class ChatResponse:
     prompt_section: Optional[RenderableType] = None
     prompt_html_uri: Optional[str] = None
     reasoning: str = ""  # Provider 原生推理，仅用于观测，不代表 Planner 显式正文。
+    provider_response: dict[str, Any] | None = field(default=None, repr=False)
+    native_tool_calls: List[NativeToolCallSummary] = field(default_factory=list)
 
 
 logger = get_logger("maisaka_chat_loop")
@@ -1069,6 +1073,12 @@ class MaisakaChatLoopService:
             "duration_ms": llm_duration_ms,
         }
 
+        # 推理记录复用既有工具调用区，按实际执行顺序先展示 Provider 原生调用，再展示 Maisaka function 调用。
+        preview_tool_calls: list[Any] = [
+            format_native_tool_call_for_display(tool_call)
+            for tool_call in generation_result.native_tool_calls
+        ]
+        preview_tool_calls.extend(final_tool_calls)
         prompt_section_result = PromptCLIVisualizer.build_prompt_section_result(
             built_messages,
             category=self._resolve_prompt_preview_category(request_kind),
@@ -1077,8 +1087,9 @@ class MaisakaChatLoopService:
             selection_reason=prompt_selection_reason,
             tool_definitions=list(all_tools),
             output_content=final_response.strip(),
-            output_tool_calls=final_tool_calls,
+            output_tool_calls=preview_tool_calls,
             metadata=prompt_metadata,
+            provider_response=generation_result.provider_response,
         )
         prompt_html_uri = prompt_section_result.preview_access.preview_web_uri
         if global_config.debug.show_maisaka_thinking:
@@ -1106,6 +1117,8 @@ class MaisakaChatLoopService:
             prompt_section=prompt_section,
             prompt_html_uri=prompt_html_uri,
             reasoning=final_reasoning,
+            provider_response=generation_result.provider_response,
+            native_tool_calls=list(generation_result.native_tool_calls),
         )
 
     @staticmethod

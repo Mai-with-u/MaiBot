@@ -123,12 +123,76 @@ const STRUCTURED_JSON = JSON.stringify({
     { index: 1, role: 'system', content: '系统提示词' },
     { index: 2, role: 'user', content: '用户发言内容' },
   ],
-  output: { title: '决策结果', content: '回复用户' },
+  output: {
+    title: '决策结果',
+    content: '回复用户',
+    tool_calls: [
+      {
+        id: 'ws-test',
+        name: 'web_search',
+        arguments: {
+          action_type: 'search',
+          status: 'completed',
+          details: ['查询：最新消息'],
+          source_count: 3,
+        },
+        source: 'provider',
+        source_label: 'Provider 原生调用',
+      },
+      {
+        id: 'reply-test',
+        name: 'reply',
+        arguments: { msg_id: 'message-test' },
+        source: 'response',
+        source_label: '正文调用',
+      },
+    ],
+  },
+  provider_response: {
+    id: 'resp-structured',
+    model: 'deepseek-v4-flash',
+    status: 'completed',
+    parallel_tool_calls: true,
+    output: [
+      {
+        type: 'reasoning',
+        id: 'rs-1',
+        summary: [{ type: 'summary_text', text: '先判断是否需要实时资料' }],
+      },
+      {
+        type: 'web_search_call',
+        id: 'ws-1',
+        status: 'completed',
+        action: { type: 'search', queries: ['最新消息'], sources: [{ url: 'https://example.com' }] },
+      },
+      {
+        type: 'reasoning',
+        id: 'rs-2',
+        content: [{ type: 'reasoning_text', text: '搜索完成，开始整理结果' }],
+      },
+      {
+        type: 'function_call',
+        id: 'fc-1',
+        call_id: 'reply-test',
+        name: 'reply',
+        arguments: '{"msg_id":"message-test"}',
+        status: 'completed',
+      },
+      {
+        type: 'message',
+        id: 'msg-1',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: '原生最终回答' }],
+      },
+    ],
+    usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+  },
   tool_definitions: [],
 })
 
 const LLM_ERROR_JSON = JSON.stringify({
-  schema_version: 3,
+  schema_version: 4,
   request: {
     kind: 'response',
     operation: 'create_response',
@@ -548,6 +612,37 @@ describe('记录详情', () => {
     expect(screen.getByText('回复用户')).toBeInTheDocument()
     // 有 json_path 的记录默认展示结构化页签
     expect(screen.getByRole('tab', { name: '结构化' })).toBeInTheDocument()
+  })
+
+  it('详细推理记录合并展示 Provider 原生工具和 function 工具', async () => {
+    const user = await renderAndSelectRecord()
+
+    await user.click(screen.getByRole('button', { name: '工具调用 · 2 个' }))
+
+    expect(screen.getByText('web_search')).toBeInTheDocument()
+    expect(screen.getByText('Provider 原生调用')).toBeInTheDocument()
+    expect(screen.getByText('reply')).toBeInTheDocument()
+    expect(screen.getByText('正文调用')).toBeInTheDocument()
+    expect(screen.getByText(/查询：最新消息/)).toBeInTheDocument()
+  })
+
+  it('按 Responses output 顺序完整展示多段推理、原生工具和多段输出', async () => {
+    const user = await renderAndSelectRecord()
+
+    expect(screen.getByText('Responses 原生输出')).toBeInTheDocument()
+    expect(screen.getByText('5 Items')).toBeInTheDocument()
+    expect(screen.getByText('先判断是否需要实时资料')).toBeInTheDocument()
+    expect(screen.getByText('搜索完成，开始整理结果')).toBeInTheDocument()
+    expect(screen.getByText('原生最终回答')).toBeInTheDocument()
+    expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.getByText('Function 调用')).toBeInTheDocument()
+    expect(screen.getByText(/"queries": \[/)).toBeInTheDocument()
+    expect(screen.getByText('输入 100')).toBeInTheDocument()
+    expect(screen.getByText('输出 50')).toBeInTheDocument()
+    expect(screen.getByText('总计 150')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '完整 Responses JSON' }))
+    expect(screen.getByText(/"parallel_tool_calls": true/)).toBeInTheDocument()
   })
 
   it('复制按钮把文本内容写入剪贴板并提示成功', async () => {

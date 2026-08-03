@@ -75,6 +75,19 @@ def test_parse_response_preserves_output_items_and_usage() -> None:
                 "encrypted_content": "encrypted-state",
             },
             {
+                "type": "web_search_call",
+                "id": "ws_test",
+                "status": "completed",
+                "action": {
+                    "type": "search",
+                    "queries": ["上海今日天气", "上海气温"],
+                    "sources": [
+                        {"type": "url", "url": "https://weather.example.com"},
+                        {"type": "url", "url": "https://news.example.com"},
+                    ],
+                },
+            },
+            {
                 "type": "function_call",
                 "id": "fc_test",
                 "call_id": "call_weather",
@@ -105,6 +118,16 @@ def test_parse_response_preserves_output_items_and_usage() -> None:
     assert response.tool_calls[0].args == {"city": "上海"}
     assert response.provider_state is not None
     assert response.provider_state.output_items == raw_response.output
+    assert response.provider_response is not None
+    assert response.provider_response["id"] == "resp_test"
+    assert response.provider_response["output"] == raw_response.output
+    assert response.provider_response["usage"] == raw_response.usage
+    assert len(response.native_tool_calls) == 1
+    assert response.native_tool_calls[0].tool_type == "web_search"
+    assert response.native_tool_calls[0].call_id == "ws_test"
+    assert response.native_tool_calls[0].action_type == "search"
+    assert response.native_tool_calls[0].details == ["查询：上海今日天气", "查询：上海气温"]
+    assert response.native_tool_calls[0].source_count == 2
     assert usage == (120, 30, 150, 80, 40)
 
 

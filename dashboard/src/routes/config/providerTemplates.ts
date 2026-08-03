@@ -18,6 +18,7 @@ export interface ProviderTemplate {
   name: string
   base_url: string
   client_type: 'openai' | 'openai_responses' | 'gemini'
+  allowed_client_types?: Array<'openai' | 'openai_responses' | 'gemini'>
   display_name: string
   // 模型列表获取配置（可选，未配置则不支持自动获取）
   modelFetcher?: ModelFetcherConfig
@@ -31,6 +32,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: 'DeepSeek',
     base_url: 'https://api.deepseek.com',
     client_type: 'openai',
+    allowed_client_types: ['openai', 'openai_responses'],
     display_name: 'DeepSeek',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
   },

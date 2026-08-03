@@ -7,9 +7,11 @@ from typing import Optional
 import pytest
 
 from src.common.data_models.llm_service_data_models import LLMResponseResult
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.context.messages import AssistantMessage
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
+from src.maisaka.monitor.events import _serialize_planner_block
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 
 
@@ -56,6 +58,32 @@ def test_planner_content_does_not_fall_back_to_reasoning(
     assert result == expected
 
 
+def test_native_tool_summary_is_serialized_without_provider_state() -> None:
+    summary = NativeToolCallSummary(
+        tool_type="web_search",
+        call_id="ws_test",
+        status="completed",
+        action_type="search",
+        details=["查询：Responses API"],
+        source_count=2,
+    )
+
+    block = _serialize_planner_block("完成", [], [summary], 10, 5, 15, 100.0)
+
+    assert block is not None
+    assert block["native_tool_calls"] == [
+        {
+            "tool_type": "web_search",
+            "call_id": "ws_test",
+            "status": "completed",
+            "action_type": "search",
+            "details": ["查询：Responses API"],
+            "source_count": 2,
+        }
+    ]
+    assert "provider_state" not in block
+
+
 @pytest.mark.asyncio
 async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> None:
     """Provider 仅返回 reasoning 时，不应将其回填为 Planner 正文。"""
@@ -67,6 +95,32 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
                 response="",
                 reasoning="Provider 原生推理",
                 model_name="test-model",
+                provider_response={
+                    "id": "resp_test",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "id": "rs_test",
+                            "summary": [{"type": "summary_text", "text": "Provider 原生推理"}],
+                        },
+                        {
+                            "type": "web_search_call",
+                            "id": "ws_test",
+                            "status": "completed",
+                            "action": {"type": "search", "queries": ["Responses API"]},
+                        },
+                    ],
+                },
+                native_tool_calls=[
+                    NativeToolCallSummary(
+                        tool_type="web_search",
+                        call_id="ws_test",
+                        status="completed",
+                        action_type="search",
+                        details=["查询：Responses API"],
+                    )
+                ],
             )
 
     class PassthroughRuntimeManager:
@@ -85,13 +139,20 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
         "_get_runtime_manager",
         staticmethod(lambda: runtime_manager),
     )
+    prompt_preview_kwargs: dict[str, object] = {}
+
+    def build_prompt_section_result(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args
+        prompt_preview_kwargs.update(kwargs)
+        return SimpleNamespace(
+            panel=None,
+            preview_access=SimpleNamespace(preview_web_uri=""),
+        )
+
     monkeypatch.setattr(
         PromptCLIVisualizer,
         "build_prompt_section_result",
-        lambda *args, **kwargs: SimpleNamespace(
-            panel=None,
-            preview_access=SimpleNamespace(preview_web_uri=""),
-        ),
+        build_prompt_section_result,
     )
 
     response = await service.chat_loop_step([])
@@ -103,3 +164,35 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
     assert response.content is None
     assert response.raw_message.content == ""
     assert response.reasoning == "Provider 原生推理"
+    assert response.native_tool_calls[0].call_id == "ws_test"
+    assert not hasattr(response.raw_message, "native_tool_calls")
+    assert prompt_preview_kwargs["output_tool_calls"] == [
+        {
+            "id": "ws_test",
+            "name": "web_search",
+            "arguments": {
+                "action_type": "search",
+                "status": "completed",
+                "details": ["查询：Responses API"],
+            },
+            "source": "provider",
+            "source_label": "Provider 原生调用",
+        }
+    ]
+    assert prompt_preview_kwargs["provider_response"] == {
+        "id": "resp_test",
+        "status": "completed",
+        "output": [
+            {
+                "type": "reasoning",
+                "id": "rs_test",
+                "summary": [{"type": "summary_text", "text": "Provider 原生推理"}],
+            },
+            {
+                "type": "web_search_call",
+                "id": "ws_test",
+                "status": "completed",
+                "action": {"type": "search", "queries": ["Responses API"]},
+            },
+        ],
+    }

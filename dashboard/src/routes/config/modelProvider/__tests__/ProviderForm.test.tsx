@@ -109,6 +109,9 @@ describe('ProviderForm 表单校验', () => {
   it('必填字段为空时提交展示三条错误且不调用 onSave', async () => {
     const user = userEvent.setup()
     const { onSave } = renderForm()
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.clear(screen.getByLabelText('基础 URL *'))
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     expect(await screen.findByText('请输入提供商名称')).toBeInTheDocument()
@@ -121,6 +124,9 @@ describe('ProviderForm 表单校验', () => {
   it('在出错字段中输入内容后即时清除该字段错误，其余错误保留', async () => {
     const user = userEvent.setup()
     renderForm()
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.clear(screen.getByLabelText('基础 URL *'))
     await user.click(screen.getByRole('button', { name: '保存' }))
     await screen.findByText('请输入提供商名称')
 
@@ -206,40 +212,62 @@ describe('ProviderForm API Key 交互', () => {
 })
 
 describe('ProviderForm 模板切换', () => {
-  it('选择预设模板后自动填充名称/URL 并锁定 URL 与客户端类型', async () => {
+  it('新增时默认使用 DeepSeek 模板，并允许切换 OpenAI 客户端类型', async () => {
     const user = userEvent.setup()
     renderForm()
-    // 初始为自定义模板
-    expect(getTemplateTrigger()).toHaveTextContent('自定义')
-
-    await user.click(getTemplateTrigger())
-    await user.click(await screen.findByRole('option', { name: 'DeepSeek' }))
 
     expect(screen.getByLabelText('名称 *')).toHaveValue('DeepSeek')
+    expect(getTemplateTrigger()).toHaveTextContent('DeepSeek')
+    expect(getTemplateTrigger()).toBeEnabled()
+    expect(screen.getByRole('button', { name: '使用自定义提供商' })).toBeInTheDocument()
+
+    await user.click(getTemplateTrigger())
+    expect(await screen.findByRole('option', { name: 'DeepSeek' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '自定义' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
     const urlInput = screen.getByLabelText('基础 URL *')
     expect(urlInput).toHaveValue('https://api.deepseek.com')
     expect(urlInput).toBeDisabled()
-    expect(screen.getByText('使用模板时 URL 不可编辑,切换到"自定义"以手动配置')).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
     expect(
-      screen.getByText('使用模板时客户端类型不可编辑,切换到"自定义"以手动配置')
-    ).toBeInTheDocument()
+      screen.queryByText('使用模板时 URL 不可编辑,切换到"自定义"以手动配置')
+    ).not.toBeInTheDocument()
+
+    const clientTypeSelect = screen.getByRole('combobox', { name: '客户端类型' })
+    expect(clientTypeSelect).toBeEnabled()
+    expect(
+      screen.queryByText('使用模板时客户端类型不可编辑,切换到"自定义"以手动配置')
+    ).not.toBeInTheDocument()
+
+    await user.click(clientTypeSelect)
+    expect(await screen.findByRole('option', { name: 'openai' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'openai_responses' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'gemini' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'openai_responses' }))
+    expect(clientTypeSelect).toHaveTextContent('openai_responses')
   })
 
-  it('从模板切回「自定义」时清空名称/URL 并解锁编辑', async () => {
+  it('模板与自定义模式可往返切换，进入自定义时保留当前值并解锁编辑', async () => {
     const user = userEvent.setup()
     renderForm()
-    await user.click(getTemplateTrigger())
-    await user.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
 
-    await user.click(getTemplateTrigger())
-    await user.click(await screen.findByRole('option', { name: '自定义' }))
-
-    expect(screen.getByLabelText('名称 *')).toHaveValue('')
+    expect(getTemplateTrigger()).toHaveTextContent('自定义提供商')
+    expect(getTemplateTrigger()).toBeDisabled()
+    expect(screen.getByLabelText('名称 *')).toHaveValue('DeepSeek')
     const urlInput = screen.getByLabelText('基础 URL *')
-    expect(urlInput).toHaveValue('')
+    expect(urlInput).toHaveValue('https://api.deepseek.com')
     expect(urlInput).toBeEnabled()
     expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeEnabled()
+
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.type(screen.getByLabelText('名称 *'), '自定义厂商')
+    await user.click(screen.getByRole('button', { name: '使用供应商模板' }))
+
+    expect(getTemplateTrigger()).toHaveTextContent('DeepSeek')
+    expect(getTemplateTrigger()).toBeEnabled()
+    expect(screen.getByLabelText('名称 *')).toHaveValue('DeepSeek')
+    expect(urlInput).toBeDisabled()
   })
 
   it('编辑已有提供商时按 base_url 与 client_type 自动匹配模板', async () => {
@@ -248,12 +276,26 @@ describe('ProviderForm 模板切换', () => {
     expect(screen.getByLabelText('基础 URL *')).toBeDisabled()
   })
 
+  it('编辑使用 Responses 客户端的 DeepSeek 时仍匹配 DeepSeek 模板', async () => {
+    renderForm({
+      editingProvider: makeProvider({ client_type: 'openai_responses' }),
+      editingIndex: 0,
+    })
+
+    await waitFor(() => expect(getTemplateTrigger()).toHaveTextContent('DeepSeek'))
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent(
+      'openai_responses'
+    )
+  })
+
   it('URL 不匹配任何模板时保持「自定义」且 URL 可编辑', async () => {
     renderForm({
       editingProvider: makeProvider({ base_url: 'https://my.private.host/v1' }),
       editingIndex: 0,
     })
-    expect(getTemplateTrigger()).toHaveTextContent('自定义')
+    expect(getTemplateTrigger()).toHaveTextContent('自定义提供商')
+    expect(getTemplateTrigger()).toBeDisabled()
     expect(screen.getByLabelText('基础 URL *')).toBeEnabled()
   })
 })
@@ -272,6 +314,7 @@ describe('ProviderForm 客户端类型选项', () => {
     ])
     renderForm()
     await waitFor(() => expect(configApi.fetchModelClientTypes).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
 
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
     expect(await screen.findByRole('option', { name: 'plugin-llm (pluginA)' })).toBeInTheDocument()
@@ -289,6 +332,7 @@ describe('ProviderForm 客户端类型选项', () => {
     vi.mocked(configApi.fetchModelClientTypes).mockRejectedValue(new Error('network'))
     renderForm()
     await waitFor(() => expect(configApi.fetchModelClientTypes).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
 
     await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
     expect(await screen.findByRole('option', { name: 'openai' })).toBeInTheDocument()

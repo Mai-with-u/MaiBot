@@ -2,11 +2,10 @@
  * 模型列表 - 移动端卡片视图
  */
 import React from 'react'
-import { AlertCircle, CheckCircle2, Loader2, Pencil, Trash2, Zap } from 'lucide-react'
+import { Loader2, Pencil, Trash2, Zap } from 'lucide-react'
 
 import type { ModelTestResult } from '@/lib/config-api'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { StreamlineIcon } from '@/components/ui/streamline-icon'
 
 import type { ModelInfo } from '../types'
@@ -32,45 +31,34 @@ interface ModelCardListProps {
   searchQuery: string
 }
 
-function renderModelTestStatus(result: ModelTestResult | undefined, isTesting: boolean) {
+function getModelTestStatus(result: ModelTestResult | undefined, isTesting: boolean) {
   if (isTesting) {
-    const description = '正在测试模型能力'
-    return (
-      <Badge variant="secondary" className="h-6 w-6 justify-center p-0" title={description} aria-label={description}>
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      </Badge>
-    )
+    return {
+      description: '正在测试模型能力',
+      className: 'border-amber-500 animate-pulse',
+    }
   }
 
   if (!result) {
-    const description = '未测试：尚未执行模型能力测试'
-    return (
-      <Badge
-        variant="outline"
-        className="border-muted-foreground/40 h-6 w-6 justify-center bg-transparent p-0"
-        title={description}
-        aria-label={description}
-      />
-    )
+    return {
+      description: '未测试：尚未执行模型能力测试',
+      className: 'border-transparent',
+    }
   }
 
   if (result.success) {
-    const description = `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常${
-      result.latency_ms != null ? `，耗时 ${(result.latency_ms / 1000).toFixed(2)}s` : ''
-    }`
-    return (
-      <Badge className="h-6 w-6 justify-center bg-green-600 p-0 hover:bg-green-700" title={description} aria-label={description}>
-        <CheckCircle2 className="h-3.5 w-3.5" />
-      </Badge>
-    )
+    return {
+      description: `测试通过：文本${result.visual_tested ? '、视觉' : ''}与工具调用正常${
+        result.latency_ms != null ? `，耗时 ${(result.latency_ms / 1000).toFixed(2)}s` : ''
+      }`,
+      className: 'border-green-500',
+    }
   }
 
-  const description = result.error || '模型能力测试未通过'
-  return (
-    <Badge variant="destructive" className="h-6 w-6 justify-center p-0" title={description} aria-label={description}>
-      <AlertCircle className="h-3.5 w-3.5" />
-    </Badge>
-  )
+  return {
+    description: result.error || '模型能力测试未通过',
+    className: 'border-red-500',
+  }
 }
 
 export const ModelCardList = React.memo(function ModelCardList({
@@ -99,12 +87,19 @@ export const ModelCardList = React.memo(function ModelCardList({
         const used = isModelUsed(model.name)
         const isTesting = testingModels.has(model.name)
         const testResult = modelTestResults.get(model.name)
+        const testStatus = getModelTestStatus(testResult, isTesting)
         return (
           <div key={displayIndex} className="bg-card space-y-2 rounded-lg border p-3">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="mb-1 flex items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold">{model.name}</h3>
+                  <h3
+                    className={`w-fit max-w-full truncate border-b-2 pb-0.5 text-sm font-semibold ${testStatus.className}`}
+                    title={testStatus.description}
+                    aria-label={testStatus.description}
+                  >
+                    {model.name}
+                  </h3>
                   <span
                     className={`block h-3 w-3 shrink-0 rounded-full border ${
                       used
@@ -114,7 +109,6 @@ export const ModelCardList = React.memo(function ModelCardList({
                     title={used ? '已使用' : '未使用'}
                     aria-label={used ? '已使用' : '未使用'}
                   />
-                  {renderModelTestStatus(testResult, isTesting)}
                 </div>
                 <p
                   className="text-muted-foreground text-[11px] leading-snug break-all"

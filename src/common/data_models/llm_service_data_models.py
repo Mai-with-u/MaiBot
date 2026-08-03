@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, TypeAlia
 import asyncio
 
 from src.common.data_models import BaseDataModel
-from src.llm_models.payload_content.resp_format import RespFormat
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.provider_state import ProviderState
+from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput
 
 if TYPE_CHECKING:
@@ -75,6 +76,8 @@ class LLMResponseResult(BaseDataModel):
     prompt_cache_hit_tokens: int = 0
     prompt_cache_miss_tokens: int = 0
     provider_state: ProviderState | None = field(default=None, repr=False)
+    provider_response: Dict[str, Any] | None = field(default=None, repr=False)
+    native_tool_calls: List[NativeToolCallSummary] = field(default_factory=list)
 
 
 @dataclass(slots=True)

@@ -143,9 +143,10 @@ describe('ModelTable', () => {
     expect(screen.getByText('alpha-id')).toBeInTheDocument()
     expect(screen.getByLabelText('已使用')).toBeInTheDocument()
     expect(screen.getByLabelText('已启用视觉')).toBeInTheDocument()
-    expect(
-      screen.getByLabelText('测试通过：文本、视觉与工具调用正常，耗时 1.25s')
-    ).toBeInTheDocument()
+    const successName = screen.getByLabelText('测试通过：文本、视觉与工具调用正常，耗时 1.25s')
+    expect(successName).toHaveTextContent('alpha')
+    expect(successName).toHaveClass('border-green-500')
+    expect(screen.queryByRole('columnheader', { name: '测试' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '测试模型 alpha' }))
     await user.click(screen.getByRole('button', { name: '编辑模型 alpha' }))
@@ -207,7 +208,7 @@ describe('ModelTable', () => {
         modelTestResults={new Map([['alpha', makeResult({ success: false, error: '鉴权失败' })]])}
       />
     )
-    expect(screen.getByLabelText('鉴权失败')).toBeInTheDocument()
+    expect(screen.getByLabelText('鉴权失败')).toHaveClass('border-red-500')
   })
 })
 
