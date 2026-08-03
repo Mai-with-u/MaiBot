@@ -354,6 +354,8 @@ class ImportTaskRecord:
     rollback_info: Dict[str, Any] = field(default_factory=dict)
     retry_parent_task_id: str = ""
     retry_summary: Dict[str, Any] = field(default_factory=dict)
+    cancel_requested_at: Optional[float] = None
+    cancel_origin: str = ""
 
     def to_summary(self) -> Dict[str, Any]:
         return {
@@ -378,6 +380,8 @@ class ImportTaskRecord:
             "rollback_info": dict(self.rollback_info),
             "retry_parent_task_id": self.retry_parent_task_id or "",
             "retry_summary": dict(self.retry_summary),
+            "cancel_requested_at": self.cancel_requested_at,
+            "cancel_origin": self.cancel_origin,
         }
 
     def to_detail(self, include_chunks: bool = False) -> Dict[str, Any]:
@@ -1783,9 +1787,14 @@ class ImportTaskManager:
             if not task:
                 return None
             if task.status == "queued":
+                task.cancel_requested_at = _now()
+                task.cancel_origin = "user_request"
                 self._mark_task_cancelled_locked(task, "任务已取消")
                 self._queue = deque([x for x in self._queue if x != task_id])
+                self._try_write_task_report(task)
             elif task.status in {"preparing", "running"}:
+                task.cancel_requested_at = _now()
+                task.cancel_origin = "user_request"
                 task.status = "cancel_requested"
                 task.current_step = "cancel_requested"
                 task.updated_at = _now()
@@ -2050,7 +2059,10 @@ class ImportTaskManager:
             self._stopping = True
             for task in self._tasks.values():
                 if task.status in {"queued", "preparing", "running", "cancel_requested"}:
+                    task.cancel_requested_at = _now()
+                    task.cancel_origin = "runtime_shutdown"
                     self._mark_task_cancelled_locked(task, "服务关闭")
+                    self._try_write_task_report(task)
             self._queue.clear()
             worker = self._worker_task
             self._worker_task = None
@@ -2106,7 +2118,18 @@ class ImportTaskManager:
             try:
                 await self._run_task(task_id)
             except asyncio.CancelledError:
-                break
+                origin = "runtime_shutdown" if self._stopping else "parent_cancel"
+                reason = "服务关闭" if self._stopping else "上层任务已取消"
+                finalize_task = asyncio.create_task(
+                    self._finalize_cancelled_task(task_id, origin=origin, reason=reason)
+                )
+                try:
+                    await asyncio.wait_for(asyncio.shield(finalize_task), timeout=1.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"写入任务取消终态超时 task={task_id} origin={origin}")
+                except asyncio.CancelledError:
+                    logger.warning(f"写入任务取消终态再次被中断 task={task_id} origin={origin}")
+                raise
             except Exception as e:
                 logger.error(f"导入任务执行失败 task={task_id}: {e}\n{traceback.format_exc()}")
                 async with self._lock:
@@ -2117,6 +2140,7 @@ class ImportTaskManager:
                         task.error = str(e)
                         task.finished_at = _now()
                         task.updated_at = _now()
+                        self._try_write_task_report(task)
             finally:
                 should_cleanup = await self._should_cleanup_task_temp(task_id)
                 async with self._lock:
@@ -2148,15 +2172,42 @@ class ImportTaskManager:
 
     def _write_task_report(self, task: ImportTaskRecord) -> None:
         path = self._task_report_path(task.task_id)
+        task.artifact_paths["summary"] = str(path)
         payload = task.to_detail(include_chunks=False)
         payload["generated_at"] = _now()
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        task.artifact_paths["summary"] = str(path)
+        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temp_path.open("w", encoding="utf-8", newline="\n") as stream:
+                json.dump(payload, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    def _try_write_task_report(self, task: ImportTaskRecord) -> None:
+        try:
+            self._write_task_report(task)
+        except Exception as report_err:
+            logger.warning(
+                f"写入任务终态报告失败 task={task.task_id} "
+                f"status={task.status} origin={task.cancel_origin or '-'}: {report_err}"
+            )
+
+    async def _finalize_cancelled_task(self, task_id: str, *, origin: str, reason: str) -> None:
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or task.status in {"completed", "completed_with_errors", "failed"}:
+                return
+            task.cancel_requested_at = _now()
+            task.cancel_origin = origin
+            self._mark_task_cancelled_locked(task, reason)
+            self._try_write_task_report(task)
 
     async def _run_task(self, task_id: str) -> None:
         async with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
+            if not task or task.status == "cancelled":
                 return
             task.status = "preparing"
             task.current_step = "preparing"
@@ -2170,10 +2221,8 @@ class ImportTaskManager:
             if not task:
                 return
             if task.status == "cancel_requested":
-                task.status = "cancelled"
-                task.current_step = "cancelled"
-                task.finished_at = _now()
-                task.updated_at = _now()
+                self._mark_task_cancelled_locked(task, "任务已取消")
+                self._try_write_task_report(task)
                 return
             task.status = "running"
             task.current_step = "running"
@@ -2198,7 +2247,12 @@ class ImportTaskManager:
             jobs = [
                 asyncio.create_task(self._process_file(task_id, f, file_semaphore, chunk_semaphore)) for f in task.files
             ]
-            await asyncio.gather(*jobs, return_exceptions=True)
+            results = await asyncio.gather(*jobs, return_exceptions=True)
+            for file_record, result in zip(task.files, results, strict=True):
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                if isinstance(result, Exception):
+                    await self._set_file_failed(task_id, file_record.file_id, f"文件处理失败: {result}")
 
         write_changed_payload: Optional[Dict[str, Any]] = None
         async with self._lock:
@@ -2227,10 +2281,7 @@ class ImportTaskManager:
                 task.current_step = "completed"
             task.finished_at = _now()
             task.updated_at = _now()
-            try:
-                self._write_task_report(task)
-            except Exception as report_err:
-                logger.warning(f"写入任务报告失败 task={task_id}: {report_err}")
+            self._try_write_task_report(task)
             task_kind = str(task.params.get("task_kind") or task.source).strip().lower()
             write_task_kinds = {"upload", "paste", "raw_scan", "lpmm_openie", "maibot_migration", "lpmm_convert"}
             has_written_chunks = (task.done_chunks > 0) or any(f.done_chunks > 0 for f in task.files)
@@ -3077,7 +3128,17 @@ class ImportTaskManager:
                     )
                 )
             )
-        await asyncio.gather(*jobs, return_exceptions=True)
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+        for chunk, result in zip(selected_chunks, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                await self._set_chunk_failed(
+                    task_id,
+                    file_record.file_id,
+                    chunk.chunk.chunk_id,
+                    f"分块处理失败: {result}",
+                )
 
         if await self._is_cancel_requested(task_id):
             await self._set_file_cancelled(task_id, file_record.file_id, "任务已取消")
@@ -3222,7 +3283,17 @@ class ImportTaskManager:
             )
             for unit in units
         ]
-        await asyncio.gather(*jobs, return_exceptions=True)
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+        for unit, result in zip(units, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                await self._set_chunk_failed(
+                    task_id,
+                    file_record.file_id,
+                    str(unit["chunk_id"]),
+                    f"JSON 单元处理失败: {result}",
+                )
 
         if await self._is_cancel_requested(task_id):
             await self._set_file_cancelled(task_id, file_record.file_id, "任务已取消")

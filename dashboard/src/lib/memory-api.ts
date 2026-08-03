@@ -332,6 +332,7 @@ export interface MemoryTaskListPayload {
 }
 
 export type MemoryImportInputMode = 'text' | 'json'
+export type MemoryImportCancelOrigin = 'user_request' | 'runtime_shutdown' | 'parent_cancel'
 
 export type MemoryImportTaskKind =
   | 'upload'
@@ -519,6 +520,8 @@ export interface MemoryImportTaskPayload extends MemoryTaskPayload {
   rollback_info?: Record<string, unknown>
   retry_parent_task_id?: string
   retry_summary?: MemoryImportRetrySummary
+  cancel_requested_at?: number | null
+  cancel_origin?: MemoryImportCancelOrigin | ''
   params?: Record<string, unknown>
   files?: MemoryImportFilePayload[]
 }

@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import asyncio
+import json
 import numpy as np
 import pytest
 
@@ -256,6 +257,12 @@ def _test_manifest_path(name: str) -> Path:
     path = Path("temp") / "web_import_manager_tests" / name
     if path.exists():
         path.unlink()
+    return path
+
+
+def _test_directory(name: str) -> Path:
+    path = Path("temp") / "web_import_manager_tests" / name
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -784,3 +791,115 @@ async def test_high_concurrency_persist_processed_chunks_keep_all_writes_consist
     assert failed_states == []
     assert metadata_store.paragraph_backfills == []
     assert embedding_manager.max_inflight > 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_task_records_user_origin_and_writes_report() -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_user_reports")
+    task = _build_progress_task("task-user-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+
+    summary = await manager.cancel_task(task.task_id)
+    await manager._run_task(task.task_id)
+
+    assert summary is not None
+    assert summary["status"] == "cancelled"
+    assert summary["cancel_origin"] == "user_request"
+    assert summary["cancel_requested_at"] is not None
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["status"] == "cancelled"
+    assert report["cancel_origin"] == "user_request"
+
+
+@pytest.mark.asyncio
+async def test_worker_parent_cancellation_is_reported_and_propagated(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_parent_reports")
+    manager._temp_root = _test_directory("cancel_parent_temp")
+    task = _build_progress_task("task-parent-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+    started = asyncio.Event()
+
+    async def blocked_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_run_task", blocked_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    await started.wait()
+    worker.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+
+    assert task.status == "cancelled"
+    assert task.cancel_origin == "parent_cancel"
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["cancel_origin"] == "parent_cancel"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_records_runtime_cancellation(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_runtime_reports")
+    manager._temp_root = _test_directory("cancel_runtime_temp")
+    task = _build_progress_task("task-runtime-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+    started = asyncio.Event()
+
+    async def blocked_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_run_task", blocked_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    manager._worker_task = worker
+    await started.wait()
+
+    await manager.shutdown()
+
+    assert task.status == "cancelled"
+    assert task.cancel_origin == "runtime_shutdown"
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["cancel_origin"] == "runtime_shutdown"
+
+
+@pytest.mark.asyncio
+async def test_run_task_assigns_unhandled_file_error_to_file(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("file_error_reports")
+    task = _build_progress_task("task-file-error")
+    task.params.update({"file_concurrency": 1, "chunk_concurrency": 1})
+    manager._tasks[task.task_id] = task
+
+    async def failed_file(*args, **kwargs) -> None:
+        del args, kwargs
+        raise RuntimeError("unexpected file failure")
+
+    monkeypatch.setattr(manager, "_process_file", failed_file)
+    await manager._run_task(task.task_id)
+
+    assert task.files[0].status == "failed"
+    assert task.status == "completed_with_errors"
+    assert "unexpected file failure" in task.files[0].error
+
+
+@pytest.mark.asyncio
+async def test_late_user_cancellation_keeps_completed_result() -> None:
+    manager, _ = _build_manager()
+    task = _build_progress_task("task-late-cancel")
+    task.status = "completed"
+    manager._tasks[task.task_id] = task
+
+    summary = await manager.cancel_task(task.task_id)
+
+    assert summary is not None
+    assert summary["status"] == "completed"
+    assert summary["cancel_origin"] == ""
+    assert summary["cancel_requested_at"] is None
