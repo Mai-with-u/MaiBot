@@ -6,10 +6,11 @@ import asyncio
 import numpy as np
 import pytest
 
-from src.A_memorix.core.retrieval import RetrievalResult
+from src.A_memorix.core.retrieval import RetrievalResult, RetrievalScope
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from src.A_memorix.core.runtime.services import memory_maintenance_service
+from src.A_memorix.core.runtime.services.search_hit_processing_service import MemorySearchHitProcessingService
 from src.A_memorix.core.runtime.services.v5_admin_service import MemoryV5AdminService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
@@ -311,6 +312,15 @@ async def test_search_memory_uses_kernel_patched_chat_scope_execution(monkeypatc
     async def fake_initialize() -> None:
         return None
 
+    def fake_resolve_retrieval_scope(
+        self: MemorySearchHitProcessingService,
+        chat_id: str,
+        shared_chat_ids: Any,
+    ) -> RetrievalScope:
+        del self, shared_chat_ids
+        assert chat_id == "session-current"
+        return RetrievalScope(key="chat:session-current", paragraph_ids=frozenset({"paragraph-1"}))
+
     async def fake_search_execution_for_chat_scope(**kwargs: Any) -> SimpleNamespace:
         captured.update(kwargs)
         return SimpleNamespace(
@@ -331,6 +341,11 @@ async def test_search_memory_uses_kernel_patched_chat_scope_execution(monkeypatc
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_search_execution_for_chat_scope", fake_search_execution_for_chat_scope)
+    monkeypatch.setattr(
+        MemorySearchHitProcessingService,
+        "_resolve_retrieval_scope",
+        fake_resolve_retrieval_scope,
+    )
 
     result = await kernel.search_memory(
         KernelSearchRequest(

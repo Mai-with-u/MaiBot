@@ -789,6 +789,7 @@ class MetadataStore(
         source: Optional[str] = None,
         limit: int = 100,
         allow_created_fallback: bool = True,
+        allowed_hashes: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         查询时序命中的段落（区间相交语义）。
@@ -807,6 +808,12 @@ class MetadataStore(
 
         conditions = ["(p.is_deleted IS NULL OR p.is_deleted = 0)"]
         params: List[Any] = []
+        if allowed_hashes is not None:
+            normalized_allowed = self._normalize_hash_sequence(allowed_hashes)
+            if not normalized_allowed:
+                return []
+            conditions.append("p.hash IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(normalized_allowed, ensure_ascii=False))
 
         if source:
             conditions.append("p.source = ?")

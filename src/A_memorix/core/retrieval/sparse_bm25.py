@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Collection, Dict, List, Optional, Sequence
 
 import re
 import sqlite3
@@ -524,7 +524,33 @@ class SparseBM25Index:
         scored.sort(key=lambda x: x["fallback_score"], reverse=True)
         return scored[:limit]
 
-    def search(self, query: str, k: int = 20) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _search_with_allowed_ids(
+        fetch: Callable[[int], List[Dict[str, Any]]],
+        *,
+        limit: int,
+        allowed_ids: Optional[Collection[str]],
+    ) -> List[Dict[str, Any]]:
+        if allowed_ids is None:
+            return fetch(limit)
+        allowed = {str(value) for value in allowed_ids}
+        if not allowed:
+            return []
+
+        scan_limit = max(1, int(limit))
+        while True:
+            rows = fetch(scan_limit)
+            scoped = [row for row in rows if str(row.get("hash", "") or "") in allowed]
+            if len(scoped) >= limit or len(rows) < scan_limit:
+                return scoped[:limit]
+            scan_limit = max(scan_limit + 1, scan_limit * 2)
+
+    def search(
+        self,
+        query: str,
+        k: int = 20,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """执行 BM25 检索。"""
         if not self.config.enabled:
             return []
@@ -543,21 +569,33 @@ class SparseBM25Index:
         limit = max(1, int(k))
         rows: List[Dict[str, Any]] = []
         if self.config.enable_tokenized_shadow_index:
-            rows = self.metadata_store.fts_search_tokenized_paragraphs_bm25(
-                match_query=match_query,
+            rows = self._search_with_allowed_ids(
+                lambda scan_limit: self.metadata_store.fts_search_tokenized_paragraphs_bm25(
+                    match_query=match_query,
+                    limit=scan_limit,
+                    max_doc_len=self.config.max_doc_len,
+                    conn=self._conn,
+                ),
                 limit=limit,
-                max_doc_len=self.config.max_doc_len,
-                conn=self._conn,
+                allowed_ids=allowed_ids,
             )
         if not rows:
-            rows = self._backend.search_paragraphs(
-                match_query=match_query,
+            rows = self._search_with_allowed_ids(
+                lambda scan_limit: self._backend.search_paragraphs(
+                    match_query=match_query,
+                    limit=scan_limit,
+                    max_doc_len=self.config.max_doc_len,
+                    conn=self._conn,
+                ),
                 limit=limit,
-                max_doc_len=self.config.max_doc_len,
-                conn=self._conn,
+                allowed_ids=allowed_ids,
             )
         if not rows:
-            rows = self._fallback_substring_search(tokens=match_tokens, limit=limit)
+            rows = self._search_with_allowed_ids(
+                lambda scan_limit: self._fallback_substring_search(tokens=match_tokens, limit=scan_limit),
+                limit=limit,
+                allowed_ids=allowed_ids,
+            )
 
         results: List[Dict[str, Any]] = []
         token_count = max(1, len(match_tokens))
@@ -580,7 +618,12 @@ class SparseBM25Index:
             )
         return results
 
-    def search_relations(self, query: str, k: int = 20) -> List[Dict[str, Any]]:
+    def search_relations(
+        self,
+        query: str,
+        k: int = 20,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """执行关系稀疏检索（FTS5 + BM25）。"""
         if not self.config.enabled or not self.config.enable_relation_sparse_fallback:
             return []
@@ -595,12 +638,17 @@ class SparseBM25Index:
         if not match_query:
             return []
 
-        rows = self._backend.search_relations(
-            match_query=match_query,
-            limit=max(1, int(k)),
-            max_doc_len=self.config.relation_max_doc_len,
-            include_inactive=False,
-            conn=self._conn,
+        limit = max(1, int(k))
+        rows = self._search_with_allowed_ids(
+            lambda scan_limit: self._backend.search_relations(
+                match_query=match_query,
+                limit=scan_limit,
+                max_doc_len=self.config.relation_max_doc_len,
+                include_inactive=False,
+                conn=self._conn,
+            ),
+            limit=limit,
+            allowed_ids=allowed_ids,
         )
         out: List[Dict[str, Any]] = []
         for rank, row in enumerate(rows, start=1):

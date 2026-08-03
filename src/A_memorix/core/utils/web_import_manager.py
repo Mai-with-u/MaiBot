@@ -1107,6 +1107,14 @@ class ImportTaskManager:
         chat_log = _coerce_bool(payload.get("chat_log"), False)
         chat_reference_time = str(payload.get("chat_reference_time") or "").strip() or None
         chat_id = str(payload.get("chat_id") or "").strip()
+        raw_scope_type = str(payload.get("scope_type") or "").strip().lower()
+        scope_type = raw_scope_type or ("chat" if chat_id else "global")
+        if scope_type not in {"global", "chat"}:
+            raise ValueError("scope_type 必须为 global 或 chat")
+        if scope_type == "chat" and not chat_id:
+            raise ValueError("scope_type=chat 时必须提供 chat_id")
+        if scope_type == "global" and chat_id:
+            raise ValueError("scope_type=global 时不能同时提供 chat_id")
         force = _coerce_bool(payload.get("force"), False)
         clear_manifest = _coerce_bool(payload.get("clear_manifest"), False)
         max_chunk_chars = self._max_import_chunk_chars()
@@ -1144,6 +1152,7 @@ class ImportTaskManager:
             "chat_log": chat_log,
             "chat_reference_time": chat_reference_time,
             "chat_id": chat_id,
+            "scope_type": scope_type,
             "force": force,
             "clear_manifest": clear_manifest,
             "dedupe_policy": dedupe_policy,
@@ -3585,11 +3594,16 @@ class ImportTaskManager:
             imported_sources.append(source_text)
 
     @staticmethod
-    def _chat_metadata_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _chat_metadata_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
         chat_id = str(params.get("chat_id") or "").strip()
-        if not chat_id:
-            return None
-        return {"chat_id": chat_id}
+        scope_type = str(params.get("scope_type") or "").strip().lower() or (
+            "chat" if chat_id else "global"
+        )
+        if scope_type == "global" and not chat_id:
+            return {"scope_type": "global"}
+        if scope_type == "chat" and chat_id:
+            return {"scope_type": "chat", "chat_id": chat_id}
+        raise ValueError("导入任务的 scope_type 与 chat_id 不一致")
 
     async def _ensure_embedding_runtime_ready(self) -> None:
         report = await ensure_runtime_self_check(self.plugin)

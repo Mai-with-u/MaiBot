@@ -99,7 +99,7 @@ function getChatTargetSearchText(chat: MemoryImportChatTargetPayload): string {
 
 function getChatTargetValueLabel(chat: MemoryImportChatTargetPayload | undefined): string {
   if (!chat) {
-    return '不绑定聊天流'
+    return '所有聊天可用'
   }
   const idLabel = chat.group_id || chat.user_id
   const displayName = formatChatDisplayName(chat.chat_name, chat.account_id)
@@ -380,8 +380,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   </div>
                   <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
                     <div className="min-w-0">
-                      <Label>归属聊天流</Label>
-                      <div className="mt-0.5 text-xs text-muted-foreground">可输入群号、QQ 号或聊天名检索；选择后，这批记忆只会在对应聊天流的检索中默认出现。</div>
+                      <Label>资料范围</Label>
+                      <div className="mt-0.5 text-xs text-muted-foreground">选择所有聊天可用，或将这批记忆限制在一个明确的聊天流内。</div>
                     </div>
                     <div className="space-y-2">
                       <div className="relative">
@@ -404,7 +404,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           onClick={() => setImportCommonChatId('')}
                         >
                           <Check className={cn('h-4 w-4 shrink-0', !importCommonChatId ? 'opacity-100' : 'opacity-0')} />
-                          <span className="truncate">不绑定聊天流</span>
+                          <span className="truncate">所有聊天可用</span>
                         </button>
                         {visibleImportChatTargets.length > 0 ? (
                           <div className="max-h-44 overflow-y-auto border-t">

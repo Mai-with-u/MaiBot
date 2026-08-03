@@ -288,6 +288,34 @@ def test_import_params_include_configurable_chunk_windows() -> None:
     assert customized["narrative_overlap"] == 600
     assert customized["factual_target_size"] == 1400
 
+def test_import_scope_is_explicit_and_legacy_payloads_remain_compatible() -> None:
+    manager, _ = _build_manager()
+
+    explicit_global = manager._normalize_common_import_params(
+        {"scope_type": "global"},
+        default_dedupe="content_hash",
+    )
+    explicit_chat = manager._normalize_common_import_params(
+        {"scope_type": "chat", "chat_id": "session-1"},
+        default_dedupe="content_hash",
+    )
+    legacy_chat = manager._normalize_common_import_params(
+        {"chat_id": "session-legacy"},
+        default_dedupe="content_hash",
+    )
+
+    assert manager._chat_metadata_from_params(explicit_global) == {"scope_type": "global"}
+    assert manager._chat_metadata_from_params(explicit_chat) == {
+        "scope_type": "chat",
+        "chat_id": "session-1",
+    }
+    assert legacy_chat["scope_type"] == "chat"
+
+    with pytest.raises(ValueError, match="不能同时提供 chat_id"):
+        manager._normalize_common_import_params(
+            {"scope_type": "global", "chat_id": "session-1"},
+            default_dedupe="content_hash",
+        )
 
 def test_import_strategy_uses_configurable_chunk_windows() -> None:
     manager, _ = _build_manager()

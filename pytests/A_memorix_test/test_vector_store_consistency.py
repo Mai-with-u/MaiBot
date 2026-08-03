@@ -60,6 +60,29 @@ def _append_orphan_vector(data_dir: Path, *, orphan_id: str, vector: np.ndarray)
         id_file.write(np.asarray([VectorStore._generate_id(orphan_id)], dtype=">i8").tobytes())
 
 
+def test_search_applies_allowed_ids_before_top_k(tmp_path: Path) -> None:
+    store = VectorStore(dimension=2, data_dir=tmp_path / "vectors", buffer_size=1)
+    store.add(
+        np.asarray(
+            [
+                [1.0, 0.0],
+                [0.99, 0.1],
+                [0.8, 0.6],
+            ],
+            dtype=np.float32,
+        ),
+        ["outside-best", "outside-second", "allowed"],
+    )
+
+    ids, scores = store.search(
+        np.asarray([1.0, 0.0], dtype=np.float32),
+        k=1,
+        allowed_ids={"allowed"},
+    )
+
+    assert ids == ["allowed"]
+    assert scores == pytest.approx([0.8])
+
 def test_v1_id_mismatch_exposes_structured_integrity_error_and_trusted_view(tmp_path: Path) -> None:
     data_dir = tmp_path / "vectors"
     fingerprint = {"hash": "embedding-fingerprint-v1"}

@@ -1396,6 +1396,7 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(uploadPayload).toMatchObject({
       input_mode: 'text',
       llm_enabled: true,
+      scope_type: 'global',
       strategy_override: 'narrative',
       chat_log: false,
       dedupe_policy: 'content_hash',

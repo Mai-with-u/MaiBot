@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 
-from ..retrieval import RetrievalResult, TemporalQueryOptions
+from ..retrieval import RetrievalResult, RetrievalScope, TemporalQueryOptions
 from .metadata import coerce_metadata_dict
 from .search_postprocess import (
     apply_safe_content_dedup,
@@ -58,6 +58,7 @@ class SearchExecutionRequest:
     source: Optional[str] = None
     use_threshold: bool = True
     enable_ppr: bool = True
+    scope: Optional[RetrievalScope] = None
 
 
 @dataclass
@@ -192,6 +193,7 @@ class SearchExecutionService:
             "time_to_ts": temporal.time_to if temporal else None,
             "person": _sanitize_text(request.person),
             "source": _sanitize_text(request.source),
+            "scope": request.scope.key if request.scope is not None else "",
             "top_k": int(top_k),
             "use_threshold": bool(request.use_threshold),
             "enable_ppr": bool(request.enable_ppr),
@@ -279,12 +281,15 @@ class SearchExecutionService:
 
         async def _executor() -> Dict[str, Any]:
             started_at = time.time()
-            retrieved = await retriever.retrieve(
-                query=query,
-                top_k=top_k,
-                temporal=temporal,
-                enable_ppr=bool(request.enable_ppr),
-            )
+            retrieve_kwargs: Dict[str, Any] = {
+                "query": query,
+                "top_k": top_k,
+                "temporal": temporal,
+                "enable_ppr": bool(request.enable_ppr),
+            }
+            if request.scope is not None:
+                retrieve_kwargs["scope"] = request.scope
+            retrieved = await retriever.retrieve(**retrieve_kwargs)
 
             should_apply_threshold = bool(request.use_threshold) and threshold_filter is not None
             if (
@@ -329,6 +334,7 @@ class SearchExecutionService:
                     results=list(retrieved),
                     graph_store=graph_store,
                     metadata_store=metadata_store,
+                    allowed_relation_ids=(request.scope.relation_ids if request.scope is not None else None),
                     enabled=fallback_enabled,
                     threshold=fallback_threshold,
                 )

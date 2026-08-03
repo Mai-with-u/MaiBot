@@ -108,15 +108,16 @@ async def test_dual_path_retriever_propagates_request_ppr_switch() -> None:
         temporal: Any = None,
         relation_intent: Any = None,
         enable_ppr: bool = True,
+        scope: Any = None,
     ) -> List[RetrievalResult]:
-        del self, query, top_k, temporal, relation_intent
+        del self, query, top_k, temporal, relation_intent, scope
         observed.append(enable_ppr)
         return []
 
     retriever._retrieve_dual_path = MethodType(fake_dual_path, retriever)
 
     await retriever.retrieve("on", enable_ppr=True)
-    await retriever.retrieve("off", enable_ppr=False)
+    await retriever.retrieve("off", None, None, None, False)
 
     assert observed == [True, False]
     assert retriever.config.enable_ppr is True

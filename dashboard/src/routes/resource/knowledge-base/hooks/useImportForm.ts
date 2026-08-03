@@ -445,6 +445,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     const payload: Record<string, unknown> = {
       llm_enabled: importCommonLlmEnabled,
       ...contentCategoryPayload,
+      scope_type: chatId ? 'chat' : 'global',
       dedupe_policy: importCommonDedupePolicy,
       force: importCommonForce,
       clear_manifest: importCommonClearManifest,

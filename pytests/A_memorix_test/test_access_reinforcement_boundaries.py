@@ -6,8 +6,9 @@ import asyncio
 
 import pytest
 
-from src.A_memorix.core.retrieval import RetrievalResult
+from src.A_memorix.core.retrieval import RetrievalResult, RetrievalScope
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
+from src.A_memorix.core.runtime.services.search_hit_processing_service import MemorySearchHitProcessingService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
 from src.A_memorix.core.utils.search_execution_service import (
@@ -116,45 +117,67 @@ async def test_limit_five_reinforces_only_five_of_twenty_five_candidates(
         KernelSearchRequest(
             query="关系",
             limit=5,
-            chat_id="session-current",
+            chat_id="",
             respect_filter=False,
         )
     )
 
     final_hashes = [str(item["hash"]) for item in result["hits"]]
-    assert requested_top_k == [25]
+    assert requested_top_k == [5]
     assert len(candidates) == 25
     assert final_hashes == [f"relation-{index:02d}" for index in range(5)]
     assert reinforced == [final_hashes]
 
 
 @pytest.mark.asyncio
-async def test_ten_chat_merge_reinforces_only_final_five_of_five_hundred_candidates(
+async def test_shared_chat_scope_executes_once_and_reinforces_only_final_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
     _prepare_search_kernel(kernel, monkeypatch)
+    candidates = [
+        _relation_result(
+            f"relation-{index}",
+            score=10.0 - index,
+            chat_id=f"session-{index}",
+        )
+        for index in range(5)
+    ]
+    allowed_relation_ids = frozenset(item.hash_value for item in candidates)
     search_calls: list[dict[str, Any]] = []
     reinforced: list[list[str]] = []
 
+    def fake_resolve_retrieval_scope(
+        self: MemorySearchHitProcessingService,
+        chat_id: str,
+        shared_chat_ids: tuple[str, ...],
+    ) -> RetrievalScope:
+        del self
+        assert chat_id == "session-0"
+        assert set(shared_chat_ids) == {f"session-{index}" for index in range(1, 10)}
+        return RetrievalScope(
+            key="chat:session-0..9",
+            relation_ids=allowed_relation_ids,
+        )
+
     async def fake_search_execution_once(**kwargs: Any) -> SearchExecutionResult:
-        source = str(kwargs["source"])
-        chat_index = int(source.rsplit("-", 1)[1])
-        top_k = int(kwargs["top_k"])
-        search_calls.append({"source": source, "top_k": top_k})
-        results = [
-            _relation_result(
-                f"relation-{chat_index:02d}-{index:02d}",
-                score=float(chat_index * 100 + index),
-                chat_id=f"session-{chat_index}",
-            )
-            for index in range(top_k)
-        ]
-        return SearchExecutionResult(success=True, results=results)
+        search_calls.append(
+            {
+                "source": kwargs["source"],
+                "top_k": int(kwargs["top_k"]),
+                "scope": kwargs["scope"],
+            }
+        )
+        return SearchExecutionResult(success=True, results=candidates)
 
     async def fake_reinforce_access(relation_hashes: list[str]) -> None:
         reinforced.append(list(relation_hashes))
 
+    monkeypatch.setattr(
+        MemorySearchHitProcessingService,
+        "_resolve_retrieval_scope",
+        fake_resolve_retrieval_scope,
+    )
     monkeypatch.setattr(kernel, "_search_execution_once", fake_search_execution_once)
     monkeypatch.setattr(kernel._runtime_facade, "reinforce_access", fake_reinforce_access)
 
@@ -169,10 +192,11 @@ async def test_ten_chat_merge_reinforces_only_final_five_of_five_hundred_candida
     )
 
     final_hashes = [str(item["hash"]) for item in result["hits"]]
-    assert len(search_calls) == 10
-    assert {item["top_k"] for item in search_calls} == {50}
-    assert sum(int(item["top_k"]) for item in search_calls) == 500
-    assert len(final_hashes) == 5
+    assert len(search_calls) == 1
+    assert search_calls[0]["source"] is None
+    assert search_calls[0]["top_k"] == 5
+    assert search_calls[0]["scope"].relation_ids == allowed_relation_ids
+    assert final_hashes == [item.hash_value for item in candidates]
     assert reinforced == [final_hashes]
 
 
@@ -264,6 +288,21 @@ async def test_person_visibility_and_type_filtered_hits_are_not_reinforced(
     metadata_by_hash = {item.hash_value: dict(item.metadata) for item in candidates}
     kernel.metadata_store = _FilteringMetadataStore(metadata_by_hash)  # type: ignore[assignment]
     reinforced: list[list[str]] = []
+    scope = RetrievalScope(
+        key="chat:session-current,session-other",
+        paragraph_ids=frozenset({"paragraph-keep"}),
+        relation_ids=frozenset(
+            item.hash_value for item in candidates if item.result_type == "relation"
+        ),
+    )
+
+    def fake_resolve_retrieval_scope(
+        self: MemorySearchHitProcessingService,
+        chat_id: str,
+        shared_chat_ids: tuple[str, ...],
+    ) -> RetrievalScope:
+        del self, chat_id, shared_chat_ids
+        return scope
 
     async def fake_search_execution_for_chat_scope(**kwargs: Any) -> SimpleNamespace:
         del kwargs
@@ -272,6 +311,11 @@ async def test_person_visibility_and_type_filtered_hits_are_not_reinforced(
     async def fake_reinforce_access(relation_hashes: list[str]) -> None:
         reinforced.append(list(relation_hashes))
 
+    monkeypatch.setattr(
+        MemorySearchHitProcessingService,
+        "_resolve_retrieval_scope",
+        fake_resolve_retrieval_scope,
+    )
     monkeypatch.setattr(kernel, "_search_execution_for_chat_scope", fake_search_execution_for_chat_scope)
     monkeypatch.setattr(kernel._runtime_facade, "reinforce_access", fake_reinforce_access)
 
@@ -349,7 +393,7 @@ async def test_time_and_hybrid_reinforce_only_relations_after_final_limit(
 
     async def fake_search_execution_for_chat_scope(**kwargs: Any) -> SimpleNamespace:
         executed_modes.append(str(kwargs["query_type"]))
-        assert kwargs["top_k"] == 10
+        assert kwargs["top_k"] == 2
         return SimpleNamespace(success=True, error="", chat_filtered=False, results=candidates)
 
     async def fake_reinforce_access(relation_hashes: list[str]) -> None:
@@ -363,7 +407,7 @@ async def test_time_and_hybrid_reinforce_only_relations_after_final_limit(
             query="时间关系",
             mode=mode,
             limit=2,
-            chat_id="session-current",
+            chat_id="",
             time_start=1_700_000_000.0,
             time_end=1_700_003_600.0,
             respect_filter=False,

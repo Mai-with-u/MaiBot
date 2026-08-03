@@ -7,7 +7,7 @@
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Collection, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 import hashlib
 import json
@@ -276,8 +276,18 @@ class ReadOnlyVectorStoreView:
         faiss.normalize_L2(vector_array)
         self._index.add_with_ids(vector_array, np.asarray(int_ids, dtype=np.int64))
 
-    def search(self, query: np.ndarray, k: int = 10, filter_deleted: bool = True) -> Tuple[List[str], List[float]]:
+    def search(
+        self,
+        query: np.ndarray,
+        k: int = 10,
+        filter_deleted: bool = True,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> Tuple[List[str], List[float]]:
         del filter_deleted
+        allowed = None if allowed_ids is None else {str(value) for value in allowed_ids}
+        if allowed is not None and not allowed:
+            return [], []
+
         query_local = np.asarray(query, dtype=np.float32)
         if query_local.ndim == 1:
             query_local = query_local.reshape(1, -1)
@@ -287,13 +297,22 @@ class ReadOnlyVectorStoreView:
             return [], []
         query_local = np.array(query_local, dtype=np.float32, order="C", copy=True)
         faiss.normalize_L2(query_local)
-        with self._lock:
-            scores, int_ids = self._index.search(query_local, max(1, int(k)))
-        results = [
-            (self._known_hashes[int(int_id)], float(score))
-            for int_id, score in zip(int_ids[0], scores[0], strict=True)
-            if int(int_id) in self._known_hashes
-        ]
+        requested_k = max(1, int(k))
+        search_k = min(int(self._index.ntotal), requested_k)
+        results: List[Tuple[str, float]] = []
+        while True:
+            with self._lock:
+                scores, int_ids = self._index.search(query_local, search_k)
+            results = []
+            for int_id, score in zip(int_ids[0], scores[0], strict=True):
+                hash_value = self._known_hashes.get(int(int_id))
+                if hash_value is None or (allowed is not None and hash_value not in allowed):
+                    continue
+                results.append((hash_value, float(score)))
+            if len(results) >= requested_k or search_k >= int(self._index.ntotal):
+                break
+            search_k = min(int(self._index.ntotal), max(search_k * 2, requested_k))
+        results = results[:requested_k]
         return [item[0] for item in results], [item[1] for item in results]
 
     def iter_vectors_by_ids(
@@ -1480,6 +1499,7 @@ class VectorStore:
         query: np.ndarray,
         k: int = 10,
         filter_deleted: bool = True,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> Tuple[List[str], List[float]]:
         query_local = np.array(query, dtype=np.float32, order="C", copy=True)
         if query_local.ndim == 1:
@@ -1497,6 +1517,10 @@ class VectorStore:
         if not np.all(np.isfinite(query_local)):
             raise ValueError("query embedding contains non-finite values")
 
+        allowed = None if allowed_ids is None else {str(value) for value in allowed_ids}
+        if allowed is not None and not allowed:
+            return [], []
+
         faiss.normalize_L2(query_local)
 
         # 查询路径仅负责检索，不在此触发训练/回放。
@@ -1509,27 +1533,29 @@ class VectorStore:
             if search_index.ntotal == 0:
                 logger.warning("Indices are empty. No data to search.")
                 return [], []
-            # 执行检索
-            dists, ids = search_index.search(query_local, k * 2)
-
-        # Faiss search 返回的是 (1, K) 的数组，取第一行
-        dists = dists[0]
-        ids = ids[0]
-
-        results = []
-        for id_val, score in zip(ids, dists, strict=True):
-            if id_val == -1:
-                continue
-            if filter_deleted and id_val in self._deleted_ids:
-                continue
-
-            str_id = self._int_to_str_map.get(id_val)
-            if str_id:
-                results.append((str_id, float(score)))
-
-        # 过滤可能减少结果数量，因此重新排序并截断。
+            requested_k = max(1, int(k))
+            search_k = min(int(search_index.ntotal), max(requested_k * 2, requested_k))
+            results: List[Tuple[str, float]] = []
+            while True:
+                dists, ids = search_index.search(query_local, search_k)
+                results = []
+                for id_val, score in zip(ids[0], dists[0], strict=True):
+                    if id_val == -1:
+                        continue
+                    if filter_deleted and id_val in self._deleted_ids:
+                        continue
+                    str_id = self._int_to_str_map.get(id_val)
+                    if str_id is None or (allowed is not None and str_id not in allowed):
+                        continue
+                    results.append((str_id, float(score)))
+                if len(results) >= requested_k or search_k >= int(search_index.ntotal):
+                    break
+                search_k = min(
+                    int(search_index.ntotal),
+                    max(search_k * 2, requested_k),
+                )
         results.sort(key=lambda x: x[1], reverse=True)
-        results = results[:k]
+        results = results[:requested_k]
 
         if not results:
             return [], []

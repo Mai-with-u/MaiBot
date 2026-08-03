@@ -8,7 +8,7 @@ import re
 import jieba
 
 if TYPE_CHECKING:
-    from .dual_path import DualPathRetriever, RetrievalResult
+    from .dual_path import DualPathRetriever, RetrievalResult, RetrievalScope
 
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
@@ -470,6 +470,7 @@ def _build_graph_results_from_seeds(
     seed_entities: Sequence[str],
     temporal: Any,
     alpha: float,
+    scope: RetrievalScope | None = None,
 ) -> List[RetrievalResult]:
     from .dual_path import RetrievalResult
 
@@ -477,7 +478,13 @@ def _build_graph_results_from_seeds(
     if service is None:
         return []
 
-    payloads = service.recall(seed_entities=seed_entities)
+    if scope:
+        payloads = service.recall(
+            seed_entities=seed_entities,
+            allowed_relation_ids=scope.relation_ids,
+        )
+    else:
+        payloads = service.recall(seed_entities=seed_entities)
     if not payloads:
         return []
 
@@ -633,6 +640,7 @@ def apply_posterior_graph_gate(
     top_k: int,
     temporal: Any,
     relation_intent: Dict[str, Any],
+    scope: RetrievalScope | None = None,
 ) -> List[RetrievalResult]:
     cfg = getattr(retriever.config, "posterior_graph", None)
     if not isinstance(cfg, PosteriorGraphConfig) or not cfg.enabled:
@@ -719,6 +727,7 @@ def apply_posterior_graph_gate(
         seed_entities=seed_names,
         temporal=temporal,
         alpha=alpha,
+        scope=scope,
     )
     raw_graph_count = len(graph_results)
     if seed_type == "incidental":
