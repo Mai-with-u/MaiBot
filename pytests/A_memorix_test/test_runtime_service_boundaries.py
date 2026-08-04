@@ -15,6 +15,7 @@ from src.A_memorix.core.runtime.services.search_hit_processing_service import Me
 from src.A_memorix.core.runtime.services.v5_admin_service import MemoryV5AdminService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
+from src.A_memorix.core.storage.vector_store import VectorStoreIntegrityError
 from src.A_memorix.core.utils.memory_lifecycle_policy import RelationLifecyclePolicy
 
 
@@ -626,6 +627,10 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
         calls.append(("backfill", kwargs))
         return {"success": True, "processed": 2}
 
+    async def fake_restore_vector_channel() -> bool:
+        calls.append(("vector_restore", None))
+        return False
+
     monkeypatch.setattr(kernel, "_refresh_runtime_self_check", fake_refresh_runtime_self_check)
     monkeypatch.setattr(kernel, "_apply_self_check_dimension_result", fake_apply_self_check_dimension_result)
     monkeypatch.setattr(kernel, "_set_embedding_degraded", fake_set_embedding_degraded)
@@ -633,6 +638,12 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_paragraph_vector_backfill_batch_size", lambda: 7)
     monkeypatch.setattr(kernel, "_paragraph_vector_backfill_max_retry", lambda: 3)
     monkeypatch.setattr(kernel, "_run_paragraph_backfill_once", fake_run_paragraph_backfill_once)
+    monkeypatch.setattr(
+        kernel,
+        "_restore_vector_channel_after_embedding_recovery",
+        fake_restore_vector_channel,
+        raising=False,
+    )
 
     result = await kernel._embedding_state_service._recover_embedding_once(sample_text="probe text")
 
@@ -646,6 +657,7 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
         ("self_check", "probe text"),
         ("dimension", report),
         ("degraded", {"active": False, "checked_at": 123.0}),
+        ("vector_restore", None),
         (
             "backfill",
             {
@@ -655,6 +667,121 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
             },
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_embedding_recovery_restores_vector_runtime_after_fingerprint_becomes_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    root_vector_store = object()
+    paragraph_store = object()
+    graph_vector_store = object()
+    retriever = object()
+    threshold_filter = object()
+    sparse_index = object()
+    calls: list[str] = []
+    kernel.sparse_index = sparse_index  # type: ignore[assignment]
+    kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+
+    def fake_make_vector_store(data_dir: Path, *, dimension: int | None = None) -> object:
+        assert data_dir == kernel._vectors_root()
+        assert dimension == kernel.embedding_dimension
+        calls.append("root_store")
+        return root_vector_store
+
+    def fake_reload_dual_vector_stores_from_disk() -> bool:
+        kernel.paragraph_vector_store = paragraph_store  # type: ignore[assignment]
+        kernel.graph_vector_store = graph_vector_store  # type: ignore[assignment]
+        kernel._dual_vector_pools_ready = True
+        calls.append("reload")
+        return True
+
+    def fake_build_search_runtime(**kwargs: Any) -> SimpleNamespace:
+        assert kwargs["plugin_config"]["paragraph_vector_store"] is paragraph_store
+        assert kwargs["plugin_config"]["graph_vector_store"] is graph_vector_store
+        calls.append("runtime")
+        return SimpleNamespace(
+            ready=True,
+            retriever=retriever,
+            threshold_filter=threshold_filter,
+            sparse_index=None,
+            error="",
+        )
+
+    monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
+    monkeypatch.setattr(kernel, "_reload_dual_vector_stores_from_disk", fake_reload_dual_vector_stores_from_disk)
+    monkeypatch.setattr(kernel_module, "build_search_runtime", fake_build_search_runtime)
+    monkeypatch.setattr(kernel, "_refresh_relation_write_service", lambda: calls.append("relation_writer"))
+    monkeypatch.setattr(
+        kernel,
+        "_refresh_runtime_dependents",
+        lambda *, preserve_managers: calls.append(f"dependents:{preserve_managers}"),
+    )
+    monkeypatch.setattr(kernel, "_apply_runtime_sparse_mode", lambda: calls.append("sparse_mode"))
+
+    restored = await kernel._embedding_state_service._restore_vector_channel_after_embedding_recovery()
+
+    assert restored is True
+    assert calls == ["root_store", "reload", "runtime", "relation_writer", "dependents:True", "sparse_mode"]
+    assert kernel.vector_store is root_vector_store
+    assert kernel.retriever is retriever
+    assert kernel.threshold_filter is threshold_filter
+    assert kernel.sparse_index is sparse_index
+    assert kernel._runtime_capabilities["vector_read"] is True
+    assert kernel._runtime_capabilities["vector_write"] is True
+    assert kernel._vector_health["state"] == "healthy"
+    assert kernel._vector_health["error_code"] == ""
+
+
+@pytest.mark.asyncio
+async def test_embedding_probe_retries_pending_vector_fingerprint_without_embedding_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel._background_stopping = False
+    kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+    calls: list[str] = []
+
+    async def fake_recover_embedding_once() -> dict[str, Any]:
+        calls.append("recover")
+        kernel._background_stopping = True
+        return {"success": True}
+
+    monkeypatch.setattr(kernel, "_embedding_probe_interval_seconds", lambda: 0.0)
+    monkeypatch.setattr(kernel, "_embedding_fallback_enabled", lambda: False)
+    monkeypatch.setattr(kernel, "_is_startup_self_check_deferred", lambda: False)
+    monkeypatch.setattr(kernel, "_is_embedding_degraded", lambda: False)
+    monkeypatch.setattr(kernel, "_recover_embedding_once", fake_recover_embedding_once)
+
+    await kernel._background_task_service._embedding_probe_loop()
+
+    assert calls == ["recover"]
+
+
+def test_dual_vector_reload_reports_temporarily_unavailable_embedding_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    manifest = {
+        "status": "ready",
+        "dimension": kernel.embedding_dimension,
+        "paragraph_vectors": 1,
+        "graph_vectors": 0,
+        "embedding_fingerprint": {"hash": "stored-model"},
+    }
+
+    monkeypatch.setattr(kernel, "_dual_vector_ready", lambda *, expected_dimension=None: False)
+    monkeypatch.setattr(kernel, "_try_recover_dual_ready_manifest", lambda: False)
+    monkeypatch.setattr(kernel, "_read_dual_vector_ready_manifest", lambda: manifest)
+    monkeypatch.setattr(kernel, "_current_embedding_fingerprint", lambda **kwargs: None)
+
+    with pytest.raises(VectorStoreIntegrityError) as exc_info:
+        kernel._dual_vector_state_service._reload_dual_vector_stores_from_disk()
+
+    assert exc_info.value.error_code == "embedding_fingerprint_unavailable"
+    assert exc_info.value.dimension_status == "matched"
+    assert exc_info.value.fingerprint_status == "unknown"
 
 
 def test_dual_vector_reload_uses_kernel_patched_state_boundaries(

@@ -359,9 +359,13 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 if self._background_stopping:
                     break
                 startup_deferred = self._is_startup_self_check_deferred()
-                if not self._embedding_fallback_enabled() and not startup_deferred:
+                vector_fingerprint_pending = (
+                    str(self._vector_health.get("error_code", "") or "")
+                    == "embedding_fingerprint_unavailable"
+                )
+                if not self._embedding_fallback_enabled() and not startup_deferred and not vector_fingerprint_pending:
                     continue
-                if not self._is_embedding_degraded() and not startup_deferred:
+                if not self._is_embedding_degraded() and not startup_deferred and not vector_fingerprint_pending:
                     continue
                 try:
                     await self._recover_embedding_once()

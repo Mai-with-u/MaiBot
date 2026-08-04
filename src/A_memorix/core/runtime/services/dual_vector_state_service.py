@@ -328,7 +328,12 @@ class MemoryDualVectorStateService(KernelServiceBase):
                     and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
                 )
                 if current_fingerprint is None:
-                    raise RuntimeError("当前 Embedding 指纹不可用，无法校验双池世代")
+                    raise VectorStoreIntegrityError(
+                        "当前 Embedding 指纹不可用，无法校验双池世代",
+                        error_code="embedding_fingerprint_unavailable",
+                        dimension_status="matched",
+                        fingerprint_status="unknown",
+                    )
                 if manifest_fingerprint is None and not empty_recovery_generation:
                     raise VectorStoreIntegrityError(
                         "双池 ready manifest 缺少 Embedding 指纹",
