@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import asyncio
+import threading
 import numpy as np
 import pytest
 
@@ -564,6 +565,42 @@ def test_embedding_state_service_uses_kernel_patched_sparse_boundary(
         }
     ]
     assert kernel._embedding_degraded["active"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_vector_copy_does_not_block_event_loop_and_waits_for_worker_on_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel._background_stopping = False
+    kernel._legacy_vector_view = object()  # type: ignore[assignment]
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def fake_copy_legacy_vectors_once(*, batch_size: int) -> dict[str, Any]:
+        assert batch_size == 256
+        worker_started.set()
+        release_worker.wait(timeout=1.0)
+        return {"done": False}
+
+    monkeypatch.setattr(kernel, "_copy_legacy_vectors_once", fake_copy_legacy_vectors_once)
+
+    copy_task = asyncio.create_task(kernel._background_task_service._legacy_vector_copy_loop())
+    for _ in range(100):
+        if worker_started.is_set():
+            break
+        await asyncio.sleep(0.001)
+
+    assert worker_started.is_set()
+    assert copy_task.done() is False
+
+    copy_task.cancel()
+    await asyncio.sleep(0)
+    assert copy_task.done() is False
+
+    release_worker.set()
+    with pytest.raises(asyncio.CancelledError):
+        await copy_task
 
 
 @pytest.mark.asyncio

@@ -265,6 +265,20 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 logger.warning(f"向量索引训练任务取消收尾异常: {exc}")
             raise
 
+    async def _run_legacy_vector_io_in_thread(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        worker = asyncio.create_task(
+            asyncio.to_thread(operation, *args, **kwargs),
+            name="A_Memorix.legacy_vector_copy.worker",
+        )
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await worker
+            except Exception as exc:
+                logger.warning(f"可信旧向量复制任务取消收尾异常: {exc}")
+            raise
+
     async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
         threshold_value = self._cfg("embedding.runtime_train_threshold", 256)
         runtime_threshold = max(1, int(256 if threshold_value is None else threshold_value))
@@ -382,10 +396,14 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         """持续复制可信旧向量；该任务从不调用 embedding。"""
         try:
             while not self._background_stopping and self._legacy_vector_view is not None:
-                result = self._copy_legacy_vectors_once(batch_size=256)
-                if bool(result.get("done", False)):
-                    self._cleanup_vector_quarantine()
-                    break
+                async with self._vector_rebuild_lock:
+                    result = await self._run_legacy_vector_io_in_thread(
+                        self._copy_legacy_vectors_once,
+                        batch_size=256,
+                    )
+                    if bool(result.get("done", False)):
+                        await self._run_legacy_vector_io_in_thread(self._cleanup_vector_quarantine)
+                        break
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             raise
