@@ -361,8 +361,6 @@ export interface MemoryImportSettings {
   maibot_target_data_dir?: string
   path_aliases?: Record<string, string>
   llm_retry?: Record<string, number>
-  convert_enable_staging_switch?: boolean
-  convert_keep_backup_count?: number
 }
 
 export interface MemoryImportSettingsPayload {

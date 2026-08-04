@@ -28,8 +28,10 @@ from src.services import llm_service as llm_api
 
 from ...paths import default_data_dir, repo_root, resolve_repo_path, scripts_root
 from ..storage import (
+    GraphStore,
     KnowledgeType,
     MetadataStore,
+    VectorStore,
     parse_import_strategy,
     resolve_stored_knowledge_type,
     select_import_strategy,
@@ -436,12 +438,6 @@ class ImportTaskManager:
 
     def _resolve_manifest_path(self) -> Path:
         return self._resolve_data_dir() / "import_manifest.json"
-
-    def _resolve_staging_root(self) -> Path:
-        return self._resolve_data_dir() / "import_staging"
-
-    def _resolve_backup_root(self) -> Path:
-        return self._resolve_data_dir() / "import_backup"
 
     def _resolve_repo_root(self) -> Path:
         return repo_root()
@@ -1352,10 +1348,6 @@ class ImportTaskManager:
             "path_aliases": self.get_path_aliases(),
             "llm_retry": llm_retry,
             "timeout": self._timeout_config(),
-            "convert_enable_staging_switch": _coerce_bool(
-                self._cfg("web.import.convert.enable_staging_switch", True), True
-            ),
-            "convert_keep_backup_count": max(0, self._cfg_int("web.import.convert.keep_backup_count", 3)),
         }
 
     def is_write_blocked(self) -> bool:
@@ -1691,6 +1683,10 @@ class ImportTaskManager:
         target_path.mkdir(parents=True, exist_ok=True)
         if not target_path.is_dir():
             raise ValueError("lpmm_convert 目标路径必须为目录")
+        if any(target_path.iterdir()):
+            raise ValueError("lpmm_convert 目标目录必须为空，不会覆盖已有存储")
+        if target_path == source_path or target_path.is_relative_to(source_path):
+            raise ValueError("lpmm_convert 目标目录不能位于输入目录内")
 
         async with self._lock:
             if self._pending_task_count() >= self._queue_limit():
@@ -2629,41 +2625,95 @@ class ImportTaskManager:
     def _resolve_convert_script(self) -> Path:
         return Path(__file__).resolve().parents[2] / "scripts" / "convert_lpmm.py"
 
-    def _cleanup_old_backups(self) -> None:
-        keep = max(0, self._cfg_int("web.import.convert.keep_backup_count", 3))
-        backup_root = self._resolve_backup_root()
-        if not backup_root.exists() or keep <= 0:
-            return
-        dirs = [p for p in backup_root.iterdir() if p.is_dir() and p.name.startswith("lpmm_convert_")]
-        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        for old in dirs[keep:]:
-            try:
-                shutil.rmtree(old)
-            except FileNotFoundError:
-                logger.debug(f"旧转换目录已不存在: {old}")
-            except OSError as exc:
-                logger.warning(f"清理旧转换目录失败: path={old}, error={exc}")
-
     def _verify_convert_output(self, output_dir: Path) -> Dict[str, Any]:
-        vectors = output_dir / "vectors"
-        graph = output_dir / "graph"
-        metadata = output_dir / "metadata"
+        vectors_root = output_dir / "vectors"
+        paragraph_vectors = vectors_root / "paragraph"
+        graph_vectors = vectors_root / "graph"
+        graph_dir = output_dir / "graph"
+        metadata_dir = output_dir / "metadata"
+        manifest_path = vectors_root / "dual_ready.json"
         checks = {
-            "vectors_exists": vectors.exists(),
-            "graph_exists": graph.exists(),
-            "metadata_exists": metadata.exists(),
-            "vectors_nonempty": vectors.exists() and any(vectors.iterdir()),
-            "graph_nonempty": graph.exists() and any(graph.iterdir()),
-            "metadata_nonempty": metadata.exists() and any(metadata.iterdir()),
+            "paragraph_vectors_exists": paragraph_vectors.is_dir(),
+            "graph_vectors_exists": graph_vectors.is_dir(),
+            "graph_exists": graph_dir.is_dir(),
+            "metadata_exists": metadata_dir.is_dir(),
+            "manifest_exists": manifest_path.is_file(),
+            "stores_opened": False,
+            "references_valid": False,
+            "counts_match": False,
+            "ok": False,
         }
-        checks["ok"] = checks["vectors_exists"] and checks["graph_exists"] and checks["metadata_exists"]
+        metadata_store: Optional[MetadataStore] = None
+        try:
+            if not all(
+                checks[key]
+                for key in (
+                    "paragraph_vectors_exists",
+                    "graph_vectors_exists",
+                    "graph_exists",
+                    "metadata_exists",
+                    "manifest_exists",
+                )
+            ):
+                return checks
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict) or manifest.get("status") != "ready":
+                raise ValueError("dual_ready.json 状态无效")
+            dimension = int(manifest.get("dimension", 0) or 0)
+            fingerprint = manifest.get("embedding_fingerprint")
+            if dimension <= 0:
+                raise ValueError("dual_ready.json 缺少有效维度")
+            if not isinstance(fingerprint, dict) or not str(fingerprint.get("hash", "") or "").strip():
+                raise ValueError("dual_ready.json 缺少 Embedding 指纹")
+
+            paragraph_store = VectorStore(dimension=dimension, data_dir=paragraph_vectors)
+            graph_vector_store = VectorStore(dimension=dimension, data_dir=graph_vectors)
+            paragraph_store.load(expected_embedding_fingerprint=fingerprint)
+            graph_vector_store.load(expected_embedding_fingerprint=fingerprint)
+            graph_store = GraphStore(data_dir=graph_dir)
+            if graph_store.has_data():
+                graph_store.load()
+            metadata_store = MetadataStore(data_dir=metadata_dir)
+            metadata_store.connect()
+            checks["stores_opened"] = True
+
+            paragraph_ids = {
+                str(row["hash"])
+                for row in metadata_store.query("SELECT hash FROM paragraphs WHERE is_deleted = 0")
+            }
+            entity_ids = {
+                f"entity:{str(row['hash'])}"
+                for row in metadata_store.query("SELECT hash FROM entities WHERE is_deleted = 0")
+            }
+            relation_ids = {
+                f"relation:{str(row['hash'])}"
+                for row in metadata_store.query(
+                    "SELECT hash FROM relations WHERE is_inactive IS NULL OR is_inactive = 0"
+                )
+            }
+            checks["references_valid"] = (
+                set(paragraph_store._known_hashes) == paragraph_ids
+                and set(graph_vector_store._known_hashes) == entity_ids | relation_ids
+            )
+            checks["counts_match"] = (
+                int(manifest.get("paragraph_vectors", -1)) == paragraph_store.num_vectors
+                and int(manifest.get("graph_vectors", -1)) == graph_vector_store.num_vectors
+            )
+            checks["paragraph_vectors"] = paragraph_store.num_vectors
+            checks["graph_vectors"] = graph_vector_store.num_vectors
+            checks["ok"] = bool(checks["references_valid"] and checks["counts_match"])
+        except Exception as exc:
+            checks["error"] = str(exc)
+        finally:
+            if metadata_store is not None:
+                metadata_store.close()
         return checks
 
     async def _preflight_convert_runtime(self) -> Tuple[bool, str]:
         """使用当前服务解释器做 convert 依赖预检，避免子进程报错信息不透明。"""
         probe_code = (
             "import importlib\n"
-            "mods=['networkx','scipy','pyarrow']\n"
+            "mods=['scipy','pyarrow']\n"
             "failed=[]\n"
             "for m in mods:\n"
             "    try:\n"
@@ -2741,13 +2791,6 @@ class ImportTaskManager:
             )
             return
 
-        staging_root = self._resolve_staging_root()
-        staging_root.mkdir(parents=True, exist_ok=True)
-        staging_dir = staging_root / f"lpmm_convert_{task_id}"
-        if staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
-        staging_dir.mkdir(parents=True, exist_ok=True)
-
         # 简单空间预检：至少保留 512MB
         usage = shutil.disk_usage(str(target_dir))
         if usage.free < 512 * 1024 * 1024:
@@ -2760,7 +2803,7 @@ class ImportTaskManager:
             "--input",
             str(source_dir),
             "--output",
-            str(staging_dir),
+            str(target_dir),
             "--dim",
             str(params.get("dimension", 384)),
             "--batch-size",
@@ -2823,90 +2866,16 @@ class ImportTaskManager:
             return
 
         await self._set_chunk_state(task_id, file_record.file_id, chunk_id, "writing", "verifying", 0.65)
-        verify = self._verify_convert_output(staging_dir)
+        verify = self._verify_convert_output(target_dir)
         async with self._lock:
             t = self._tasks.get(task_id)
             if t:
-                t.artifact_paths["staging_dir"] = str(staging_dir)
+                t.artifact_paths["output_dir"] = str(target_dir)
                 t.artifact_paths["verify"] = json.dumps(verify, ensure_ascii=False)
         if not verify.get("ok"):
             await self._set_file_failed(task_id, file_record.file_id, f"校验失败: {verify}")
             await self._set_chunk_failed(task_id, file_record.file_id, chunk_id, f"校验失败: {verify}")
             return
-
-        enable_switch = _coerce_bool(self._cfg("web.import.convert.enable_staging_switch", True), True)
-        if not enable_switch:
-            await self._set_file_failed(task_id, file_record.file_id, "未启用 staging 切换")
-            await self._set_chunk_failed(task_id, file_record.file_id, chunk_id, "未启用 staging 切换")
-            return
-
-        await self._set_chunk_state(task_id, file_record.file_id, chunk_id, "writing", "switching", 0.85)
-        backup_root = self._resolve_backup_root()
-        backup_root.mkdir(parents=True, exist_ok=True)
-        backup_dir = backup_root / f"lpmm_convert_{task_id}_{int(_now())}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-
-        switched = False
-        rollback_info: Dict[str, Any] = {"attempted": True, "restored": False, "error": ""}
-        moved_items: List[Tuple[Path, Path]] = []
-        installed_items: List[Path] = []
-        try:
-            for name in ("vectors", "graph", "metadata"):
-                src_current = target_dir / name
-                src_new = staging_dir / name
-                if not src_new.exists():
-                    raise RuntimeError(f"staging 缺少目录: {src_new}")
-                if src_current.exists():
-                    dst_backup = backup_dir / name
-                    shutil.move(str(src_current), str(dst_backup))
-                    moved_items.append((dst_backup, src_current))
-                shutil.move(str(src_new), str(src_current))
-                installed_items.append(src_current)
-            switched = True
-        except Exception as switch_err:
-            rollback_info["error"] = str(switch_err)
-            restore_errors: List[str] = []
-            # 先移走已安装的新目录，再逐项恢复旧目录，避免新旧内容混合。
-            for installed_path in reversed(installed_items):
-                if not installed_path.exists():
-                    continue
-                failed_new_path = backup_dir / f"{installed_path.name}.failed_new"
-                try:
-                    shutil.move(str(installed_path), str(failed_new_path))
-                except OSError as restore_exc:
-                    restore_errors.append(str(restore_exc))
-                    logger.error(f"隔离切换失败目录失败: path={installed_path}, error={restore_exc}")
-            for src_backup, dst_original in reversed(moved_items):
-                if src_backup.exists():
-                    try:
-                        shutil.move(str(src_backup), str(dst_original))
-                    except OSError as restore_exc:
-                        restore_errors.append(str(restore_exc))
-                        logger.error(
-                            f"恢复转换备份失败: source={src_backup}, target={dst_original}, error={restore_exc}"
-                        )
-            rollback_info["restored"] = not restore_errors
-            if restore_errors:
-                rollback_info["error"] = f"{switch_err}; rollback: {'; '.join(restore_errors)}"
-            async with self._lock:
-                t = self._tasks.get(task_id)
-                if t:
-                    t.rollback_info = rollback_info
-            await self._set_file_failed(task_id, file_record.file_id, f"切换失败并回滚: {switch_err}")
-            await self._set_chunk_failed(task_id, file_record.file_id, chunk_id, f"switch failed: {switch_err}")
-            return
-
-        if switched:
-            async with self._lock:
-                t = self._tasks.get(task_id)
-                if t:
-                    t.rollback_info = rollback_info
-                    t.artifact_paths["backup_dir"] = str(backup_dir)
-            self._cleanup_old_backups()
-            try:
-                await self._reload_stores_after_external_migration()
-            except Exception as reload_err:
-                logger.warning(f"转换后重载存储失败: {reload_err}")
 
         await self._set_chunk_completed(task_id, file_record.file_id, chunk_id)
         async with self._lock:
