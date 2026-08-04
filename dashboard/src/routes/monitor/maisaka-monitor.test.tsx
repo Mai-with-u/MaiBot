@@ -924,6 +924,38 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('#2')).toBeInTheDocument()
   })
 
+  it('planner.finalized 单独展示 Provider 原生联网搜索摘要', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.finalized',
+          makeFinalized({
+            planner: makePlannerBlock({
+              native_tool_calls: [
+                {
+                  tool_type: 'web_search',
+                  call_id: 'ws-1',
+                  status: 'completed',
+                  action_type: 'search',
+                  details: ['查询：Responses API 标准工具'],
+                  source_count: 3,
+                },
+              ],
+            }),
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('Provider 原生工具')).toBeInTheDocument()
+    expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.getByText('search')).toBeInTheDocument()
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(screen.getByText('查询：Responses API 标准工具')).toBeInTheDocument()
+    expect(screen.getByText('来源 3 个')).toBeInTheDocument()
+  })
+
   it('planner.finalized 仅 finish 工具时提示回合结束，混合工具时内联提示', () => {
     const timeline = [
       makeEntry(

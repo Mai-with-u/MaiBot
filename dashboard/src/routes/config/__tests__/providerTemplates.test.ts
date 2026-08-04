@@ -22,6 +22,14 @@ describe('providerTemplates', () => {
     expect(template?.modelFetcher).toEqual({ endpoint: '/models', parser: 'gemini' })
   })
 
+  it('为自定义 OpenAI Responses 端点保留 Responses 客户端类型', () => {
+    const template = resolveModelFetcherTemplate('https://responses.example.com/v1', 'openai_responses')
+
+    expect(template?.id).toBe('custom-openai-responses')
+    expect(template?.client_type).toBe('openai_responses')
+    expect(template?.modelFetcher).toEqual({ endpoint: '/models', parser: 'openai' })
+  })
+
   it('保留已知但不支持自动获取的内置模板状态', () => {
     const template = resolveModelFetcherTemplate('https://api.anthropic.com/v1', 'openai')
 

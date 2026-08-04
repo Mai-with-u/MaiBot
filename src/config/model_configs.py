@@ -67,7 +67,7 @@ class APIProvider(ConfigBase):
             "x-widget": "select",
         },
     )
-    """客户端类型 (可选: openai/google, 默认为openai)"""
+    """客户端类型。内置支持 openai、openai_responses 和 gemini，也可由插件扩展。"""
 
     auth_type: str = Field(
         default=OpenAICompatibleAuthType.BEARER.value,

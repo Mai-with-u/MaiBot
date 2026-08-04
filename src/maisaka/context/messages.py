@@ -25,6 +25,7 @@ from src.common.data_models.message_component_data_model import (
     VoiceComponent,
 )
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.tool_option import ToolCall
 
 FORWARD_PREVIEW_LIMIT = 4
@@ -552,6 +553,7 @@ class AssistantMessage(LLMContextMessage):
     content: str
     timestamp: datetime
     tool_calls: list[ToolCall] = field(default_factory=list)
+    provider_state: ProviderState | None = field(default=None, repr=False)
     source_kind: str = "assistant"
 
     @property
@@ -575,12 +577,15 @@ class AssistantMessage(LLMContextMessage):
         message_sequence = MessageSequence([])
         if self.content:
             message_sequence.text(self.content)
-        return _build_message_from_sequence(
+        message = _build_message_from_sequence(
             RoleType.Assistant,
             message_sequence,
             self.content,
             tool_calls=self.tool_calls or None,
         )
+        if message is not None and self.provider_state is not None:
+            message.provider_state = self.provider_state
+        return message
 
 
 @dataclass(slots=True)

@@ -720,6 +720,7 @@ class BehaviorLearner:
                 reference_count=len(feedback_context.references),
                 timeline_count=len(feedback_context.timeline_items),
                 output_content=response,
+                provider_response=generation_result.provider_response,
             )
         except Exception as exc:
             logger.error(f"行为路径反馈评估失败: {exc}")
@@ -900,6 +901,7 @@ class BehaviorLearner:
                 session_display_name=session_display_name,
                 source_message_count=len(pending_messages),
                 output_content=response,
+                provider_response=generation_result.provider_response,
             )
         except Exception as exc:
             logger.error(f"{log_prefix} 学习行为表现失败: {exc}")
@@ -1135,6 +1137,7 @@ class BehaviorLearner:
                 source_message_count=len(messages),
                 request_messages=scene_messages,
                 output_content=response,
+                provider_response=generation_result.provider_response,
             )
             return response
 
@@ -1171,6 +1174,7 @@ class BehaviorLearner:
                 source_message_count=len(messages),
                 request_messages=scene_messages,
                 output_content=response,
+                provider_response=generation_result.provider_response,
             )
             return response
 
@@ -1343,6 +1347,7 @@ class BehaviorLearner:
         source_message_count: int,
         request_messages: Optional[list[Message]] = None,
         output_content: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存行为学习前的场景画像请求预览。"""
 
@@ -1366,6 +1371,7 @@ class BehaviorLearner:
                     f"构建消息数: {len(request_messages or [])}"
                 ),
                 output_content=output_content,
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"[{session_display_name}] 行为学习场景画像预览保存失败: {exc}")
@@ -1385,6 +1391,7 @@ class BehaviorLearner:
         session_display_name: str,
         source_message_count: int,
         output_content: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存行为学习上下文预览，并在日志中输出查看入口。"""
 
@@ -1402,6 +1409,7 @@ class BehaviorLearner:
                     f"构建消息数: {len(messages)}"
                 ),
                 output_content=output_content,
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"[{session_display_name}] 行为学习上下文预览保存失败: {exc}")
@@ -1420,6 +1428,7 @@ class BehaviorLearner:
         reference_count: int,
         timeline_count: int,
         output_content: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存行为路径反馈评估上下文预览。"""
 
@@ -1439,6 +1448,7 @@ class BehaviorLearner:
                     f"构建消息数: {len(messages)}"
                 ),
                 output_content=output_content,
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"{log_prefix} 行为路径反馈预览保存失败: {exc}")

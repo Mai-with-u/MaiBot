@@ -80,6 +80,17 @@ import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
 import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
+import {
+  getDeepSeekReasoningEffort,
+  isDeepSeekThinkingEnabled,
+  isDeepSeekWebSearchEnabled,
+  setDeepSeekReasoningEffort,
+  setDeepSeekThinkingEnabled,
+  setDeepSeekWebSearchEnabled,
+  validateDeepSeekExtraParams,
+  type DeepSeekClientType,
+  type DeepSeekReasoningEffort,
+} from './model/deepSeekExtraParams'
 import { ProviderForm } from './modelProvider/ProviderForm'
 import { ProviderList } from './modelProvider/ProviderList'
 import type { APIProvider } from './modelProvider/types'
@@ -219,6 +230,7 @@ function ModelConfigPageContent() {
     editingIndex,
     formErrors,
     setFormErrors,
+    isDeepSeekTemplateProvider,
     handleSaveEdit,
     handleEditDialogClose,
     deleteDialogOpen,
@@ -359,6 +371,43 @@ function ModelConfigPageContent() {
     clearModels,
   } = useModelFetcher({ getProviderConfig })
 
+  const selectedProviderConfig = editingModel?.api_provider
+    ? getProviderConfig(editingModel.api_provider)
+    : undefined
+  const selectedClientType = selectedProviderConfig?.client_type
+  const deepSeekClientType: DeepSeekClientType | null =
+    matchedTemplate?.id === 'deepseek' &&
+    (selectedClientType === 'openai' || selectedClientType === 'openai_responses')
+      ? selectedClientType
+      : null
+  const modelExtraParams = editingModel?.extra_params || {}
+  const deepSeekThinkingEnabled = deepSeekClientType
+    ? isDeepSeekThinkingEnabled(modelExtraParams, deepSeekClientType)
+    : false
+  const deepSeekReasoningEffort = deepSeekClientType
+    ? getDeepSeekReasoningEffort(modelExtraParams, deepSeekClientType)
+    : 'high'
+  const deepSeekWebSearchEnabled = deepSeekClientType === 'openai_responses'
+    ? isDeepSeekWebSearchEnabled(modelExtraParams)
+    : false
+  const deepSeekExtraParamsError = deepSeekClientType
+    ? validateDeepSeekExtraParams(modelExtraParams, deepSeekClientType)
+    : null
+  const deepSeekToolsInvalid =
+    modelExtraParams.tools !== undefined && !Array.isArray(modelExtraParams.tools)
+
+  const updateModelExtraParams = (
+    updater: (params: Record<string, unknown>) => Record<string, unknown>
+  ) => {
+    setEditingModel((previousModel) => previousModel
+      ? {
+          ...previousModel,
+          extra_params: updater(previousModel.extra_params || {}),
+        }
+      : null
+    )
+  }
+
   // 打开模型编辑对话框：重置高级设置可见性后委托核心 hook
   const openEditDialog = (model: ModelInfo | null, index: number | null) => {
     mc.openEditDialog(model, index, () => setAdvancedModelSettingsVisible(false))
@@ -437,7 +486,7 @@ function ModelConfigPageContent() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
+      <div data-model-config-page="true" className="space-y-4 p-4 sm:space-y-6 sm:p-6">
         {/* 无效模型引用警告 */}
         {invalidModelRefs.length > 0 && (
           <Alert variant="destructive">
@@ -505,7 +554,10 @@ function ModelConfigPageContent() {
             data-model-config-tabs-bar="true"
             className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 border-b bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
           >
-            <TabsList className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-3">
+            <TabsList
+              data-model-config-tabs-list="true"
+              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-3 bg-transparent shadow-none"
+            >
               <TabsTrigger value="providers" className="w-full" data-tour="providers-tab-trigger">模型厂商设置</TabsTrigger>
               <TabsTrigger value="models" className="w-full" data-tour="models-tab-trigger">模型列表</TabsTrigger>
               <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">为模型分配功能</TabsTrigger>
@@ -1101,7 +1153,7 @@ function ModelConfigPageContent() {
       {/* 编辑模型对话框 */}
       <Dialog open={editDialogOpen} onOpenChange={handleEditDialogClose}>
         <DialogContent 
-          className="max-w-[95vw] gap-3 p-4 sm:max-w-2xl sm:gap-4 sm:p-6"
+          className="max-w-[95vw] gap-3 p-4 sm:gap-4 sm:p-6 sm:[--dialog-width:64rem]"
           data-tour="model-dialog"
           preventOutsideClose={tourIsRunning}
           confirmOnEnter
@@ -1126,70 +1178,78 @@ function ModelConfigPageContent() {
 
           <DialogBody viewportClassName="min-h-0 flex-1 pr-3 sm:pr-4 [&>div]:!block">
           <div className="grid gap-3 py-2 sm:gap-4 sm:py-4">
-            <div className="grid gap-2" data-tour="model-name-input">
-              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
-                <Label
-                  htmlFor="model_name"
-                  className={`sm:w-28 sm:flex-shrink-0 ${formErrors.name ? 'text-destructive' : ''}`}
-                >
-                  模型名称 *
-                </Label>
-                <Input
-                  id="model_name"
-                  value={editingModel?.name || ''}
-                  onChange={(e) => {
-                    setEditingModel((prev) =>
-                      prev ? { ...prev, name: e.target.value } : null
-                    )
-                    if (formErrors.name) {
-                      setFormErrors((prev) => ({ ...prev, name: undefined }))
-                    }
-                  }}
-                  placeholder="例如: qwen3-30b"
-                  className={`sm:flex-1 ${formErrors.name ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                />
+            <div className="grid gap-3 md:grid-cols-2 md:gap-4">
+              <div className="grid gap-2" data-tour="model-name-input">
+                <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+                  <Label
+                    htmlFor="model_name"
+                    className={`sm:w-28 sm:flex-shrink-0 ${formErrors.name ? 'text-destructive' : ''}`}
+                  >
+                    模型名称 *
+                  </Label>
+                  <Input
+                    id="model_name"
+                    value={editingModel?.name || ''}
+                    onChange={(e) => {
+                      setEditingModel((prev) =>
+                        prev ? { ...prev, name: e.target.value } : null
+                      )
+                      if (formErrors.name) {
+                        setFormErrors((prev) => ({ ...prev, name: undefined }))
+                      }
+                    }}
+                    placeholder="例如: qwen3-30b"
+                    className={`sm:flex-1 ${formErrors.name ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                  />
+                </div>
+                {formErrors.name ? (
+                  <p className="text-xs text-destructive sm:pl-28">{formErrors.name}</p>
+                ) : null}
               </div>
-              {formErrors.name ? (
-                <p className="text-xs text-destructive sm:pl-28">{formErrors.name}</p>
-              ) : null}
-            </div>
 
-            <div className="grid gap-2" data-tour="model-provider-select">
-              <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
-                <Label
-                  htmlFor="api_provider"
-                  className={`sm:w-28 sm:flex-shrink-0 ${formErrors.api_provider ? 'text-destructive' : ''}`}
-                >
-                  API 提供商 *
-                </Label>
-                <Select
-                  value={editingModel?.api_provider || ''}
-                  onValueChange={(value) => {
-                    setEditingModel((prev) =>
-                      prev ? { ...prev, api_provider: value } : null
-                    )
-                    // 清空模型列表和错误状态，等待 useEffect 重新获取
-                    clearModels()
-                    if (formErrors.api_provider) {
-                      setFormErrors((prev) => ({ ...prev, api_provider: undefined }))
-                    }
-                  }}
-                >
-                  <SelectTrigger id="api_provider" className={`sm:flex-1 ${formErrors.api_provider ? 'border-destructive focus-visible:ring-destructive' : ''}`}>
-                    <SelectValue placeholder="选择提供商" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providers.map((provider) => (
-                      <SelectItem key={provider} value={provider}>
-                        {provider}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-2" data-tour="model-provider-select">
+                <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+                  <Label
+                    htmlFor="api_provider"
+                    className={`sm:w-28 sm:flex-shrink-0 ${formErrors.api_provider ? 'text-destructive' : ''}`}
+                  >
+                    API 提供商 *
+                  </Label>
+                  <Select
+                    value={editingModel?.api_provider || ''}
+                    onValueChange={(value) => {
+                      setEditingModel((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              api_provider: value,
+                              cache: isDeepSeekTemplateProvider(value) || prev.cache,
+                            }
+                          : null
+                      )
+                      // 清空模型列表和错误状态，等待 useEffect 重新获取
+                      clearModels()
+                      if (formErrors.api_provider) {
+                        setFormErrors((prev) => ({ ...prev, api_provider: undefined }))
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="api_provider" className={`sm:flex-1 ${formErrors.api_provider ? 'border-destructive focus-visible:ring-destructive' : ''}`}>
+                      <SelectValue placeholder="选择提供商" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providers.map((provider) => (
+                        <SelectItem key={provider} value={provider}>
+                          {provider}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {formErrors.api_provider && (
+                  <p className="text-xs text-destructive sm:pl-28">{formErrors.api_provider}</p>
+                )}
               </div>
-              {formErrors.api_provider && (
-                <p className="text-xs text-destructive sm:pl-28">{formErrors.api_provider}</p>
-              )}
             </div>
 
             <div className="grid gap-2" data-tour="model-identifier-input">
@@ -1360,21 +1420,6 @@ function ModelConfigPageContent() {
                   启用视觉
                 </Label>
               </div>
-
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="model_cache"
-                  checked={editingModel?.cache || false}
-                  onCheckedChange={(checked) =>
-                    setEditingModel((prev) =>
-                      prev ? { ...prev, cache: checked } : null
-                    )
-                  }
-                />
-                <Label htmlFor="model_cache" className="cursor-pointer">
-                  支持缓存
-                </Label>
-              </div>
             </div>
 
             <div className={`grid grid-cols-1 gap-3 sm:gap-4 ${editingModel?.cache ? 'md:grid-cols-3' : 'sm:grid-cols-2'}`}>
@@ -1441,8 +1486,95 @@ function ModelConfigPageContent() {
               )}
             </div>
 
+            {deepSeekClientType && (
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                  <div className="flex items-center justify-between gap-4 rounded-md border bg-background/50 p-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="deepseek_thinking" className="cursor-pointer">启用思考</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {deepSeekClientType === 'openai_responses'
+                          ? '写入 reasoning.effort'
+                          : '写入 thinking.type'}
+                      </p>
+                    </div>
+                    <Switch
+                      id="deepseek_thinking"
+                      checked={deepSeekThinkingEnabled}
+                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                        setDeepSeekThinkingEnabled(params, deepSeekClientType, checked)
+                      )}
+                    />
+                  </div>
+
+                  <div className="space-y-2 rounded-md border bg-background/50 p-3">
+                    <Label htmlFor="deepseek_reasoning_effort">思考力度</Label>
+                    <Select
+                      value={deepSeekReasoningEffort}
+                      disabled={!deepSeekThinkingEnabled}
+                      onValueChange={(value) => updateModelExtraParams((params) =>
+                        setDeepSeekReasoningEffort(
+                          params,
+                          deepSeekClientType,
+                          value as DeepSeekReasoningEffort
+                        )
+                      )}
+                    >
+                      <SelectTrigger id="deepseek_reasoning_effort">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">低</SelectItem>
+                        <SelectItem value="high">高（默认）</SelectItem>
+                        <SelectItem value="max">最高</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 rounded-md border bg-background/50 p-3 sm:col-span-2 md:col-span-1">
+                    <div className="space-y-1">
+                      <Label htmlFor="deepseek_web_search" className="cursor-pointer">启用联网搜索</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {deepSeekClientType === 'openai_responses'
+                          ? '添加 DeepSeek 原生 web_search 工具，并保留其他工具配置'
+                          : '仅 DeepSeek Responses API 支持原生联网搜索'}
+                      </p>
+                    </div>
+                    <Switch
+                      id="deepseek_web_search"
+                      checked={deepSeekWebSearchEnabled}
+                      disabled={deepSeekClientType !== 'openai_responses' || deepSeekToolsInvalid}
+                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                        setDeepSeekWebSearchEnabled(params, checked)
+                      )}
+                    />
+                  </div>
+                {deepSeekExtraParamsError && (
+                  <p role="alert" className="text-xs text-destructive sm:col-span-2 md:col-span-3">
+                    额外参数配置冲突：{deepSeekExtraParamsError}
+                  </p>
+                )}
+              </div>
+            )}
+
             {advancedModelSettingsVisible && (
               <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10 sm:space-y-4 sm:p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="model_cache" className="cursor-pointer">支持缓存</Label>
+                    <p className="text-xs text-muted-foreground">
+                      标记该模型支持提示词缓存，并启用缓存价格配置
+                    </p>
+                  </div>
+                  <Switch
+                    id="model_cache"
+                    checked={editingModel?.cache || false}
+                    onCheckedChange={(checked) =>
+                      setEditingModel((prev) =>
+                        prev ? { ...prev, cache: checked } : null
+                      )
+                    }
+                  />
+                </div>
                 <div className="flex items-center justify-between gap-4">
                   <div className="space-y-1">
                     <Label htmlFor="force_stream_mode" className="cursor-pointer">强制流式输出模式</Label>
@@ -1463,8 +1595,9 @@ function ModelConfigPageContent() {
               </div>
             )}
 
-            {/* 模型级别温度 */}
-            <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
+            <div className="grid items-start gap-3 md:grid-cols-2 md:gap-4">
+              {/* 模型级别温度 */}
+              <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5">
@@ -1559,10 +1692,10 @@ function ModelConfigPageContent() {
                   </p>
                 </div>
               )}
-            </div>
+              </div>
 
-            {/* 模型级别最大 Token */}
-            <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
+              {/* 模型级别最大 Token */}
+              <div className="space-y-2 rounded-lg border p-3 sm:space-y-3 sm:p-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5">
@@ -1625,6 +1758,7 @@ function ModelConfigPageContent() {
                   </p>
                 </div>
               )}
+              </div>
             </div>
 
             {/* 额外参数 */}
@@ -1679,7 +1813,7 @@ function ModelConfigPageContent() {
               data-dialog-action="confirm"
               className="flex-1 sm:flex-none"
               onClick={handleSaveEdit}
-              disabled={saving}
+              disabled={saving || Boolean(deepSeekExtraParamsError)}
               data-tour="model-save-button"
             >
               {saving ? '保存中...' : '保存'}
@@ -1765,6 +1899,10 @@ function ModelConfigPageContent() {
         open={extraParamsDialogOpen}
         onOpenChange={setExtraParamsDialogOpen}
         value={editingModel?.extra_params || {}}
+        validate={deepSeekClientType
+          ? (params) => validateDeepSeekExtraParams(params, deepSeekClientType)
+          : undefined
+        }
         onChange={(params) =>
           setEditingModel((prev) =>
             prev ? { ...prev, extra_params: params } : null

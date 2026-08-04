@@ -16,7 +16,7 @@ import { ApiError, backendApi, statsApi } from '@/lib/http'
 export interface PackProvider {
   name: string
   base_url: string
-  client_type: 'openai' | 'gemini'
+  client_type: 'openai' | 'openai_responses' | 'gemini'
   max_retry?: number
   timeout?: number
   retry_interval?: number

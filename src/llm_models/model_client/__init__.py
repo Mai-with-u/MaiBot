@@ -4,6 +4,7 @@ from src.config.config import config_manager
 
 _CLIENT_MODULE_BY_TYPE: dict[str, str] = {
     "openai": ".openai_client",
+    "openai_responses": ".openai_responses_client",
     "gemini": ".gemini_client",
 }
 

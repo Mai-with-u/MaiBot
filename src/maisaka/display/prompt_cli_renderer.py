@@ -27,6 +27,7 @@ DATA_IMAGE_DIR = REPO_ROOT / "data" / "images"
 DATA_EMOJI_DIR = REPO_ROOT / "data" / "emoji"
 DATA_PROMPT_IMAGE_DIR = REPO_ROOT / "data" / "prompt_imgs"
 SUPPORTED_STRUCTURED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "webp", "gif"}
+PROVIDER_RESPONSE_BASE64_OMIT_THRESHOLD_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -470,6 +471,78 @@ class PromptCLIVisualizer:
 
         return value
 
+    @staticmethod
+    def _build_omitted_binary_reference(
+        value: str | bytes,
+        *,
+        size_bytes: int,
+        media_type: str = "",
+    ) -> dict[str, Any]:
+        """为未写入 Prompt JSON 的大块 Base64 或二进制数据构建可核验占位。"""
+
+        raw_bytes = value.encode("utf-8") if isinstance(value, str) else value
+        reference: dict[str, Any] = {
+            "type": "omitted_binary",
+            "size_bytes": size_bytes,
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        }
+        if isinstance(value, str):
+            reference["base64_omitted"] = True
+            reference["encoded_chars"] = len(value)
+        else:
+            reference["binary_omitted"] = True
+        if media_type:
+            reference["media_type"] = media_type
+        return reference
+
+    @staticmethod
+    def _looks_like_large_base64(value: str) -> bool:
+        """识别超过阈值的普通或 URL-safe Base64 字符串。"""
+
+        normalized = value.strip()
+        if len(normalized) * 3 // 4 <= PROVIDER_RESPONSE_BASE64_OMIT_THRESHOLD_BYTES:
+            return False
+        allowed_characters = frozenset(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-"
+        )
+        return bool(normalized) and all(character in allowed_characters for character in normalized)
+
+    @classmethod
+    def _sanitize_provider_response_value(cls, value: Any, *, keep_base64: bool) -> Any:
+        """完整保留 Provider 响应，仅将特别大的 Base64 和原始二进制替换为占位。"""
+
+        if keep_base64:
+            return value
+        if isinstance(value, bytes):
+            return cls._build_omitted_binary_reference(value, size_bytes=len(value))
+        if isinstance(value, str):
+            normalized_value = value.strip()
+            if normalized_value.startswith("data:") and ";base64," in normalized_value:
+                header, base64_value = normalized_value.split(",", maxsplit=1)
+                size_bytes = max(0, len(base64_value) * 3 // 4)
+                if size_bytes > PROVIDER_RESPONSE_BASE64_OMIT_THRESHOLD_BYTES:
+                    media_type = header.removeprefix("data:").split(";", maxsplit=1)[0]
+                    return cls._build_omitted_binary_reference(
+                        base64_value,
+                        size_bytes=size_bytes,
+                        media_type=media_type,
+                    )
+                return value
+            if cls._looks_like_large_base64(normalized_value):
+                return cls._build_omitted_binary_reference(
+                    normalized_value,
+                    size_bytes=max(0, len(normalized_value) * 3 // 4),
+                )
+            return value
+        if isinstance(value, dict):
+            return {
+                str(key): cls._sanitize_provider_response_value(item, keep_base64=False)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._sanitize_provider_response_value(item, keep_base64=False) for item in value]
+        return value
+
     @classmethod
     def build_structured_message_payload(cls, messages: list[Any], *, keep_base64: bool) -> list[dict[str, Any]]:
         """构建 WebUI 可直接解析的 Prompt 消息结构。"""
@@ -549,12 +622,13 @@ class PromptCLIVisualizer:
         output_title: str,
         output_tool_calls: list[Any] | None,
         metadata: Mapping[str, Any] | None,
+        provider_response: Mapping[str, Any] | None,
         keep_base64: bool,
     ) -> dict[str, Any]:
         """构建 Prompt 预览 JSON，供 WebUI 稳定解析展示。"""
 
-        return {
-            "schema_version": 3,
+        payload = {
+            "schema_version": 4,
             "request": {
                 "kind": request_kind,
                 "selection_reason": selection_reason,
@@ -569,6 +643,12 @@ class PromptCLIVisualizer:
             ),
             "tool_definitions": tool_definitions or [],
         }
+        if provider_response is not None:
+            payload["provider_response"] = cls._sanitize_provider_response_value(
+                dict(provider_response),
+                keep_base64=keep_base64,
+            )
+        return payload
 
     @classmethod
     def _build_preview_access_body(
@@ -662,6 +742,7 @@ class PromptCLIVisualizer:
         output_title: str = "输出结果",
         output_tool_calls: list[Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
     ) -> PromptPreviewAccess:
         """保存 Prompt 预览文件，并返回 CLI 展示入口与浏览器可打开的 URI。"""
 
@@ -678,6 +759,7 @@ class PromptCLIVisualizer:
                 output_title=output_title,
                 output_tool_calls=output_tool_calls,
                 metadata=metadata,
+                provider_response=provider_response,
                 keep_base64=keep_json_base64,
             ),
         )
@@ -696,6 +778,7 @@ class PromptCLIVisualizer:
         output_title: str = "输出结果",
         output_tool_calls: list[Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
     ) -> RenderableType:
         """构建用于查看完整 prompt 的折叠入口内容。"""
 
@@ -710,6 +793,7 @@ class PromptCLIVisualizer:
             output_title=output_title,
             output_tool_calls=output_tool_calls,
             metadata=metadata,
+            provider_response=provider_response,
         ).body
 
     @classmethod
@@ -726,6 +810,7 @@ class PromptCLIVisualizer:
         output_title: str = "输出结果",
         output_tool_calls: list[Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
     ) -> PromptSectionResult:
         """构建默认折叠的 Prompt 面板，并返回对应的结构化预览入口。"""
 
@@ -741,6 +826,7 @@ class PromptCLIVisualizer:
             output_title=output_title,
             output_tool_calls=output_tool_calls,
             metadata=metadata,
+            provider_response=provider_response,
         )
 
         return PromptSectionResult(
@@ -767,6 +853,7 @@ class PromptCLIVisualizer:
         output_title: str = "输出结果",
         output_tool_calls: list[Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
     ) -> RenderableType:
         """构建文本型 Prompt 的折叠入口内容。"""
 
@@ -780,6 +867,7 @@ class PromptCLIVisualizer:
             output_title=output_title,
             output_tool_calls=output_tool_calls,
             metadata=metadata,
+            provider_response=provider_response,
         ).body
 
     @classmethod
@@ -795,6 +883,7 @@ class PromptCLIVisualizer:
         output_title: str = "输出结果",
         output_tool_calls: list[Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        provider_response: Mapping[str, Any] | None = None,
     ) -> PromptPreviewAccess:
         """保存文本型 Prompt 预览文件，并返回对应访问入口。"""
 
@@ -811,6 +900,7 @@ class PromptCLIVisualizer:
                 output_title=output_title,
                 output_tool_calls=output_tool_calls,
                 metadata=metadata,
+                provider_response=provider_response,
                 keep_base64=keep_json_base64,
             ),
         )

@@ -406,6 +406,7 @@ class ExpressionLearner:
                 source_message_count=len(pending_messages),
                 source_type="trimmed_history",
                 output_content=generation_result.response or "",
+                provider_response=generation_result.provider_response,
             )
             response = generation_result.response
         except Exception as e:
@@ -584,6 +585,7 @@ class ExpressionLearner:
         source_message_count: int,
         source_type: str,
         output_content: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存表达学习上下文预览，并在日志中输出查看入口。"""
 
@@ -601,6 +603,7 @@ class ExpressionLearner:
                     f"构建消息数: {len(messages)}"
                 ),
                 output_content=output_content,
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"{self.session_id} 表达学习上下文预览保存失败: {exc}")
