@@ -156,6 +156,9 @@ class AMemorixHostService:
     def get_config(self) -> Dict[str, Any]:
         return dict(self._read_config())
 
+    def get_runtime_data_dir(self) -> Path:
+        return self._runtime_data_dir()
+
     def is_enabled(self) -> bool:
         return self._is_enabled_config(self._read_config())
 

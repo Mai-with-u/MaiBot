@@ -446,6 +446,9 @@ class ImportTaskManager:
     def _resolve_import_root(self) -> Path:
         return self._resolve_data_dir() / "imports"
 
+    def _resolve_upload_staging_root(self) -> Path:
+        return self._resolve_import_root() / "staging"
+
     def _migrate_legacy_import_state(self) -> None:
         """迁移仍有长期价值的旧导入状态，临时任务目录不参与迁移。"""
         data_dir = self._resolve_data_dir()
@@ -1467,6 +1470,11 @@ class ImportTaskManager:
                 if isinstance(uploaded, dict):
                     staged_path_raw = uploaded.get("staged_path") or uploaded.get("path") or ""
                     staged_path = Path(str(staged_path_raw or "")).expanduser().resolve()
+                    staging_root = self._resolve_upload_staging_root().resolve()
+                    try:
+                        staged_path.relative_to(staging_root)
+                    except ValueError:
+                        raise ValueError(f"上传暂存文件必须位于导入目录: {staging_root}") from None
                     if not staged_path.is_file():
                         raise ValueError(f"上传暂存文件不存在: {staged_path}")
                     name = _safe_filename(uploaded.get("filename") or uploaded.get("name") or staged_path.name)

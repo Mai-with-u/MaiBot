@@ -200,6 +200,7 @@ def _build_manager(
     embedding_manager: _DummyEmbeddingManager | None = None,
     relation_vectorization_enabled: bool = False,
     vector_pool_mode: str = "single",
+    data_dir: Path | None = None,
 ) -> tuple[ImportTaskManager, _DummyMetadataStore]:
     metadata_store = _DummyMetadataStore()
     config = {
@@ -209,6 +210,8 @@ def _build_manager(
         },
         "retrieval.vector_pools.mode": vector_pool_mode,
     }
+    if data_dir is not None:
+        config["storage.data_dir"] = str(data_dir)
     graph_store = _DummyGraphStore()
     legacy_vector_store = _DummyVectorStore()
     paragraph_vector_store = _DummyVectorStore()
@@ -332,6 +335,34 @@ def test_import_task_kinds_use_their_fixed_aliases(tmp_path: Path) -> None:
 
     legacy_target = manager._normalize_lpmm_convert_params({"target_alias": "plugin_data"})
     assert legacy_target["target_alias"] == "converted"
+
+
+@pytest.mark.asyncio
+async def test_staged_upload_must_stay_under_import_root(tmp_path: Path, monkeypatch) -> None:
+    data_dir = tmp_path / "a-memorix"
+    manager, _ = _build_manager(data_dir=data_dir)
+    staged_file = data_dir / "imports" / "staging" / "request" / "demo.txt"
+    staged_file.parent.mkdir(parents=True)
+    staged_file.write_text("demo", encoding="utf-8")
+
+    async def skip_worker() -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_worker", skip_worker)
+    summary = await manager.create_upload_task(
+        [{"staged_path": str(staged_file), "filename": "demo.txt"}],
+        {"strategy_override": "factual"},
+    )
+
+    task = manager._tasks[summary["task_id"]]
+    assert Path(task.files[0].temp_path).is_relative_to(data_dir / "imports" / "tasks")
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+    with pytest.raises(ValueError, match="必须位于导入目录"):
+        await manager.create_upload_task(
+            [{"staged_path": str(outside_file), "filename": "outside.txt"}],
+            {"strategy_override": "factual"},
+        )
 
 
 def test_maibot_migration_allows_live_db_or_import_directory(tmp_path: Path) -> None:
