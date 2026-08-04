@@ -26,6 +26,8 @@ def build_planner_prefix(
     include_message_id: bool = True,
     include_chat_id: bool = False,
     is_self_message: bool = False,
+    is_at: bool = False,
+    is_mentioned: bool = False,
 ) -> str:
     """构造 Maisaka 规划器使用的统一消息前缀。
 
@@ -36,9 +38,11 @@ def build_planner_prefix(
         message_id: 消息 ID。
         chat_id: 聊天流 ID。
         quote_ids: 被引用消息 ID 列表。
-        include_message_id: 是否输出 `msg_id` 段。
-        include_chat_id: 是否输出 `chat_id` 段。
+        include_message_id: 是否输出 ``msg_id`` 段。
+        include_chat_id: 是否输出 ``chat_id`` 段。
         is_self_message: 是否显式标注这条消息是 bot 自己发送的。
+        is_at: 是否显式标注这条消息 @ 了 bot。
+        is_mentioned: 是否显式标注这条消息提及了 bot。
 
     Returns:
         str: 拼接完成的规划器前缀。
@@ -69,6 +73,10 @@ def build_planner_prefix(
         message_attrs.append(f'group_card="{escape(normalized_group_card, quote=True)}"')
     if is_self_message:
         message_attrs.append('is_self_message="true"')
+    if is_at:
+        message_attrs.append('is_at="true"')
+    if is_mentioned:
+        message_attrs.append('is_mentioned="true"')
     return f"<message {' '.join(message_attrs)}>\n"
 
 
@@ -117,8 +125,8 @@ def build_planner_user_prefix_from_session_message(
 
     Args:
         message: 原始会话消息。
-        include_message_id: 是否输出 `msg_id` 段。
-        include_chat_id: 是否输出 `chat_id` 段。
+        include_message_id: 是否输出 ``msg_id`` 段。
+        include_chat_id: 是否输出 ``chat_id`` 段。
         is_self_message: 是否显式标注这条消息是 bot 自己发送的。
 
     Returns:
@@ -137,6 +145,8 @@ def build_planner_user_prefix_from_session_message(
         include_message_id=include_message_id and not message.is_notify and bool(message.message_id),
         include_chat_id=include_chat_id,
         is_self_message=is_self_message,
+        is_at=message.is_at,
+        is_mentioned=message.is_mentioned,
     )
 
 

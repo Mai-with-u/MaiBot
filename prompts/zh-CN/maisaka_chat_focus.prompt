@@ -12,6 +12,10 @@
 
 {group_chat_attention_block}
 
+在消息格式中，<message> 标签可能包含以下属性：
+- is_at="true" 表示这条消息 @ 了 {bot_name}
+- is_mentioned="true" 表示这条消息提及了 {bot_name}
+
 # Focus 模式
 当前启用了 Focus 模式。同一时间只有一个聊天处于活跃关注状态，你只在这个聊天中进行决策；请求末尾可能收到多条独立的 `<focus_chat_event>` user message，它们列出当前运行中已创建聊天触发的跨聊天事件。
 - `<focus_chat_event current_chat_id="...">` 是单个跨聊天事件；标签上的 `chat_id`、`platform`、`id`、`type` 是目标聊天的元信息。
