@@ -281,6 +281,7 @@ class LPMMConverter:
                 ids_list = []
                 relation_hashes = []
                 relation_edges = []
+                seen_vector_ids: set[str] = set()
                 for _, row in df_batch.iterrows():
                     processed_rows += 1
                     emb = row["embedding"]
@@ -309,8 +310,6 @@ class LPMMConverter:
                             source_paragraph=None,
                         )
                         vector_id = f"relation:{store_id}"
-                        relation_hashes.append(store_id)
-                        relation_edges.append((subject, obj))
                     else:
                         raw_content = row[content_col]
                         content = str(raw_content or "").strip()
@@ -330,8 +329,14 @@ class LPMMConverter:
                     raw_hash = row["hash"] if "hash" in df_batch.columns else None
                     if raw_hash is not None and not (isinstance(raw_hash, float) and np.isnan(raw_hash)):
                         self._register_id_mapping(raw_hash, store_id, p_type)
+                    if vector_id in seen_vector_ids:
+                        continue
+                    seen_vector_ids.add(vector_id)
                     embeddings_list.append(emb_np)
                     ids_list.append(vector_id)
+                    if p_type == "relation":
+                        relation_hashes.append(store_id)
+                        relation_edges.append((subject, obj))
 
                 if embeddings_list:
                     target_store = (

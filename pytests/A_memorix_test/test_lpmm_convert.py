@@ -166,6 +166,52 @@ def test_lpmm_converter_writes_loadable_dual_pools_and_refuses_overwrite(tmp_pat
     assert manifest_path.read_bytes() == committed_manifest
 
 
+def test_lpmm_converter_deduplicates_semantic_ids_within_batch(tmp_path: Path) -> None:
+    input_dir, output_dir = _conversion_paths(tmp_path)
+    _write_parquet(
+        input_dir / "paragraph.parquet",
+        [
+            {"hash": "paragraph-a", "str": "重复段落", "embedding": [1.0, 0.0]},
+            {"hash": "paragraph-b", "str": "重复段落", "embedding": [1.0, 0.0]},
+        ],
+    )
+    _write_parquet(
+        input_dir / "entity.parquet",
+        [
+            {"hash": "entity-a", "str": "重复实体", "embedding": [0.0, 1.0]},
+            {"hash": "entity-b", "str": "重复实体", "embedding": [0.0, 1.0]},
+        ],
+    )
+    relation = {
+        "subject": "重复实体",
+        "predicate": "关联",
+        "object": "重复目标",
+        "embedding": [0.5, 0.5],
+    }
+    _write_parquet(
+        input_dir / "relation.parquet",
+        [{"hash": "relation-a", **relation}, {"hash": "relation-b", **relation}],
+    )
+
+    result = _run_convert(input_dir, output_dir)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    manifest = json.loads((output_dir / "vectors" / "dual_ready.json").read_text(encoding="utf-8"))
+    assert manifest["stats"] == {
+        "paragraphs": {"done": 1, "failed": 0},
+        "entities": {"done": 1, "failed": 0},
+        "relations": {"done": 1, "failed": 0},
+    }
+    metadata_store = MetadataStore(data_dir=output_dir / "metadata")
+    metadata_store.connect()
+    assert len(metadata_store.query("SELECT hash FROM paragraphs")) == 1
+    assert len(metadata_store.query("SELECT hash FROM entities")) == 1
+    relation_rows = metadata_store.query("SELECT hash, vector_state FROM relations")
+    metadata_store.close()
+    assert len(relation_rows) == 1
+    assert relation_rows[0]["vector_state"] == "ready"
+
+
 def test_lpmm_converter_dimension_failure_does_not_publish_ready_manifest(tmp_path: Path) -> None:
     input_dir, output_dir = _conversion_paths(tmp_path)
     _write_parquet(
