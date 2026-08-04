@@ -12,6 +12,7 @@ from src.A_memorix.core.retrieval.dual_path import (
     DualPathRetriever,
     DualPathRetrieverConfig,
     RetrievalResult,
+    RetrievalScope,
     TemporalQueryOptions,
     VectorPoolsConfig,
 )
@@ -27,6 +28,35 @@ from src.A_memorix.core.utils.search_execution_service import (
 
 class _PluginStub:
     pass
+
+
+def test_search_request_key_distinguishes_scope_resource_sets() -> None:
+    first_scope = RetrievalScope(
+        key="chat:shared",
+        paragraph_ids=frozenset({"paragraph-a"}),
+        relation_ids=frozenset({"relation-a"}),
+    )
+    equivalent_scope = RetrievalScope(
+        key="chat:shared",
+        paragraph_ids=frozenset({"paragraph-a"}),
+        relation_ids=frozenset({"relation-a"}),
+    )
+    changed_scope = RetrievalScope(
+        key="chat:shared",
+        paragraph_ids=frozenset({"paragraph-b"}),
+        relation_ids=frozenset({"relation-a"}),
+    )
+
+    def build_key(scope: RetrievalScope) -> str:
+        return SearchExecutionService._build_request_key(
+            SearchExecutionRequest(caller="test", query="同一查询", top_k=5, scope=scope),
+            "search",
+            5,
+            None,
+        )
+
+    assert build_key(first_scope) == build_key(equivalent_scope)
+    assert build_key(first_scope) != build_key(changed_scope)
 
 
 class _ConcurrentRequestRetriever:

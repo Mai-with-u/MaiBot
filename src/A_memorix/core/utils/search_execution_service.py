@@ -84,6 +84,25 @@ class SearchExecutionResult:
 
 
 class SearchExecutionService:
+    @staticmethod
+    def _scope_identity(scope: Optional[RetrievalScope]) -> str:
+        if scope is None:
+            return ""
+        digest = hashlib.sha1()
+        for label, values in (
+            ("paragraph", scope.paragraph_ids),
+            ("relation", scope.relation_ids),
+            ("entity", scope.entity_ids),
+            ("episode", scope.episode_ids),
+        ):
+            digest.update(label.encode("utf-8"))
+            digest.update(b"\0")
+            for value in sorted(values):
+                encoded = value.encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+        return f"{scope.key}:{digest.hexdigest()}"
+
     """统一检索执行服务。"""
 
     @staticmethod
@@ -193,7 +212,7 @@ class SearchExecutionService:
             "time_to_ts": temporal.time_to if temporal else None,
             "person": _sanitize_text(request.person),
             "source": _sanitize_text(request.source),
-            "scope": request.scope.key if request.scope is not None else "",
+            "scope": SearchExecutionService._scope_identity(request.scope),
             "top_k": int(top_k),
             "use_threshold": bool(request.use_threshold),
             "enable_ppr": bool(request.enable_ppr),

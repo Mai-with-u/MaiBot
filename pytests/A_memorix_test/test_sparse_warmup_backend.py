@@ -64,6 +64,38 @@ def test_sparse_tokenized_shadow_index_search_and_delete(tmp_path: Path) -> None
         store.close()
 
 
+def test_scoped_sparse_search_filters_in_sql_before_limit(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    index = None
+    try:
+        store.add_paragraph("scopeprobe 排除段落", source="test")
+        allowed_paragraph = store.add_paragraph("scopeprobe 允许段落", source="test")
+        store.add_relation("scopeprobe", "关联", "排除关系")
+        allowed_relation = store.add_relation("scopeprobe", "关联", "允许关系")
+        index = SparseBM25Index(
+            metadata_store=store,
+            config=SparseBM25Config(enable_ngram_fallback_index=False),
+        )
+        assert index.ensure_loaded()
+        statements: list[str] = []
+        assert index._conn is not None
+        index._conn.set_trace_callback(statements.append)
+
+        paragraph_rows = index.search("scopeprobe", k=1, allowed_ids={allowed_paragraph})
+        relation_rows = index.search_relations("scopeprobe", k=1, allowed_ids={allowed_relation})
+
+        assert [row["hash"] for row in paragraph_rows] == [allowed_paragraph]
+        assert [row["hash"] for row in relation_rows] == [allowed_relation]
+        match_queries = [statement for statement in statements if " MATCH " in statement]
+        assert len(match_queries) == 2
+        assert all("json_each" in statement for statement in match_queries)
+    finally:
+        if index is not None:
+            index.unload()
+        store.close()
+
+
 def test_sparse_tokenized_shadow_index_incremental_lifecycle(tmp_path: Path) -> None:
     store = MetadataStore(data_dir=tmp_path)
     store.connect()

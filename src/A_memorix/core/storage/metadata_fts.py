@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, List, Optional, Sequence, Tuple
 
+import json
 import re
 import sqlite3
 import time
@@ -14,6 +15,21 @@ logger = get_logger("A_Memorix.MetadataFTS")
 
 class MetadataFTSMixin:
     """维护 FTS、BM25 与字符 n-gram 索引。"""
+
+    @staticmethod
+    def _allowed_hash_filter(
+        column: str,
+        allowed_hashes: Optional[Collection[str]],
+    ) -> Tuple[str, List[Any]]:
+        if allowed_hashes is None:
+            return "", []
+        normalized = list(dict.fromkeys(str(value) for value in allowed_hashes if str(value)))
+        if not normalized:
+            return " AND 0", []
+        return (
+            f" AND {column} IN (SELECT value FROM json_each(?))",
+            [json.dumps(normalized, ensure_ascii=False)],
+        )
 
     def ensure_fts_schema(self, conn: Optional[sqlite3.Connection] = None) -> bool:
         """
@@ -363,6 +379,7 @@ class MetadataFTSMixin:
         limit: int = 20,
         max_doc_len: int = 2000,
         conn: Optional[sqlite3.Connection] = None,
+        allowed_hashes: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """使用预分词段落 FTS5 shadow index 执行 BM25 检索。"""
         if not match_query.strip():
@@ -370,18 +387,20 @@ class MetadataFTSMixin:
 
         c = self._resolve_conn(conn)
         cur = c.cursor()
+        scope_clause, scope_params = self._allowed_hash_filter("p.hash", allowed_hashes)
         try:
             cur.execute(
-                """
+                f"""
                 SELECT p.hash, p.content, bm25(paragraphs_tokenized_fts) AS bm25_score
                 FROM paragraphs_tokenized_fts
                 JOIN paragraphs p ON p.hash = paragraphs_tokenized_fts.paragraph_hash
                 WHERE paragraphs_tokenized_fts MATCH ?
                   AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+                  {scope_clause}
                 ORDER BY bm25_score ASC
                 LIMIT ?
                 """,
-                (match_query, max(1, int(limit))),
+                (match_query, *scope_params, max(1, int(limit))),
             )
             rows = cur.fetchall()
             results: List[Dict[str, Any]] = []
@@ -742,6 +761,7 @@ class MetadataFTSMixin:
         limit: int = 20,
         max_doc_len: int = 2000,
         conn: Optional[sqlite3.Connection] = None,
+        allowed_hashes: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         使用 FTS5 + bm25 执行全文检索。
@@ -751,18 +771,20 @@ class MetadataFTSMixin:
 
         c = self._resolve_conn(conn)
         cur = c.cursor()
+        scope_clause, scope_params = self._allowed_hash_filter("p.hash", allowed_hashes)
         try:
             cur.execute(
-                """
+                f"""
                 SELECT p.hash, p.content, bm25(paragraphs_fts) AS bm25_score
                 FROM paragraphs_fts
                 JOIN paragraphs p ON p.rowid = paragraphs_fts.rowid
                 WHERE paragraphs_fts MATCH ?
                   AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+                  {scope_clause}
                 ORDER BY bm25_score ASC
                 LIMIT ?
                 """,
-                (match_query, max(1, int(limit))),
+                (match_query, *scope_params, max(1, int(limit))),
             )
             rows = cur.fetchall()
             results: List[Dict[str, Any]] = []
@@ -789,6 +811,7 @@ class MetadataFTSMixin:
         max_doc_len: int = 512,
         include_inactive: bool = True,
         conn: Optional[sqlite3.Connection] = None,
+        allowed_hashes: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """使用 FTS5 + bm25 执行关系全文检索。"""
         if not match_query.strip():
@@ -797,6 +820,7 @@ class MetadataFTSMixin:
         c = self._resolve_conn(conn)
         cur = c.cursor()
         active_clause = "" if include_inactive else " AND (r.is_inactive IS NULL OR r.is_inactive = 0)"
+        scope_clause, scope_params = self._allowed_hash_filter("r.hash", allowed_hashes)
         try:
             cur.execute(
                 f"""
@@ -810,10 +834,11 @@ class MetadataFTSMixin:
                 JOIN relations r ON r.hash = relations_fts.relation_hash
                 WHERE relations_fts MATCH ?
                 {active_clause}
+                {scope_clause}
                 ORDER BY bm25_score ASC
                 LIMIT ?
                 """,
-                (match_query, max(1, int(limit))),
+                (match_query, *scope_params, max(1, int(limit))),
             )
             rows = cur.fetchall()
             out: List[Dict[str, Any]] = []
@@ -842,6 +867,7 @@ class MetadataFTSMixin:
         limit: int = 20,
         max_doc_len: int = 2000,
         conn: Optional[sqlite3.Connection] = None,
+        allowed_hashes: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """按 ngram 倒排索引检索段落，避免 LIKE 全表扫描。"""
         uniq = [t for t in dict.fromkeys([str(x).strip().lower() for x in tokens]) if t]
@@ -851,6 +877,7 @@ class MetadataFTSMixin:
         c = self._resolve_conn(conn)
         cur = c.cursor()
         placeholders = ",".join(["?"] * len(uniq))
+        scope_clause, scope_params = self._allowed_hash_filter("p.hash", allowed_hashes)
         try:
             cur.execute(
                 f"""
@@ -862,11 +889,12 @@ class MetadataFTSMixin:
                 JOIN paragraphs p ON p.hash = ng.paragraph_hash
                 WHERE ng.term IN ({placeholders})
                   AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+                  {scope_clause}
                 GROUP BY p.hash, p.content
                 ORDER BY hit_terms DESC
                 LIMIT ?
                 """,
-                tuple(uniq + [max(1, int(limit))]),
+                tuple(uniq + scope_params + [max(1, int(limit))]),
             )
             rows = cur.fetchall()
             out: List[Dict[str, Any]] = []

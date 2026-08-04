@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+import json
 import time
 
 from src.chat.message_receive.chat_manager import chat_manager
@@ -241,13 +242,40 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         if self.metadata_store is None:
             return RetrievalScope(key=scope_key)
 
+        allowed_chat_ids_json = json.dumps(sorted(allowed_chat_ids), ensure_ascii=False)
         paragraph_ids: set[str] = set()
         paragraph_rows = self.metadata_store.query(
             """
+            WITH allowed_chat_ids(value) AS (
+                SELECT CAST(value AS TEXT) FROM json_each(?)
+            ), paragraph_candidates AS (
+                SELECT
+                    hash,
+                    source,
+                    metadata,
+                    CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END AS metadata_json
+                FROM paragraphs
+                WHERE is_deleted IS NULL OR is_deleted = 0
+            )
             SELECT hash, source, metadata
-            FROM paragraphs
-            WHERE is_deleted IS NULL OR is_deleted = 0
-            """
+            FROM paragraph_candidates p
+            WHERE LOWER(COALESCE(json_extract(p.metadata_json, '$.scope_type'), '')) = 'global'
+               OR p.source LIKE 'web_import:%'
+               OR COALESCE(json_extract(p.metadata_json, '$.source'), '') LIKE 'web_import:%'
+               OR EXISTS (
+                    SELECT 1
+                    FROM allowed_chat_ids allowed
+                    WHERE p.source = 'chat_summary:' || allowed.value
+               )
+               OR EXISTS (
+                    SELECT 1
+                    FROM json_tree(p.metadata_json) metadata_value
+                    JOIN allowed_chat_ids allowed
+                      ON CAST(metadata_value.value AS TEXT) = allowed.value
+                    WHERE metadata_value.type IN ('text', 'integer', 'real')
+               )
+            """,
+            (allowed_chat_ids_json,),
         )
         for paragraph in paragraph_rows:
             scope_kind, paragraph_chat_ids = self._paragraph_scope_identity(paragraph)
@@ -262,11 +290,19 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         if paragraph_ids:
             for row in self.metadata_store.query(
                 """
+                WITH allowed_paragraphs(value) AS (
+                    SELECT CAST(value AS TEXT) FROM json_each(?)
+                )
                 SELECT r.hash, r.source_paragraph, pr.paragraph_hash
                 FROM relations r
                 LEFT JOIN paragraph_relations pr ON pr.relation_hash = r.hash
                 WHERE r.is_inactive IS NULL OR r.is_inactive = 0
-                """
+                  AND (
+                       r.source_paragraph IN (SELECT value FROM allowed_paragraphs)
+                    OR pr.paragraph_hash IN (SELECT value FROM allowed_paragraphs)
+                  )
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
             ):
                 if (
                     str(row.get("source_paragraph", "") or "").strip() in paragraph_ids
@@ -281,14 +317,21 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 FROM paragraph_entities pe
                 JOIN entities e ON e.hash = pe.entity_hash
                 WHERE e.is_deleted IS NULL OR e.is_deleted = 0
-                """
+                  AND pe.paragraph_hash IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
             ):
                 if str(row.get("paragraph_hash", "") or "").strip() in paragraph_ids:
                     entity_hash = str(row.get("entity_hash", "") or "").strip()
                     if entity_hash:
                         entity_ids.add(entity_hash)
             for row in self.metadata_store.query(
-                "SELECT episode_id, paragraph_hash FROM episode_paragraphs"
+                """
+                SELECT episode_id, paragraph_hash
+                FROM episode_paragraphs
+                WHERE paragraph_hash IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
             ):
                 if str(row.get("paragraph_hash", "") or "").strip() in paragraph_ids:
                     episode_id = str(row.get("episode_id", "") or "").strip()

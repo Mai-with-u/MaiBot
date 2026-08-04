@@ -8,6 +8,7 @@ import pytest
 from src.A_memorix.core.retrieval import RetrievalResult, RetrievalScope
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
+from src.A_memorix.core.storage import MetadataStore
 
 
 class _DummyMetadataStore:
@@ -487,6 +488,57 @@ def test_retrieval_scope_keeps_explicit_and_legacy_global_data(tmp_path) -> None
         }
     )
     assert scope.relation_ids == frozenset({"rel-current", "rel-global"})
+
+
+def test_retrieval_scope_filters_real_store_associations_in_sql(tmp_path: Path) -> None:
+    data_dir = tmp_path / "memory"
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(data_dir)}},
+    )
+    metadata_store = MetadataStore(data_dir=data_dir / "metadata")
+    metadata_store.connect()
+    try:
+        current_paragraph = metadata_store.add_paragraph(
+            "当前聊天范围段落",
+            source="chat_summary:session-current",
+            metadata={"scope_type": "chat", "chat_id": "session-current"},
+        )
+        other_paragraph = metadata_store.add_paragraph(
+            "其他聊天范围段落",
+            source="chat_summary:session-other",
+            metadata={"scope_type": "chat", "chat_id": "session-other"},
+        )
+        global_paragraph = metadata_store.add_paragraph(
+            "旧版全局导入段落",
+            source="web_import:legacy.txt",
+        )
+        current_entity = metadata_store.add_entity("当前范围实体", source_paragraph=current_paragraph)
+        other_entity = metadata_store.add_entity("其他范围实体", source_paragraph=other_paragraph)
+        current_relation = metadata_store.add_relation("当前", "属于", "范围", source_paragraph=current_paragraph)
+        other_relation = metadata_store.add_relation("其他", "属于", "范围", source_paragraph=other_paragraph)
+        kernel.metadata_store = metadata_store
+        statements: list[str] = []
+        metadata_store._conn.set_trace_callback(statements.append)
+
+        service = kernel._get_search_hit_service()
+        scope = type(service)._resolve_retrieval_scope(service, "session-current")
+
+        assert scope is not None
+        assert scope.paragraph_ids == frozenset({current_paragraph, global_paragraph})
+        assert current_entity in scope.entity_ids
+        assert other_entity not in scope.entity_ids
+        assert current_relation in scope.relation_ids
+        assert other_relation not in scope.relation_ids
+        association_queries = [
+            statement
+            for statement in statements
+            if any(table in statement for table in ("FROM relations", "FROM paragraph_entities", "FROM episode_paragraphs"))
+        ]
+        assert len(association_queries) == 3
+        assert all("json_each" in statement for statement in association_queries)
+    finally:
+        metadata_store.close()
 
 
 @pytest.mark.asyncio
