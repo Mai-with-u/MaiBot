@@ -296,7 +296,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 SELECT r.hash, r.source_paragraph, pr.paragraph_hash
                 FROM relations r
                 LEFT JOIN paragraph_relations pr ON pr.relation_hash = r.hash
-                WHERE r.is_inactive IS NULL OR r.is_inactive = 0
+                WHERE (r.is_inactive IS NULL OR r.is_inactive = 0)
                   AND (
                        r.source_paragraph IN (SELECT value FROM allowed_paragraphs)
                     OR pr.paragraph_hash IN (SELECT value FROM allowed_paragraphs)
@@ -316,7 +316,7 @@ class MemorySearchHitProcessingService(KernelServiceBase):
                 SELECT pe.entity_hash, pe.paragraph_hash
                 FROM paragraph_entities pe
                 JOIN entities e ON e.hash = pe.entity_hash
-                WHERE e.is_deleted IS NULL OR e.is_deleted = 0
+                WHERE (e.is_deleted IS NULL OR e.is_deleted = 0)
                   AND pe.paragraph_hash IN (SELECT CAST(value AS TEXT) FROM json_each(?))
                 """,
                 (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),

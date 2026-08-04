@@ -490,7 +490,10 @@ def test_retrieval_scope_keeps_explicit_and_legacy_global_data(tmp_path) -> None
     assert scope.relation_ids == frozenset({"rel-current", "rel-global"})
 
 
-def test_retrieval_scope_filters_real_store_associations_in_sql(tmp_path: Path) -> None:
+def test_retrieval_scope_filters_real_store_associations_in_sql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     data_dir = tmp_path / "memory"
     kernel = SDKMemoryKernel(
         plugin_root=tmp_path,
@@ -517,8 +520,30 @@ def test_retrieval_scope_filters_real_store_associations_in_sql(tmp_path: Path) 
         other_entity = metadata_store.add_entity("其他范围实体", source_paragraph=other_paragraph)
         current_relation = metadata_store.add_relation("当前", "属于", "范围", source_paragraph=current_paragraph)
         other_relation = metadata_store.add_relation("其他", "属于", "范围", source_paragraph=other_paragraph)
+        metadata_store._conn.execute(
+            "UPDATE entities SET is_deleted = NULL WHERE hash IN (?, ?)",
+            (current_entity, other_entity),
+        )
+        metadata_store._conn.execute(
+            "UPDATE relations SET is_inactive = NULL WHERE hash IN (?, ?)",
+            (current_relation, other_relation),
+        )
+        metadata_store._conn.commit()
         kernel.metadata_store = metadata_store
         statements: list[str] = []
+        association_rows: dict[str, list[dict[str, Any]]] = {}
+        original_query = metadata_store.query
+
+        def recording_query(sql: str, params: tuple[Any, ...] | None = None) -> list[dict[str, Any]]:
+            rows = original_query(sql, params)
+            normalized_sql = " ".join(sql.split())
+            if "FROM relations r" in normalized_sql:
+                association_rows["relations"] = rows
+            elif "FROM paragraph_entities pe" in normalized_sql:
+                association_rows["entities"] = rows
+            return rows
+
+        monkeypatch.setattr(metadata_store, "query", recording_query)
         metadata_store._conn.set_trace_callback(statements.append)
 
         service = kernel._get_search_hit_service()
@@ -530,6 +555,8 @@ def test_retrieval_scope_filters_real_store_associations_in_sql(tmp_path: Path) 
         assert other_entity not in scope.entity_ids
         assert current_relation in scope.relation_ids
         assert other_relation not in scope.relation_ids
+        assert {row["hash"] for row in association_rows["relations"]} == {current_relation}
+        assert {row["entity_hash"] for row in association_rows["entities"]} == {current_entity}
         association_queries = [
             statement
             for statement in statements
