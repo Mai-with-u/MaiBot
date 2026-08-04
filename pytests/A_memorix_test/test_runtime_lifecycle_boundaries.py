@@ -117,7 +117,12 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
         def __init__(self, facade: Any, *, import_write_blocked_provider: Any) -> None:
             events.append("retrieval_tuning_manager")
 
-    monkeypatch.setattr(kernel_module, "run_startup_format_migration", lambda data_dir: events.append("migration"))
+    def fail_startup_migration(data_dir: Path) -> None:
+        del data_dir
+        events.append("migration")
+        raise RuntimeError("injected startup migration failure")
+
+    monkeypatch.setattr(kernel_module, "run_startup_format_migration", fail_startup_migration)
     monkeypatch.setattr(
         kernel_module,
         "create_embedding_api_adapter",

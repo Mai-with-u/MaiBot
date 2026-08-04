@@ -119,6 +119,149 @@ def test_v1_id_mismatch_exposes_structured_integrity_error_and_trusted_view(tmp_
         view.add(_vector(), ["new"])
 
 
+def test_v1_reconciliation_preserves_active_rows_and_keeps_excluded_vectors(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "vectors"
+    evidence_root = tmp_path / "vector_reconciliation_evidence"
+    fingerprint = {"hash": "embedding-fingerprint-v1"}
+    store = VectorStore(dimension=2, data_dir=data_dir, buffer_size=1)
+    store.add(_vector(), ["active"])
+    store.save(embedding_fingerprint=fingerprint)
+    metadata_path = data_dir / "vectors_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        {
+            "schema_version": 1,
+            "known_hashes": ["active", "missing", "inactive", "duplicate-active"],
+            "deleted_ids": [],
+        }
+    )
+    metadata.pop("binary_commit", None)
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+    source_vectors = np.asarray(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [0.5, 0.5],
+            [-1.0, 0.0],
+            [0.0, -1.0],
+        ],
+        dtype=np.float16,
+    )
+    source_ids = np.asarray(
+        [
+            VectorStore._generate_id("active"),
+            VectorStore._generate_id("tail"),
+            VectorStore._generate_id("orphan"),
+            VectorStore._generate_id("duplicate-active"),
+            VectorStore._generate_id("duplicate-active"),
+        ],
+        dtype=">i8",
+    )
+    (data_dir / "vectors.bin").write_bytes(source_vectors.tobytes())
+    (data_dir / "vectors_ids.bin").write_bytes(source_ids.tobytes())
+
+    reloaded = VectorStore(dimension=2, data_dir=data_dir)
+    reloaded.load(
+        expected_embedding_fingerprint=fingerprint,
+        v1_valid_hashes={"active", "tail", "missing", "current-only", "duplicate-active"},
+        v1_evidence_root=evidence_root,
+    )
+
+    assert set(reloaded._known_hashes) == {"active", "tail"}
+    assert reloaded.num_vectors == 2
+    migrated_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert migrated_metadata["schema_version"] == 2
+    assert migrated_metadata["binary_commit"]["id_bytes"] == 16
+    evidence_dirs = list(evidence_root.iterdir())
+    assert len(evidence_dirs) == 1
+    report = json.loads((evidence_dirs[0] / "report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "completed"
+    assert report["preserved"] == ["active"]
+    assert report["recovered_tail"] == ["tail"]
+    assert report["missing_requires_explicit_rebuild"] == ["current-only", "duplicate-active", "missing"]
+    assert report["counts"] == {
+        "source_rows": 5,
+        "accepted_rows": 2,
+        "excluded_rows": 3,
+        "missing": 3,
+    }
+    with np.load(evidence_dirs[0] / "excluded_vectors.npz", allow_pickle=False) as evidence:
+        assert evidence["row_indices"].tolist() == [2, 3, 4]
+        assert evidence["int64_ids"].tolist() == source_ids[[2, 3, 4]].astype(np.int64).tolist()
+        assert np.array_equal(evidence["vectors"], source_vectors[[2, 3, 4]])
+    assert not (data_dir / "vectors_compaction.json").exists()
+    assert not (data_dir / "vectors.bin.compaction.bak").exists()
+    assert not (data_dir / "vectors_ids.bin.compaction.bak").exists()
+
+    second = VectorStore(dimension=2, data_dir=data_dir)
+    second.load(expected_embedding_fingerprint=fingerprint)
+    assert set(second._known_hashes) == {"active", "tail"}
+    assert len(list(evidence_root.iterdir())) == 1
+
+
+def test_v1_reconciliation_pair_switch_failure_restores_source_and_can_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "vectors"
+    evidence_root = tmp_path / "vector_reconciliation_evidence"
+    fingerprint = {"hash": "embedding-fingerprint-v1"}
+    store = VectorStore(dimension=2, data_dir=data_dir, buffer_size=1)
+    store.add(_vector(), ["active"])
+    store.save(embedding_fingerprint=fingerprint)
+    _convert_to_v1_with_fingerprint(data_dir, fingerprint)
+    _append_orphan_vector(data_dir, orphan_id="orphan", vector=np.asarray([0.0, 1.0], dtype=np.float32))
+    original_files = {
+        path.name: path.read_bytes()
+        for path in (
+            data_dir / "vectors.bin",
+            data_dir / "vectors_ids.bin",
+            data_dir / "vectors_metadata.json",
+        )
+    }
+    original_replace = vector_store_module.os.replace
+
+    def fail_id_pair_switch(source: str | Path, target: str | Path) -> None:
+        source_path = Path(source)
+        target_path = Path(target)
+        if source_path == data_dir / "vectors_ids.bin.tmp" and target_path == data_dir / "vectors_ids.bin":
+            raise OSError("injected V1 pair switch failure")
+        original_replace(source, target)
+
+    monkeypatch.setattr(vector_store_module.os, "replace", fail_id_pair_switch)
+    interrupted = VectorStore(dimension=2, data_dir=data_dir)
+    with pytest.raises(OSError, match="injected V1 pair switch failure"):
+        interrupted.load(
+            expected_embedding_fingerprint=fingerprint,
+            v1_valid_hashes={"active"},
+            v1_evidence_root=evidence_root,
+        )
+
+    for file_name, payload in original_files.items():
+        assert (data_dir / file_name).read_bytes() == payload
+    assert not (data_dir / "vectors_compaction.json").exists()
+    assert not (data_dir / "vectors.bin.compaction.bak").exists()
+    assert not (data_dir / "vectors_ids.bin.compaction.bak").exists()
+    first_evidence_dir = next(evidence_root.iterdir())
+    first_report = json.loads((first_evidence_dir / "report.json").read_text(encoding="utf-8"))
+    assert first_report["status"] == "prepared"
+    assert (first_evidence_dir / "excluded_vectors.npz").exists()
+
+    monkeypatch.setattr(vector_store_module.os, "replace", original_replace)
+    retried = VectorStore(dimension=2, data_dir=data_dir)
+    retried.load(
+        expected_embedding_fingerprint=fingerprint,
+        v1_valid_hashes={"active"},
+        v1_evidence_root=evidence_root,
+    )
+
+    assert set(retried._known_hashes) == {"active"}
+    assert json.loads((data_dir / "vectors_metadata.json").read_text(encoding="utf-8"))["schema_version"] == 2
+    assert first_evidence_dir.exists()
+
+
 def test_trusted_v1_view_rejects_missing_fingerprint_without_mutation(tmp_path: Path) -> None:
     data_dir = tmp_path / "vectors"
     store = VectorStore(dimension=2, data_dir=data_dir, buffer_size=1)

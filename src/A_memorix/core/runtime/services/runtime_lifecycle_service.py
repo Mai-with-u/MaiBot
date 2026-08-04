@@ -107,7 +107,10 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
             return
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        kernel_module.run_startup_format_migration(self.data_dir)
+        try:
+            kernel_module.run_startup_format_migration(self.data_dir)
+        except Exception as exc:
+            logger.exception(f"[sdk] 历史格式转换失败，将由各存储通道独立校验并降级: {exc}")
         try:
             self.embedding_manager = kernel_module.create_embedding_api_adapter(
                 batch_size=int(self._cfg("embedding.batch_size", 32)),
@@ -227,7 +230,9 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                 )
             elif self._legacy_vector_view is None and self.vector_store.has_data():
                 self.vector_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
+                    v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )
                 self.vector_store.warmup_index(force_train=True)
             self._set_runtime_capability("vector_read", True)

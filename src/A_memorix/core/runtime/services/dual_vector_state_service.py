@@ -363,11 +363,20 @@ class MemoryDualVectorStateService(KernelServiceBase):
             paragraph_store = self._make_vector_store(self._paragraph_vector_dir())
             graph_store = self._make_vector_store(self._graph_vector_dir())
             expected_fingerprint = self._current_embedding_fingerprint()
+            evidence_root = self._v1_reconciliation_evidence_root()
             if paragraph_store.has_data():
-                paragraph_store.load(expected_embedding_fingerprint=expected_fingerprint)
+                paragraph_store.load(
+                    expected_embedding_fingerprint=expected_fingerprint,
+                    v1_valid_hashes=self._v1_valid_hashes_for_pool("paragraph"),
+                    v1_evidence_root=evidence_root,
+                )
                 paragraph_store.warmup_index(force_train=True)
             if graph_store.has_data():
-                graph_store.load(expected_embedding_fingerprint=expected_fingerprint)
+                graph_store.load(
+                    expected_embedding_fingerprint=expected_fingerprint,
+                    v1_valid_hashes=self._v1_valid_hashes_for_pool("graph"),
+                    v1_evidence_root=evidence_root,
+                )
                 graph_store.warmup_index(force_train=True)
         except Exception:
             self._dual_vector_pools_ready = False
@@ -393,11 +402,15 @@ class MemoryDualVectorStateService(KernelServiceBase):
         try:
             if paragraph_store.has_data():
                 paragraph_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    v1_valid_hashes=self._v1_valid_hashes_for_pool("paragraph"),
+                    v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )
             if graph_store.has_data():
                 graph_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint()
+                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    v1_valid_hashes=self._v1_valid_hashes_for_pool("graph"),
+                    v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )
         except Exception as exc:
             logger.warning(f"双池 ready manifest 自愈失败，加载向量池异常: {exc}")

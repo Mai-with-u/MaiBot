@@ -575,6 +575,14 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._vector_recovery_service
         return type(service)._vector_health_snapshot(service)
 
+    def _v1_reconciliation_evidence_root(self) -> Path:
+        service = self._vector_recovery_service
+        return type(service)._v1_reconciliation_evidence_root(service)
+
+    def _v1_valid_hashes_for_pool(self, pool: str) -> List[str]:
+        service = self._vector_recovery_service
+        return type(service)._v1_valid_hashes_for_pool(service, pool)
+
     def _set_vector_health(self, **patch: Any) -> None:
         service = self._vector_recovery_service
         return type(service)._set_vector_health(service, **patch)

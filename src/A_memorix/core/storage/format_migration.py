@@ -60,7 +60,7 @@ def _read_json_dict(path: Path) -> Dict[str, Any]:
 def _backup_legacy_file(path: Path) -> Path:
     backup_path = path.with_suffix(path.suffix + ".bak")
     if backup_path.exists():
-        backup_path = path.with_suffix(path.suffix + f".bak.{int(time.time())}")
+        backup_path = path.with_suffix(path.suffix + f".bak.{time.time_ns()}")
     path.replace(backup_path)
     return backup_path
 
@@ -110,6 +110,8 @@ def _ensure_migration_table(conn: sqlite3.Connection) -> None:
 
 
 def _migration_record_exists(conn: sqlite3.Connection) -> bool:
+    if not _sqlite_table_exists(conn, "storage_format_migrations"):
+        return False
     row = conn.execute(
         "SELECT 1 FROM storage_format_migrations WHERE version = ? LIMIT 1",
         (FORMAT_MIGRATION_VERSION,),
@@ -117,17 +119,137 @@ def _migration_record_exists(conn: sqlite3.Connection) -> bool:
     return row is not None
 
 
-def _legacy_pickle_paths(data_dir: Path) -> List[Path]:
-    return [
-        data_dir / "vectors" / "vectors_metadata.pkl",
-        data_dir / "vectors" / "paragraph" / "vectors_metadata.pkl",
-        data_dir / "vectors" / "graph" / "vectors_metadata.pkl",
-        data_dir / "graph" / "graph_metadata.pkl",
+def _sqlite_legacy_metadata_exists(conn: sqlite3.Connection) -> bool:
+    for table in ("paragraphs", "entities", "relations", "deleted_relations"):
+        if not _sqlite_column_exists(conn, table, "metadata"):
+            continue
+        row = conn.execute(
+            f"SELECT 1 FROM {table} WHERE metadata IS NOT NULL AND typeof(metadata) = 'blob' LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            return True
+    return False
+
+
+def _vector_format_work(vector_dir: Path, *, migration_record_exists: bool) -> Dict[str, Any]:
+    pkl_path = vector_dir / "vectors_metadata.pkl"
+    json_path = vector_dir / "vectors_metadata.json"
+    backups = _legacy_backup_candidates(pkl_path)
+    json_valid = False
+    json_error = ""
+    if json_path.exists():
+        try:
+            _validate_vector_metadata_json(json_path)
+        except Exception as exc:
+            json_error = str(exc)
+        else:
+            json_valid = True
+
+    if pkl_path.exists():
+        if migration_record_exists and json_valid:
+            return {
+                "action": "none",
+                "reason": "stale_legacy_artifact",
+                "path": str(vector_dir),
+                "error": json_error,
+            }
+        return {
+            "action": "migrate",
+            "reason": (
+                "legacy_pickle"
+                if not json_path.exists()
+                else ("incomplete_migration" if json_valid else "legacy_recovery")
+            ),
+            "path": str(vector_dir),
+        }
+    if json_valid:
+        return {"action": "none", "reason": "current_valid", "path": str(vector_dir)}
+    if backups:
+        return {"action": "recover", "reason": "legacy_backup", "path": str(vector_dir)}
+    if json_path.exists():
+        return {
+            "action": "none",
+            "reason": "current_format_corrupt",
+            "path": str(vector_dir),
+            "error": json_error,
+        }
+    return {"action": "none", "reason": "legacy_missing", "path": str(vector_dir)}
+
+
+def _graph_format_work(
+    data_dir: Path,
+    conn: Optional[sqlite3.Connection],
+    *,
+    migration_record_exists: bool,
+) -> Dict[str, Any]:
+    graph_dir = data_dir / "graph"
+    pkl_path = graph_dir / "graph_metadata.pkl"
+    json_path = graph_dir / "graph_metadata.json"
+    backups = _legacy_backup_candidates(pkl_path)
+    json_valid = False
+    json_error = ""
+    if json_path.exists():
+        try:
+            _validate_graph_metadata_json(json_path)
+        except Exception as exc:
+            json_error = str(exc)
+        else:
+            json_valid = True
+
+    if pkl_path.exists():
+        if migration_record_exists and json_valid:
+            return {
+                "action": "none",
+                "reason": "stale_legacy_artifact",
+                "error": json_error,
+            }
+        return {
+            "action": "migrate",
+            "reason": (
+                "legacy_pickle"
+                if not json_path.exists()
+                else ("incomplete_migration" if json_valid else "legacy_recovery")
+            ),
+        }
+    if not json_valid and backups:
+        return {"action": "recover", "reason": "legacy_backup"}
+    if (
+        not migration_record_exists
+        and json_valid
+        and backups
+        and conn is not None
+        and _graph_edge_map_count(conn) == 0
+    ):
+        return {"action": "recover", "reason": "legacy_edge_map_backup"}
+    if json_valid:
+        return {"action": "none", "reason": "current_valid"}
+    if json_path.exists():
+        return {"action": "none", "reason": "current_format_corrupt", "error": json_error}
+    return {"action": "none", "reason": "legacy_missing"}
+
+
+def _detect_startup_format_work(
+    data_dir: Path,
+    conn: Optional[sqlite3.Connection],
+) -> Dict[str, Any]:
+    record_exists = conn is not None and _migration_record_exists(conn)
+    sqlite_required = conn is not None and _sqlite_legacy_metadata_exists(conn)
+    vectors = [
+        _vector_format_work(data_dir / relative, migration_record_exists=record_exists)
+        for relative in ("vectors", "vectors/paragraph", "vectors/graph")
     ]
-
-
-def _legacy_pickle_exists(data_dir: Path) -> bool:
-    return any(path.exists() for path in _legacy_pickle_paths(data_dir))
+    graph = _graph_format_work(data_dir, conn, migration_record_exists=record_exists)
+    return {
+        "record_exists": bool(record_exists),
+        "sqlite_required": bool(sqlite_required),
+        "vectors": vectors,
+        "graph": graph,
+        "required": bool(
+            sqlite_required
+            or any(item["action"] != "none" for item in vectors)
+            or graph["action"] != "none"
+        ),
+    }
 
 
 def ensure_graph_edge_map_table(conn: sqlite3.Connection) -> None:
@@ -467,10 +589,9 @@ def _migrate_graph_metadata(data_dir: Path, conn: Optional[sqlite3.Connection]) 
 
 
 def run_startup_format_migration(data_dir: Path) -> Dict[str, Any]:
-    """同步执行启动格式迁移，失败时抛出异常并阻止 A_Memorix 初始化。"""
+    """仅在存在历史格式输入时执行一次启动转换。"""
 
     data_dir = Path(data_dir)
-    data_dir.mkdir(parents=True, exist_ok=True)
     started_at = time.time()
     summary: Dict[str, Any] = {
         "version": FORMAT_MIGRATION_VERSION,
@@ -484,25 +605,59 @@ def run_startup_format_migration(data_dir: Path) -> Dict[str, Any]:
     db_path = _metadata_db_path(data_dir)
     conn: Optional[sqlite3.Connection] = _connect_metadata_db(db_path) if db_path.exists() else None
     try:
-        if conn is not None:
-            _ensure_migration_table(conn)
-            if _migration_record_exists(conn) and not _legacy_pickle_exists(data_dir):
-                summary["sqlite"] = {"updated": 0, "reason": "already_applied"}
-            else:
-                summary["sqlite"] = _migrate_sqlite_metadata(conn)
+        work = _detect_startup_format_work(data_dir, conn)
+        if not work["required"]:
+            summary["sqlite"] = {
+                "updated": 0,
+                "reason": (
+                    "already_applied"
+                    if work["record_exists"]
+                    else ("not_required" if conn is not None else "metadata_db_missing")
+                ),
+            }
+            summary["vectors"] = [dict(item) for item in work["vectors"]]
+            summary["graph"] = dict(work["graph"])
+            summary["finished_at"] = time.time()
+            logger.info(
+                "A_Memorix 无需执行存储格式迁移: "
+                f"reason={summary['sqlite']['reason']}, "
+                f"duration={summary['finished_at'] - started_at:.2f}s"
+            )
+            return summary
+
+        if conn is not None and work["sqlite_required"]:
+            summary["sqlite"] = _migrate_sqlite_metadata(conn)
+        elif conn is not None:
+            summary["sqlite"] = {"updated": 0, "reason": "not_required"}
         else:
             summary["sqlite"] = {"updated": 0, "reason": "metadata_db_missing"}
-        for relative in ("vectors", "vectors/paragraph", "vectors/graph"):
-            summary["vectors"].append(_migrate_vector_metadata_dir(data_dir / relative))
-        summary["graph"] = _migrate_graph_metadata(data_dir, conn)
-        if conn is not None:
+
+        for item in work["vectors"]:
+            if item["action"] == "none":
+                summary["vectors"].append(dict(item))
+                continue
+            summary["vectors"].append(_migrate_vector_metadata_dir(Path(item["path"])))
+        if work["graph"]["action"] == "none":
+            summary["graph"] = dict(work["graph"])
+        else:
+            summary["graph"] = _migrate_graph_metadata(data_dir, conn)
+
+        summary["finished_at"] = time.time()
+        blocking_reasons = {"current_format_corrupt"}
+        has_blocking_issue = any(
+            item.get("reason") in blocking_reasons for item in summary["vectors"]
+        ) or summary["graph"].get("reason") in blocking_reasons
+        if conn is not None and not has_blocking_issue:
+            _ensure_migration_table(conn)
             conn.execute(
                 """
-                INSERT OR REPLACE INTO storage_format_migrations (version, applied_at, summary_json)
+                INSERT INTO storage_format_migrations (version, applied_at, summary_json)
                 VALUES (?, ?, ?)
+                ON CONFLICT(version) DO NOTHING
                 """,
                 (FORMAT_MIGRATION_VERSION, time.time(), _json_dumps(summary)),
             )
+        if conn is not None:
             conn.commit()
     except Exception:
         if conn is not None:
@@ -512,7 +667,7 @@ def run_startup_format_migration(data_dir: Path) -> Dict[str, Any]:
         if conn is not None:
             conn.close()
 
-    summary["finished_at"] = time.time()
+    summary.setdefault("finished_at", time.time())
     logger.info(
         "A_Memorix 存储格式迁移检查完成: "
         f"sqlite_updated={summary.get('sqlite', {}).get('updated', 0)}, "

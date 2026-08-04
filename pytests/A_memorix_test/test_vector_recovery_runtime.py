@@ -50,7 +50,7 @@ def _make_corrupt_v1_store(
     return exc_info.value
 
 
-def test_known_v1_corruption_is_quarantined_and_copied_without_embedding(tmp_path: Path) -> None:
+def test_v1_id_mismatch_is_not_quarantined_as_generic_corruption(tmp_path: Path) -> None:
     data_dir = tmp_path / "memory"
     kernel = SDKMemoryKernel(
         plugin_root=tmp_path,
@@ -72,24 +72,40 @@ def test_known_v1_corruption_is_quarantined_and_copied_without_embedding(tmp_pat
         fingerprint=fingerprint,
     )
 
-    assert kernel._recover_known_vector_failure(error) is True
+    vector_bytes = (data_dir / "vectors" / "vectors.bin").read_bytes()
+    id_bytes = (data_dir / "vectors" / "vectors_ids.bin").read_bytes()
 
-    journal = json.loads((data_dir / "vector_recovery.json").read_text(encoding="utf-8"))
-    quarantine = Path(journal["quarantine_path"])
-    assert journal["stage"] == "completed"
-    assert quarantine.exists()
-    assert not (data_dir / "vectors" / "vectors.bin").exists()
-    assert (data_dir / "vectors" / "dual_ready.json").exists()
-    assert kernel._legacy_vector_view is not None
-    assert kernel._vector_health["trusted_coverage"] == 1.0
+    assert kernel._recover_known_vector_failure(error) is False
+    assert (data_dir / "vectors" / "vectors.bin").read_bytes() == vector_bytes
+    assert (data_dir / "vectors" / "vectors_ids.bin").read_bytes() == id_bytes
+    assert not (data_dir / "vector_recovery.json").exists()
+    assert not (data_dir / "vector_quarantine").exists()
+    metadata_store.close()
 
-    result = kernel._copy_legacy_vectors_once(batch_size=8)
 
-    assert result == {"success": True, "processed": 1, "copied": 1, "done": True}
-    assert kernel._legacy_vector_view is None
-    assert paragraph_hash in kernel.paragraph_vector_store
-    assert "orphan" not in kernel.paragraph_vector_store
-    assert kernel._vector_health["state"] == "recovered"
+def test_v1_valid_hashes_are_resolved_per_pool_and_exclude_single_pool_ambiguity(tmp_path: Path) -> None:
+    data_dir = tmp_path / "memory"
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(data_dir)}},
+    )
+    metadata_store = MetadataStore(data_dir=data_dir / "metadata")
+    metadata_store.connect()
+    kernel.metadata_store = metadata_store
+    shared_hash = metadata_store.add_paragraph(content="跨类型同哈希", source="test")
+    with metadata_store.transaction(immediate=True):
+        metadata_store._conn.execute(
+            """
+            INSERT INTO entities
+            (hash, name, vector_index, appearance_count, created_at, metadata, is_deleted, deleted_at)
+            VALUES (?, ?, NULL, 1, 0, '{}', 0, NULL)
+            """,
+            (shared_hash, "同哈希实体"),
+        )
+
+    assert shared_hash in kernel._v1_valid_hashes_for_pool("paragraph")
+    assert f"entity:{shared_hash}" in kernel._v1_valid_hashes_for_pool("graph")
+    assert shared_hash not in kernel._v1_valid_hashes_for_pool("single")
     metadata_store.close()
 
 
@@ -134,7 +150,7 @@ def test_unknown_vector_failure_keeps_original_files_and_core_capability(
 
 @pytest.mark.parametrize(
     "interrupted_stage",
-    ["prepared", "quarantined", "metadata_reset", "new_generation_ready", "completed"],
+    ["prepared", "quarantined", "metadata_reset", "new_generation_ready", "copying"],
 )
 def test_vector_recovery_journal_resumes_idempotently_after_each_stage(
     tmp_path: Path,
@@ -156,10 +172,17 @@ def test_vector_recovery_journal_resumes_idempotently_after_each_stage(
     metadata_store.connect()
     kernel.metadata_store = metadata_store
     paragraph_hash = metadata_store.add_paragraph(content="可恢复段落", source="test")
-    error = _make_corrupt_v1_store(
+    _make_corrupt_v1_store(
         data_dir / "vectors",
         paragraph_hash=paragraph_hash,
         fingerprint=fingerprint,
+    )
+    error = VectorStoreIntegrityError(
+        "V1 metadata 无法解析",
+        error_code="v1_metadata_invalid",
+        pair_aligned=True,
+        dimension_status="matched",
+        fingerprint_status="matched",
     )
 
     recovery_service = kernel._vector_recovery_service
@@ -182,9 +205,65 @@ def test_vector_recovery_journal_resumes_idempotently_after_each_stage(
 
     journal = json.loads((data_dir / "vector_recovery.json").read_text(encoding="utf-8"))
     quarantine_dirs = list((data_dir / "vector_quarantine").iterdir())
-    assert journal["stage"] == "completed"
+    assert journal["stage"] == "copying"
     assert len(quarantine_dirs) == 1
     assert quarantine_dirs[0].name == journal["operation_id"]
     assert (data_dir / "vectors" / "dual_ready.json").exists()
     assert kernel._dual_vector_pools_ready is True
+
+    result = kernel._copy_legacy_vectors_once(batch_size=8)
+    completed_journal = json.loads((data_dir / "vector_recovery.json").read_text(encoding="utf-8"))
+
+    assert result["done"] is True
+    assert completed_journal["stage"] == "completed"
+    assert completed_journal["copy"]["state"] == "completed"
+    assert paragraph_hash in kernel.paragraph_vector_store
+    metadata_store.close()
+
+
+def test_legacy_completed_pending_journal_resumes_as_copying_without_new_operation(tmp_path: Path) -> None:
+    data_dir = tmp_path / "memory"
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={
+            "storage": {"data_dir": str(data_dir)},
+            "embedding": {"dimension": 2},
+            "retrieval": {"vector_pools": {"mode": "dual"}},
+        },
+    )
+    fingerprint = {"hash": "trusted-model"}
+    kernel.embedding_manager = _FingerprintEmbedding(fingerprint)
+    metadata_store = MetadataStore(data_dir=data_dir / "metadata")
+    metadata_store.connect()
+    kernel.metadata_store = metadata_store
+    paragraph_hash = metadata_store.add_paragraph(content="旧日志待复制段落", source="test")
+    _make_corrupt_v1_store(
+        data_dir / "vectors",
+        paragraph_hash=paragraph_hash,
+        fingerprint=fingerprint,
+    )
+    error = VectorStoreIntegrityError(
+        "V1 metadata 无法解析",
+        error_code="v1_metadata_invalid",
+        pair_aligned=True,
+        dimension_status="matched",
+        fingerprint_status="matched",
+    )
+    assert kernel._recover_known_vector_failure(error) is True
+    journal_path = data_dir / "vector_recovery.json"
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    operation_id = journal["operation_id"]
+    journal["stage"] = "completed"
+    journal.pop("completed_at", None)
+    journal_path.write_text(json.dumps(journal, ensure_ascii=False), encoding="utf-8")
+    kernel._legacy_vector_view = None
+
+    kernel._resume_vector_recovery_if_needed()
+    assert kernel._vector_health["recovery_stage"] == "copying"
+    assert kernel._legacy_vector_view is not None
+    assert kernel._recover_known_vector_failure(error) is True
+
+    resumed = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert resumed["operation_id"] == operation_id
+    assert len(list((data_dir / "vector_quarantine").iterdir())) == 1
     metadata_store.close()

@@ -178,7 +178,7 @@ def _run_killed_migration_at_stage(data_dir: Path, marker_path: Path, stage: str
 
                 def execute(self, sql, parameters=()):
                     result = self._conn.execute(sql, parameters)
-                    if "storage_format_migrations" in str(sql) and "INSERT OR REPLACE" in str(sql):
+                    if "INSERT INTO storage_format_migrations" in str(sql):
                         mark_and_sleep()
                     return result
 
@@ -440,8 +440,8 @@ def test_startup_format_migration_is_idempotent_after_pickle_backup(tmp_path: Pa
     second = run_startup_format_migration(data_dir)
 
     assert first["vectors"][0]["migrated"] is True
-    assert second["vectors"][0]["migrated"] is False
-    assert second["vectors"][0]["reason"] == "legacy_missing"
+    assert second["vectors"][0]["action"] == "none"
+    assert second["vectors"][0]["reason"] == "current_valid"
     assert (data_dir / "vectors" / "vectors_metadata.json").exists()
     assert (data_dir / "vectors" / "vectors_metadata.pkl.bak").exists()
     assert not list((data_dir / "vectors").glob("vectors_metadata.pkl.bak.*"))
@@ -467,6 +467,153 @@ def test_startup_format_migration_skips_sqlite_scan_after_applied(tmp_path: Path
 
     assert first["sqlite"]["updated"] == 1
     assert second["sqlite"]["reason"] == "already_applied"
+
+
+def test_startup_format_migration_without_legacy_input_does_not_write_database(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata TEXT)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("paragraph-current", json.dumps({"chat_id": "chat-current"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    before = db_path.read_bytes()
+    before_mtime = db_path.stat().st_mtime_ns
+
+    summary = run_startup_format_migration(data_dir)
+
+    assert summary["sqlite"]["reason"] == "not_required"
+    assert db_path.read_bytes() == before
+    assert db_path.stat().st_mtime_ns == before_mtime
+    conn = sqlite3.connect(str(db_path))
+    try:
+        migration_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='storage_format_migrations'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert migration_table is None
+
+
+def test_startup_format_migration_keeps_first_completion_record(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata BLOB)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("paragraph-legacy", pickle.dumps({"chat_id": "chat-legacy"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    first = run_startup_format_migration(data_dir)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        first_record = conn.execute(
+            "SELECT applied_at, summary_json FROM storage_format_migrations WHERE version = ?",
+            ("pickle_to_json_v1",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    second = run_startup_format_migration(data_dir)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        second_record = conn.execute(
+            "SELECT applied_at, summary_json FROM storage_format_migrations WHERE version = ?",
+            ("pickle_to_json_v1",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert first_record == second_record
+    assert "finished_at" in json.loads(first_record[1])
+    assert first["finished_at"] == json.loads(first_record[1])["finished_at"]
+    assert second["sqlite"]["reason"] == "already_applied"
+
+
+def test_startup_format_migration_does_not_treat_current_corruption_as_legacy_work(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    json_path = data_dir / "vectors" / "vectors_metadata.json"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text("{broken json", encoding="utf-8")
+
+    summary = run_startup_format_migration(data_dir)
+
+    assert summary["vectors"][0]["reason"] == "current_format_corrupt"
+    assert json_path.read_text(encoding="utf-8") == "{broken json"
+    assert not (data_dir / "metadata" / "metadata.db").exists()
+
+
+def test_startup_format_migration_reports_reintroduced_pickle_without_overwrite(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata BLOB)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("paragraph-legacy", pickle.dumps({"chat_id": "chat-legacy"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    pkl_path = data_dir / "vectors" / "vectors_metadata.pkl"
+    _dump_pickle(pkl_path, {"dimension": 8, "known_hashes": ["old"]})
+    run_startup_format_migration(data_dir)
+    json_path = data_dir / "vectors" / "vectors_metadata.json"
+    current_json = json_path.read_bytes()
+    pkl_path.write_bytes((data_dir / "vectors" / "vectors_metadata.pkl.bak").read_bytes())
+
+    summary = run_startup_format_migration(data_dir)
+
+    assert summary["sqlite"]["reason"] == "already_applied"
+    assert summary["vectors"][0]["reason"] == "stale_legacy_artifact"
+    assert pkl_path.exists()
+    assert json_path.read_bytes() == current_json
+
+
+def test_startup_format_migration_recovers_reintroduced_pickle_when_current_json_is_missing(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "a_memorix_data"
+    db_path = data_dir / "metadata" / "metadata.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE paragraphs (hash TEXT PRIMARY KEY, metadata BLOB)")
+        conn.execute(
+            "INSERT INTO paragraphs (hash, metadata) VALUES (?, ?)",
+            ("paragraph-legacy", pickle.dumps({"chat_id": "chat-legacy"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    pkl_path = data_dir / "vectors" / "vectors_metadata.pkl"
+    _dump_pickle(pkl_path, {"dimension": 8, "known_hashes": ["old"]})
+    run_startup_format_migration(data_dir)
+    json_path = data_dir / "vectors" / "vectors_metadata.json"
+    json_path.unlink()
+    pkl_path.write_bytes((data_dir / "vectors" / "vectors_metadata.pkl.bak").read_bytes())
+
+    summary = run_startup_format_migration(data_dir)
+
+    assert summary["vectors"][0]["migrated"] is True
+    assert json.loads(json_path.read_text(encoding="utf-8"))["known_hashes"] == ["old"]
+    assert not pkl_path.exists()
 
 
 def test_startup_format_migration_corrupt_vector_pickle_fails_without_backup(tmp_path: Path) -> None:
