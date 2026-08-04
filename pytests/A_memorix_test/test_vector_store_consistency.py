@@ -283,6 +283,32 @@ def test_trusted_v1_view_rejects_missing_fingerprint_without_mutation(tmp_path: 
     assert after == before
 
 
+@pytest.mark.parametrize("invalid_deleted_ids", [{"unexpected": 1}, ["invalid"], [True]])
+def test_trusted_v1_view_rejects_invalid_deleted_ids(
+    tmp_path: Path,
+    invalid_deleted_ids: object,
+) -> None:
+    data_dir = tmp_path / "vectors"
+    fingerprint = {"hash": "embedding-fingerprint-v1"}
+    store = VectorStore(dimension=2, data_dir=data_dir, buffer_size=1)
+    store.add(_vector(), ["known"])
+    store.save(embedding_fingerprint=fingerprint)
+    _convert_to_v1_with_fingerprint(data_dir, fingerprint)
+    metadata_path = data_dir / "vectors_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["deleted_ids"] = invalid_deleted_ids
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(VectorStoreIntegrityError) as exc_info:
+        ReadOnlyVectorStoreView.open_trusted_v1(
+            data_dir=data_dir,
+            dimension=2,
+            expected_embedding_fingerprint=fingerprint,
+        )
+
+    assert exc_info.value.error_code == "legacy_view_metadata_invalid"
+
+
 def test_trusted_v1_view_uses_only_unique_intersection_for_missing_and_duplicate_ids(
     tmp_path: Path,
 ) -> None:

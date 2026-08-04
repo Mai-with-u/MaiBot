@@ -201,7 +201,18 @@ class ReadOnlyVectorStoreView:
                 fingerprint_status=fingerprint_status,
             )
 
-        deleted_ids = set(meta.get("deleted_ids", [])) if isinstance(meta.get("deleted_ids", []), list) else set()
+        raw_deleted_ids = meta.get("deleted_ids", [])
+        if not isinstance(raw_deleted_ids, list) or any(
+            not isinstance(int_id, int) or isinstance(int_id, bool) for int_id in raw_deleted_ids
+        ):
+            raise VectorStoreIntegrityError(
+                "旧向量元数据的 deleted_ids 无效",
+                error_code="legacy_view_metadata_invalid",
+                pair_aligned=True,
+                dimension_status=dimension_status,
+                fingerprint_status=fingerprint_status,
+            )
+        deleted_ids = set(raw_deleted_ids)
         declared_owners: Dict[int, str] = {}
         ambiguous_declared_ids: Set[int] = set()
         for hash_value in raw_hashes:
