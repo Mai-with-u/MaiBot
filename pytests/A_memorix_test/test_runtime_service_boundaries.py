@@ -568,6 +568,28 @@ def test_embedding_state_service_uses_kernel_patched_sparse_boundary(
     assert kernel._embedding_degraded["active"] is True
 
 
+def test_embedding_sparse_mode_requires_embedding_and_vector_channel() -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    sparse_calls: list[bool] = []
+
+    class Retriever:
+        def set_runtime_sparse_only(self, enabled: bool) -> None:
+            sparse_calls.append(enabled)
+
+    kernel.retriever = Retriever()  # type: ignore[assignment]
+    kernel._embedding_degraded["active"] = False
+    kernel._runtime_capabilities["vector_read"] = False
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    kernel._runtime_capabilities["vector_read"] = True
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    kernel._embedding_degraded["active"] = True
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    assert sparse_calls == [True, False, True]
+
+
 @pytest.mark.asyncio
 async def test_legacy_vector_copy_does_not_block_event_loop_and_waits_for_worker_on_cancel(
     monkeypatch: pytest.MonkeyPatch,

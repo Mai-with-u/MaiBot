@@ -235,7 +235,8 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         if not callable(setter):
             return
         try:
-            setter(self._is_embedding_degraded())
+            sparse_only = self._is_embedding_degraded() or not self._runtime_capabilities["vector_read"]
+            setter(sparse_only)
         except Exception as exc:
             logger.warning(f"设置 retriever sparse-only 运行时状态失败: {exc}")
 
