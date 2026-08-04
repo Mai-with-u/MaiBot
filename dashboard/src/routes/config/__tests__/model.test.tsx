@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -169,6 +169,82 @@ describe('ModelConfigPage 特征化', () => {
     expect(configApi.getModelConfigCached).toHaveBeenCalled()
     expect(configApi.getModelConfigSchema).toHaveBeenCalled()
     expect(screen.getByRole('tab', { name: '模型厂商设置' })).toBeInTheDocument()
+  })
+
+  it('DeepSeek Responses 模型默认缓存，并在高级设置中映射思考与联网参数', async () => {
+    const user = userEvent.setup()
+    const deepSeekConfig = {
+      ...baseConfig(),
+      models: [],
+      api_providers: [
+        {
+          name: '自定义名称',
+          base_url: 'https://api.deepseek.com',
+          api_key: 'sk-deepseek',
+          client_type: 'openai_responses',
+        },
+      ],
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(deepSeekConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(deepSeekConfig as never)
+
+    await renderModelPage()
+    await user.click(screen.getByRole('tab', { name: '模型列表' }))
+    const addModelButton = document.querySelector<HTMLButtonElement>(
+      '[data-tour="add-model-button"]'
+    )
+    expect(addModelButton).not.toBeNull()
+    await user.click(addModelButton!)
+
+    const dialog = await screen.findByRole('dialog', { name: '添加模型' })
+    expect(within(dialog).queryByText('支持缓存')).not.toBeInTheDocument()
+    const thinkingSwitch = within(dialog).getByRole('switch', { name: '启用思考' })
+    const effortSelect = within(dialog).getByRole('combobox', { name: '思考力度' })
+    const webSearchSwitch = within(dialog).getByRole('switch', { name: '启用联网搜索' })
+    expect(thinkingSwitch).toBeChecked()
+    expect(effortSelect).toBeEnabled()
+    expect(webSearchSwitch).not.toBeChecked()
+
+    await user.click(webSearchSwitch)
+    await user.click(thinkingSwitch)
+    expect(webSearchSwitch).toBeChecked()
+    expect(thinkingSwitch).not.toBeChecked()
+    expect(effortSelect).toBeDisabled()
+    expect(within(dialog).getByText('已配置 2 个参数')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: '已配置 2 个参数' }))
+    const extraParamsDialog = await screen.findByRole('dialog', { name: '编辑额外参数' })
+    await user.click(within(extraParamsDialog).getByRole('tab', { name: 'JSON 编辑' }))
+    const jsonEditor = within(extraParamsDialog).getByRole('textbox')
+    expect((jsonEditor as HTMLTextAreaElement).value).toContain('"reasoning"')
+    expect((jsonEditor as HTMLTextAreaElement).value).toContain('"effort": "none"')
+
+    fireEvent.change(jsonEditor, {
+      target: {
+        value: JSON.stringify({
+          reasoning: { effort: 'max' },
+          thinking: { type: 'disabled' },
+          tools: [{ type: 'web_search' }],
+        }, null, 2),
+      },
+    })
+    expect(within(extraParamsDialog).getByRole('button', { name: '保存' })).toBeDisabled()
+
+    fireEvent.change(jsonEditor, {
+      target: {
+        value: JSON.stringify({
+          reasoning: { effort: 'max' },
+          tools: [{ type: 'web_search' }],
+        }, null, 2),
+      },
+    })
+    await user.click(within(extraParamsDialog).getByRole('button', { name: '保存' }))
+    expect(thinkingSwitch).toBeChecked()
+    expect(effortSelect).toBeEnabled()
+    expect(effortSelect).toHaveTextContent('最高')
+
+    await user.click(within(dialog).getByRole('button', { name: '高级设置' }))
+    expect(within(dialog).getByRole('switch', { name: '支持缓存' })).toBeChecked()
   })
 
   it('切到任务页可见 embedding 配置卡片', async () => {

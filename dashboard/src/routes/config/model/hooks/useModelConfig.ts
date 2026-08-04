@@ -40,6 +40,7 @@ import type { ConfigSchema } from '@/types/config-schema'
 import type { ModelInfo, ModelTaskConfig, ProviderConfig, TaskConfig } from '../types'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
+import { findTemplateByBaseUrl } from '../../providerTemplates'
 import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
 
@@ -409,6 +410,14 @@ export function useModelConfig() {
       return providerConfigs.find((p) => p.name === providerName)
     },
     [providerConfigs]
+  )
+
+  const isDeepSeekTemplateProvider = useCallback(
+    (providerName: string): boolean => {
+      const provider = getProviderConfig(providerName)
+      return provider ? findTemplateByBaseUrl(provider.base_url)?.id === 'deepseek' : false
+    },
+    [getProviderConfig]
   )
 
   // 清理模型中的 null 值（TOML 不支持 null）
@@ -839,14 +848,16 @@ export function useModelConfig() {
       // 清除表单验证错误
       setFormErrors({})
 
+      const defaultProvider = providers[0] || ''
+
       setEditingModel(
         model || {
           model_identifier: '',
           name: '',
-          api_provider: providers[0] || '',
+          api_provider: defaultProvider,
           price_in: 0,
           price_out: 0,
-          cache: false,
+          cache: isDeepSeekTemplateProvider(defaultProvider),
           cache_price_in: 0,
           temperature: null,
           max_tokens: null,
@@ -859,7 +870,7 @@ export function useModelConfig() {
       setEditingIndex(index)
       setEditDialogOpen(true)
     },
-    [providers]
+    [isDeepSeekTemplateProvider, providers]
   )
 
   const openProviderDialog = useCallback((provider: APIProvider | null, index: number | null) => {
@@ -1465,6 +1476,7 @@ export function useModelConfig() {
     formErrors,
     setFormErrors,
     openEditDialog,
+    isDeepSeekTemplateProvider,
     handleSaveEdit,
     handleEditDialogClose,
     deleteDialogOpen,

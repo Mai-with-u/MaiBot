@@ -313,12 +313,20 @@ def _get_chat_name(chat_session: ChatSession, latest_messages: dict[str, dict[st
             return name
     except Exception:
         pass
-    if name := _get_chat_name_from_latest_message(latest_messages.get(chat_id)):
-        return name
-    if chat_session.group_name:
-        return chat_session.group_name
+
+    latest_message = latest_messages.get(chat_id)
     if chat_session.group_id:
+        # 群聊会话只接受带群聊身份的消息名称，避免缺少群信息的发送侧消息被显示成私聊。
+        if latest_message and str(latest_message.get("group_id") or "").strip():
+            if name := _get_chat_name_from_latest_message(latest_message):
+                return name
+        if chat_session.group_name:
+            return chat_session.group_name
         return f"群聊{chat_session.group_id}"
+
+    if latest_message and not str(latest_message.get("group_id") or "").strip():
+        if name := _get_chat_name_from_latest_message(latest_message):
+            return name
     private_name = chat_session.user_cardname or chat_session.user_nickname or (
         f"用户{chat_session.user_id}" if chat_session.user_id else ""
     )

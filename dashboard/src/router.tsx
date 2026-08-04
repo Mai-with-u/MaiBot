@@ -69,6 +69,13 @@ const indexRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/index'), 'IndexPage'),
 })
 
+// 详细统计路由
+const statisticsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/statistics',
+  component: lazyRouteComponent(() => import('./routes/statistics'), 'StatisticsPage'),
+})
+
 // 沉浸专注陪伴路由
 const focusCompanionRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -351,6 +358,7 @@ const routeTree = rootRoute.addChildren([
   pluginMirrorsEmbedRoute,
   protectedRoute.addChildren([
     indexRoute,
+    statisticsRoute,
     focusCompanionRoute,
     botConfigRoute,
     modelConfigRoute,

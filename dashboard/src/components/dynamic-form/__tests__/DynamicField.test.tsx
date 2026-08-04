@@ -486,22 +486,21 @@ describe('DynamicField', () => {
       expect(screen.getByText('Advanced Field').closest('label')).toHaveClass('text-sky-700')
     })
 
-    it('renders label with icon', () => {
-      const schema: FieldSchema = {
-        name: 'test_icon',
+    it('ignores legacy x-icon metadata', () => {
+      const schema = {
+        name: 'legacy_icon',
         type: 'string',
-        label: 'Test Icon',
-        description: 'A test with icon',
+        label: 'Legacy Icon',
+        description: 'A field carrying legacy icon metadata',
         required: false,
         'x-icon': 'Settings',
-      }
-      const onChange = vi.fn()
+      } as FieldSchema
 
-      render(<DynamicField schema={schema} value="" onChange={onChange} />)
+      render(<DynamicField schema={schema} value="" onChange={vi.fn()} />)
 
-      const label = screen.getByText('Test Icon').closest('label')
+      const label = screen.getByText('Legacy Icon').closest('label')
       expect(label).toBeInTheDocument()
-      expect(label?.querySelector('svg')).toBeInTheDocument()
+      expect(label?.querySelector('svg')).not.toBeInTheDocument()
     })
 
     it('renders required indicator', () => {

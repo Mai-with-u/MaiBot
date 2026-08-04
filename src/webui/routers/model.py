@@ -36,6 +36,11 @@ MODEL_FETCHER_CONFIG = {
         "endpoint": "/models",
         "parser": "openai",
     },
+    # OpenAI Responses API 与 Chat Completions 共用模型列表格式
+    "openai_responses": {
+        "endpoint": "/models",
+        "parser": "openai",
+    },
     # Gemini 格式
     "gemini": {
         "endpoint": "/models",
@@ -598,7 +603,7 @@ async def get_models_by_url(
     api_key: str = Query(..., description="API Key"),
     parser: str = Query("openai", description="响应解析器类型 (openai | gemini)"),
     endpoint: str = Query("/models", description="获取模型列表的端点"),
-    client_type: str = Query("openai", description="客户端类型 (openai | gemini)"),
+    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
     auth_type: str = Query("bearer", description="鉴权方式 (bearer | header | query | none)"),
     auth_header_name: str = Query("Authorization", description="Header 鉴权名称"),
     auth_header_prefix: str = Query("Bearer", description="Header 鉴权前缀"),
@@ -628,7 +633,7 @@ async def get_models_by_url(
 async def test_provider_connection(
     base_url: str = Query(..., description="提供商的基础 URL"),
     api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
-    client_type: str = Query("openai", description="客户端类型 (openai | gemini)"),
+    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
 ):
     """
     测试提供商连接状态

@@ -57,6 +57,118 @@
       "settings": "WEBUI设置"
     }
   },
+  "statisticsPage": {
+    "title": "详细统计数据",
+    "description": "查看麦麦运行期间的模型调用、Token、费用、消息与在线时长。",
+    "generatedAt": "统计截止时间：{{time}}",
+    "periodRange": "统计时段：{{start}} 至 {{end}}",
+    "empty": "当前统计时段暂无数据",
+    "actions": {
+      "refresh": "刷新",
+      "openHtml": "打开 HTML 版"
+    },
+    "error": {
+      "title": "详细统计加载失败",
+      "description": "请稍后重试"
+    },
+    "periods": {
+      "all_time": "自部署以来",
+      "last_30_days": "近30天",
+      "last_7_days": "近7天",
+      "last_3_days": "近3天",
+      "last_24_hours": "近1天",
+      "last_3_hours": "近3小时",
+      "last_hour": "近1小时",
+      "last_15_minutes": "近15分钟"
+    },
+    "tabs": {
+      "trends": "数据图表",
+      "metrics": "指标趋势"
+    },
+    "sections": {
+      "breakdowns": "分类统计",
+      "distributions": "数据分布图表"
+    },
+    "breakdowns": {
+      "models": "按模型",
+      "modules": "按模块",
+      "requestTypes": "按请求类型",
+      "chats": "聊天消息"
+    },
+    "summary": {
+      "onlineTime": "总在线时间",
+      "messages": "总消息数",
+      "replies": "总回复数",
+      "requests": "总请求数",
+      "tokens": "总Token数",
+      "inputTokens": "总输入Token",
+      "outputTokens": "总输出Token",
+      "cacheHitRate": "Prompt缓存命中率",
+      "cacheHitTokens": "缓存命中Token",
+      "cacheMissTokens": "缓存未命中Token",
+      "totalCost": "总花费",
+      "costPerMessages": "花费/消息数量",
+      "costPerReceivedMessages": "花费/接收消息数量",
+      "costPerReplies": "花费/回复数量",
+      "costPerHour": "花费/时间",
+      "tokensPerHour": "Token/时间"
+    },
+    "units": {
+      "per100": "每100条",
+      "perHour": "每小时"
+    },
+    "table": {
+      "name": "名称",
+      "requests": "调用次数",
+      "inputTokens": "输入Token",
+      "outputTokens": "输出Token",
+      "totalTokens": "Token总量",
+      "cacheHitTokens": "缓存命中Token",
+      "cacheMissTokens": "缓存未命中Token",
+      "cacheHitRate": "缓存命中率",
+      "cost": "累计花费",
+      "avgTime": "平均耗时",
+      "stdTime": "耗时标准差",
+      "callsPerReply": "每次回复平均调用次数",
+      "tokensPerReply": "每次回复平均Token",
+      "tokensPerCall": "每次调用平均Token",
+      "chat": "联系人/群组名称",
+      "messages": "消息数量"
+    },
+    "distributions": {
+      "ownerCosts": "调用来源花费分布",
+      "modelCosts": "模型花费分布",
+      "moduleCosts": "模块花费分布",
+      "requestTypeCosts": "请求类型花费分布",
+      "chatMessages": "聊天消息分布",
+      "chatCosts": "聊天流花费分布"
+    },
+    "charts": {
+      "timeRange": "时间范围",
+      "timeScale": "时间尺度",
+      "toggleSeries": "显示或隐藏 {{name}}"
+    },
+    "ranges": {
+      "6h": "6小时",
+      "12h": "12小时",
+      "24h": "24小时",
+      "48h": "48小时",
+      "7d": "7天",
+      "30d": "30天"
+    },
+    "trends": {
+      "totalCost": "总花费趋势",
+      "moduleCosts": "各模块花费趋势",
+      "modelCosts": "各模型花费趋势",
+      "chatMessages": "各聊天流消息数趋势"
+    },
+    "metrics": {
+      "costPerMessages": "花费/消息数量趋势",
+      "costPerHour": "花费/时间趋势",
+      "tokensPerHour": "Token/时间趋势",
+      "costPerReplies": "花费/回复数量趋势"
+    }
+  },
   "workspace": {
     "switcherLabel": "切换麦麦工作区",
     "settings": "麦麦设置",

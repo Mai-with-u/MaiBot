@@ -142,6 +142,10 @@ type StructuredPromptOutput = {
   tool_calls?: unknown[]
 }
 
+type ProviderResponsePayload = Record<string, unknown> & {
+  output?: unknown[]
+}
+
 type StructuredPromptLlmCall = {
   inference_stage: string
   request?: {
@@ -164,6 +168,7 @@ type StructuredPromptLlmCall = {
   }
   messages?: StructuredPromptMessage[]
   output?: StructuredPromptOutput | null
+  provider_response?: ProviderResponsePayload
 }
 
 type StructuredPromptPayload = {
@@ -193,6 +198,7 @@ type StructuredPromptPayload = {
   attempts?: LlmErrorAttempt[]
   request_parameters?: Record<string, unknown>
   provider_request?: Record<string, unknown>
+  provider_response?: ProviderResponsePayload
 }
 
 function getInitialSearchParams(): URLSearchParams {
@@ -710,6 +716,7 @@ function combineJargonLearningUpdatePayloads(
     metadata: payload.metadata,
     messages: payload.messages ?? [],
     output: payload.output ?? null,
+    provider_response: payload.provider_response,
   }))
 
   return {
@@ -736,6 +743,10 @@ function buildStructuredPromptCopyText(payload: StructuredPromptPayload | null):
   if (payload.metadata?.model_name) metadataLines.push(`模型：${payload.metadata.model_name}`)
   if (typeof payload.metadata?.duration_ms === 'number') metadataLines.push(`耗时：${payload.metadata.duration_ms} ms`)
   if (metadataLines.length > 0) sections.push(`[元信息]\n${metadataLines.join('\n')}`)
+
+  if (payload.provider_response) {
+    sections.push(`[Provider 原生响应]\n${stringifyStructuredValue(payload.provider_response)}`)
+  }
 
   if (payload.output) {
     const outputText = stringifyPromptContent(payload.output.content)
@@ -799,6 +810,9 @@ function getToolCallSourceClassName(source: string): string {
   }
   if (source === 'response') {
     return 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  }
+  if (source === 'provider') {
+    return 'border-sky-500/45 bg-sky-500/10 text-sky-700 dark:text-sky-300'
   }
   return 'border-muted-foreground/30 bg-muted/40 text-muted-foreground'
 }
@@ -1176,6 +1190,199 @@ function ToolCallsCollapsible({ toolCalls }: { toolCalls: unknown[] }) {
         </div>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+function getProviderItemTypeLabel(itemType: string): string {
+  const labels: Record<string, string> = {
+    reasoning: '推理',
+    message: '消息输出',
+    web_search_call: '联网搜索',
+    function_call: 'Function 调用',
+    function_call_output: 'Function 结果',
+    file_search_call: '文件搜索',
+    code_interpreter_call: '代码解释器',
+    image_generation_call: '图像生成',
+    mcp_call: 'MCP 调用',
+    mcp_list_tools: 'MCP 工具列表',
+    computer_call: '计算机操作',
+    shell_call: 'Shell 调用',
+    apply_patch_call: '补丁调用',
+    custom_tool_call: '自定义工具调用',
+  }
+  return labels[itemType] || itemType || '未知 Item'
+}
+
+function extractProviderTextParts(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value] : []
+  if (!Array.isArray(value)) {
+    if (!isRecord(value)) return []
+    const textParts: string[] = []
+    for (const key of ['text', 'refusal']) {
+      const text = value[key]
+      if (typeof text === 'string' && text.trim()) textParts.push(text)
+    }
+    for (const key of ['content', 'summary']) {
+      textParts.push(...extractProviderTextParts(value[key]))
+    }
+    return textParts
+  }
+  return value.flatMap(extractProviderTextParts)
+}
+
+function parseProviderArguments(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const normalizedValue = value.trim()
+  if (!normalizedValue) return ''
+  try {
+    return JSON.parse(normalizedValue) as unknown
+  } catch {
+    return value
+  }
+}
+
+function getProviderItemReadableText(item: Record<string, unknown>, itemType: string): string {
+  if (itemType === 'reasoning') {
+    return [...extractProviderTextParts(item.summary), ...extractProviderTextParts(item.content)]
+      .join('\n\n')
+      .trim()
+  }
+  if (itemType === 'message') {
+    return extractProviderTextParts(item.content).join('\n\n').trim()
+  }
+  return ''
+}
+
+function getProviderItemPayload(item: Record<string, unknown>, itemType: string): unknown {
+  if (itemType === 'function_call' || itemType === 'custom_tool_call') {
+    return {
+      ...(item.name ? { name: item.name } : {}),
+      arguments: parseProviderArguments(item.arguments),
+    }
+  }
+  if (item.action !== undefined) return item.action
+  if (itemType !== 'message' && itemType !== 'reasoning' && item.output !== undefined) {
+    return item.output
+  }
+  return null
+}
+
+function ProviderResponseTimeline({ response }: { response: ProviderResponsePayload }) {
+  const outputItems = Array.isArray(response.output) ? response.output : []
+  const usage = isRecord(response.usage) ? response.usage : null
+  const inputTokens = usage && typeof usage.input_tokens === 'number' ? usage.input_tokens : null
+  const outputTokens = usage && typeof usage.output_tokens === 'number' ? usage.output_tokens : null
+  const totalTokens = usage && typeof usage.total_tokens === 'number' ? usage.total_tokens : null
+
+  return (
+    <section className="space-y-2 rounded-md border border-sky-500/30 bg-sky-500/[0.03] p-2.5 sm:p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Code2 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+        <span className="text-sm font-semibold">Responses 原生输出</span>
+        <Badge variant="secondary">{outputItems.length} Items</Badge>
+        {response.status !== undefined && (
+          <Badge variant="outline">{String(response.status)}</Badge>
+        )}
+        {response.model !== undefined && (
+          <span className="text-muted-foreground text-xs">{String(response.model)}</span>
+        )}
+        {response.id !== undefined && (
+          <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+            {String(response.id)}
+          </span>
+        )}
+      </div>
+
+      {(inputTokens !== null || outputTokens !== null || totalTokens !== null) && (
+        <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {inputTokens !== null && <span>输入 {inputTokens}</span>}
+          {outputTokens !== null && <span>输出 {outputTokens}</span>}
+          {totalTokens !== null && <span>总计 {totalTokens}</span>}
+        </div>
+      )}
+
+      {outputItems.length > 0 ? (
+        <div className="space-y-2">
+          {outputItems.map((rawItem, index) => {
+            const item = isRecord(rawItem) ? rawItem : { value: rawItem }
+            const itemType = String(item.type || '').trim()
+            const readableText = getProviderItemReadableText(item, itemType)
+            const itemPayload = getProviderItemPayload(item, itemType)
+            const itemId = String(item.id || item.call_id || '').trim()
+            const itemStatus = String(item.status || '').trim()
+
+            return (
+              <article
+                key={`${itemId || itemType || 'item'}-${index}`}
+                className="bg-background/75 space-y-2 rounded-md border p-2.5 sm:p-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">#{index + 1}</Badge>
+                  <Badge variant="secondary" className="font-mono">
+                    {getProviderItemTypeLabel(itemType)}
+                  </Badge>
+                  {itemType && <span className="text-muted-foreground font-mono text-[11px]">{itemType}</span>}
+                  {itemStatus && <Badge variant="outline">{itemStatus}</Badge>}
+                  {itemId && (
+                    <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+                      {itemId}
+                    </span>
+                  )}
+                </div>
+
+                {readableText && (
+                  <pre className="bg-muted/20 max-h-96 overflow-auto rounded-md border p-2.5 text-sm leading-6 whitespace-pre-wrap">
+                    {readableText}
+                  </pre>
+                )}
+
+                {itemPayload !== null && itemPayload !== undefined && (
+                  <pre className="bg-muted/20 max-h-80 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+                    {stringifyStructuredValue(itemPayload)}
+                  </pre>
+                )}
+
+                <Collapsible className="rounded-md border">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors [&[data-state=open]>svg]:rotate-180"
+                    >
+                      <span>完整 Item JSON</span>
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t">
+                    <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+                      {JSON.stringify(rawItem, null, 2)}
+                    </pre>
+                  </CollapsibleContent>
+                </Collapsible>
+              </article>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-xs">Provider 响应未包含 output Items。</p>
+      )}
+
+      <Collapsible className="rounded-md border">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors [&[data-state=open]>svg]:rotate-180"
+          >
+            <span className="font-medium">完整 Responses JSON</span>
+            <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="border-t">
+          <pre className="max-h-[36rem] overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+            {JSON.stringify(response, null, 2)}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
+    </section>
   )
 }
 
@@ -3066,6 +3273,10 @@ export function ReasoningProcessPage({
                                     })}
                                   </div>
 
+                                  {llmCall.provider_response && (
+                                    <ProviderResponseTimeline response={llmCall.provider_response} />
+                                  )}
+
                                   {llmCall.output && (
                                     <div className="rounded-md border p-2.5 sm:p-3">
                                       <Badge variant="outline" className="mb-2">
@@ -3085,6 +3296,10 @@ export function ReasoningProcessPage({
                               ))}
                             </div>
                           )}
+
+                        {structuredPrompt.provider_response && (
+                          <ProviderResponseTimeline response={structuredPrompt.provider_response} />
+                        )}
 
                         {structuredPrompt.output && (
                           <div className="rounded-md border p-2.5 sm:p-3">

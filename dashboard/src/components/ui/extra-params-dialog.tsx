@@ -17,6 +17,7 @@ interface ExtraParamsDialogProps {
   onOpenChange: (open: boolean) => void
   value: Record<string, unknown>
   onChange: (value: Record<string, unknown>) => void
+  validate?: (value: Record<string, unknown>) => string | null
 }
 
 export function ExtraParamsDialog({
@@ -24,12 +25,16 @@ export function ExtraParamsDialog({
   onOpenChange,
   value,
   onChange,
+  validate,
 }: ExtraParamsDialogProps) {
   const [editingValue, setEditingValue] = useState<Record<string, unknown>>(value)
+  const [editorError, setEditorError] = useState<string | null>(null)
+  const validationError = editorError ?? validate?.(editingValue) ?? null
 
   useEffect(() => {
     if (open) {
       setEditingValue(value)
+      setEditorError(null)
     }
   }, [open, value])
 
@@ -38,17 +43,20 @@ export function ExtraParamsDialog({
     if (newOpen) {
       // 打开时同步最新的 value
       setEditingValue(value)
+      setEditorError(null)
     }
     onOpenChange(newOpen)
   }
 
   const handleSave = () => {
+    if (validationError) return
     onChange(editingValue)
     onOpenChange(false)
   }
 
   const handleCancel = () => {
     setEditingValue(value) // 恢复原始值
+    setEditorError(null)
     onOpenChange(false)
   }
 
@@ -66,15 +74,22 @@ export function ExtraParamsDialog({
           <KeyValueEditor
             value={editingValue}
             onChange={setEditingValue}
+            onValidationChange={setEditorError}
             placeholder="添加额外参数（如 thinking、top_p 等）..."
           />
         </div>
+
+        {validationError && (
+          <p role="alert" className="text-sm text-destructive">
+            {validationError}
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={handleCancel}>
             取消
           </Button>
-          <Button onClick={handleSave}>保存</Button>
+          <Button onClick={handleSave} disabled={Boolean(validationError)}>保存</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

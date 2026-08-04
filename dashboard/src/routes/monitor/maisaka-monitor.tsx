@@ -19,7 +19,10 @@ import {
   Clock,
   Eraser,
   FileCode2,
+  Globe2,
   ImageIcon,
+  ImageOff,
+  Loader2,
   PauseCircle,
   Timer,
   Wrench,
@@ -37,6 +40,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useResolvedAvatarUrl, type AvatarTargetType } from '@/lib/avatar-url'
 import { useToast } from '@/hooks/use-toast'
+import { backendApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
 import type {
@@ -117,6 +121,14 @@ function isWaitingForMessage(status: StageStatusInfo) {
     status.detail.includes('等待消息') ||
     status.agentState === 'wait'
   )
+}
+
+function getAgentStateLabel(agentState: string): string | null {
+  const normalizedState = agentState.trim().toLowerCase()
+  if (!normalizedState || normalizedState === 'stop') return null
+  if (normalizedState === 'running') return '运行中'
+  if (normalizedState === 'wait') return '等待中'
+  return agentState
 }
 
 function MonitorAvatar({
@@ -372,6 +384,7 @@ function StageStatusPanel({
   stats,
   status,
 }: StageStatusPanelProps) {
+  const agentStateLabel = status ? getAgentStateLabel(status.agentState) : null
   const actions = (
     <MonitorStatusActions
       autoScroll={autoScroll}
@@ -405,12 +418,12 @@ function StageStatusPanel({
             {status.roundText}
           </Badge>
         )}
-        {status.agentState && (
+        {agentStateLabel && (
           <Badge
             variant={status.agentState === 'running' ? 'default' : 'outline'}
             className="px-1.5 text-[10px]"
           >
-            {status.agentState}
+            {agentStateLabel}
           </Badge>
         )}
         <span className="text-muted-foreground ml-auto text-[11px]">
@@ -479,6 +492,114 @@ function buildMessageMediaKey(media: MaisakaMessageMedia, index: number) {
   return `${media.kind}:${media.hash}:${media.index ?? index}`
 }
 
+function MessageMediaItem({ item }: { item: MaisakaMessageMedia }) {
+  const inlineSource = item.data_url?.trim() ?? ''
+  const remoteSource = item.url.trim()
+  const canShowOriginal = Boolean(inlineSource || remoteSource)
+  const [showOriginal, setShowOriginal] = useState(
+    canShowOriginal && Boolean(item.default_original)
+  )
+  const [resolvedSource, setResolvedSource] = useState(inlineSource)
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>(
+    showOriginal && !inlineSource ? 'loading' : 'idle'
+  )
+  const [loadRequestId, setLoadRequestId] = useState(showOriginal && !inlineSource ? 1 : 0)
+  const label = item.kind === 'emoji' ? '表情包' : '图片'
+
+  useEffect(() => {
+    if (loadRequestId <= 0 || inlineSource || !remoteSource) {
+      return
+    }
+
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    void backendApi
+      .get<Blob>(remoteSource, {
+        parse: 'blob',
+        cache: 'force-cache',
+        errorMessage: `读取${label}原文件失败`,
+      })
+      .then((blob) => {
+        if (cancelled) {
+          return
+        }
+        objectUrl = URL.createObjectURL(blob)
+        setResolvedSource(objectUrl)
+        setLoadState('idle')
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadState('error')
+        }
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [inlineSource, label, loadRequestId, remoteSource])
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'group bg-muted/40 hover:border-primary/60 hover:bg-muted/70 max-w-full overflow-hidden rounded-md border text-left transition-colors',
+        showOriginal ? 'p-1.5' : 'px-2.5 py-1.5'
+      )}
+      title={`点击切换为${showOriginal ? '识别文本' : '原文件'}`}
+      onClick={() => {
+        if (!canShowOriginal) {
+          return
+        }
+        if (!showOriginal) {
+          if (!inlineSource && !resolvedSource && loadState !== 'loading') {
+            setLoadState('loading')
+            setLoadRequestId((current) => current + 1)
+          }
+        }
+        setShowOriginal((current) => !current)
+      }}
+    >
+      {showOriginal ? (
+        resolvedSource ? (
+          <img
+            src={resolvedSource}
+            alt={`${label}原文件`}
+            className={cn(
+              'block rounded object-contain',
+              item.kind === 'emoji' ? 'max-h-24 max-w-24' : 'max-h-56 max-w-full'
+            )}
+            onError={() => {
+              setResolvedSource('')
+              setLoadState('error')
+            }}
+          />
+        ) : loadState === 'error' ? (
+          <span className="text-destructive flex min-h-8 items-center gap-1.5 px-1 text-xs">
+            <ImageOff className="h-3.5 w-3.5 shrink-0" />
+            原文件读取失败
+          </span>
+        ) : (
+          <span className="text-muted-foreground flex min-h-8 items-center gap-1.5 px-1 text-xs">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            正在读取{label}…
+          </span>
+        )
+      ) : (
+        <span className="text-muted-foreground flex max-w-sm items-center gap-1.5 text-xs">
+          <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 break-words whitespace-pre-wrap">
+            {item.text || `[${label}]`}
+          </span>
+        </span>
+      )}
+    </button>
+  )
+}
+
 function MessageMediaContent({
   content,
   emptyLabel,
@@ -488,7 +609,6 @@ function MessageMediaContent({
   emptyLabel: string
   media?: MaisakaMessageMedia[]
 }) {
-  const [displayOverrides, setDisplayOverrides] = useState<Record<string, boolean>>({})
   const normalizedContent = content ?? ''
   const hasContent = normalizedContent.trim().length > 0
   const hasMedia = media.length > 0
@@ -512,50 +632,7 @@ function MessageMediaContent({
         <div className="flex flex-wrap gap-2">
           {media.map((item, index) => {
             const mediaKey = buildMessageMediaKey(item, index)
-            const source = item.data_url || item.url
-            const canShowOriginal = source.trim().length > 0
-            const showOriginal =
-              canShowOriginal && (displayOverrides[mediaKey] ?? Boolean(item.default_original))
-            const label = item.kind === 'emoji' ? '表情包' : '图片'
-            return (
-              <button
-                key={mediaKey}
-                type="button"
-                className={cn(
-                  'group bg-muted/40 hover:border-primary/60 hover:bg-muted/70 max-w-full overflow-hidden rounded-md border text-left transition-colors',
-                  showOriginal ? 'p-1.5' : 'px-2.5 py-1.5'
-                )}
-                title={`点击切换为${showOriginal ? '识别文本' : '原文件'}`}
-                onClick={() => {
-                  if (!canShowOriginal) {
-                    return
-                  }
-                  setDisplayOverrides((current) => ({
-                    ...current,
-                    [mediaKey]: !showOriginal,
-                  }))
-                }}
-              >
-                {showOriginal ? (
-                  <img
-                    src={source}
-                    alt={`${label}原文件`}
-                    className={cn(
-                      'block rounded object-contain',
-                      item.kind === 'emoji' ? 'max-h-24 max-w-24' : 'max-h-56 max-w-full'
-                    )}
-                    loading="lazy"
-                  />
-                ) : (
-                  <span className="text-muted-foreground flex max-w-sm items-center gap-1.5 text-xs">
-                    <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="min-w-0 break-words whitespace-pre-wrap">
-                      {item.text || `[${label}]`}
-                    </span>
-                  </span>
-                )}
-              </button>
-            )
+            return <MessageMediaItem key={mediaKey} item={item} />
           })}
         </div>
       )}
@@ -1059,6 +1136,68 @@ function PlannerToolCallsBlock({
   )
 }
 
+function PlannerNativeToolCallsBlock({ data }: { data: PlannerFinalizedEvent }) {
+  const nativeToolCalls = data.planner?.native_tool_calls ?? []
+  if (nativeToolCalls.length <= 0) {
+    return null
+  }
+
+  return (
+    <Card className="border-l-4 border-l-sky-500/60">
+      <CardHeader className="space-y-2 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Globe2 className="h-4 w-4 text-sky-500" />
+          <CardTitle className="text-sm font-medium">Provider 原生工具</CardTitle>
+          <Badge variant="secondary" className="ml-auto text-[10px]">
+            {nativeToolCalls.length} 次
+          </Badge>
+        </div>
+        <div className="space-y-2">
+          {nativeToolCalls.map((toolCall, index) => (
+            <div
+              key={`${toolCall.call_id || toolCall.tool_type}-${index}`}
+              className="bg-muted/20 space-y-1 rounded-md border px-2.5 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-sm font-semibold">
+                  {toolCall.tool_type === 'web_search' ? '联网搜索' : toolCall.tool_type}
+                </span>
+                {toolCall.action_type && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {toolCall.action_type}
+                  </Badge>
+                )}
+                {toolCall.status && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {toolCall.status}
+                  </Badge>
+                )}
+                {toolCall.source_count > 0 && (
+                  <span className="text-muted-foreground ml-auto text-[10px]">
+                    来源 {toolCall.source_count} 个
+                  </span>
+                )}
+              </div>
+              {toolCall.details.length > 0 ? (
+                toolCall.details.map((detail, detailIndex) => (
+                  <p
+                    key={`${toolCall.call_id || index}-detail-${detailIndex}`}
+                    className="text-foreground/80 text-xs break-words"
+                  >
+                    {detail}
+                  </p>
+                ))
+              ) : (
+                <p className="text-muted-foreground text-xs">供应商未返回查询详情。</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardHeader>
+    </Card>
+  )
+}
+
 function ToolExecutionCard({ data }: { data: ToolExecutionEvent }) {
   return (
     <div className="flex items-start gap-3">
@@ -1236,6 +1375,7 @@ function TimelineEventRenderer({
             data={entry.data as PlannerFinalizedEvent}
             onOpenReasoning={onOpenReasoning}
           />
+          <PlannerNativeToolCallsBlock data={entry.data as PlannerFinalizedEvent} />
           <PlannerToolCallsBlock
             data={entry.data as PlannerFinalizedEvent}
             onOpenReasoning={onOpenReasoning}

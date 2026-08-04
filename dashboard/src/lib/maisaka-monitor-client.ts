@@ -199,9 +199,19 @@ export interface MaisakaRequestBlock {
   tool_count: number
 }
 
+export interface MaisakaNativeToolCall {
+  tool_type: string
+  call_id: string
+  status: string
+  action_type: string
+  details: string[]
+  source_count: number
+}
+
 export interface MaisakaPlannerBlock {
   content: string | null
   tool_calls: MaisakaToolCall[]
+  native_tool_calls?: MaisakaNativeToolCall[]
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number

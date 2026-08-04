@@ -126,8 +126,7 @@ export const menuSections: MenuSection[] = [
       {
         icon: StatisticsIcon,
         label: 'sidebar.menu.statistics',
-        path: '/maibot_statistics.html',
-        external: true,
+        path: '/statistics',
       },
     ],
   },

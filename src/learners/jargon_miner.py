@@ -370,6 +370,7 @@ class JargonMiner:
         prompt: str,
         output_content: str,
         model_name: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存黑话含义推断阶段的可重放 LLM Prompt。"""
 
@@ -389,6 +390,7 @@ class JargonMiner:
                 output_title=f"黑话含义推断输出 - {stage_name}",
                 output_content=output_content,
                 metadata={"model_name": model_name},
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"jargon {jargon_content} 推断 Prompt 保存失败: stage={stage_name}, error={exc}")
@@ -456,6 +458,7 @@ class JargonMiner:
             prompt=prompt1,
             output_content=llm_response_1,
             model_name=str(getattr(generation_result_1, "model_name", "") or ""),
+            provider_response=generation_result_1.provider_response,
         )
         if not llm_response_1:
             logger.warning(f"jargon {content} 推断1失败：无响应")
@@ -495,6 +498,7 @@ class JargonMiner:
             prompt=prompt2,
             output_content=llm_response_2,
             model_name=str(getattr(generation_result_2, "model_name", "") or ""),
+            provider_response=generation_result_2.provider_response,
         )
         if not llm_response_2:
             logger.warning(f"jargon {content} 推断2失败：无响应")
@@ -522,6 +526,7 @@ class JargonMiner:
             prompt=prompt3,
             output_content=llm_response_3,
             model_name=str(getattr(generation_result_3, "model_name", "") or ""),
+            provider_response=generation_result_3.provider_response,
         )
         if not llm_response_3:
             logger.warning(f"jargon {content} 比较失败：无响应")

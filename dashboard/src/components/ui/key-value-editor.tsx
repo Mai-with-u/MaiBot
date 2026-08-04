@@ -10,6 +10,7 @@ import { NestedKeyValueEditor } from "./nested-key-value-editor"
 interface KeyValueEditorProps {
   value: Record<string, unknown>
   onChange: (value: Record<string, unknown>) => void
+  onValidationChange?: (error: string | null) => void
   className?: string
   placeholder?: string
 }
@@ -34,6 +35,7 @@ function validateJson(jsonStr: string): { valid: boolean; error?: string; parsed
 export function KeyValueEditor({
   value,
   onChange,
+  onValidationChange,
   className,
   placeholder = "添加额外参数...",
 }: KeyValueEditorProps) {
@@ -46,6 +48,11 @@ export function KeyValueEditor({
   
   const [editingJsonText, setEditingJsonText] = useState(initialJsonText)
   const [jsonError, setJsonError] = useState<string | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
+
+  useEffect(() => {
+    onValidationChange?.(mode === 'json' ? jsonError : listError)
+  }, [jsonError, listError, mode, onValidationChange])
 
   // 当 value 变化时重置编辑状态
   useEffect(() => {
@@ -110,6 +117,7 @@ export function KeyValueEditor({
           <NestedKeyValueEditor
             value={value}
             onChange={onChange}
+            onValidationChange={setListError}
             placeholder={placeholder}
           />
         </TabsContent>

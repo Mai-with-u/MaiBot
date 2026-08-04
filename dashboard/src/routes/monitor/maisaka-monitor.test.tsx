@@ -8,7 +8,7 @@
  * useMaisakaMonitor hook 已有独立单测（同目录），此处整体打桩以便精确控制视图状态；
  * 虚拟滚动与路由跳转按仓库既有样板打桩。
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -48,6 +48,10 @@ const toastMocks = vi.hoisted(() => ({
   toast: vi.fn(),
 }))
 
+const httpMocks = vi.hoisted(() => ({
+  get: vi.fn(),
+}))
+
 // 虚拟滚动桩：直接渲染全部行，并暴露 scrollToIndex 供滚动断言
 const virtualizerMocks = vi.hoisted(() => ({
   measureElement: vi.fn(),
@@ -78,6 +82,10 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMocks.toast }),
+}))
+
+vi.mock('@/lib/http', () => ({
+  backendApi: { get: httpMocks.get },
 }))
 
 // 头像解析依赖设置项与后端地址解析，桩为无头像（仅渲染回退字符/图标）。
@@ -425,7 +433,7 @@ describe('会话侧边栏', () => {
 })
 
 describe('阶段状态栏与工具条', () => {
-  it('展示选中会话的阶段徽章、轮次、agent 状态、详情与更新时间', () => {
+  it('展示选中会话的阶段徽章、轮次、中文运行状态、详情与更新时间', () => {
     const stageStatuses = new Map<string, StageStatusInfo>([
       [
         's1',
@@ -443,10 +451,42 @@ describe('阶段状态栏与工具条', () => {
 
     expect(screen.getByText('回复中')).toBeInTheDocument()
     expect(screen.getByText('第 2 轮')).toBeInTheDocument()
-    expect(screen.getByText('running')).toBeInTheDocument()
+    expect(screen.getByText('运行中')).toBeInTheDocument()
+    expect(screen.queryByText('running')).not.toBeInTheDocument()
     expect(screen.getByText('正在生成回复')).toBeInTheDocument()
     expect(screen.getByText('更新于 刚刚')).toBeInTheDocument()
     expect(screen.queryByText('当前聊天流暂无阶段状态')).not.toBeInTheDocument()
+  })
+
+  it('空闲阶段不重复显示 stop 状态', () => {
+    const stageStatuses = new Map<string, StageStatusInfo>([
+      [
+        's1',
+        makeStatus({
+          stage: '空闲',
+          agentState: 'stop',
+          detail: '等待消息触发',
+        }),
+      ],
+    ])
+    setupMonitorState({ selectedSession: 's1', stageStatuses })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('空闲')).toBeInTheDocument()
+    expect(screen.getByText('等待消息触发')).toBeInTheDocument()
+    expect(screen.queryByText('stop')).not.toBeInTheDocument()
+  })
+
+  it('wait 状态显示为中文等待状态', () => {
+    const stageStatuses = new Map<string, StageStatusInfo>([
+      ['s1', makeStatus({ stage: '等待消息', agentState: 'wait' })],
+    ])
+    setupMonitorState({ selectedSession: 's1', stageStatuses })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('等待消息')).toBeInTheDocument()
+    expect(screen.getByText('等待中')).toBeInTheDocument()
+    expect(screen.queryByText('wait')).not.toBeInTheDocument()
   })
 
   it('统计浮层汇总消息、循环与工具调用数量', async () => {
@@ -684,6 +724,84 @@ describe('时间线事件卡片', () => {
     expect(screen.queryByAltText('图片原文件')).not.toBeInTheDocument()
   })
 
+  it('通过统一后端客户端读取观察消息的原始图片', async () => {
+    const user = userEvent.setup()
+    const objectUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:monitor-image')
+    let resolveRequest!: (blob: Blob) => void
+    httpMocks.get.mockReturnValue(
+      new Promise<Blob>((resolve) => {
+        resolveRequest = resolve
+      })
+    )
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'message.ingested',
+          makeIngested({
+            content: '',
+            media: [
+              {
+                kind: 'image',
+                hash: 'image-hash',
+                text: '图片描述',
+                url: '/api/webui/system/maisaka-monitor/media/image/image-hash',
+              },
+            ],
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    await user.click(screen.getByText('图片描述'))
+
+    expect(screen.getByText('正在读取图片…')).toBeInTheDocument()
+    await act(async () => {
+      resolveRequest(new Blob(['image-bytes'], { type: 'image/jpeg' }))
+    })
+    await waitFor(() => {
+      expect(screen.getByAltText('图片原文件')).toHaveAttribute('src', 'blob:monitor-image')
+    })
+    expect(httpMocks.get).toHaveBeenCalledWith(
+      '/api/webui/system/maisaka-monitor/media/image/image-hash',
+      {
+        parse: 'blob',
+        cache: 'force-cache',
+        errorMessage: '读取图片原文件失败',
+      }
+    )
+    expect(objectUrlSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('原始图片读取失败时显示明确错误而不是空白图片框', async () => {
+    const user = userEvent.setup()
+    httpMocks.get.mockRejectedValue(new Error('not found'))
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'message.ingested',
+          makeIngested({
+            content: '',
+            media: [
+              {
+                kind: 'image',
+                hash: 'missing-image',
+                text: '图片描述',
+                url: '/api/webui/system/maisaka-monitor/media/image/missing-image',
+              },
+            ],
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    await user.click(screen.getByText('图片描述'))
+
+    expect(await screen.findByText('原文件读取失败')).toBeInTheDocument()
+    expect(screen.queryByAltText('图片原文件')).not.toBeInTheDocument()
+  })
+
   it('反应门卡片按动作渲染徽章与耗时', () => {
     const timeline = [
       makeEntry(
@@ -804,6 +922,38 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('未返回结果摘要。')).toBeInTheDocument()
     expect(screen.getByText('#1')).toBeInTheDocument()
     expect(screen.getByText('#2')).toBeInTheDocument()
+  })
+
+  it('planner.finalized 单独展示 Provider 原生联网搜索摘要', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.finalized',
+          makeFinalized({
+            planner: makePlannerBlock({
+              native_tool_calls: [
+                {
+                  tool_type: 'web_search',
+                  call_id: 'ws-1',
+                  status: 'completed',
+                  action_type: 'search',
+                  details: ['查询：Responses API 标准工具'],
+                  source_count: 3,
+                },
+              ],
+            }),
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('Provider 原生工具')).toBeInTheDocument()
+    expect(screen.getByText('联网搜索')).toBeInTheDocument()
+    expect(screen.getByText('search')).toBeInTheDocument()
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(screen.getByText('查询：Responses API 标准工具')).toBeInTheDocument()
+    expect(screen.getByText('来源 3 个')).toBeInTheDocument()
   })
 
   it('planner.finalized 仅 finish 工具时提示回合结束，混合工具时内联提示', () => {

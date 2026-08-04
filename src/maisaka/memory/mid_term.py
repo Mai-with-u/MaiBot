@@ -490,6 +490,7 @@ def _save_mid_term_memory_prompt_preview(
             metadata={
                 "model_name": str(getattr(result, "model_name", "") or ""),
             },
+            provider_response=getattr(result, "provider_response", None),
         )
         logger.debug(f"{log_prefix} 聊天回想生成 Prompt 预览已保存")
     except Exception as exc:
@@ -537,6 +538,7 @@ def _truncate_message_text(message: Message, max_text_chars: int) -> Message:
         tool_call_id=message.tool_call_id,
         tool_name=message.tool_name,
         tool_calls=message.tool_calls,
+        provider_state=message.provider_state if truncated_parts == message.parts else None,
     )
 
 

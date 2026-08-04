@@ -155,10 +155,13 @@ export function ProviderList({
       </div>
 
       {/* 桌面端表格视图 */}
-      <div className="bg-card hidden overflow-hidden border md:block">
+      <div
+        data-model-config-table-surface="true"
+        className="hidden overflow-hidden border bg-transparent md:block"
+      >
         <div className="overflow-x-auto">
           <Table aria-label="AI 模型提供商列表" className="min-w-[960px]">
-            <TableHeader className="bg-muted/30">
+            <TableHeader className="bg-transparent">
               <TableRow className="hover:bg-transparent">
                 <TableHead className={`${providerTableHeadClass} w-[5.5rem]`}>
                   <div className="flex items-center gap-2">

@@ -17,7 +17,8 @@ export interface ProviderTemplate {
   id: string
   name: string
   base_url: string
-  client_type: 'openai' | 'gemini'
+  client_type: 'openai' | 'openai_responses' | 'gemini'
+  allowed_client_types?: Array<'openai' | 'openai_responses' | 'gemini'>
   display_name: string
   // 模型列表获取配置（可选，未配置则不支持自动获取）
   modelFetcher?: ModelFetcherConfig
@@ -31,6 +32,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     name: 'DeepSeek',
     base_url: 'https://api.deepseek.com',
     client_type: 'openai',
+    allowed_client_types: ['openai', 'openai_responses'],
     display_name: 'DeepSeek',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
   },
@@ -218,12 +220,21 @@ export function resolveModelFetcherTemplate(
   if (!baseUrl) return null
 
   const isGemini = clientType === 'gemini'
+  const isOpenAIResponses = clientType === 'openai_responses'
   return {
-    id: isGemini ? 'custom-gemini' : 'custom-openai-compatible',
+    id: isGemini
+      ? 'custom-gemini'
+      : isOpenAIResponses
+        ? 'custom-openai-responses'
+        : 'custom-openai-compatible',
     name: '',
     base_url: baseUrl,
-    client_type: isGemini ? 'gemini' : 'openai',
-    display_name: isGemini ? '自定义 Gemini 端点' : '自定义 OpenAI 兼容端点',
+    client_type: isGemini ? 'gemini' : isOpenAIResponses ? 'openai_responses' : 'openai',
+    display_name: isGemini
+      ? '自定义 Gemini 端点'
+      : isOpenAIResponses
+        ? '自定义 OpenAI Responses 端点'
+        : '自定义 OpenAI 兼容端点',
     modelFetcher: {
       endpoint: '/models',
       parser: isGemini ? 'gemini' : 'openai',

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from html import escape
 from os import getenv
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import asyncio
 import concurrent.futures
@@ -13,6 +13,14 @@ from typing_extensions import TypedDict
 
 from src.common.logger import get_logger
 from src.manager.async_task_manager import AsyncTask
+
+if TYPE_CHECKING:
+    from src.webui.schemas.statistics import (
+        DetailedDistributionItem,
+        DetailedStatisticsBreakdown,
+        DetailedStatisticsData,
+        DetailedStatisticsDistributions,
+    )
 
 logger = get_logger("maibot_statistic")
 
@@ -1347,6 +1355,232 @@ class StatisticOutputTask(AsyncTask):
 
     # 移除_generate_versions_tab方法
 
+    @staticmethod
+    def _calculate_cache_hit_rate_value(hit_tokens: int, miss_tokens: int) -> float | None:
+        total_cache_tokens = hit_tokens + miss_tokens
+        if total_cache_tokens <= 0:
+            return None
+        return hit_tokens / total_cache_tokens
+
+    @classmethod
+    def _build_breakdown_rows(
+        cls,
+        stat_data: StatPeriodData,
+        dimension: str,
+    ) -> list["DetailedStatisticsBreakdown"]:
+        """将模型、模块或请求类型统计转换为统一的前端表格行。"""
+
+        from src.webui.schemas.statistics import DetailedStatisticsBreakdown
+
+        dimension_keys = {
+            "model": (
+                REQ_CNT_BY_MODEL,
+                IN_TOK_BY_MODEL,
+                OUT_TOK_BY_MODEL,
+                TOTAL_TOK_BY_MODEL,
+                CACHE_HIT_TOK_BY_MODEL,
+                CACHE_MISS_TOK_BY_MODEL,
+                COST_BY_MODEL,
+                AVG_TIME_COST_BY_MODEL,
+                STD_TIME_COST_BY_MODEL,
+            ),
+            "module": (
+                REQ_CNT_BY_MODULE,
+                IN_TOK_BY_MODULE,
+                OUT_TOK_BY_MODULE,
+                TOTAL_TOK_BY_MODULE,
+                CACHE_HIT_TOK_BY_MODULE,
+                CACHE_MISS_TOK_BY_MODULE,
+                COST_BY_MODULE,
+                AVG_TIME_COST_BY_MODULE,
+                STD_TIME_COST_BY_MODULE,
+            ),
+            "request_type": (
+                REQ_CNT_BY_TYPE,
+                IN_TOK_BY_TYPE,
+                OUT_TOK_BY_TYPE,
+                TOTAL_TOK_BY_TYPE,
+                CACHE_HIT_TOK_BY_TYPE,
+                CACHE_MISS_TOK_BY_TYPE,
+                COST_BY_TYPE,
+                AVG_TIME_COST_BY_TYPE,
+                STD_TIME_COST_BY_TYPE,
+            ),
+        }
+        if dimension not in dimension_keys:
+            raise ValueError(f"不支持的详细统计维度: {dimension}")
+
+        (
+            request_key,
+            input_key,
+            output_key,
+            token_key,
+            cache_hit_key,
+            cache_miss_key,
+            cost_key,
+            avg_time_key,
+            std_time_key,
+        ) = dimension_keys[dimension]
+        request_counts = cast(dict[str, int], stat_data[request_key])
+        total_replies = int(stat_data.get(TOTAL_REPLY_CNT, 0))
+
+        rows = []
+        for name, request_count in sorted(request_counts.items()):
+            input_tokens = cast(dict[str, int], stat_data[input_key])[name]
+            output_tokens = cast(dict[str, int], stat_data[output_key])[name]
+            total_tokens = cast(dict[str, int], stat_data[token_key])[name]
+            cache_hit_tokens = cast(dict[str, int], stat_data[cache_hit_key])[name]
+            cache_miss_tokens = cast(dict[str, int], stat_data[cache_miss_key])[name]
+            rows.append(
+                DetailedStatisticsBreakdown(
+                    name=name,
+                    request_count=request_count,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=total_tokens,
+                    cache_hit_tokens=cache_hit_tokens,
+                    cache_miss_tokens=cache_miss_tokens,
+                    cache_hit_rate=cls._calculate_cache_hit_rate_value(cache_hit_tokens, cache_miss_tokens),
+                    total_cost=cast(dict[str, float], stat_data[cost_key])[name],
+                    avg_time_cost=cast(dict[str, float], stat_data[avg_time_key])[name],
+                    std_time_cost=cast(dict[str, float], stat_data[std_time_key])[name],
+                    avg_calls_per_reply=request_count / total_replies if total_replies > 0 else None,
+                    avg_tokens_per_reply=total_tokens / total_replies if total_replies > 0 else None,
+                    avg_tokens_per_call=total_tokens / request_count if request_count > 0 else None,
+                )
+            )
+        return rows
+
+    @staticmethod
+    def _build_distribution_items(values: dict[str, float | int]) -> list["DetailedDistributionItem"]:
+        from src.webui.schemas.statistics import DetailedDistributionItem
+
+        return [
+            DetailedDistributionItem(name=name, value=float(value))
+            for name, value in sorted(values.items())
+        ]
+
+    def _build_period_distributions(
+        self,
+        stat_data: StatPeriodData,
+    ) -> "DetailedStatisticsDistributions":
+        from src.webui.schemas.statistics import DetailedStatisticsDistributions
+
+        chat_messages: defaultdict[str, int] = defaultdict(int)
+        for chat_id, count in stat_data[MSG_CNT_BY_CHAT].items():
+            chat_name = str(self.name_mapping.get(chat_id, ("未知聊天", 0))[0])
+            chat_messages[chat_name] += count
+
+        chat_costs: defaultdict[str, float] = defaultdict(float)
+        for chat_id, cost in stat_data[COST_BY_CHAT].items():
+            chat_name = (
+                "全局"
+                if chat_id == GLOBAL_COST_SESSION_KEY
+                else str(self.name_mapping.get(chat_id, (self._get_chat_display_name_from_id(chat_id), 0))[0])
+            )
+            chat_costs[chat_name] += cost
+        owner_costs = _build_llm_owner_costs(stat_data[COST_BY_TYPE])
+
+        return DetailedStatisticsDistributions(
+            owner_costs=self._build_distribution_items(dict(owner_costs)),
+            model_costs=self._build_distribution_items(dict(stat_data[COST_BY_MODEL])),
+            module_costs=self._build_distribution_items(dict(stat_data[COST_BY_MODULE])),
+            request_type_costs=self._build_distribution_items(dict(stat_data[COST_BY_TYPE])),
+            chat_messages=self._build_distribution_items(chat_messages),
+            chat_costs=self._build_distribution_items(chat_costs),
+        )
+
+    def _build_detailed_statistics_snapshot(
+        self,
+        stat: StatPeriodMapping,
+        now: datetime,
+        chart_data: dict[str, dict[str, object]],
+        metrics_data: dict[str, object],
+    ) -> "DetailedStatisticsData":
+        """构造与当前 HTML 报告完全同源的 WebUI 详细统计快照。"""
+
+        from src.webui.schemas.statistics import (
+            DetailedChatStatistics,
+            DetailedStatisticsData,
+            DetailedStatisticsMetricsData,
+            DetailedStatisticsPeriod,
+            DetailedStatisticsSummary,
+            DetailedStatisticsTrendData,
+        )
+
+        periods = []
+        for period_key, duration, _ in self.stat_period:
+            stat_data = stat[period_key]
+            total_tokens = sum(stat_data[TOTAL_TOK_BY_MODEL].values())
+            input_tokens = sum(stat_data[IN_TOK_BY_MODEL].values())
+            output_tokens = sum(stat_data[OUT_TOK_BY_MODEL].values())
+            cache_hit_tokens = int(stat_data.get(CACHE_HIT_TOK, 0))
+            cache_miss_tokens = int(stat_data.get(CACHE_MISS_TOK, 0))
+            total_messages = int(stat_data[TOTAL_MSG_CNT])
+            total_replies = int(stat_data.get(TOTAL_REPLY_CNT, 0))
+            received_messages = total_messages - total_replies
+            online_hours = stat_data[ONLINE_TIME] / 3600.0
+            period_start_time = self.all_time_start_time if period_key == "all_time" else now - duration
+
+            periods.append(
+                DetailedStatisticsPeriod(
+                    key=period_key,
+                    start_time=period_start_time.isoformat(),
+                    end_time=now.isoformat(),
+                    summary=DetailedStatisticsSummary(
+                        online_time=stat_data[ONLINE_TIME],
+                        total_messages=total_messages,
+                        total_replies=total_replies,
+                        total_requests=stat_data[TOTAL_REQ_CNT],
+                        total_tokens=total_tokens,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_hit_tokens=cache_hit_tokens,
+                        cache_miss_tokens=cache_miss_tokens,
+                        cache_hit_rate=self._calculate_cache_hit_rate_value(
+                            cache_hit_tokens,
+                            cache_miss_tokens,
+                        ),
+                        total_cost=stat_data[TOTAL_COST],
+                        cost_per_100_messages=(
+                            stat_data[TOTAL_COST] / total_messages * 100 if total_messages > 0 else 0.0
+                        ),
+                        cost_per_100_messages_excluding_replies=(
+                            stat_data[TOTAL_COST] / received_messages * 100 if received_messages > 0 else 0.0
+                        ),
+                        cost_per_100_replies=(
+                            stat_data[TOTAL_COST] / total_replies * 100 if total_replies > 0 else 0.0
+                        ),
+                        cost_per_hour=stat_data[TOTAL_COST] / online_hours if online_hours > 0 else 0.0,
+                        tokens_per_hour=total_tokens / online_hours if online_hours > 0 else 0.0,
+                    ),
+                    models=self._build_breakdown_rows(stat_data, "model"),
+                    modules=self._build_breakdown_rows(stat_data, "module"),
+                    request_types=self._build_breakdown_rows(stat_data, "request_type"),
+                    chats=[
+                        DetailedChatStatistics(
+                            name=str(self.name_mapping.get(chat_id, ("未知聊天", 0))[0]),
+                            message_count=count,
+                        )
+                        for chat_id, count in sorted(stat_data[MSG_CNT_BY_CHAT].items())
+                    ],
+                    distributions=self._build_period_distributions(stat_data),
+                )
+            )
+
+        return DetailedStatisticsData(
+            generated_at=now.isoformat(),
+            periods=periods,
+            trends={
+                range_key: DetailedStatisticsTrendData.model_validate(range_data)
+                for range_key, range_data in chart_data.items()
+            },
+            metrics={
+                range_key: DetailedStatisticsMetricsData.model_validate(range_data)
+                for range_key, range_data in metrics_data.items()
+            },
+        )
+
     def _generate_html_report(self, stat: StatPeriodMapping, now: datetime):
         """
         生成HTML格式的统计报告
@@ -2202,6 +2436,12 @@ class StatisticOutputTask(AsyncTask):
 
         with open(record_file, "w", encoding="utf-8") as f:
             f.write(html_template)
+
+        from src.services.statistics_service import store_detailed_statistics_snapshot
+
+        store_detailed_statistics_snapshot(
+            self._build_detailed_statistics_snapshot(stat, now, chart_data, metrics_data)
+        )
 
     def _generate_chart_data(self, stat: StatPeriodMapping) -> dict[str, dict[str, object]]:
         """生成图表数据"""
