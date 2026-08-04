@@ -72,6 +72,7 @@ def test_parse_response_preserves_output_items_and_usage() -> None:
                 "type": "reasoning",
                 "id": "rs_test",
                 "summary": [{"type": "summary_text", "text": "检查天气参数"}],
+                "content": [{"type": "reasoning_text", "text": "不应覆盖可展示摘要"}],
                 "encrypted_content": "encrypted-state",
             },
             {
@@ -129,6 +130,56 @@ def test_parse_response_preserves_output_items_and_usage() -> None:
     assert response.native_tool_calls[0].details == ["查询：上海今日天气", "查询：上海气温"]
     assert response.native_tool_calls[0].source_count == 2
     assert usage == (120, 30, 150, 80, 40)
+
+
+def test_parse_response_extracts_multiple_plaintext_reasoning_parts() -> None:
+    request = _build_request([MessageBuilder().add_text_content("计算一道题").build()])
+    raw_response = SimpleNamespace(
+        id="resp_deepseek",
+        model="deepseek-v4-flash",
+        status="completed",
+        output=[
+            {
+                "type": "reasoning",
+                "id": "rs_first",
+                "status": "completed",
+                "content": [
+                    {"type": "reasoning_text", "text": "第一段推理"},
+                    {"type": "reasoning_text", "text": "第二段推理"},
+                ],
+                "summary": [],
+            },
+            {
+                "type": "reasoning",
+                "id": "rs_second",
+                "status": "completed",
+                "content": [{"type": "reasoning_text", "text": "第三段推理"}],
+                "summary": [],
+            },
+            {
+                "type": "message",
+                "id": "msg_answer",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "最终答案"}],
+            },
+        ],
+        usage=None,
+    )
+
+    response, usage = _parse_completed_response(
+        raw_response,
+        request,
+        "responses-test",
+        "https://api.example.com/v1",
+        "strict",
+    )
+
+    assert response.reasoning_content == "第一段推理\n第二段推理\n第三段推理"
+    assert response.content == "最终答案"
+    assert response.provider_state is not None
+    assert response.provider_state.output_items == raw_response.output
+    assert usage is None
 
 
 def test_convert_messages_replays_matching_state_and_falls_back_after_edit() -> None:

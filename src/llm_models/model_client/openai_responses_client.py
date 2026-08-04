@@ -316,6 +316,23 @@ def _extract_reasoning_summary(item: Any) -> List[str]:
     return summary_parts
 
 
+def _extract_reasoning_display_text(item: Any) -> List[str]:
+    """提取 reasoning item 的可展示文本，优先使用摘要并兼容明文推理块。"""
+
+    summary_parts = _extract_reasoning_summary(item)
+    if summary_parts:
+        return summary_parts
+
+    reasoning_parts: List[str] = []
+    for content_part in _get_value(item, "content", []) or []:
+        if str(_get_value(content_part, "type", "") or "") != "reasoning_text":
+            continue
+        text = _get_value(content_part, "text")
+        if isinstance(text, str) and text.strip():
+            reasoning_parts.append(text.strip())
+    return reasoning_parts
+
+
 def _normalize_native_tool_detail(value: Any) -> str:
     """将原生工具可观测字段压缩为适合日志和 WebUI 的单行摘要。"""
 
@@ -439,7 +456,7 @@ def _parse_completed_response(
             continue
 
         if item_type == "reasoning":
-            reasoning_parts.extend(_extract_reasoning_summary(item))
+            reasoning_parts.extend(_extract_reasoning_display_text(item))
             continue
 
         if item_type == "function_call":
