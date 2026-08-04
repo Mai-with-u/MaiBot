@@ -543,7 +543,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       <Input
                         type="file"
                         multiple
-                        accept=".txt,.md,.json,.jsonl,.csv,.log,.html,.htm,.xml"
+                        accept=".txt,.md,.json"
                         onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))}
                       />
                     </div>

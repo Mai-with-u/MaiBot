@@ -1346,6 +1346,7 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(createButton).toBeEnabled()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(fileInput).toHaveAttribute('accept', '.txt,.md,.json')
     const uploadFiles = [
       new File(['hello'], 'demo.txt', { type: 'text/plain' }),
       new File(['{"name":"mai"}'], 'demo.json', { type: 'application/json' }),
@@ -1392,8 +1393,8 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.createMemoryMaibotMigrationImport).toHaveBeenCalledTimes(1))
 
     const [uploadedFiles, uploadPayload] = vi.mocked(memoryApi.createMemoryUploadImport).mock.calls[0]
-    expect(uploadedFiles).toHaveLength(4)
-    expect(uploadedFiles.map((file) => file.name)).toEqual(['demo.txt', 'demo.json', 'demo.csv', 'demo.md'])
+    expect(uploadedFiles).toHaveLength(3)
+    expect(uploadedFiles.map((file) => file.name)).toEqual(['demo.txt', 'demo.json', 'demo.md'])
     expect(uploadPayload).toMatchObject({
       input_mode: 'text',
       llm_enabled: true,
