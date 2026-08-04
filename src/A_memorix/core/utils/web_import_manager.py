@@ -407,6 +407,9 @@ class ImportTaskManager:
         self._worker_task: Optional[asyncio.Task] = None
         self._stopping = False
 
+        self._import_root = self._resolve_import_root()
+        self._import_root.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_import_state()
         self._temp_root = self._resolve_temp_root()
         self._temp_root.mkdir(parents=True, exist_ok=True)
         self._reports_root = self._resolve_reports_root()
@@ -430,14 +433,33 @@ class ImportTaskManager:
             logger.warning(f"写入变更回调执行失败: {e}")
 
     def _resolve_temp_root(self) -> Path:
-        data_dir = resolve_repo_path(self.plugin.get_config("storage.data_dir", "./data"), fallback=default_data_dir())
-        return data_dir / "web_import_tmp"
+        return self._resolve_import_root() / "tasks"
 
     def _resolve_reports_root(self) -> Path:
-        return self._resolve_data_dir() / "web_import_reports"
+        return self._resolve_import_root() / "reports"
 
     def _resolve_manifest_path(self) -> Path:
-        return self._resolve_data_dir() / "import_manifest.json"
+        return self._resolve_import_root() / "manifest.json"
+
+    def _resolve_import_root(self) -> Path:
+        return self._resolve_data_dir() / "imports"
+
+    def _migrate_legacy_import_state(self) -> None:
+        """迁移仍有长期价值的旧导入状态，临时任务目录不参与迁移。"""
+        data_dir = self._resolve_data_dir()
+        legacy_items = (
+            (data_dir / "import_manifest.json", self._resolve_manifest_path()),
+            (data_dir / "web_import_reports", self._resolve_reports_root()),
+        )
+        for legacy_path, target_path in legacy_items:
+            if not legacy_path.exists() or target_path.exists():
+                continue
+            try:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(legacy_path, target_path)
+                logger.info(f"已迁移旧导入状态: {legacy_path} -> {target_path}")
+            except OSError as exc:
+                logger.warning(f"旧导入状态迁移失败，保留原文件继续启动: {legacy_path}, error={exc}")
 
     def _resolve_repo_root(self) -> Path:
         return repo_root()

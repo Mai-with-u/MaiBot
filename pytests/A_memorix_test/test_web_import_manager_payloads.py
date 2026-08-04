@@ -266,6 +266,32 @@ def _test_directory(name: str) -> Path:
     return path
 
 
+def test_import_state_uses_data_dir_imports_and_migrates_legacy_state(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    legacy_manifest = data_dir / "import_manifest.json"
+    legacy_reports = data_dir / "web_import_reports"
+    legacy_tasks = data_dir / "web_import_tmp"
+    legacy_reports.mkdir(parents=True)
+    legacy_tasks.mkdir(parents=True)
+    legacy_manifest.write_text('{"source": {"status": "completed"}}', encoding="utf-8")
+    (legacy_reports / "report.json").write_text("{}", encoding="utf-8")
+    (legacy_tasks / "stale.txt").write_text("stale", encoding="utf-8")
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+
+    manager = ImportTaskManager(plugin)
+
+    assert manager._temp_root == data_dir / "imports" / "tasks"
+    assert manager._reports_root == data_dir / "imports" / "reports"
+    assert manager._manifest_path == data_dir / "imports" / "manifest.json"
+    assert manager._load_manifest() == {"source": {"status": "completed"}}
+    assert (manager._reports_root / "report.json").is_file()
+    assert not legacy_manifest.exists()
+    assert not legacy_reports.exists()
+    assert (legacy_tasks / "stale.txt").is_file()
+
+
 def test_import_params_include_configurable_chunk_windows() -> None:
     manager, _ = _build_manager()
 
