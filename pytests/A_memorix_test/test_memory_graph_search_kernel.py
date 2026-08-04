@@ -419,7 +419,7 @@ async def test_search_memory_filters_hits_to_current_chat_scope(tmp_path) -> Non
 
     assert payload["summary"]
     assert [item["hash"] for item in payload["hits"]] == ["para-current", "rel-current"]
-    assert retriever.top_k_values == [2]
+    assert retriever.top_k_values == [30]
 
 
 @pytest.mark.asyncio
@@ -442,7 +442,7 @@ async def test_search_memory_allows_configured_shared_chat_scope(tmp_path) -> No
         "para-current",
         "rel-current",
     ]
-    assert retriever.top_k_values == [4]
+    assert retriever.top_k_values == [30]
 
 
 def test_retrieval_scope_keeps_explicit_and_legacy_global_data(tmp_path) -> None:
@@ -555,7 +555,7 @@ async def test_search_memory_keeps_global_results_without_chat_id(tmp_path) -> N
     )
 
     assert [item["hash"] for item in payload["hits"]] == ["para-other", "rel-other"]
-    assert retriever.top_k_values == [2]
+    assert retriever.top_k_values == [30]
 
 
 def test_retrieval_type_filter_is_disabled_by_default() -> None:

@@ -52,6 +52,7 @@ class SearchExecutionRequest:
     query_type: str = "search"  # 检索类型：search、time、hybrid
     query: str = ""
     top_k: Optional[int] = None
+    candidate_top_k: Optional[int] = None
     time_from: Optional[str] = None
     time_to: Optional[str] = None
     person: Optional[str] = None
@@ -201,7 +202,9 @@ class SearchExecutionService:
         query_type: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions],
+        candidate_top_k: Optional[int] = None,
     ) -> str:
+        resolved_candidate_top_k = top_k if candidate_top_k is None else max(top_k, int(candidate_top_k))
         payload = {
             "stream_id": _sanitize_text(request.stream_id),
             "query_type": query_type,
@@ -214,6 +217,7 @@ class SearchExecutionService:
             "source": _sanitize_text(request.source),
             "scope": SearchExecutionService._scope_identity(request.scope),
             "top_k": int(top_k),
+            "candidate_top_k": int(resolved_candidate_top_k),
             "use_threshold": bool(request.use_threshold),
             "enable_ppr": bool(request.enable_ppr),
         }
@@ -255,6 +259,13 @@ class SearchExecutionService:
         top_k_ok, top_k, top_k_error = SearchExecutionService._resolve_top_k(plugin_config, query_type, request.top_k)
         if not top_k_ok:
             return SearchExecutionResult(success=False, error=top_k_error)
+        if request.candidate_top_k is None:
+            candidate_top_k = top_k
+        else:
+            try:
+                candidate_top_k = max(top_k, int(request.candidate_top_k))
+            except (TypeError, ValueError):
+                return SearchExecutionResult(success=False, error="candidate_top_k 参数必须为整数")
 
         temporal_ok, temporal, temporal_error = SearchExecutionService._build_temporal(
             plugin_config=plugin_config,
@@ -296,13 +307,14 @@ class SearchExecutionService:
             query_type=query_type,
             top_k=top_k,
             temporal=temporal,
+            candidate_top_k=candidate_top_k,
         )
 
         async def _executor() -> Dict[str, Any]:
             started_at = time.time()
             retrieve_kwargs: Dict[str, Any] = {
                 "query": query,
-                "top_k": top_k,
+                "top_k": candidate_top_k,
                 "temporal": temporal,
                 "enable_ppr": bool(request.enable_ppr),
             }

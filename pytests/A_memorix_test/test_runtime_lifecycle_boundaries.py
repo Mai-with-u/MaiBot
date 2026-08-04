@@ -671,6 +671,7 @@ async def test_search_execution_once_preserves_request_semantics(
     assert execution_request.query_type == "time"
     assert execution_request.query == "绿茶"
     assert execution_request.top_k == 7
+    assert execution_request.candidate_top_k == 30
     assert execution_request.time_from == "2026-01-01"
     assert execution_request.time_to == "2026-01-02"
     assert execution_request.person == "person-1"

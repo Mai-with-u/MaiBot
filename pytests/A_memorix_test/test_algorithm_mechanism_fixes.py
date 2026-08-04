@@ -59,6 +59,56 @@ def test_search_request_key_distinguishes_scope_resource_sets() -> None:
     assert build_key(first_scope) != build_key(changed_scope)
 
 
+@pytest.mark.asyncio
+async def test_search_execution_uses_candidate_budget_before_threshold_filter() -> None:
+    candidates = [
+        RetrievalResult(
+            hash_value=f"candidate-{index}",
+            content=f"候选 {index}",
+            score=float(10 - index),
+            result_type="paragraph",
+            source="test",
+            metadata={},
+        )
+        for index in range(4)
+    ]
+    requested_top_k: list[int] = []
+
+    class Retriever:
+        async def retrieve(self, **kwargs: Any) -> List[RetrievalResult]:
+            requested_top_k.append(int(kwargs["top_k"]))
+            return candidates[: int(kwargs["top_k"])]
+
+    class ThresholdFilter:
+        @staticmethod
+        def filter(items: List[RetrievalResult]) -> List[RetrievalResult]:
+            return [item for item in items if item.hash_value not in {"candidate-0", "candidate-1"}]
+
+    result = await SearchExecutionService.execute(
+        retriever=Retriever(),
+        threshold_filter=ThresholdFilter(),
+        plugin_config={
+            "retrieval": {
+                "search": {
+                    "smart_fallback": {"enabled": False},
+                    "safe_content_dedup": {"enabled": False},
+                }
+            }
+        },
+        request=SearchExecutionRequest(
+            caller="test",
+            query="候选预算",
+            top_k=2,
+            candidate_top_k=4,
+        ),
+        enforce_chat_filter=False,
+    )
+
+    assert result.success is True
+    assert requested_top_k == [4]
+    assert [item.hash_value for item in result.results] == ["candidate-2", "candidate-3"]
+
+
 class _ConcurrentRequestRetriever:
     def __init__(self) -> None:
         self.config = SimpleNamespace(enable_ppr=True)

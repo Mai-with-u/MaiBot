@@ -189,6 +189,7 @@ class MemorySearchService(KernelServiceBase):
         )
         hits = [self._retrieval_result_hit(item) for item in result.results] if result.success else []
         hits = self._filter_hits_by_retrieval_scope(hits, scope)
+        hits = hits[:limit]
         return {
             "success": result.success,
             "results": hits,
@@ -219,6 +220,7 @@ class MemorySearchService(KernelServiceBase):
         )
         hits = [self._retrieval_result_hit(item) for item in result.results] if result.success else []
         hits = self._filter_hits_by_retrieval_scope(hits, scope)
+        hits = hits[:limit]
         return {
             "success": result.success,
             "results": hits,
@@ -263,6 +265,11 @@ class MemorySearchService(KernelServiceBase):
         enforce_chat_filter: bool,
         scope: Optional[RetrievalScope] = None,
     ) -> SearchExecutionResult:
+        candidate_top_k = max(
+            int(top_k),
+            int(self._cfg("retrieval.top_k_paragraphs", 20))
+            + int(self._cfg("retrieval.top_k_relations", 10)),
+        )
         return await SearchExecutionService.execute(
             retriever=self.retriever,
             threshold_filter=self.threshold_filter,
@@ -275,6 +282,7 @@ class MemorySearchService(KernelServiceBase):
                 query_type=query_type,
                 query=query,
                 top_k=top_k,
+                candidate_top_k=candidate_top_k,
                 time_from=time_from,
                 scope=scope,
                 time_to=time_to,
