@@ -685,13 +685,14 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
             self.name = name
             self.num_vectors = num_vectors
             self.loaded = False
+            self.valid_hashes: list[str] = []
 
         def has_data(self) -> bool:
             return True
 
         def load(self, **kwargs: Any) -> None:
-            del kwargs
             self.loaded = True
+            self.valid_hashes = list(kwargs["v1_valid_hashes"])
 
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
     kernel.metadata_store = object()  # type: ignore[assignment]
@@ -702,12 +703,15 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     graph_dir.mkdir(parents=True)
     calls: list[tuple[str, Any]] = []
     captured_manifest: dict[str, Any] = {}
+    stores: dict[str, FakeVectorStore] = {}
 
     def fake_make_vector_store(data_dir: Path, *, dimension: int | None = None) -> FakeVectorStore:
         del dimension
         name = Path(data_dir).name
         calls.append(("make", name))
-        return FakeVectorStore(name, 2 if name == "paragraph" else 3)
+        store = FakeVectorStore(name, 2 if name == "paragraph" else 3)
+        stores[name] = store
+        return store
 
     def fake_stored_vectors_compatible(store: FakeVectorStore) -> bool:
         calls.append(("compatible", store.name))
@@ -726,6 +730,11 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_paragraph_vector_dir", lambda: paragraph_dir)
     monkeypatch.setattr(kernel, "_graph_vector_dir", lambda: graph_dir)
     monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
+    monkeypatch.setattr(
+        kernel,
+        "_v1_valid_hashes_for_pool",
+        lambda pool: ["paragraph-1", "paragraph-2"] if pool == "paragraph" else ["entity:1", "relation:1"],
+    )
     monkeypatch.setattr(kernel, "_stored_vectors_compatible_with_current_embedding", fake_stored_vectors_compatible)
     monkeypatch.setattr(kernel, "_count_vector_rebuild_targets", fake_count_vector_rebuild_targets)
     monkeypatch.setattr(kernel, "_write_dual_vector_ready_manifest", fake_write_dual_vector_ready_manifest)
@@ -746,6 +755,8 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
         "entities": {"done": 1, "failed": 0},
         "relations": {"done": 2, "failed": 0},
     }
+    assert stores["paragraph"].valid_hashes == ["paragraph-1", "paragraph-2"]
+    assert stores["graph"].valid_hashes == ["entity:1", "relation:1"]
 
 
 def test_dual_migration_does_not_trigger_historical_reembedding(
