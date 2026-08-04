@@ -243,6 +243,24 @@ async def test_host_service_unknown_component_keeps_runtime_error(monkeypatch: p
 
 
 @pytest.mark.asyncio
+async def test_host_service_does_not_apply_default_invoke_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _ready_service(_FakeKernel())
+
+    async def fake_invoke(component_name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"component_name": component_name, "args": args}
+
+    def fail_timeout(_delay: float) -> None:
+        raise AssertionError("普通 A_Memorix 调用不应进入通用超时上下文")
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+    monkeypatch.setattr(asyncio, "timeout", fail_timeout)
+
+    result = await service.invoke("memory_stats", {})
+
+    assert result == {"component_name": "memory_stats", "args": {}}
+
+
+@pytest.mark.asyncio
 async def test_host_service_enforces_invoke_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     class SlowKernel(_FakeKernel):
         def __init__(self) -> None:
