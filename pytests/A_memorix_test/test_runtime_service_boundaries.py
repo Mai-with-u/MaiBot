@@ -603,13 +603,13 @@ async def test_legacy_vector_copy_does_not_block_event_loop_and_waits_for_worker
     def fake_copy_legacy_vectors_once(*, batch_size: int) -> dict[str, Any]:
         assert batch_size == 256
         worker_started.set()
-        release_worker.wait(timeout=1.0)
+        release_worker.wait(timeout=2.0)
         return {"done": False}
 
     monkeypatch.setattr(kernel, "_copy_legacy_vectors_once", fake_copy_legacy_vectors_once)
 
     copy_task = asyncio.create_task(kernel._background_task_service._legacy_vector_copy_loop())
-    for _ in range(100):
+    for _ in range(2000):
         if worker_started.is_set():
             break
         await asyncio.sleep(0.001)

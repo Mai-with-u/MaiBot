@@ -204,10 +204,14 @@ def test_lpmm_converter_deduplicates_semantic_ids_within_batch(tmp_path: Path) -
     }
     metadata_store = MetadataStore(data_dir=output_dir / "metadata")
     metadata_store.connect()
-    assert len(metadata_store.query("SELECT hash FROM paragraphs")) == 1
-    assert len(metadata_store.query("SELECT hash FROM entities")) == 1
-    relation_rows = metadata_store.query("SELECT hash, vector_state FROM relations")
-    metadata_store.close()
+    try:
+        paragraph_rows = metadata_store.query("SELECT hash FROM paragraphs")
+        entity_rows = metadata_store.query("SELECT hash FROM entities")
+        relation_rows = metadata_store.query("SELECT hash, vector_state FROM relations")
+    finally:
+        metadata_store.close()
+    assert len(paragraph_rows) == 1
+    assert len(entity_rows) == 1
     assert len(relation_rows) == 1
     assert relation_rows[0]["vector_state"] == "ready"
 
