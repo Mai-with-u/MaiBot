@@ -88,7 +88,7 @@ class _KernelBackedRuntimeManager:
         component_name: str,
         args: Dict[str, Any] | None,
         *,
-        timeout_ms: int = 30000,
+        timeout_ms: int | None = None,
     ) -> Any:
         del timeout_ms
         payload = args or {}

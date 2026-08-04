@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import json
 import re
@@ -1397,6 +1397,7 @@ class MetadataEpisodeMixin:
         person: Optional[str] = None,
         source: Optional[str] = None,
         limit: int = 20,
+        allowed_episode_ids: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """查询 episode 列表。"""
         safe_limit = max(1, int(limit))
@@ -1406,6 +1407,14 @@ class MetadataEpisodeMixin:
             person=person,
             source=source,
         )
+        if allowed_episode_ids is not None:
+            normalized_episode_ids = [
+                str(value or "").strip() for value in allowed_episode_ids if str(value or "").strip()
+            ]
+            if not normalized_episode_ids:
+                return []
+            conditions.append("e.episode_id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(normalized_episode_ids, ensure_ascii=False))
 
         q, tokens = self._tokenize_episode_query(query)
         select_score_sql = "0.0 AS lexical_score"

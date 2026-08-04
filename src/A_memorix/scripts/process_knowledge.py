@@ -3,8 +3,8 @@
 知识库自动导入脚本 (Strategy-Aware Version)
 
 功能：
-1. 扫描 data/plugins/a-dawn.a-memorix/raw 下的 .txt 文件
-2. 检查 data/import_manifest.json 确认是否已导入
+1. 扫描 A_Memorix 数据目录 imports/source/raw 下的 .txt 文件
+2. 检查 imports/manifest.json 确认是否已导入
 3. 使用 Strategy 模式处理文件 (Narrative/Factual/Quote)
 4. 将生成的数据直接存入 VectorStore/GraphStore/MetadataStore
 5. 更新 manifest
@@ -13,18 +13,19 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
-
-from rich.console import Console
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import argparse
 import asyncio
 import hashlib
 import json
+import os
 import sys
 import time
+
+from rich.console import Console
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 import tomlkit
 
-from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR
+from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR, resolve_repo_path
 
 console = Console()
 
@@ -33,15 +34,9 @@ class LLMGenerationError(Exception):
     pass
 
 
-# 数据目录
-DATA_DIR = DEFAULT_DATA_DIR
-RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
-MANIFEST_PATH = DATA_DIR / "import_manifest.json"
-
-
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="A_Memorix Knowledge Importer (Strategy-Aware)")
+    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="A_Memorix 数据目录")
     parser.add_argument("--force", action="store_true", help="Force re-import")
     parser.add_argument("--clear-manifest", action="store_true", help="Clear manifest")
     parser.add_argument(
@@ -139,6 +134,7 @@ class AutoImporter:
         concurrency: int = 5,
         chat_log: bool = False,
         chat_reference_time: Optional[str] = None,
+        data_dir: Optional[Path] = None,
     ):
         self.vector_store: Optional[VectorStore] = None
         self.graph_store: Optional[GraphStore] = None
@@ -147,6 +143,11 @@ class AutoImporter:
         self.relation_write_service = None
         self.plugin_config = {}
         self.manifest = {}
+        self.data_dir = resolve_repo_path(data_dir, fallback=DEFAULT_DATA_DIR)
+        self.import_dir = self.data_dir / "imports"
+        self.raw_dir = self.import_dir / "source" / "raw"
+        self.processed_dir = self.import_dir / "processed"
+        self.manifest_path = self.import_dir / "manifest.json"
         self.force = force
         self.clear_manifest = clear_manifest
         self.chat_log = chat_log
@@ -164,16 +165,23 @@ class AutoImporter:
         self.semaphore = asyncio.Semaphore(self.concurrency_limit)
         self.storage_lock = asyncio.Lock()
 
-        RAW_DIR.mkdir(parents=True, exist_ok=True)
-        PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        self.processed_dir.mkdir(parents=True, exist_ok=True)
+        legacy_manifest_path = self.data_dir / "import_manifest.json"
+        if legacy_manifest_path.is_file() and not self.manifest_path.exists():
+            try:
+                os.replace(legacy_manifest_path, self.manifest_path)
+                logger.info(f"已迁移旧导入清单: {legacy_manifest_path} -> {self.manifest_path}")
+            except OSError as exc:
+                logger.warning(f"旧导入清单迁移失败，保留原文件继续执行: {legacy_manifest_path}, error={exc}")
 
         if self.clear_manifest:
             logger.info("🧹 清理 Mainfest")
             self.manifest = {}
             self._save_manifest()
-        elif MANIFEST_PATH.exists():
+        elif self.manifest_path.exists():
             try:
-                with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+                with open(self.manifest_path, "r", encoding="utf-8") as f:
                     self.manifest = json.load(f)
             except Exception:
                 self.manifest = {}
@@ -218,7 +226,7 @@ class AutoImporter:
             )
 
         self.vector_store = VectorStore(
-            dimension=dim, quantization_type=QuantizationType.INT8, data_dir=DATA_DIR / "vectors"
+            dimension=dim, quantization_type=QuantizationType.INT8, data_dir=self.data_dir / "vectors"
         )
 
         SparseMatrixFormat = storage_module.SparseMatrixFormat
@@ -226,10 +234,10 @@ class AutoImporter:
         m_map = {"csr": SparseMatrixFormat.CSR, "csc": SparseMatrixFormat.CSC}
 
         self.graph_store = GraphStore(
-            matrix_format=m_map.get(m_fmt_str, SparseMatrixFormat.CSR), data_dir=DATA_DIR / "graph"
+            matrix_format=m_map.get(m_fmt_str, SparseMatrixFormat.CSR), data_dir=self.data_dir / "graph"
         )
 
-        self.metadata_store = MetadataStore(data_dir=DATA_DIR / "metadata")
+        self.metadata_store = MetadataStore(data_dir=self.data_dir / "metadata")
         self.metadata_store.connect()
 
         if RelationWriteService is not None:
@@ -390,8 +398,8 @@ Chat paragraph:
         if not await self.initialize():
             return
 
-        files = list(RAW_DIR.glob("*.txt"))
-        logger.info(f"扫描到 {len(files)} 个文件 in {RAW_DIR}")
+        files = list(self.raw_dir.glob("*.txt"))
+        logger.info(f"扫描到 {len(files)} 个文件 in {self.raw_dir}")
 
         if not files:
             return
@@ -476,7 +484,7 @@ Chat paragraph:
                     logger.info(f"  已处理块 {i + 1}/{len(initial_chunks)}")
 
                 # 4. 保存 JSON
-                json_path = PROCESSED_DIR / f"{file_path.stem}.json"
+                json_path = self.processed_dir / f"{file_path.stem}.json"
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(processed_data, f, ensure_ascii=False, indent=2)
 
@@ -792,7 +800,8 @@ Chat paragraph:
             self.metadata_store.close()
 
     def _save_manifest(self):
-        with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, ensure_ascii=False, indent=2)
 
 
@@ -810,6 +819,7 @@ async def main():
         concurrency=args.concurrency,
         chat_log=args.chat_log,
         chat_reference_time=args.chat_reference_time,
+        data_dir=Path(args.data_dir),
     )
     await importer.process_and_import()
     await importer.close()

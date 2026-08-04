@@ -9,6 +9,7 @@ from src.A_memorix.core.retrieval.dual_path import (
     DualPathRetriever,
     DualPathRetrieverConfig,
     RetrievalResult,
+    RetrievalStrategy,
     VectorPoolsConfig,
 )
 
@@ -195,6 +196,49 @@ def _make_retriever(vector_pools_cfg: Optional[VectorPoolsConfig] = None) -> Dua
         embedding_manager=MagicMock(),
         config=config,
     )
+
+
+@pytest.mark.asyncio
+async def test_vector_unavailable_uses_sparse_without_calling_embedding() -> None:
+    class FailIfEncoded:
+        async def encode(self, query: str) -> None:
+            raise AssertionError(f"向量不可用时不应生成查询 Embedding: {query}")
+
+    metadata_store = MagicMock()
+    metadata_store.get_paragraphs_by_hashes.return_value = {
+        "paragraph-1": {
+            "hash": "paragraph-1",
+            "content": "稀疏检索仍能返回这段记忆",
+            "word_count": 12,
+        }
+    }
+    sparse_index = MagicMock()
+    sparse_index.search.return_value = [
+        {
+            "hash": "paragraph-1",
+            "score": 0.9,
+            "bm25_score": 3.2,
+            "matched_token_count": 2,
+            "matched_token_ratio": 1.0,
+        }
+    ]
+    retriever = DualPathRetriever(
+        vector_store=None,
+        graph_store=None,
+        metadata_store=metadata_store,
+        embedding_manager=FailIfEncoded(),  # type: ignore[arg-type]
+        sparse_index=sparse_index,
+        config=DualPathRetrieverConfig(
+            retrieval_strategy=RetrievalStrategy.PARA_ONLY,
+            enable_ppr=False,
+            sparse={"enabled": True},  # type: ignore[arg-type]
+        ),
+    )
+
+    results = await retriever.retrieve("仍可检索", top_k=3)
+
+    assert [item.hash_value for item in results] == ["paragraph-1"]
+    assert results[0].source == "sparse_bm25"
 
 
 class TestDualPoolWeights:

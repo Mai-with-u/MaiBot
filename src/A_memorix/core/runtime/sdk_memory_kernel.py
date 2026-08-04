@@ -167,6 +167,25 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             "since": None,
             "last_check": None,
         }
+        self._runtime_capabilities: Dict[str, bool] = {
+            "metadata": False,
+            "sparse": False,
+            "graph": False,
+            "vector_read": False,
+            "vector_write": False,
+            "embedding": False,
+        }
+        self._vector_health: Dict[str, Any] = {
+            "state": "not_initialized",
+            "error_code": "",
+            "reason": "",
+            "trusted_coverage": 0.0,
+            "recovery_stage": "idle",
+            "operation_id": "",
+            "copy_progress": {},
+            "updated_at": None,
+        }
+        self._legacy_vector_view = None
         self._current_effective_filter_cache: Dict[str, Any] = {"checked_at": 0.0, "needed": False}
         self._feedback_classifier: Optional[LLMServiceClient] = None
         self._fuzzy_modify_planner: Optional[LLMServiceClient] = None
@@ -197,6 +216,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             MemorySummaryService,
             MemoryV5AdminService,
             MemoryVectorDeleteService,
+            MemoryVectorRecoveryService,
             MemoryVectorRuntimeService,
         )
 
@@ -223,6 +243,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self._import_tuning_admin_service = MemoryImportTuningAdminService(self)
         self._v5_admin_service = MemoryV5AdminService(self)
         self._vector_delete_service = MemoryVectorDeleteService(self)
+        self._vector_recovery_service = MemoryVectorRecoveryService(self)
         self._request_dedup_service = MemoryRequestDedupService(self)
         self._summary_service = MemorySummaryService(self)
         self._stats_service = MemoryStatsService(self)
@@ -282,14 +303,57 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         return await type(service).apply_retrieval_tuning_profile(service, profile, validate=validate)
 
     def is_runtime_ready(self) -> bool:
-        return bool(
-            self._initialized
-            and self.vector_store is not None
-            and self.graph_store is not None
-            and self.metadata_store is not None
-            and self.embedding_manager is not None
-            and self.retriever is not None
+        return bool(self._initialized and self.metadata_store is not None)
+
+    def _set_runtime_capability(self, channel: str, available: bool) -> None:
+        token = str(channel or "").strip()
+        if token not in self._runtime_capabilities:
+            raise ValueError(f"未知运行时能力: {token}")
+        self._runtime_capabilities[token] = bool(available)
+
+    def _runtime_capability_status(self) -> Dict[str, Any]:
+        ordered_channels = ("metadata", "sparse", "graph", "vector_read", "vector_write", "embedding")
+        capabilities = {name: bool(self._runtime_capabilities.get(name, False)) for name in ordered_channels}
+        available_channels = [name for name, available in capabilities.items() if available]
+        unavailable_channels = [name for name, available in capabilities.items() if not available]
+        vector_retrieval_available = capabilities["vector_read"] and capabilities["embedding"]
+        retrieval_channels = [name for name in ("sparse", "graph") if capabilities[name]]
+        if vector_retrieval_available:
+            retrieval_channels.insert(0, "vector_read")
+        retrieval_ready = bool(capabilities["metadata"] and retrieval_channels)
+        if vector_retrieval_available and (capabilities["sparse"] or capabilities["graph"]):
+            retrieval_mode = "hybrid"
+        elif vector_retrieval_available:
+            retrieval_mode = "vector"
+        elif capabilities["sparse"] and capabilities["graph"]:
+            retrieval_mode = "sparse_graph"
+        elif capabilities["sparse"]:
+            retrieval_mode = "sparse"
+        elif capabilities["graph"]:
+            retrieval_mode = "graph"
+        elif capabilities["metadata"]:
+            retrieval_mode = "metadata_only"
+        else:
+            retrieval_mode = "unavailable"
+        vector_state = str(self._vector_health.get("state", "") or "")
+        degraded = bool(
+            capabilities["metadata"]
+            and (
+                any(not capabilities[name] for name in ordered_channels[1:])
+                or vector_state in {"degraded", "recovering", "unavailable"}
+            )
         )
+        return {
+            "memory_enabled": bool(self._cfg("plugin.enabled", True)),
+            "runtime_ready": self.is_runtime_ready(),
+            "retrieval_ready": retrieval_ready,
+            "degraded": degraded,
+            "retrieval_mode": retrieval_mode,
+            "available_channels": available_channels,
+            "unavailable_channels": unavailable_channels,
+            "capabilities": capabilities,
+            "vector_health": self._vector_health_snapshot(),
+        }
 
     def is_chat_enabled(self, stream_id: str, group_id: str | None = None, user_id: str | None = None) -> bool:
         service = self._chat_filter_service
@@ -457,12 +521,14 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         *,
         stats: Dict[str, Dict[str, int]],
         migration_stats: Dict[str, Dict[str, int]],
+        generation_reason: str = "",
     ) -> None:
         service = self._dual_vector_state_service
         return type(service)._write_dual_vector_ready_manifest(
             service,
             stats=stats,
             migration_stats=migration_stats,
+            generation_reason=generation_reason,
         )
 
     def _remove_dual_vector_ready_manifest(self) -> None:
@@ -504,6 +570,42 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     def _try_recover_dual_ready_manifest(self) -> bool:
         service = self._dual_vector_state_service
         return type(service)._try_recover_dual_ready_manifest(service)
+
+    def _vector_health_snapshot(self) -> Dict[str, Any]:
+        service = self._vector_recovery_service
+        return type(service)._vector_health_snapshot(service)
+
+    def _v1_reconciliation_evidence_root(self) -> Path:
+        service = self._vector_recovery_service
+        return type(service)._v1_reconciliation_evidence_root(service)
+
+    def _v1_valid_hashes_for_pool(self, pool: str) -> List[str]:
+        service = self._vector_recovery_service
+        return type(service)._v1_valid_hashes_for_pool(service, pool)
+
+    def _set_vector_health(self, **patch: Any) -> None:
+        service = self._vector_recovery_service
+        return type(service)._set_vector_health(service, **patch)
+
+    def _disable_vector_channel(self, exc: BaseException) -> None:
+        service = self._vector_recovery_service
+        return type(service)._disable_vector_channel(service, exc)
+
+    def _recover_known_vector_failure(self, error: Any) -> bool:
+        service = self._vector_recovery_service
+        return type(service)._recover_known_vector_failure(service, error)
+
+    def _resume_vector_recovery_if_needed(self) -> None:
+        service = self._vector_recovery_service
+        return type(service)._resume_vector_recovery_if_needed(service)
+
+    def _copy_legacy_vectors_once(self, *, batch_size: int = 256) -> Dict[str, Any]:
+        service = self._vector_recovery_service
+        return type(service)._copy_legacy_vectors_once(service, batch_size=batch_size)
+
+    def _cleanup_vector_quarantine(self) -> None:
+        service = self._vector_recovery_service
+        return type(service)._cleanup_vector_quarantine(service)
 
     def _drop_dual_build_root(self, build_root: Optional[Path]) -> None:
         service = self._dual_vector_state_service

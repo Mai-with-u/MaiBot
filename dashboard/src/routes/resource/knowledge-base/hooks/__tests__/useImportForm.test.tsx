@@ -101,6 +101,7 @@ describe('useImportForm', () => {
       act(() => {
         result.current.setImportCreateMode('paste')
         result.current.setPasteContent('要导入的内容')
+        result.current.setImportContentCategory('factual')
       })
       await act(async () => {
         await result.current.submitImportByMode()
@@ -122,6 +123,23 @@ describe('useImportForm', () => {
       expect(memoryApi.createMemoryPasteImport).not.toHaveBeenCalled()
       expect(onCreated).not.toHaveBeenCalled()
     })
+
+    it('内容导入未选择资料类别时不创建任务', async () => {
+      const { result, onCreated } = renderForm()
+
+      act(() => {
+        result.current.setImportCreateMode('paste')
+        result.current.setPasteContent('要导入的内容')
+      })
+      expect(result.current.importContentCategoryMissing).toBe(true)
+
+      await act(async () => {
+        await result.current.submitImportByMode()
+      })
+
+      expect(memoryApi.createMemoryPasteImport).not.toHaveBeenCalled()
+      expect(onCreated).not.toHaveBeenCalled()
+    })
   })
 
   describe('buildCommonImportPayload', () => {
@@ -136,6 +154,38 @@ describe('useImportForm', () => {
       const payload = result.current.buildCommonImportPayload()
 
       expect(payload).toMatchObject({ llm_enabled: true })
+    })
+
+    it('把四种页面类别映射为稳定的后端载荷', () => {
+      const { result } = renderForm()
+      const cases = [
+        { category: 'narrative', strategy_override: 'narrative', chat_log: false },
+        { category: 'factual', strategy_override: 'factual', chat_log: false },
+        { category: 'quote', strategy_override: 'quote', chat_log: false },
+        { category: 'chat_log', strategy_override: 'narrative', chat_log: true },
+      ] as const
+
+      for (const item of cases) {
+        act(() => result.current.setImportContentCategory(item.category))
+        expect(result.current.buildCommonImportPayload()).toMatchObject({
+          strategy_override: item.strategy_override,
+          chat_log: item.chat_log,
+        })
+      }
+    })
+
+    it('未选择类别时保留 auto 载荷供旧任务重试', () => {
+      const { result } = renderForm()
+      expect(result.current.buildCommonImportPayload()).toMatchObject({
+        strategy_override: 'auto',
+        chat_log: false,
+      })
+    })
+
+    it('维护类任务不受资料类别选择阻塞', () => {
+      const { result } = renderForm()
+      act(() => result.current.setImportCreateMode('lpmm_convert'))
+      expect(result.current.importContentCategoryMissing).toBe(false)
     })
   })
 })

@@ -1132,6 +1132,40 @@ def test_import_upload_route(client: TestClient, monkeypatch, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_import_upload_route_uses_runtime_import_staging(client: TestClient, monkeypatch, tmp_path):
+    data_dir = tmp_path / "a-memorix"
+    monkeypatch.setattr(memory_router_module, "STAGING_ROOT", None)
+    monkeypatch.setattr(
+        memory_router_module.a_memorix_host_service,
+        "get_runtime_data_dir",
+        lambda: data_dir,
+    )
+    monkeypatch.setattr(
+        memory_router_module._chat_manager,
+        "get_existing_session_by_session_id",
+        lambda chat_id: SimpleNamespace(session_id=chat_id),
+    )
+
+    async def fake_import_admin(*, action: str, **kwargs):
+        assert action == "create_upload"
+        staged_path = memory_router_module.Path(kwargs["staged_files"][0]["staged_path"])
+        assert staged_path.is_relative_to(data_dir / "imports" / "staging")
+        assert staged_path.is_file()
+        return {"success": True, "task_id": "task-runtime-staging"}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "import_admin", fake_import_admin)
+
+    response = client.post(
+        "/api/import/upload",
+        data={"payload_json": "{\"chat_id\": \"session-1\"}"},
+        files=[("files", ("demo.txt", b"hello world", "text/plain"))],
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "task_id": "task-runtime-staging"}
+    assert list((data_dir / "imports" / "staging").iterdir()) == []
+
+
 def test_import_upload_route_rejects_unknown_chat_id(client: TestClient, monkeypatch, tmp_path):
     monkeypatch.setattr(memory_router_module, "STAGING_ROOT", tmp_path)
     monkeypatch.setattr(memory_router_module._chat_manager, "get_existing_session_by_session_id", lambda chat_id: None)

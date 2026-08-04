@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.common.logger import get_logger
 
-from ..retrieval import RetrievalResult, TemporalQueryOptions
+from ..retrieval import RetrievalResult, RetrievalScope, TemporalQueryOptions
 from .metadata import coerce_metadata_dict
 from .search_postprocess import (
     apply_safe_content_dedup,
@@ -52,12 +52,14 @@ class SearchExecutionRequest:
     query_type: str = "search"  # 检索类型：search、time、hybrid
     query: str = ""
     top_k: Optional[int] = None
+    candidate_top_k: Optional[int] = None
     time_from: Optional[str] = None
     time_to: Optional[str] = None
     person: Optional[str] = None
     source: Optional[str] = None
     use_threshold: bool = True
     enable_ppr: bool = True
+    scope: Optional[RetrievalScope] = None
 
 
 @dataclass
@@ -83,6 +85,25 @@ class SearchExecutionResult:
 
 
 class SearchExecutionService:
+    @staticmethod
+    def _scope_identity(scope: Optional[RetrievalScope]) -> str:
+        if scope is None:
+            return ""
+        digest = hashlib.sha1()
+        for label, values in (
+            ("paragraph", scope.paragraph_ids),
+            ("relation", scope.relation_ids),
+            ("entity", scope.entity_ids),
+            ("episode", scope.episode_ids),
+        ):
+            digest.update(label.encode("utf-8"))
+            digest.update(b"\0")
+            for value in sorted(values):
+                encoded = value.encode("utf-8")
+                digest.update(len(encoded).to_bytes(8, "big"))
+                digest.update(encoded)
+        return f"{scope.key}:{digest.hexdigest()}"
+
     """统一检索执行服务。"""
 
     @staticmethod
@@ -181,7 +202,9 @@ class SearchExecutionService:
         query_type: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions],
+        candidate_top_k: Optional[int] = None,
     ) -> str:
+        resolved_candidate_top_k = top_k if candidate_top_k is None else max(top_k, int(candidate_top_k))
         payload = {
             "stream_id": _sanitize_text(request.stream_id),
             "query_type": query_type,
@@ -192,7 +215,9 @@ class SearchExecutionService:
             "time_to_ts": temporal.time_to if temporal else None,
             "person": _sanitize_text(request.person),
             "source": _sanitize_text(request.source),
+            "scope": SearchExecutionService._scope_identity(request.scope),
             "top_k": int(top_k),
+            "candidate_top_k": int(resolved_candidate_top_k),
             "use_threshold": bool(request.use_threshold),
             "enable_ppr": bool(request.enable_ppr),
         }
@@ -234,6 +259,13 @@ class SearchExecutionService:
         top_k_ok, top_k, top_k_error = SearchExecutionService._resolve_top_k(plugin_config, query_type, request.top_k)
         if not top_k_ok:
             return SearchExecutionResult(success=False, error=top_k_error)
+        if request.candidate_top_k is None:
+            candidate_top_k = top_k
+        else:
+            try:
+                candidate_top_k = max(top_k, int(request.candidate_top_k))
+            except (TypeError, ValueError):
+                return SearchExecutionResult(success=False, error="candidate_top_k 参数必须为整数")
 
         temporal_ok, temporal, temporal_error = SearchExecutionService._build_temporal(
             plugin_config=plugin_config,
@@ -275,16 +307,20 @@ class SearchExecutionService:
             query_type=query_type,
             top_k=top_k,
             temporal=temporal,
+            candidate_top_k=candidate_top_k,
         )
 
         async def _executor() -> Dict[str, Any]:
             started_at = time.time()
-            retrieved = await retriever.retrieve(
-                query=query,
-                top_k=top_k,
-                temporal=temporal,
-                enable_ppr=bool(request.enable_ppr),
-            )
+            retrieve_kwargs: Dict[str, Any] = {
+                "query": query,
+                "top_k": candidate_top_k,
+                "temporal": temporal,
+                "enable_ppr": bool(request.enable_ppr),
+            }
+            if request.scope is not None:
+                retrieve_kwargs["scope"] = request.scope
+            retrieved = await retriever.retrieve(**retrieve_kwargs)
 
             should_apply_threshold = bool(request.use_threshold) and threshold_filter is not None
             if (
@@ -329,6 +365,7 @@ class SearchExecutionService:
                     results=list(retrieved),
                     graph_store=graph_store,
                     metadata_store=metadata_store,
+                    allowed_relation_ids=(request.scope.relation_ids if request.scope is not None else None),
                     enabled=fallback_enabled,
                     threshold=fallback_threshold,
                 )

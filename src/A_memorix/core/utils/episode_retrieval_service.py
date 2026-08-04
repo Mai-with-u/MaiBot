@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from src.common.logger import get_logger
 
-from ..retrieval import DualPathRetriever, TemporalQueryOptions
+from ..retrieval import DualPathRetriever, RetrievalScope, TemporalQueryOptions
 
 logger = get_logger("A_Memorix.EpisodeRetrievalService")
 
@@ -56,6 +56,7 @@ class EpisodeRetrievalService:
         person: Optional[str] = None,
         source: Optional[str] = None,
         include_paragraphs: bool = False,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[Dict[str, Any]]:
         clean_query = str(query or "").strip()
         safe_top_k = max(1, int(top_k))
@@ -69,6 +70,7 @@ class EpisodeRetrievalService:
                 person=person,
                 source=source,
                 limit=(candidate_k if clean_query else safe_top_k),
+                allowed_episode_ids=scope.episode_ids if scope else None,
             )
         }
 
@@ -80,11 +82,14 @@ class EpisodeRetrievalService:
                     person=person,
                     source=source,
                 )
-                results = await self.retriever.retrieve(
-                    query=clean_query,
-                    top_k=candidate_k,
-                    temporal=temporal,
-                )
+                retrieve_kwargs: Dict[str, Any] = {
+                    "query": clean_query,
+                    "top_k": candidate_k,
+                    "temporal": temporal,
+                }
+                if scope is not None:
+                    retrieve_kwargs["scope"] = scope
+                results = await self.retriever.retrieve(**retrieve_kwargs)
             except Exception as exc:
                 logger.warning(f"episode evidence retrieval failed, fallback to lexical only: {exc}")
             else:
@@ -105,6 +110,12 @@ class EpisodeRetrievalService:
                         list(paragraph_rank_map.keys()),
                         source=source,
                     )
+                    if scope:
+                        paragraph_rows = [
+                            row
+                            for row in paragraph_rows
+                            if str(row.get("episode_id", "") or "").strip() in scope.episode_ids
+                        ]
                     if paragraph_rows:
                         branches["paragraph_evidence"] = self._rank_projected_rows(
                             paragraph_rows,
@@ -117,6 +128,12 @@ class EpisodeRetrievalService:
                         list(relation_rank_map.keys()),
                         source=source,
                     )
+                    if scope:
+                        relation_rows = [
+                            row
+                            for row in relation_rows
+                            if str(row.get("episode_id", "") or "").strip() in scope.episode_ids
+                        ]
                     if relation_rows:
                         branches["relation_evidence"] = self._rank_projected_rows(
                             relation_rows,

@@ -176,10 +176,10 @@ python src/A_memorix/scripts/runtime_self_check.py --json
 `process_knowledge.py` 当前默认扫描目录为：
 
 ```text
-data/plugins/a-dawn.a-memorix/raw/
+data/a-memorix/imports/source/raw/
 ```
 
-若你当前运行目录使用 `storage.data_dir = "data/a-memorix"`，建议先把文本同步到脚本默认目录再执行，避免导入目录与运行目录不一致。
+自定义 `storage.data_dir` 时，执行脚本应同时传入相同的 `--data-dir`。
 
 执行：
 
@@ -198,8 +198,8 @@ python src/A_memorix/scripts/process_knowledge.py --chat-log --chat-reference-ti
 ### 4.2 其他导入脚本
 
 ```bash
-python src/A_memorix/scripts/import_lpmm_json.py <json文件或目录>
-python src/A_memorix/scripts/convert_lpmm.py -i <lpmm数据目录> -o data/a-memorix
+python src/A_memorix/scripts/import_lpmm_json.py data/a-memorix/imports/source/lpmm/<json文件或目录>
+python src/A_memorix/scripts/convert_lpmm.py -i data/a-memorix/imports/source/lpmm/<数据集> -o data/a-memorix/imports/converted/<数据集>
 python src/A_memorix/scripts/migrate_chat_history.py --help
 python src/A_memorix/scripts/migrate_maibot_memory.py --help
 python src/A_memorix/scripts/migrate_person_memory_points.py --help

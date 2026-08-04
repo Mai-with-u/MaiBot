@@ -23,6 +23,7 @@ from .stats_service import MemoryStatsService
 from .summary_service import MemorySummaryService
 from .v5_admin_service import MemoryV5AdminService
 from .vector_delete_service import MemoryVectorDeleteService
+from .vector_recovery_service import MemoryVectorRecoveryService
 from .vector_runtime_service import MemoryVectorRuntimeService
 
 __all__ = [
@@ -51,5 +52,6 @@ __all__ = [
     "MemorySummaryService",
     "MemoryV5AdminService",
     "MemoryVectorDeleteService",
+    "MemoryVectorRecoveryService",
     "MemoryVectorRuntimeService",
 ]

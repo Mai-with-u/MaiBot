@@ -3,16 +3,19 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import asyncio
+import threading
 import numpy as np
 import pytest
 
-from src.A_memorix.core.retrieval import RetrievalResult
+from src.A_memorix.core.retrieval import RetrievalResult, RetrievalScope
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import KernelSearchRequest, SDKMemoryKernel
 from src.A_memorix.core.runtime.services import memory_maintenance_service
+from src.A_memorix.core.runtime.services.search_hit_processing_service import MemorySearchHitProcessingService
 from src.A_memorix.core.runtime.services.v5_admin_service import MemoryV5AdminService
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
+from src.A_memorix.core.storage.vector_store import VectorStoreIntegrityError
 from src.A_memorix.core.utils.memory_lifecycle_policy import RelationLifecyclePolicy
 
 
@@ -311,6 +314,15 @@ async def test_search_memory_uses_kernel_patched_chat_scope_execution(monkeypatc
     async def fake_initialize() -> None:
         return None
 
+    def fake_resolve_retrieval_scope(
+        self: MemorySearchHitProcessingService,
+        chat_id: str,
+        shared_chat_ids: Any,
+    ) -> RetrievalScope:
+        del self, shared_chat_ids
+        assert chat_id == "session-current"
+        return RetrievalScope(key="chat:session-current", paragraph_ids=frozenset({"paragraph-1"}))
+
     async def fake_search_execution_for_chat_scope(**kwargs: Any) -> SimpleNamespace:
         captured.update(kwargs)
         return SimpleNamespace(
@@ -331,6 +343,11 @@ async def test_search_memory_uses_kernel_patched_chat_scope_execution(monkeypatc
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_search_execution_for_chat_scope", fake_search_execution_for_chat_scope)
+    monkeypatch.setattr(
+        MemorySearchHitProcessingService,
+        "_resolve_retrieval_scope",
+        fake_resolve_retrieval_scope,
+    )
 
     result = await kernel.search_memory(
         KernelSearchRequest(
@@ -551,6 +568,64 @@ def test_embedding_state_service_uses_kernel_patched_sparse_boundary(
     assert kernel._embedding_degraded["active"] is True
 
 
+def test_embedding_sparse_mode_requires_embedding_and_vector_channel() -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    sparse_calls: list[bool] = []
+
+    class Retriever:
+        def set_runtime_sparse_only(self, enabled: bool) -> None:
+            sparse_calls.append(enabled)
+
+    kernel.retriever = Retriever()  # type: ignore[assignment]
+    kernel._embedding_degraded["active"] = False
+    kernel._runtime_capabilities["vector_read"] = False
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    kernel._runtime_capabilities["vector_read"] = True
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    kernel._embedding_degraded["active"] = True
+    kernel._embedding_state_service._apply_runtime_sparse_mode()
+
+    assert sparse_calls == [True, False, True]
+
+
+@pytest.mark.asyncio
+async def test_legacy_vector_copy_does_not_block_event_loop_and_waits_for_worker_on_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel._background_stopping = False
+    kernel._legacy_vector_view = object()  # type: ignore[assignment]
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def fake_copy_legacy_vectors_once(*, batch_size: int) -> dict[str, Any]:
+        assert batch_size == 256
+        worker_started.set()
+        release_worker.wait(timeout=2.0)
+        return {"done": False}
+
+    monkeypatch.setattr(kernel, "_copy_legacy_vectors_once", fake_copy_legacy_vectors_once)
+
+    copy_task = asyncio.create_task(kernel._background_task_service._legacy_vector_copy_loop())
+    for _ in range(2000):
+        if worker_started.is_set():
+            break
+        await asyncio.sleep(0.001)
+
+    assert worker_started.is_set()
+    assert copy_task.done() is False
+
+    copy_task.cancel()
+    await asyncio.sleep(0)
+    assert copy_task.done() is False
+
+    release_worker.set()
+    with pytest.raises(asyncio.CancelledError):
+        await copy_task
+
+
 @pytest.mark.asyncio
 async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch: pytest.MonkeyPatch,
@@ -574,6 +649,10 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
         calls.append(("backfill", kwargs))
         return {"success": True, "processed": 2}
 
+    async def fake_restore_vector_channel() -> bool:
+        calls.append(("vector_restore", None))
+        return False
+
     monkeypatch.setattr(kernel, "_refresh_runtime_self_check", fake_refresh_runtime_self_check)
     monkeypatch.setattr(kernel, "_apply_self_check_dimension_result", fake_apply_self_check_dimension_result)
     monkeypatch.setattr(kernel, "_set_embedding_degraded", fake_set_embedding_degraded)
@@ -581,6 +660,12 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_paragraph_vector_backfill_batch_size", lambda: 7)
     monkeypatch.setattr(kernel, "_paragraph_vector_backfill_max_retry", lambda: 3)
     monkeypatch.setattr(kernel, "_run_paragraph_backfill_once", fake_run_paragraph_backfill_once)
+    monkeypatch.setattr(
+        kernel,
+        "_restore_vector_channel_after_embedding_recovery",
+        fake_restore_vector_channel,
+        raising=False,
+    )
 
     result = await kernel._embedding_state_service._recover_embedding_once(sample_text="probe text")
 
@@ -594,6 +679,7 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
         ("self_check", "probe text"),
         ("dimension", report),
         ("degraded", {"active": False, "checked_at": 123.0}),
+        ("vector_restore", None),
         (
             "backfill",
             {
@@ -603,6 +689,121 @@ async def test_embedding_recover_uses_kernel_patched_recovery_boundaries(
             },
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_embedding_recovery_restores_vector_runtime_after_fingerprint_becomes_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    root_vector_store = object()
+    paragraph_store = object()
+    graph_vector_store = object()
+    retriever = object()
+    threshold_filter = object()
+    sparse_index = object()
+    calls: list[str] = []
+    kernel.sparse_index = sparse_index  # type: ignore[assignment]
+    kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+
+    def fake_make_vector_store(data_dir: Path, *, dimension: int | None = None) -> object:
+        assert data_dir == kernel._vectors_root()
+        assert dimension == kernel.embedding_dimension
+        calls.append("root_store")
+        return root_vector_store
+
+    def fake_reload_dual_vector_stores_from_disk() -> bool:
+        kernel.paragraph_vector_store = paragraph_store  # type: ignore[assignment]
+        kernel.graph_vector_store = graph_vector_store  # type: ignore[assignment]
+        kernel._dual_vector_pools_ready = True
+        calls.append("reload")
+        return True
+
+    def fake_build_search_runtime(**kwargs: Any) -> SimpleNamespace:
+        assert kwargs["plugin_config"]["paragraph_vector_store"] is paragraph_store
+        assert kwargs["plugin_config"]["graph_vector_store"] is graph_vector_store
+        calls.append("runtime")
+        return SimpleNamespace(
+            ready=True,
+            retriever=retriever,
+            threshold_filter=threshold_filter,
+            sparse_index=None,
+            error="",
+        )
+
+    monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
+    monkeypatch.setattr(kernel, "_reload_dual_vector_stores_from_disk", fake_reload_dual_vector_stores_from_disk)
+    monkeypatch.setattr(kernel_module, "build_search_runtime", fake_build_search_runtime)
+    monkeypatch.setattr(kernel, "_refresh_relation_write_service", lambda: calls.append("relation_writer"))
+    monkeypatch.setattr(
+        kernel,
+        "_refresh_runtime_dependents",
+        lambda *, preserve_managers: calls.append(f"dependents:{preserve_managers}"),
+    )
+    monkeypatch.setattr(kernel, "_apply_runtime_sparse_mode", lambda: calls.append("sparse_mode"))
+
+    restored = await kernel._embedding_state_service._restore_vector_channel_after_embedding_recovery()
+
+    assert restored is True
+    assert calls == ["root_store", "reload", "runtime", "relation_writer", "dependents:True", "sparse_mode"]
+    assert kernel.vector_store is root_vector_store
+    assert kernel.retriever is retriever
+    assert kernel.threshold_filter is threshold_filter
+    assert kernel.sparse_index is sparse_index
+    assert kernel._runtime_capabilities["vector_read"] is True
+    assert kernel._runtime_capabilities["vector_write"] is True
+    assert kernel._vector_health["state"] == "healthy"
+    assert kernel._vector_health["error_code"] == ""
+
+
+@pytest.mark.asyncio
+async def test_embedding_probe_retries_pending_vector_fingerprint_without_embedding_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    kernel._background_stopping = False
+    kernel._vector_health["error_code"] = "embedding_fingerprint_unavailable"
+    calls: list[str] = []
+
+    async def fake_recover_embedding_once() -> dict[str, Any]:
+        calls.append("recover")
+        kernel._background_stopping = True
+        return {"success": True}
+
+    monkeypatch.setattr(kernel, "_embedding_probe_interval_seconds", lambda: 0.0)
+    monkeypatch.setattr(kernel, "_embedding_fallback_enabled", lambda: False)
+    monkeypatch.setattr(kernel, "_is_startup_self_check_deferred", lambda: False)
+    monkeypatch.setattr(kernel, "_is_embedding_degraded", lambda: False)
+    monkeypatch.setattr(kernel, "_recover_embedding_once", fake_recover_embedding_once)
+
+    await kernel._background_task_service._embedding_probe_loop()
+
+    assert calls == ["recover"]
+
+
+def test_dual_vector_reload_reports_temporarily_unavailable_embedding_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
+    manifest = {
+        "status": "ready",
+        "dimension": kernel.embedding_dimension,
+        "paragraph_vectors": 1,
+        "graph_vectors": 0,
+        "embedding_fingerprint": {"hash": "stored-model"},
+    }
+
+    monkeypatch.setattr(kernel, "_dual_vector_ready", lambda *, expected_dimension=None: False)
+    monkeypatch.setattr(kernel, "_try_recover_dual_ready_manifest", lambda: False)
+    monkeypatch.setattr(kernel, "_read_dual_vector_ready_manifest", lambda: manifest)
+    monkeypatch.setattr(kernel, "_current_embedding_fingerprint", lambda **kwargs: None)
+
+    with pytest.raises(VectorStoreIntegrityError) as exc_info:
+        kernel._dual_vector_state_service._reload_dual_vector_stores_from_disk()
+
+    assert exc_info.value.error_code == "embedding_fingerprint_unavailable"
+    assert exc_info.value.dimension_status == "matched"
+    assert exc_info.value.fingerprint_status == "unknown"
 
 
 def test_dual_vector_reload_uses_kernel_patched_state_boundaries(
@@ -617,7 +818,8 @@ def test_dual_vector_reload_uses_kernel_patched_state_boundaries(
         def has_data(self) -> bool:
             return False
 
-        def load(self) -> None:
+        def load(self, **kwargs: Any) -> None:
+            del kwargs
             self.loaded = True
 
         def warmup_index(self, *, force_train: bool = False) -> None:
@@ -669,12 +871,14 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
             self.name = name
             self.num_vectors = num_vectors
             self.loaded = False
+            self.valid_hashes: list[str] = []
 
         def has_data(self) -> bool:
             return True
 
-        def load(self) -> None:
+        def load(self, **kwargs: Any) -> None:
             self.loaded = True
+            self.valid_hashes = list(kwargs["v1_valid_hashes"])
 
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
     kernel.metadata_store = object()  # type: ignore[assignment]
@@ -685,12 +889,15 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     graph_dir.mkdir(parents=True)
     calls: list[tuple[str, Any]] = []
     captured_manifest: dict[str, Any] = {}
+    stores: dict[str, FakeVectorStore] = {}
 
     def fake_make_vector_store(data_dir: Path, *, dimension: int | None = None) -> FakeVectorStore:
         del dimension
         name = Path(data_dir).name
         calls.append(("make", name))
-        return FakeVectorStore(name, 2 if name == "paragraph" else 3)
+        store = FakeVectorStore(name, 2 if name == "paragraph" else 3)
+        stores[name] = store
+        return store
 
     def fake_stored_vectors_compatible(store: FakeVectorStore) -> bool:
         calls.append(("compatible", store.name))
@@ -709,6 +916,11 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_paragraph_vector_dir", lambda: paragraph_dir)
     monkeypatch.setattr(kernel, "_graph_vector_dir", lambda: graph_dir)
     monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
+    monkeypatch.setattr(
+        kernel,
+        "_v1_valid_hashes_for_pool",
+        lambda pool: ["paragraph-1", "paragraph-2"] if pool == "paragraph" else ["entity:1", "relation:1"],
+    )
     monkeypatch.setattr(kernel, "_stored_vectors_compatible_with_current_embedding", fake_stored_vectors_compatible)
     monkeypatch.setattr(kernel, "_count_vector_rebuild_targets", fake_count_vector_rebuild_targets)
     monkeypatch.setattr(kernel, "_write_dual_vector_ready_manifest", fake_write_dual_vector_ready_manifest)
@@ -729,9 +941,11 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
         "entities": {"done": 1, "failed": 0},
         "relations": {"done": 2, "failed": 0},
     }
+    assert stores["paragraph"].valid_hashes == ["paragraph-1", "paragraph-2"]
+    assert stores["graph"].valid_hashes == ["entity:1", "relation:1"]
 
 
-def test_dual_migration_start_uses_kernel_patched_state_boundaries(
+def test_dual_migration_does_not_trigger_historical_reembedding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = SDKMemoryKernel(plugin_root=Path.cwd(), config={})
@@ -752,8 +966,8 @@ def test_dual_migration_start_uses_kernel_patched_state_boundaries(
 
     result = kernel._dual_vector_migration_service._should_start_dual_vector_auto_migration()
 
-    assert result is True
-    assert calls == ["config", "ready"]
+    assert result is False
+    assert calls == []
 
 
 def test_dual_migration_update_uses_kernel_patched_progress_normalizer(
@@ -1046,14 +1260,19 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
 
     monkeypatch.setattr(kernel, "initialize", fake_initialize)
     monkeypatch.setattr(kernel, "_persist", lambda *args, **kwargs: None)
+    monkeypatch.setattr(kernel, "_mark_person_active", lambda person_id: None)
+    monkeypatch.setattr(kernel, "_enqueue_person_profile_refresh", lambda person_id, reason="": True)
     monkeypatch.setattr(kernel, "_write_paragraph_vector_or_enqueue", patched_write)
     monkeypatch.setattr(kernel, "_ensure_entity_vector", patched_entity)
 
+    hex_entity_name = "a" * 64
     result = await kernel._ingest_service.ingest_text(
         external_id="external-1",
         source_type="manual",
         text="Alice 喜欢绿茶",
-        entities=["Alice"],
+        entities=["Alice", hex_entity_name],
+        person_ids=["person-internal-id"],
+        participants=["person-internal-id", "Alice 显示名"],
     )
 
     assert result["stored_ids"] == ["paragraph-1"]
@@ -1064,7 +1283,13 @@ async def test_ingest_service_uses_kernel_patched_write_boundaries(
             "context": "ingest_text",
         }
     ]
-    assert entity_calls == [{"hash": "entity:Alice:paragraph-1", "name": "Alice"}]
+    assert entity_calls == [
+        {"hash": "entity:Alice:paragraph-1", "name": "Alice"},
+        {"hash": f"entity:{hex_entity_name}:paragraph-1", "name": hex_entity_name},
+        {"hash": "entity:Alice 显示名:paragraph-1", "name": "Alice 显示名"},
+    ]
+    assert kernel.metadata_store.paragraph["metadata"]["person_ids"] == ["person-internal-id"]
+    assert kernel.metadata_store.paragraph["metadata"]["participants"] == ["Alice 显示名"]
 
 
 @pytest.mark.asyncio

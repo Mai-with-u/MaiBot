@@ -51,7 +51,7 @@ def normalize_entity_import_item(item: Any) -> Optional[str]:
     else:
         name = ""
 
-    if not name or is_probable_hash_token(name):
+    if not name:
         return None
     return name
 
@@ -66,8 +66,6 @@ def normalize_relation_import_item(item: Any) -> Optional[Dict[str, str]]:
     predicate = str(item.get("predicate", "") or "").strip()
     obj = str(item.get("object", "") or "").strip()
     if not (subject and predicate and obj):
-        return None
-    if any(is_probable_hash_token(token) for token in (subject, predicate, obj)):
         return None
     return {
         "subject": subject,
