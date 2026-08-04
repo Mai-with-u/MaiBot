@@ -23,13 +23,14 @@ import time
 import numpy as np
 import tomlkit
 
-from _bootstrap import DEFAULT_CONFIG_PATH, resolve_repo_path
+from _bootstrap import DEFAULT_CONFIG_PATH, DEFAULT_DATA_DIR, resolve_repo_path
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="将 LPMM 数据转换为 A_memorix 格式")
     parser.add_argument("--input", "-i", required=True, help="包含 LPMM 数据的输入目录 (parquet, graphml)")
     parser.add_argument("--output", "-o", required=True, help="A_memorix 数据的输出目录")
+    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="A_Memorix 数据目录")
     parser.add_argument("--dim", type=int, default=384, help="Embedding 维度 (必须与 LPMM 模型匹配)")
     parser.add_argument("--batch-size", type=int, default=1024, help="Parquet 分批读取大小 (默认 1024)")
     parser.add_argument(
@@ -43,6 +44,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="允许读取 LPMM graph_structure.pkl。该格式会反序列化 pickle，只应在信任输入来源时开启。",
     )
     return parser
+
+
+def _resolve_import_path(raw_path: str, root: Path, label: str) -> Path:
+    candidate = Path(str(raw_path or "").strip()).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        repo_candidate = resolve_repo_path(candidate)
+        try:
+            repo_candidate.relative_to(root)
+        except ValueError:
+            resolved = (root / candidate).resolve()
+        else:
+            resolved = repo_candidate
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(f"{label}必须位于导入目录: {root}") from None
+    return resolved
 
 
 # --help/-h 快速路径：避免加载较重的宿主和插件运行时
@@ -478,8 +498,21 @@ def main():
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    input_path = resolve_repo_path(args.input)
-    output_path = resolve_repo_path(args.output)
+    data_dir = resolve_repo_path(args.data_dir, fallback=DEFAULT_DATA_DIR)
+    try:
+        input_path = _resolve_import_path(
+            args.input,
+            (data_dir / "imports" / "source" / "lpmm").resolve(),
+            "LPMM 输入",
+        )
+        output_path = _resolve_import_path(
+            args.output,
+            (data_dir / "imports" / "converted").resolve(),
+            "LPMM 输出",
+        )
+    except ValueError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
 
     if not input_path.exists():
         logger.error(f"输入目录不存在: {input_path}")

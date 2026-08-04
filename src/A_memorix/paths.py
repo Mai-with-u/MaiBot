@@ -22,7 +22,7 @@ def config_path() -> Path:
 
 
 def default_data_dir() -> Path:
-    return repo_root() / "data" / "plugins" / "a-dawn.a-memorix"
+    return repo_root() / "data" / "a-memorix"
 
 
 def artifacts_root() -> Path:

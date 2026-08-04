@@ -10,28 +10,49 @@ LPMM OpenIE JSON 导入工具。
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, Dict, List
 import argparse
 import asyncio
 import json
 import sys
 import traceback
-from pathlib import Path
-from typing import Any, Dict, List
 
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-import _bootstrap  # noqa: F401
+from _bootstrap import DEFAULT_DATA_DIR, resolve_repo_path
 
 console = Console()
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="将 LPMM OpenIE JSON 导入 A_Memorix")
-    parser.add_argument("path", help="LPMM JSON 文件路径或目录")
+    parser.add_argument("path", help="imports/source/lpmm 内的 JSON 文件或目录")
+    parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR), help="A_Memorix 数据目录")
     parser.add_argument("--force", action="store_true", help="强制重新导入")
     parser.add_argument("--concurrency", "-c", type=int, default=5, help="并发数")
     return parser
+
+
+def _resolve_lpmm_source_path(raw_path: str, data_dir: Path) -> Path:
+    source_root = (data_dir / "imports" / "source" / "lpmm").resolve()
+    candidate = Path(str(raw_path or "").strip()).expanduser()
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        repo_candidate = resolve_repo_path(candidate)
+        try:
+            repo_candidate.relative_to(source_root)
+        except ValueError:
+            resolved = (source_root / candidate).resolve()
+        else:
+            resolved = repo_candidate
+    try:
+        resolved.relative_to(source_root)
+    except ValueError:
+        raise ValueError(f"LPMM JSON 必须位于导入目录: {source_root}") from None
+    return resolved
 
 
 if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
@@ -104,7 +125,8 @@ async def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    target_path = Path(args.path)
+    data_dir = resolve_repo_path(args.data_dir, fallback=DEFAULT_DATA_DIR)
+    target_path = _resolve_lpmm_source_path(args.path, data_dir)
     if not target_path.exists():
         logger.error(f"路径不存在: {target_path}")
         return
@@ -118,7 +140,7 @@ async def main() -> None:
         logger.error("未找到可处理的 JSON 文件")
         return
 
-    importer = AutoImporter(force=bool(args.force), concurrency=int(args.concurrency))
+    importer = AutoImporter(force=bool(args.force), concurrency=int(args.concurrency), data_dir=data_dir)
     if not await importer.initialize():
         logger.error("初始化存储失败")
         return

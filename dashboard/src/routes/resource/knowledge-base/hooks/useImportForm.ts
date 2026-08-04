@@ -5,7 +5,7 @@
  * - 表单参数（通用参数 15 项 + 7 种导入模式各自字段）以本地 state 维护；
  * - 导入设置（settings）/路径别名（path_aliases）/聊天流（chat-targets）走 useQuery，仅在面板激活时拉取；
  * - 服务端默认值在 settings 首次到达时 seed 一次进表单（渲染期版本标记模式，避免 effect 内 setState 级联）；
- * - 别名到达后，各模式 alias 字段为空时自动选第一个可用别名；
+ * - 文件导入使用服务端固定的目录别名，路径解析工具可在这些目录中选择；
  * - submitImportByMode 按当前模式分派到 7 个 submit 函数，创建成功后回调 onCreated 刷新队列；
  * - 写失败弹全局 toast（与原页面一致）；路径解析读失败仅写入输出框。
  *
@@ -41,6 +41,9 @@ import {
 
 const DATE_TIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/
+const RAW_IMPORT_ALIAS = 'raw'
+const LPMM_IMPORT_ALIAS = 'lpmm'
+const CONVERTED_IMPORT_ALIAS = 'converted'
 
 export type ImportContentCategory = '' | 'narrative' | 'factual' | 'quote' | 'chat_log'
 
@@ -171,8 +174,6 @@ export interface UseImportFormResult {
   pasteContent: string
   setPasteContent: React.Dispatch<React.SetStateAction<string>>
 
-  rawAlias: string
-  setRawAlias: React.Dispatch<React.SetStateAction<string>>
   rawInputMode: MemoryImportInputMode
   setRawInputMode: React.Dispatch<React.SetStateAction<MemoryImportInputMode>>
   rawRelativePath: string
@@ -182,17 +183,11 @@ export interface UseImportFormResult {
   rawRecursive: boolean
   setRawRecursive: React.Dispatch<React.SetStateAction<boolean>>
 
-  openieAlias: string
-  setOpenieAlias: React.Dispatch<React.SetStateAction<string>>
   openieRelativePath: string
   setOpenieRelativePath: React.Dispatch<React.SetStateAction<string>>
   openieIncludeAllJson: boolean
   setOpenieIncludeAllJson: React.Dispatch<React.SetStateAction<boolean>>
 
-  convertAlias: string
-  setConvertAlias: React.Dispatch<React.SetStateAction<string>>
-  convertTargetAlias: string
-  setConvertTargetAlias: React.Dispatch<React.SetStateAction<string>>
   convertRelativePath: string
   setConvertRelativePath: React.Dispatch<React.SetStateAction<string>>
   convertTargetRelativePath: string
@@ -202,12 +197,8 @@ export interface UseImportFormResult {
   convertBatchSize: string
   setConvertBatchSize: React.Dispatch<React.SetStateAction<string>>
 
-  backfillAlias: string
-  setBackfillAlias: React.Dispatch<React.SetStateAction<string>>
   backfillLimit: string
   setBackfillLimit: React.Dispatch<React.SetStateAction<string>>
-  backfillRelativePath: string
-  setBackfillRelativePath: React.Dispatch<React.SetStateAction<string>>
   backfillDryRun: boolean
   setBackfillDryRun: React.Dispatch<React.SetStateAction<boolean>>
   backfillNoCreatedFallback: boolean
@@ -290,25 +281,19 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   const [pasteMode, setPasteMode] = useState<MemoryImportInputMode>('text')
   const [pasteContent, setPasteContent] = useState('')
 
-  const [rawAlias, setRawAlias] = useState('raw')
   const [rawRelativePath, setRawRelativePath] = useState('')
   const [rawGlob, setRawGlob] = useState('*')
   const [rawInputMode, setRawInputMode] = useState<MemoryImportInputMode>('text')
   const [rawRecursive, setRawRecursive] = useState(true)
 
-  const [openieAlias, setOpenieAlias] = useState('lpmm')
   const [openieRelativePath, setOpenieRelativePath] = useState('')
   const [openieIncludeAllJson, setOpenieIncludeAllJson] = useState(false)
 
-  const [convertAlias, setConvertAlias] = useState('lpmm')
   const [convertRelativePath, setConvertRelativePath] = useState('')
-  const [convertTargetAlias, setConvertTargetAlias] = useState('plugin_data')
   const [convertTargetRelativePath, setConvertTargetRelativePath] = useState('')
   const [convertDimension, setConvertDimension] = useState('')
   const [convertBatchSize, setConvertBatchSize] = useState('1024')
 
-  const [backfillAlias, setBackfillAlias] = useState('plugin_data')
-  const [backfillRelativePath, setBackfillRelativePath] = useState('')
   const [backfillLimit, setBackfillLimit] = useState('100000')
   const [backfillDryRun, setBackfillDryRun] = useState(false)
   const [backfillNoCreatedFallback, setBackfillNoCreatedFallback] = useState(false)
@@ -414,27 +399,18 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     }
   }
 
-  // 别名联动：别名到达后，各模式 alias 字段为空或不在可用列表中时自动选第一个可用别名。
-  // 同样用「渲染期版本标记」模式，避免 effect 内 setState 级联。
+  // 路径解析工具只允许选择服务端签发的固定目录别名。
   const aliasVersion = importAliasKeys.length > 0 ? importAliasKeys.join('|') : null
   const [linkedAliasVersion, setLinkedAliasVersion] = useState<string | null>(null)
   if (aliasVersion !== null && aliasVersion !== linkedAliasVersion) {
     setLinkedAliasVersion(aliasVersion)
-    const pickAlias = (current: string, preferred: string): string => {
+    const pickAlias = (current: string): string => {
       if (current && importAliasKeys.includes(current)) {
         return current
       }
-      if (importAliasKeys.includes(preferred)) {
-        return preferred
-      }
       return importAliasKeys[0]
     }
-    setRawAlias((current) => pickAlias(current, 'raw'))
-    setOpenieAlias((current) => pickAlias(current, 'lpmm'))
-    setConvertAlias((current) => pickAlias(current, 'lpmm'))
-    setConvertTargetAlias((current) => pickAlias(current, 'plugin_data'))
-    setBackfillAlias((current) => pickAlias(current, 'plugin_data'))
-    setPathResolveAlias((current) => pickAlias(current, 'raw'))
+    setPathResolveAlias((current) => pickAlias(current))
   }
 
   const buildCommonImportPayload = useCallback((): Record<string, unknown> => {
@@ -576,7 +552,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
       setCreatingImport(true)
       const result = await createMemoryRawScanImport({
         ...buildCommonImportPayload(),
-        alias: rawAlias,
+        alias: RAW_IMPORT_ALIAS,
         relative_path: rawRelativePath,
         glob: rawGlob,
         recursive: rawRecursive,
@@ -604,7 +580,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   }, [
     buildCommonImportPayload,
     onCreated,
-    rawAlias,
     rawGlob,
     rawInputMode,
     rawRecursive,
@@ -617,7 +592,7 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
       setCreatingImport(true)
       const result = await createMemoryLpmmOpenieImport({
         ...buildCommonImportPayload(),
-        alias: openieAlias,
+        alias: LPMM_IMPORT_ALIAS,
         relative_path: openieRelativePath,
         include_all_json: openieIncludeAllJson,
       })
@@ -643,7 +618,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
   }, [
     buildCommonImportPayload,
     onCreated,
-    openieAlias,
     openieIncludeAllJson,
     openieRelativePath,
     toast,
@@ -653,9 +627,9 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     try {
       setCreatingImport(true)
       const result = await createMemoryLpmmConvertImport({
-        alias: convertAlias,
+        alias: LPMM_IMPORT_ALIAS,
         relative_path: convertRelativePath,
-        target_alias: convertTargetAlias,
+        target_alias: CONVERTED_IMPORT_ALIAS,
         target_relative_path: convertTargetRelativePath,
         dimension: parseOptionalPositiveInt(convertDimension),
         batch_size: parseOptionalPositiveInt(convertBatchSize),
@@ -680,11 +654,9 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
       setCreatingImport(false)
     }
   }, [
-    convertAlias,
     convertBatchSize,
     convertDimension,
     convertRelativePath,
-    convertTargetAlias,
     convertTargetRelativePath,
     onCreated,
     toast,
@@ -694,8 +666,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     try {
       setCreatingImport(true)
       const result = await createMemoryTemporalBackfillImport({
-        alias: backfillAlias,
-        relative_path: backfillRelativePath,
         limit: parseOptionalPositiveInt(backfillLimit),
         dry_run: backfillDryRun,
         no_created_fallback: backfillNoCreatedFallback,
@@ -720,11 +690,9 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
       setCreatingImport(false)
     }
   }, [
-    backfillAlias,
     backfillDryRun,
     backfillLimit,
     backfillNoCreatedFallback,
-    backfillRelativePath,
     onCreated,
     toast,
   ])
@@ -927,8 +895,6 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     setPasteMode,
     pasteContent,
     setPasteContent,
-    rawAlias,
-    setRawAlias,
     rawInputMode,
     setRawInputMode,
     rawRelativePath,
@@ -937,16 +903,10 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     setRawGlob,
     rawRecursive,
     setRawRecursive,
-    openieAlias,
-    setOpenieAlias,
     openieRelativePath,
     setOpenieRelativePath,
     openieIncludeAllJson,
     setOpenieIncludeAllJson,
-    convertAlias,
-    setConvertAlias,
-    convertTargetAlias,
-    setConvertTargetAlias,
     convertRelativePath,
     setConvertRelativePath,
     convertTargetRelativePath,
@@ -955,12 +915,8 @@ export function useImportForm({ active, onCreated }: UseImportFormOptions): UseI
     setConvertDimension,
     convertBatchSize,
     setConvertBatchSize,
-    backfillAlias,
-    setBackfillAlias,
     backfillLimit,
     setBackfillLimit,
-    backfillRelativePath,
-    setBackfillRelativePath,
     backfillDryRun,
     setBackfillDryRun,
     backfillNoCreatedFallback,

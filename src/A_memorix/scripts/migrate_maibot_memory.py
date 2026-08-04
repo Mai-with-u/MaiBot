@@ -1898,7 +1898,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target-data-dir",
         default=str(DEFAULT_TARGET_DATA_DIR),
-        help="A_memorix 数据目录（默认 data/plugins/a-dawn.a-memorix）",
+        help="A_memorix 数据目录（默认 data/a-memorix）",
     )
 
     resume_group = parser.add_mutually_exclusive_group()

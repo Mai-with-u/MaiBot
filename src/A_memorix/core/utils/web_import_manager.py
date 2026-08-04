@@ -410,6 +410,8 @@ class ImportTaskManager:
         self._import_root = self._resolve_import_root()
         self._import_root.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_import_state()
+        for import_path in self._default_path_aliases().values():
+            Path(import_path).mkdir(parents=True, exist_ok=True)
         self._temp_root = self._resolve_temp_root()
         self._temp_root.mkdir(parents=True, exist_ok=True)
         self._reports_root = self._resolve_reports_root()
@@ -472,6 +474,36 @@ class ImportTaskManager:
 
     def _default_maibot_source_db(self) -> Path:
         return self._resolve_repo_root() / "data" / "MaiBot.db"
+
+    def _resolve_maibot_source_db(self, raw_path: str) -> Path:
+        default_source = self._default_maibot_source_db().resolve()
+        text = str(raw_path or "").strip()
+        if not text:
+            return default_source
+
+        candidate = Path(text).expanduser()
+        if candidate.is_absolute():
+            resolved = candidate.resolve()
+        else:
+            repo_candidate = resolve_repo_path(candidate)
+            if repo_candidate == default_source:
+                return default_source
+            import_root = Path(self._default_path_aliases()["maibot"]).resolve()
+            try:
+                repo_candidate.relative_to(import_root)
+            except ValueError:
+                resolved = self.resolve_path_alias("maibot", text)
+            else:
+                resolved = repo_candidate
+
+        if resolved == default_source:
+            return default_source
+        import_root = Path(self._default_path_aliases()["maibot"]).resolve()
+        try:
+            resolved.relative_to(import_root)
+        except ValueError:
+            raise ValueError(f"自定义 MaiBot 数据库必须位于导入目录: {import_root}") from None
+        return resolved
 
     def _cfg(self, key: str, default: Any) -> Any:
         return self.plugin.get_config(key, default)
@@ -779,41 +811,16 @@ class ImportTaskManager:
         }
 
     def _default_path_aliases(self) -> Dict[str, str]:
-        plugin_dir = Path(__file__).resolve().parents[2]
-        repo_root = self._resolve_repo_root()
+        import_root = self._resolve_import_root()
         return {
-            "raw": str((plugin_dir / "data" / "raw").resolve()),
-            "lpmm": str((repo_root / "data" / "lpmm_storage").resolve()),
-            "plugin_data": str((plugin_dir / "data").resolve()),
+            "raw": str((import_root / "source" / "raw").resolve()),
+            "lpmm": str((import_root / "source" / "lpmm").resolve()),
+            "maibot": str((import_root / "source" / "maibot").resolve()),
+            "converted": str((import_root / "converted").resolve()),
         }
 
     def get_path_aliases(self) -> Dict[str, str]:
-        configured = self._cfg("web.import.path_aliases", self._default_path_aliases())
-        if not isinstance(configured, dict):
-            configured = self._default_path_aliases()
-
-        repo_root = self._resolve_repo_root()
-        result: Dict[str, str] = {}
-        for alias, raw_path in configured.items():
-            key = str(alias or "").strip()
-            if not key:
-                continue
-            text = str(raw_path or "").strip()
-            if not text:
-                continue
-            if text.startswith("\\\\"):
-                continue
-            p = Path(text)
-            if not p.is_absolute():
-                p = (repo_root / p).resolve()
-            else:
-                p = p.resolve()
-            result[key] = str(p)
-
-        defaults = self._default_path_aliases()
-        for key, path in defaults.items():
-            result.setdefault(key, path)
-        return result
+        return self._default_path_aliases()
 
     def resolve_path_alias(
         self,
@@ -1187,6 +1194,8 @@ class ImportTaskManager:
     def _normalize_raw_scan_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         params = self._normalize_common_import_params(payload, default_dedupe="manifest")
         alias = str(payload.get("alias") or "raw").strip()
+        if alias != "raw":
+            raise ValueError("raw_scan 仅允许使用 raw 导入目录")
         relative_path = str(payload.get("relative_path") or "").strip()
         glob_pattern = str(payload.get("glob") or "*").strip() or "*"
         recursive = _coerce_bool(payload.get("recursive"), True)
@@ -1206,6 +1215,8 @@ class ImportTaskManager:
     def _normalize_lpmm_openie_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         params = self._normalize_common_import_params(payload, default_dedupe="manifest")
         alias = str(payload.get("alias") or "lpmm").strip()
+        if alias != "lpmm":
+            raise ValueError("lpmm_openie 仅允许使用 lpmm 导入目录")
         relative_path = str(payload.get("relative_path") or "").strip()
         include_all_json = _coerce_bool(payload.get("include_all_json"), False)
         params.update(
@@ -1220,15 +1231,11 @@ class ImportTaskManager:
         return params
 
     def _normalize_temporal_backfill_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        alias = str(payload.get("alias") or "plugin_data").strip()
-        relative_path = str(payload.get("relative_path") or "").strip()
         dry_run = _coerce_bool(payload.get("dry_run"), False)
         no_created_fallback = _coerce_bool(payload.get("no_created_fallback"), False)
         limit = _parse_optional_positive_int(payload.get("limit"), "limit") or 100000
         return {
             "task_kind": "temporal_backfill",
-            "alias": alias,
-            "relative_path": relative_path,
             "dry_run": dry_run,
             "no_created_fallback": no_created_fallback,
             "limit": limit,
@@ -1236,8 +1243,14 @@ class ImportTaskManager:
 
     def _normalize_lpmm_convert_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         alias = str(payload.get("alias") or "lpmm").strip()
+        if alias != "lpmm":
+            raise ValueError("lpmm_convert 仅允许使用 lpmm 导入目录")
         relative_path = str(payload.get("relative_path") or "").strip()
-        target_alias = str(payload.get("target_alias") or "plugin_data").strip()
+        target_alias = str(payload.get("target_alias") or "converted").strip()
+        if target_alias == "plugin_data":
+            target_alias = "converted"
+        if target_alias != "converted":
+            raise ValueError("lpmm_convert 仅允许写入 converted 导入目录")
         target_relative_path = str(payload.get("target_relative_path") or "").strip()
         dimension = _parse_optional_positive_int(payload.get("dimension"), "dimension") or _coerce_int(
             self._cfg("embedding.dimension", 384),
@@ -1274,9 +1287,7 @@ class ImportTaskManager:
         return self._normalize_params(payload)
 
     def _normalize_migration_params(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        source_db = str(payload.get("source_db") or "").strip()
-        if not source_db:
-            source_db = str(self._default_maibot_source_db())
+        source_db = str(self._resolve_maibot_source_db(str(payload.get("source_db") or "")))
 
         time_from = str(payload.get("time_from") or "").strip() or None
         time_to = str(payload.get("time_to") or "").strip() or None
@@ -1652,13 +1663,11 @@ class ImportTaskManager:
         if not self._is_enabled():
             raise ValueError("导入功能已禁用")
         params = self._normalize_temporal_backfill_params(payload)
-        target_path = self.resolve_path_alias(
-            params["alias"],
-            params["relative_path"],
-            must_exist=True,
-        )
+        target_path = self._resolve_data_dir()
         if not target_path.is_dir():
             raise ValueError("temporal_backfill 目标路径必须为目录")
+        if not (target_path / "metadata").is_dir():
+            raise ValueError("活动 A_Memorix Store 缺少 metadata 目录")
 
         async with self._lock:
             if self._pending_task_count() >= self._queue_limit():
@@ -2826,6 +2835,8 @@ class ImportTaskManager:
             str(source_dir),
             "--output",
             str(target_dir),
+            "--data-dir",
+            str(self._resolve_data_dir()),
             "--dim",
             str(params.get("dimension", 384)),
             "--batch-size",

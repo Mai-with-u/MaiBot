@@ -34,7 +34,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-dir",
         default=str(DEFAULT_DATA_DIR),
-        help="数据目录（默认 data/plugins/a-dawn.a-memorix）",
+        help="数据目录（默认 data/a-memorix）",
     )
     parser.add_argument(
         "--states",

@@ -292,6 +292,90 @@ def test_import_state_uses_data_dir_imports_and_migrates_legacy_state(tmp_path: 
     assert (legacy_tasks / "stale.txt").is_file()
 
 
+def test_import_aliases_are_fixed_under_data_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    external_dir = tmp_path / "external"
+    config = {
+        "storage.data_dir": str(data_dir),
+        "web.import.path_aliases": {"raw": str(external_dir), "outside": str(external_dir)},
+    }
+    plugin = SimpleNamespace(get_config=lambda key, default=None: config.get(key, default))
+
+    manager = ImportTaskManager(plugin)
+
+    assert manager.get_path_aliases() == {
+        "raw": str((data_dir / "imports" / "source" / "raw").resolve()),
+        "lpmm": str((data_dir / "imports" / "source" / "lpmm").resolve()),
+        "maibot": str((data_dir / "imports" / "source" / "maibot").resolve()),
+        "converted": str((data_dir / "imports" / "converted").resolve()),
+    }
+    assert all(Path(path).is_dir() for path in manager.get_path_aliases().values())
+    with pytest.raises(ValueError, match="未知路径别名"):
+        manager.resolve_path_alias("outside")
+
+
+def test_import_task_kinds_use_their_fixed_aliases(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+
+    with pytest.raises(ValueError, match="raw 导入目录"):
+        manager._normalize_raw_scan_params({"alias": "lpmm"})
+    with pytest.raises(ValueError, match="lpmm 导入目录"):
+        manager._normalize_lpmm_openie_params({"alias": "raw"})
+    with pytest.raises(ValueError, match="lpmm 导入目录"):
+        manager._normalize_lpmm_convert_params({"alias": "raw"})
+    with pytest.raises(ValueError, match="converted 导入目录"):
+        manager._normalize_lpmm_convert_params({"target_alias": "raw"})
+
+    legacy_target = manager._normalize_lpmm_convert_params({"target_alias": "plugin_data"})
+    assert legacy_target["target_alias"] == "converted"
+
+
+def test_maibot_migration_allows_live_db_or_import_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+    import_db = data_dir / "imports" / "source" / "maibot" / "history.db"
+
+    default_params = manager._normalize_migration_params({})
+    relative_params = manager._normalize_migration_params({"source_db": "history.db"})
+    absolute_params = manager._normalize_migration_params({"source_db": str(import_db)})
+
+    assert Path(default_params["source_db"]) == manager._default_maibot_source_db().resolve()
+    assert Path(relative_params["source_db"]) == import_db.resolve()
+    assert Path(absolute_params["source_db"]) == import_db.resolve()
+    with pytest.raises(ValueError, match="必须位于导入目录"):
+        manager._normalize_migration_params({"source_db": str(tmp_path / "outside.db")})
+
+
+@pytest.mark.asyncio
+async def test_temporal_backfill_always_targets_active_store(tmp_path: Path, monkeypatch) -> None:
+    data_dir = tmp_path / "a-memorix"
+    (data_dir / "metadata").mkdir(parents=True)
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+
+    async def skip_worker() -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_worker", skip_worker)
+    summary = await manager.create_temporal_backfill_task(
+        {"alias": "plugin_data", "relative_path": "ignored", "dry_run": True}
+    )
+
+    task = manager._tasks[summary["task_id"]]
+    assert task.files[0].source_path == str(data_dir.resolve())
+    assert "alias" not in task.params
+    assert "relative_path" not in task.params
+
+
 def test_import_params_include_configurable_chunk_windows() -> None:
     manager, _ = _build_manager()
 

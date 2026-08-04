@@ -191,8 +191,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setPasteMode,
     pasteContent,
     setPasteContent,
-    rawAlias,
-    setRawAlias,
     rawInputMode,
     setRawInputMode,
     rawRelativePath,
@@ -201,16 +199,10 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setRawGlob,
     rawRecursive,
     setRawRecursive,
-    openieAlias,
-    setOpenieAlias,
     openieRelativePath,
     setOpenieRelativePath,
     openieIncludeAllJson,
     setOpenieIncludeAllJson,
-    convertAlias,
-    setConvertAlias,
-    convertTargetAlias,
-    setConvertTargetAlias,
     convertRelativePath,
     setConvertRelativePath,
     convertTargetRelativePath,
@@ -219,12 +211,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setConvertDimension,
     convertBatchSize,
     setConvertBatchSize,
-    backfillAlias,
-    setBackfillAlias,
     backfillLimit,
     setBackfillLimit,
-    backfillRelativePath,
-    setBackfillRelativePath,
     backfillDryRun,
     setBackfillDryRun,
     backfillNoCreatedFallback,
@@ -604,10 +592,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">扫描目录文件，适合本地批处理</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={rawAlias} onChange={(event) => setRawAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>输入模式</Label>
                       <Select
                         value={rawInputMode}
@@ -643,10 +627,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">读取 LPMM 内容并抽取关系</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={openieAlias} onChange={(event) => setOpenieAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>相对路径</Label>
                       <Input value={openieRelativePath} onChange={(event) => setOpenieRelativePath(event.target.value)} />
                     </div>
@@ -665,14 +645,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <div className="space-y-3 rounded-xl border bg-background/70 p-4">
                   <div className="text-xs text-muted-foreground">将 LPMM 数据转换到目标目录</div>
                   <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>源路径别名</Label>
-                      <Input value={convertAlias} onChange={(event) => setConvertAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>目标路径别名</Label>
-                      <Input value={convertTargetAlias} onChange={(event) => setConvertTargetAlias(event.target.value)} />
-                    </div>
                     <div className="space-y-1">
                       <Label>源相对路径</Label>
                       <Input value={convertRelativePath} onChange={(event) => setConvertRelativePath(event.target.value)} />
@@ -711,16 +683,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">为已有数据补齐时间字段</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={backfillAlias} onChange={(event) => setBackfillAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>处理上限</Label>
                       <Input type="number" min={1} value={backfillLimit} onChange={(event) => setBackfillLimit(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>相对路径</Label>
-                      <Input value={backfillRelativePath} onChange={(event) => setBackfillRelativePath(event.target.value)} />
                     </div>
                   </div>
                   <div className="grid gap-2">

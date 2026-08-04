@@ -4,9 +4,7 @@
 
 ### 📚 文档口径同步
 
-- 补充并统一“运行时目录”和“离线脚本默认目录”的说明：
-  - 运行时主目录由 `storage.data_dir` 决定（当前模板默认 `data/a-memorix`）；
-  - 部分离线脚本仍以 `data/plugins/a-dawn.a-memorix` 作为默认处理目录。
+- 统一运行时和离线脚本默认目录为 `data/a-memorix`，文件导入资源集中到其 `imports` 子目录。
 - 修正文档中的导入示例参数，`memory_import_admin.create_paste` 的 `input_mode` 示例统一为 `text`/`json`。
 - 更新 `README.md` 关于元数据 schema 的描述，和当前代码 `SCHEMA_VERSION = 10` 保持一致。
 

@@ -415,9 +415,10 @@ describe('KnowledgeBasePage import workflow', () => {
     vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({
       success: true,
       path_aliases: {
-        lpmm: 'data/lpmm',
-        plugin_data: 'data/plugins/a-dawn.a-memorix',
-        raw: 'data/raw',
+        converted: 'data/a-memorix/imports/converted',
+        lpmm: 'data/a-memorix/imports/source/lpmm',
+        maibot: 'data/a-memorix/imports/source/maibot',
+        raw: 'data/a-memorix/imports/source/raw',
       },
     })
     vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({

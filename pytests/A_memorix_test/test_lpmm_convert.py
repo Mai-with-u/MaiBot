@@ -24,6 +24,7 @@ def _write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def _run_convert(input_dir: Path, output_dir: Path, *, dimension: int = 2) -> subprocess.CompletedProcess[str]:
+    data_dir = input_dir.parents[3]
     return subprocess.run(
         [
             sys.executable,
@@ -32,6 +33,8 @@ def _run_convert(input_dir: Path, output_dir: Path, *, dimension: int = 2) -> su
             str(input_dir),
             "--output",
             str(output_dir),
+            "--data-dir",
+            str(data_dir),
             "--dim",
             str(dimension),
             "--skip-relation-vector-rebuild",
@@ -45,6 +48,41 @@ def _run_convert(input_dir: Path, output_dir: Path, *, dimension: int = 2) -> su
     )
 
 
+def _conversion_paths(tmp_path: Path) -> tuple[Path, Path]:
+    data_dir = tmp_path / "a-memorix"
+    return (
+        data_dir / "imports" / "source" / "lpmm" / "dataset",
+        data_dir / "imports" / "converted" / "dataset",
+    )
+
+
+def test_lpmm_converter_rejects_paths_outside_import_root(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    outside_input = tmp_path / "outside"
+    outside_input.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CONVERT_SCRIPT),
+            "--input",
+            str(outside_input),
+            "--output",
+            str(data_dir / "imports" / "converted" / "dataset"),
+            "--data-dir",
+            str(data_dir),
+        ],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert result.returncode != 0
+    assert "LPMM 输入必须位于导入目录" in f"{result.stdout}\n{result.stderr}"
+
+
 def _build_verify_manager(tmp_path: Path) -> ImportTaskManager:
     config = {"storage.data_dir": str(tmp_path / "runtime")}
     plugin = SimpleNamespace(get_config=lambda key, default=None: config.get(key, default))
@@ -52,8 +90,7 @@ def _build_verify_manager(tmp_path: Path) -> ImportTaskManager:
 
 
 def test_lpmm_converter_writes_loadable_dual_pools_and_refuses_overwrite(tmp_path: Path) -> None:
-    input_dir = tmp_path / "lpmm"
-    output_dir = tmp_path / "converted"
+    input_dir, output_dir = _conversion_paths(tmp_path)
     _write_parquet(
         input_dir / "paragraph.parquet",
         [{"hash": "lpmm-paragraph", "str": "旧版段落", "embedding": [1.0, 0.0]}],
@@ -130,8 +167,7 @@ def test_lpmm_converter_writes_loadable_dual_pools_and_refuses_overwrite(tmp_pat
 
 
 def test_lpmm_converter_dimension_failure_does_not_publish_ready_manifest(tmp_path: Path) -> None:
-    input_dir = tmp_path / "lpmm"
-    output_dir = tmp_path / "converted"
+    input_dir, output_dir = _conversion_paths(tmp_path)
     _write_parquet(
         input_dir / "paragraph.parquet",
         [{"hash": "bad-dimension", "str": "错误维度", "embedding": [1.0, 0.0, 0.5]}],
@@ -145,8 +181,7 @@ def test_lpmm_converter_dimension_failure_does_not_publish_ready_manifest(tmp_pa
 
 
 def test_lpmm_converter_empty_parquet_does_not_publish_ready_manifest(tmp_path: Path) -> None:
-    input_dir = tmp_path / "lpmm"
-    output_dir = tmp_path / "converted"
+    input_dir, output_dir = _conversion_paths(tmp_path)
     _write_parquet(
         input_dir / "paragraph.parquet",
         [],
@@ -160,8 +195,7 @@ def test_lpmm_converter_empty_parquet_does_not_publish_ready_manifest(tmp_path: 
 
 
 def test_lpmm_output_verification_rejects_metadata_without_graph_vector(tmp_path: Path) -> None:
-    input_dir = tmp_path / "lpmm"
-    output_dir = tmp_path / "converted"
+    input_dir, output_dir = _conversion_paths(tmp_path)
     _write_parquet(
         input_dir / "paragraph.parquet",
         [{"hash": "lpmm-paragraph", "str": "可用段落", "embedding": [1.0, 0.0]}],
@@ -182,19 +216,16 @@ def test_lpmm_output_verification_rejects_metadata_without_graph_vector(tmp_path
 
 @pytest.mark.asyncio
 async def test_web_lpmm_convert_rejects_nonempty_target_before_queueing(tmp_path: Path) -> None:
-    source_root = tmp_path / "source-root"
+    data_dir = tmp_path / "runtime"
+    source_root = data_dir / "imports" / "source" / "lpmm"
     source_dir = source_root / "dataset"
     source_dir.mkdir(parents=True)
-    target_root = tmp_path / "target-root"
+    target_root = data_dir / "imports" / "converted"
     target_dir = target_root / "converted"
     target_dir.mkdir(parents=True)
     (target_dir / "existing.txt").write_text("keep", encoding="utf-8")
     config = {
-        "storage.data_dir": str(tmp_path / "runtime"),
-        "web.import.path_aliases": {
-            "lpmm-test": str(source_root),
-            "target-test": str(target_root),
-        },
+        "storage.data_dir": str(data_dir),
     }
     plugin = SimpleNamespace(get_config=lambda key, default=None: config.get(key, default))
     manager = ImportTaskManager(plugin)
@@ -202,9 +233,9 @@ async def test_web_lpmm_convert_rejects_nonempty_target_before_queueing(tmp_path
     with pytest.raises(ValueError, match="目标目录必须为空"):
         await manager.create_lpmm_convert_task(
             {
-                "alias": "lpmm-test",
+                "alias": "lpmm",
                 "relative_path": "dataset",
-                "target_alias": "target-test",
+                "target_alias": "converted",
                 "target_relative_path": "converted",
                 "dimension": 2,
             }

@@ -25,7 +25,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-dir",
         default=str(DEFAULT_DATA_DIR),
-        help="A_Memorix 数据目录（默认: data/plugins/a-dawn.a-memorix）",
+        help="A_Memorix 数据目录（默认: data/a-memorix）",
     )
     parser.add_argument("--json-out", default="", help="可选：输出 JSON 文件路径")
     parser.add_argument(
