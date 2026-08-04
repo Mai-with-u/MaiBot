@@ -342,12 +342,14 @@ class PromptCLIVisualizer:
             if isinstance(message, dict):
                 raw_role = message.get("role", "unknown")
                 content = message.get("content")
+                reasoning_content = message.get("reasoning_content")
                 tool_call_id = message.get("tool_call_id")
                 tool_name = message.get("tool_name")
                 tool_calls = message.get("tool_calls") or []
             else:
                 raw_role = getattr(message, "role", "unknown")
                 content = getattr(message, "content", None)
+                reasoning_content = getattr(message, "reasoning_content", None)
                 tool_call_id = getattr(message, "tool_call_id", None)
                 tool_name = getattr(message, "tool_name", None)
                 tool_calls = getattr(message, "tool_calls", None) or []
@@ -363,6 +365,10 @@ class PromptCLIVisualizer:
             if normalized_content:
                 block_lines.append("")
                 block_lines.append(normalized_content)
+            if reasoning_content:
+                block_lines.append("")
+                block_lines.append("reasoning_content:")
+                block_lines.append(str(reasoning_content))
 
             if tool_calls:
                 block_lines.append("")
@@ -552,12 +558,14 @@ class PromptCLIVisualizer:
             if isinstance(message, dict):
                 raw_role = message.get("role", "unknown")
                 content = message.get("content")
+                reasoning_content = message.get("reasoning_content")
                 tool_call_id = message.get("tool_call_id")
                 tool_name = message.get("tool_name")
                 tool_calls = message.get("tool_calls") or []
             else:
                 raw_role = getattr(message, "role", "unknown")
                 content = getattr(message, "content", None)
+                reasoning_content = getattr(message, "reasoning_content", None)
                 tool_call_id = getattr(message, "tool_call_id", None)
                 tool_name = getattr(message, "tool_name", None)
                 tool_calls = getattr(message, "tool_calls", None) or []
@@ -568,6 +576,11 @@ class PromptCLIVisualizer:
                 "role": role,
                 "content": cls._sanitize_structured_value(content, keep_base64=keep_base64),
             }
+            if reasoning_content:
+                structured_message["reasoning_content"] = cls._sanitize_structured_value(
+                    reasoning_content,
+                    keep_base64=keep_base64,
+                )
             if tool_call_id:
                 structured_message["tool_call_id"] = str(tool_call_id)
             if tool_name:

@@ -9,7 +9,7 @@ import time
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions
+from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     EmojiComponent,
@@ -28,8 +28,8 @@ from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
-from src.config.official_configs import build_personality_emotion_suffix
 from src.config.model_configs import ModelInfo
+from src.config.official_configs import build_personality_emotion_suffix
 from src.core.types import ActionInfo
 from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
 from src.maisaka.context.message_adapter import parse_speaker_content
@@ -835,6 +835,58 @@ class BaseMaisakaReplyGenerator:
         return f'由于{normalized_reason}，之前生成的回复"{normalized_response}"不符合要求，你需要重新生成回复。'
 
     @staticmethod
+    def _is_reasoning_only_response(generation_result: LLMResponseResult) -> bool:
+        """判断模型是否仅返回了可续接的推理内容。"""
+
+        return bool((generation_result.reasoning or "").strip()) and not (
+            (generation_result.response or "").strip()
+            or generation_result.tool_calls
+            or generation_result.native_tool_calls
+        )
+
+    @staticmethod
+    def _build_reasoning_continuation_message(generation_result: LLMResponseResult) -> Message:
+        """把 reasoning-only 响应构造成仅供本次 Replyer 续写的 assistant 上下文。"""
+
+        context_message = AssistantMessage(
+            content="",
+            timestamp=datetime.now(),
+            reasoning_content=generation_result.reasoning.strip(),
+            provider_state=generation_result.provider_state,
+            source_kind="replyer_reasoning_continuation",
+        )
+        continuation_message = context_message.to_llm_message(enable_visual_message=False)
+        if continuation_message is None:
+            raise ValueError("无法构造 Replyer 推理续写上下文")
+        return continuation_message
+
+    async def _continue_reasoning_only_response(
+        self,
+        *,
+        active_model: Any,
+        request_messages: List[Message],
+        generation_result: LLMResponseResult,
+        active_model_name: Optional[str],
+    ) -> Tuple[LLMResponseResult, List[Message]]:
+        """将 reasoning-only 响应接回当前上下文，并使用同一模型续写一次。"""
+
+        continuation_message = self._build_reasoning_continuation_message(generation_result)
+        continuation_messages = [*request_messages, continuation_message]
+        continuation_model_name = generation_result.model_name.strip() or active_model_name
+
+        async def continuation_message_factory(
+            _client: object,
+            _model_info: Optional[ModelInfo] = None,
+        ) -> List[Message]:
+            return continuation_messages
+
+        continued_result = await active_model.generate_response_with_messages(
+            message_factory=continuation_message_factory,
+            options=LLMGenerationOptions(model_name=continuation_model_name),
+        )
+        return continued_result, continuation_messages
+
+    @staticmethod
     def _get_runtime_manager() -> Any:
         from src.plugin_runtime.integration import get_plugin_runtime_manager
 
@@ -982,6 +1034,7 @@ class BaseMaisakaReplyGenerator:
         aggregate_prompt_tokens = 0
         aggregate_completion_tokens = 0
         aggregate_total_tokens = 0
+        reasoning_continuation_count = 0
         default_task_name = str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer"
 
         while True:
@@ -1093,6 +1146,33 @@ class BaseMaisakaReplyGenerator:
                     message_factory=message_factory,
                     options=LLMGenerationOptions(model_name=active_model_name),
                 )
+                aggregate_prompt_tokens += generation_result.prompt_tokens
+                aggregate_completion_tokens += generation_result.completion_tokens
+                aggregate_total_tokens += generation_result.total_tokens
+
+                if reasoning_continuation_count == 0 and self._is_reasoning_only_response(generation_result):
+                    reasoning_continuation_count = 1
+                    continuation_reasoning = generation_result.reasoning.strip()
+                    continuation_model_name = generation_result.model_name.strip() or active_model_name
+                    logger.warning(
+                        "Maisaka 回复器仅收到推理内容，将在本次上下文中续写一次: "
+                        f"session={preview_chat_id} model={continuation_model_name or 'unknown'} "
+                        f"reasoning={self._normalize_content(continuation_reasoning, limit=300)!r}"
+                    )
+                    generation_result, request_messages = await self._continue_reasoning_only_response(
+                        active_model=active_model,
+                        request_messages=request_messages,
+                        generation_result=generation_result,
+                        active_model_name=active_model_name,
+                    )
+                    prompt_preview = PromptCLIVisualizer.build_prompt_dump_text(request_messages)
+                    aggregate_prompt_tokens += generation_result.prompt_tokens
+                    aggregate_completion_tokens += generation_result.completion_tokens
+                    aggregate_total_tokens += generation_result.total_tokens
+                    logger.info(
+                        "Maisaka 回复器推理续写完成: "
+                        f"session={preview_chat_id} response={self._normalize_content(generation_result.response, limit=300)!r}"
+                    )
             except Exception as exc:
                 logger.exception("Maisaka 回复器调用失败")
                 result.error_message = str(exc)
@@ -1111,9 +1191,6 @@ class BaseMaisakaReplyGenerator:
             )
             llm_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
             response_text = (generation_result.response or "").strip()
-            aggregate_prompt_tokens += generation_result.prompt_tokens
-            aggregate_completion_tokens += generation_result.completion_tokens
-            aggregate_total_tokens += generation_result.total_tokens
             hook_original_response = response_text
 
             try:
@@ -1224,6 +1301,7 @@ class BaseMaisakaReplyGenerator:
             stage_logs=[
                 f"prompt: {prompt_ms} ms",
                 f"llm: {llm_ms} ms",
+                f"reasoning_continuation: {reasoning_continuation_count}",
             ],
         )
         prompt_cache_hit_tokens = getattr(generation_result, "prompt_cache_hit_tokens", 0) or 0
@@ -1238,7 +1316,8 @@ class BaseMaisakaReplyGenerator:
         result.metrics.extra["prompt_cache_miss_tokens"] = prompt_cache_miss_tokens
         result.metrics.extra["prompt_cache_hit_rate"] = round(prompt_cache_hit_rate, 2)
         result.metrics.extra["replyer_retry_count"] = retry_count
-        result.metrics.extra["replyer_attempt_count"] = retry_count + 1
+        result.metrics.extra["replyer_reasoning_continuation_count"] = reasoning_continuation_count
+        result.metrics.extra["replyer_attempt_count"] = retry_count + reasoning_continuation_count + 1
         result.metrics.extra["replyer_aggregate_prompt_tokens"] = aggregate_prompt_tokens
         result.metrics.extra["replyer_aggregate_completion_tokens"] = aggregate_completion_tokens
         result.metrics.extra["replyer_aggregate_total_tokens"] = aggregate_total_tokens
@@ -1268,6 +1347,7 @@ class BaseMaisakaReplyGenerator:
         logger.info(
             f"Maisaka 回复器生成成功 文本={response_text!r} "
             f"总耗时ms={result.metrics.overall_ms} 重生成次数={retry_count} "
+            f"推理续写次数={reasoning_continuation_count} "
             f"已选表达={result.selected_expression_ids!r}"
         )
         if retry_count > 0:

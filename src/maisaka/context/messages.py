@@ -553,6 +553,7 @@ class AssistantMessage(LLMContextMessage):
     content: str
     timestamp: datetime
     tool_calls: list[ToolCall] = field(default_factory=list)
+    reasoning_content: str = field(default="", repr=False)
     provider_state: ProviderState | None = field(default=None, repr=False)
     source_kind: str = "assistant"
 
@@ -574,18 +575,18 @@ class AssistantMessage(LLMContextMessage):
 
     def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
         del enable_visual_message
-        message_sequence = MessageSequence([])
+        builder = MessageBuilder().set_role(RoleType.Assistant)
         if self.content:
-            message_sequence.text(self.content)
-        message = _build_message_from_sequence(
-            RoleType.Assistant,
-            message_sequence,
-            self.content,
-            tool_calls=self.tool_calls or None,
-        )
-        if message is not None and self.provider_state is not None:
-            message.provider_state = self.provider_state
-        return message
+            builder.add_text_content(self.content)
+        if self.tool_calls:
+            builder.set_tool_calls(self.tool_calls)
+        if self.reasoning_content:
+            builder.set_reasoning_content(self.reasoning_content)
+        if self.provider_state is not None:
+            builder.set_provider_state(self.provider_state)
+        if not self.content and not self.tool_calls and not self.reasoning_content and self.provider_state is None:
+            return None
+        return builder.build()
 
 
 @dataclass(slots=True)

@@ -121,6 +121,7 @@ class LLMServiceClient:
         return {
             "role": str(message.role.value if hasattr(message.role, "value") else message.role),
             "parts": parts,
+            "reasoning_content": message.reasoning_content,
             "tool_call_id": message.tool_call_id,
             "tool_name": message.tool_name,
             "tool_calls": [
@@ -604,6 +605,10 @@ def _build_message_from_dict(raw_message: PromptMessage) -> Message:
 
     role = _normalize_role(raw_role)
     message_builder = MessageBuilder().set_role(role)
+
+    reasoning_content = raw_message.get("reasoning_content")
+    if isinstance(reasoning_content, str) and reasoning_content and role == RoleType.Assistant:
+        message_builder.set_reasoning_content(reasoning_content)
 
     tool_calls = _build_tool_calls(raw_message.get("tool_calls"))
     if tool_calls is not None:

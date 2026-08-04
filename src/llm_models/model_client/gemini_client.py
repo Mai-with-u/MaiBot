@@ -308,6 +308,8 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
 
         if message.role == RoleType.Assistant:
             assistant_parts = _build_non_tool_parts(message)
+            if not assistant_parts and message.reasoning_content:
+                assistant_parts.append(Part(text=message.reasoning_content))
             if message.tool_calls:
                 for tool_call_index, tool_call in enumerate(message.tool_calls):
                     assistant_parts.append(

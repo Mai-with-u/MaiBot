@@ -78,6 +78,7 @@ class Message:
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_calls: List[ToolCall] | None = None
+    reasoning_content: str | None = field(default=None, repr=False)
     provider_state: ProviderState | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -86,12 +87,17 @@ class Message:
         Raises:
             ValueError: 当消息内容或工具调用信息不完整时抛出。
         """
-        if not self.parts and not (self.role == RoleType.Assistant and self.tool_calls):
+        has_assistant_payload = self.role == RoleType.Assistant and bool(
+            self.tool_calls or self.reasoning_content or self.provider_state
+        )
+        if not self.parts and not has_assistant_payload:
             raise ValueError("消息内容不能为空")
         if self.role == RoleType.Tool and not self.tool_call_id:
             raise ValueError("Tool 角色的工具调用 ID 不能为空")
         if self.tool_name and self.role != RoleType.Tool:
             raise ValueError("仅当角色为 Tool 时才能设置工具名称")
+        if self.reasoning_content is not None and self.role != RoleType.Assistant:
+            raise ValueError("仅当角色为 Assistant 时才能携带推理内容")
         if self.provider_state is not None and self.role != RoleType.Assistant:
             raise ValueError("仅当角色为 Assistant 时才能携带 ProviderState")
 
@@ -143,6 +149,7 @@ class MessageBuilder:
         self.__tool_call_id: str | None = None
         self.__tool_name: str | None = None
         self.__tool_calls: List[ToolCall] | None = None
+        self.__reasoning_content: str | None = None
         self.__provider_state: ProviderState | None = None
 
     def set_role(self, role: RoleType = RoleType.User) -> "MessageBuilder":
@@ -284,6 +291,15 @@ class MessageBuilder:
         self.__tool_calls = list(tool_calls)
         return self
 
+    def set_reasoning_content(self, reasoning_content: str) -> "MessageBuilder":
+        """设置助手消息携带的原生推理内容。"""
+        if self.__role != RoleType.Assistant:
+            raise ValueError("仅当角色为 Assistant 时才能设置推理内容")
+        if not reasoning_content:
+            raise ValueError("推理内容不能为空")
+        self.__reasoning_content = reasoning_content
+        return self
+
     def set_provider_state(self, provider_state: ProviderState) -> "MessageBuilder":
         """设置 assistant 消息携带的 Provider 原生状态。"""
         if self.__role != RoleType.Assistant:
@@ -303,5 +319,6 @@ class MessageBuilder:
             tool_call_id=self.__tool_call_id,
             tool_name=self.__tool_name,
             tool_calls=list(self.__tool_calls) if self.__tool_calls else None,
+            reasoning_content=self.__reasoning_content,
             provider_state=self.__provider_state,
         )

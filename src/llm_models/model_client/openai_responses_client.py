@@ -187,6 +187,8 @@ def _convert_messages(
 
         if message.role == RoleType.Assistant:
             assistant_content = _convert_text_parts(message)
+            if not assistant_content and message.reasoning_content:
+                assistant_content = [{"type": "input_text", "text": message.reasoning_content}]
             if assistant_content:
                 input_items.append({"role": "assistant", "content": assistant_content})
             for tool_call in message.tool_calls or []:

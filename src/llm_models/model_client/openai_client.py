@@ -456,6 +456,8 @@ def _sanitize_messages_for_toolless_request(messages: List[Message]) -> List[Mes
                 tool_call_id=message.tool_call_id,
                 tool_name=message.tool_name,
                 tool_calls=None,
+                reasoning_content=message.reasoning_content,
+                provider_state=message.provider_state,
             )
             sanitized_messages.append(assistant_message)
             continue
@@ -497,6 +499,8 @@ def _convert_messages(messages: List[Message]) -> List[ChatCompletionMessagePara
                 "role": "assistant",
                 "content": None if not message.parts and message.tool_calls else _convert_text_only_message_content(message),
             }
+            if message.reasoning_content:
+                assistant_payload["reasoning_content"] = message.reasoning_content  # type: ignore[typeddict-unknown-key]
             if message.tool_calls:
                 assistant_payload["tool_calls"] = _convert_assistant_tool_calls(message.tool_calls)
             converted_messages.append(assistant_payload)

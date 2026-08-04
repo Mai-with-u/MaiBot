@@ -189,6 +189,8 @@ def serialize_message_snapshot(message: Message) -> dict[str, Any]:
         "parts": parts_payload,
         "role": message.role.value,
     }
+    if message.reasoning_content:
+        payload["reasoning_content"] = message.reasoning_content
     if message.tool_call_id:
         payload["tool_call_id"] = message.tool_call_id
     if message.tool_name:
@@ -209,6 +211,10 @@ def deserialize_message_snapshot(raw_message: Any) -> Message:
 
     role = RoleType(raw_role)
     builder = MessageBuilder().set_role(role)
+
+    reasoning_content = raw_message.get("reasoning_content")
+    if role == RoleType.Assistant and isinstance(reasoning_content, str) and reasoning_content:
+        builder.set_reasoning_content(reasoning_content)
 
     raw_tool_calls = raw_message.get("tool_calls")
     tool_calls = deserialize_tool_calls_snapshot(raw_tool_calls)
@@ -304,6 +310,9 @@ def deserialize_structured_messages_snapshot(raw_messages: Any) -> list[Message]
             raise ValueError("快照中的 message 必须是字典")
         role = RoleType(str(raw_message.get("role") or "user"))
         builder = MessageBuilder().set_role(role)
+        reasoning_content = raw_message.get("reasoning_content")
+        if role == RoleType.Assistant and isinstance(reasoning_content, str) and reasoning_content:
+            builder.set_reasoning_content(reasoning_content)
         content = raw_message.get("content")
         content_parts = content if isinstance(content, list) else [{"type": "text", "text": str(content or "")}]
         for raw_part in content_parts:
