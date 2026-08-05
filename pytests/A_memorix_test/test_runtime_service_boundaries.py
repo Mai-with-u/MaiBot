@@ -918,6 +918,11 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
     monkeypatch.setattr(
         kernel,
+        "_current_embedding_fingerprint_for_validation",
+        lambda **kwargs: {"hash": "observed-test-model"},
+    )
+    monkeypatch.setattr(
+        kernel,
         "_v1_valid_hashes_for_pool",
         lambda pool: ["paragraph-1", "paragraph-2"] if pool == "paragraph" else ["entity:1", "relation:1"],
     )

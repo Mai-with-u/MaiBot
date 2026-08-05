@@ -413,6 +413,17 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         service = self._embedding_state_service
         return type(service)._current_embedding_fingerprint(service, dimension=dimension)
 
+    def _current_embedding_fingerprint_for_validation(
+        self,
+        *,
+        dimension: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        service = self._embedding_state_service
+        return type(service)._current_embedding_fingerprint_for_validation(
+            service,
+            dimension=dimension,
+        )
+
     def _stored_embedding_fingerprint(self, store: Optional[VectorStore] = None) -> Optional[Dict[str, Any]]:
         service = self._embedding_state_service
         return type(service)._stored_embedding_fingerprint(service, store)

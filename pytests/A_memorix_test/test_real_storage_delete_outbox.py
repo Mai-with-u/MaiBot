@@ -127,6 +127,9 @@ async def _open_runtime(data_dir: Path) -> SDKMemoryKernel:
     await embedding.initialize()
     kernel.embedding_manager = embedding
     kernel.embedding_dimension = EMBEDDING_DIMENSION
+    if kernel._vector_health.get("error_code") == "embedding_fingerprint_unavailable":
+        restored = await kernel._embedding_state_service._restore_vector_channel_after_embedding_recovery()
+        assert restored is True
     if kernel.relation_write_service is not None:
         kernel.relation_write_service.embedding_manager = embedding
     return kernel

@@ -153,6 +153,7 @@ def test_lpmm_converter_writes_loadable_dual_pools_and_refuses_overwrite(tmp_pat
         get_embedding_fingerprint=lambda *, dimension: {
             **manifest["embedding_fingerprint"],
             "dimension": dimension,
+            "source": "observed",
         }
     )
     assert kernel._dual_vector_ready(expected_dimension=2) is True

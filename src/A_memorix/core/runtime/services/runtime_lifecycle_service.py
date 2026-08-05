@@ -137,7 +137,7 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
         provisional_dimension = int(self.embedding_dimension)
         if stored_dimension is not None and stored_dimension != provisional_dimension:
             logger.warning(
-                "历史向量维度与当前配置不同，将按当前维度创建新世代: "
+                "历史向量维度与当前配置不同，将保留原世代并等待显式重建: "
                 f"stored={stored_dimension}, current={provisional_dimension}"
             )
 
@@ -229,8 +229,16 @@ class MemoryRuntimeLifecycleService(KernelServiceBase):
                     copy_progress={},
                 )
             elif self._legacy_vector_view is None and self.vector_store.has_data():
+                expected_fingerprint = self._current_embedding_fingerprint_for_validation()
+                if expected_fingerprint is None:
+                    raise VectorStoreIntegrityError(
+                        "当前 Embedding 指纹尚未经过真实请求确认",
+                        error_code="embedding_fingerprint_unavailable",
+                        dimension_status="unknown",
+                        fingerprint_status="unknown",
+                    )
                 self.vector_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    expected_embedding_fingerprint=expected_fingerprint,
                     v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
                     v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )

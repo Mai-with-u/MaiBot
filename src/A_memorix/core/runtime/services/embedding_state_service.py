@@ -86,6 +86,18 @@ class MemoryEmbeddingStateService(KernelServiceBase):
             logger.warning(f"生成 embedding 指纹失败: {exc}")
             return None
 
+    def _current_embedding_fingerprint_for_validation(
+        self,
+        *,
+        dimension: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        fingerprint = self._current_embedding_fingerprint(dimension=dimension)
+        if fingerprint is None:
+            return None
+        if str(fingerprint.get("source", "") or "").strip().lower() == "configured":
+            return None
+        return fingerprint
+
     def _stored_embedding_fingerprint(self, store: Optional[VectorStore] = None) -> Optional[Dict[str, Any]]:
         ready_manifest = (
             self._read_dual_vector_ready_manifest()
@@ -118,7 +130,9 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         current_dimension = self._current_embedding_status_dimension()
         if stored_dimension is None or int(stored_dimension) != int(current_dimension):
             return False
-        current_fingerprint = self._current_embedding_fingerprint(dimension=current_dimension)
+        current_fingerprint = self._current_embedding_fingerprint_for_validation(
+            dimension=current_dimension
+        )
         if current_fingerprint is None:
             return False
         stored_fingerprint = self._stored_embedding_fingerprint(store)
@@ -147,7 +161,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         return "matched" if str(current.get("hash", "")) == str(stored.get("hash", "")) else "mismatched"
 
     def _stored_vectors_compatible_with_current_embedding(self, store: Optional[VectorStore] = None) -> bool:
-        current = self._current_embedding_fingerprint()
+        current = self._current_embedding_fingerprint_for_validation()
         stored = self._stored_embedding_fingerprint(store)
         if current is None:
             return False
@@ -335,13 +349,38 @@ class MemoryEmbeddingStateService(KernelServiceBase):
                     self._vectors_root(),
                     dimension=self._current_embedding_status_dimension(),
                 )
-                loaded = self._reload_dual_vector_stores_from_disk()
+                if self._dual_vector_pools_config_enabled():
+                    loaded = self._reload_dual_vector_stores_from_disk()
+                    if not loaded:
+                        raise RuntimeError("Embedding 恢复后未找到可加载的双池向量世代")
+                else:
+                    expected_fingerprint = self._current_embedding_fingerprint_for_validation()
+                    if expected_fingerprint is None:
+                        raise VectorStoreIntegrityError(
+                            "当前 Embedding 指纹尚未经过真实请求确认",
+                            error_code="embedding_fingerprint_unavailable",
+                            dimension_status="unknown",
+                            fingerprint_status="unknown",
+                        )
+                    if not self.vector_store.has_data():
+                        raise RuntimeError("Embedding 恢复后未找到可加载的单池向量世代")
+                    self.vector_store.load(
+                        expected_embedding_fingerprint=expected_fingerprint,
+                        v1_valid_hashes=self._v1_valid_hashes_for_pool("single"),
+                        v1_evidence_root=self._v1_reconciliation_evidence_root(),
+                    )
+                    self.vector_store.warmup_index(force_train=True)
+                    self.paragraph_vector_store = self._make_vector_store(
+                        self._paragraph_vector_dir()
+                    )
+                    self.graph_vector_store = self._make_vector_store(
+                        self._graph_vector_dir()
+                    )
+                    loaded = True
             except VectorStoreIntegrityError as exc:
                 if not self._recover_known_vector_failure(exc):
                     raise
                 return self._dual_vector_pools_enabled(), False
-            if not loaded:
-                raise RuntimeError("Embedding 恢复后未找到可加载的双池向量世代")
             return True, True
 
         async with self._vector_rebuild_lock:

@@ -24,7 +24,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             stored_dimension = int(self._vector_rebuild_source_dimension)
         current_dimension = self._current_embedding_status_dimension()
         dimension_rebuild_required = stored_dimension is not None and stored_dimension != current_dimension
-        current_fingerprint = self._current_embedding_fingerprint()
+        current_fingerprint = self._current_embedding_fingerprint_for_validation()
         stored_fingerprint = self._stored_embedding_fingerprint()
         fingerprint_status = self._embedding_fingerprint_status(
             current_fingerprint,
@@ -563,7 +563,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         降级状态，完成后重新组装检索运行时并通过自检决定是否解除持久化阻断。
         ``dry_run`` 只统计目标数量，不修改运行时和磁盘状态。
         """
-        if self.metadata_store is None or self.vector_store is None or self.embedding_manager is None:
+        if self.metadata_store is None or self.embedding_manager is None:
             return {"success": False, "error": "runtime_components_missing"}
 
         target_counts = self._count_vector_rebuild_targets()
@@ -579,6 +579,12 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 "total": int(total),
                 **self._vector_rebuild_status(),
             }
+
+        if self.vector_store is None:
+            self.vector_store = self._make_vector_store(
+                self._vectors_root(),
+                dimension=self._current_embedding_status_dimension(),
+            )
 
         started = time.time()
         safe_batch_size = max(1, int(batch_size or self._cfg("embedding.batch_size", 32) or 32))
@@ -915,6 +921,17 @@ class MemoryVectorRuntimeService(KernelServiceBase):
         if rebuild_success:
             self._vector_persist_blocked_until_rebuild = False
             self._vector_rebuild_source_dimension = None
+            self._set_runtime_capability("vector_read", True)
+            self._set_runtime_capability("vector_write", True)
+            self._set_vector_health(
+                state="healthy",
+                error_code="",
+                reason="",
+                trusted_coverage=1.0,
+                recovery_stage="idle",
+                operation_id="",
+                copy_progress={},
+            )
         self._update_dual_vector_auto_migration_stage(
             "persist", rebuild_success=rebuild_success, errors=list(errors[:5])
         )

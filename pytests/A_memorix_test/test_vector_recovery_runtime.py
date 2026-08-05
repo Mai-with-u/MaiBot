@@ -149,6 +149,47 @@ def test_unknown_vector_failure_keeps_original_files_and_core_capability(
 
 
 @pytest.mark.parametrize(
+    "error_code",
+    [
+        "embedding_fingerprint_unavailable",
+        "v1_dimension_mismatch",
+        "v1_fingerprint_missing",
+        "v1_fingerprint_mismatch",
+        "v2_dimension_mismatch",
+        "v2_fingerprint_missing",
+        "v2_fingerprint_mismatch",
+    ],
+)
+def test_embedding_compatibility_failure_never_quarantines_vectors(
+    tmp_path: Path,
+    error_code: str,
+) -> None:
+    data_dir = tmp_path / error_code
+    marker = data_dir / "vectors" / "generation.bin"
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(b"preserve-compatible-generation")
+    kernel = SDKMemoryKernel(
+        plugin_root=tmp_path,
+        config={"storage": {"data_dir": str(data_dir)}},
+    )
+    error = VectorStoreIntegrityError(
+        "embedding 空间兼容性待确认",
+        error_code=error_code,
+        dimension_status="unknown",
+        fingerprint_status="unknown",
+    )
+
+    assert kernel._recover_known_vector_failure(error) is False
+    kernel._disable_vector_channel(error)
+
+    assert marker.read_bytes() == b"preserve-compatible-generation"
+    assert not (data_dir / "vector_recovery.json").exists()
+    assert not (data_dir / "vector_quarantine").exists()
+    expected_state = "verification_pending" if error_code == "embedding_fingerprint_unavailable" else "incompatible"
+    assert kernel._vector_health["state"] == expected_state
+
+
+@pytest.mark.parametrize(
     "interrupted_stage",
     ["prepared", "quarantined", "metadata_reset", "new_generation_ready", "copying"],
 )
