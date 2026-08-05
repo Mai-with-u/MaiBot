@@ -17,16 +17,6 @@ class PromptPreviewLogger:
     _TRIM_COUNT = 100
 
     @classmethod
-    def _build_file_stem(cls, chat_dir: Path) -> str:
-        base_stem = str(int(time.time() * 1000))
-        candidate_stem = base_stem
-        suffix_index = 1
-        while (chat_dir / f"{candidate_stem}.json").exists():
-            candidate_stem = f"{base_stem}_{suffix_index}"
-            suffix_index += 1
-        return candidate_stem
-
-    @classmethod
     def save_preview_file(
         cls,
         chat_id: str,
@@ -38,13 +28,20 @@ class PromptPreviewLogger:
         normalized_category = normalize_preview_name(category)
         chat_dir = (cls._BASE_DIR / normalized_category / build_preview_chat_dir_name(chat_id)).resolve()
         chat_dir.mkdir(parents=True, exist_ok=True)
-        stem = cls._build_file_stem(chat_dir)
-        file_path = chat_dir / f"{stem}.json"
+        base_stem = str(int(time.time() * 1000))
+        suffix_index = 0
         try:
-            file_path.write_text(content, encoding="utf-8")
+            while True:
+                stem = base_stem if suffix_index == 0 else f"{base_stem}_{suffix_index}"
+                file_path = chat_dir / f"{stem}.json"
+                try:
+                    with file_path.open("x", encoding="utf-8") as preview_file:
+                        preview_file.write(content)
+                    return file_path
+                except FileExistsError:
+                    suffix_index += 1
         finally:
             cls._trim_overflow(chat_dir)
-        return file_path
 
     @classmethod
     def _trim_overflow(cls, chat_dir: Path) -> None:
@@ -60,13 +57,20 @@ class PromptPreviewLogger:
         if len(grouped_files) <= max_preview_groups:
             return
 
-        sorted_groups = sorted(
-            grouped_files.items(),
-            key=lambda item: min(path.stat().st_mtime for path in item[1]),
-        )
+        sortable_groups: list[tuple[float, str, list[Path]]] = []
+        for stem, paths in grouped_files.items():
+            mtimes: list[float] = []
+            for path in paths:
+                try:
+                    mtimes.append(path.stat().st_mtime)
+                except FileNotFoundError:
+                    continue
+            if mtimes:
+                sortable_groups.append((min(mtimes), stem, paths))
+        sorted_groups = sorted(sortable_groups, key=lambda item: (item[0], item[1]))
         overflow_count = len(grouped_files) - max_preview_groups
         trim_count = min(len(sorted_groups), max(cls._TRIM_COUNT, overflow_count))
-        for _, file_group in sorted_groups[:trim_count]:
+        for _, _, file_group in sorted_groups[:trim_count]:
             for old_file in file_group:
                 try:
                     old_file.unlink()

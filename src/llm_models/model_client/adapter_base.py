@@ -5,6 +5,7 @@ import asyncio
 
 from src.common.logger import get_logger
 from src.config.model_configs import ModelInfo
+from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
 
 from .base_client import (
     APIResponse,
@@ -97,6 +98,7 @@ class AdapterClient(BaseClient, ABC, Generic[RawStreamT, RawResponseT]):
         Returns:
             APIResponse: 解析完成的统一响应对象。
         """
+        validate_context_items(request.context_items, ContextProtocolMode.REQUEST_CONTEXT)
         stream_response_handler = self._resolve_stream_response_handler(request)
         response_parser = self._resolve_response_parser(request)
         response, usage_record = await self._execute_response_request(
@@ -104,7 +106,15 @@ class AdapterClient(BaseClient, ABC, Generic[RawStreamT, RawResponseT]):
             stream_response_handler,
             response_parser,
         )
-        return self._attach_usage_record(response, request.model_info, usage_record)
+        validate_context_items(response.output_items, ContextProtocolMode.MODEL_OUTPUT)
+        response.bind_logical_turn(request.logical_turn_id)
+        response = self._attach_usage_record(response, request.model_info, usage_record)
+        response.attach_generation_trace(
+            provider=self.api_provider.name,
+            endpoint=self.api_provider.base_url,
+            model=request.model_info.model_identifier,
+        )
+        return response
 
     async def get_embedding(self, request: EmbeddingRequest) -> APIResponse:
         """获取文本嵌入。

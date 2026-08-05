@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 import base64
 import io
@@ -8,14 +9,20 @@ from src.common.database.database import get_db_session
 from src.common.database.database_model import ModelUsage
 from src.common.logger import get_logger
 from src.config.model_configs import ModelInfo
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    SystemMessageItem,
+    UserMessageItem,
+)
 
 from .model_client.base_client import UsageRecord
-from .payload_content.message import ImageMessagePart, Message, MessageBuilder, RoleType, TextMessagePart
 
 logger = get_logger("消息压缩工具")
 
 
-def compress_messages(messages: list[Message], img_target_size: int = 1 * 1024 * 1024) -> list[Message]:
+def compress_messages(items: list[ContextItem], img_target_size: int = 1 * 1024 * 1024) -> list[ContextItem]:
     """
     压缩消息列表中的图片
     :param messages: 消息列表
@@ -132,32 +139,28 @@ def compress_messages(messages: list[Message], img_target_size: int = 1 * 1024 *
 
         return base64_data
 
-    def rebuild_message_with_compressed_images(message: Message) -> Message:
-        """重建消息并压缩其中的图片，同时保留角色与工具元信息。"""
-        if not any(isinstance(part, ImageMessagePart) for part in message.parts):
-            return message
+    def rebuild_item_with_compressed_images(item: ContextItem) -> ContextItem:
+        """重建含图片的消息 Item，并只清除被修改 Item 自身的 replay fragment。"""
 
-        message_builder = MessageBuilder().set_role(message.role)
-        if message.role == RoleType.Assistant and message.tool_calls:
-            message_builder.set_tool_calls(message.tool_calls)
-        if message.role == RoleType.Tool and message.tool_call_id:
-            message_builder.set_tool_call_id(message.tool_call_id)
-        if message.role == RoleType.Tool and message.tool_name:
-            message_builder.set_tool_name(message.tool_name)
+        if not isinstance(item, (SystemMessageItem, UserMessageItem, AssistantMessageItem)):
+            return item
+        if not any(isinstance(part, ContextImagePart) for part in item.parts):
+            return item
 
-        for message_part in message.parts:
-            if isinstance(message_part, ImageMessagePart):
-                message_builder.add_image_content(
-                    message_part.image_format,
-                    compress_base64_image(message_part.image_base64, target_size=img_target_size),
-                )
-                continue
-            if isinstance(message_part, TextMessagePart):
-                message_builder.add_text_content(message_part.text)
+        compressed_parts = tuple(
+            ContextImagePart(
+                image_format=part.image_format,
+                image_base64=compress_base64_image(part.image_base64, target_size=img_target_size),
+            )
+            if isinstance(part, ContextImagePart)
+            else part
+            for part in item.parts
+        )
+        if isinstance(item, AssistantMessageItem):
+            return replace(item, parts=compressed_parts, replay=None)
+        return replace(item, parts=compressed_parts)
 
-        return message_builder.build()
-
-    return [rebuild_message_with_compressed_images(message) for message in messages]
+    return [rebuild_item_with_compressed_images(item) for item in items]
 
 
 class LLMUsageRecorder:

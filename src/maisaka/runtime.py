@@ -1,4 +1,4 @@
-﻿"""Maisaka 非 CLI 运行时。"""
+"""Maisaka 非 CLI 运行时。"""
 
 from collections import deque
 from datetime import datetime
@@ -36,8 +36,8 @@ from src.maisaka.builtin_tool.provider import MaisakaBuiltinToolProvider
 from src.maisaka.context.history import drop_leading_orphan_tool_results
 from src.maisaka.context.clear_context import select_messages_after_latest_clear_marker
 from src.maisaka.context.messages import (
-    AssistantMessage,
     LLMContextMessage,
+    ModelOutputContextMessage,
     ReferenceMessage,
     ReferenceMessageType,
     SessionBackedMessage,
@@ -47,7 +47,12 @@ from src.maisaka.display.runtime_mixin import MaisakaRuntimeDisplayMixin
 from src.maisaka.display.stage_status_board import remove_stage_status, update_stage_status
 from src.maisaka.focus import MaisakaFocusRuntimeMixin, focus_mode_manager
 from src.maisaka.mode_policy import is_reply_necessity_trigger_enabled
-from src.maisaka.monitor.events import emit_message_ingested, emit_message_sent, emit_message_updated, emit_session_start
+from src.maisaka.monitor.events import (
+    emit_message_ingested,
+    emit_message_sent,
+    emit_message_updated,
+    emit_session_start,
+)
 from src.maisaka.monitor.message_payload import (
     build_monitor_message_content,
     build_monitor_message_media,
@@ -160,6 +165,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         self._last_processed_index = 0
         self._internal_turn_queue: asyncio.Queue[Literal["message", "timeout", "proactive"]] = asyncio.Queue()
         self._proactive_trigger_message: Optional[SessionMessage] = None
+        self._proactive_logical_turn_id: Optional[str] = None
         self._focus_cooldown_wakeup_scheduled = False
         self._focus_cooldown_timer_task: Optional[asyncio.Task[None]] = None
 
@@ -179,6 +185,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         self._max_internal_rounds = MAX_INTERNAL_ROUNDS
         self._agent_state: Literal["running", "wait", "stop"] = self._STATE_STOP
         self._pending_wait_tool_call_id: Optional[str] = None
+        self._pending_wait_logical_turn_id: Optional[str] = None
         self._pending_wait_started_at: Optional[float] = None
         self._pending_wait_seconds: Optional[float] = None
         self._consecutive_wait_count = 0
@@ -649,10 +656,16 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         message.processed_plain_text = "插件主动聊天任务"
         return message
 
-    def _queue_proactive_turn(self, trigger_message: SessionMessage) -> None:
+    def _queue_proactive_turn(
+        self,
+        trigger_message: SessionMessage,
+        *,
+        logical_turn_id: str | None = None,
+    ) -> None:
         """设置主动触发消息，并投递 proactive 内部循环。"""
 
         self._proactive_trigger_message = trigger_message
+        self._proactive_logical_turn_id = logical_turn_id
         self._resume_from_wait_for_proactive_trigger()
         self._internal_turn_queue.put_nowait("proactive")
 
@@ -662,6 +675,13 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         trigger_message = self._proactive_trigger_message
         self._proactive_trigger_message = None
         return trigger_message
+
+    def _consume_proactive_logical_turn_id(self) -> str | None:
+        """消费主动触发需要继承的逻辑工具轮次。"""
+
+        logical_turn_id = self._proactive_logical_turn_id
+        self._proactive_logical_turn_id = None
+        return logical_turn_id
 
     def _clear_focus_cooldown_wakeup_scheduled(self) -> None:
         """清理 focus 冷却唤醒排队标记。"""
@@ -714,10 +734,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             _refresh_pending_visual_components(message.raw_message.components)
             self._register_monitor_visual_placeholder_refresh(message)
         except Exception as exc:
-            logger.debug(
-                f"{self.log_prefix} 刷新监控消息媒体描述失败: "
-                f"message_id={message.message_id} error={exc}"
-            )
+            logger.debug(f"{self.log_prefix} 刷新监控消息媒体描述失败: message_id={message.message_id} error={exc}")
 
     def _build_monitor_message_media(self, message: SessionMessage) -> list[dict[str, Any]]:
         """构造监控面板可切换展示的原始图片或表情。"""
@@ -1211,8 +1228,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             return
 
         logger.info(
-            f"{self.log_prefix} 检测到{trigger_reason}，下一轮 Planner 将强制触发；"
-            f"消息编号={message.message_id}"
+            f"{self.log_prefix} 检测到{trigger_reason}，下一轮 Planner 将强制触发；消息编号={message.message_id}"
         )
 
     def _arm_forced_turn_state(self, *, message_id: str, reason: str) -> bool:
@@ -1234,9 +1250,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         trigger_message_id = self._forced_turn_message_id or "unknown"
         reason = f"检测到新的{trigger_reason}（消息编号={trigger_message_id}），本轮直接进入 Planner。"
         logger.info(
-            f"{self.log_prefix} 已结束本次强制触发状态；"
-            f"触发原因={trigger_reason} "
-            f"触发消息编号={trigger_message_id}"
+            f"{self.log_prefix} 已结束本次强制触发状态；触发原因={trigger_reason} 触发消息编号={trigger_message_id}"
         )
         self._clear_forced_turn_state()
         return reason
@@ -1470,7 +1484,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         tool_search_call_ids = {
             tool_call.call_id
             for message in selected_history
-            if isinstance(message, AssistantMessage)
+            if isinstance(message, ModelOutputContextMessage)
             for tool_call in message.tool_calls
             if tool_call.func_name == "tool_search" and tool_call.call_id
         }
@@ -1681,6 +1695,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         """清理 wait 工具挂起状态与超时任务。"""
 
         self._pending_wait_tool_call_id = None
+        self._pending_wait_logical_turn_id = None
         self._pending_wait_started_at = None
         self._pending_wait_seconds = None
         self._cancel_wait_timeout_task()
@@ -1690,13 +1705,15 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
         if self._consecutive_wait_count <= 0:
             return
-        logger.debug(
-            f"{self.log_prefix} 连续 wait 计数已重置: "
-            f"原计数={self._consecutive_wait_count} 原因={reason}"
-        )
+        logger.debug(f"{self.log_prefix} 连续 wait 计数已重置: 原计数={self._consecutive_wait_count} 原因={reason}")
         self._consecutive_wait_count = 0
 
-    def _try_enter_wait_state(self, seconds: Optional[float] = None, tool_call_id: Optional[str] = None) -> tuple[bool, int, int]:
+    def _try_enter_wait_state(
+        self,
+        seconds: Optional[float] = None,
+        tool_call_id: Optional[str] = None,
+        logical_turn_id: Optional[str] = None,
+    ) -> tuple[bool, int, int]:
         """尝试进入 wait 状态，并返回是否成功、当前连续次数和上限。"""
 
         max_count = max(1, int(global_config.chat.reply_timing.max_consecutive_wait_count))
@@ -1704,7 +1721,11 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             return False, self._consecutive_wait_count, max_count
 
         self._consecutive_wait_count += 1
-        self._enter_wait_state(seconds=seconds, tool_call_id=tool_call_id)
+        self._enter_wait_state(
+            seconds=seconds,
+            tool_call_id=tool_call_id,
+            logical_turn_id=logical_turn_id,
+        )
         return True, self._consecutive_wait_count, max_count
 
     def _resume_from_wait_for_proactive_trigger(self) -> None:
@@ -1714,12 +1735,20 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             return
 
         self._enter_running_state()
-        self._clear_wait_state()
 
-    def _enter_wait_state(self, seconds: Optional[float] = None, tool_call_id: Optional[str] = None) -> None:
+    def _enter_wait_state(
+        self,
+        seconds: Optional[float] = None,
+        tool_call_id: Optional[str] = None,
+        logical_turn_id: Optional[str] = None,
+    ) -> None:
         """切换到等待状态。"""
+
+        if not tool_call_id or not logical_turn_id:
+            raise ValueError("进入 wait 状态必须绑定非空 tool_call_id 和 logical_turn_id")
         self._agent_state = self._STATE_WAIT
         self._pending_wait_tool_call_id = tool_call_id
+        self._pending_wait_logical_turn_id = logical_turn_id
         self._pending_wait_started_at = time.time()
         self._pending_wait_seconds = seconds
         self._mark_message_turn_unscheduled()
@@ -1758,22 +1787,33 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             if self._wait_timeout_task is not None and self._pending_wait_tool_call_id == tool_call_id:
                 self._wait_timeout_task = None
 
-    def _consume_pending_wait_state(self) -> tuple[str, float, Optional[float]]:
+    def _consume_pending_wait_state(self) -> tuple[str, str, float, Optional[float]]:
         """消费当前 wait 挂起状态，供 wait 完成消息回填。"""
 
-        tool_call_id = self._pending_wait_tool_call_id or "wait_timeout"
+        tool_call_id = self._pending_wait_tool_call_id
+        logical_turn_id = self._pending_wait_logical_turn_id
+        if not tool_call_id or not logical_turn_id:
+            raise RuntimeError("不存在可补齐的 wait 工具调用")
         started_at = self._pending_wait_started_at
         requested_seconds = self._pending_wait_seconds
         elapsed_seconds = max(0.0, time.time() - started_at) if started_at is not None else 0.0
         self._pending_wait_tool_call_id = None
+        self._pending_wait_logical_turn_id = None
         self._pending_wait_started_at = None
         self._pending_wait_seconds = None
-        return tool_call_id, elapsed_seconds, requested_seconds
+        return tool_call_id, logical_turn_id, elapsed_seconds, requested_seconds
 
     def _has_pending_wait_tool_call(self) -> bool:
         """返回当前是否存在等待完成后需要回填的 wait 工具调用。"""
 
         return self._pending_wait_tool_call_id is not None
+
+    def _get_pending_wait_tool_call_ids(self) -> set[str]:
+        """返回历史清理期间允许暂时未闭合的 wait 调用 ID。"""
+
+        if self._pending_wait_tool_call_id is None:
+            return set()
+        return {self._pending_wait_tool_call_id}
 
     async def _trigger_trimmed_history_learning(self, context_messages: Sequence[LLMContextMessage]) -> None:
         """提交对 Maisaka 裁切历史的后台学习任务。"""

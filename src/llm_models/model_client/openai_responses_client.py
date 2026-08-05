@@ -2,7 +2,6 @@ from copy import deepcopy
 from typing import Any, Dict, List, Sequence, Tuple, cast
 
 import asyncio
-import json
 
 from openai import APIConnectionError, APIStatusError, AsyncStream
 from openai._types import omit
@@ -17,19 +16,34 @@ from src.llm_models.exceptions import (
     RespParseException,
 )
 from src.llm_models.openai_compat import split_openai_request_overrides
-from src.llm_models.payload_content.message import ImageMessagePart, Message, RoleType, TextMessagePart
-from src.llm_models.payload_content.native_tool import NativeToolCallSummary
-from src.llm_models.payload_content.provider_state import (
-    PROVIDER_STATE_SCHEMA_VERSION,
-    ProviderState,
-    build_assistant_message_fingerprint,
+from src.llm_models.payload_content.context_item import (
+    PROVIDER_REPLAY_SCHEMA_VERSION,
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    ContextItemMeta,
+    ContextRefusalPart,
+    ContextTextPart,
+    ContextToolCall,
+    FunctionCallOutputItem,
+    FunctionCallItem,
+    ModelOutputItem,
+    ProviderActivityItem,
+    ProviderOpaqueItem,
+    ProviderReplayFragment,
+    ProviderScope,
+    ReasoningItem,
+    ReasoningRepresentation,
+    SystemMessageItem,
+    UserMessageItem,
     build_provider_endpoint_fingerprint,
+    get_item_replay,
 )
+from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.llm_models.payload_content.tool_option import (
     TOOL_CALL_SOURCE_EXTRA_KEY,
     TOOL_CALL_SOURCE_RESPONSE,
-    ToolCall,
     ToolOption,
 )
 from src.llm_models.request_snapshot import (
@@ -40,7 +54,7 @@ from src.llm_models.request_snapshot import (
 )
 
 from .adapter_base import await_task_with_interrupt
-from .base_client import APIResponse, ResponseRequest, UsageTuple, client_registry
+from .base_client import APIResponse, GenerationTrace, ResponseRequest, UsageTuple, client_registry
 from .openai_client import (
     OpenaiClient,
     _build_api_status_message,
@@ -54,6 +68,18 @@ RESPONSES_OPERATION = "responses.create"
 RESPONSES_ENDPOINT = "/responses"
 NATIVE_TOOL_DETAIL_LIMIT = 500
 NATIVE_TOOL_DETAIL_COUNT_LIMIT = 5
+PROVIDER_ACTIVITY_ITEM_TYPES = {
+    "apply_patch_call",
+    "code_interpreter_call",
+    "computer_call",
+    "file_search_call",
+    "image_generation_call",
+    "mcp_approval_request",
+    "mcp_call",
+    "mcp_list_tools",
+    "shell_call",
+    "web_search_call",
+}
 
 logger = get_logger("llm_models")
 
@@ -82,11 +108,7 @@ def _serialize_response(response: Any) -> Dict[str, Any]:
         if isinstance(payload, dict):
             return payload
     try:
-        payload = {
-            key: deepcopy(value)
-            for key, value in vars(response).items()
-            if not key.startswith("_")
-        }
+        payload = {key: deepcopy(value) for key, value in vars(response).items() if not key.startswith("_")}
     except TypeError as exc:
         raise RespParseException(response, f"Responses 响应无法序列化: {type(response).__name__}") from exc
     if payload:
@@ -102,28 +124,32 @@ def _get_value(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
-def _convert_text_parts(message: Message) -> str:
+def _convert_text_parts(item: SystemMessageItem | AssistantMessageItem) -> str:
     """将只允许文本的消息内容转换为字符串。"""
 
     text_parts: List[str] = []
-    for part in message.parts:
-        if not isinstance(part, TextMessagePart):
-            raise ValueError(f"{message.role.value} 消息仅支持文本片段")
-        text_parts.append(part.text)
+    for part in item.parts:
+        if isinstance(part, ContextTextPart):
+            text_parts.append(part.text)
+            continue
+        if isinstance(part, ContextRefusalPart):
+            text_parts.append(part.refusal)
+            continue
+        raise ValueError(f"{item.role.value} 消息仅支持文本片段")
     return "".join(text_parts)
 
 
-def _convert_user_content(message: Message) -> List[Dict[str, Any]]:
+def _convert_user_content(item: UserMessageItem) -> List[Dict[str, Any]]:
     """将用户消息转换为 Responses 输入内容块。"""
 
     content: List[Dict[str, Any]] = []
-    for part in message.parts:
-        if isinstance(part, TextMessagePart):
+    for part in item.parts:
+        if isinstance(part, ContextTextPart):
             if part.text.strip():
                 content.append({"type": "input_text", "text": part.text})
             continue
 
-        if not isinstance(part, ImageMessagePart):
+        if not isinstance(part, ContextImagePart):
             raise ValueError(f"不支持的消息片段类型: {type(part).__name__}")
         normalized_image = _normalize_image_part_for_openai(part)
         if normalized_image is None:
@@ -140,26 +166,24 @@ def _convert_user_content(message: Message) -> List[Dict[str, Any]]:
     return content
 
 
-def _can_replay_provider_state(message: Message, request: ResponseRequest, provider_name: str, base_url: str) -> bool:
-    """判断 assistant 消息携带的 Responses Items 是否仍可安全回放。"""
+def _can_replay_item(item: ContextItem, request: ResponseRequest, provider_name: str, base_url: str) -> bool:
+    """判断单个 Context Item 的 Responses 原生 fragment 是否可安全回放。"""
 
-    state = message.provider_state
-    if state is None:
+    replay = get_item_replay(item)
+    if replay is None:
         return False
+    scope = replay.scope
     return (
-        state.schema_version == PROVIDER_STATE_SCHEMA_VERSION
-        and state.client_type == RESPONSES_CLIENT_TYPE
-        and state.provider_name == provider_name
-        and state.endpoint_fingerprint == build_provider_endpoint_fingerprint(RESPONSES_CLIENT_TYPE, base_url)
-        and state.model_identifier == request.model_info.model_identifier
-        and state.message_fingerprint
-        == build_assistant_message_fingerprint(message.get_text_content(), message.tool_calls)
-        and bool(state.output_items)
+        scope.schema_version == PROVIDER_REPLAY_SCHEMA_VERSION
+        and scope.client_type == RESPONSES_CLIENT_TYPE
+        and scope.provider_name == provider_name
+        and scope.endpoint_fingerprint == build_provider_endpoint_fingerprint(RESPONSES_CLIENT_TYPE, base_url)
+        and scope.model_identifier == request.model_info.model_identifier
     )
 
 
-def _convert_messages(
-    messages: Sequence[Message],
+def _convert_context_items(
+    items: Sequence[ContextItem],
     request: ResponseRequest,
     provider_name: str,
     base_url: str,
@@ -167,54 +191,50 @@ def _convert_messages(
     """将统一消息转换为 Responses API Input Items。"""
 
     input_items: List[Dict[str, Any]] = []
-    for message in messages:
-        if message.role == RoleType.Assistant and _can_replay_provider_state(
-            message,
-            request,
-            provider_name,
-            base_url,
-        ):
-            input_items.extend(deepcopy(message.provider_state.output_items))
+    for item in items:
+        if _can_replay_item(item, request, provider_name, base_url):
+            replay = get_item_replay(item)
+            if replay is None:
+                raise RuntimeError("已通过 replay 校验的 Item 缺少 replay fragment")
+            input_items.append(replay.materialize())
             continue
 
-        if message.role == RoleType.System:
-            input_items.append({"role": "system", "content": _convert_text_parts(message)})
+        if isinstance(item, SystemMessageItem):
+            input_items.append({"role": "system", "content": _convert_text_parts(item)})
             continue
 
-        if message.role == RoleType.User:
-            input_items.append({"role": "user", "content": _convert_user_content(message)})
+        if isinstance(item, UserMessageItem):
+            input_items.append({"role": "user", "content": _convert_user_content(item)})
             continue
 
-        if message.role == RoleType.Assistant:
-            assistant_content = _convert_text_parts(message)
-            if not assistant_content and message.reasoning_content:
-                assistant_content = [{"type": "input_text", "text": message.reasoning_content}]
+        if isinstance(item, AssistantMessageItem):
+            assistant_content = _convert_text_parts(item)
             if assistant_content:
                 input_items.append({"role": "assistant", "content": assistant_content})
-            for tool_call in message.tool_calls or []:
-                input_items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": tool_call.call_id,
-                        "name": tool_call.func_name,
-                        "arguments": json.dumps(tool_call.args or {}, ensure_ascii=False),
-                    }
-                )
             continue
 
-        if message.role == RoleType.Tool:
-            if message.tool_call_id is None:
-                raise ValueError("Tool 消息缺少 tool_call_id")
+        if isinstance(item, FunctionCallItem):
             input_items.append(
                 {
-                    "type": "function_call_output",
-                    "call_id": message.tool_call_id,
-                    "output": _convert_text_parts(message),
+                    "type": "function_call",
+                    "call_id": item.tool_call.call_id,
+                    "name": item.tool_call.func_name,
+                    "arguments": item.tool_call.args_json.decode("utf-8"),
                 }
             )
             continue
 
-        raise ValueError(f"不支持的消息角色: {message.role}")
+        if isinstance(item, FunctionCallOutputItem):
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": item.call_id,
+                    "output": item.output,
+                }
+            )
+            continue
+
+        # reasoning、Provider 原生活动和未知 Item 在 scope 不匹配时没有可移植投影。
 
     return input_items
 
@@ -434,31 +454,84 @@ def _parse_completed_response(
         raise RespParseException(response, f"Responses 请求未完整完成: {details}")
 
     output = list(_get_value(response, "output", []) or [])
-    content_parts: List[str] = []
-    reasoning_parts: List[str] = []
-    tool_calls: List[ToolCall] = []
+    response_id = str(_get_value(response, "id", "") or "").strip()
+    scope = ProviderScope(
+        schema_version=PROVIDER_REPLAY_SCHEMA_VERSION,
+        client_type=RESPONSES_CLIENT_TYPE,
+        provider_name=provider_name,
+        endpoint_fingerprint=build_provider_endpoint_fingerprint(RESPONSES_CLIENT_TYPE, base_url),
+        model_identifier=request.model_info.model_identifier,
+    )
+    output_items: List[ModelOutputItem] = []
     output_types: List[str] = []
 
     for item in output:
         item_type = str(_get_value(item, "type", "") or "")
         if item_type:
             output_types.append(item_type)
+        serialized_item = _serialize_response_item(item)
+        replay = ProviderReplayFragment.from_payload(scope, serialized_item)
+        meta = ContextItemMeta.create(
+            logical_turn_id=request.logical_turn_id,
+        )
 
         if item_type == "message":
+            parts: List[ContextTextPart | ContextRefusalPart] = []
             for content_part in _get_value(item, "content", []) or []:
                 content_type = str(_get_value(content_part, "type", "") or "")
                 if content_type == "output_text":
                     text = _get_value(content_part, "text")
                     if isinstance(text, str) and text:
-                        content_parts.append(text)
+                        parts.append(ContextTextPart(text))
                 elif content_type == "refusal":
                     refusal = _get_value(content_part, "refusal")
                     if isinstance(refusal, str) and refusal:
-                        content_parts.append(refusal)
+                        parts.append(ContextRefusalPart(refusal))
+            if parts:
+                output_items.append(
+                    AssistantMessageItem(
+                        meta=meta,
+                        parts=tuple(parts),
+                        phase=str(_get_value(item, "phase", "") or "").strip() or None,
+                        replay=replay,
+                    )
+                )
+            else:
+                output_items.append(
+                    ProviderOpaqueItem(
+                        meta=meta,
+                        provider_type=item_type,
+                        display_summary="空 message Item",
+                        replay=replay,
+                    )
+                )
             continue
 
         if item_type == "reasoning":
-            reasoning_parts.extend(_extract_reasoning_display_text(item))
+            summary_parts = tuple(_extract_reasoning_summary(item))
+            reasoning_text_parts: List[str] = []
+            for content_part in _get_value(item, "content", []) or []:
+                if str(_get_value(content_part, "type", "") or "") != "reasoning_text":
+                    continue
+                text = _get_value(content_part, "text")
+                if isinstance(text, str) and text.strip():
+                    reasoning_text_parts.append(text.strip())
+            text_parts = tuple(reasoning_text_parts)
+            if summary_parts:
+                representation = ReasoningRepresentation.SUMMARY
+            elif text_parts:
+                representation = ReasoningRepresentation.RAW_TEXT
+            else:
+                representation = ReasoningRepresentation.OPAQUE
+            output_items.append(
+                ReasoningItem(
+                    meta=meta,
+                    summary_parts=summary_parts,
+                    text_parts=text_parts,
+                    representation=representation,
+                    replay=replay,
+                )
+            )
             continue
 
         if item_type == "function_call":
@@ -468,18 +541,58 @@ def _parse_completed_response(
             if not call_id or not function_name:
                 raise RespParseException(response, "Responses function_call 缺少 call_id 或 name")
             arguments = _parse_tool_arguments(raw_arguments, tool_argument_parse_mode, response)
-            tool_calls.append(
-                ToolCall(
-                    call_id=call_id,
-                    func_name=function_name,
-                    args=arguments,
-                    extra_content={TOOL_CALL_SOURCE_EXTRA_KEY: TOOL_CALL_SOURCE_RESPONSE},
+            output_items.append(
+                FunctionCallItem(
+                    meta=meta,
+                    tool_call=ContextToolCall.create(
+                        call_id=call_id,
+                        func_name=function_name,
+                        args=arguments,
+                        extra_content={TOOL_CALL_SOURCE_EXTRA_KEY: TOOL_CALL_SOURCE_RESPONSE},
+                    ),
+                    replay=replay,
                 )
             )
+            continue
 
-    content = "".join(content_parts).strip()
-    reasoning_content = "\n".join(reasoning_parts).strip()
-    if not content and not reasoning_content and not tool_calls:
+        if item_type in PROVIDER_ACTIVITY_ITEM_TYPES:
+            if item_type == "web_search_call":
+                summary = _extract_web_search_summary(item)
+            else:
+                action = _get_value(item, "action")
+                action_type = str(_get_value(action, "type", "") or "").strip()
+                summary = NativeToolCallSummary(
+                    tool_type=item_type.removesuffix("_call"),
+                    call_id=str(_get_value(item, "call_id", "") or _get_value(item, "id", "") or "").strip(),
+                    status=str(_get_value(item, "status", "") or "").strip(),
+                    action_type=action_type,
+                )
+            display_summary = "；".join(summary.details) or summary.status
+            output_items.append(
+                ProviderActivityItem(
+                    meta=meta,
+                    provider_type=summary.tool_type,
+                    call_id=summary.call_id,
+                    status=summary.status,
+                    display_summary=display_summary,
+                    action_type=summary.action_type,
+                    details=tuple(summary.details),
+                    source_count=summary.source_count,
+                    replay=replay,
+                )
+            )
+            continue
+
+        output_items.append(
+            ProviderOpaqueItem(
+                meta=meta,
+                provider_type=item_type or "unknown",
+                display_summary=str(_get_value(item, "status", "") or "").strip(),
+                replay=replay,
+            )
+        )
+
+    if not output_items:
         raise EmptyResponseException(
             {
                 "model": _get_value(response, "model"),
@@ -489,28 +602,28 @@ def _parse_completed_response(
             }
         )
 
-    serialized_output = [_serialize_response_item(item) for item in output]
-    provider_state = ProviderState(
-        client_type=RESPONSES_CLIENT_TYPE,
-        provider_name=provider_name,
-        endpoint_fingerprint=build_provider_endpoint_fingerprint(RESPONSES_CLIENT_TYPE, base_url),
-        model_identifier=request.model_info.model_identifier,
-        message_fingerprint=build_assistant_message_fingerprint(content, tool_calls),
-        output_items=serialized_output,
-    )
     api_response = APIResponse(
-        content=content or None,
-        reasoning_content=reasoning_content or None,
-        tool_calls=tool_calls or None,
+        output_items=tuple(output_items),
+        generation_trace=GenerationTrace(
+            provider=provider_name,
+            endpoint=base_url,
+            model=request.model_info.model_identifier,
+            response_id=response_id or None,
+            status=status or "completed",
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            prompt_cache_hit_tokens=0,
+            prompt_cache_miss_tokens=0,
+            output_item_ids=tuple(item.meta.item_id for item in output_items),
+        ),
         raw_data={
             "model": _get_value(response, "model"),
             "output_types": output_types,
             "response_id": _get_value(response, "id"),
             "status": status,
         },
-        provider_state=provider_state,
         provider_response=_serialize_response(response),
-        native_tool_calls=_extract_native_tool_summaries(output),
     )
     return api_response, _extract_usage_record(_get_value(response, "usage"))
 
@@ -569,8 +682,8 @@ class OpenAIResponsesClient(OpenaiClient):
         }
 
         try:
-            input_items = _convert_messages(
-                request.message_list,
+            input_items = _convert_context_items(
+                request.context_items,
                 request,
                 self.api_provider.name,
                 self.api_provider.base_url,
@@ -648,6 +761,13 @@ class OpenAIResponsesClient(OpenaiClient):
                 )
             if usage_record is not None:
                 response.usage = self._build_usage_record(model_info, usage_record)
+            response.wire_protocol = "responses"
+            response.request_wire_payload = {
+                "extra_body": extra_body or None,
+                "input": input_items,
+                "text": text_config,
+                "tools": tools,
+            }
             return response
         except (EmptyResponseException, RespParseException) as exc:
             self._attach_failure_snapshot(exc, request, snapshot_provider_request)

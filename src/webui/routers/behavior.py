@@ -32,7 +32,7 @@ from src.learners.behavior_scene_cluster_store import (
     debug_retrieve_behavior_scores_from_scene_clusters,
     format_scene_cluster_distribution,
 )
-from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.services.llm_service import LLMServiceClient
 from src.webui.dependencies import require_auth
 
@@ -200,11 +200,7 @@ def _cluster_tag_payloads(
 
 
 def _format_cluster_tag_payloads(tags: list[BehaviorClusterTag]) -> str:
-    parts = [
-        f"{(tag.display or tag.tag)}={tag.probability:.3f}"
-        for tag in tags[:8]
-        if (tag.display or tag.tag)
-    ]
+    parts = [f"{(tag.display or tag.tag)}={tag.probability:.3f}" for tag in tags[:8] if (tag.display or tag.tag)]
     return "；".join(parts)
 
 
@@ -234,7 +230,7 @@ async def _analyze_debug_scene_text(scene_text: str) -> BehaviorScenarioProfile:
 
     async def run_scene_prompt(system_prompt: str) -> str:
         scene_messages = _build_debug_scene_messages(normalized_scene_text, system_prompt)
-        generation_result = await behavior_scene_debug_model.generate_response_with_messages(
+        generation_result = await behavior_scene_debug_model.generate_response_with_context(
             lambda _client: scene_messages,
             options=LLMGenerationOptions(temperature=0.2),
         )
@@ -253,11 +249,11 @@ async def _analyze_debug_scene_text(scene_text: str) -> BehaviorScenarioProfile:
     return profile
 
 
-def _build_debug_scene_messages(scene_text: str, system_prompt: str) -> list[Message]:
+def _build_debug_scene_messages(scene_text: str, system_prompt: str) -> list[ContextItem]:
     """把 WebUI 调试输入包装成场景概括模型熟悉的多消息格式。"""
 
     return [
-        MessageBuilder()
+        ContextItemBuilder()
         .set_role(RoleType.System)
         .add_text_content(
             f"{system_prompt}\n\n"
@@ -265,7 +261,7 @@ def _build_debug_scene_messages(scene_text: str, system_prompt: str) -> list[Mes
             "不是数据库中的真实聊天记录；请仍按主程序行为学习场景概括的 JSON 结构输出 tag 簇。"
         )
         .build(),
-        MessageBuilder()
+        ContextItemBuilder()
         .set_role(RoleType.User)
         .add_text_content(
             "\n".join(
@@ -279,7 +275,7 @@ def _build_debug_scene_messages(scene_text: str, system_prompt: str) -> list[Mes
             )
         )
         .build(),
-        MessageBuilder()
+        ContextItemBuilder()
         .set_role(RoleType.User)
         .add_text_content("请根据以上聊天场景描述输出场景片段 JSON。")
         .build(),
@@ -504,7 +500,9 @@ def _build_behavior_graph_data(session: Any, session_id: Optional[str]) -> dict[
             tag_scene_count[tag].add(scene_id)
         for left_tag, right_tag in combinations(sorted(tag_probs), 2):
             edge_key = tuple(sorted((left_tag, right_tag)))
-            edge = tag_edges.setdefault(edge_key, {"source": edge_key[0], "target": edge_key[1], "weight": 0.0, "count": 0})
+            edge = tag_edges.setdefault(
+                edge_key, {"source": edge_key[0], "target": edge_key[1], "weight": 0.0, "count": 0}
+            )
             edge["weight"] += min(tag_probs[left_tag], tag_probs[right_tag])
             edge["count"] += 1
 
@@ -688,8 +686,7 @@ async def list_behavior_clusters(
                 for item in cluster_items
                 if normalized_search
                 in (
-                    f"{item.name}\n{item.chat_name}\n"
-                    + "\n".join(f"{tag.tag}\n{tag.display}" for tag in item.tags)
+                    f"{item.name}\n{item.chat_name}\n" + "\n".join(f"{tag.tag}\n{tag.display}" for tag in item.tags)
                 ).lower()
             ]
         cluster_items = _sort_behavior_cluster_items(cluster_items, sort_by=sort_by, sort_order=sort_order)
@@ -776,7 +773,9 @@ async def debug_behavior_retrieval(request: BehaviorScenarioDebugRequest) -> dic
     with get_db_session(auto_commit=False) as session:
         paths = []
         if behavior_ids:
-            paths = session.exec(select(BehaviorExperiencePath).where(col(BehaviorExperiencePath.id).in_(behavior_ids))).all()
+            paths = session.exec(
+                select(BehaviorExperiencePath).where(col(BehaviorExperiencePath.id).in_(behavior_ids))
+            ).all()
         path_items = {item.id: item for item in _build_path_items(session, list(paths))}
         matched_clusters = _enrich_debug_clusters(session, debug_payload.get("matched_clusters", []))
     return {
@@ -980,6 +979,8 @@ def _load_scene_clusters(session: Any, scene_cluster_ids: set[int]) -> dict[int,
         return {}
     return {
         cluster.id: cluster
-        for cluster in session.exec(select(BehaviorSceneCluster).where(col(BehaviorSceneCluster.id).in_(scene_cluster_ids))).all()
+        for cluster in session.exec(
+            select(BehaviorSceneCluster).where(col(BehaviorSceneCluster.id).in_(scene_cluster_ids))
+        ).all()
         if cluster.id is not None
     }

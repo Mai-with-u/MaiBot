@@ -1,5 +1,51 @@
+from .context_item import (
+    AssistantMessageItem,
+    ContextContentPart,
+    ContextImagePart,
+    ContextItem,
+    ContextItemBuilder,
+    ContextItemMeta,
+    ContextRefusalPart,
+    ContextTextPart,
+    ContextToolCall,
+    FunctionCallItem,
+    FunctionCallOutputItem,
+    ModelOutputItem,
+    ProviderActivityItem,
+    ProviderOpaqueItem,
+    ProviderReplayFragment,
+    ProviderScope,
+    ReasoningItem,
+    ReasoningRepresentation,
+    RoleType,
+    SystemMessageItem,
+    UserMessageItem,
+)
 from .native_tool import NativeToolCallSummary
-from .provider_state import ProviderState
 from .tool_option import ToolCall
 
-__all__ = ["NativeToolCallSummary", "ProviderState", "ToolCall"]
+__all__ = [
+    "AssistantMessageItem",
+    "ContextContentPart",
+    "ContextImagePart",
+    "ContextItem",
+    "ContextItemBuilder",
+    "ContextItemMeta",
+    "ContextRefusalPart",
+    "ContextTextPart",
+    "ContextToolCall",
+    "FunctionCallItem",
+    "FunctionCallOutputItem",
+    "ModelOutputItem",
+    "NativeToolCallSummary",
+    "ProviderActivityItem",
+    "ProviderOpaqueItem",
+    "ProviderReplayFragment",
+    "ProviderScope",
+    "ReasoningItem",
+    "ReasoningRepresentation",
+    "RoleType",
+    "SystemMessageItem",
+    "ToolCall",
+    "UserMessageItem",
+]

@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import asyncio
 import json
+import os
 import re
 import time
+import uuid
 
 import numpy as np
 
@@ -34,6 +36,7 @@ HISTORY_BACKFILL_MIN_INTERVAL_SECONDS = 10.0
 HISTORY_BACKFILL_MAX_INTERVAL_SECONDS = 600.0
 HISTORY_BACKFILL_INTERVAL_SPEED_RATIO = 1.0
 HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS = 300.0
+HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS = 60.0
 EMBEDDING_PROFILE_PROBE_TEXTS = [
     "MaiBot 表达检索 embedding profile probe v1：技术问题排查、报错截图、配置异常",
     "MaiBot 表达检索 embedding profile probe v1：轻松吐槽、接梗、日常群聊",
@@ -380,12 +383,41 @@ def _resolve_vectors_path(index_path: Path, payload: dict[str, Any]) -> Path:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    """用同目录临时文件原子替换文本文件。"""
+    """用同目录唯一临时文件完整落盘后原子替换文本文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f"{path.stem}.tmp{path.suffix}")
-    temporary_path.write_text(content, encoding="utf-8")
-    temporary_path.replace(path)
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("x", encoding="utf-8", newline="\n") as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _load_index_payload(index_path: Path) -> dict[str, Any] | None:
+    """读取生成索引；损坏内容会被明确记录，并交由数据库重建。"""
+
+    if not index_path.exists():
+        return None
+    try:
+        raw_content = index_path.read_text(encoding="utf-8")
+        payload = json.loads(raw_content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.error(
+            "表达向量索引 JSON 已损坏，将忽略该生成文件并从数据库重建: "
+            f"path={index_path} size={index_path.stat().st_size} error={exc}"
+        )
+        return None
+    if not isinstance(payload, dict):
+        logger.error(
+            "表达向量索引 JSON 根节点不是对象，将忽略该生成文件并从数据库重建: "
+            f"path={index_path} type={type(payload).__name__}"
+        )
+        return None
+    return payload
 
 
 class ExpressionVectorIndex:
@@ -400,14 +432,15 @@ class ExpressionVectorIndex:
         self._profile_drift_confirmations = 0
         self._history_backfill_task: asyncio.Task[None] | None = None
         self._history_backfill_last_empty_at = 0.0
+        self._history_backfill_last_failure_at = 0.0
 
     @staticmethod
     def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
         """从现有索引读取当前向量空间的持久化探针基准。"""
 
-        if not index_path.exists():
+        payload = _load_index_payload(index_path)
+        if payload is None:
             return None
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
         raw_profile = payload.get("embedding_profile")
         if raw_profile is None:
             return None
@@ -559,7 +592,9 @@ class ExpressionVectorIndex:
         if self._snapshot is not None and self._snapshot.path == index_path and self._snapshot.mtime == mtime:
             return self._snapshot
 
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = _load_index_payload(index_path)
+        if payload is None:
+            return None
         payload_version = int(payload.get("version") or 0)
         if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
             raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
@@ -770,7 +805,9 @@ class ExpressionVectorIndex:
         if not index_path.exists():
             return {}
 
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = _load_index_payload(index_path)
+        if payload is None:
+            return {}
         payload_version = int(payload.get("version") or 0)
         if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
             raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
@@ -1192,7 +1229,9 @@ class ExpressionVectorIndex:
 
         index_path.parent.mkdir(parents=True, exist_ok=True)
         vectors_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_vectors_path = vectors_path.with_name(f"{vectors_path.stem}.tmp{vectors_path.suffix}")
+        temporary_vectors_path = vectors_path.with_name(
+            f".{vectors_path.name}.{uuid.uuid4().hex}.tmp"
+        )
         arrays: dict[str, np.ndarray] = {}
         for raw_profile in payload.get("embedding_profiles") or []:
             if not isinstance(raw_profile, dict):
@@ -1206,8 +1245,14 @@ class ExpressionVectorIndex:
             arrays[cluster_centers_key] = profile_cluster_centers[marker].astype(np.float32)
         if not arrays:
             raise ValueError("表达向量索引没有可写入的 embedding profile 数组")
-        np.savez_compressed(temporary_vectors_path, **arrays)
-        temporary_vectors_path.replace(vectors_path)
+        try:
+            with temporary_vectors_path.open("xb") as temporary_vectors_file:
+                np.savez_compressed(temporary_vectors_file, **arrays)
+                temporary_vectors_file.flush()
+                os.fsync(temporary_vectors_file.fileno())
+            temporary_vectors_path.replace(vectors_path)
+        finally:
+            temporary_vectors_path.unlink(missing_ok=True)
         _atomic_write_text(index_path, json.dumps(payload, ensure_ascii=False, indent=2))
 
     async def upsert_expressions_and_recluster(
@@ -1290,8 +1335,9 @@ class ExpressionVectorIndex:
             previous_profile_cluster_centers: Dict[str, np.ndarray] = {}
             payload: dict[str, Any]
 
-            if resolved_index_path.exists():
-                payload = json.loads(resolved_index_path.read_text(encoding="utf-8"))
+            existing_payload = _load_index_payload(resolved_index_path)
+            if existing_payload is not None:
+                payload = existing_payload
                 payload_version = int(payload.get("version") or 0)
                 if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
                     raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
@@ -1458,6 +1504,8 @@ class ExpressionVectorIndex:
         now = time.monotonic()
         if now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
             return
+        if now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
+            return
 
         try:
             loop = asyncio.get_running_loop()
@@ -1488,7 +1536,10 @@ class ExpressionVectorIndex:
         try:
             task.result()
         except Exception:
+            self._history_backfill_last_failure_at = time.monotonic()
             logger.exception("表达向量历史补建任务异常退出")
+            return
+        self._history_backfill_last_failure_at = 0.0
 
     @staticmethod
     def _calculate_history_backfill_interval(

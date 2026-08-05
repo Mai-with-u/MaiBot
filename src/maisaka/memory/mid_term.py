@@ -1,35 +1,42 @@
 """Maisaka 聊天回想消息。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha1
 from html import escape
 from math import sqrt
 from typing import Any, Sequence
+
 from json_repair import repair_json
 from pydantic import BaseModel
+
 import json
 import re
 
-
-from src.common.data_models.message_component_data_model import DictComponent, MessageSequence
 from src.common.data_models.embedding_service_data_models import EmbeddingResult
+from src.common.data_models.llm_service_data_models import LLMResponseResult
+from src.common.data_models.message_component_data_model import DictComponent, MessageSequence
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.config.config import global_config
-from src.llm_models.payload_content.message import (
-    ImageMessagePart,
-    Message,
-    MessageBuilder,
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    ContextItemBuilder,
+    ContextTextPart,
+    FunctionCallOutputItem,
     RoleType,
-    TextMessagePart,
+    SystemMessageItem,
+    UserMessageItem,
+    get_item_text,
 )
 from src.maisaka.context.messages import (
     ComplexSessionMessage,
     LLMContextMessage,
     ReferenceMessage,
     ReferenceMessageType,
-    build_llm_message_from_context,
+    build_context_items_from_history_entry,
 )
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
@@ -141,9 +148,9 @@ async def build_mid_term_memory_message(
         session_id=session_id,
     )
 
-    request_prompt_messages: list[Message] = []
+    request_prompt_messages: list[ContextItem] = []
 
-    def message_factory(_client: Any, model_info: Any = None) -> list[Message]:
+    def context_factory(_client: Any, model_info: Any = None) -> list[ContextItem]:
         nonlocal request_prompt_messages
         request_prompt_messages = _build_summary_prompt_messages(
             summary_source_messages,
@@ -152,7 +159,7 @@ async def build_mid_term_memory_message(
         )
         return request_prompt_messages
 
-    result = await llm_client.generate_response_with_messages(message_factory)
+    result = await llm_client.generate_response_with_context(context_factory)
     _save_mid_term_memory_prompt_preview(
         request_prompt_messages,
         result=result,
@@ -417,31 +424,35 @@ def _build_summary_prompt_messages(
     *,
     instruction_prompt: str,
     enable_visual_message: bool = False,
-) -> list[Message]:
-    prompt_messages = [MessageBuilder().set_role(RoleType.System).add_text_content(instruction_prompt).build()]
+) -> list[ContextItem]:
+    prompt_messages = [ContextItemBuilder().set_role(RoleType.System).add_text_content(instruction_prompt).build()]
     total_source_chars = 0
     for source_message in source_messages:
-        llm_message = build_llm_message_from_context(
+        source_items = build_context_items_from_history_entry(
             source_message,
             enable_visual_message=enable_visual_message,
         )
-        if llm_message is None:
-            continue
+        for llm_message in source_items:
+            if not isinstance(
+                llm_message,
+                (SystemMessageItem, UserMessageItem, AssistantMessageItem, FunctionCallOutputItem),
+            ):
+                continue
 
-        message_text = llm_message.get_text_content().strip()
-        if not message_text and not _message_has_visual_content(llm_message):
-            continue
+            message_text = get_item_text(llm_message).strip()
+            if not message_text and not _message_has_visual_content(llm_message):
+                continue
 
-        remaining_chars = MAX_SUMMARY_INPUT_CHARS - total_source_chars
-        if remaining_chars <= 0:
-            break
-        if len(message_text) > remaining_chars:
-            llm_message = _truncate_message_text(llm_message, remaining_chars)
+            remaining_chars = MAX_SUMMARY_INPUT_CHARS - total_source_chars
+            if remaining_chars <= 0:
+                return prompt_messages
+            if len(message_text) > remaining_chars:
+                llm_message = _truncate_message_text(llm_message, remaining_chars)
+                prompt_messages.append(llm_message)
+                return prompt_messages
+
             prompt_messages.append(llm_message)
-            break
-
-        prompt_messages.append(llm_message)
-        total_source_chars += len(message_text)
+            total_source_chars += len(message_text)
 
     if enable_visual_message:
         return limit_latest_images_in_messages(
@@ -452,9 +463,9 @@ def _build_summary_prompt_messages(
 
 
 def _save_mid_term_memory_prompt_preview(
-    request_prompt_messages: Sequence[Message],
+    request_prompt_messages: Sequence[ContextItem],
     *,
-    result: Any,
+    result: LLMResponseResult,
     session_id: str,
     time_range: str,
     participants: Sequence[str],
@@ -473,10 +484,10 @@ def _save_mid_term_memory_prompt_preview(
         f"时间范围: {time_range}\n"
         f"参与人物: {participants_text}\n"
         f"构建消息数: {len(request_prompt_messages)}\n"
-        f"请求模型: {str(getattr(result, 'model_name', '') or 'unknown')}\n"
-        f"Token: prompt={int(getattr(result, 'prompt_tokens', 0) or 0)} "
-        f"completion={int(getattr(result, 'completion_tokens', 0) or 0)} "
-        f"total={int(getattr(result, 'total_tokens', 0) or 0)}"
+        f"请求模型: {result.model_name or 'unknown'}\n"
+        f"Token: prompt={result.prompt_tokens} "
+        f"completion={result.completion_tokens} "
+        f"total={result.total_tokens}"
     )
     try:
         PromptCLIVisualizer.build_prompt_preview_access(
@@ -485,41 +496,45 @@ def _save_mid_term_memory_prompt_preview(
             chat_id=session_id or "unknown",
             request_kind="mid_term_memory",
             selection_reason=selection_reason,
-            output_content=str(getattr(result, "response", "") or ""),
+            output_items=result.output_items,
             output_title="聊天回想生成结果",
             metadata={
-                "model_name": str(getattr(result, "model_name", "") or ""),
+                "model_name": result.model_name,
             },
-            provider_response=getattr(result, "provider_response", None),
+            generation_attempts=result.generation_attempts,
         )
         logger.debug(f"{log_prefix} 聊天回想生成 Prompt 预览已保存")
     except Exception as exc:
         logger.debug(f"{log_prefix} 聊天回想生成 Prompt 预览保存失败，已跳过: {exc}")
 
 
-def _count_prompt_message_chars(messages: Sequence[Message]) -> int:
-    return sum(len(message.get_text_content()) for message in messages)
+def _count_prompt_message_chars(messages: Sequence[ContextItem]) -> int:
+    return sum(len(get_item_text(message)) for message in messages)
 
 
 def _should_enable_visual_summary(model_info: Any) -> bool:
     return bool(getattr(model_info, "visual", False))
 
 
-def _message_has_visual_content(message: Message) -> bool:
-    return any(isinstance(part, ImageMessagePart) for part in message.parts)
+def _message_has_visual_content(message: ContextItem) -> bool:
+    return any(isinstance(part, ContextImagePart) for part in getattr(message, "parts", ()))
 
 
-def _truncate_message_text(message: Message, max_text_chars: int) -> Message:
+def _truncate_message_text(message: ContextItem, max_text_chars: int) -> ContextItem:
+    if isinstance(message, FunctionCallOutputItem):
+        return replace(message, output=message.output[:max_text_chars])
+    if not isinstance(message, (SystemMessageItem, UserMessageItem, AssistantMessageItem)):
+        return message
     remaining_chars = max(0, int(max_text_chars))
     truncated_parts = []
     for part in message.parts:
-        if isinstance(part, TextMessagePart):
+        if isinstance(part, ContextTextPart):
             if remaining_chars <= 0:
                 continue
 
             truncated_text = part.text[:remaining_chars]
             if truncated_text:
-                truncated_parts.append(TextMessagePart(truncated_text))
+                truncated_parts.append(ContextTextPart(truncated_text))
                 remaining_chars -= len(truncated_text)
             continue
 
@@ -527,26 +542,21 @@ def _truncate_message_text(message: Message, max_text_chars: int) -> Message:
 
     if not truncated_parts:
         return (
-            MessageBuilder()
+            ContextItemBuilder()
             .set_role(message.role)
-            .add_text_content(message.get_text_content()[:max_text_chars])
+            .add_text_content(get_item_text(message)[:max_text_chars])
             .build()
         )
-    return Message(
-        role=message.role,
-        parts=truncated_parts,
-        tool_call_id=message.tool_call_id,
-        tool_name=message.tool_name,
-        tool_calls=message.tool_calls,
-        provider_state=message.provider_state if truncated_parts == message.parts else None,
-    )
+    if isinstance(message, AssistantMessageItem):
+        return replace(message, parts=tuple(truncated_parts), replay=None)
+    return replace(message, parts=tuple(truncated_parts))
 
 
-def _render_summary_prompt_messages_for_log(messages: Sequence[Message]) -> str:
+def _render_summary_prompt_messages_for_log(messages: Sequence[ContextItem]) -> str:
     rendered_messages: list[str] = []
     for index, message in enumerate(messages, start=1):
         role = message.role.value if hasattr(message.role, "value") else str(message.role)
-        rendered_messages.append(f"[{index}][{role}]\n{message.get_text_content()}")
+        rendered_messages.append(f"[{index}][{role}]\n{get_item_text(message)}")
     return "\n\n".join(rendered_messages).strip()
 
 

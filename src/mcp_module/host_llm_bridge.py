@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 import json
+import uuid
 
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
 from src.common.logger import get_logger
-from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextItem,
+    ContextItemBuilder,
+    ContextItemMeta,
+    ContextToolCall,
+    FunctionCallItem,
+    RoleType,
+)
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput
 from src.services.llm_service import LLMServiceClient
 
@@ -77,7 +87,7 @@ class MCPHostLLMBridge:
                 raw_tools=getattr(params, "tools", None),
                 tool_choice_mode=tool_choice_mode,
             )
-            message_factory = self._build_message_factory(
+            context_factory = self._build_context_factory(
                 raw_messages=list(getattr(params, "messages", []) or []),
                 system_prompt=self._build_system_prompt(
                     raw_system_prompt=str(getattr(params, "systemPrompt", "") or ""),
@@ -86,8 +96,8 @@ class MCPHostLLMBridge:
                 ),
             )
 
-            generation_result = await self._sampling_client.generate_response_with_messages(
-                message_factory=message_factory,
+            generation_result = await self._sampling_client.generate_response_with_context(
+                context_factory=context_factory,
                 options=LLMGenerationOptions(
                     temperature=self._coerce_float(getattr(params, "temperature", None)),
                     max_tokens=int(getattr(params, "maxTokens", 1024) or 1024),
@@ -171,7 +181,7 @@ class MCPHostLLMBridge:
             prompt_parts.append("本轮回答必须至少调用一个工具；不要直接结束回答。")
         return "\n\n".join(part for part in prompt_parts if part).strip()
 
-    def _build_message_factory(
+    def _build_context_factory(
         self,
         raw_messages: list[Any],
         system_prompt: str,
@@ -186,32 +196,41 @@ class MCPHostLLMBridge:
             Any: 供 `LLMServiceClient` 使用的消息工厂。
         """
 
-        def _message_factory(client: "BaseClient") -> list[Message]:
-            """延迟构建内部消息列表。
+        def _context_factory(client: "BaseClient") -> list[ContextItem]:
+            """延迟构建内部 Context Items。
 
             Args:
                 client: 当前被选中的底层模型客户端。
 
             Returns:
-                list[Message]: 内部统一消息列表。
+                list[ContextItem]: 内部 Context Items。
             """
 
-            messages: list[Message] = []
+            items: list[ContextItem] = []
+            logical_turn_by_call_id: dict[str, str] = {}
             if system_prompt.strip():
-                messages.append(
-                    MessageBuilder()
-                    .set_role(RoleType.System)
-                    .add_text_content(system_prompt.strip())
-                    .build()
+                items.append(
+                    ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt.strip()).build()
                 )
 
             for raw_message in raw_messages:
-                messages.extend(self._convert_sampling_message(raw_message, client))
-            return messages
+                items.extend(
+                    self._convert_sampling_message(
+                        raw_message,
+                        client,
+                        logical_turn_by_call_id,
+                    )
+                )
+            return items
 
-        return _message_factory
+        return _context_factory
 
-    def _convert_sampling_message(self, raw_message: Any, client: "BaseClient") -> list[Message]:
+    def _convert_sampling_message(
+        self,
+        raw_message: Any,
+        client: "BaseClient",
+        logical_turn_by_call_id: dict[str, str],
+    ) -> list[ContextItem]:
         """将单条 MCP Sampling 消息转换为内部消息列表。
 
         Args:
@@ -219,18 +238,21 @@ class MCPHostLLMBridge:
             client: 当前底层模型客户端。
 
         Returns:
-            list[Message]: 转换后的内部消息列表。
+            list[ContextItem]: 转换后的内部 Items。
         """
 
         role = str(getattr(raw_message, "role", "") or "").strip().lower()
         content_blocks = self._get_content_blocks(getattr(raw_message, "content", None))
 
         if role == "assistant":
-            assistant_message = self._build_assistant_message(content_blocks, client)
-            return [assistant_message] if assistant_message is not None else []
+            items = self._build_assistant_items(content_blocks, client)
+            for item in items:
+                if isinstance(item, FunctionCallItem) and item.meta.logical_turn_id:
+                    logical_turn_by_call_id[item.tool_call.call_id] = item.meta.logical_turn_id
+            return items
 
         if role == "user":
-            return self._build_user_messages(content_blocks, client)
+            return self._build_user_messages(content_blocks, client, logical_turn_by_call_id)
 
         raise ValueError(f"不支持的 MCP Sampling 消息角色: {role}")
 
@@ -251,18 +273,18 @@ class MCPHostLLMBridge:
             return list(raw_content)
         return [raw_content]
 
-    def _build_assistant_message(self, content_blocks: list[Any], client: "BaseClient") -> Optional[Message]:
-        """构建内部 assistant 消息。
+    def _build_assistant_items(self, content_blocks: list[Any], client: "BaseClient") -> list[ContextItem]:
+        """构建独立 assistant message/function call Items。
 
         Args:
             content_blocks: MCP assistant 内容块列表。
             client: 当前底层模型客户端。
 
         Returns:
-            Optional[Message]: 转换后的内部 assistant 消息；无有效内容时返回 ``None``。
+            list[ContextItem]: 转换后的内部 assistant 输出 Items。
         """
 
-        message_builder = MessageBuilder().set_role(RoleType.Assistant)
+        item_builder = ContextItemBuilder().set_role(RoleType.Assistant)
         tool_calls: list[ToolCall] = []
         has_visible_content = False
 
@@ -278,20 +300,51 @@ class MCPHostLLMBridge:
                 )
                 continue
 
-            has_visible_content = self._append_sampling_content_to_builder(
-                message_builder=message_builder,
-                content_block=content_block,
-                client=client,
-            ) or has_visible_content
-
-        if tool_calls:
-            message_builder.set_tool_calls(tool_calls)
+            has_visible_content = (
+                self._append_sampling_content_to_builder(
+                    item_builder=item_builder,
+                    content_block=content_block,
+                    client=client,
+                )
+                or has_visible_content
+            )
 
         if not has_visible_content and not tool_calls:
-            return None
-        return message_builder.build()
+            return []
 
-    def _build_user_messages(self, content_blocks: list[Any], client: "BaseClient") -> list[Message]:
+        logical_turn_id = uuid.uuid4().hex
+        ungrouped_items: list[ContextItem] = []
+        if has_visible_content:
+            assistant_item = item_builder.build()
+            if not isinstance(assistant_item, AssistantMessageItem):
+                raise TypeError("MCP assistant 内容未构建为 AssistantMessageItem")
+            ungrouped_items.append(assistant_item)
+        ungrouped_items.extend(
+            FunctionCallItem(
+                meta=ContextItemMeta.create(logical_turn_id=logical_turn_id),
+                tool_call=ContextToolCall.create(
+                    call_id=tool_call.call_id,
+                    func_name=tool_call.func_name,
+                    args=tool_call.args,
+                    extra_content=tool_call.extra_content,
+                ),
+            )
+            for tool_call in tool_calls
+        )
+        return [
+            replace(
+                item,
+                meta=replace(item.meta, logical_turn_id=logical_turn_id),
+            )
+            for item in ungrouped_items
+        ]
+
+    def _build_user_messages(
+        self,
+        content_blocks: list[Any],
+        client: "BaseClient",
+        logical_turn_by_call_id: dict[str, str],
+    ) -> list[ContextItem]:
         """构建内部 user/tool 消息序列。
 
         Args:
@@ -299,35 +352,38 @@ class MCPHostLLMBridge:
             client: 当前底层模型客户端。
 
         Returns:
-            list[Message]: 转换后的内部消息序列。
+            list[ContextItem]: 转换后的内部 Item 序列。
         """
 
-        messages: list[Message] = []
-        message_builder = MessageBuilder().set_role(RoleType.User)
+        messages: list[ContextItem] = []
+        item_builder = ContextItemBuilder().set_role(RoleType.User)
         has_user_content = False
 
         def flush_user_message() -> None:
             """在当前存在用户可见内容时落盘一条 user 消息。"""
 
-            nonlocal message_builder, has_user_content
+            nonlocal item_builder, has_user_content
             if not has_user_content:
                 return
-            messages.append(message_builder.build())
-            message_builder = MessageBuilder().set_role(RoleType.User)
+            messages.append(item_builder.build())
+            item_builder = ContextItemBuilder().set_role(RoleType.User)
             has_user_content = False
 
         for content_block in content_blocks:
             content_type = self._get_content_type(content_block)
             if content_type == "tool_result":
                 flush_user_message()
-                messages.append(self._build_tool_result_message(content_block))
+                messages.append(self._build_tool_result_item(content_block, logical_turn_by_call_id))
                 continue
 
-            has_user_content = self._append_sampling_content_to_builder(
-                message_builder=message_builder,
-                content_block=content_block,
-                client=client,
-            ) or has_user_content
+            has_user_content = (
+                self._append_sampling_content_to_builder(
+                    item_builder=item_builder,
+                    content_block=content_block,
+                    client=client,
+                )
+                or has_user_content
+            )
 
         flush_user_message()
         return messages
@@ -347,14 +403,14 @@ class MCPHostLLMBridge:
 
     def _append_sampling_content_to_builder(
         self,
-        message_builder: MessageBuilder,
+        item_builder: ContextItemBuilder,
         content_block: Any,
         client: "BaseClient",
     ) -> bool:
         """将 MCP 普通内容块追加到内部消息构建器。
 
         Args:
-            message_builder: 内部消息构建器。
+            item_builder: 内部 Item 构建器。
             content_block: MCP 内容块对象。
             client: 当前底层模型客户端。
 
@@ -366,7 +422,7 @@ class MCPHostLLMBridge:
         if content_type == "text":
             text_content = str(getattr(content_block, "text", "") or "")
             if text_content.strip():
-                message_builder.add_text_content(text_content)
+                item_builder.add_text_content(text_content)
                 return True
             return False
 
@@ -375,21 +431,21 @@ class MCPHostLLMBridge:
             image_mime_type = str(getattr(content_block, "mimeType", "") or "")
             image_format = self._normalize_image_format(image_mime_type)
             if image_data and image_format:
-                message_builder.add_image_content(
+                item_builder.add_image_content(
                     image_format=image_format,
                     image_base64=image_data,
                     support_formats=client.get_support_image_formats(),
                 )
                 return True
 
-            message_builder.add_text_content(
+            item_builder.add_text_content(
                 f"[图片内容：mime_type={image_mime_type or 'unknown'}，当前客户端无法直接透传]"
             )
             return True
 
         if content_type == "audio":
             audio_mime_type = str(getattr(content_block, "mimeType", "") or "")
-            message_builder.add_text_content(f"[音频内容：mime_type={audio_mime_type or 'unknown'}]")
+            item_builder.add_text_content(f"[音频内容：mime_type={audio_mime_type or 'unknown'}]")
             return True
 
         return False
@@ -416,21 +472,29 @@ class MCPHostLLMBridge:
             return "gif"
         return ""
 
-    def _build_tool_result_message(self, content_block: Any) -> Message:
-        """将 MCP `tool_result` 内容块转换为内部 Tool 消息。
+    def _build_tool_result_item(
+        self,
+        content_block: Any,
+        logical_turn_by_call_id: dict[str, str],
+    ) -> ContextItem:
+        """将 MCP `tool_result` 内容块转换为 FunctionCallOutputItem。
 
         Args:
             content_block: MCP `tool_result` 内容块对象。
 
         Returns:
-            Message: 转换后的内部 Tool 消息。
+            ContextItem: 转换后的工具结果 Item。
         """
 
-        message_builder = MessageBuilder().set_role(RoleType.Tool)
-        message_builder.set_tool_call_id(str(getattr(content_block, "toolUseId", "") or "tool_result"))
+        item_builder = ContextItemBuilder().set_role(RoleType.Tool)
+        tool_call_id = str(getattr(content_block, "toolUseId", "") or "tool_result")
+        item_builder.set_tool_call_id(tool_call_id)
+        item_builder.set_meta(
+            ContextItemMeta.create(logical_turn_id=logical_turn_by_call_id.get(tool_call_id))
+        )
         summary_text = self._summarize_tool_result_content(content_block)
-        message_builder.add_text_content(summary_text or "工具执行完成。")
-        return message_builder.build()
+        item_builder.add_text_content(summary_text or "工具执行完成。")
+        return item_builder.build()
 
     def _summarize_tool_result_content(self, content_block: Any) -> str:
         """汇总 MCP `tool_result` 内容块中的结果文本。

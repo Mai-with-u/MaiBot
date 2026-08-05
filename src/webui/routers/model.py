@@ -20,7 +20,7 @@ from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.model_client import ensure_client_type_loaded
 from src.llm_models.model_client.base_client import client_registry
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
-from src.llm_models.payload_content.message import Message, MessageBuilder
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
 from src.webui.dependencies import require_auth
@@ -157,8 +157,8 @@ async def test_model_capability(request: ModelTestRequest):
     start_time = time.time()
     try:
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
-        result = await orchestrator.generate_response_with_message_async(
-            message_factory=_build_model_test_message_factory(visual_enabled),
+        result = await orchestrator.generate_response_with_context_async(
+            context_factory=_build_model_test_context_factory(visual_enabled),
             temperature=0.0,
             max_tokens=512,
             model_name=model_name,
@@ -489,11 +489,11 @@ def _build_model_test_tools() -> List[Dict[str, Any]]:
     ]
 
 
-def _build_model_test_message_factory(visual_enabled: bool):
+def _build_model_test_context_factory(visual_enabled: bool):
     """构造可按客户端图片格式能力生成消息的工厂。"""
 
-    def message_factory(client) -> List[Message]:
-        builder = MessageBuilder().add_text_content(_build_model_test_prompt(visual_enabled))
+    def context_factory(client) -> List[ContextItem]:
+        builder = ContextItemBuilder().add_text_content(_build_model_test_prompt(visual_enabled))
         if visual_enabled:
             builder.add_image_content(
                 image_format="png",
@@ -502,7 +502,7 @@ def _build_model_test_message_factory(visual_enabled: bool):
             )
         return [builder.build()]
 
-    return message_factory
+    return context_factory
 
 
 def _serialize_model_test_tool_calls(tool_calls: List[ToolCall] | None) -> List[ModelTestToolCall]:

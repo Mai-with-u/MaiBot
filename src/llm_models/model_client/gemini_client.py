@@ -7,6 +7,7 @@ import base64
 import binascii
 import io
 import json
+import uuid
 
 from google import genai
 from google.genai.errors import (
@@ -47,7 +48,23 @@ from src.llm_models.exceptions import (
     RespNotOkException,
     RespParseException,
 )
-from src.llm_models.payload_content.message import ImageMessagePart, Message, RoleType, TextMessagePart
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    ContextRefusalPart,
+    ContextTextPart,
+    ContextToolCall,
+    FunctionCallItem,
+    FunctionCallOutputItem,
+    ProviderActivityItem,
+    ProviderOpaqueItem,
+    ReasoningItem,
+    SystemMessageItem,
+    UserMessageItem,
+    build_portable_output_items,
+    get_item_text,
+)
 from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.llm_models.payload_content.tool_option import ToolCall, ToolOption
 
@@ -146,21 +163,24 @@ def _normalize_image_mime_type(image_format: str) -> str:
     return f"image/{normalized_image_format}"
 
 
-def _build_non_tool_parts(message: Message) -> List[Part]:
+def _build_non_tool_parts(item: UserMessageItem | AssistantMessageItem) -> List[Part]:
     """将消息中的文本与图片片段转换为 Gemini `Part` 列表。
 
     Args:
-        message: 内部统一消息对象。
+        item: 内部消息 Item。
 
     Returns:
         List[Part]: Gemini 所需的内容片段列表。
     """
     converted_parts: List[Part] = []
-    for message_part in message.parts:
-        if isinstance(message_part, TextMessagePart):
+    for message_part in item.parts:
+        if isinstance(message_part, ContextTextPart):
             converted_parts.append(Part.from_text(text=message_part.text))
             continue
-        if isinstance(message_part, ImageMessagePart):
+        if isinstance(message_part, ContextRefusalPart):
+            converted_parts.append(Part.from_text(text=message_part.refusal))
+            continue
+        if isinstance(message_part, ContextImagePart):
             converted_parts.append(
                 Part.from_bytes(
                     data=base64.b64decode(message_part.image_base64),
@@ -170,29 +190,25 @@ def _build_non_tool_parts(message: Message) -> List[Part]:
     return converted_parts
 
 
-def _normalize_function_response_payload(message: Message) -> Dict[str, Any]:
+def _normalize_function_response_payload(item: FunctionCallOutputItem) -> Dict[str, Any]:
     """将内部工具结果消息转换为 Gemini 函数响应负载。
 
     Args:
-        message: 工具结果消息。
+        item: 工具结果 Item。
 
     Returns:
         Dict[str, Any]: 可用于 `Part.from_function_response()` 的响应对象。
     """
-    content = message.content
-    if isinstance(content, str):
-        stripped_content = content.strip()
-        if not stripped_content:
-            return {}
-        try:
-            parsed_content = json.loads(stripped_content)
-        except json.JSONDecodeError:
-            return {"result": content}
-        if isinstance(parsed_content, dict):
-            return parsed_content
-        return {"result": parsed_content}
-
-    return {"result": content}
+    stripped_content = item.output.strip()
+    if not stripped_content:
+        return {}
+    try:
+        parsed_content = json.loads(stripped_content)
+    except json.JSONDecodeError:
+        return {"result": item.output}
+    if isinstance(parsed_content, dict):
+        return parsed_content
+    return {"result": parsed_content}
 
 
 def _build_gemini_tool_call_extra_content(thought_signature: bytes | None) -> Dict[str, Any] | None:
@@ -206,12 +222,13 @@ def _build_gemini_tool_call_extra_content(thought_signature: bytes | None) -> Di
     }
 
 
-def _extract_gemini_thought_signature(tool_call: ToolCall) -> bytes | None:
+def _extract_gemini_thought_signature(tool_call: ContextToolCall) -> bytes | None:
     """从内部工具调用附加信息中提取 Gemini thought signature。"""
-    if not tool_call.extra_content:
+    extra_content = tool_call.materialize_extra_content()
+    if not extra_content:
         return None
 
-    provider_payload = tool_call.extra_content.get(GEMINI_EXTRA_CONTENT_PROVIDER_KEY)
+    provider_payload = extra_content.get(GEMINI_EXTRA_CONTENT_PROVIDER_KEY)
     if not isinstance(provider_payload, dict):
         return None
 
@@ -232,7 +249,7 @@ def _extract_gemini_thought_signature(tool_call: ToolCall) -> bytes | None:
 
 
 def _build_gemini_function_call_part(
-    tool_call: ToolCall,
+    tool_call: ContextToolCall,
     *,
     inject_fallback_signature: bool,
 ) -> Part:
@@ -245,7 +262,7 @@ def _build_gemini_function_call_part(
         function_call=FunctionCall(
             id=tool_call.call_id,
             name=tool_call.func_name,
-            args=tool_call.args or {},
+            args=tool_call.materialize_args(),
         ),
         thought_signature=thought_signature,
     )
@@ -278,11 +295,11 @@ def _extract_response_json_schema(response_format: RespFormat) -> Dict[str, obje
     return cast(Dict[str, object], schema_payload)
 
 
-def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | None]:
+def _convert_messages(items: List[ContextItem]) -> Tuple[ContentListUnion, str | None]:
     """将内部统一消息列表转换为 Gemini 内容结构。
 
     Args:
-        messages: 内部统一消息列表。
+        items: 内部 Context Items。
 
     Returns:
         Tuple[ContentListUnion, str | None]: `contents` 与可选的 `system_instruction`。
@@ -294,24 +311,47 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
     system_instruction_chunks: List[str] = []
     tool_name_by_call_id: Dict[str, str] = {}
 
-    for message in messages:
-        if message.role == RoleType.System:
-            system_text = message.get_text_content().strip()
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if isinstance(item, SystemMessageItem):
+            system_text = get_item_text(item).strip()
             if not system_text:
                 raise ValueError("Gemini 的 system message 必须为非空文本")
             system_instruction_chunks.append(system_text)
+            index += 1
             continue
 
-        if message.role == RoleType.User:
-            contents.append(Content(role="user", parts=_build_non_tool_parts(message)))
+        if isinstance(item, UserMessageItem):
+            contents.append(Content(role="user", parts=_build_non_tool_parts(item)))
+            index += 1
             continue
 
-        if message.role == RoleType.Assistant:
-            assistant_parts = _build_non_tool_parts(message)
-            if not assistant_parts and message.reasoning_content:
-                assistant_parts.append(Part(text=message.reasoning_content))
-            if message.tool_calls:
-                for tool_call_index, tool_call in enumerate(message.tool_calls):
+        if isinstance(
+            item,
+            (ReasoningItem, AssistantMessageItem, FunctionCallItem, ProviderActivityItem, ProviderOpaqueItem),
+        ):
+            group_items: List[ContextItem] = [item]
+            index += 1
+            while index < len(items):
+                next_item = items[index]
+                if not isinstance(
+                    next_item,
+                    (ReasoningItem, AssistantMessageItem, FunctionCallItem, ProviderActivityItem, ProviderOpaqueItem),
+                ):
+                    break
+                group_items.append(next_item)
+                index += 1
+
+            assistant_parts: List[Part] = []
+            group_tool_calls = [
+                group_item.tool_call for group_item in group_items if isinstance(group_item, FunctionCallItem)
+            ]
+            for group_item in group_items:
+                if isinstance(group_item, AssistantMessageItem):
+                    assistant_parts.extend(_build_non_tool_parts(group_item))
+            if group_tool_calls:
+                for tool_call_index, tool_call in enumerate(group_tool_calls):
                     assistant_parts.append(
                         _build_gemini_function_call_part(
                             tool_call,
@@ -319,30 +359,30 @@ def _convert_messages(messages: List[Message]) -> Tuple[ContentListUnion, str | 
                         )
                     )
                     tool_name_by_call_id[tool_call.call_id] = tool_call.func_name
-            contents.append(Content(role="model", parts=assistant_parts))
+            if assistant_parts:
+                contents.append(Content(role="model", parts=assistant_parts))
             continue
 
-        if message.role == RoleType.Tool:
-            if not message.tool_call_id:
-                raise ValueError("Gemini 工具结果消息缺少 tool_call_id")
-            tool_name = (message.tool_name or tool_name_by_call_id.get(message.tool_call_id, "")).strip()
+        if isinstance(item, FunctionCallOutputItem):
+            tool_name = (item.tool_name or tool_name_by_call_id.get(item.call_id, "")).strip()
             if not tool_name:
                 raise ValueError(
-                    f"Gemini 无法根据 tool_call_id={message.tool_call_id} 找到对应的工具名称，"
-                    "且消息中未携带 tool_name"
+                    f"Gemini 无法根据 tool_call_id={item.call_id} 找到对应的工具名称，且消息中未携带 tool_name"
                 )
-            tool_name_by_call_id[message.tool_call_id] = tool_name
+            tool_name_by_call_id[item.call_id] = tool_name
             function_response_part = Part(
                 function_response=FunctionResponse(
-                    id=message.tool_call_id,
+                    id=item.call_id,
                     name=tool_name,
-                    response=_normalize_function_response_payload(message),
+                    response=_normalize_function_response_payload(item),
                 )
             )
             contents.append(Content(role="tool", parts=[function_response_part]))
+            index += 1
             continue
 
-        raise ValueError(f"不支持的消息角色: {message.role}")
+        # Provider 原生活动和未知 Item 没有可移植 Gemini 投影。
+        index += 1
 
     system_instruction = "\n\n".join(chunk for chunk in system_instruction_chunks if chunk.strip()) or None
     return contents, system_instruction
@@ -382,9 +422,8 @@ def _extract_usage_record(response: GenerateContentResponse) -> Optional[UsageTu
     if usage_metadata is None:
         return None
     prompt_tokens = getattr(usage_metadata, "prompt_token_count", 0) or 0
-    completion_tokens = (
-        (getattr(usage_metadata, "candidates_token_count", 0) or 0)
-        + (getattr(usage_metadata, "thoughts_token_count", 0) or 0)
+    completion_tokens = (getattr(usage_metadata, "candidates_token_count", 0) or 0) + (
+        getattr(usage_metadata, "thoughts_token_count", 0) or 0
     )
     total_tokens = getattr(usage_metadata, "total_token_count", 0) or 0
     return prompt_tokens, completion_tokens, total_tokens
@@ -497,8 +536,8 @@ def _collect_function_calls(response: GenerateContentResponse) -> List[ToolCall]
 def _process_stream_chunk(
     chunk: GenerateContentResponse,
     content_buffer: io.StringIO,
+    reasoning_buffer: io.StringIO,
     tool_calls_buffer: List[ToolCall],
-    response: APIResponse,
 ) -> None:
     """处理单个 Gemini 流式响应块。
 
@@ -506,7 +545,7 @@ def _process_stream_chunk(
         chunk: 当前流式响应块。
         content_buffer: 正文缓冲区。
         tool_calls_buffer: 工具调用缓冲区。
-        response: 当前累积的统一响应对象。
+        reasoning_buffer: reasoning 文本缓冲区。
     """
     candidates = _get_candidates(chunk)
     for candidate in candidates:
@@ -517,7 +556,7 @@ def _process_stream_chunk(
             if not part_text:
                 continue
             if getattr(part, "thought", False):
-                response.reasoning_content = (response.reasoning_content or "") + part_text
+                reasoning_buffer.write(part_text)
             else:
                 content_buffer.write(part_text)
 
@@ -526,9 +565,10 @@ def _process_stream_chunk(
 
 def _build_stream_api_response(
     content_buffer: io.StringIO,
+    reasoning_buffer: io.StringIO,
     tool_calls_buffer: List[ToolCall],
     last_response: GenerateContentResponse | None,
-    response: APIResponse,
+    logical_turn_id: str,
 ) -> APIResponse:
     """根据流式缓冲区内容构建统一响应对象。
 
@@ -536,7 +576,7 @@ def _build_stream_api_response(
         content_buffer: 正文缓冲区。
         tool_calls_buffer: 工具调用缓冲区。
         last_response: 最后一个 Gemini 响应块。
-        response: 已累积的响应对象。
+        reasoning_buffer: reasoning 文本缓冲区。
 
     Returns:
         APIResponse: 构建完成的统一响应对象。
@@ -544,23 +584,39 @@ def _build_stream_api_response(
     Raises:
         EmptyResponseException: 响应中既无正文也无工具调用且无思考内容时抛出。
     """
-    if content_buffer.tell() > 0:
-        response.content = content_buffer.getvalue()
+    content = content_buffer.getvalue().strip()
+    reasoning_content = reasoning_buffer.getvalue().strip()
     content_buffer.close()
+    reasoning_buffer.close()
 
-    if tool_calls_buffer:
-        response.tool_calls = list(tool_calls_buffer)
-    response.raw_data = last_response
-
-    _warn_if_max_tokens_truncated(last_response, response.content, response.tool_calls)
-    if not response.content and not response.tool_calls and not response.reasoning_content:
+    _warn_if_max_tokens_truncated(last_response, content or None, tool_calls_buffer or None)
+    if not content and not tool_calls_buffer and not reasoning_content:
         raise EmptyResponseException(last_response)
-    return response
+    context_tool_calls = [
+        ContextToolCall.create(
+            call_id=tool_call.call_id,
+            func_name=tool_call.func_name,
+            args=tool_call.args,
+            extra_content=tool_call.extra_content,
+        )
+        for tool_call in tool_calls_buffer
+    ]
+    return APIResponse(
+        output_items=build_portable_output_items(
+            content=content,
+            reasoning=reasoning_content,
+            tool_calls=context_tool_calls,
+            logical_turn_id=logical_turn_id,
+        ),
+        raw_data=last_response,
+    )
 
 
 async def _default_stream_response_handler(
     response_stream: AsyncIterator[GenerateContentResponse],
     interrupt_flag: asyncio.Event | None,
+    *,
+    logical_turn_id: str,
 ) -> Tuple[APIResponse, Optional[UsageTuple]]:
     """处理 Gemini 流式响应。
 
@@ -572,8 +628,8 @@ async def _default_stream_response_handler(
         Tuple[APIResponse, Optional[UsageTuple]]: 统一响应对象与可选的使用量信息。
     """
     content_buffer = io.StringIO()
+    reasoning_buffer = io.StringIO()
     tool_calls_buffer: List[ToolCall] = []
-    api_response = APIResponse()
     usage_record: Optional[UsageTuple] = None
     last_response: GenerateContentResponse | None = None
 
@@ -582,17 +638,30 @@ async def _default_stream_response_handler(
             last_response = chunk
             if interrupt_flag and interrupt_flag.is_set():
                 raise ReqAbortException("请求被外部信号中断")
-            _process_stream_chunk(chunk, content_buffer, tool_calls_buffer, api_response)
+            _process_stream_chunk(chunk, content_buffer, reasoning_buffer, tool_calls_buffer)
             usage_record = _extract_usage_record(chunk) or usage_record
-        return _build_stream_api_response(content_buffer, tool_calls_buffer, last_response, api_response), usage_record
+        return (
+            _build_stream_api_response(
+                content_buffer,
+                reasoning_buffer,
+                tool_calls_buffer,
+                last_response,
+                logical_turn_id,
+            ),
+            usage_record,
+        )
     except Exception:
         if not content_buffer.closed:
             content_buffer.close()
+        if not reasoning_buffer.closed:
+            reasoning_buffer.close()
         raise
 
 
 def _default_normal_response_parser(
     response: GenerateContentResponse,
+    *,
+    logical_turn_id: str,
 ) -> Tuple[APIResponse, Optional[UsageTuple]]:
     """解析 Gemini 非流式响应。
 
@@ -605,8 +674,8 @@ def _default_normal_response_parser(
     Raises:
         EmptyResponseException: 响应中既无正文也无工具调用且无思考内容时抛出。
     """
-    api_response = APIResponse(raw_data=response)
     visible_parts: List[str] = []
+    reasoning_parts: List[str] = []
 
     for candidate in _get_candidates(response):
         content = getattr(candidate, "content", None)
@@ -616,21 +685,39 @@ def _default_normal_response_parser(
             if not part_text:
                 continue
             if getattr(part, "thought", False):
-                api_response.reasoning_content = (api_response.reasoning_content or "") + part_text
+                reasoning_parts.append(part_text)
             else:
                 visible_parts.append(part_text)
 
-    api_response.content = "".join(visible_parts).strip() or getattr(response, "text", None)
-
+    content = "".join(visible_parts).strip() or getattr(response, "text", None)
+    reasoning_content = "".join(reasoning_parts).strip()
     tool_calls = _collect_function_calls(response)
-    if tool_calls:
-        api_response.tool_calls = tool_calls
 
     usage_record = _extract_usage_record(response)
-    _warn_if_max_tokens_truncated(response, api_response.content, api_response.tool_calls)
-    if not api_response.content and not api_response.tool_calls and not api_response.reasoning_content:
+    _warn_if_max_tokens_truncated(response, content, tool_calls or None)
+    if not content and not tool_calls and not reasoning_content:
         raise EmptyResponseException(response, "响应中既无文本内容也无工具调用")
-    return api_response, usage_record
+    context_tool_calls = [
+        ContextToolCall.create(
+            call_id=tool_call.call_id,
+            func_name=tool_call.func_name,
+            args=tool_call.args,
+            extra_content=tool_call.extra_content,
+        )
+        for tool_call in tool_calls
+    ]
+    return (
+        APIResponse(
+            output_items=build_portable_output_items(
+                content=content,
+                reasoning=reasoning_content,
+                tool_calls=context_tool_calls,
+                logical_turn_id=logical_turn_id,
+            ),
+            raw_data=response,
+        ),
+        usage_record,
+    )
 
 
 def _build_http_options(api_provider: APIProvider) -> HttpOptions:
@@ -871,8 +958,17 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderStreamResponseHandler[AsyncIterator[GenerateContentResponse]]: 默认流式处理器。
         """
-        del request
-        return _default_stream_response_handler
+        async def default_stream_handler(
+            response_stream: AsyncIterator[GenerateContentResponse],
+            interrupt_flag: asyncio.Event | None,
+        ) -> Tuple[APIResponse, Optional[UsageTuple]]:
+            return await _default_stream_response_handler(
+                response_stream,
+                interrupt_flag,
+                logical_turn_id=request.logical_turn_id,
+            )
+
+        return default_stream_handler
 
     def _build_default_response_parser(
         self,
@@ -886,8 +982,15 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         Returns:
             ProviderResponseParser[GenerateContentResponse]: 默认非流式解析器。
         """
-        del request
-        return _default_normal_response_parser
+        def default_response_parser(
+            response: GenerateContentResponse,
+        ) -> Tuple[APIResponse, Optional[UsageTuple]]:
+            return _default_normal_response_parser(
+                response,
+                logical_turn_id=request.logical_turn_id,
+            )
+
+        return default_response_parser
 
     async def _execute_response_request(
         self,
@@ -915,7 +1018,7 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
         }
 
         try:
-            contents, system_instruction = _convert_messages(request.message_list)
+            contents, system_instruction = _convert_messages(request.context_items)
             model_identifier, enable_google_search = self._resolve_model_identifier(
                 model_info.model_identifier,
                 request.extra_params,
@@ -949,20 +1052,28 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                     AsyncIterator[GenerateContentResponse],
                     await await_task_with_interrupt(stream_task, request.interrupt_flag),
                 )
-                return await stream_response_handler(raw_response_stream, request.interrupt_flag)
-
-            completion_task: asyncio.Task[GenerateContentResponse] = asyncio.create_task(
-                self.client.aio.models.generate_content(
-                    model=model_identifier,
-                    contents=contents,
-                    config=generation_config,
+                response, usage_record = await stream_response_handler(raw_response_stream, request.interrupt_flag)
+            else:
+                completion_task: asyncio.Task[GenerateContentResponse] = asyncio.create_task(
+                    self.client.aio.models.generate_content(
+                        model=model_identifier,
+                        contents=contents,
+                        config=generation_config,
+                    )
                 )
-            )
-            raw_response = cast(
-                GenerateContentResponse,
-                await await_task_with_interrupt(completion_task, request.interrupt_flag),
-            )
-            return response_parser(raw_response)
+                raw_response = cast(
+                    GenerateContentResponse,
+                    await await_task_with_interrupt(completion_task, request.interrupt_flag),
+                )
+                response, usage_record = response_parser(raw_response)
+
+            response.wire_protocol = "gemini_generate_content"
+            response.request_wire_payload = {
+                "config": generation_config,
+                "contents": contents,
+                "system_instruction": system_instruction,
+            }
+            return response, usage_record
         except ReqAbortException:
             raise
         except (ClientError, ServerError) as exc:
@@ -1021,7 +1132,9 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 trace_context=request.trace_context,
             )
             wrapped_error = (
-                exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
+                exc
+                if isinstance(exc, (EmptyResponseException, RespParseException))
+                else NetworkConnectionError(str(exc))
             )
             attach_request_snapshot(wrapped_error, snapshot_path)
             if wrapped_error is exc:
@@ -1098,7 +1211,9 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 trace_context=request.trace_context,
             )
             wrapped_error = (
-                exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
+                exc
+                if isinstance(exc, (EmptyResponseException, RespParseException))
+                else NetworkConnectionError(str(exc))
             )
             attach_request_snapshot(wrapped_error, snapshot_path)
             if wrapped_error is exc:
@@ -1201,7 +1316,10 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 contents=contents,
                 config=generation_config,
             )
-            response, usage_record = _default_normal_response_parser(raw_response)
+            response, usage_record = _default_normal_response_parser(
+                raw_response,
+                logical_turn_id=uuid.uuid4().hex,
+            )
         except (ClientError, ServerError) as exc:
             status_code = int(getattr(exc, "code", 500) or 500)
             snapshot_path = save_failed_request_snapshot(
@@ -1231,7 +1349,9 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 trace_context=request.trace_context,
             )
             wrapped_error = (
-                exc if isinstance(exc, (EmptyResponseException, RespParseException)) else NetworkConnectionError(str(exc))
+                exc
+                if isinstance(exc, (EmptyResponseException, RespParseException))
+                else NetworkConnectionError(str(exc))
             )
             attach_request_snapshot(wrapped_error, snapshot_path)
             if wrapped_error is exc:

@@ -1,6 +1,23 @@
 # 更新日志
-s
 # [1.1.5] - 2026-8-4
+
+## 模型与 Maisaka
+
+- 模型上下文和输出升级为扁平 Item-first 结构，独立保留正文、推理、函数调用、工具结果与 Provider 原生活动；列表位置负责顺序，`call_id` 和逻辑轮次负责工具关系。
+- Replyer 在 Responses 端点仅返回推理而没有正文时，会携带完整输出 Items 自动续写一次；Chat 端点和其他模块不触发该逻辑。
+- 修复并行函数调用的结果排序与工具结果缺少逻辑轮次的问题；普通 Item 可独立裁切，工具循环按完整逻辑轮次处理；replay fragment 只随历史裁切释放，不再使用独立固定内存预算。
+- 修复拒答内容切换 Chat、Responses 或 Gemini 端点时无法携带的问题，并避免缓存统计保留完整图片、加密内容或 SDK 二进制请求。
+- 修复裁切历史黑话学习仍引用旧 AssistantMessage 的异常；在线学习和离线 planner 日志学习均按 Item 类型提取正文与工具结果，并排除 reasoning。
+- 工具关系校验统一为 Item 纯函数内核，分别约束模型请求、模型输出和允许 pending wait 的历史；Hook 修改采用事务校验，非法关系整批放弃。
+- 完整保留 Provider 失败、重试、模型切换、Hook 重生成和 Replyer 续写的 Generation Attempts，并统一脱敏请求、响应、鉴权参数和大型二进制诊断。
+- 插件 LLM Provider 升级为版本化 `output_items` 协议，由 Host 生成 Item 元数据并校验输出类型与关系；旧标量响应保留一版弃用兼容。
+- 修复表达向量索引 JSON 损坏后历史补建反复异常重启的问题；损坏的生成索引会明确记录并从数据库重建，JSON/NPZ 改用唯一排他临时文件原子替换，失败任务增加重试冷却。
+
+## Webui
+
+- 推理过程结构化记录升级为 v6 `request_items` / `output_items` / `generation_attempts`，按扁平 Item 和真实 Provider 调用时间线展示；编辑重放和重放结果统一使用 Items，v1-v5 旧记录仅在前端读取时迁移。
+- 修复重放编辑器输入非法 Item JSON 后提交按钮持续禁用的问题；Replyer 与工具监控统一保存 Context Item 快照。
+- 拆分推理过程页面的日志迁移、Item 展示、Attempt 时间线、Replay 编辑器和页面编排，失败调用可查看结构化错误、模型切换及可用响应。
 
 # [1.1.4] - 2026-8-4
 

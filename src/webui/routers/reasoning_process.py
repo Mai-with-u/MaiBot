@@ -20,6 +20,13 @@ from src.common.data_models.llm_service_data_models import LLMServiceRequest
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Messages
 from src.config.config import config_manager
+from src.llm_models.payload_content.context_item import CONTEXT_ITEM_SCHEMA_VERSION, ContextItem
+from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
+from src.llm_models.request_snapshot import (
+    deserialize_context_item_snapshot,
+    serialize_generation_attempt,
+    serialize_context_item_snapshot,
+)
 from src.services.llm_service import generate as generate_llm_response
 from src.services.service_task_resolver import get_available_models
 from src.webui.dependencies import require_auth
@@ -158,18 +165,28 @@ def _build_jargon_learning_update_preview_payload(payload: dict[str, Any]) -> di
         ]
     )
     preview_payload = {
-        "schema_version": payload.get("schema_version") or 1,
+        "schema_version": 6,
         "request": {
             "kind": "jargon_learning_update",
             "selection_reason": "\n".join(summary_lines),
         },
         "metadata": {},
-        "messages": [],
-        "output": {
-            "title": "黑话学习更新日志",
-            "content": details,
-        },
+        "presentation": {"output_title": "黑话学习更新日志"},
+        "request_items": [],
+        "output_items": [
+            {
+                "item_type": "ProviderOpaqueItem",
+                "meta": {
+                    "item_id": f"jargon-learning-update-{payload.get('learning_session_id') or 'unknown'}",
+                    "logical_turn_id": None,
+                    "timestamp": str(payload.get("created_at") or ""),
+                },
+                "display_summary": details,
+                "provider_type": "maibot_jargon_learning",
+            }
+        ],
         "tool_definitions": [],
+        "generation_attempts": [],
     }
     return preview_payload
 
@@ -285,23 +302,15 @@ class ReasoningPromptContentResponse(BaseModel):
     message_avatars: dict[str, ReasoningPromptMessageAvatar] = Field(default_factory=dict)
 
 
-class ReasoningReplayMessage(BaseModel):
-    """重放调试使用的单条 LLM 消息。"""
-
-    role: str = Field(..., min_length=1)
-    content: Any
-    tool_call_id: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
-
-
 class ReasoningReplayRequest(BaseModel):
     """推理过程重放请求。"""
 
     source_path: str | None = Field(default=None, description="原始 prompt JSON 相对路径")
     stage: str = Field(default="", description="原始推理阶段")
     model_name: str = Field(..., min_length=1, description="要用于重放的模型名称")
-    messages: list[ReasoningReplayMessage] = Field(default_factory=list)
-    tool_definitions: list[dict[str, Any]] = Field(default_factory=list)
+    item_schema_version: int = Field(default=CONTEXT_ITEM_SCHEMA_VERSION)
+    request_items: list[dict[str, Any]] = Field(default_factory=list)
+    tool_definitions: list[dict[str, Any]] | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=1)
 
@@ -310,10 +319,10 @@ class ReasoningReplayResponse(BaseModel):
     """推理过程重放响应。"""
 
     success: bool
-    response: str = ""
-    reasoning: str = ""
+    output_items: list[dict[str, Any]] = Field(default_factory=list)
+    schema_version: int = 6
+    generation_attempts: list[dict[str, Any]] = Field(default_factory=list)
     model_name: str = ""
-    tool_calls: list[dict[str, Any]] | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -731,14 +740,29 @@ def _extract_message_ids_from_prompt_payload(payload: dict[str, Any]) -> list[st
                 seen.add(message_id)
                 message_ids.append(message_id)
 
-    for message in payload.get("messages") or []:
-        if not isinstance(message, dict):
-            continue
-        append_from_text(_structured_prompt_content_to_text(message.get("content")))
+    def append_from_value(value: Any) -> None:
+        if isinstance(value, str):
+            append_from_text(value)
+            return
+        if isinstance(value, list):
+            for item in value:
+                append_from_value(item)
+            return
+        if isinstance(value, dict):
+            for item in value.values():
+                append_from_value(item)
 
-    output = payload.get("output")
-    if isinstance(output, dict):
-        append_from_text(_structured_prompt_content_to_text(output.get("content")))
+    for item in payload.get("request_items") or []:
+        append_from_value(item)
+    for item in payload.get("output_items") or []:
+        append_from_value(item)
+
+    # v1-v4 旧记录只在读取边界扫描，不进入 Dashboard 的运行时模型。
+    for message in payload.get("messages") or []:
+        if isinstance(message, dict):
+            append_from_text(_structured_prompt_content_to_text(message.get("content")))
+    if isinstance(payload.get("output"), dict):
+        append_from_text(_structured_prompt_content_to_text(payload["output"].get("content")))
 
     request = payload.get("request")
     if isinstance(request, dict):
@@ -870,7 +894,9 @@ def _extract_llm_error_display_title(payload: dict[str, Any]) -> str:
     }
     status_label = status_labels.get(status, status or "请求异常")
 
-    raw_attempts = payload.get("attempts")
+    raw_attempts = payload.get("generation_attempts")
+    if not isinstance(raw_attempts, list):
+        raw_attempts = payload.get("attempts")
     attempts = raw_attempts if isinstance(raw_attempts, list) else []
     error_message = ""
     for raw_attempt in reversed(attempts):
@@ -1032,16 +1058,12 @@ def _rehydrate_replay_content(value: Any) -> Any:
     return {key: _rehydrate_replay_content(item) for key, item in value.items()}
 
 
-def _normalize_replay_message(message: ReasoningReplayMessage) -> dict[str, Any]:
-    normalized_message: dict[str, Any] = {
-        "role": message.role.strip().lower(),
-        "content": _rehydrate_replay_content(message.content),
-    }
-    if message.tool_call_id:
-        normalized_message["tool_call_id"] = message.tool_call_id
-    if message.tool_calls:
-        normalized_message["tool_calls"] = message.tool_calls
-    return normalized_message
+def _deserialize_replay_items(raw_items: list[dict[str, Any]]) -> list[ContextItem]:
+    """还原 Dashboard 提交的规范 Item 快照，并校验关系与工具协议。"""
+
+    items = [deserialize_context_item_snapshot(_rehydrate_replay_content(raw_item)) for raw_item in raw_items]
+    validate_context_items(items, ContextProtocolMode.REQUEST_CONTEXT)
+    return items
 
 
 def _decode_json_string_match(value: str) -> str:
@@ -1149,6 +1171,32 @@ def _extract_output_text(file_path: Path) -> str | None:
 
 
 def _extract_output_text_from_json_payload(payload: dict[str, Any]) -> str | None:
+    output_items = payload.get("output_items")
+    if isinstance(output_items, list):
+        text_parts: list[str] = []
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("item_type") or "")
+            if item_type == "AssistantMessageItem":
+                parts = item.get("parts")
+                if isinstance(parts, list):
+                    for part in parts:
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text" and isinstance(part.get("text"), str):
+                            text_parts.append(part["text"])
+                        elif part.get("type") == "refusal" and isinstance(part.get("refusal"), str):
+                            text_parts.append(part["refusal"])
+            elif item_type == "ProviderOpaqueItem" and isinstance(item.get("display_summary"), str):
+                text_parts.append(item["display_summary"])
+        normalized_item_text = " ".join(
+            line.strip() for text in text_parts for line in text.splitlines() if line.strip()
+        )
+        if normalized_item_text:
+            return normalized_item_text
+
+    # v1-v4 旧记录只在读取边界解析。
     output = payload.get("output")
     if not isinstance(output, dict):
         return None
@@ -1226,11 +1274,27 @@ def _extract_action_preview_from_json_payload(payload: dict[str, Any], max_actio
     if _is_jargon_learning_update_preview_payload(payload):
         return _extract_output_preview_from_json_payload(payload, max_chars=160)
 
-    output = payload.get("output")
     action_names: list[str] = []
 
-    if isinstance(output, dict):
-        action_names = _extract_action_names_from_tool_calls(output.get("tool_calls"))
+    output_items = payload.get("output_items")
+    if isinstance(output_items, list):
+        for item in output_items:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("item_type") or "")
+            if item_type == "FunctionCallItem" and isinstance(item.get("tool_call"), dict):
+                action_name = str(item["tool_call"].get("func_name") or "").strip()
+            elif item_type == "ProviderActivityItem":
+                action_name = str(item.get("provider_type") or item.get("action_type") or "").strip()
+            else:
+                action_name = ""
+            if action_name:
+                action_names.append(action_name)
+
+    if not action_names:
+        output = payload.get("output")
+        if isinstance(output, dict):
+            action_names = _extract_action_names_from_tool_calls(output.get("tool_calls"))
 
     if not action_names:
         return None
@@ -1882,23 +1946,27 @@ async def get_reasoning_prompt_file(path: str = Query(...)):
 
 @router.post("/replay", response_model=ReasoningReplayResponse)
 async def replay_reasoning_prompt(request: ReasoningReplayRequest):
-    """使用可编辑消息重放一次推理过程请求。"""
+    """使用可编辑 Context Items 重放一次推理过程请求。"""
 
     model_name = _ensure_replay_model_exists(request.model_name)
-    if not request.messages:
-        raise HTTPException(status_code=400, detail="重放消息不能为空")
+    if request.item_schema_version != CONTEXT_ITEM_SCHEMA_VERSION:
+        raise HTTPException(status_code=400, detail="重放 Item schema 版本不匹配")
+    if not request.request_items:
+        raise HTTPException(status_code=400, detail="重放 Items 不能为空")
 
     tool_definitions = request.tool_definitions
-    if not tool_definitions and request.source_path:
+    if tool_definitions is None and request.source_path:
         source_path = _resolve_prompt_log_path(request.source_path, {".json"})
         source_payload = _load_prompt_json(source_path)
         raw_tool_definitions = source_payload.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
             tool_definitions = [item for item in raw_tool_definitions if isinstance(item, dict)]
+    if tool_definitions is None:
+        tool_definitions = []
 
     try:
-        replay_messages = [_normalize_replay_message(message) for message in request.messages]
-    except ValueError as exc:
+        replay_items = _deserialize_replay_items(request.request_items)
+    except (TypeError, ValueError) as exc:
         return ReasoningReplayResponse(
             success=False,
             model_name=model_name,
@@ -1911,7 +1979,7 @@ async def replay_reasoning_prompt(request: ReasoningReplayRequest):
         LLMServiceRequest(
             task_name=task_name,
             request_type=f"webui.reasoning_replay.{request.stage or 'unknown'}",
-            prompt=replay_messages,
+            context_factory=lambda _: replay_items,
             model_name=model_name,
             tool_options=tool_definitions,
             temperature=request.temperature,
@@ -1920,13 +1988,14 @@ async def replay_reasoning_prompt(request: ReasoningReplayRequest):
     )
     duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
     completion = service_result.completion
-
     return ReasoningReplayResponse(
         success=service_result.success,
-        response=completion.response,
-        reasoning=completion.reasoning,
+        output_items=[serialize_context_item_snapshot(item) for item in completion.output_items],
+        generation_attempts=[
+            serialize_generation_attempt(attempt)
+            for attempt in completion.generation_attempts
+        ],
         model_name=completion.model_name or model_name,
-        tool_calls=service_result.to_capability_payload().get("tool_calls") if completion.tool_calls else None,
         prompt_tokens=completion.prompt_tokens,
         completion_tokens=completion.completion_tokens,
         total_tokens=completion.total_tokens,
