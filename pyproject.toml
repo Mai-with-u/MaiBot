@@ -107,3 +107,7 @@ skip-magic-trailing-comma = false
 
 # 自动检测合适的换行符
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["pytests"]
+pythonpath = ["."]

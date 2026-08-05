@@ -163,7 +163,7 @@ class SessionMessage(MaiMessage):
         for result in results:
             if isinstance(result, BaseException):
                 logger.error(f"处理消息组件时发生错误: {result}")
-            else:
+            elif result:
                 processed_texts.append(result)
         self.processed_plain_text = " ".join(processed_texts)
 

@@ -533,7 +533,7 @@ def _timeline_chat_from_session(chat_session: ChatSession) -> MemoryTimelineChat
         platform=chat_session.platform,
         group_id=chat_session.group_id,
         user_id=chat_session.user_id,
-        account_id=chat_session.account_id,
+        account_id=getattr(chat_session, "account_id", None),
         is_group=bool(chat_session.group_id),
     )
 

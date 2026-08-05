@@ -636,6 +636,7 @@ def test_webui_memory_timeline_returns_chat_scoped_events(client: TestClient, mo
         lambda chat_id: SimpleNamespace(
             session_id=chat_id,
             platform="qq",
+            account_id=None,
             group_id="100",
             user_id=None,
             group_name="测试群",
@@ -759,6 +760,7 @@ def test_webui_memory_timeline_deleted_paragraph_prefers_delete_operation(client
         lambda chat_id: SimpleNamespace(
             session_id=chat_id,
             platform="qq",
+            account_id=None,
             group_id="100",
             user_id=None,
             group_name="测试群",

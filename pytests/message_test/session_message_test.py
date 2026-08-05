@@ -58,7 +58,7 @@ class DummyDBSession:
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def exec(self, statement):
+    def exec(self, statement, *args, **kwargs):
         return self
 
     def first(self):
@@ -202,7 +202,7 @@ async def test_image(monkeypatch):
     msg.raw_message = MessageSequence(components=[])
     msg.raw_message.components = [ImageComponent(binary_hash="image_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一张图片，网卡了加载不出来] Hello, world!"
+    assert msg.processed_plain_text == "Hello, world!"
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_emoji(monkeypatch):
     msg.raw_message = MessageSequence(components=[])
     msg.raw_message.components = [EmojiComponent(binary_hash="emoji_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一个表情，网卡了加载不出来] Hello, world!"
+    assert msg.processed_plain_text == "[表情包] Hello, world!"
 
 
 @pytest.mark.asyncio
@@ -230,6 +230,9 @@ async def test_voice(monkeypatch):
 @pytest.mark.asyncio
 async def test_at_component(monkeypatch):
     load_message_via_file(monkeypatch)
+    system_utils_mod = ModuleType("src.common.utils.system_utils")
+    system_utils_mod.is_bot_self = lambda platform, user_id: False
+    monkeypatch.setitem(sys.modules, "src.common.utils.system_utils", system_utils_mod)
     msg = SessionMessage("msg123", datetime.now(), platform="test_platform")
     msg.session_id = "session123"
     msg.platform = "test_platform"

@@ -1,10 +1,12 @@
 """实验性动作票据式网页浏览测试。"""
 
-from playwright.async_api import Error as PlaywrightError, async_playwright
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 import asyncio
 import json
+
+from playwright.async_api import Error as PlaywrightError, async_playwright
 
 import pytest
 
@@ -19,6 +21,7 @@ from src.maisaka.browser_tool.service import (
     BrowserRecoverableActionError,
     BrowserScreenshot,
 )
+from src.maisaka.browser_tool import provider as browser_provider_module
 from src.maisaka.browser_tool.provider import BrowserActionToolProvider, _build_browser_tool_specs
 from src.services import html_render_service as html_render_service_module
 from src.services.html_render_service import HTMLRenderService
@@ -1031,6 +1034,37 @@ def test_experimental_browser_is_disabled_by_default() -> None:
 
     assert config.browser.enabled is False
     assert config.browser.max_actions == 20
+
+
+@pytest.mark.asyncio
+async def test_experimental_browser_provider_uses_config_switch(monkeypatch) -> None:
+    class FakeManager:
+        def __init__(self) -> None:
+            self.closed_owner_ids: list[str] = []
+
+        async def close_owner(self, owner_id: str) -> None:
+            self.closed_owner_ids.append(owner_id)
+
+    manager = FakeManager()
+    provider = BrowserActionToolProvider(manager=manager)
+    browser_config = SimpleNamespace(enabled=True)
+    monkeypatch.setattr(
+        browser_provider_module.config_manager,
+        "get_global_config",
+        lambda: SimpleNamespace(experimental=SimpleNamespace(browser=browser_config)),
+    )
+
+    assert [tool.name for tool in await provider.list_tools()] == [
+        "browser_start",
+        "browser_step",
+        "browser_screenshot",
+        "browser_get_image",
+        "browser_stop",
+    ]
+
+    browser_config.enabled = False
+    assert await provider.list_tools() == []
+    assert manager.closed_owner_ids == [provider._owner_id]
 
 
 def test_experimental_browser_switch_is_exposed_in_config_schema() -> None:

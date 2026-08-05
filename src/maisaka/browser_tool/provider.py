@@ -28,9 +28,6 @@ from .service import (
     get_browser_action_manager,
 )
 
-_BROWSER_FEATURE_ENABLED = False
-
-
 def _build_browser_tool_specs() -> List[ToolSpec]:
     """构建 URL 入口、独立搜索、动作票据执行和关闭能力的工具声明。"""
 
@@ -194,7 +191,8 @@ class BrowserActionToolProvider(ToolProvider):
         """仅在网页浏览功能正式开放时声明工具。"""
 
         del context
-        if not _BROWSER_FEATURE_ENABLED:
+        browser_config = config_manager.get_global_config().experimental.browser
+        if not browser_config.enabled:
             await self._manager.close_owner(self._owner_id)
             return []
         return _build_browser_tool_specs()
@@ -206,8 +204,9 @@ class BrowserActionToolProvider(ToolProvider):
     ) -> ToolExecutionResult:
         """执行浏览会话入口、动作票据或关闭请求。"""
 
-        if not _BROWSER_FEATURE_ENABLED:
-            return self._failure(invocation.tool_name, "网页浏览功能当前版本暂未开放。")
+        browser_config = config_manager.get_global_config().experimental.browser
+        if not browser_config.enabled:
+            return self._failure(invocation.tool_name, "网页浏览功能未启用。")
         if context is None or not context.session_id.strip():
             return self._failure(invocation.tool_name, "网页浏览需要绑定真实聊天流，当前缺少 session_id。")
 

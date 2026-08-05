@@ -7,6 +7,9 @@ import importlib.util
 
 
 class DummyLogger:
+    def debug(self, *a, **k):
+        pass
+
     def info(self, *a, **k):
         pass
 
@@ -224,8 +227,10 @@ def _load_image_manager_module(tmp_path=None):
 
 
 @pytest.mark.asyncio
-async def test_get_image_description_generates(tmp_path):
+async def test_get_image_description_generates(monkeypatch, tmp_path):
     image_manager = _load_image_manager_module(tmp_path)
+    monkeypatch.setattr(image_manager, "_is_vlm_task_configured", lambda: True)
+    monkeypatch.setattr(image_manager, "vlm", DummyLLMServiceClient())
 
     mgr = image_manager.ImageManager()
     desc = await mgr.get_image_description(image_bytes=b"abc")
@@ -270,8 +275,10 @@ def test_delete_image_not_found(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_save_image_and_process_and_cleanup(tmp_path):
+async def test_save_image_and_process_and_cleanup(monkeypatch, tmp_path):
     image_manager = _load_image_manager_module(tmp_path)
+    monkeypatch.setattr(image_manager, "_is_vlm_task_configured", lambda: True)
+    monkeypatch.setattr(image_manager, "vlm", DummyLLMServiceClient())
 
     mgr = image_manager.ImageManager()
     # call save_image_and_process
