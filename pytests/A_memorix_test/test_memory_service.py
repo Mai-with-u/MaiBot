@@ -26,7 +26,7 @@ async def test_graph_admin_invokes_plugin(monkeypatch):
     result = await service.graph_admin(action="get_graph", limit=12)
 
     assert result["success"] is True
-    assert calls == [("memory_graph_admin", {"action": "get_graph", "limit": 12}, {"timeout_ms": 30000})]
+    assert calls == [("memory_graph_admin", {"action": "get_graph", "limit": 12}, {})]
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_v5_admin_invokes_plugin(monkeypatch):
     result = await service.v5_admin(action="status", target="mai", limit=5)
 
     assert result["success"] is True
-    assert calls == [("memory_v5_admin", {"action": "status", "target": "mai", "limit": 5}, {"timeout_ms": 30000})]
+    assert calls == [("memory_v5_admin", {"action": "status", "target": "mai", "limit": 5}, {})]
 
 
 @pytest.mark.asyncio

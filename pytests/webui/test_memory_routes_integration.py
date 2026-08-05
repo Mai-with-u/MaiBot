@@ -427,7 +427,6 @@ def _create_seed_paste_task(client: TestClient, *, source: str, unique_token: st
 def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dict[str, Any], None, None]:
     tmp_root = tmp_path_factory.mktemp("memory_routes_integration")
     data_dir = (tmp_root / "data").resolve()
-    staging_dir = (tmp_root / "upload_staging").resolve()
     artifacts_dir = (tmp_root / "artifacts").resolve()
     config_file = (tmp_root / "config" / "bot_config.toml").resolve()
     runtime_config = _build_test_config(data_dir)
@@ -440,7 +439,7 @@ def integration_state(tmp_path_factory: pytest.TempPathFactory) -> Generator[Dic
         "create_embedding_api_adapter",
         lambda **kwargs: _FakeEmbeddingManager(dimension=64),
     )
-    patches.setattr(memory_router_module, "STAGING_ROOT", staging_dir)
+    patches.setattr(memory_router_module, "STAGING_ROOT", None)
     patches.setattr(tuning_manager_module, "artifacts_root", lambda: artifacts_dir)
 
     asyncio.run(host_service_module.a_memorix_host_service.stop())

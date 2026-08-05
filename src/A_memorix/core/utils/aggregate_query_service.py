@@ -301,6 +301,8 @@ class AggregateQueryService:
                 return_exceptions=True,
             )
             for (branch_name, _), payload in zip(scheduled, done, strict=True):
+                if isinstance(payload, asyncio.CancelledError):
+                    raise payload
                 if isinstance(payload, Exception):
                     logger.error(f"aggregate branch failed: branch={branch_name} error={payload}")
                     normalized = self._normalize_branch_payload(

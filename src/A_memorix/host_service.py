@@ -156,6 +156,9 @@ class AMemorixHostService:
     def get_config(self) -> Dict[str, Any]:
         return dict(self._read_config())
 
+    def get_runtime_data_dir(self) -> Path:
+        return self._runtime_data_dir()
+
     def is_enabled(self) -> bool:
         return self._is_enabled_config(self._read_config())
 
@@ -205,12 +208,20 @@ class AMemorixHostService:
             "config_path": str(path),
         }
 
-    async def invoke(self, component_name: str, args: Dict[str, Any] | None = None, *, timeout_ms: int = 30000) -> Any:
+    async def invoke(
+        self,
+        component_name: str,
+        args: Dict[str, Any] | None = None,
+        *,
+        timeout_ms: Optional[int] = None,
+    ) -> Any:
         """将 MaiBot 宿主请求路由到共享 A_Memorix 内核。
 
         本层负责启动状态、宿主参数适配、共享聊天范围、启动期写入排队和管理命令
         分发；检索、写入及维护操作的业务语义由内核服务负责。
         """
+        if timeout_ms is None:
+            return await self._invoke(component_name, args)
         if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
             raise ValueError("timeout_ms 必须是正整数")
         try:
@@ -484,9 +495,20 @@ class AMemorixHostService:
             self._startup_queue_cache_loaded = True
 
     def _startup_status_payload(self) -> Dict[str, Any]:
+        memory_enabled = self.is_enabled()
+        runtime_status: Dict[str, Any] = {}
+        if self._kernel is not None and self._runtime_state == "ready":
+            runtime_status = self._kernel._runtime_capability_status()
         return {
-            "enabled": self.is_enabled(),
-            "runtime_ready": self._runtime_state == "ready",
+            "enabled": memory_enabled,
+            "memory_enabled": memory_enabled,
+            "runtime_ready": bool(runtime_status.get("runtime_ready", self._runtime_state == "ready")),
+            "retrieval_ready": bool(runtime_status.get("retrieval_ready", False)),
+            "degraded": bool(runtime_status.get("degraded", False)),
+            "retrieval_mode": str(runtime_status.get("retrieval_mode", "unavailable")),
+            "available_channels": list(runtime_status.get("available_channels", [])),
+            "unavailable_channels": list(runtime_status.get("unavailable_channels", [])),
+            "vector_health": dict(runtime_status.get("vector_health", {})),
             "startup_state": self._runtime_state,
             "initializing": self._runtime_state in {"starting", "migrating"},
             "initialization_failed": self._runtime_state == "failed",
@@ -871,6 +893,7 @@ class AMemorixHostService:
             return {
                 "success": True,
                 "enabled": False,
+                "memory_enabled": False,
                 "disabled": True,
                 "reason": reason,
                 "message": message,
@@ -883,10 +906,17 @@ class AMemorixHostService:
             return {
                 "success": True,
                 "enabled": False,
+                "memory_enabled": False,
                 "disabled": True,
                 "reason": reason,
                 "message": message,
                 "runtime_ready": False,
+                "retrieval_ready": False,
+                "degraded": False,
+                "retrieval_mode": "disabled",
+                "available_channels": [],
+                "unavailable_channels": [],
+                "vector_health": {"state": "disabled"},
                 "embedding_degraded": False,
                 "embedding_dimension": 0,
                 "auto_save": False,

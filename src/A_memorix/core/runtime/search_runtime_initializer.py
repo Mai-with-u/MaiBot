@@ -24,12 +24,7 @@ from ..retrieval import (
 
 _logger = get_logger("A_Memorix.SearchRuntimeInitializer")
 
-_REQUIRED_COMPONENT_KEYS = (
-    "vector_store",
-    "graph_store",
-    "metadata_store",
-    "embedding_manager",
-)
+_REQUIRED_COMPONENT_KEYS = ("metadata_store",)
 
 
 def _get_config_value(config: Optional[dict], key: str, default: Any = None) -> Any:
@@ -81,6 +76,7 @@ class SearchRuntimeBundle:
     vector_store: Optional[Any] = None
     paragraph_vector_store: Optional[Any] = None
     graph_vector_store: Optional[Any] = None
+    legacy_vector_store: Optional[Any] = None
     graph_store: Optional[Any] = None
     metadata_store: Optional[Any] = None
     embedding_manager: Optional[Any] = None
@@ -91,13 +87,7 @@ class SearchRuntimeBundle:
 
     @property
     def ready(self) -> bool:
-        return (
-            self.retriever is not None
-            and self.vector_store is not None
-            and self.graph_store is not None
-            and self.metadata_store is not None
-            and self.embedding_manager is not None
-        )
+        return self.retriever is not None and self.metadata_store is not None
 
 
 def _resolve_runtime_components(plugin_config: Optional[dict]) -> SearchRuntimeBundle:
@@ -105,6 +95,7 @@ def _resolve_runtime_components(plugin_config: Optional[dict]) -> SearchRuntimeB
         vector_store=_get_config_value(plugin_config, "vector_store"),
         paragraph_vector_store=_get_config_value(plugin_config, "paragraph_vector_store"),
         graph_vector_store=_get_config_value(plugin_config, "graph_vector_store"),
+        legacy_vector_store=_get_config_value(plugin_config, "legacy_vector_store"),
         graph_store=_get_config_value(plugin_config, "graph_store"),
         metadata_store=_get_config_value(plugin_config, "metadata_store"),
         embedding_manager=_get_config_value(plugin_config, "embedding_manager"),
@@ -135,6 +126,8 @@ def _resolve_runtime_components(plugin_config: Optional[dict]) -> SearchRuntimeB
         bundle.paragraph_vector_store = instances.get("paragraph_vector_store")
     if bundle.graph_vector_store is None:
         bundle.graph_vector_store = instances.get("graph_vector_store")
+    if bundle.legacy_vector_store is None:
+        bundle.legacy_vector_store = instances.get("legacy_vector_store")
     if bundle.graph_store is None:
         bundle.graph_store = instances.get("graph_store")
     if bundle.metadata_store is None:
@@ -166,8 +159,8 @@ def build_search_runtime(
 
     runtime = _resolve_runtime_components(plugin_config)
     if any(getattr(runtime, key) is None for key in _REQUIRED_COMPONENT_KEYS):
-        runtime.error = "存储组件未完全初始化"
-        log.warning(f"{prefix_text}[{owner}] 存储组件未完全初始化，无法使用检索功能")
+        runtime.error = "元数据核心未初始化"
+        log.warning(f"{prefix_text}[{owner}] 元数据核心未初始化，无法构建检索运行时")
         return runtime
 
     sparse_cfg_raw = _safe_dict(_get_config_value(plugin_config, "retrieval.sparse", {}) or {})
@@ -247,11 +240,15 @@ def build_search_runtime(
             vector_store=runtime.vector_store,
             paragraph_vector_store=runtime.paragraph_vector_store or runtime.vector_store,
             graph_vector_store=runtime.graph_vector_store or runtime.vector_store,
+            legacy_vector_store=runtime.legacy_vector_store,
             graph_store=runtime.graph_store,
             metadata_store=runtime.metadata_store,
             embedding_manager=runtime.embedding_manager,
             sparse_index=runtime.sparse_index,
             config=config,
+        )
+        runtime.retriever.set_runtime_sparse_only(
+            runtime.vector_store is None or runtime.embedding_manager is None
         )
 
         threshold_config = ThresholdConfig(

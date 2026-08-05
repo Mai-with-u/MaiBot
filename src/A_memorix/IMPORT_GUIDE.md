@@ -26,13 +26,13 @@ python src/A_memorix/scripts/runtime_self_check.py --json
 将 `.txt` 文件放入：
 
 ```text
-data/plugins/a-dawn.a-memorix/raw/
+data/a-memorix/imports/source/raw/
 ```
 
 说明：
 
-- `process_knowledge.py` 当前默认扫描上述目录。
-- 若你的运行配置使用 `storage.data_dir = "data/a-memorix"`，请在执行脚本前统一目录，避免脚本导入目录与运行目录不一致。
+- `process_knowledge.py` 默认扫描 `storage.data_dir/imports/source/raw`。
+- 自定义 `storage.data_dir` 时，执行脚本应同时传入相同的 `--data-dir`。
 
 执行：
 
@@ -51,13 +51,15 @@ python src/A_memorix/scripts/process_knowledge.py --chat-log --chat-reference-ti
 ## 2.2 OpenIE JSON 导入
 
 ```bash
-python src/A_memorix/scripts/import_lpmm_json.py <json文件或目录>
+python src/A_memorix/scripts/import_lpmm_json.py data/a-memorix/imports/source/lpmm/<json文件或目录>
 ```
 
 ## 2.3 LPMM 数据转换
 
 ```bash
-python src/A_memorix/scripts/convert_lpmm.py -i <lpmm数据目录> -o data/a-memorix
+python src/A_memorix/scripts/convert_lpmm.py \
+  -i data/a-memorix/imports/source/lpmm/<数据集> \
+  -o data/a-memorix/imports/converted/<数据集>
 ```
 
 ## 2.4 历史数据迁移
@@ -98,6 +100,11 @@ python src/A_memorix/scripts/audit_vector_consistency.py --json
 - `chunks` / `get_chunks`
 - `cancel`
 - `retry_failed`
+
+文件导入统一使用 `storage.data_dir/imports`。`raw`、`lpmm`、`maibot` 和
+`converted` 是固定逻辑别名，分别对应普通文件、LPMM 源数据、用户提供的
+MaiBot 历史数据库和 LPMM 转换结果。运行中的 `data/MaiBot.db` 仍可作为
+默认只读迁移来源，时序回填则直接处理当前活动 Store。
 
 ### 3.2 调用示例
 
@@ -290,7 +297,7 @@ A_Memorix 导入链路仍然遵循策略模式（Strategy-Aware）。`process_kn
 
 以下样例可直接复制保存为文件测试，或作为 LLM few-shot 示例。
 
-### 11.1 叙事文本 (`data/plugins/a-dawn.a-memorix/raw/story_demo.txt`)
+### 11.1 叙事文本 (`data/a-memorix/imports/source/raw/story_demo.txt`)
 
 ```text
 # 第一章：星之子
@@ -309,7 +316,7 @@ A_Memorix 导入链路仍然遵循策略模式（Strategy-Aware）。`process_kn
 “我必须来，”艾瑞克握紧了拳头，“为了解开星盘的秘密，也为了你。”
 ```
 
-### 11.2 事实文本 (`data/plugins/a-dawn.a-memorix/raw/rules_demo.txt`)
+### 11.2 事实文本 (`data/a-memorix/imports/source/raw/rules_demo.txt`)
 
 ```text
 # 联邦安全协议 v2.0
@@ -323,7 +330,7 @@ A_Memorix 导入链路仍然遵循策略模式（Strategy-Aware）。`process_kn
 - **黑色障壁**：用于隔离高危 AI 的物理防火墙设施。
 ```
 
-### 11.3 引用文本 (`data/plugins/a-dawn.a-memorix/raw/poem_demo.txt`)
+### 11.3 引用文本 (`data/a-memorix/imports/source/raw/poem_demo.txt`)
 
 ```text
 致橡树

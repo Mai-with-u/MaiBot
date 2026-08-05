@@ -26,7 +26,7 @@ import type {
 } from '@/lib/memory-api'
 
 import { IMPORT_CHUNK_PAGE_SIZE, IMPORT_KIND_OPTIONS, RUNNING_IMPORT_STATUS } from '../constants'
-import type { UseImportFormResult } from '../hooks/useImportForm'
+import type { ImportContentCategory, UseImportFormResult } from '../hooks/useImportForm'
 import type { UseImportQueueResult } from '../hooks/useImportQueue'
 import {
   formatImportTime,
@@ -99,7 +99,7 @@ function getChatTargetSearchText(chat: MemoryImportChatTargetPayload): string {
 
 function getChatTargetValueLabel(chat: MemoryImportChatTargetPayload | undefined): string {
   if (!chat) {
-    return '不绑定聊天流'
+    return '所有聊天可用'
   }
   const idLabel = chat.group_id || chat.user_id
   const displayName = formatChatDisplayName(chat.chat_name, chat.account_id)
@@ -168,12 +168,11 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setImportCommonFactualTargetSize,
     importCommonLlmEnabled,
     setImportCommonLlmEnabled,
-    importCommonStrategyOverride,
-    setImportCommonStrategyOverride,
+    importContentCategory,
+    setImportContentCategory,
+    importContentCategoryMissing,
     importCommonDedupePolicy,
     setImportCommonDedupePolicy,
-    importCommonChatLog,
-    setImportCommonChatLog,
     importCommonChatId,
     setImportCommonChatId,
     importCommonChatReferenceTime,
@@ -192,8 +191,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setPasteMode,
     pasteContent,
     setPasteContent,
-    rawAlias,
-    setRawAlias,
     rawInputMode,
     setRawInputMode,
     rawRelativePath,
@@ -202,16 +199,10 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setRawGlob,
     rawRecursive,
     setRawRecursive,
-    openieAlias,
-    setOpenieAlias,
     openieRelativePath,
     setOpenieRelativePath,
     openieIncludeAllJson,
     setOpenieIncludeAllJson,
-    convertAlias,
-    setConvertAlias,
-    convertTargetAlias,
-    setConvertTargetAlias,
     convertRelativePath,
     setConvertRelativePath,
     convertTargetRelativePath,
@@ -220,12 +211,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setConvertDimension,
     convertBatchSize,
     setConvertBatchSize,
-    backfillAlias,
-    setBackfillAlias,
     backfillLimit,
     setBackfillLimit,
-    backfillRelativePath,
-    setBackfillRelativePath,
     backfillDryRun,
     setBackfillDryRun,
     backfillNoCreatedFallback,
@@ -359,20 +346,30 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     </div>
                     <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">需要模型参与抽取，质量更高但耗时更长。</div>
                   </div>
-                  <div className="rounded-md border bg-background/70 px-2.5 py-2">
-                    <div className="flex items-center gap-2 text-sm font-medium leading-tight">
-                      <Checkbox
-                        checked={importCommonChatLog}
-                        onCheckedChange={(value) => setImportCommonChatLog(Boolean(value))}
-                      />
-                      按聊天日志解析
-                    </div>
-                    <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">适合导入聊天记录，会尽量保留时间和对话上下文。</div>
+                  <div className="grid gap-2 rounded-md border bg-background/70 p-3">
+                    <Label>资料类别</Label>
+                    <Select
+                      value={importContentCategory}
+                      onValueChange={(value) => setImportContentCategory(value as ImportContentCategory)}
+                    >
+                      <SelectTrigger aria-label="资料类别" aria-invalid={importContentCategoryMissing}>
+                        <SelectValue placeholder="请选择资料类别" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="narrative">叙事资料</SelectItem>
+                        <SelectItem value="factual">事实资料</SelectItem>
+                        <SelectItem value="quote">语录与短句</SelectItem>
+                        <SelectItem value="chat_log">聊天记录</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {importContentCategoryMissing ? (
+                      <div className="text-xs text-destructive" role="status">请选择资料类别</div>
+                    ) : null}
                   </div>
                   <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
                     <div className="min-w-0">
-                      <Label>归属聊天流</Label>
-                      <div className="mt-0.5 text-xs text-muted-foreground">可输入群号、QQ 号或聊天名检索；选择后，这批记忆只会在对应聊天流的检索中默认出现。</div>
+                      <Label>资料范围</Label>
+                      <div className="mt-0.5 text-xs text-muted-foreground">选择所有聊天可用，或将这批记忆限制在一个明确的聊天流内。</div>
                     </div>
                     <div className="space-y-2">
                       <div className="relative">
@@ -395,7 +392,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           onClick={() => setImportCommonChatId('')}
                         >
                           <Check className={cn('h-4 w-4 shrink-0', !importCommonChatId ? 'opacity-100' : 'opacity-0')} />
-                          <span className="truncate">不绑定聊天流</span>
+                          <span className="truncate">所有聊天可用</span>
                         </button>
                         {visibleImportChatTargets.length > 0 ? (
                           <div className="max-h-44 overflow-y-auto border-t">
@@ -482,13 +479,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <Label>指定抽取策略</Label>
-                      <Input
-                        value={importCommonStrategyOverride}
-                        onChange={(event) => setImportCommonStrategyOverride(event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
                       <Label>去重策略</Label>
                       <Input
                         value={importCommonDedupePolicy}
@@ -553,7 +543,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       <Input
                         type="file"
                         multiple
-                        accept=".txt,.md,.json,.jsonl,.csv,.log,.html,.htm,.xml"
+                        accept=".txt,.md,.json"
                         onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))}
                       />
                     </div>
@@ -602,10 +592,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">扫描目录文件，适合本地批处理</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={rawAlias} onChange={(event) => setRawAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>输入模式</Label>
                       <Select
                         value={rawInputMode}
@@ -641,10 +627,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">读取 LPMM 内容并抽取关系</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={openieAlias} onChange={(event) => setOpenieAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>相对路径</Label>
                       <Input value={openieRelativePath} onChange={(event) => setOpenieRelativePath(event.target.value)} />
                     </div>
@@ -663,14 +645,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <div className="space-y-3 rounded-xl border bg-background/70 p-4">
                   <div className="text-xs text-muted-foreground">将 LPMM 数据转换到目标目录</div>
                   <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>源路径别名</Label>
-                      <Input value={convertAlias} onChange={(event) => setConvertAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>目标路径别名</Label>
-                      <Input value={convertTargetAlias} onChange={(event) => setConvertTargetAlias(event.target.value)} />
-                    </div>
                     <div className="space-y-1">
                       <Label>源相对路径</Label>
                       <Input value={convertRelativePath} onChange={(event) => setConvertRelativePath(event.target.value)} />
@@ -709,16 +683,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <div className="text-xs text-muted-foreground">为已有数据补齐时间字段</div>
                   <div className="grid gap-3">
                     <div className="space-y-1">
-                      <Label>路径别名</Label>
-                      <Input value={backfillAlias} onChange={(event) => setBackfillAlias(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
                       <Label>处理上限</Label>
                       <Input type="number" min={1} value={backfillLimit} onChange={(event) => setBackfillLimit(event.target.value)} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>相对路径</Label>
-                      <Input value={backfillRelativePath} onChange={(event) => setBackfillRelativePath(event.target.value)} />
                     </div>
                   </div>
                   <div className="grid gap-2">
@@ -891,7 +857,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
 
               </Tabs>
 
-              <Button onClick={() => void submitImportByMode()} disabled={creatingImport}>
+              <Button onClick={() => void submitImportByMode()} disabled={creatingImport || importContentCategoryMissing}>
                 {creatingImport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                 创建导入任务
               </Button>

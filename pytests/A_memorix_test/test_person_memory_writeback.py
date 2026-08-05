@@ -79,6 +79,42 @@ async def test_store_person_memory_from_answer_prefers_explicit_person_id(monkey
 
 
 @pytest.mark.asyncio
+async def test_store_person_memory_without_display_name_keeps_only_person_id(monkeypatch):
+    calls = []
+
+    class FakePerson:
+        def __init__(self, person_id: str):
+            self.person_id = person_id
+            self.person_name = None
+            self.nickname = ""
+            self.is_known = True
+
+    async def fake_ingest_text(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(success=True, detail="", stored_ids=["p1"])
+
+    session = SimpleNamespace(platform="qq", user_id="10001", group_id="", session_id="session-1")
+    monkeypatch.setattr(
+        person_info_module, "_chat_manager", SimpleNamespace(get_session_by_session_id=lambda chat_id: session)
+    )
+    monkeypatch.setattr(person_info_module, "Person", FakePerson)
+    monkeypatch.setattr(person_info_module.memory_service, "ingest_text", fake_ingest_text)
+
+    await person_info_module.store_person_memory_from_answer(
+        "",
+        "该人物偏好使用青轴键盘",
+        "session-1",
+        person_id="person-target",
+    )
+
+    assert len(calls) == 1
+    payload = calls[0]
+    assert payload["person_ids"] == ["person-target"]
+    assert payload["participants"] == []
+    assert payload["metadata"]["person_name"] == ""
+
+
+@pytest.mark.asyncio
 async def test_store_person_memory_from_answer_skips_unknown_person(monkeypatch):
     calls = []
 

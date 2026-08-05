@@ -1,6 +1,12 @@
 """存储层"""
 
-from .vector_store import VectorStore, QuantizationType
+from .vector_store import (
+    QuantizationType,
+    ReadOnlyVectorStoreView,
+    TrustedVectorViewReport,
+    VectorStore,
+    VectorStoreIntegrityError,
+)
 from .graph_store import GraphStore, SparseMatrixFormat
 from .metadata_store import MetadataStore
 from .knowledge_types import (
@@ -28,6 +34,9 @@ from .type_detection import (
 
 __all__ = [
     "VectorStore",
+    "VectorStoreIntegrityError",
+    "ReadOnlyVectorStoreView",
+    "TrustedVectorViewReport",
     "GraphStore",
     "MetadataStore",
     "QuantizationType",

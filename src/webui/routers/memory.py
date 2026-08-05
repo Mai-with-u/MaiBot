@@ -25,7 +25,13 @@ from src.webui.dependencies import require_auth
 
 router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(require_auth)])
 compat_router = APIRouter(prefix="/api", tags=["memory-compat"], dependencies=[Depends(require_auth)])
-STAGING_ROOT = Path(__file__).resolve().parents[3] / "data" / "memory_upload_staging"
+STAGING_ROOT: Optional[Path] = None
+
+
+def _upload_staging_root() -> Path:
+    if STAGING_ROOT is not None:
+        return STAGING_ROOT
+    return a_memorix_host_service.get_runtime_data_dir() / "imports" / "staging"
 
 
 class NodeRequest(BaseModel):
@@ -2398,8 +2404,9 @@ async def _tuning_report(task_id: str, fmt: str) -> dict:
 
 
 async def _stage_upload_files(files: list[UploadFile]) -> tuple[Path, list[dict[str, Any]]]:
-    STAGING_ROOT.mkdir(parents=True, exist_ok=True)
-    staging_dir = STAGING_ROOT / uuid.uuid4().hex
+    staging_root = _upload_staging_root()
+    staging_root.mkdir(parents=True, exist_ok=True)
+    staging_dir = staging_root / uuid.uuid4().hex
     staging_dir.mkdir(parents=True, exist_ok=True)
     staged_files: list[dict[str, Any]] = []
     for index, upload in enumerate(files):

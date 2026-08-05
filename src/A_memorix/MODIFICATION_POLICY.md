@@ -33,7 +33,7 @@
 - `config/a_memorix.toml`
 - `data/a-memorix/`
 - `data/plugins/a-dawn.a-memorix/`（旧脚本默认路径）
-- `data/memory_upload_staging/`（Web 上传暂存）
+- `data/a-memorix/imports/`（文件来源、上传暂存、任务状态与转换结果）
 - `pytests/A_memorix_test/`
 - 同步脚本与同步文档，例如 `scripts/sync_a_memorix_subtree.sh`
 

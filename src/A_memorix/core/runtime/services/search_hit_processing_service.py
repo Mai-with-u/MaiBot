@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+import json
 import time
 
 from src.chat.message_receive.chat_manager import chat_manager
 from src.common.logger import get_logger
 
-from ...retrieval import RetrievalResult
+from ...retrieval import RetrievalResult, RetrievalScope
 from ...utils.feedback_policy import (
     feedback_cfg_episode_query_block_enabled,
     feedback_cfg_paragraph_hard_filter_enabled,
@@ -189,12 +190,8 @@ class MemorySearchHitProcessingService(KernelServiceBase):
 
     @staticmethod
     def _scoped_search_limit(limit: int, *, chat_id: str, shared_chat_ids: Sequence[str] = ()) -> int:
-        safe_limit = max(1, int(limit or 5))
-        allowed_chat_ids = MemorySearchHitProcessingService._resolve_allowed_chat_ids(chat_id, shared_chat_ids)
-        if not allowed_chat_ids:
-            return safe_limit
-        multiplier = max(5, len(allowed_chat_ids) * 5)
-        return min(50, max(safe_limit, safe_limit * multiplier))
+        del chat_id, shared_chat_ids
+        return max(1, int(limit or 5))
 
     @classmethod
     def _resolve_allowed_chat_ids(cls, chat_id: str, shared_chat_ids: Sequence[str] = ()) -> set[str]:
@@ -203,6 +200,183 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         if clean_chat_id:
             allowed_chat_ids.add(clean_chat_id)
         return allowed_chat_ids
+
+    @classmethod
+    def _paragraph_scope_identity(cls, paragraph: Dict[str, Any]) -> tuple[str, set[str]]:
+        """按新字段优先、旧来源兼容的顺序解释段落范围。"""
+        metadata = coerce_metadata_dict(paragraph.get("metadata"))
+        scope_type = str(metadata.get("scope_type", "") or "").strip().lower()
+        chat_ids = cls._metadata_chat_scope_ids(metadata)
+        source = str(paragraph.get("source", "") or metadata.get("source", "") or "").strip()
+
+        if scope_type:
+            if scope_type == "global":
+                return "global", set()
+            if scope_type == "chat":
+                if not chat_ids and source.startswith("chat_summary:"):
+                    source_chat_id = source.removeprefix("chat_summary:").strip()
+                    if source_chat_id:
+                        chat_ids.add(source_chat_id)
+                return ("chat", chat_ids) if chat_ids else ("unknown", set())
+            return "unknown", set()
+
+        if chat_ids:
+            return "chat", chat_ids
+        if source.startswith("web_import:"):
+            return "global", set()
+        if source.startswith("chat_summary:"):
+            source_chat_id = source.removeprefix("chat_summary:").strip()
+            if source_chat_id:
+                return "chat", {source_chat_id}
+        return "unknown", set()
+
+    def _resolve_retrieval_scope(
+        self,
+        chat_id: str,
+        shared_chat_ids: Sequence[str] = (),
+    ) -> Optional[RetrievalScope]:
+        allowed_chat_ids = self._resolve_allowed_chat_ids(chat_id, shared_chat_ids)
+        if not allowed_chat_ids:
+            return None
+        scope_key = "chat:" + ",".join(sorted(allowed_chat_ids))
+        if self.metadata_store is None:
+            return RetrievalScope(key=scope_key)
+
+        allowed_chat_ids_json = json.dumps(sorted(allowed_chat_ids), ensure_ascii=False)
+        paragraph_ids: set[str] = set()
+        paragraph_rows = self.metadata_store.query(
+            """
+            WITH allowed_chat_ids(value) AS (
+                SELECT CAST(value AS TEXT) FROM json_each(?)
+            ), paragraph_candidates AS (
+                SELECT
+                    hash,
+                    source,
+                    metadata,
+                    CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END AS metadata_json
+                FROM paragraphs
+                WHERE is_deleted IS NULL OR is_deleted = 0
+            )
+            SELECT hash, source, metadata
+            FROM paragraph_candidates p
+            WHERE LOWER(COALESCE(json_extract(p.metadata_json, '$.scope_type'), '')) = 'global'
+               OR p.source LIKE 'web_import:%'
+               OR COALESCE(json_extract(p.metadata_json, '$.source'), '') LIKE 'web_import:%'
+               OR EXISTS (
+                    SELECT 1
+                    FROM allowed_chat_ids allowed
+                    WHERE p.source = 'chat_summary:' || allowed.value
+               )
+               OR EXISTS (
+                    SELECT 1
+                    FROM json_tree(p.metadata_json) metadata_value
+                    JOIN allowed_chat_ids allowed
+                      ON CAST(metadata_value.value AS TEXT) = allowed.value
+                    WHERE metadata_value.type IN ('text', 'integer', 'real')
+               )
+            """,
+            (allowed_chat_ids_json,),
+        )
+        for paragraph in paragraph_rows:
+            scope_kind, paragraph_chat_ids = self._paragraph_scope_identity(paragraph)
+            if scope_kind == "global" or (scope_kind == "chat" and paragraph_chat_ids & allowed_chat_ids):
+                paragraph_hash = str(paragraph.get("hash", "") or "").strip()
+                if paragraph_hash:
+                    paragraph_ids.add(paragraph_hash)
+
+        relation_ids: set[str] = set()
+        entity_ids: set[str] = set()
+        episode_ids: set[str] = set()
+        if paragraph_ids:
+            for row in self.metadata_store.query(
+                """
+                WITH allowed_paragraphs(value) AS (
+                    SELECT CAST(value AS TEXT) FROM json_each(?)
+                )
+                SELECT r.hash, r.source_paragraph, pr.paragraph_hash
+                FROM relations r
+                LEFT JOIN paragraph_relations pr ON pr.relation_hash = r.hash
+                WHERE (r.is_inactive IS NULL OR r.is_inactive = 0)
+                  AND (
+                       r.source_paragraph IN (SELECT value FROM allowed_paragraphs)
+                    OR pr.paragraph_hash IN (SELECT value FROM allowed_paragraphs)
+                  )
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
+            ):
+                if (
+                    str(row.get("source_paragraph", "") or "").strip() in paragraph_ids
+                    or str(row.get("paragraph_hash", "") or "").strip() in paragraph_ids
+                ):
+                    relation_hash = str(row.get("hash", "") or "").strip()
+                    if relation_hash:
+                        relation_ids.add(relation_hash)
+            for row in self.metadata_store.query(
+                """
+                SELECT pe.entity_hash, pe.paragraph_hash
+                FROM paragraph_entities pe
+                JOIN entities e ON e.hash = pe.entity_hash
+                WHERE (e.is_deleted IS NULL OR e.is_deleted = 0)
+                  AND pe.paragraph_hash IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
+            ):
+                if str(row.get("paragraph_hash", "") or "").strip() in paragraph_ids:
+                    entity_hash = str(row.get("entity_hash", "") or "").strip()
+                    if entity_hash:
+                        entity_ids.add(entity_hash)
+            for row in self.metadata_store.query(
+                """
+                SELECT episode_id, paragraph_hash
+                FROM episode_paragraphs
+                WHERE paragraph_hash IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+                """,
+                (json.dumps(sorted(paragraph_ids), ensure_ascii=False),),
+            ):
+                if str(row.get("paragraph_hash", "") or "").strip() in paragraph_ids:
+                    episode_id = str(row.get("episode_id", "") or "").strip()
+                    if episode_id:
+                        episode_ids.add(episode_id)
+
+        return RetrievalScope(
+            key=scope_key,
+            paragraph_ids=frozenset(paragraph_ids),
+            relation_ids=frozenset(relation_ids),
+            entity_ids=frozenset(entity_ids),
+            episode_ids=frozenset(episode_ids),
+        )
+
+    @staticmethod
+    def _filter_hits_by_retrieval_scope(
+        hits: List[Dict[str, Any]],
+        scope: Optional[RetrievalScope],
+    ) -> List[Dict[str, Any]]:
+        if scope is None:
+            return hits
+        filtered: List[Dict[str, Any]] = []
+        for item in hits:
+            hit_type = str(item.get("type", "") or "").strip()
+            hit_hash = str(item.get("hash", "") or "").strip()
+            if hit_type == "paragraph" and hit_hash in scope.paragraph_ids:
+                filtered.append(item)
+            elif hit_type == "episode" and str(item.get("episode_id", "") or "").strip() in scope.episode_ids:
+                filtered.append(item)
+            elif hit_type == "relation":
+                if hit_hash in scope.relation_ids:
+                    filtered.append(item)
+                    continue
+                metadata = coerce_metadata_dict(item.get("metadata"))
+                raw_relation_hashes = metadata.get("relation_hashes", [])
+                if not isinstance(raw_relation_hashes, (list, tuple, set)):
+                    continue
+                relation_hashes = {
+                    str(value or "").strip()
+                    for value in raw_relation_hashes
+                    if str(value or "").strip()
+                }
+                if relation_hashes and relation_hashes <= scope.relation_ids:
+                    filtered.append(item)
+        return filtered
 
     @staticmethod
     def _rank_score_from_item(item: Any) -> float:
@@ -243,12 +417,10 @@ class MemorySearchHitProcessingService(KernelServiceBase):
         if not allowed_chat_ids:
             return True
 
-        metadata = coerce_metadata_dict(paragraph.get("metadata"))
-        if cls._metadata_chat_scope_ids(metadata) & allowed_chat_ids:
+        scope_kind, paragraph_chat_ids = cls._paragraph_scope_identity(paragraph)
+        if scope_kind == "global":
             return True
-
-        source = str(paragraph.get("source", "") or metadata.get("source", "") or "").strip()
-        return any(source == str(cls._chat_source(allowed_chat_id) or "") for allowed_chat_id in allowed_chat_ids)
+        return scope_kind == "chat" and bool(paragraph_chat_ids & allowed_chat_ids)
 
     @classmethod
     def _hit_metadata_matches_chat_scope(cls, hit: Dict[str, Any], allowed_chat_ids: set[str]) -> Optional[bool]:
