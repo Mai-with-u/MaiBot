@@ -192,7 +192,7 @@ def _build_forward_full_text(component: ForwardNodeComponent) -> str:
     forward_lines = ["【合并转发消息:"]
     for node in component.forward_components:
         sender_name = node.user_cardname or node.user_nickname or node.user_id or "未知用户"
-        content = _render_components_inline(node.content) or "[空消息]"
+        content = _render_components_inline(node.content, expand_nested_forwards=True) or "[空消息]"
         forward_lines.append(f"【{sender_name}】: {content}")
     forward_lines.append("】")
     return "\n".join(forward_lines)
@@ -264,12 +264,25 @@ def _build_forward_preview_block(component: ForwardNodeComponent) -> str:
     return "\n".join(preview_lines).strip()
 
 
-def _render_components_inline(components: Sequence[StandardMessageComponents]) -> str:
-    """将组件序列压缩为单行预览文本。"""
+def _render_components_inline(
+    components: Sequence[StandardMessageComponents],
+    *,
+    expand_nested_forwards: bool = False,
+) -> str:
+    """将组件序列压缩为单行文本，并按需递归展开嵌套转发。
+
+    Args:
+        components: 待渲染的消息组件序列。
+        expand_nested_forwards: 是否在完整查看路径中展开嵌套转发；普通预览默认保留
+            ``[转发消息]`` 占位符。
+    """
 
     rendered_parts: list[str] = []
     for component in components:
         if isinstance(component, ForwardNodeComponent):
+            if expand_nested_forwards:
+                rendered_parts.append(_normalize_inline_text(_build_forward_full_text(component)))
+                continue
             rendered_parts.append("[转发消息]")
             continue
 
