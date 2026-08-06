@@ -107,16 +107,15 @@ type DistributionMetric =
   | 'conversation_score'
   | 'relative_score'
 
-interface ScoreDistributionBucket {
+interface ScoreDistributionPoint {
   score: number
-  range: string
   count: number
   percentage: number
 }
 
 interface ScoreDistribution {
   sample_count: number
-  buckets: ScoreDistributionBucket[]
+  points: ScoreDistributionPoint[]
 }
 
 interface Overview {
@@ -173,11 +172,16 @@ const STRATEGY_NAMES: Record<string, string> = {
 }
 
 const DISTRIBUTION_COLORS = [
-  'var(--chart-1)',
-  'var(--chart-2)',
-  'var(--chart-3)',
-  'var(--chart-4)',
-  'var(--chart-5)',
+  '#e4572e',
+  '#168aad',
+  '#2a9d5b',
+  '#8357c5',
+  '#d94f91',
+  '#d9970b',
+  '#008f95',
+  '#6f9f18',
+  '#d1495b',
+  '#5367d5',
 ]
 
 function scoreWithStdText(
@@ -241,14 +245,21 @@ function ScoreDistributionChart({
       distribution: version.score_distributions?.[metric],
     }))
     .filter((item) => (item.distribution?.sample_count ?? 0) > 0)
-  const buckets = series[0]?.distribution?.buckets ?? []
-  const chartData = buckets.map((bucket, bucketIndex) => {
+  const scores = Array.from(
+    new Set(series.flatMap((item) => item.distribution?.points.map((point) => point.score) ?? []))
+  ).sort((left, right) => left - right)
+  const percentages = series.map(
+    (item) =>
+      new Map(
+        item.distribution?.points.map((point) => [point.score, point.percentage] as const) ?? []
+      )
+  )
+  const chartData = scores.map((score) => {
     const point: Record<string, string | number> = {
-      score: bucket.score,
-      range: bucket.range,
+      score,
     }
-    for (const item of series) {
-      point[item.key] = item.distribution?.buckets[bucketIndex]?.percentage ?? 0
+    for (const [index, item] of series.entries()) {
+      point[item.key] = percentages[index].get(score) ?? 0
     }
     return point
   })
@@ -256,7 +267,26 @@ function ScoreDistributionChart({
   return (
     <div className="bg-muted/15 min-w-0 rounded-xl border p-3 sm:p-4">
       <h3 className="text-sm font-semibold">{title}</h3>
-      <p className="text-muted-foreground mt-1 text-xs">每 5 分一档 · 纵轴为组内样本占比</p>
+      <p className="text-muted-foreground mt-1 text-xs">按实际分值绘制 · 纵轴为组内样本占比</p>
+      {series.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+          {series.map((item) => (
+            <div
+              key={item.key}
+              className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-[11px]"
+            >
+              <span
+                className="h-0.5 w-5 shrink-0 rounded-full"
+                style={{ backgroundColor: item.color }}
+              />
+              <span className="max-w-52 truncate" title={item.label}>
+                {item.label}
+              </span>
+              <span className="shrink-0">({item.distribution?.sample_count ?? 0})</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 h-64">
         {series.length ? (
           <ResponsiveContainer width="100%" height="100%">
@@ -278,9 +308,7 @@ function ScoreDistributionChart({
                 axisLine={false}
               />
               <Tooltip
-                labelFormatter={(_, payload) =>
-                  payload?.[0]?.payload?.range ? `分数 ${payload[0].payload.range}` : ''
-                }
+                labelFormatter={(value) => `分数 ${Number(value).toFixed(1)}`}
                 formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
               />
               {series.map((item) => (
@@ -291,8 +319,8 @@ function ScoreDistributionChart({
                   name={item.label}
                   stroke={item.color}
                   fill={item.color}
-                  fillOpacity={0.08}
-                  strokeWidth={2}
+                  fillOpacity={0.2}
+                  strokeWidth={2.5}
                   dot={false}
                   activeDot={{ r: 3 }}
                 />
@@ -967,30 +995,12 @@ export function ReplyEffectsPage() {
                 </Table>
               </div>
               <div className="border-t p-4 sm:p-5">
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div className="mb-4">
                   <div>
                     <h3 className="text-sm font-semibold">评分分布</h3>
                     <p className="text-muted-foreground mt-1 text-xs">
                       基于当前筛选与合并方式，对实际评分记录分桶
                     </p>
-                  </div>
-                  <div className="flex max-w-4xl flex-wrap justify-end gap-x-4 gap-y-2">
-                    {overview?.versions.map((item, index, items) => (
-                      <div
-                        key={item.name}
-                        className="text-muted-foreground flex items-center gap-1.5 text-xs"
-                      >
-                        <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor:
-                              DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
-                          }}
-                        />
-                        <span>{readablePromptVersionName(item, index, items)}</span>
-                        <span>({item.count})</span>
-                      </div>
-                    ))}
                   </div>
                 </div>
                 <div className="grid min-w-0 gap-4 xl:grid-cols-2">

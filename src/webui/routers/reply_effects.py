@@ -1,6 +1,6 @@
 """MaiSaka 回复效果分析与迁移接口。"""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from difflib import unified_diff
 from io import BytesIO
@@ -431,32 +431,24 @@ def _score_distribution(
     rows: list[MaisakaReplyEffect],
     field_name: str,
 ) -> dict[str, Any]:
-    """按 5 分区间统计真实评分分布，并转换为组内样本占比。"""
+    """按实际分值统计评分分布，并转换为组内样本占比。"""
 
-    bucket_width = 5
-    bucket_count = 100 // bucket_width
-    counts = [0] * bucket_count
     values = [float(value) for row in rows if (value := getattr(row, field_name)) is not None]
     for value in values:
         if not 0 <= value <= 100:
             raise ValueError(f"回复效果分数超出 0～100：field={field_name} value={value}")
-        bucket_index = min(int(value // bucket_width), bucket_count - 1)
-        counts[bucket_index] += 1
 
     sample_count = len(values)
+    counts = Counter(values)
     return {
         "sample_count": sample_count,
-        "buckets": [
+        "points": [
             {
-                "score": bucket_index * bucket_width,
-                "range": (
-                    f"{bucket_index * bucket_width}～"
-                    f"{(bucket_index + 1) * bucket_width}"
-                ),
+                "score": score,
                 "count": count,
                 "percentage": round(count * 100 / sample_count, 2) if sample_count else 0.0,
             }
-            for bucket_index, count in enumerate(counts)
+            for score, count in sorted(counts.items())
         ],
     }
 
