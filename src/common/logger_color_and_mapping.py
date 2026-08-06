@@ -1,10 +1,11 @@
-# 定义模块颜色映射
+from typing import Dict, Optional, Tuple
+
 import itertools
 import os
 import sys
-from typing import Dict, Optional, Tuple
 
 
+# 定义模块颜色映射
 MODULE_COLORS: Dict[str, Tuple[str, Optional[str], bool]] = {
     "sender": ("#005f87", None, False),  # 较暗的蓝色，适合不显眼的日志
     "send_api": ("#005f87", None, False),  # 橙色，适合突出显示
@@ -198,9 +199,12 @@ def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
 
 
 def supports_truecolor() -> bool:
-    # sourcery skip: assign-if-exp, reintroduce-else
-    ct = os.environ.get("COLORTERM", "").lower()
-    if "truecolor" in ct or "24bit" in ct:
+    # Apple 自带终端使用 256 色编码，避免部分 24 位颜色被显示为默认白色。
+    if os.environ.get("TERM_PROGRAM") == "Apple_Terminal":
+        return False
+
+    color_term = os.environ.get("COLORTERM", "").lower()
+    if "truecolor" in color_term or "24bit" in color_term:
         return True
     if "WT_SESSION" in os.environ:
         return True
