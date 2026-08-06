@@ -20,7 +20,7 @@ from .scoring import normalize_text_for_prompt
 
 JudgeRunner = Callable[[str], Awaitable[str]]
 MAX_CONTEXT_ITEMS = 20
-MAX_CONTEXT_CHARS = 12_000
+MAX_PROMPT_CHARS = 12_000
 
 
 async def judge_reply_effect(
@@ -36,10 +36,11 @@ async def judge_reply_effect(
     error = ""
     for attempt in range(2):
         active_prompt = prompt if not error else f"{prompt}\n\n上一次输出校验失败：{error}\n请修正后重新输出完整 JSON。"
+        response_text = await judge_runner(active_prompt)
         try:
-            payload = _loads_json_object(await judge_runner(active_prompt))
+            payload = _loads_json_object(response_text)
             return parse_judge_result(payload, record, candidate_records)
-        except Exception as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             error = str(exc)
             if attempt == 1:
                 raise ValueError(f"回复效果评审连续两次校验失败：{error}") from exc
@@ -47,22 +48,15 @@ async def judge_reply_effect(
 
 
 def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[ReplyEffectRecord]) -> str:
-    context = _format_context(record.context_snapshot, record.reply.target_message_id)
-    candidates = "\n".join(
-        f"- effect_id={item.effect_id}，bot回复={normalize_text_for_prompt(item.reply.reply_text, 1200)}"
-        for item in candidate_records
-    )
-    followups = _format_followups(record.followup_messages)
-    return (
+    instruction = (
         "你是 MaiSaka 群聊回复效果评审器。不得使用关键词机械判断，只根据完整语境进行语义归因。\n"
         "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 effect_id。\n"
         "显式引用关系已经由程序锁定，你不得删除，可在有充分证据时补充其他关联。\n"
         "评价必须拆成两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"
         "对话题或第三方的负面喜好不等于反感 bot；指出 bot 的事实错误使用 factual_correction + advance；"
-        "针对 bot 的厌烦或攻击使用 bot_attack + wrong_push。\n\n"
-        f"评论前上下文：\n{context or '（无）'}\n\n"
-        f"候选 bot 评论：\n{candidates}\n\n"
-        f"后续用户消息：\n{followups or '（无）'}\n\n"
+        "针对 bot 的厌烦或攻击使用 bot_attack + wrong_push。"
+    )
+    output_contract = (
         "策略 primary 只能是 answer/opinion/empathy/humor/question/topic_start/acknowledgement/other；"
         "secondary 也只能使用这些值。\n"
         "stance_target 只能是 topic_or_third_party/bot_content/bot_persona。\n"
@@ -77,6 +71,34 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         '"contribution": "advance", "reason": "...", "evidence_spans": ["..."], "confidence": 0.8}]}]\n'
         "}"
     )
+    section_template = (
+        "{instruction}\n\n"
+        "评论前上下文：\n{context}\n\n"
+        "候选 bot 评论：\n{candidates}\n\n"
+        "后续用户消息：\n{followups}\n\n"
+        "{output_contract}"
+    )
+    fixed_length = len(
+        section_template.format(
+            instruction=instruction,
+            context="（无）",
+            candidates="（无）",
+            followups="（无）",
+            output_contract=output_contract,
+        )
+    )
+    content_budget = max(0, MAX_PROMPT_CHARS - fixed_length)
+    context_budget = int(content_budget * 0.25)
+    candidate_budget = int(content_budget * 0.35)
+    followup_budget = content_budget - context_budget - candidate_budget
+    prompt = section_template.format(
+        instruction=instruction,
+        context=_format_context(record.context_snapshot, record.reply.target_message_id, context_budget) or "（无）",
+        candidates=_format_candidates(candidate_records, candidate_budget) or "（无）",
+        followups=_format_followups(record.followup_messages, followup_budget) or "（无）",
+        output_contract=output_contract,
+    )
+    return prompt
 
 
 def parse_judge_result(
@@ -150,37 +172,68 @@ def parse_judge_result(
     return primary, list(dict.fromkeys(secondary)), strategy_confidence, parsed
 
 
-def _format_context(context_snapshot: list[dict[str, Any]], target_message_id: str) -> str:
+def _format_context(context_snapshot: list[dict[str, Any]], target_message_id: str, max_chars: int) -> str:
     selected = context_snapshot[-MAX_CONTEXT_ITEMS:]
     target_item = next(
         (item for item in context_snapshot if str(item.get("message_id") or "") == target_message_id),
         None,
     )
-    if target_item is not None and target_item not in selected:
-        selected = [target_item, *selected[-(MAX_CONTEXT_ITEMS - 1) :]]
+    if target_item is not None:
+        selected = [target_item, *(item for item in selected if item is not target_item)]
+        selected = selected[:MAX_CONTEXT_ITEMS]
     lines: list[str] = []
     used = 0
     for item in selected:
         line = (
             f"[{item.get('timestamp', '')}] role={item.get('role', '')} source={item.get('source', '')} "
-            f"message_id={item.get('message_id', '')}: {normalize_text_for_prompt(str(item.get('text') or ''), 800)}"
+            f"message_id={item.get('message_id', '')}: {normalize_text_for_prompt(str(item.get('text') or ''), 300)}"
         )
-        if used + len(line) > MAX_CONTEXT_CHARS:
+        if used + len(line) + 1 > max_chars:
             break
         lines.append(line)
-        used += len(line)
+        used += len(line) + 1
     return "\n".join(lines)
 
 
-def _format_followups(followups: list[FollowupMessageSnapshot]) -> str:
+def _format_candidates(candidate_records: Sequence[ReplyEffectRecord], max_chars: int) -> str:
+    if not candidate_records or max_chars <= 0:
+        return ""
+    line_prefixes = [f"- effect_id={item.effect_id}，bot回复=" for item in candidate_records]
+    fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
+    text_limit = max(1, (max_chars - fixed_chars) // len(candidate_records))
     lines: list[str] = []
+    used = 0
+    for prefix, item in zip(line_prefixes, candidate_records, strict=True):
+        line = f"{prefix}{normalize_text_for_prompt(item.reply.reply_text, text_limit)}"
+        remaining = max_chars - used
+        if remaining <= 0:
+            break
+        lines.append(line[:remaining])
+        used += len(lines[-1]) + 1
+    return "\n".join(lines)
+
+
+def _format_followups(followups: list[FollowupMessageSnapshot], max_chars: int) -> str:
+    if not followups or max_chars <= 0:
+        return ""
+    line_prefixes: list[str] = []
     for item in followups:
         locked = [association.effect_id for association in item.associations if association.attribution_type == "explicit_quote"]
-        lines.append(
+        line_prefixes.append(
             f"- message_id={item.message_id} user_id={item.user_id} latency={item.latency_seconds}s "
-            f"reply_to={item.reply_to or '-'} quotes={item.quote_target_ids} candidates={item.candidate_effect_ids} "
-            f"locked={locked}: {normalize_text_for_prompt(item.visible_text or item.plain_text, 700)}"
+            f"reply_to={item.reply_to or '-'} quotes={item.quote_target_ids} locked={locked}: "
         )
+    fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
+    text_limit = max(1, (max_chars - fixed_chars) // len(followups))
+    lines: list[str] = []
+    used = 0
+    for prefix, item in zip(line_prefixes, followups, strict=True):
+        line = f"{prefix}{normalize_text_for_prompt(item.visible_text or item.plain_text, text_limit)}"
+        remaining = max_chars - used
+        if remaining <= 0:
+            break
+        lines.append(line[:remaining])
+        used += len(lines[-1]) + 1
     return "\n".join(lines)
 
 

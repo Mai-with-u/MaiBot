@@ -243,16 +243,13 @@ class MaisakaExpressionSelector:
         if expression_intent_block:
             query_parts.append(expression_intent_block)
 
-        guide_parts: List[str] = []
+        reference_parts: List[str] = []
         if isinstance(reply_tool_args, dict):
-            reply_guide = str(reply_tool_args.get("reply_guide") or "").strip()
-            if reply_guide:
-                guide_parts.append(f"回复指引：\n{reply_guide}")
-            reference_info = str(reply_tool_args.get("reference_info") or "").strip()
-            if reference_info:
-                guide_parts.append(f"关键信息参考：\n{reference_info}")
-        if guide_parts:
-            query_parts.extend(guide_parts)
+            reply_reference = str(reply_tool_args.get("reply_reference") or "").strip()
+            if reply_reference:
+                reference_parts.append(f"回复信息参考：\n{reply_reference}")
+        if reference_parts:
+            query_parts.extend(reference_parts)
         else:
             normalized_reply_reason = str(reply_reason or "").strip()
             if normalized_reply_reason:

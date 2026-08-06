@@ -567,36 +567,36 @@ class BaseMaisakaReplyGenerator:
 
     def _build_reply_instruction(self) -> str:
         return (
-            "请优先依据【回复信息参考】中的回复指引和关键信息；只有缺少这些信息时，"
-            "才结合当前思考和聊天记录判断。请自然地回复。不要输出多余说明、括号、@ 或额外标记，"
-            "只输出实际要发送的内容。"
+            "请自然地回复。不要输出多余说明、括号、@ 或额外标记，"
+            "只输出实际要发言的内容。"
         )
 
     @staticmethod
-    def _build_reply_reference_lines(reply_reason: str, reply_guide: str, reference_info: str) -> List[str]:
-        """构建 replyer 的信息参考块，优先使用显式指引和关键信息。"""
+    def _build_reply_reference_lines(reply_reason: str, reply_reference: str) -> List[str]:
+        """构建 replyer 的信息参考块，优先使用显式参考信息。"""
 
-        normalized_reply_guide = reply_guide.strip()
-        normalized_reference_info = reference_info.strip()
-        if normalized_reply_guide or normalized_reference_info:
-            reference_lines: List[str] = []
-            if normalized_reply_guide:
-                reference_lines.append(f"回复指引：\n{normalized_reply_guide}")
-            if normalized_reference_info:
-                reference_lines.append(f"关键信息参考：\n{normalized_reference_info}")
-            return reference_lines
+        normalized_reply_reference = reply_reference.strip()
+        if normalized_reply_reference:
+            return [normalized_reply_reference]
 
         normalized_reply_reason = reply_reason.strip()
         if normalized_reply_reason:
             return [f"当前思考：\n{normalized_reply_reason}"]
         return []
 
+    @classmethod
+    def _build_reply_reference_message(cls, reply_reason: str, reply_reference: str) -> str:
+        """构建独立的回复信息参考消息。"""
+
+        reference_lines = cls._build_reply_reference_lines(reply_reason, reply_reference)
+        if not reference_lines:
+            return ""
+        return "\n\n".join(reference_lines)
+
     def _build_final_user_message(
         self,
         chat_history: List[LLMContextMessage],
         reply_message: Optional[SessionMessage],
-        reply_reason: str,
-        reply_guide: str = "",
         reply_requirements: str = "",
         keywords_reaction_prompt: str = "",
         reply_tool_args: Optional[Dict[str, Any]] = None,
@@ -611,13 +611,6 @@ class BaseMaisakaReplyGenerator:
         ).strip()
         if duplicate_target_reply_reminder:
             sections.append(duplicate_target_reply_reminder)
-        reply_reference_lines = self._build_reply_reference_lines(
-            reply_reason=reply_reason,
-            reply_guide=reply_guide,
-            reference_info=str((reply_tool_args or {}).get("reference_info") or ""),
-        )
-        if reply_reference_lines:
-            sections.append("【回复信息参考】\n" + "\n\n".join(reply_reference_lines))
         if reply_requirements.strip():
             sections.append(reply_requirements.strip())
         if keywords_reaction_prompt.strip():
@@ -638,6 +631,20 @@ class BaseMaisakaReplyGenerator:
         if not normalized_reply_style:
             return ""
         return f"你的说话风格可以尝试：\n{normalized_reply_style}"
+
+    @staticmethod
+    def _build_requested_reply_style_message(reply_style: str) -> str:
+        """根据 reply 工具参数构建本次回复的篇幅要求。"""
+
+        style_messages = {
+            "简短表达": "请简短的回复，允许句子残缺，奇怪表达，倒装，省略，符合口语习惯，符合省力随意回复习惯",
+            "正常回复": "",
+            "长回复": "可以针对问题做出较为详细的评论和说明",
+        }
+        normalized_reply_style = reply_style.strip()
+        if not normalized_reply_style:
+            return ""
+        return style_messages[normalized_reply_style]
 
     def _build_history_messages(
         self,
@@ -699,13 +706,18 @@ class BaseMaisakaReplyGenerator:
         final_user_message = self._build_final_user_message(
             chat_history=chat_history,
             reply_message=reply_message,
-            reply_reason=reply_reason,
-            reply_guide=str((reply_tool_args or {}).get("reply_guide") or ""),
             reply_requirements=reply_requirements,
             keywords_reaction_prompt=keywords_reaction_prompt,
             reply_tool_args=reply_tool_args,
         )
         temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
+        reply_reference_message = self._build_reply_reference_message(
+            reply_reason,
+            str((reply_tool_args or {}).get("reply_reference") or ""),
+        )
+        requested_reply_style_message = self._build_requested_reply_style_message(
+            str((reply_tool_args or {}).get("reply_style") or "")
+        )
 
         items.append(ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt).build())
         items.extend(self._build_history_messages(chat_history, enable_visual_message))
@@ -717,7 +729,13 @@ class BaseMaisakaReplyGenerator:
             items.append(
                 ContextItemBuilder().set_role(RoleType.User).add_text_content(temporary_reply_style_message).build()
             )
+        if reply_reference_message:
+            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(reply_reference_message).build())
         items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(final_user_message).build())
+        if requested_reply_style_message:
+            items.append(
+                ContextItemBuilder().set_role(RoleType.User).add_text_content(requested_reply_style_message).build()
+            )
         if enable_visual_message:
             return limit_latest_images_in_messages(
                 items,

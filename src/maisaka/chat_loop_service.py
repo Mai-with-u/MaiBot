@@ -72,6 +72,7 @@ REQUEST_TYPE_BY_REQUEST_KIND = {
 }
 MODEL_TASK_NAME_BY_REQUEST_KIND: dict[str, str] = {
     "expression_selector": "expression_use",
+    "reply_effect_judge": "utils",
 }
 PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "planner": "planner",

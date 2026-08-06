@@ -1,9 +1,10 @@
 /* eslint-disable react-refresh/only-export-components -- Replay 编辑组件需与其 Item 编辑工厂共同导出。 */
 
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Plus, Trash2, X } from 'lucide-react'
+import { Braces, FileText, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CodeEditor } from '@/components/CodeEditor'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -137,6 +138,108 @@ export function parseEditableReplayItems(items: EditableReplayItem[]): ContextIt
   })
 }
 
+type ReplayTextPart = {
+  index: number
+  text: string
+}
+
+export function getReplayTextParts(jsonText: string): ReplayTextPart[] {
+  try {
+    const parsed = JSON.parse(jsonText) as unknown
+    if (!isRecord(parsed) || !Array.isArray(parsed.parts)) return []
+    return parsed.parts.flatMap((part, index) =>
+      isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+        ? [{ index, text: part.text }]
+        : []
+    )
+  } catch {
+    return []
+  }
+}
+
+export function updateReplayTextPart(jsonText: string, partIndex: number, text: string): string {
+  const parsed = JSON.parse(jsonText) as unknown
+  if (!isRecord(parsed) || !Array.isArray(parsed.parts) || !isRecord(parsed.parts[partIndex])) {
+    throw new Error('无法更新正文：Item 的 parts 结构无效')
+  }
+  const parts = parsed.parts.map((part, index) =>
+    index === partIndex && isRecord(part) ? { ...part, text } : part
+  )
+  return JSON.stringify({ ...parsed, parts }, null, 2)
+}
+
+function ReplayItemBodyEditor({
+  item,
+  updateItem,
+}: {
+  item: EditableReplayItem
+  updateItem: (id: string, patch: Partial<EditableReplayItem>) => void
+}) {
+  const [showJson, setShowJson] = useState(false)
+  const textParts = getReplayTextParts(item.jsonText)
+  const hasReadableText = textParts.length > 0
+
+  const updateJsonText = (jsonText: string) => {
+    const itemTypeMatch = jsonText.match(/"item_type"\s*:\s*"([^"]+)"/)
+    updateItem(item.id, {
+      jsonText,
+      ...(itemTypeMatch ? { itemType: itemTypeMatch[1] } : {}),
+    })
+  }
+
+  return (
+    <div className="space-y-3">
+      {hasReadableText && !showJson ? (
+        <div className="space-y-3">
+          {textParts.map((part, textIndex) => (
+            <div key={part.index} className="space-y-1.5">
+              <Label className="text-muted-foreground text-xs">
+                {textParts.length > 1 ? `正文 ${textIndex + 1}` : '正文'}
+              </Label>
+              <Textarea
+                value={part.text}
+                onChange={(event) => {
+                  updateJsonText(
+                    updateReplayTextPart(item.jsonText, part.index, event.target.value)
+                  )
+                }}
+                minHeight={180}
+                maxHeight={560}
+                className="text-sm leading-6"
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <CodeEditor
+          value={item.jsonText}
+          onChange={updateJsonText}
+          language="json"
+          height="clamp(220px, 42vh, 560px)"
+          minHeight="220px"
+          maxHeight="560px"
+          className="text-xs"
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {hasReadableText && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setShowJson((current) => !current)}
+          >
+            {showJson ? <FileText className="h-3.5 w-3.5" /> : <Braces className="h-3.5 w-3.5" />}
+            {showJson ? '正文编辑' : 'JSON 编辑'}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function formatReplayTokenSummary(result: ReasoningReplayResponse): string {
   const parts = [
     `输入 ${result.prompt_tokens}`,
@@ -220,19 +323,7 @@ export function ReplayItemEditorColumn({
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
-                <Textarea
-                  value={item.jsonText}
-                  onChange={(event) => {
-                    const itemTypeMatch = event.target.value.match(/"item_type"\s*:\s*"([^"]+)"/)
-                    updateItem(item.id, {
-                      jsonText: event.target.value,
-                      ...(itemTypeMatch ? { itemType: itemTypeMatch[1] } : {}),
-                    })
-                  }}
-                  minHeight={220}
-                  maxHeight={560}
-                  className="font-mono text-xs leading-5"
-                />
+                <ReplayItemBodyEditor item={item} updateItem={updateItem} />
               </section>
             ))
           )}

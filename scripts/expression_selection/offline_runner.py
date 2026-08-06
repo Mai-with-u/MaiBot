@@ -198,9 +198,9 @@ def build_reply_tool_args(sample: dict[str, Any]) -> dict[str, Any]:
     """从样本中恢复 reply 工具参数。"""
 
     reply_tool_args: dict[str, Any] = {}
-    reply_guide = str(sample.get("reply_guide") or "").strip()
-    if reply_guide:
-        reply_tool_args["reply_guide"] = reply_guide
+    reply_reference = str(sample.get("reply_reference") or "").strip()
+    if reply_reference:
+        reply_tool_args["reply_reference"] = reply_reference
     expression_intent = sample.get("expression_intent")
     if isinstance(expression_intent, dict) and expression_intent:
         reply_tool_args["expression_intent"] = expression_intent

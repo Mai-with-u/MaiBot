@@ -15,6 +15,7 @@ class ReplyEffectStatus(str, Enum):
     """回复效果记录状态。"""
 
     PENDING = "pending"
+    EVALUATING = "evaluating"
     FINALIZED = "finalized"
     EVALUATION_FAILED = "evaluation_failed"
 
@@ -61,6 +62,7 @@ class ReplySnapshot:
     planner_reasoning: str
     sent_message_ids: List[str] = field(default_factory=list)
     model_name: str = ""
+    request_fingerprint: str = ""
     prompt_fingerprint: str = ""
     strategy_primary: str = "other"
     strategy_secondary: List[str] = field(default_factory=list)

@@ -1,9 +1,10 @@
 """回复效果独立 JSON 存储。"""
 
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
 
+import gzip
 import json
 import time
 
@@ -11,9 +12,15 @@ from sqlmodel import col, select
 
 from src.common.database.database import get_db_session
 from src.common.database.database_model import MaisakaReplyEffect
+from src.common.reply_effect_record_codec import decode_record_payload, encode_record_payload
 
-from .models import ReplyEffectRecord, reply_effect_record_from_dict
+from .models import ReplyEffectRecord, ReplyEffectStatus, reply_effect_record_from_dict
 from .path_utils import BASE_DIR, build_reply_effect_chat_dir, normalize_preview_name
+
+LEGACY_RETRYABLE_EVALUATION_ERRORS = {
+    "回复效果评审连续两次校验失败：Connection error.",
+    "回复效果评审连续两次校验失败：Request timed out.",
+}
 
 
 class ReplyEffectStorage:
@@ -36,7 +43,7 @@ class ReplyEffectStorage:
         chat_dir.mkdir(parents=True, exist_ok=True)
         timestamp_ms = int(time.time() * 1000)
         safe_effect_id = record.effect_id.replace("-", "")
-        file_path = chat_dir / f"{timestamp_ms}_{safe_effect_id}.json"
+        file_path = chat_dir / f"{timestamp_ms}_{safe_effect_id}.json.gz"
         record.file_path = file_path
         self.save_record(record)
         self._trim_overflow(chat_dir)
@@ -52,9 +59,14 @@ class ReplyEffectStorage:
         file_path = record.file_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = file_path.with_name(f".{file_path.name}.tmp")
-        temp_path.write_text(
-            json.dumps(record.to_json_dict(), ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
+        serialized = json.dumps(
+            record.to_json_dict(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        temp_path.write_bytes(
+            gzip.compress(serialized, compresslevel=9, mtime=0),
         )
         temp_path.replace(file_path)
         self._save_database_summary(record)
@@ -70,7 +82,59 @@ class ReplyEffectStorage:
         records: List[ReplyEffectRecord] = []
         for row in rows:
             try:
-                payload = json.loads(row.record_json)
+                payload = decode_record_payload(row.record_json, row.record_blob)
+                if int(payload.get("schema_version", 0)) != 2:
+                    continue
+                records.append(reply_effect_record_from_dict(payload))
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return records
+
+    def load_unfinished_records(self, session_id: str) -> List[ReplyEffectRecord]:
+        """读取待结算记录，并恢复旧版本错误重试造成的瞬时失败。"""
+
+        recoverable_statuses = {"pending", "evaluating", "evaluation_failed"}
+        with get_db_session(auto_commit=False) as session:
+            rows = session.exec(
+                select(MaisakaReplyEffect)
+                .where(
+                    MaisakaReplyEffect.session_id == session_id,
+                    col(MaisakaReplyEffect.status).in_(recoverable_statuses),
+                )
+                .order_by(col(MaisakaReplyEffect.created_at).asc())
+            ).all()
+
+        records: List[ReplyEffectRecord] = []
+        for row in rows:
+            try:
+                payload = decode_record_payload(row.record_json, row.record_blob)
+                if int(payload.get("schema_version", 0)) != 2:
+                    continue
+                record = reply_effect_record_from_dict(payload)
+                if (
+                    record.status == ReplyEffectStatus.EVALUATION_FAILED
+                    and record.evaluation_error not in LEGACY_RETRYABLE_EVALUATION_ERRORS
+                ):
+                    continue
+                record.file_path = self._find_record_file(record)
+                records.append(record)
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return records
+
+    def load_records_by_ids(self, effect_ids: set[str]) -> List[ReplyEffectRecord]:
+        """加载恢复评审仍会引用的候选记录。"""
+
+        if not effect_ids:
+            return []
+        with get_db_session(auto_commit=False) as session:
+            rows = session.exec(
+                select(MaisakaReplyEffect).where(col(MaisakaReplyEffect.effect_id).in_(effect_ids))
+            ).all()
+        records: List[ReplyEffectRecord] = []
+        for row in rows:
+            try:
+                payload = decode_record_payload(row.record_json, row.record_blob)
                 if int(payload.get("schema_version", 0)) != 2:
                     continue
                 records.append(reply_effect_record_from_dict(payload))
@@ -99,6 +163,7 @@ class ReplyEffectStorage:
             row.finalized_at = finalized_at
             row.strategy_primary = record.reply.strategy_primary
             row.model_name = record.reply.model_name
+            row.request_fingerprint = record.reply.request_fingerprint
             row.prompt_fingerprint = record.reply.prompt_fingerprint
             row.scorer_version = record.scorer_version
             row.response_score = scores.response_score if scores else None
@@ -107,7 +172,8 @@ class ReplyEffectStorage:
             row.raw_score = scores.raw_score if scores else None
             row.relative_score = scores.relative_score if scores else None
             row.confidence = scores.confidence if scores else 0.0
-            row.record_json = json.dumps(payload, ensure_ascii=False, default=str)
+            row.record_json = "{}"
+            row.record_blob = encode_record_payload(payload)
             session.add(row)
         ReplyEffectStorage._trim_database_records(record.session.session_id)
 
@@ -128,13 +194,39 @@ class ReplyEffectStorage:
     def read_json(file_path: Path) -> Dict[str, object]:
         """读取已保存的 JSON 文件。"""
 
-        return json.loads(file_path.read_text(encoding="utf-8"))
+        if file_path.suffix == ".gz":
+            serialized = gzip.decompress(file_path.read_bytes()).decode("utf-8")
+        else:
+            serialized = file_path.read_text(encoding="utf-8")
+        return json.loads(serialized)
+
+    def _find_record_file(self, record: ReplyEffectRecord) -> Path | None:
+        """定位记录已有的诊断镜像，避免恢复后重复创建 JSON。"""
+
+        chat_dir_name = normalize_preview_name(record.session.platform_type_id)
+        if chat_dir_name == "unknown":
+            chat_dir = build_reply_effect_chat_dir(record.session.session_id, self._base_dir).resolve()
+        else:
+            chat_dir = (self._base_dir / chat_dir_name).resolve()
+        safe_effect_id = record.effect_id.replace("-", "")
+        compressed_file = next(
+            iter(sorted(chat_dir.glob(f"*_{safe_effect_id}.json.gz"), reverse=True)),
+            None,
+        )
+        if compressed_file is not None:
+            return compressed_file
+        return next(iter(sorted(chat_dir.glob(f"*_{safe_effect_id}.json"), reverse=True)), None)
 
     def _trim_overflow(self, chat_dir: Path) -> None:
         """超过容量时删除最旧的回复效果记录。"""
 
         max_records = self._get_max_records_per_chat()
-        files = [file_path for file_path in chat_dir.glob("*.json") if file_path.is_file()]
+        files = [
+            file_path
+            for pattern in ("*.json", "*.json.gz")
+            for file_path in chat_dir.glob(pattern)
+            if file_path.is_file()
+        ]
         if len(files) <= max_records:
             return
 

@@ -29,7 +29,7 @@ from src.learners.behavior_learner import BehaviorLearner
 from src.learners.expression_learner import ExpressionLearner
 from src.learners.jargon_learner import JargonLearner
 from src.learners.jargon_miner import JargonMiner
-from src.llm_models.payload_content.resp_format import RespFormat
+from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 from src.maisaka.builtin_tool.provider import MaisakaBuiltinToolProvider
 from src.maisaka.context.history import drop_leading_orphan_tool_results
@@ -305,6 +305,8 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
         await self._restore_recent_context_from_db()
         self._running = True
+        if self._is_reply_effect_tracking_enabled():
+            await self._reply_effect_tracker.start()
         self._ensure_background_tasks_running()
         self._schedule_message_turn()
         self._update_stage_status("空闲", "等待消息触发")
@@ -474,7 +476,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 self._internal_loop_task = None
 
         if self._is_reply_effect_tracking_enabled():
-            await self._reply_effect_tracker.finalize_all("runtime_stop")
+            await self._reply_effect_tracker.stop()
         focus_mode_manager.release_focus(self.session_id)
         await self._tool_registry.close()
         remove_stage_status(self.session_id)
@@ -1354,20 +1356,23 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         model_task_name: str = "planner",
         response_format: RespFormat | None = None,
         tool_definitions: Optional[Sequence[ToolDefinitionInput]] = None,
+        include_parent_context: bool = True,
     ) -> ChatResponse:
-        """运行一个复制上下文的临时子代理，并在完成后立即销毁。"""
+        """运行一个可选继承父上下文的临时子代理，并在完成后立即销毁。"""
 
-        selected_history, _ = MaisakaChatLoopService.select_llm_context_messages(
-            self._chat_history,
-            request_kind=request_kind,
-            max_context_size=context_message_limit,
-            is_group_chat=self.chat_stream.is_group_session,
-        )
-        sub_agent_history = self._drop_head_context_messages(
-            selected_history,
-            drop_head_context_count,
-            trim_threshold_context_count=context_message_limit,
-        )
+        sub_agent_history: list[LLMContextMessage] = []
+        if include_parent_context:
+            selected_history, _ = MaisakaChatLoopService.select_llm_context_messages(
+                self._chat_history,
+                request_kind=request_kind,
+                max_context_size=context_message_limit,
+                is_group_chat=self.chat_stream.is_group_session,
+            )
+            sub_agent_history = self._drop_head_context_messages(
+                selected_history,
+                drop_head_context_count,
+                trim_threshold_context_count=context_message_limit,
+            )
         if extra_messages:
             sub_agent_history.extend(list(extra_messages))
 
@@ -1432,7 +1437,10 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             system_prompt="你是回复效果评分器。请严格按用户给出的 JSON 格式输出，不要输出 JSON 之外的内容。",
             request_kind="reply_effect_judge",
             extra_messages=[judge_message],
+            model_task_name="utils",
+            response_format=RespFormat(format_type=RespFormatType.JSON_OBJ),
             tool_definitions=[],
+            include_parent_context=False,
         )
         return (response.content or "").strip()
 

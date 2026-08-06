@@ -173,6 +173,7 @@ class MaisakaReplyEffect(SQLModel, table=True):
         Index("ix_reply_effect_session_finalized", "session_id", "finalized_at"),
         Index("ix_reply_effect_strategy_finalized", "strategy_primary", "finalized_at"),
         Index("ix_reply_effect_model_prompt", "model_name", "prompt_fingerprint"),
+        Index("ix_reply_effect_request_fingerprint", "request_fingerprint"),
     )
 
     effect_id: str = Field(primary_key=True, max_length=36)
@@ -184,6 +185,7 @@ class MaisakaReplyEffect(SQLModel, table=True):
     finalized_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True, nullable=True))
     strategy_primary: str = Field(default="other", index=True, max_length=40)
     model_name: str = Field(default="", index=True, max_length=255)
+    request_fingerprint: str = Field(default="", index=True, max_length=64)
     prompt_fingerprint: str = Field(default="", index=True, max_length=64)
     scorer_version: int = Field(default=2, index=True)
     response_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
@@ -193,6 +195,7 @@ class MaisakaReplyEffect(SQLModel, table=True):
     relative_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
     confidence: float = Field(default=0.0, sa_column=Column(Float, nullable=False, server_default="0"))
     record_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
+    record_blob: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary, nullable=True))
 
 
 class OneTimeMaintenanceTask(SQLModel, table=True):
