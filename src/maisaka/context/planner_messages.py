@@ -74,9 +74,9 @@ def build_planner_prefix(
     if is_self_message:
         message_attrs.append('is_self_message="true"')
     if is_at:
-        message_attrs.append('is_at="true"')
+        message_attrs.append("is_at=\"true\"")
     if is_mentioned:
-        message_attrs.append('is_mentioned="true"')
+        message_attrs.append("is_mentioned=\"true\"")
     return f"<message {' '.join(message_attrs)}>\n"
 
 
