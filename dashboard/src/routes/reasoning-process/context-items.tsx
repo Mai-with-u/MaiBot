@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- 本模块同时导出 Item 展示组件及其共享格式化函数。 */
 
-import type { CSSProperties } from 'react'
+import { type CSSProperties, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -23,6 +23,10 @@ import {
 const NATURAL_LANGUAGE_TEXT_STYLE: CSSProperties = {
   fontFamily:
     "'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif",
+}
+
+const ITEM_JSON_PANEL_STYLE: CSSProperties = {
+  backgroundColor: 'var(--retro-paper, hsl(var(--color-background)))',
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -712,6 +716,7 @@ export function ContextItemCard({
   avatarMap: ReasoningPromptMessageAvatarMap
   botSelfNames: Set<string>
 }) {
+  const [itemJsonOpen, setItemJsonOpen] = useState(false)
   const role = getContextItemRole(item)
   const roleStyle = getStructuredPromptMessageRoleStyle(
     role,
@@ -726,49 +731,61 @@ export function ContextItemCard({
 
   return (
     <article
-      className={cn('space-y-2 rounded-md border p-2.5 sm:p-3', roleStyle.containerClassName)}
+      className={cn(
+        'relative space-y-2 rounded-md border p-2.5 sm:p-3',
+        roleStyle.containerClassName
+      )}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <Badge variant="outline">#{index + 1}</Badge>
-        <Badge variant="outline" className={cn('font-mono', roleStyle.badgeClassName)}>
-          {roleStyle.label}
-        </Badge>
-        <span className="text-muted-foreground font-mono text-[11px]">{item.item_type}</span>
-        {item.meta.logical_turn_id && (
-          <Badge
-            variant="outline"
-            className="max-w-48 truncate font-mono text-[10px]"
-            title={item.meta.logical_turn_id}
-          >
-            turn {item.meta.logical_turn_id}
+      <div className="min-w-0 space-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Badge variant="outline">#{index + 1}</Badge>
+          <Badge variant="outline" className={cn('font-mono', roleStyle.badgeClassName)}>
+            {roleStyle.label}
           </Badge>
+          <span className="text-muted-foreground font-mono text-[11px]">{item.item_type}</span>
+          {item.meta.logical_turn_id && (
+            <Badge
+              variant="outline"
+              className="max-w-48 truncate font-mono text-[10px]"
+              title={item.meta.logical_turn_id}
+            >
+              turn {item.meta.logical_turn_id}
+            </Badge>
+          )}
+          {item.phase && <Badge variant="outline">phase: {item.phase}</Badge>}
+          {item.representation && <Badge variant="outline">{item.representation}</Badge>}
+          {item.status && <Badge variant="outline">{item.status}</Badge>}
+        </div>
+
+        {callId && (
+          <div className="text-muted-foreground font-mono text-[11px]">call_id: {callId}</div>
         )}
-        {item.phase && <Badge variant="outline">phase: {item.phase}</Badge>}
-        {item.representation && <Badge variant="outline">{item.representation}</Badge>}
-        {item.status && <Badge variant="outline">{item.status}</Badge>}
-        <span
-          className="text-muted-foreground ml-auto max-w-full truncate font-mono text-[10px]"
-          title={item.meta.item_id}
-        >
-          {item.meta.item_id}
-        </span>
+        {readableText && <NaturalLanguageText text={readableText} avatarMap={avatarMap} />}
+        {toolCalls.length > 0 && <ToolCallsCollapsible toolCalls={toolCalls} />}
+        {item.item_type === 'ProviderActivityItem' && item.details && item.details.length > 0 && (
+          <pre className="bg-muted/20 max-h-64 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+            {item.details.join('\n')}
+          </pre>
+        )}
+        {!readableText && toolCalls.length === 0 && (
+          <p className="text-muted-foreground text-xs">
+            此 Item 没有可见文本；完整字段见 Item JSON。
+          </p>
+        )}
       </div>
 
-      {callId && (
-        <div className="text-muted-foreground font-mono text-[11px]">call_id: {callId}</div>
-      )}
-      {readableText && <NaturalLanguageText text={readableText} avatarMap={avatarMap} />}
-      {toolCalls.length > 0 && <ToolCallsCollapsible toolCalls={toolCalls} />}
-      {item.item_type === 'ProviderActivityItem' && item.details && item.details.length > 0 && (
-        <pre className="bg-muted/20 max-h-64 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-          {item.details.join('\n')}
-        </pre>
-      )}
-      {!readableText && toolCalls.length === 0 && (
-        <p className="text-muted-foreground text-xs">此 Item 没有可见文本；完整字段见下方 JSON。</p>
-      )}
-
-      <Collapsible className="bg-background/50 rounded-md border">
+      <Collapsible
+        open={itemJsonOpen}
+        onOpenChange={setItemJsonOpen}
+        style={ITEM_JSON_PANEL_STYLE}
+        className={cn(
+          'min-w-0 rounded-md border',
+          'lg:absolute lg:top-3 lg:right-3',
+          itemJsonOpen
+            ? 'lg:z-40 lg:w-[min(48%,46rem)] lg:shadow-xl'
+            : 'lg:z-10 lg:w-48 lg:shadow-sm'
+        )}
+      >
         <CollapsibleTrigger asChild>
           <button
             type="button"
@@ -778,8 +795,8 @@ export function ContextItemCard({
             <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
           </button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="border-t">
-          <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
+        <CollapsibleContent className="min-w-0 border-t">
+          <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap lg:max-h-[32rem]">
             {JSON.stringify(item, null, 2)}
           </pre>
         </CollapsibleContent>

@@ -254,7 +254,7 @@ function LlmErrorDetails({ prompt }: { prompt: StructuredPromptPayload }) {
         </dl>
       )}
 
-      <GenerationAttemptTimeline attempts={attempts} />
+      <GenerationAttemptTimeline attempts={attempts} referenceRequestItems={prompt.request_items} />
     </section>
   )
 }
@@ -1604,6 +1604,7 @@ export function ReasoningProcessPage({
 
                                         <GenerationAttemptTimeline
                                           attempts={llmCall.generation_attempts}
+                                          referenceRequestItems={llmCall.request_items}
                                         />
 
                                         <ContextItemTimeline
@@ -1627,6 +1628,7 @@ export function ReasoningProcessPage({
 
                             <GenerationAttemptTimeline
                               attempts={structuredPrompt.generation_attempts}
+                              referenceRequestItems={structuredPrompt.request_items}
                             />
 
                             <ContextItemTimeline

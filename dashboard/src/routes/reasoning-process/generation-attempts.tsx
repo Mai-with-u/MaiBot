@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Code2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type {
+  ContextItemSnapshot,
   GenerationAttemptSnapshot,
   GenerationTraceSnapshot,
 } from '@/lib/reasoning-process-api'
@@ -276,7 +277,34 @@ export function ProviderResponseTimeline({ response }: { response: ProviderRespo
   )
 }
 
-export function GenerationAttemptTimeline({ attempts }: { attempts: GenerationAttemptSnapshot[] }) {
+type RequestItemDiff = {
+  changedOrAdded: ContextItemSnapshot[]
+  removed: ContextItemSnapshot[]
+}
+
+export function getRequestItemDiff(
+  referenceItems: ContextItemSnapshot[],
+  actualItems: ContextItemSnapshot[]
+): RequestItemDiff {
+  const referenceById = new Map(referenceItems.map((item) => [item.meta.item_id, item]))
+  const actualIds = new Set(actualItems.map((item) => item.meta.item_id))
+
+  return {
+    changedOrAdded: actualItems.filter((item) => {
+      const referenceItem = referenceById.get(item.meta.item_id)
+      return !referenceItem || JSON.stringify(referenceItem) !== JSON.stringify(item)
+    }),
+    removed: referenceItems.filter((item) => !actualIds.has(item.meta.item_id)),
+  }
+}
+
+export function GenerationAttemptTimeline({
+  attempts,
+  referenceRequestItems,
+}: {
+  attempts: GenerationAttemptSnapshot[]
+  referenceRequestItems?: ContextItemSnapshot[]
+}) {
   if (attempts.length === 0) {
     return (
       <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-sm">
@@ -285,22 +313,18 @@ export function GenerationAttemptTimeline({ attempts }: { attempts: GenerationAt
     )
   }
 
-  let finalSucceededIndex = -1
-  attempts.forEach((attempt, index) => {
-    if (['succeeded', 'completed'].includes(attempt.status)) finalSucceededIndex = index
-  })
-
   return (
     <section className="space-y-2" aria-label="Generation Attempt 时间线">
       {attempts.map((attempt, index) => {
         const succeeded = ['succeeded', 'completed'].includes(attempt.status)
-        const defaultOpen =
-          index === (finalSucceededIndex >= 0 ? finalSucceededIndex : attempts.length - 1)
+        const requestItemDiff = referenceRequestItems
+          ? getRequestItemDiff(referenceRequestItems, attempt.request_items)
+          : null
+        const requestItemDiffCount = requestItemDiff
+          ? requestItemDiff.changedOrAdded.length + requestItemDiff.removed.length
+          : 0
         return (
-          <Collapsible
-            key={attempt.attempt_id || `${attempt.provider_attempt}-${index}`}
-            defaultOpen={defaultOpen}
-          >
+          <Collapsible key={attempt.attempt_id || `${attempt.provider_attempt}-${index}`}>
             <article className="bg-muted/10 overflow-hidden rounded-md border">
               <CollapsibleTrigger asChild>
                 <button
@@ -361,12 +385,40 @@ export function GenerationAttemptTimeline({ attempts }: { attempts: GenerationAt
                     </div>
                   )}
 
-                  <ContextItemTimeline
-                    title="实际请求 Items"
-                    items={attempt.request_items}
-                    avatarMap={{}}
-                    botSelfNames={new Set<string>()}
-                  />
+                  {requestItemDiff && requestItemDiffCount > 0 && (
+                    <Collapsible>
+                      <div className="overflow-hidden rounded-md border">
+                        <CollapsibleTrigger asChild>
+                          <button
+                            type="button"
+                            className="hover:bg-muted/50 flex w-full items-center gap-2 px-3 py-2 text-left text-sm [&[data-state=open]>svg]:rotate-180"
+                          >
+                            <span className="font-semibold">实际请求差异</span>
+                            <Badge variant="secondary">{requestItemDiffCount} Items</Badge>
+                            <ChevronDown className="text-muted-foreground ml-auto h-4 w-4 transition-transform" />
+                          </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-3 border-t p-3">
+                          {requestItemDiff.changedOrAdded.length > 0 && (
+                            <ContextItemTimeline
+                              title="新增或变更 Items"
+                              items={requestItemDiff.changedOrAdded}
+                              avatarMap={{}}
+                              botSelfNames={new Set<string>()}
+                            />
+                          )}
+                          {requestItemDiff.removed.length > 0 && (
+                            <ContextItemTimeline
+                              title="未进入实际请求的 Items"
+                              items={requestItemDiff.removed}
+                              avatarMap={{}}
+                              botSelfNames={new Set<string>()}
+                            />
+                          )}
+                        </CollapsibleContent>
+                      </div>
+                    </Collapsible>
+                  )}
                   {attempt.tool_definitions.length > 0 && (
                     <ToolDefinitionsCollapsible toolDefinitions={attempt.tool_definitions} />
                   )}
