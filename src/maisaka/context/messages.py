@@ -269,19 +269,19 @@ def _render_components_inline(
     *,
     expand_nested_forwards: bool = False,
 ) -> str:
-    """将组件序列压缩为单行文本，并按需递归展开嵌套转发。
+    """渲染组件序列，并按需递归展开嵌套转发。
 
     Args:
         components: 待渲染的消息组件序列。
-        expand_nested_forwards: 是否在完整查看路径中展开嵌套转发；普通预览默认保留
-            ``[转发消息]`` 占位符。
+        expand_nested_forwards: 是否在完整查看路径中展开嵌套转发并保留其换行；普通预览
+            默认保留 ``[转发消息]`` 占位符并压缩为单行。
     """
 
     rendered_parts: list[str] = []
     for component in components:
         if isinstance(component, ForwardNodeComponent):
             if expand_nested_forwards:
-                rendered_parts.append(_normalize_inline_text(_build_forward_full_text(component)))
+                rendered_parts.append(_build_forward_full_text(component))
                 continue
             rendered_parts.append("[转发消息]")
             continue
