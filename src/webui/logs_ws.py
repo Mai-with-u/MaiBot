@@ -8,7 +8,7 @@ import json
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from src.common.logger import get_logger
-from src.common.logger_color_and_mapping import MODULE_COLORS
+from src.common.logger_color_and_mapping import MODULE_ALIASES, MODULE_COLORS
 from src.webui.core import get_token_manager
 from src.webui.routers.websocket.auth import verify_ws_token
 from src.webui.routers.websocket.manager import websocket_manager
@@ -56,6 +56,9 @@ def _format_log_entry(raw_entry: Dict, log_id: str) -> Dict:
         "message": raw_entry.get("event", ""),
     }
     formatted_log.update(_resolve_module_style(module_name))
+    # 颜色解析必须使用原始模块名（MODULE_COLORS 按 "." 分段匹配原始 key），
+    # 因此别名转换放在颜色解析之后，仅影响前端显示的模块名。
+    formatted_log["module"] = MODULE_ALIASES.get(module_name, module_name)
     return formatted_log
 
 
@@ -187,6 +190,8 @@ async def broadcast_log(log_data: Dict):
     module_name = str(log_data.get("module", ""))
     enriched_log_data = dict(log_data)
     enriched_log_data.update(_resolve_module_style(module_name))
+    # 颜色解析必须使用原始模块名，别名转换放在其后，仅影响前端显示。
+    enriched_log_data["module"] = MODULE_ALIASES.get(module_name, module_name)
     await websocket_manager.broadcast_to_topic(
         domain="logs",
         topic="main",
