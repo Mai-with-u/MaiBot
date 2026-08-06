@@ -501,14 +501,20 @@ class MaisakaExpressionSelector:
                 reply_tool_args,
                 use_expression_intent=self._use_expression_intent(),
             )
-            vector_candidates = await expression_vector_index.select_candidates(
-                index_path=global_config.expression.expression_vector_index_path,
-                session_id=session_id,
-                query_text=expression_query_text,
-                scoped_candidates=all_candidates,
-                candidate_pool_size=global_config.expression.expression_vector_candidate_pool_size,
-                cluster_pool_size=self._VECTOR_CLUSTER_POOL_SIZE,
-            )
+            try:
+                vector_candidates = await expression_vector_index.select_candidates(
+                    index_path=global_config.expression.expression_vector_index_path,
+                    session_id=session_id,
+                    query_text=expression_query_text,
+                    scoped_candidates=all_candidates,
+                    candidate_pool_size=global_config.expression.expression_vector_candidate_pool_size,
+                    cluster_pool_size=self._VECTOR_CLUSTER_POOL_SIZE,
+                )
+            except Exception:
+                logger.exception(
+                    f"表达方式向量候选构建失败，回退随手候选: session_id={session_id}"
+                )
+                return self._sample_legacy_expression_candidates(all_candidates)
             if vector_candidates:
                 logger.debug(
                     f"表达方式向量候选池完成：session_id={session_id} "

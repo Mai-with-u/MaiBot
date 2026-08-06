@@ -750,10 +750,17 @@ class ExpressionLearner:
                 )
             )
 
-        await expression_vector_index.upsert_expressions_and_recluster(
-            index_path=global_config.expression.expression_vector_index_path,
-            expressions=index_items,
-        )
+        try:
+            await expression_vector_index.upsert_expressions(
+                index_path=global_config.expression.expression_vector_index_path,
+                expressions=index_items,
+            )
+        except Exception:
+            # 表达数据库写入是主流程，向量索引是可从数据库重建的派生数据。
+            # 索引同步的系统性错误必须完整记录，但不应把已成功的表达学习改报为失败。
+            logger.exception(
+                f"表达向量索引同步失败，已保留数据库学习结果: count={len(index_items)}"
+            )
 
     def _create_expression(
         self,
