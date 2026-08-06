@@ -37,6 +37,7 @@ const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const DataTransferIcon: MenuIcon = (props) => createElement(HardDrive, props)
 const StatisticsIcon: MenuIcon = (props) => createElement(BarChart3, props)
+const ReplyEffectsIcon: MenuIcon = (props) => createElement(Activity, props)
 
 export const menuSections: MenuSection[] = [
   {
@@ -123,6 +124,11 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.dataTransferDesc',
       },
       { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
+      {
+        icon: ReplyEffectsIcon,
+        label: 'sidebar.menu.replyEffects',
+        path: '/reply-effects',
+      },
       {
         icon: StatisticsIcon,
         label: 'sidebar.menu.statistics',

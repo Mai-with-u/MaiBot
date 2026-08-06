@@ -165,6 +165,36 @@ class MaisakaMonitorEventRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime))
 
 
+class MaisakaReplyEffect(SQLModel, table=True):
+    """可供 WebUI 聚合查询的 MaiSaka 回复效果记录。"""
+
+    __tablename__ = "maisaka_reply_effects"  # type: ignore
+    __table_args__ = (
+        Index("ix_reply_effect_session_finalized", "session_id", "finalized_at"),
+        Index("ix_reply_effect_strategy_finalized", "strategy_primary", "finalized_at"),
+        Index("ix_reply_effect_model_prompt", "model_name", "prompt_fingerprint"),
+    )
+
+    effect_id: str = Field(primary_key=True, max_length=36)
+    session_id: str = Field(index=True, max_length=255)
+    session_name: str = Field(default="", max_length=255)
+    chat_type: str = Field(default="group", index=True, max_length=20)
+    status: str = Field(index=True, max_length=30)
+    created_at: datetime = Field(sa_column=Column(DateTime, index=True))
+    finalized_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True, nullable=True))
+    strategy_primary: str = Field(default="other", index=True, max_length=40)
+    model_name: str = Field(default="", index=True, max_length=255)
+    prompt_fingerprint: str = Field(default="", index=True, max_length=64)
+    scorer_version: int = Field(default=2, index=True)
+    response_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    reception_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    conversation_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    raw_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    relative_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
+    confidence: float = Field(default=0.0, sa_column=Column(Float, nullable=False, server_default="0"))
+    record_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
+
+
 class OneTimeMaintenanceTask(SQLModel, table=True):
     """一次性数据库维护任务状态。"""
 
