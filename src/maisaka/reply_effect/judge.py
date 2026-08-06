@@ -49,9 +49,9 @@ async def judge_reply_effect(
 
 def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[ReplyEffectRecord]) -> str:
     instruction = (
-        "你是 MaiSaka 群聊回复效果评审器。不得使用关键词机械判断，只根据完整语境进行语义归因。\n"
+        "请你评估下面 Bot 回复引起的讨论程度、后续互动和情绪反应。\n"
+        "候选 Bot 回复一定先于与其关联的后续用户消息，请严格按照发送时间判断先后关系。\n"
         "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 effect_id。\n"
-        "显式引用关系已经由程序锁定，你不得删除，可在有充分证据时补充其他关联。\n"
         "评价必须拆成两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"
         "对话题或第三方的负面喜好不等于反感 bot；指出 bot 的事实错误使用 factual_correction + advance；"
         "针对 bot 的厌烦或攻击使用 bot_attack + wrong_push。"
@@ -73,9 +73,9 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
     )
     section_template = (
         "{instruction}\n\n"
-        "评论前上下文：\n{context}\n\n"
-        "候选 bot 评论：\n{candidates}\n\n"
-        "后续用户消息：\n{followups}\n\n"
+        "Bot 回复前的聊天上下文（按发送顺序排列）：\n{context}\n\n"
+        "待评估的 Bot 回复：\n{candidates}\n\n"
+        "Bot 回复后的用户消息（按发送顺序排列）：\n{followups}\n\n"
         "{output_contract}"
     )
     fixed_length = len(
@@ -88,8 +88,8 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         )
     )
     content_budget = max(0, MAX_PROMPT_CHARS - fixed_length)
-    context_budget = int(content_budget * 0.25)
-    candidate_budget = int(content_budget * 0.35)
+    context_budget = int(content_budget * 0.20)
+    candidate_budget = int(content_budget * 0.50)
     followup_budget = content_budget - context_budget - candidate_budget
     prompt = section_template.format(
         instruction=instruction,
@@ -108,6 +108,9 @@ def parse_judge_result(
 ) -> Tuple[str, list[str], float, Dict[str, list[ReplyAssociation]]]:
     candidate_ids = {item.effect_id for item in candidate_records}
     followup_ids = {item.message_id for item in record.followup_messages}
+    allowed_effects_by_message = {
+        item.message_id: set(item.candidate_effect_ids) for item in record.followup_messages
+    }
     locked_effects = {
         item.message_id: {
             association.effect_id
@@ -144,6 +147,10 @@ def parse_judge_result(
             effect_id = str(item.get("effect_id") or "").strip()
             if effect_id not in candidate_ids or effect_id in seen_effects:
                 raise ValueError(f"消息 {message_id} 包含未知或重复候选：{effect_id}")
+            if effect_id not in allowed_effects_by_message[message_id]:
+                raise ValueError(
+                    f"消息 {message_id} 关联了当时尚不存在或已结束观察的 Bot 回复：{effect_id}"
+                )
             seen_effects.add(effect_id)
             evidence_spans = item.get("evidence_spans", [])
             if not isinstance(evidence_spans, list):
@@ -173,20 +180,31 @@ def parse_judge_result(
 
 
 def _format_context(context_snapshot: list[dict[str, Any]], target_message_id: str, max_chars: int) -> str:
-    selected = context_snapshot[-MAX_CONTEXT_ITEMS:]
+    # 评分只需要真实聊天内容，不传入工具结果、内部推理、记忆和黑话注入等运行时信息。
+    conversation_items = [
+        (index, item)
+        for index, item in enumerate(context_snapshot)
+        if str(item.get("source") or "") in {"user", "guided_reply"}
+    ]
+    selected = conversation_items[-MAX_CONTEXT_ITEMS:]
     target_item = next(
-        (item for item in context_snapshot if str(item.get("message_id") or "") == target_message_id),
+        (pair for pair in conversation_items if str(pair[1].get("message_id") or "") == target_message_id),
         None,
     )
-    if target_item is not None:
-        selected = [target_item, *(item for item in selected if item is not target_item)]
-        selected = selected[:MAX_CONTEXT_ITEMS]
+    if target_item is not None and target_item not in selected:
+        selected = [target_item, *selected[-(MAX_CONTEXT_ITEMS - 1) :]]
+        selected.sort(key=lambda pair: pair[0])
     lines: list[str] = []
     used = 0
-    for item in selected:
+    for _, item in selected:
+        source = str(item.get("source") or "")
+        sender = item.get("sender")
+        display_name = str(sender.get("display_name") or "用户") if isinstance(sender, dict) else "用户"
+        speaker = "Bot" if source == "guided_reply" else display_name
+        target_mark = "（触发当前 Bot 回复）" if str(item.get("message_id") or "") == target_message_id else ""
         line = (
-            f"[{item.get('timestamp', '')}] role={item.get('role', '')} source={item.get('source', '')} "
-            f"message_id={item.get('message_id', '')}: {normalize_text_for_prompt(str(item.get('text') or ''), 300)}"
+            f"- [{item.get('timestamp', '')}] {speaker}{target_mark}: "
+            f"{normalize_text_for_prompt(str(item.get('text') or ''), 300)}"
         )
         if used + len(line) + 1 > max_chars:
             break
@@ -198,7 +216,9 @@ def _format_context(context_snapshot: list[dict[str, Any]], target_message_id: s
 def _format_candidates(candidate_records: Sequence[ReplyEffectRecord], max_chars: int) -> str:
     if not candidate_records or max_chars <= 0:
         return ""
-    line_prefixes = [f"- effect_id={item.effect_id}，bot回复=" for item in candidate_records]
+    line_prefixes = [
+        f"- effect_id={item.effect_id} time={item.created_at} Bot: " for item in candidate_records
+    ]
     fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
     text_limit = max(1, (max_chars - fixed_chars) // len(candidate_records))
     lines: list[str] = []
@@ -218,11 +238,21 @@ def _format_followups(followups: list[FollowupMessageSnapshot], max_chars: int) 
         return ""
     line_prefixes: list[str] = []
     for item in followups:
-        locked = [association.effect_id for association in item.associations if association.attribution_type == "explicit_quote"]
-        line_prefixes.append(
-            f"- message_id={item.message_id} user_id={item.user_id} latency={item.latency_seconds}s "
-            f"reply_to={item.reply_to or '-'} quotes={item.quote_target_ids} locked={locked}: "
-        )
+        display_name = item.cardname or item.nickname or "用户"
+        metadata = [f"可关联回复={item.candidate_effect_ids}"]
+        if item.reply_to:
+            metadata.append(f"回复消息={item.reply_to}")
+        if item.quote_target_ids:
+            metadata.append(f"引用消息={item.quote_target_ids}")
+        confirmed_effect_ids = [
+            association.effect_id
+            for association in item.associations
+            if association.attribution_type == "explicit_quote"
+        ]
+        if confirmed_effect_ids:
+            metadata.append(f"已确认关联={confirmed_effect_ids}")
+        metadata_text = f" ({'，'.join(metadata)})"
+        line_prefixes.append(f"- [{item.timestamp}] message_id={item.message_id} {display_name}{metadata_text}: ")
     fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
     text_limit = max(1, (max_chars - fixed_chars) // len(followups))
     lines: list[str] = []

@@ -8,9 +8,9 @@ import {
   MessageCircleReply,
   MessagesSquare,
   RotateCcw,
-  UserRound,
 } from 'lucide-react'
 
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -68,10 +68,12 @@ interface DetailAssociation {
 interface DetailFollowup {
   message_id: string
   timestamp: string
+  user_id?: string
   nickname: string
   cardname: string
   visible_text: string
   reply_to: string
+  avatar_url?: string | null
   associations: DetailAssociation[]
 }
 
@@ -81,6 +83,20 @@ interface ContextMessage {
   role: string
   timestamp: string
   text: string
+  display_text?: string
+  sender?: {
+    user_id?: string
+    nickname?: string
+    cardname?: string
+    display_name?: string
+    platform?: string
+    avatar_url?: string | null
+  }
+}
+
+interface TimelineMessage extends ContextMessage {
+  timeline_kind: 'context' | 'reply' | 'followup'
+  associations?: DetailAssociation[]
 }
 
 interface EffectDetail {
@@ -193,6 +209,147 @@ function strategyName(value: string | undefined) {
   return STRATEGY_NAMES[value ?? ''] ?? value ?? '未分类'
 }
 
+const LEGACY_CONTEXT_MESSAGE_PATTERN =
+  /^(?:\d{2}:\d{2}:\d{2})?(?:\[msg_id:[^\]]+\])?\[([^\]]+)\]([\s\S]*)$/
+
+function getContextMessagePresentation(message: ContextMessage) {
+  const legacyMatch = message.text.match(LEGACY_CONTEXT_MESSAGE_PATTERN)
+  const senderName =
+    message.sender?.display_name ||
+    message.sender?.cardname ||
+    message.sender?.nickname ||
+    legacyMatch?.[1] ||
+    ''
+  return {
+    senderName,
+    text: message.display_text ?? legacyMatch?.[2]?.trim() ?? message.text,
+  }
+}
+
+function contextMessageRoleLabel(message: ContextMessage) {
+  if (message.source === 'evaluated_reply') return '麦麦'
+  if (message.source === 'followup') return '后续'
+  if (message.source === 'user') return '用户'
+  if (message.source === 'guided_reply') return '麦麦'
+  if (message.role === 'reasoning') return '推理'
+  if (message.role === 'assistant') return '助手'
+  return '参考'
+}
+
+function contextMessageStyle(message: ContextMessage) {
+  if (message.source === 'user' || message.source === 'followup') {
+    return 'border-emerald-400/70 bg-emerald-50/45 dark:border-emerald-700 dark:bg-emerald-950/15'
+  }
+  if (message.source === 'guided_reply' || message.source === 'evaluated_reply') {
+    return 'border-orange-400/70 bg-orange-50/45 dark:border-orange-700 dark:bg-orange-950/15'
+  }
+  if (message.role === 'reasoning') {
+    return 'border-indigo-400/70 bg-indigo-50/45 dark:border-indigo-700 dark:bg-indigo-950/15'
+  }
+  return 'border-border bg-card/50'
+}
+
+function contextMessageBadgeStyle(message: ContextMessage) {
+  if (message.source === 'user' || message.source === 'followup') {
+    return 'border-emerald-400/60 bg-emerald-100/70 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100'
+  }
+  if (message.source === 'guided_reply' || message.source === 'evaluated_reply') {
+    return 'border-orange-400/60 bg-orange-100/70 text-orange-900 dark:border-orange-700 dark:bg-orange-950 dark:text-orange-100'
+  }
+  if (message.role === 'reasoning') {
+    return 'border-indigo-400/60 bg-indigo-100/70 text-indigo-900 dark:border-indigo-700 dark:bg-indigo-950 dark:text-indigo-100'
+  }
+  return 'bg-background/80'
+}
+
+function avatarFallbackText(displayName: string, userId = '') {
+  const normalizedName = displayName.trim()
+  if (normalizedName) return normalizedName.slice(0, 1).toUpperCase()
+  const normalizedUserId = userId.trim()
+  return normalizedUserId ? normalizedUserId.slice(-2) : '用'
+}
+
+function ContextMessageRow({ message, isTarget }: { message: TimelineMessage; isTarget: boolean }) {
+  const { senderName, text } = getContextMessagePresentation(message)
+  const showAvatar = Boolean(senderName || message.sender?.avatar_url)
+
+  return (
+    <article
+      className={cn(
+        'border-l-2 px-3 py-3 sm:px-4',
+        contextMessageStyle(message),
+        isTarget && 'ring-primary/35 ring-1 ring-inset'
+      )}
+    >
+      <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        {showAvatar && (
+          <Avatar className="bg-background h-6 w-6 shrink-0 border">
+            {message.sender?.avatar_url && (
+              <AvatarImage src={message.sender.avatar_url} alt={`${senderName} 的头像`} />
+            )}
+            <AvatarFallback className="text-[10px]">
+              {avatarFallbackText(senderName, message.sender?.user_id)}
+            </AvatarFallback>
+          </Avatar>
+        )}
+        {senderName && <span className="truncate text-xs font-medium">{senderName}</span>}
+        <Badge
+          variant="outline"
+          className={cn('h-5 px-1.5 text-[10px]', contextMessageBadgeStyle(message))}
+        >
+          {contextMessageRoleLabel(message)}
+        </Badge>
+        {isTarget && <Badge className="h-5 px-1.5 text-[10px]">目标消息</Badge>}
+        {message.timeline_kind === 'reply' && (
+          <Badge className="h-5 px-1.5 text-[10px]">本次回复</Badge>
+        )}
+        {message.timestamp && (
+          <span className="text-muted-foreground text-[11px] tabular-nums">
+            {new Date(message.timestamp).toLocaleString()}
+          </span>
+        )}
+      </div>
+      <p className="line-clamp-6 text-sm leading-6 whitespace-pre-wrap">{text || '空消息'}</p>
+      {message.timeline_kind === 'followup' &&
+        (message.associations?.length ? (
+          <div className="mt-3 space-y-2 border-t pt-3">
+            {message.associations.map((association, index) => (
+              <div
+                key={`${association.effect_id}-${index}`}
+                className="bg-muted/35 rounded-md p-3 text-xs"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">
+                    {STANCE_TARGET_NAMES[association.stance_target] ?? association.stance_target}
+                  </Badge>
+                  <Badge variant="outline">
+                    {STANCE_NAMES[association.stance] ?? association.stance}
+                  </Badge>
+                  <Badge variant="outline">
+                    {CONTRIBUTION_NAMES[association.contribution] ?? association.contribution}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    归因 {confidenceText(association.attribution_confidence)}
+                  </span>
+                </div>
+                {association.reason && <p className="mt-2 leading-5">{association.reason}</p>}
+                {association.evidence_spans.length > 0 && (
+                  <p className="text-muted-foreground mt-1 leading-5">
+                    证据：{association.evidence_spans.join('；')}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-muted-foreground mt-3 border-t pt-2 text-xs">
+            评审未将这条消息关联到本次回复
+          </div>
+        ))}
+    </article>
+  )
+}
+
 function StatusBadge({ status }: { status: string }) {
   return (
     <Badge
@@ -232,6 +389,40 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
     }
     return recentMessages
   }, [detail.context_snapshot, targetMessageId])
+  const timelineMessages = useMemo<TimelineMessage[]>(() => {
+    const messages: TimelineMessage[] = contextMessages.map((message) => ({
+      ...message,
+      timeline_kind: 'context',
+    }))
+    messages.push({
+      message_id: `effect:${detail.effect_id}`,
+      source: 'evaluated_reply',
+      role: 'assistant',
+      timestamp: detail.created_at,
+      text: detail.reply?.reply_text || '无可见回复文本',
+      sender: { display_name: 'Bot' },
+      timeline_kind: 'reply',
+    })
+    for (const followup of detail.followup_messages ?? []) {
+      messages.push({
+        message_id: followup.message_id,
+        source: 'followup',
+        role: 'user',
+        timestamp: followup.timestamp,
+        text: followup.visible_text || '无可见文本',
+        sender: {
+          user_id: followup.user_id,
+          nickname: followup.nickname,
+          cardname: followup.cardname,
+          display_name: followup.cardname || followup.nickname || '未知用户',
+          avatar_url: followup.avatar_url,
+        },
+        timeline_kind: 'followup',
+        associations: followup.associations,
+      })
+    }
+    return messages
+  }, [contextMessages, detail.created_at, detail.effect_id, detail.followup_messages, detail.reply])
   const scores = detail.scores
 
   return (
@@ -245,9 +436,6 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
               <span>{detail.reply?.model_name || '未记录模型'}</span>
               <span>评分器 v{detail.scorer_version}</span>
             </div>
-            <p className="mt-3 text-base leading-7 whitespace-pre-wrap">
-              {detail.reply?.reply_text || '无可见回复文本'}
-            </p>
           </div>
           <StatusBadge status={detail.status} />
         </div>
@@ -303,124 +491,30 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <MessagesSquare className="text-primary h-4 w-4" />
-            <h3 className="text-sm font-semibold">评估上下文</h3>
+            <h3 className="text-sm font-semibold">评估对话时间线</h3>
           </div>
           <span className="text-muted-foreground text-xs">
-            展示最近 {contextMessages.length} 条 · 回复前 2 分钟有 {detail.pre_activity_count ?? 0}{' '}
-            条人类消息
+            上下文 {contextMessages.length} 条 / 本次回复 1 条 / 后续{' '}
+            {detail.followup_messages?.length ?? 0} 条 / 关联{' '}
+            {detail.followup_summary?.associated_count ?? 0} 条
           </span>
         </div>
-        <div className="bg-muted/15 max-h-80 space-y-2 overflow-y-auto rounded-xl border p-3">
-          {contextMessages.length ? (
-            contextMessages.map((message, index) => {
-              const isTarget = message.message_id === targetMessageId
-              return (
-                <div
-                  key={`${message.message_id || message.timestamp}-${index}`}
-                  className={cn(
-                    'rounded-lg border px-3 py-2.5 text-sm',
-                    isTarget ? 'border-primary/40 bg-primary/8' : 'bg-card/65'
-                  )}
-                >
-                  <div className="text-muted-foreground mb-1 flex flex-wrap items-center gap-2 text-[11px]">
-                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                      {message.source === 'user'
-                        ? '用户'
-                        : message.role === 'reasoning'
-                          ? '推理'
-                          : 'Bot'}
-                    </Badge>
-                    {isTarget && <Badge className="h-5 px-1.5 text-[10px]">目标消息</Badge>}
-                    {message.timestamp && (
-                      <span>{new Date(message.timestamp).toLocaleString()}</span>
-                    )}
-                  </div>
-                  <p className="line-clamp-6 leading-6 whitespace-pre-wrap">{message.text}</p>
-                </div>
-              )
-            })
-          ) : (
-            <div className="text-muted-foreground py-10 text-center text-sm">未保存上下文</div>
-          )}
-        </div>
-      </section>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <UserRound className="text-primary h-4 w-4" />
-            <h3 className="text-sm font-semibold">后续消息与归因证据</h3>
+        <div className="bg-muted/15 max-h-[36rem] overflow-y-auto rounded-xl border p-2">
+          <div className="space-y-2">
+            {timelineMessages.map((message, index) => (
+              <ContextMessageRow
+                key={`${message.timeline_kind}-${message.message_id || message.timestamp}-${index}`}
+                message={message}
+                isTarget={
+                  message.timeline_kind === 'context' && message.message_id === targetMessageId
+                }
+              />
+            ))}
           </div>
-          <span className="text-muted-foreground text-xs">
-            {detail.followup_summary?.associated_count ?? 0}/
-            {detail.followup_summary?.total_count ?? detail.followup_messages?.length ?? 0} 条关联
-          </span>
         </div>
-        <div className="space-y-3">
-          {detail.followup_messages?.length ? (
-            detail.followup_messages.map((message, messageIndex) => (
-              <div
-                key={`${message.message_id || message.timestamp}-${messageIndex}`}
-                className="rounded-xl border p-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm font-medium">
-                    {message.cardname || message.nickname || '未知用户'}
-                  </div>
-                  <div className="text-muted-foreground text-xs">
-                    {new Date(message.timestamp).toLocaleString()}
-                  </div>
-                </div>
-                <p className="mt-2 text-sm leading-6 whitespace-pre-wrap">
-                  {message.visible_text || '无可见文本'}
-                </p>
-                {message.associations.length ? (
-                  <div className="mt-3 space-y-2 border-t pt-3">
-                    {message.associations.map((association, index) => (
-                      <div
-                        key={`${association.effect_id}-${index}`}
-                        className="bg-muted/30 rounded-lg p-3 text-xs"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">
-                            {STANCE_TARGET_NAMES[association.stance_target] ??
-                              association.stance_target}
-                          </Badge>
-                          <Badge variant="outline">
-                            {STANCE_NAMES[association.stance] ?? association.stance}
-                          </Badge>
-                          <Badge variant="outline">
-                            {CONTRIBUTION_NAMES[association.contribution] ??
-                              association.contribution}
-                          </Badge>
-                          <span className="text-muted-foreground">
-                            归因 {confidenceText(association.attribution_confidence)}
-                          </span>
-                        </div>
-                        {association.reason && (
-                          <p className="mt-2 leading-5">{association.reason}</p>
-                        )}
-                        {association.evidence_spans.length > 0 && (
-                          <p className="text-muted-foreground mt-1 leading-5">
-                            证据：{association.evidence_spans.join('；')}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-muted-foreground mt-3 border-t pt-3 text-xs">
-                    评审未将这条消息关联到当前 Bot 回复
-                  </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="text-muted-foreground rounded-xl border border-dashed py-12 text-center text-sm">
-              尚无后续观察消息
-            </div>
-          )}
-        </div>
+        <p className="text-muted-foreground mt-2 text-xs">
+          回复前 2 分钟有 {detail.pre_activity_count ?? 0} 条人类消息
+        </p>
       </section>
     </div>
   )

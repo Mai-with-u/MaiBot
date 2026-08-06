@@ -1,11 +1,65 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { backendApi } from '@/lib/http'
 
 import { ReplyEffectsPage } from './reply-effects'
+import { ReplyEffectsBrowser } from './reply-effects-browser'
 
-vi.mock('@/lib/http', () => ({ backendApi: { get: vi.fn() } }))
+vi.mock('@/lib/http', () => ({ backendApi: { get: vi.fn(), post: vi.fn() } }))
+
+const versionAggregates = [
+  {
+    name: 'model-a · prompt-a',
+    count: 12,
+    response_score: 52,
+    response_score_std: 8,
+    reception_score: 60,
+    reception_score_std: 7,
+    conversation_score: 50,
+    conversation_score_std: 6,
+    raw_score: 54,
+    raw_score_std: 7,
+    relative_score: 55,
+    relative_score_std: 8,
+    confidence: 0.8,
+    confidence_std: 0.05,
+    model_name: 'model-a',
+    prompt_fingerprint: 'prompt-a',
+    model_names: ['model-a'],
+    prompt_fingerprints: ['prompt-a'],
+    first_seen: '2026-01-01T00:00:00',
+    last_seen: '2026-01-02T00:00:00',
+    collapsed_models: false,
+    collapsed_versions: false,
+    score_distributions: {},
+  },
+  {
+    name: 'model-b · prompt-b',
+    count: 10,
+    response_score: 66,
+    response_score_std: 7,
+    reception_score: 62,
+    reception_score_std: 6,
+    conversation_score: 58,
+    conversation_score_std: 7,
+    raw_score: 62,
+    raw_score_std: 6,
+    relative_score: 64,
+    relative_score_std: 7,
+    confidence: 0.82,
+    confidence_std: 0.04,
+    model_name: 'model-b',
+    prompt_fingerprint: 'prompt-b',
+    model_names: ['model-b'],
+    prompt_fingerprints: ['prompt-b'],
+    first_seen: '2026-01-01T00:00:00',
+    last_seen: '2026-01-02T00:00:00',
+    collapsed_models: false,
+    collapsed_versions: false,
+    score_distributions: {},
+  },
+]
 
 describe('ReplyEffectsPage', () => {
   beforeEach(() => {
@@ -33,7 +87,7 @@ describe('ReplyEffectsPage', () => {
               confidence: 0.8,
             },
           ],
-          versions: [],
+          versions: versionAggregates,
           trend: [],
           filters: { sessions: [['s1', '测试群']], strategies: ['answer'], models: [] },
         }) as never
@@ -49,6 +103,7 @@ describe('ReplyEffectsPage', () => {
           scorer_version: 2,
           session: { session_name: '测试群' },
           reply: {
+            target_message_id: '-1085252920',
             reply_text: '你好',
             model_name: 'test',
             request_fingerprint: 'request123',
@@ -64,7 +119,28 @@ describe('ReplyEffectsPage', () => {
             baseline_sample_size: 0,
             baseline_level: 'insufficient',
           },
-          followup_messages: [],
+          context_snapshot: [
+            {
+              message_id: '-1085252920',
+              source: 'user',
+              role: 'user',
+              timestamp: '2026-08-06T19:51:07',
+              text: '19:51:07[msg_id:-1085252920][花生]怎么操作呀？',
+            },
+          ],
+          followup_messages: [
+            {
+              message_id: 'followup-1',
+              timestamp: '2026-08-06T19:51:15',
+              user_id: '10002',
+              nickname: '明光',
+              cardname: '',
+              visible_text: '应该只有群里有吧',
+              reply_to: '',
+              associations: [],
+            },
+          ],
+          followup_summary: { total_count: 1, associated_count: 0, participant_count: 1 },
         }) as never
       }
       return Promise.resolve({
@@ -90,6 +166,30 @@ describe('ReplyEffectsPage', () => {
         ],
       }) as never
     })
+    vi.mocked(backendApi.post).mockResolvedValue({
+      method: 'two_sided_welch_t_test',
+      alpha: 0.05,
+      left: { name: 'model-a · 版本 1', record_count: 12 },
+      right: { name: 'model-b · 版本 1', record_count: 10 },
+      significant_count: 1,
+      metrics: [
+        {
+          field: 'response_score',
+          label: '回应度',
+          left_count: 12,
+          right_count: 10,
+          left_mean: 52,
+          right_mean: 66,
+          mean_difference: -14,
+          confidence_interval: [-20.2, -7.8],
+          p_value: 0.0123,
+          significant: true,
+          hedges_g: -0.72,
+          sufficient: true,
+          reason: '',
+        },
+      ],
+    } as never)
   })
 
   it('展示分析视图和三维分数', async () => {
@@ -104,5 +204,36 @@ describe('ReplyEffectsPage', () => {
 
     const requestPaths = vi.mocked(backendApi.get).mock.calls.map(([path]) => path)
     expect(requestPaths.find((path) => path.includes('/overview'))).toContain('min_confidence=0.6')
+  })
+
+  it('以结构化消息样式展示评估上下文且不显示消息 ID', async () => {
+    render(<ReplyEffectsBrowser refreshToken={0} />)
+
+    expect(await screen.findByText('花生')).toBeInTheDocument()
+    expect(screen.getByText('评估对话时间线')).toBeInTheDocument()
+    expect(screen.getByText('怎么操作呀？')).toBeInTheDocument()
+    expect(screen.getByText('本次回复')).toBeInTheDocument()
+    expect(screen.getByText('明光')).toBeInTheDocument()
+    expect(screen.getByText('应该只有群里有吧')).toBeInTheDocument()
+    expect(screen.getByText('目标消息')).toBeInTheDocument()
+    expect(screen.queryByText(/msg_id:/)).not.toBeInTheDocument()
+  })
+
+  it('对任意两个版本项目执行显著性检验并展示结论', async () => {
+    render(<ReplyEffectsPage />)
+
+    const compareButton = await screen.findByRole('button', { name: '计算显著性' })
+    fireEvent.click(compareButton)
+
+    expect(await screen.findByText('发现 1 项显著差异')).toBeInTheDocument()
+    expect(screen.getByText('0.0123')).toBeInTheDocument()
+    expect(screen.getByText('显著')).toBeInTheDocument()
+    expect(backendApi.post).toHaveBeenCalledWith('/api/webui/reply-effects/compare', {
+      body: expect.objectContaining({
+        left: expect.objectContaining({ model_names: ['model-a'] }),
+        right: expect.objectContaining({ model_names: ['model-b'] }),
+        min_confidence: 0.6,
+      }),
+    })
   })
 })

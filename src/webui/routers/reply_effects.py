@@ -4,27 +4,30 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from difflib import unified_diff
 from io import BytesIO
-from statistics import pstdev
+from math import isfinite, sqrt
+from statistics import pstdev, variance
 from typing import Any, Optional
-
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+from scipy.stats import t as student_t
+from sqlmodel import col, select
 import gzip
 import json
 import zlib
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import Response
-from sqlmodel import col, select
-
 from src.common.database.database import get_db_session
-from src.common.database.database_model import MaisakaReplyEffect
+from src.common.database.database_model import MaisakaReplyEffect, Messages
 from src.common.reply_effect_fingerprint import (
     extract_generation_fingerprints,
     extract_system_prompt_from_metadata,
 )
 from src.common.reply_effect_record_codec import decode_record_payload
+from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.reply_effect.models import reply_effect_record_from_dict
 from src.maisaka.reply_effect.storage import ReplyEffectStorage
 from src.webui.dependencies import require_auth
+from src.webui.routers.avatar import build_webui_avatar_url
 
 router = APIRouter(prefix="/reply-effects", tags=["reply-effects"], dependencies=[Depends(require_auth)])
 
@@ -32,6 +35,121 @@ _EXPORT_FORMAT = "maibot-reply-effects"
 _EXPORT_FORMAT_VERSION = 1
 _MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
 _MAX_IMPORT_JSON_BYTES = 256 * 1024 * 1024
+_SIGNIFICANCE_ALPHA = 0.05
+_SIGNIFICANCE_METRICS = {
+    "response_score": "回应度",
+    "reception_score": "情感接受度",
+    "conversation_score": "聊天推动度",
+    "raw_score": "原始总分",
+    "relative_score": "相对分",
+}
+
+
+class ReplyEffectComparisonGroup(BaseModel):
+    """版本统计表中的一个可比较项目。"""
+
+    name: str = Field(min_length=1, max_length=300)
+    model_names: list[str] = Field(min_length=1, max_length=200)
+    prompt_fingerprints: list[str] = Field(min_length=1, max_length=200)
+
+
+class ReplyEffectComparisonRequest(BaseModel):
+    """两个模型与 Prompt 聚合项目的显著性对比请求。"""
+
+    left: ReplyEffectComparisonGroup
+    right: ReplyEffectComparisonGroup
+    session_id: str = ""
+    strategy: str = ""
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+
+
+def _load_context_message_rows(message_ids: list[str], session_id: str) -> dict[str, Messages]:
+    """读取上下文消息对应的发送者信息，供详情页复用麦麦推理的头像展示。"""
+
+    normalized_ids = list(dict.fromkeys(message_id for message_id in message_ids if message_id))
+    if not normalized_ids:
+        return {}
+
+    statement = select(Messages).where(col(Messages.message_id).in_(normalized_ids))
+    if session_id:
+        statement = statement.where(Messages.session_id == session_id)
+    with get_db_session(auto_commit=False) as session:
+        rows = session.exec(statement).all()
+    return {str(row.message_id): row for row in rows}
+
+
+def _build_context_snapshot_for_display(payload: dict[str, Any], session_id: str) -> list[dict[str, Any]]:
+    """补齐上下文的纯正文、发送者与头像，同时兼容尚未结构化的旧记录。"""
+
+    context_snapshot = payload.get("context_snapshot")
+    if not isinstance(context_snapshot, list):
+        return []
+
+    message_ids = [
+        str(item.get("message_id") or "").strip()
+        for item in context_snapshot
+        if isinstance(item, dict)
+    ]
+    message_rows = _load_context_message_rows(message_ids, session_id)
+    display_items: list[dict[str, Any]] = []
+    for raw_item in context_snapshot:
+        if not isinstance(raw_item, dict):
+            continue
+
+        item = dict(raw_item)
+        message_id = str(item.get("message_id") or "").strip()
+        raw_text = str(item.get("text") or "")
+        speaker_name, parsed_text = parse_speaker_content(raw_text)
+        item["display_text"] = parsed_text.strip()
+
+        stored_sender = item.get("sender")
+        sender = dict(stored_sender) if isinstance(stored_sender, dict) else {}
+        message_row = message_rows.get(message_id)
+        if message_row is not None:
+            sender.setdefault("user_id", str(message_row.user_id or ""))
+            sender.setdefault("nickname", str(message_row.user_nickname or ""))
+            sender.setdefault("cardname", str(message_row.user_cardname or ""))
+            sender.setdefault("platform", str(message_row.platform or ""))
+
+        display_name = str(
+            sender.get("display_name")
+            or sender.get("cardname")
+            or sender.get("nickname")
+            or speaker_name
+            or ""
+        ).strip()
+        if display_name:
+            sender["display_name"] = display_name
+
+        platform = str(sender.get("platform") or "").strip()
+        user_id = str(sender.get("user_id") or "").strip()
+        sender["avatar_url"] = build_webui_avatar_url(platform, user_id)
+        if any(sender.values()):
+            item["sender"] = sender
+        display_items.append(item)
+    return display_items
+
+
+def _build_followups_for_display(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """为后续消息补齐与上下文消息一致的头像字段。"""
+
+    raw_followups = payload.get("followup_messages")
+    if not isinstance(raw_followups, list):
+        return []
+    session_payload = payload.get("session")
+    platform = str(session_payload.get("platform") or "") if isinstance(session_payload, dict) else ""
+
+    followups: list[dict[str, Any]] = []
+    for raw_followup in raw_followups:
+        if not isinstance(raw_followup, dict):
+            continue
+        followup = dict(raw_followup)
+        user_id = str(followup.get("user_id") or "").strip()
+        followup["avatar_url"] = build_webui_avatar_url(platform, user_id)
+        followups.append(followup)
+    return followups
 
 
 def _filtered_rows(
@@ -185,6 +303,47 @@ async def list_reply_effects(
         "items": [_row_summary(row) for row in selected],
         "next_cursor": cursor + limit if cursor + limit < len(rows) else None,
         "total": len(rows),
+    }
+
+
+@router.post("/compare")
+async def compare_reply_effect_projects(request: ReplyEffectComparisonRequest) -> dict[str, Any]:
+    """对当前筛选范围内的两个版本项目执行双侧 Welch t 检验。"""
+
+    rows = _filtered_rows(
+        session_id=request.session_id,
+        strategy=request.strategy,
+        start_at=request.start_at,
+        end_at=request.end_at,
+        min_confidence=request.min_confidence,
+        finalized_only=True,
+    )
+    left_rows = _select_comparison_rows(rows, request.left)
+    right_rows = _select_comparison_rows(rows, request.right)
+    if not left_rows or not right_rows:
+        raise HTTPException(status_code=400, detail="所选项目在当前筛选范围内没有可比较记录")
+    if {row.effect_id for row in left_rows} == {row.effect_id for row in right_rows}:
+        raise HTTPException(status_code=400, detail="请选择两个不同的项目")
+
+    metrics = []
+    for field_name, label in _SIGNIFICANCE_METRICS.items():
+        left_values = [float(value) for row in left_rows if (value := getattr(row, field_name)) is not None]
+        right_values = [float(value) for row in right_rows if (value := getattr(row, field_name)) is not None]
+        metrics.append(
+            {
+                "field": field_name,
+                "label": label,
+                **_welch_comparison(left_values, right_values, alpha=_SIGNIFICANCE_ALPHA),
+            }
+        )
+
+    return {
+        "method": "two_sided_welch_t_test",
+        "alpha": _SIGNIFICANCE_ALPHA,
+        "left": {"name": request.left.name, "record_count": len(left_rows)},
+        "right": {"name": request.right.name, "record_count": len(right_rows)},
+        "metrics": metrics,
+        "significant_count": sum(metric["significant"] for metric in metrics),
     }
 
 
@@ -353,6 +512,8 @@ async def get_reply_effect_detail(effect_id: str) -> dict[str, Any]:
     reply["request_fingerprint"] = request_fingerprint
     reply["prompt_fingerprint"] = prompt_version_fingerprint
     payload["reply"] = reply
+    payload["context_snapshot"] = _build_context_snapshot_for_display(payload, row.session_id)
+    payload["followup_messages"] = _build_followups_for_display(payload)
     return payload
 
 
@@ -379,6 +540,101 @@ def _row_summary(row: MaisakaReplyEffect) -> dict[str, Any]:
         "confidence": row.confidence,
         "evaluation_error": str(payload.get("evaluation_error") or ""),
     }
+
+
+def _select_comparison_rows(
+    rows: list[MaisakaReplyEffect],
+    group: ReplyEffectComparisonGroup,
+) -> list[MaisakaReplyEffect]:
+    """按模型集合与 Prompt 指纹集合还原版本统计表中的项目。"""
+
+    model_names = set(group.model_names)
+    prompt_fingerprints = set(group.prompt_fingerprints)
+    return [
+        row
+        for row in rows
+        if (row.model_name or "unknown") in model_names
+        and _resolve_row_fingerprints(row)[1] in prompt_fingerprints
+    ]
+
+
+def _welch_comparison(
+    left_values: list[float],
+    right_values: list[float],
+    *,
+    alpha: float,
+) -> dict[str, Any]:
+    """计算双侧 Welch t 检验、均值差置信区间与 Hedges' g。"""
+
+    left_count = len(left_values)
+    right_count = len(right_values)
+    left_mean = sum(left_values) / left_count if left_values else None
+    right_mean = sum(right_values) / right_count if right_values else None
+    mean_difference = (
+        left_mean - right_mean if left_mean is not None and right_mean is not None else None
+    )
+    base_result: dict[str, Any] = {
+        "left_count": left_count,
+        "right_count": right_count,
+        "left_mean": left_mean,
+        "right_mean": right_mean,
+        "mean_difference": mean_difference,
+        "confidence_interval": None,
+        "p_value": None,
+        "significant": False,
+        "hedges_g": None,
+        "sufficient": False,
+        "reason": "",
+    }
+    if left_count < 2 or right_count < 2:
+        base_result["reason"] = "两组都至少需要 2 个有效样本"
+        return base_result
+
+    left_variance = variance(left_values)
+    right_variance = variance(right_values)
+    standard_error_squared = left_variance / left_count + right_variance / right_count
+    assert mean_difference is not None
+    if standard_error_squared == 0:
+        p_value = 1.0 if mean_difference == 0 else 0.0
+        confidence_interval = [mean_difference, mean_difference]
+    else:
+        standard_error = sqrt(standard_error_squared)
+        degrees_of_freedom_denominator = (
+            (left_variance / left_count) ** 2 / (left_count - 1)
+            + (right_variance / right_count) ** 2 / (right_count - 1)
+        )
+        degrees_of_freedom = standard_error_squared**2 / degrees_of_freedom_denominator
+        test_statistic = mean_difference / standard_error
+        p_value = float(2 * student_t.sf(abs(test_statistic), degrees_of_freedom))
+        critical_value = float(student_t.ppf(1 - alpha / 2, degrees_of_freedom))
+        margin = critical_value * standard_error
+        confidence_interval = [mean_difference - margin, mean_difference + margin]
+
+    pooled_variance = (
+        (left_count - 1) * left_variance + (right_count - 1) * right_variance
+    ) / (left_count + right_count - 2)
+    if pooled_variance > 0:
+        cohens_d = mean_difference / sqrt(pooled_variance)
+        correction = 1 - 3 / (4 * (left_count + right_count - 2) - 1)
+        hedges_g: Optional[float] = cohens_d * correction
+    elif mean_difference == 0:
+        hedges_g = 0.0
+    else:
+        hedges_g = None
+
+    if not isfinite(p_value):
+        base_result["reason"] = "样本方差无法支持稳定检验"
+        return base_result
+    base_result.update(
+        {
+            "confidence_interval": confidence_interval,
+            "p_value": p_value,
+            "significant": p_value < alpha,
+            "hedges_g": hedges_g,
+            "sufficient": True,
+        }
+    )
+    return base_result
 
 
 def _aggregate_version_group(

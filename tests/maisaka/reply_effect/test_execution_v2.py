@@ -7,7 +7,9 @@ import json
 
 import pytest
 
+from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.llm_models.payload_content.resp_format import RespFormatType
+from src.maisaka.context.messages import SessionBackedMessage
 from src.maisaka.reply_effect import tracker as tracker_module
 from src.maisaka.reply_effect.judge import MAX_PROMPT_CHARS, build_judge_prompt, judge_reply_effect
 from src.maisaka.reply_effect.models import (
@@ -114,7 +116,7 @@ def test_judge_prompt_has_total_limit_and_keeps_required_ids() -> None:
             "message_id": "target" if index == 0 else f"context-{index}",
             "timestamp": record.created_at,
             "role": "user",
-            "source": "chat",
+            "source": "user",
             "text": "目标消息" if index == 0 else "很长的上下文" * 100,
         }
         for index in range(30)
@@ -131,7 +133,84 @@ def test_judge_prompt_has_total_limit_and_keeps_required_ids() -> None:
     assert "目标消息" in prompt
     assert record.followup_messages[-1].message_id in prompt
     assert candidates[-1].effect_id in prompt
+    assert "请你评估下面 Bot 回复引起的讨论程度、后续互动和情绪反应。" in prompt
+    assert "显式引用关系已经由程序锁定" not in prompt
+    assert f"time={record.created_at}" in prompt
     assert prompt.endswith("}")
+
+
+def test_judge_prompt_keeps_only_conversation_context_and_removes_internal_fields() -> None:
+    record = build_record(followup_count=1)
+    record.context_snapshot = [
+        {
+            "message_id": "internal-reasoning",
+            "timestamp": record.created_at,
+            "role": "reasoning",
+            "source": "assistant",
+            "text": "不应发送给评分模型的内部推理",
+        },
+        {
+            "message_id": "target",
+            "timestamp": record.created_at,
+            "role": "user",
+            "source": "user",
+            "text": "真实用户消息",
+            "sender": {"display_name": "测试用户"},
+        },
+        {
+            "message_id": "guided-reply",
+            "timestamp": record.created_at,
+            "role": "user",
+            "source": "guided_reply",
+            "text": "已经发送的 Bot 消息",
+        },
+    ]
+
+    prompt = build_judge_prompt(record, [record])
+
+    assert "不应发送给评分模型的内部推理" not in prompt
+    assert "测试用户（触发当前 Bot 回复）: 真实用户消息" in prompt
+    assert "Bot: 已经发送的 Bot 消息" in prompt
+    assert "user_id=" not in prompt
+    assert "latency=" not in prompt
+    assert "locked=" not in prompt
+    assert f"可关联回复={record.followup_messages[0].candidate_effect_ids}" in prompt
+
+
+def test_reply_effect_context_snapshot_separates_sender_metadata_from_text() -> None:
+    timestamp = datetime(2026, 8, 6, 19, 51, 7)
+    original_message = SimpleNamespace(
+        message_info=SimpleNamespace(
+            user_info=SimpleNamespace(
+                user_id="10001",
+                user_nickname="花生",
+                user_cardname="花生米",
+            )
+        ),
+        platform="qq",
+    )
+    context_message = SessionBackedMessage(
+        raw_message=MessageSequence([TextComponent("怎么操作呀？")]),
+        visible_text="19:51:07[msg_id:-1085252920][花生米]怎么操作呀？",
+        timestamp=timestamp,
+        message_id="-1085252920",
+        original_message=original_message,
+    )
+
+    snapshot = MaisakaHeartFlowChatting._build_reply_effect_context_snapshot(
+        SimpleNamespace(),
+        context_messages=[context_message],
+    )
+
+    assert snapshot[0]["text"] == "怎么操作呀？"
+    assert snapshot[0]["raw_text"] == "19:51:07[msg_id:-1085252920][花生米]怎么操作呀？"
+    assert snapshot[0]["sender"] == {
+        "user_id": "10001",
+        "nickname": "花生",
+        "cardname": "花生米",
+        "display_name": "花生米",
+        "platform": "qq",
+    }
 
 
 @pytest.mark.asyncio

@@ -192,3 +192,45 @@ def test_parser_rejects_missing_locked_quote() -> None:
 
     with pytest.raises(ValueError, match="显式引用关联被遗漏"):
         parse_judge_result(payload, record, [record])
+
+
+def test_parser_rejects_candidate_unavailable_when_followup_was_received() -> None:
+    record = build_record("effect-current")
+    future_record = build_record("effect-future")
+    record.followup_messages.append(
+        FollowupMessageSnapshot(
+            message_id="user-1",
+            timestamp=record.created_at,
+            user_id="member-a",
+            nickname="A",
+            cardname="",
+            visible_text="早于未来回复的用户消息",
+            plain_text="早于未来回复的用户消息",
+            latency_seconds=1,
+            is_target_user=False,
+            candidate_effect_ids=[record.effect_id],
+        )
+    )
+    payload = {
+        "strategy": {"primary": "answer", "secondary": [], "confidence": 1.0},
+        "messages": [
+            {
+                "message_id": "user-1",
+                "associations": [
+                    {
+                        "effect_id": future_record.effect_id,
+                        "attribution_confidence": 1.0,
+                        "stance_target": "bot_content",
+                        "stance": "neutral",
+                        "contribution": "maintain",
+                        "reason": "错误关联到未来回复",
+                        "evidence_spans": ["早于未来回复的用户消息"],
+                        "confidence": 1.0,
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="当时尚不存在或已结束观察"):
+        parse_judge_result(payload, record, [record, future_record])

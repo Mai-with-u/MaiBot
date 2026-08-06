@@ -13,10 +13,17 @@ import * as systemApi from '@/lib/system-api'
 import * as pluginApi from '@/lib/plugin-api'
 import { APP_VERSION } from '@/lib/version'
 
+const originalRandomUUID = globalThis.crypto.randomUUID
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   window.localStorage.clear()
+  Object.defineProperty(globalThis.crypto, 'randomUUID', {
+    configurable: true,
+    writable: true,
+    value: originalRandomUUID,
+  })
 })
 
 // i18n 测试环境未初始化，t() 返回 key；mock 为恒等便于断言。
@@ -197,7 +204,12 @@ describe('IndexPage 特征化', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('hitokoto')))
   })
 
-  it('可停用默认一言、维护自定义列表，并在列表为空时留空', async () => {
+  it('缺少 randomUUID 时仍可停用默认一言、维护自定义列表，并在列表为空时留空', async () => {
+    Object.defineProperty(globalThis.crypto, 'randomUUID', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    })
     const user = userEvent.setup()
     render(<IndexPage />)
 
@@ -220,7 +232,9 @@ describe('IndexPage 特征化', () => {
       JSON.parse(localStorage.getItem('maibot-home-hitokoto-settings-v1') ?? '{}')
     ).toMatchObject({
       defaultEnabled: false,
-      customItems: [{ content: '自定义的一言', source: '自定义出处' }],
+      customItems: [
+        { id: expect.any(String), content: '自定义的一言', source: '自定义出处' },
+      ],
     })
 
     await user.click(screen.getByRole('button', { name: 'home.hitokoto.edit' }))

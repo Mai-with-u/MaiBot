@@ -32,8 +32,9 @@ from src.learners.jargon_miner import JargonMiner
 from src.llm_models.payload_content.resp_format import RespFormat, RespFormatType
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 from src.maisaka.builtin_tool.provider import MaisakaBuiltinToolProvider
-from src.maisaka.context.history import drop_leading_orphan_tool_results
 from src.maisaka.context.clear_context import select_messages_after_latest_clear_marker
+from src.maisaka.context.history import drop_leading_orphan_tool_results
+from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.context.messages import (
     LLMContextMessage,
     ModelOutputContextMessage,
@@ -1018,22 +1019,38 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         snapshot: list[dict[str, Any]] = []
         excluded_segments = [segment.strip() for segment in (exclude_reply_segments or []) if segment.strip()]
         for message in source_messages:
-            text = str(message.processed_plain_text or "").strip()
-            if not text:
+            raw_text = str(message.processed_plain_text or "").strip()
+            if not raw_text:
                 continue
-            if message.source == "guided_reply" and any(segment in text for segment in excluded_segments):
+            if message.source == "guided_reply" and any(segment in raw_text for segment in excluded_segments):
                 continue
-            snapshot.append(
-                {
-                    "message_id": message_id_from_context_message(message),
-                    "source": message.source,
-                    "role": message.role,
-                    "timestamp": message.timestamp.isoformat(timespec="seconds"),
-                    "text": text,
-                    "quote_target_ids": extract_quote_target_ids(getattr(message, "raw_message", None)),
-                    "attachments": extract_visual_attachments_from_sequence(getattr(message, "raw_message", None)),
+            speaker_name, visible_text = parse_speaker_content(raw_text)
+            item: dict[str, Any] = {
+                "message_id": message_id_from_context_message(message),
+                "source": message.source,
+                "role": message.role,
+                "timestamp": message.timestamp.isoformat(timespec="seconds"),
+                "text": visible_text.strip(),
+                "quote_target_ids": extract_quote_target_ids(getattr(message, "raw_message", None)),
+                "attachments": extract_visual_attachments_from_sequence(getattr(message, "raw_message", None)),
+            }
+            if visible_text != raw_text:
+                item["raw_text"] = raw_text
+
+            original_message = getattr(message, "original_message", None)
+            if original_message is not None:
+                user_info = original_message.message_info.user_info
+                display_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+                item["sender"] = {
+                    "user_id": user_info.user_id,
+                    "nickname": user_info.user_nickname,
+                    "cardname": user_info.user_cardname or "",
+                    "display_name": display_name,
+                    "platform": original_message.platform,
                 }
-            )
+            elif speaker_name:
+                item["sender"] = {"display_name": speaker_name}
+            snapshot.append(item)
         return snapshot
 
     def _get_message_trigger_threshold(self) -> int:

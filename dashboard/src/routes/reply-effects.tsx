@@ -10,16 +10,19 @@ import {
 } from 'react'
 import {
   Activity,
+  ArrowLeftRight,
   BarChart3,
   CalendarDays,
   ChevronRight,
   CircleGauge,
   Download,
   Filter,
+  FlaskConical,
   HeartHandshake,
   Info,
   LayoutDashboard,
   ListFilter,
+  LoaderCircle,
   MessageCircleReply,
   MessagesSquare,
   RefreshCw,
@@ -130,6 +133,45 @@ interface Overview {
   }
 }
 
+interface ComparisonOption {
+  key: string
+  label: string
+  modelNames: string[]
+  promptFingerprints: string[]
+}
+
+interface SignificanceMetric {
+  field: string
+  label: string
+  left_count: number
+  right_count: number
+  left_mean: number | null
+  right_mean: number | null
+  mean_difference: number | null
+  confidence_interval: [number, number] | null
+  p_value: number | null
+  significant: boolean
+  hedges_g: number | null
+  sufficient: boolean
+  reason: string
+}
+
+interface SignificanceComparisonResult {
+  method: 'two_sided_welch_t_test'
+  alpha: number
+  left: { name: string; record_count: number }
+  right: { name: string; record_count: number }
+  metrics: SignificanceMetric[]
+  significant_count: number
+}
+
+interface ComparisonRequestState {
+  signature: string
+  loading: boolean
+  result: SignificanceComparisonResult | null
+  error: string
+}
+
 interface PromptVersionSession {
   session_id: string
   session_name: string
@@ -226,6 +268,38 @@ function readablePromptVersionName(
     }).length + 1
   const modelLabel = item.collapsed_models ? '全部模型' : item.model_name || '未知模型'
   return `${modelLabel} · 版本 ${versionNumber}`
+}
+
+function buildComparisonOptions(versions: VersionAggregate[]): ComparisonOption[] {
+  return versions.map((item, index, items) => ({
+    key: `${index}:${item.model_names.join(',')}:${item.prompt_fingerprints.join(',')}`,
+    label: readablePromptVersionName(item, index, items),
+    modelNames: item.model_names,
+    promptFingerprints: item.prompt_fingerprints,
+  }))
+}
+
+function formatComparisonNumber(value: number | null, digits = 2) {
+  if (value == null || !Number.isFinite(value)) return '未计算'
+  return value.toFixed(digits)
+}
+
+function formatMeanDifference(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return '未计算'
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
+}
+
+function formatPValue(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return '未计算'
+  if (value < 0.0001) return '< 0.0001'
+  return value.toFixed(4)
+}
+
+function effectSizeText(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return '未计算'
+  const magnitude = Math.abs(value)
+  const level = magnitude < 0.2 ? '极小' : magnitude < 0.5 ? '小' : magnitude < 0.8 ? '中' : '大'
+  return `${value.toFixed(2)}（${level}）`
 }
 
 function ScoreDistributionChart({
@@ -428,6 +502,188 @@ function EmptyTableRow({ colSpan, children }: { colSpan: number; children: React
   )
 }
 
+function SignificanceComparison({
+  options,
+  leftKey,
+  rightKey,
+  loading,
+  result,
+  error,
+  onLeftChange,
+  onRightChange,
+  onCompare,
+}: {
+  options: ComparisonOption[]
+  leftKey: string
+  rightKey: string
+  loading: boolean
+  result: SignificanceComparisonResult | null
+  error: string
+  onLeftChange: (value: string) => void
+  onRightChange: (value: string) => void
+  onCompare: () => void
+}) {
+  const canCompare = options.length >= 2 && leftKey !== rightKey
+
+  return (
+    <div className="border-t p-4 sm:p-5">
+      <div className="flex items-start gap-3">
+        <div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+          <FlaskConical className="h-4 w-4" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold">显著性对比</h3>
+          <p className="text-muted-foreground mt-1 text-xs leading-5">
+            对当前筛选范围执行双侧 Welch t 检验。p &lt; 0.05 表示均值差异具有统计显著性。
+          </p>
+        </div>
+      </div>
+
+      {options.length >= 2 ? (
+        <div className="mt-4 grid items-end gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto]">
+          <div className="space-y-2">
+            <label htmlFor="significance-left" className="text-xs font-medium">
+              项目 A
+            </label>
+            <Select value={leftKey} onValueChange={onLeftChange}>
+              <SelectTrigger id="significance-left" aria-label="显著性对比项目 A">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((option) => (
+                  <SelectItem
+                    key={option.key}
+                    value={option.key}
+                    disabled={option.key === rightKey}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <ArrowLeftRight className="text-muted-foreground mb-2 hidden h-4 w-4 md:block" />
+          <div className="space-y-2">
+            <label htmlFor="significance-right" className="text-xs font-medium">
+              项目 B
+            </label>
+            <Select value={rightKey} onValueChange={onRightChange}>
+              <SelectTrigger id="significance-right" aria-label="显著性对比项目 B">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((option) => (
+                  <SelectItem key={option.key} value={option.key} disabled={option.key === leftKey}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="button" onClick={onCompare} disabled={!canCompare || loading}>
+            {loading ? (
+              <LoaderCircle className="h-4 w-4 animate-spin" />
+            ) : (
+              <FlaskConical className="h-4 w-4" />
+            )}
+            {loading ? '计算中' : '计算显著性'}
+          </Button>
+        </div>
+      ) : (
+        <div className="text-muted-foreground mt-4 rounded-lg border border-dashed px-4 py-8 text-center text-sm">
+          当前筛选与合并方式下至少需要两个项目
+        </div>
+      )}
+
+      {error && (
+        <div className="border-destructive/30 bg-destructive/10 text-destructive mt-4 rounded-lg border px-3 py-2 text-sm">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="mt-4 space-y-3">
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm',
+              result.significant_count > 0
+                ? 'border-primary/30 bg-primary/8'
+                : 'border-border bg-muted/25'
+            )}
+            role="status"
+          >
+            <span className="font-medium">
+              {result.significant_count > 0
+                ? `发现 ${result.significant_count} 项显著差异`
+                : '未发现显著差异'}
+            </span>
+            <span className="text-muted-foreground text-xs">
+              A: {result.left.name}（n={result.left.record_count}） / B: {result.right.name}（n=
+              {result.right.record_count}）
+            </span>
+          </div>
+          <div className="overflow-x-auto rounded-lg border">
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow>
+                  <TableHead>指标</TableHead>
+                  <TableHead>A 均值</TableHead>
+                  <TableHead>B 均值</TableHead>
+                  <TableHead>均值差 A-B</TableHead>
+                  <TableHead>95% 置信区间</TableHead>
+                  <TableHead>Hedges' g</TableHead>
+                  <TableHead>p 值</TableHead>
+                  <TableHead>结论</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {result.metrics.map((metric) => (
+                  <TableRow key={metric.field}>
+                    <TableCell className="font-medium">{metric.label}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {formatComparisonNumber(metric.left_mean)}（n={metric.left_count}）
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      {formatComparisonNumber(metric.right_mean)}（n={metric.right_count}）
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      {formatMeanDifference(metric.mean_difference)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {metric.confidence_interval
+                        ? `[${formatComparisonNumber(metric.confidence_interval[0])}, ${formatComparisonNumber(metric.confidence_interval[1])}]`
+                        : metric.reason || '未计算'}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {effectSizeText(metric.hedges_g)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {formatPValue(metric.p_value)}
+                    </TableCell>
+                    <TableCell>
+                      {metric.sufficient ? (
+                        <Badge variant={metric.significant ? 'default' : 'outline'}>
+                          {metric.significant ? '显著' : '不显著'}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary">样本不足</Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <p className="text-muted-foreground text-xs leading-5">
+            Hedges' g
+            表示标准化效应量。各指标独立检验，未做多重比较校正；显著性不等于效果足够大，结果也不能排除聊天流、时段等混杂因素。
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ReplyEffectsPage() {
   const { toast } = useToast()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -445,6 +701,9 @@ export function ReplyEffectsPage() {
   const [selectedPromptVersion, setSelectedPromptVersion] = useState<VersionAggregate | null>(null)
   const [promptVersionDetail, setPromptVersionDetail] = useState<PromptVersionDetail | null>(null)
   const [promptVersionLoading, setPromptVersionLoading] = useState(false)
+  const [comparisonLeftKey, setComparisonLeftKey] = useState('')
+  const [comparisonRightKey, setComparisonRightKey] = useState('')
+  const [comparisonRequest, setComparisonRequest] = useState<ComparisonRequestState | null>(null)
   const [browserRefreshToken, setBrowserRefreshToken] = useState(0)
   const [browserLoading, setBrowserLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -466,6 +725,22 @@ export function ReplyEffectsPage() {
     params.set('collapse_models', String(collapseModels))
     return params.toString()
   }, [baseQuery, collapseModels, collapseVersions, minConfidence])
+
+  const comparisonOptions = useMemo(
+    () => buildComparisonOptions(overview?.versions ?? []),
+    [overview?.versions]
+  )
+  const selectedLeftOption =
+    comparisonOptions.find((option) => option.key === comparisonLeftKey) ?? comparisonOptions[0]
+  const selectedRightOption =
+    comparisonOptions.find(
+      (option) => option.key === comparisonRightKey && option.key !== selectedLeftOption?.key
+    ) ?? comparisonOptions.find((option) => option.key !== selectedLeftOption?.key)
+  const resolvedLeftKey = selectedLeftOption?.key ?? ''
+  const resolvedRightKey = selectedRightOption?.key ?? ''
+  const comparisonSignature = `${overviewQuery}|${resolvedLeftKey}|${resolvedRightKey}`
+  const activeComparisonRequest =
+    comparisonRequest?.signature === comparisonSignature ? comparisonRequest : null
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -502,6 +777,45 @@ export function ReplyEffectsPage() {
       setSelectedPromptVersion(null)
     } finally {
       setPromptVersionLoading(false)
+    }
+  }
+
+  const compareSelectedProjects = async () => {
+    if (!selectedLeftOption || !selectedRightOption) return
+
+    const signature = comparisonSignature
+    setComparisonRequest({ signature, loading: true, result: null, error: '' })
+    const body: Record<string, unknown> = {
+      left: {
+        name: selectedLeftOption.label,
+        model_names: selectedLeftOption.modelNames,
+        prompt_fingerprints: selectedLeftOption.promptFingerprints,
+      },
+      right: {
+        name: selectedRightOption.label,
+        model_names: selectedRightOption.modelNames,
+        prompt_fingerprints: selectedRightOption.promptFingerprints,
+      },
+      min_confidence: Number(minConfidence || 0),
+    }
+    if (sessionId) body.session_id = sessionId
+    if (strategy) body.strategy = strategy
+    if (startAt) body.start_at = `${startAt}T00:00:00`
+    if (endAt) body.end_at = `${endAt}T23:59:59`
+
+    try {
+      const result = await backendApi.post<SignificanceComparisonResult>(
+        '/api/webui/reply-effects/compare',
+        { body }
+      )
+      setComparisonRequest({ signature, loading: false, result, error: '' })
+    } catch (requestError) {
+      setComparisonRequest({
+        signature,
+        loading: false,
+        result: null,
+        error: requestError instanceof Error ? requestError.message : '显著性检验失败',
+      })
     }
   }
 
@@ -1026,6 +1340,17 @@ export function ReplyEffectsPage() {
                   />
                 </div>
               </div>
+              <SignificanceComparison
+                options={comparisonOptions}
+                leftKey={resolvedLeftKey}
+                rightKey={resolvedRightKey}
+                loading={activeComparisonRequest?.loading ?? false}
+                result={activeComparisonRequest?.result ?? null}
+                error={activeComparisonRequest?.error ?? ''}
+                onLeftChange={setComparisonLeftKey}
+                onRightChange={setComparisonRightKey}
+                onCompare={() => void compareSelectedProjects()}
+              />
             </SectionPanel>
           </>
         ) : (
