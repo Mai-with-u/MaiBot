@@ -13,7 +13,6 @@ import inspect
 import json
 import uuid
 
-from src.common.data_models.embedding_service_data_models import EmbeddingResult
 from src.common.data_models.llm_service_data_models import (
     ContextFactory,
     LLMAudioTranscriptionResult,
@@ -45,12 +44,10 @@ from src.llm_models.payload_content.context_item import (
 )
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.utils_model import LLMOrchestrator
-from src.services.embedding_service import EmbeddingServiceClient
 from src.services.llm_cache_stats import record_llm_cache_usage
 from src.services.service_task_resolver import (
     get_available_models as _get_available_models,
     resolve_task_name as _resolve_task_name,
-    resolve_task_name_from_model_config as _resolve_task_name_from_model_config,
 )
 
 logger = get_logger("llm_service")
@@ -66,7 +63,6 @@ class LLMServiceClient:
     - `generate_response_with_context`
     - `generate_response_for_image`
     - `transcribe_audio`
-    - `embed_text`（兼容入口，推荐改用 `EmbeddingServiceClient`）
     """
 
     def __init__(self, task_name: str, request_type: str = "", session_id: str = "") -> None:
@@ -437,23 +433,6 @@ class LLMServiceClient:
             session_id=self._resolve_effective_session_id(session_id),
         )
 
-    async def embed_text(self, embedding_input: str, *, session_id: str = "") -> EmbeddingResult:
-        """兼容旧调用的文本嵌入入口。
-
-        Args:
-            embedding_input: 待编码的文本。
-
-        Returns:
-            EmbeddingResult: 向量生成结果对象。
-        """
-        embedding_client = EmbeddingServiceClient(
-            task_name=self.task_name,
-            request_type=self.request_type,
-            session_id=self._resolve_effective_session_id(session_id),
-        )
-        return await embedding_client.embed_text(embedding_input, session_id=session_id)
-
-
 def get_available_models() -> Dict[str, Any]:
     """获取所有可用模型配置。
 
@@ -473,22 +452,6 @@ def resolve_task_name(task_name: str = "") -> str:
         str: 解析得到的任务配置名。
     """
     return _resolve_task_name(task_name)
-
-
-def resolve_task_name_from_model_config(model_config: Any, preferred_task_name: str = "") -> str:
-    """根据旧版 `TaskConfig` 风格参数解析可用任务名。
-
-    Args:
-        model_config: 旧调用方持有的任务配置对象。
-        preferred_task_name: 候选任务名（可选）。
-
-    Returns:
-        str: 可用于 `LLMServiceRequest.task_name` 的任务名。
-    """
-    return _resolve_task_name_from_model_config(
-        model_config=model_config,
-        preferred_task_name=preferred_task_name,
-    )
 
 
 def _normalize_role(role_name: str) -> RoleType:
