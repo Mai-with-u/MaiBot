@@ -186,7 +186,7 @@ client_type = "gemini"
             "http_status": 200,
         }
 
-    monkeypatch.setattr(model_routes, "test_provider_connection", fake_test_provider_connection)
+    monkeypatch.setattr(model_routes, "_test_provider_connection", fake_test_provider_connection)
 
     result = await model_routes.test_provider_connection_by_name(provider_name="Gemini")
 
@@ -196,6 +196,7 @@ client_type = "gemini"
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "api_key": "valid-gemini-key",
         "client_type": "gemini",
+        "allow_configured_private_network": True,
     }
 
 

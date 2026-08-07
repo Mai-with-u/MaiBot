@@ -1,4 +1,4 @@
-import { type CSSProperties, type MouseEvent, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -64,7 +64,6 @@ import {
   Search,
   Settings,
   Trash2,
-  Zap,
 } from 'lucide-react'
 import { resolveFieldLabel } from '@/lib/config-label'
 import {
@@ -92,13 +91,13 @@ import {
   type DeepSeekReasoningEffort,
 } from './model/deepSeekExtraParams'
 import { ProviderForm } from './modelProvider/ProviderForm'
-import { ProviderList } from './modelProvider/ProviderList'
+import { ProviderSidebar } from './modelProvider/ProviderSidebar'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
 import type { ModelInfo } from './model/types'
 
-const MODEL_CONFIG_TABS = ['providers', 'models', 'tasks'] as const
+const MODEL_CONFIG_TABS = ['configuration', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
 
 interface ModelIdentifierMarqueeProps {
@@ -170,11 +169,12 @@ function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentif
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
-    return 'providers'
+    return 'configuration'
   }
 
   const tab = new URLSearchParams(window.location.search).get('tab')
-  return MODEL_CONFIG_TABS.includes(tab as ModelConfigTab) ? (tab as ModelConfigTab) : 'providers'
+  if (tab === 'tasks') return 'tasks'
+  return 'configuration'
 }
 
 // 主导出组件：包装 RestartProvider
@@ -273,19 +273,13 @@ function ModelConfigPageContent() {
     setBatchDeleteDialogOpen,
     openBatchDeleteDialog,
     handleConfirmBatchDelete,
-    // 提供商批量
-    selectedProviders,
-    toggleProviderSelection,
-    toggleSelectAllProviders,
-    providerBatchDeleteDialogOpen,
-    setProviderBatchDeleteDialogOpen,
-    openProviderBatchDeleteDialog,
-    handleConfirmProviderBatchDelete,
     // 任务配置
     updateTaskConfig,
     // 搜索 / 分页
     searchQuery,
     setSearchQuery,
+    modelProviderFilter,
+    setModelProviderFilter,
     filteredModels,
     paginatedModels,
     page,
@@ -313,11 +307,8 @@ function ModelConfigPageContent() {
   useEffect(() => {
     const searchParams = new URLSearchParams(routeSearch.startsWith('?') ? routeSearch.slice(1) : routeSearch)
     const tab = searchParams.get('tab')
-    const nextTab = searchFieldPath
-      ? getModelConfigTabForField(searchFieldPath)
-      : MODEL_CONFIG_TABS.includes(tab as ModelConfigTab)
-        ? (tab as ModelConfigTab)
-        : 'providers'
+    const fieldTab = searchFieldPath ? getModelConfigTabForField(searchFieldPath) : ''
+    const nextTab: ModelConfigTab = fieldTab === 'tasks' || tab === 'tasks' ? 'tasks' : 'configuration'
 
     const frameId = window.requestAnimationFrame(() => {
       setActiveTab(nextTab)
@@ -360,6 +351,18 @@ function ModelConfigPageContent() {
   const [tourEntryVisible, setTourEntryVisible] = useState(
     () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
   )
+
+  const providerModelCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    models.forEach((model) => counts.set(model.api_provider, (counts.get(model.api_provider) ?? 0) + 1))
+    return counts
+  }, [models])
+
+  useEffect(() => {
+    if (modelProviderFilter && !apiProviders.some((provider) => provider.name === modelProviderFilter)) {
+      setModelProviderFilter('')
+    }
+  }, [apiProviders, modelProviderFilter, setModelProviderFilter])
 
   // 模型列表获取 (使用 hook 封装的逻辑)
   const {
@@ -433,9 +436,9 @@ function ModelConfigPageContent() {
   const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
       ? (value as ModelConfigTab)
-      : 'providers'
+      : 'configuration'
     setActiveTab(nextTab)
-    const nextUrl = nextTab === 'providers' ? '/config/model' : `/config/model?tab=${nextTab}`
+    const nextUrl = nextTab === 'configuration' ? '/config/model' : `/config/model?tab=${nextTab}`
     window.history.replaceState(null, '', nextUrl)
   }
 
@@ -467,8 +470,8 @@ function ModelConfigPageContent() {
     onCloseEditDialog: () => setEditDialogOpen(false),
     onOpenProviderDialog: () => openProviderDialog(null, null),
     onCloseProviderDialog: () => setProviderDialogOpen(false),
-    onOpenProvidersTab: () => handleActiveTabChange('providers'),
-    onOpenModelsTab: () => handleActiveTabChange('models'),
+    onOpenProvidersTab: () => handleActiveTabChange('configuration'),
+    onOpenModelsTab: () => handleActiveTabChange('configuration'),
     onOpenTasksTab: () => handleActiveTabChange('tasks'),
   })
 
@@ -556,10 +559,9 @@ function ModelConfigPageContent() {
           >
             <TabsList
               data-model-config-tabs-list="true"
-              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-3 bg-transparent shadow-none"
+              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-2 bg-transparent shadow-none"
             >
-              <TabsTrigger value="providers" className="w-full" data-tour="providers-tab-trigger">模型厂商设置</TabsTrigger>
-              <TabsTrigger value="models" className="w-full" data-tour="models-tab-trigger">模型列表</TabsTrigger>
+              <TabsTrigger value="configuration" className="w-full" data-tour="providers-tab-trigger">模型设置</TabsTrigger>
               <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">为模型分配功能</TabsTrigger>
             </TabsList>
             <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
@@ -574,11 +576,11 @@ function ModelConfigPageContent() {
               >
                 <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-[190px] sm:flex-none" aria-label="模型配置副本">
                   <History className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <SelectValue placeholder={activeConfigVersion?.label || '当前启用'} />
+                  <SelectValue placeholder={activeConfigVersion?.label || '默认配置'} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="active">
-                    {activeConfigVersion?.label || '默认配置'} · 当前启用
+                    {activeConfigVersion?.label || '默认配置'}
                   </SelectItem>
                   {configVersions.map((version) => (
                     <SelectItem key={version.id} value={version.id} disabled={!version.valid}>
@@ -612,104 +614,32 @@ function ModelConfigPageContent() {
               </Button>
             </div>
           </div>
-          {/* 模型厂商设置标签页 */}
-          <TabsContent value="providers" className="space-y-4 mt-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="hidden">
-                {selectedProviders.size > 0 && (
-                  <Button
-                    onClick={openProviderBatchDeleteDialog}
-                    size="sm"
-                    variant="destructive"
-                    className="w-full sm:w-auto"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    批量删除 ({selectedProviders.size})
-                  </Button>
-                )}
-                <Button
-                  onClick={handleTestAllProviderConnections}
-                  size="sm"
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  disabled={apiProviders.length === 0 || testingProviders.size > 0}
-                >
-                  <Zap className="mr-2 h-4 w-4" />
-                  {testingProviders.size > 0 ? `测试中 (${testingProviders.size})` : '测试全部'}
-                </Button>
-                <Button onClick={() => openProviderDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto">
-                  <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  添加提供商
-                </Button>
-              </div>
-            </div>
-
-            <div data-config-field-path="api_providers">
-              <ProviderList
+          {/* 厂商与模型合并配置视图 */}
+          <TabsContent value="configuration" className="mt-0">
+            <div className="grid gap-4 lg:grid-cols-3">
+              <ProviderSidebar
                 providers={apiProviders}
+                modelCounts={providerModelCounts}
+                selectedProvider={modelProviderFilter}
                 testingProviders={testingProviders}
                 testResults={testResults}
-                selectedProviders={selectedProviders}
-                toolbarActions={(
-                  <>
-                  {selectedProviders.size > 0 && (
-                    <Button
-                      onClick={openProviderBatchDeleteDialog}
-                      size="sm"
-                      variant="destructive"
-                      className="w-full sm:w-auto"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                      <span className="text-sm">批量删除 ({selectedProviders.size})</span>
-                    </Button>
-                  )}
-                  <Button
-                    onClick={handleTestAllProviderConnections}
-                    size="sm"
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    disabled={apiProviders.length === 0 || testingProviders.size > 0}
-                  >
-                    <Zap className="mr-2 h-4 w-4" />
-                    <span className="text-sm">
-                      {testingProviders.size > 0 ? `测试中 (${testingProviders.size})` : '测试全部连接'}
-                    </span>
-                  </Button>
-                  <Button onClick={() => openProviderDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto" data-tour="add-provider-button">
-                    <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    <span className="text-sm">添加厂商</span>
-                  </Button>
-                  </>
-                )}
+                onSelectProvider={setModelProviderFilter}
+                onAdd={() => openProviderDialog(null, null)}
                 onEdit={openProviderDialog}
                 onDelete={openProviderDeleteDialog}
                 onTest={handleTestProviderConnection}
-                onToggleSelect={toggleProviderSelection}
-                onToggleSelectAll={toggleSelectAllProviders}
+                onTestAll={handleTestAllProviderConnections}
               />
-            </div>
-          </TabsContent>
-          {/* 模型配置标签页 */}
-          <TabsContent value="models" className="space-y-4 mt-0">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <div className="hidden">
-                {selectedModels.size > 0 && (
-                  <Button 
-                    onClick={openBatchDeleteDialog} 
-                    size="sm" 
-                    variant="destructive" 
-                    className="w-full sm:w-auto"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    批量删除 ({selectedModels.size})
-                  </Button>
-                )}
-                <Button onClick={() => openEditDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto">
-                  <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  添加模型
-                </Button>
-              </div>
-            </div>
+
+              <section className="min-w-0 space-y-4 lg:col-span-2" data-tour="models-tab-trigger">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold">
+                      {modelProviderFilter ? `${modelProviderFilter} 的模型` : '全部模型'}
+                    </h2>
+                    <p className="text-muted-foreground text-xs">共 {filteredModels.length} 个匹配模型</p>
+                  </div>
+                </div>
 
           {/* 搜索框 */}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -803,7 +733,9 @@ function ModelConfigPageContent() {
             onJumpToPage={handleJumpToPage}
             onSelectionClear={() => setSelectedModels(new Set())}
           />
-        </TabsContent>
+              </section>
+            </div>
+          </TabsContent>
 
         {/* 模型任务配置标签页 */}
         <TabsContent value="tasks" className="mt-0 space-y-3">
@@ -1079,28 +1011,6 @@ function ModelConfigPageContent() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* 批量删除提供商确认对话框 */}
-      <AlertDialog open={providerBatchDeleteDialogOpen} onOpenChange={setProviderBatchDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认批量删除提供商</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要删除选中的 {selectedProviders.size} 个提供商吗？
-              如果这些提供商下存在模型，确认时会提示一并处理关联模型。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmProviderBatchDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              批量删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
