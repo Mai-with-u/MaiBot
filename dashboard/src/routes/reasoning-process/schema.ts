@@ -48,6 +48,9 @@ export type StructuredPromptLlmCall = {
     created_at?: string
     model_name?: string
     duration_ms?: number
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
     provider_name?: string
     request_id?: string
     session_id?: string | null

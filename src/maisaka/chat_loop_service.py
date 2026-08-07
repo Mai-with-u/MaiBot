@@ -1159,6 +1159,9 @@ class MaisakaChatLoopService:
         prompt_metadata = {
             "model_name": display_model_name,
             "duration_ms": llm_duration_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
         }
 
         prompt_section_result = PromptCLIVisualizer.build_prompt_section_result(

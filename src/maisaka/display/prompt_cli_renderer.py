@@ -177,7 +177,66 @@ class PromptCLIVisualizer:
             except (TypeError, ValueError):
                 pass
 
+        for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            raw_token_count = metadata.get(token_key)
+            if isinstance(raw_token_count, int) and not isinstance(raw_token_count, bool):
+                normalized[token_key] = max(raw_token_count, 0)
+        if "total_tokens" not in normalized and all(
+            token_key in normalized for token_key in ("prompt_tokens", "completion_tokens")
+        ):
+            normalized["total_tokens"] = normalized["prompt_tokens"] + normalized["completion_tokens"]
+
         return normalized
+
+    @staticmethod
+    def _extract_token_metadata_from_attempts(attempts: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+        """从已序列化的 Generation Attempt 中提取最近一次有效 Token 用量。"""
+
+        for attempt in reversed(attempts):
+            trace = attempt.get("trace")
+            if isinstance(trace, Mapping):
+                trace_tokens = {
+                    token_key: trace.get(token_key)
+                    for token_key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                }
+                if any(isinstance(token_count, int) and token_count > 0 for token_count in trace_tokens.values()):
+                    normalized_trace_tokens = {
+                        token_key: max(token_count, 0)
+                        for token_key, token_count in trace_tokens.items()
+                        if isinstance(token_count, int) and not isinstance(token_count, bool)
+                    }
+                    if "total_tokens" not in normalized_trace_tokens and all(
+                        token_key in normalized_trace_tokens for token_key in ("prompt_tokens", "completion_tokens")
+                    ):
+                        normalized_trace_tokens["total_tokens"] = (
+                            normalized_trace_tokens["prompt_tokens"] + normalized_trace_tokens["completion_tokens"]
+                        )
+                    return normalized_trace_tokens
+
+            wire_response = attempt.get("wire_response")
+            usage = wire_response.get("usage") if isinstance(wire_response, Mapping) else None
+            if not isinstance(usage, Mapping):
+                continue
+            usage_tokens = {
+                "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens")),
+                "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens")),
+                "total_tokens": usage.get("total_tokens"),
+            }
+            if any(isinstance(token_count, int) and token_count > 0 for token_count in usage_tokens.values()):
+                normalized_usage_tokens = {
+                    token_key: max(token_count, 0)
+                    for token_key, token_count in usage_tokens.items()
+                    if isinstance(token_count, int) and not isinstance(token_count, bool)
+                }
+                if "total_tokens" not in normalized_usage_tokens and all(
+                    token_key in normalized_usage_tokens for token_key in ("prompt_tokens", "completion_tokens")
+                ):
+                    normalized_usage_tokens["total_tokens"] = (
+                        normalized_usage_tokens["prompt_tokens"] + normalized_usage_tokens["completion_tokens"]
+                    )
+                return normalized_usage_tokens
+
+        return {}
 
     @staticmethod
     def get_request_panel_style(request_kind: str) -> tuple[str, str]:
@@ -747,13 +806,19 @@ class PromptCLIVisualizer:
     ) -> dict[str, Any]:
         """构建 Prompt 预览 JSON，供 WebUI 稳定解析展示。"""
 
+        serialized_attempts = [cls._build_generation_attempt_payload(attempt) for attempt in generation_attempts]
+        normalized_metadata = cls._normalize_preview_metadata(metadata)
+        attempt_token_metadata = cls._extract_token_metadata_from_attempts(serialized_attempts)
+        for token_key, token_count in attempt_token_metadata.items():
+            normalized_metadata.setdefault(token_key, token_count)
+
         payload = {
             "schema_version": 6,
             "request": {
                 "kind": request_kind,
                 "selection_reason": selection_reason,
             },
-            "metadata": cls._normalize_preview_metadata(metadata),
+            "metadata": normalized_metadata,
             "presentation": {"output_title": output_title},
             "request_items": cls.build_structured_context_item_payload(
                 request_items,
@@ -764,10 +829,7 @@ class PromptCLIVisualizer:
                 keep_base64=keep_base64,
             ),
             "tool_definitions": tool_definitions or [],
-            "generation_attempts": [
-                cls._build_generation_attempt_payload(attempt)
-                for attempt in generation_attempts
-            ],
+            "generation_attempts": serialized_attempts,
         }
         return payload
 

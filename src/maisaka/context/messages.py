@@ -133,8 +133,8 @@ def contains_complex_message(message_sequence: MessageSequence) -> bool:
     return any(isinstance(component, ForwardNodeComponent) for component in message_sequence.components)
 
 
-async def build_full_complex_message_content(message: SessionMessage) -> str:
-    """构造转发消息的完整文本内容。"""
+async def build_full_complex_message_content(message: SessionMessage, path: Sequence[int] = ()) -> str:
+    """按路径构造转发消息当前层级的文本内容。"""
 
     if _prepare_unresolved_visual_components(message.raw_message.components):
         await message.process(
@@ -142,7 +142,7 @@ async def build_full_complex_message_content(message: SessionMessage) -> str:
             enable_voice_transcription=False,
         )
 
-    full_content = _build_complex_message_full_text(message.raw_message)
+    full_content = _build_complex_message_full_text(message.raw_message, path)
     if full_content:
         return full_content
 
@@ -151,10 +151,13 @@ async def build_full_complex_message_content(message: SessionMessage) -> str:
     return (message.processed_plain_text or "").strip()
 
 
-def build_full_complex_message_content_from_sequence(message_sequence: MessageSequence) -> str:
-    """从消息组件序列构造转发消息的完整文本内容。"""
+def build_full_complex_message_content_from_sequence(
+    message_sequence: MessageSequence,
+    path: Sequence[int] = (),
+) -> str:
+    """从消息组件序列按路径构造转发消息当前层级的文本内容。"""
 
-    return _build_complex_message_full_text(message_sequence)
+    return _build_complex_message_full_text(message_sequence, path)
 
 
 def _prepare_unresolved_visual_components(components: Sequence[StandardMessageComponents]) -> bool:
@@ -188,27 +191,91 @@ def _prepare_unresolved_visual_components(components: Sequence[StandardMessageCo
     return found_unresolved
 
 
-def _build_complex_message_full_text(message_sequence: MessageSequence) -> str:
-    """构造转发消息浏览工具返回的完整文本。"""
+def _build_complex_message_full_text(message_sequence: MessageSequence, path: Sequence[int]) -> str:
+    """构造转发消息浏览工具返回的当前层级文本。"""
 
-    full_parts: list[str] = []
-    for component in message_sequence.components:
-        if isinstance(component, ForwardNodeComponent):
-            full_parts.append(_build_forward_full_text(component))
+    root_components = [
+        component for component in message_sequence.components if isinstance(component, ForwardNodeComponent)
+    ]
+    if path:
+        target_component = _resolve_forward_component(root_components, path)
+        return _build_forward_full_text(target_component, tuple(path))
 
-    return "\n".join(part for part in full_parts if part).strip()
+    return "\n".join(
+        _build_forward_full_text(component, (index,)) for index, component in enumerate(root_components)
+    ).strip()
 
 
-def _build_forward_full_text(component: ForwardNodeComponent) -> str:
-    """构造合并转发消息的完整文本。"""
+def _resolve_forward_component(
+    root_components: Sequence[ForwardNodeComponent],
+    path: Sequence[int],
+) -> ForwardNodeComponent:
+    """根据转发组件路径定位需要展开的节点。"""
+
+    current_components = list(root_components)
+    current_component: ForwardNodeComponent | None = None
+    for depth, component_index in enumerate(path):
+        if component_index < 0 or component_index >= len(current_components):
+            raise ValueError(f"转发消息路径无效：第 {depth + 1} 级索引 {component_index} 超出范围。")
+        current_component = current_components[component_index]
+        current_components = _collect_nested_forward_components(current_component)
+
+    if current_component is None:
+        raise ValueError("转发消息路径不能为空。")
+    return current_component
+
+
+def _collect_nested_forward_components(component: ForwardNodeComponent) -> list[ForwardNodeComponent]:
+    """按消息顺序收集当前层级直接包含的嵌套转发组件。"""
+
+    return [
+        nested_component
+        for node in component.forward_components
+        for nested_component in node.content
+        if isinstance(nested_component, ForwardNodeComponent)
+    ]
+
+
+def _build_forward_full_text(component: ForwardNodeComponent, path: tuple[int, ...]) -> str:
+    """构造合并转发消息的当前层级文本。"""
 
     forward_lines = ["【合并转发消息:"]
+    nested_component_index = 0
     for node in component.forward_components:
         sender_name = node.user_cardname or node.user_nickname or node.user_id or "未知用户"
-        content = _render_components_inline(node.content) or "[空消息]"
-        forward_lines.append(f"【{sender_name}】: {content}")
+        content, nested_component_index = _render_components_for_browser(
+            node.content,
+            path,
+            nested_component_index,
+        )
+        forward_lines.append(f"【{sender_name}】: {content or '[空消息]'}")
     forward_lines.append("】")
     return "\n".join(forward_lines)
+
+
+def _render_components_for_browser(
+    components: Sequence[StandardMessageComponents],
+    parent_path: tuple[int, ...],
+    nested_component_index: int,
+) -> tuple[str, int]:
+    """渲染当前层级组件，并为嵌套转发提供下一次展开路径。"""
+
+    rendered_parts: list[str] = []
+    for component in components:
+        if isinstance(component, ForwardNodeComponent):
+            nested_path = [*parent_path, nested_component_index]
+            rendered_parts.append(
+                f"[嵌套转发消息，path={nested_path}，可再次调用 view_forward_message 展开]"
+            )
+            nested_component_index += 1
+            continue
+
+        rendered_text = _render_component_for_prompt(component)
+        normalized_text = _normalize_inline_text(rendered_text)
+        if normalized_text:
+            rendered_parts.append(normalized_text)
+
+    return " ".join(rendered_parts).strip(), nested_component_index
 
 
 def _build_complex_message_prompt_text(message_sequence: MessageSequence) -> str:

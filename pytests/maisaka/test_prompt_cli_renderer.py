@@ -12,6 +12,26 @@ from src.llm_models.payload_content.context_item import (
 )
 
 
+def test_preview_metadata_keeps_token_usage() -> None:
+    metadata = PromptCLIVisualizer._normalize_preview_metadata(
+        {
+            "model_name": "test-model",
+            "duration_ms": 123.456,
+            "prompt_tokens": 1200,
+            "completion_tokens": 34,
+            "total_tokens": 1234,
+        }
+    )
+
+    assert metadata == {
+        "model_name": "test-model",
+        "duration_ms": 123.46,
+        "prompt_tokens": 1200,
+        "completion_tokens": 34,
+        "total_tokens": 1234,
+    }
+
+
 def test_reasoning_item_is_displayed_as_independent_item_content() -> None:
     item = ReasoningItem(
         meta=ContextItemMeta.create(),
@@ -79,6 +99,56 @@ def test_structured_preview_keeps_output_items_independent_and_ordered() -> None
         reasoning.meta.item_id,
         assistant.meta.item_id,
     ]
+    assert payload["metadata"]["prompt_tokens"] == 10
+    assert payload["metadata"]["completion_tokens"] == 5
+    assert payload["metadata"]["total_tokens"] == 15
+
+
+def test_structured_preview_extracts_responses_usage_when_trace_is_zero() -> None:
+    payload = PromptCLIVisualizer._build_structured_preview_payload(
+        [],
+        request_kind="planner",
+        selection_reason="Responses usage",
+        tool_definitions=None,
+        output_title="输出结果",
+        output_items=(),
+        metadata={"model_name": "responses-model"},
+        generation_attempts=(
+            {
+                "trace": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "wire_response": {
+                    "usage": {"input_tokens": 120, "output_tokens": 30}
+                },
+            },
+        ),
+        keep_base64=False,
+    )
+
+    assert payload["metadata"]["prompt_tokens"] == 120
+    assert payload["metadata"]["completion_tokens"] == 30
+    assert payload["metadata"]["total_tokens"] == 150
+
+
+def test_structured_preview_prefers_explicit_token_metadata() -> None:
+    payload = PromptCLIVisualizer._build_structured_preview_payload(
+        [],
+        request_kind="replyer",
+        selection_reason="显式用量",
+        tool_definitions=None,
+        output_title="输出结果",
+        output_items=(),
+        metadata={"prompt_tokens": 10, "completion_tokens": 2},
+        generation_attempts=(
+            {
+                "trace": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            },
+        ),
+        keep_base64=False,
+    )
+
+    assert payload["metadata"]["prompt_tokens"] == 10
+    assert payload["metadata"]["completion_tokens"] == 2
+    assert payload["metadata"]["total_tokens"] == 12
 
 
 def test_structured_preview_accepts_serialized_reasoning_item_snapshots() -> None:

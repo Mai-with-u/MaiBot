@@ -384,7 +384,7 @@ class MaisakaRuntimeDisplayMixin:
 
     @staticmethod
     def _build_prompt_preview_metadata_from_tool_metrics(metrics: Any) -> dict[str, Any]:
-        """从工具监控 metrics 中提取可写入 Prompt 预览的模型与耗时。"""
+        """从工具监控 metrics 中提取可写入 Prompt 预览的模型、耗时与 Token。"""
 
         if not isinstance(metrics, dict):
             return {}
@@ -399,6 +399,11 @@ class MaisakaRuntimeDisplayMixin:
             if isinstance(duration_ms, (int, float)):
                 metadata["duration_ms"] = duration_ms
                 break
+
+        for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            token_count = metrics.get(token_key)
+            if isinstance(token_count, int) and not isinstance(token_count, bool):
+                metadata[token_key] = token_count
 
         return metadata
 

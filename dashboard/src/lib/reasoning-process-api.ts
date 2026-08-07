@@ -23,6 +23,9 @@ export type ReasoningPromptFile = {
   has_behavior_choice_insert: boolean
   model_name: string | null
   duration_ms: number | null
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
   size: number
   modified_at: number
 }
@@ -73,6 +76,9 @@ export type ReasoningPromptContentResponse = {
   modified_at: number
   model_name: string | null
   duration_ms: number | null
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  total_tokens: number | null
   message_avatars: Record<string, ReasoningPromptMessageAvatar>
 }
 

@@ -184,6 +184,22 @@ function formatDurationMs(durationMs: number | null): string {
   return `${(durationMs / 1000).toFixed(2)} s`
 }
 
+function formatTokenUsage(
+  promptTokens: number | null | undefined,
+  completionTokens: number | null | undefined,
+  totalTokens: number | null | undefined
+): string {
+  if (promptTokens === null || promptTokens === undefined) return ''
+  const parts = [`输入 ${promptTokens.toLocaleString('zh-CN')}`]
+  if (completionTokens !== null && completionTokens !== undefined) {
+    parts.push(`输出 ${completionTokens.toLocaleString('zh-CN')}`)
+  }
+  if (totalTokens !== null && totalTokens !== undefined) {
+    parts.push(`总计 ${totalTokens.toLocaleString('zh-CN')}`)
+  }
+  return `${parts.join(' / ')} Token`
+}
+
 function formatLlmRequestStatus(status?: string): string {
   const labels: Record<string, string> = {
     failed: '本次失败',
@@ -267,6 +283,10 @@ function getReasoningMetadataText(item: ReasoningPromptFile): string {
   const durationText = formatDurationMs(item.duration_ms)
   if (durationText) {
     parts.push(`耗时：${durationText}`)
+  }
+  const tokenText = formatTokenUsage(item.prompt_tokens, item.completion_tokens, item.total_tokens)
+  if (tokenText) {
+    parts.push(tokenText)
   }
   return parts.join(' · ')
 }
@@ -911,6 +931,9 @@ export function ReasoningProcessPage({
     () => extractReasoningHeaderMeta(structuredPrompt?.request?.selection_reason),
     [structuredPrompt]
   )
+  const selectedTokenText = selected
+    ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
+    : ''
   const renderRefreshButton = (variant: 'default' | 'topbar' | 'toolbar' = 'default') => (
     <Button
       variant="outline"
@@ -1351,6 +1374,15 @@ export function ReasoningProcessPage({
                               {durationText}
                             </span>
                           )}
+                          {item.prompt_tokens !== null && (
+                            <span className="inline-flex items-center gap-1">
+                              {formatTokenUsage(
+                                item.prompt_tokens,
+                                item.completion_tokens,
+                                item.total_tokens
+                              )}
+                            </span>
+                          )}
                           <span className="shrink-0">{formatSize(item.size)}</span>
                         </div>
                       )}
@@ -1406,7 +1438,7 @@ export function ReasoningProcessPage({
                       <div className="flex min-h-12 flex-col gap-2 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between">
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">{selectedTitle}</div>
-                          {(headerMeta.sessionId || headerMeta.callId) && (
+                          {(headerMeta.sessionId || headerMeta.callId || selectedTokenText) && (
                             <div className="text-muted-foreground mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4">
                               {headerMeta.sessionId && (
                                 <span className="min-w-0 truncate">
@@ -1418,6 +1450,7 @@ export function ReasoningProcessPage({
                                   调用ID: {headerMeta.callId}
                                 </span>
                               )}
+                              {selectedTokenText && <span>{selectedTokenText}</span>}
                             </div>
                           )}
                           {!selected && (

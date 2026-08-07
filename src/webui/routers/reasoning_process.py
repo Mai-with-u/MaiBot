@@ -248,6 +248,9 @@ class ReasoningPromptFile(BaseModel):
     has_behavior_choice_insert: bool = False
     model_name: str | None = None
     duration_ms: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
     size: int = 0
     modified_at: float = 0
 
@@ -299,6 +302,9 @@ class ReasoningPromptContentResponse(BaseModel):
     modified_at: float
     model_name: str | None = None
     duration_ms: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
     message_avatars: dict[str, ReasoningPromptMessageAvatar] = Field(default_factory=dict)
 
 
@@ -644,6 +650,15 @@ def _parse_duration_ms(value: Any) -> float | None:
         return None
 
 
+def _parse_token_count(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 0)
+
+    token_text = str(value or "").strip().replace(",", "")
+    match = re.search(r"\d+", token_text)
+    return int(match.group(0)) if match else None
+
+
 def _normalize_prompt_metadata(raw_metadata: dict[str, Any]) -> dict[str, object]:
     """归一化 prompt 预览元数据字段。"""
 
@@ -655,6 +670,15 @@ def _normalize_prompt_metadata(raw_metadata: dict[str, Any]) -> dict[str, object
     duration_ms = _parse_duration_ms(raw_metadata.get("duration_ms"))
     if duration_ms is not None:
         metadata["duration_ms"] = duration_ms
+
+    for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        token_count = raw_metadata.get(token_key)
+        if isinstance(token_count, int) and not isinstance(token_count, bool):
+            metadata[token_key] = max(token_count, 0)
+    if "total_tokens" not in metadata and all(
+        token_key in metadata for token_key in ("prompt_tokens", "completion_tokens")
+    ):
+        metadata["total_tokens"] = int(metadata["prompt_tokens"]) + int(metadata["completion_tokens"])
 
     return metadata
 
@@ -682,6 +706,12 @@ def _extract_prompt_metadata_from_text(content: str) -> dict[str, object]:
             raw_metadata["model_name"] = value
         elif key in {"推理耗时", "请求耗时", "耗时"}:
             raw_metadata["duration_ms"] = value
+        elif key in {"输入 Token", "输入Token", "Prompt Token"}:
+            raw_metadata["prompt_tokens"] = _parse_token_count(value)
+        elif key in {"输出 Token", "输出Token", "Completion Token"}:
+            raw_metadata["completion_tokens"] = _parse_token_count(value)
+        elif key in {"总 Token", "总Token", "Token"}:
+            raw_metadata["total_tokens"] = _parse_token_count(value)
 
     return _normalize_prompt_metadata(raw_metadata)
 
@@ -875,7 +905,41 @@ def _prompt_record_has_behavior_reference(
 
 def _extract_prompt_metadata_from_json_payload(payload: dict[str, Any]) -> dict[str, object]:
     raw_metadata = payload.get("metadata")
-    return _normalize_prompt_metadata(raw_metadata if isinstance(raw_metadata, dict) else {})
+    metadata = _normalize_prompt_metadata(raw_metadata if isinstance(raw_metadata, dict) else {})
+    if all(token_key in metadata for token_key in ("prompt_tokens", "completion_tokens", "total_tokens")):
+        return metadata
+
+    raw_attempts = payload.get("generation_attempts")
+    attempts = raw_attempts if isinstance(raw_attempts, list) else []
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        trace = attempt.get("trace")
+        if isinstance(trace, dict):
+            trace_tokens = {
+                token_key: trace.get(token_key)
+                for token_key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
+            if any(isinstance(token_count, int) and token_count > 0 for token_count in trace_tokens.values()):
+                for token_key, token_count in trace_tokens.items():
+                    if token_key not in metadata and isinstance(token_count, int) and not isinstance(token_count, bool):
+                        metadata[token_key] = max(token_count, 0)
+
+        wire_response = attempt.get("wire_response")
+        raw_usage = wire_response.get("usage") if isinstance(wire_response, dict) else None
+        if isinstance(raw_usage, dict):
+            usage_tokens = {
+                "prompt_tokens": raw_usage.get("prompt_tokens", raw_usage.get("input_tokens")),
+                "completion_tokens": raw_usage.get("completion_tokens", raw_usage.get("output_tokens")),
+                "total_tokens": raw_usage.get("total_tokens"),
+            }
+            for token_key, token_count in usage_tokens.items():
+                if token_key not in metadata and isinstance(token_count, int) and not isinstance(token_count, bool):
+                    metadata[token_key] = max(token_count, 0)
+
+        if all(token_key in metadata for token_key in ("prompt_tokens", "completion_tokens", "total_tokens")):
+            break
+    return _normalize_prompt_metadata(metadata)
 
 
 def _extract_llm_error_display_title(payload: dict[str, Any]) -> str:
@@ -1092,6 +1156,11 @@ def _extract_prompt_metadata_from_json_head(file_path: Path, read_size: int = 81
     if duration_match:
         raw_metadata["duration_ms"] = duration_match.group("value")
 
+    for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        token_match = re.search(rf'"{token_key}"\s*:\s*(?P<value>\d+)', content)
+        if token_match:
+            raw_metadata[token_key] = int(token_match.group("value"))
+
     return _normalize_prompt_metadata(raw_metadata)
 
 
@@ -1123,6 +1192,11 @@ def _merge_prompt_metadata(record: dict[str, object], metadata: dict[str, object
     duration_ms = metadata.get("duration_ms")
     if isinstance(duration_ms, (int, float)) and record.get("duration_ms") is None:
         record["duration_ms"] = float(duration_ms)
+
+    for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        token_count = metadata.get(token_key)
+        if isinstance(token_count, int) and record.get(token_key) is None:
+            record[token_key] = token_count
 
 
 def _extract_output_block_from_content(content: str) -> str | None:
@@ -1432,6 +1506,9 @@ def _matches_prompt_file_search(item: ReasoningPromptFile, normalized_search: st
         or normalized_search in (item.display_title or "").casefold()
         or normalized_search in (item.model_name or "").casefold()
         or normalized_search in (str(item.duration_ms) if item.duration_ms is not None else "")
+        or normalized_search in (str(item.prompt_tokens) if item.prompt_tokens is not None else "")
+        or normalized_search in (str(item.completion_tokens) if item.completion_tokens is not None else "")
+        or normalized_search in (str(item.total_tokens) if item.total_tokens is not None else "")
         or normalized_search in item.stem.casefold()
     ):
         return True
@@ -1602,6 +1679,9 @@ def _collect_prompt_file_records_for_session(
                     "action_preview": None,
                     "model_name": None,
                     "duration_ms": None,
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "total_tokens": None,
                     "size": 0,
                     "modified_at": 0.0,
                 },
@@ -1940,6 +2020,11 @@ async def get_reasoning_prompt_file(path: str = Query(...)):
         modified_at=stat.st_mtime,
         model_name=metadata.get("model_name") if isinstance(metadata.get("model_name"), str) else None,
         duration_ms=metadata.get("duration_ms") if isinstance(metadata.get("duration_ms"), (int, float)) else None,
+        prompt_tokens=metadata.get("prompt_tokens") if isinstance(metadata.get("prompt_tokens"), int) else None,
+        completion_tokens=(
+            metadata.get("completion_tokens") if isinstance(metadata.get("completion_tokens"), int) else None
+        ),
+        total_tokens=metadata.get("total_tokens") if isinstance(metadata.get("total_tokens"), int) else None,
         message_avatars=message_avatars,
     )
 

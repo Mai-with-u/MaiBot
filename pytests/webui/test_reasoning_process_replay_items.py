@@ -12,6 +12,7 @@ from src.webui.routers.reasoning_process import (
     _deserialize_replay_items,
     _extract_action_preview_from_json_payload,
     _extract_output_text_from_json_payload,
+    _extract_prompt_metadata_from_json_payload,
 )
 
 
@@ -24,6 +25,55 @@ def _meta(item_id: str, *, include_deprecated_fields: bool = False) -> dict[str,
     if include_deprecated_fields:
         meta.update({"response_group_id": "legacy-group", "ordinal": 99})
     return meta
+
+
+def test_extract_prompt_metadata_reads_tokens_and_supports_legacy_attempt_trace() -> None:
+    direct_metadata = _extract_prompt_metadata_from_json_payload(
+        {
+            "metadata": {
+                "model_name": "test-model",
+                "duration_ms": 123.45,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+            }
+        }
+    )
+    legacy_metadata = _extract_prompt_metadata_from_json_payload(
+        {
+            "metadata": {"model_name": "legacy-model", "duration_ms": 50},
+            "generation_attempts": [
+                {
+                    "trace": {
+                        "prompt_tokens": 80,
+                        "completion_tokens": 10,
+                        "total_tokens": 90,
+                    }
+                }
+            ],
+        }
+    )
+    responses_metadata = _extract_prompt_metadata_from_json_payload(
+        {
+            "metadata": {"model_name": "responses-model", "duration_ms": 60},
+            "generation_attempts": [
+                {
+                    "trace": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    "wire_response": {
+                        "usage": {"input_tokens": 1000, "output_tokens": 50}
+                    },
+                }
+            ],
+        }
+    )
+
+    assert direct_metadata["total_tokens"] == 120
+    assert legacy_metadata["prompt_tokens"] == 80
+    assert legacy_metadata["completion_tokens"] == 10
+    assert legacy_metadata["total_tokens"] == 90
+    assert responses_metadata["prompt_tokens"] == 1000
+    assert responses_metadata["completion_tokens"] == 50
+    assert responses_metadata["total_tokens"] == 1050
 
 
 def test_deserialize_replay_items_preserves_flat_item_types_and_ignores_legacy_group_fields() -> None:

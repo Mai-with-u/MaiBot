@@ -28,6 +28,7 @@
 
 ## Webui
 
+- 推理过程日志列表与详情新增输入、输出和总 Token 展示；统一记录层会从 Generation Attempt 补全用量，覆盖 Planner、Replyer、学习器、记忆和工具调用等生成路径，并兼容旧记录。
 - 麦麦推理的重放 Item 编辑器新增正文与 JSON 双视图，正文按真实换行显示，JSON 支持语法高亮编辑。
 - 新增独立回复效果分析页，可按真实聊天流、日期、策略和置信度查看三维趋势、策略对比与逐条归因证据。
 - 推理过程结构化记录升级为 v6 `request_items` / `output_items` / `generation_attempts`，按扁平 Item 和真实 Provider 调用时间线展示；编辑重放和重放结果统一使用 Items，v1-v5 旧记录仅在前端读取时迁移。
