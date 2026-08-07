@@ -8,9 +8,9 @@ import gzip
 import json
 import time
 
-from sqlmodel import col, select
+from sqlmodel import col, delete, select
 
-from src.common.database.database import get_db_session
+from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import MaisakaReplyEffect
 from src.common.reply_effect_record_codec import decode_record_payload, encode_record_payload
 
@@ -199,6 +199,27 @@ class ReplyEffectStorage:
         else:
             serialized = file_path.read_text(encoding="utf-8")
         return json.loads(serialized)
+
+    def clear_all_records(self) -> tuple[int, int]:
+        """删除全部数据库记录与诊断镜像，并回收数据库文件空间。"""
+
+        with get_db_session() as session:
+            effect_ids = list(session.exec(select(MaisakaReplyEffect.effect_id)).all())
+            session.exec(delete(MaisakaReplyEffect))
+
+        removed_files = 0
+        for pattern in ("*.json", "*.json.gz"):
+            for file_path in self._base_dir.rglob(pattern):
+                if not file_path.is_file():
+                    continue
+                file_path.unlink()
+                removed_files += 1
+
+        with engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.commit()
+            connection.exec_driver_sql("VACUUM")
+        return len(effect_ids), removed_files
 
     def _find_record_file(self, record: ReplyEffectRecord) -> Path | None:
         """定位记录已有的诊断镜像，避免恢复后重复创建 JSON。"""

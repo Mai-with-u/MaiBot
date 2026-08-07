@@ -1,6 +1,6 @@
 """MaiSaka 回复效果分析与迁移接口。"""
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 from difflib import unified_diff
 from io import BytesIO
@@ -26,6 +26,7 @@ from src.common.reply_effect_record_codec import decode_record_payload
 from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.reply_effect.models import reply_effect_record_from_dict
 from src.maisaka.reply_effect.storage import ReplyEffectStorage
+from src.maisaka.reply_effect.tracker import clear_active_reply_effect_trackers
 from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import build_webui_avatar_url
 
@@ -496,6 +497,19 @@ async def import_reply_effects(file: UploadFile = File(...)) -> dict[str, int]:
     }
 
 
+@router.delete("/clear")
+async def clear_reply_effects() -> dict[str, int]:
+    """清空全部评分记录、镜像及仍在运行的观察任务。"""
+
+    tracker_count = await clear_active_reply_effect_trackers()
+    record_count, mirror_count = ReplyEffectStorage().clear_all_records()
+    return {
+        "deleted_records": record_count,
+        "deleted_mirrors": mirror_count,
+        "cleared_trackers": tracker_count,
+    }
+
+
 @router.get("/{effect_id}")
 async def get_reply_effect_detail(effect_id: str) -> dict[str, Any]:
     with get_db_session(auto_commit=False) as session:
@@ -687,24 +701,32 @@ def _score_distribution(
     rows: list[MaisakaReplyEffect],
     field_name: str,
 ) -> dict[str, Any]:
-    """按实际分值统计评分分布，并转换为组内样本占比。"""
+    """按 5 分区间统计真实评分分布，并转换为组内样本占比。"""
 
+    bucket_width = 5
+    bucket_count = 100 // bucket_width
+    counts = [0] * bucket_count
     values = [float(value) for row in rows if (value := getattr(row, field_name)) is not None]
     for value in values:
         if not 0 <= value <= 100:
             raise ValueError(f"回复效果分数超出 0～100：field={field_name} value={value}")
+        bucket_index = min(int(value // bucket_width), bucket_count - 1)
+        counts[bucket_index] += 1
 
     sample_count = len(values)
-    counts = Counter(values)
     return {
         "sample_count": sample_count,
-        "points": [
+        "buckets": [
             {
-                "score": score,
+                "score": bucket_index * bucket_width,
+                "range": (
+                    f"{bucket_index * bucket_width}～"
+                    f"{(bucket_index + 1) * bucket_width}"
+                ),
                 "count": count,
                 "percentage": round(count * 100 / sample_count, 2) if sample_count else 0.0,
             }
-            for score, count in sorted(counts.items())
+            for bucket_index, count in enumerate(counts)
         ],
     }
 

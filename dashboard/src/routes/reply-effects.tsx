@@ -28,6 +28,7 @@ import {
   RefreshCw,
   RotateCcw,
   Sparkles,
+  Trash2,
   Upload,
 } from 'lucide-react'
 import {
@@ -44,6 +45,17 @@ import {
 } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -110,15 +122,16 @@ type DistributionMetric =
   | 'conversation_score'
   | 'relative_score'
 
-interface ScoreDistributionPoint {
+interface ScoreDistributionBucket {
   score: number
+  range: string
   count: number
   percentage: number
 }
 
 interface ScoreDistribution {
   sample_count: number
-  points: ScoreDistributionPoint[]
+  buckets: ScoreDistributionBucket[]
 }
 
 interface Overview {
@@ -200,6 +213,12 @@ interface ReplyEffectImportResult {
   imported: number
   skipped: number
   conflicts: number
+}
+
+interface ReplyEffectClearResult {
+  deleted_records: number
+  deleted_mirrors: number
+  cleared_trackers: number
 }
 
 const STRATEGY_NAMES: Record<string, string> = {
@@ -319,21 +338,14 @@ function ScoreDistributionChart({
       distribution: version.score_distributions?.[metric],
     }))
     .filter((item) => (item.distribution?.sample_count ?? 0) > 0)
-  const scores = Array.from(
-    new Set(series.flatMap((item) => item.distribution?.points.map((point) => point.score) ?? []))
-  ).sort((left, right) => left - right)
-  const percentages = series.map(
-    (item) =>
-      new Map(
-        item.distribution?.points.map((point) => [point.score, point.percentage] as const) ?? []
-      )
-  )
-  const chartData = scores.map((score) => {
+  const buckets = series[0]?.distribution?.buckets ?? []
+  const chartData = buckets.map((bucket, bucketIndex) => {
     const point: Record<string, string | number> = {
-      score,
+      score: bucket.score,
+      range: bucket.range,
     }
-    for (const [index, item] of series.entries()) {
-      point[item.key] = percentages[index].get(score) ?? 0
+    for (const item of series) {
+      point[item.key] = item.distribution?.buckets[bucketIndex]?.percentage ?? 0
     }
     return point
   })
@@ -341,7 +353,7 @@ function ScoreDistributionChart({
   return (
     <div className="bg-muted/15 min-w-0 rounded-xl border p-3 sm:p-4">
       <h3 className="text-sm font-semibold">{title}</h3>
-      <p className="text-muted-foreground mt-1 text-xs">按实际分值绘制 · 纵轴为组内样本占比</p>
+      <p className="text-muted-foreground mt-1 text-xs">每 5 分一档 · 纵轴为组内样本占比</p>
       {series.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
           {series.map((item) => (
@@ -382,7 +394,9 @@ function ScoreDistributionChart({
                 axisLine={false}
               />
               <Tooltip
-                labelFormatter={(value) => `分数 ${Number(value).toFixed(1)}`}
+                labelFormatter={(_, payload) =>
+                  payload?.[0]?.payload?.range ? `分数 ${payload[0].payload.range}` : ''
+                }
                 formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
               />
               {series.map((item) => (
@@ -708,6 +722,7 @@ export function ReplyEffectsPage() {
   const [browserLoading, setBrowserLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   const baseQuery = useMemo(() => {
     const params = new URLSearchParams()
@@ -894,6 +909,28 @@ export function ReplyEffectsPage() {
     }
   }
 
+  const clearScores = async () => {
+    setClearing(true)
+    try {
+      const result = await backendApi.delete<ReplyEffectClearResult>(
+        '/api/webui/reply-effects/clear'
+      )
+      toast({
+        title: '评分已清空',
+        description: `已删除 ${result.deleted_records} 条评分和 ${result.deleted_mirrors} 个诊断镜像`,
+      })
+      refreshPage()
+    } catch (requestError) {
+      toast({
+        title: '清空失败',
+        description: requestError instanceof Error ? requestError.message : '无法清空评分数据',
+        variant: 'destructive',
+      })
+    } finally {
+      setClearing(false)
+    }
+  }
+
   return (
     <div className="flex min-h-full flex-col p-4 sm:p-6">
       <div className="mx-auto w-full max-w-[1800px] space-y-5">
@@ -941,12 +978,43 @@ export function ReplyEffectsPage() {
               <Download className="h-4 w-4" />
               {exporting ? '导出中' : '导出评分'}
             </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={importing || exporting || clearing}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {clearing ? '清空中' : '清空评分'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>确定清空全部评分数据？</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    将删除全部回复效果评分、上下文与诊断镜像，并取消当前尚未结算的观察任务。聊天记录、模型调用和麦麦观察数据不会受到影响。建议先导出备份。
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    disabled={clearing}
+                    onClick={() => void clearScores()}
+                  >
+                    确认清空
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={refreshPage}
-              disabled={loading || browserLoading || importing}
+              disabled={loading || browserLoading || importing || clearing}
             >
               <RefreshCw className={cn('h-4 w-4', (loading || browserLoading) && 'animate-spin')} />
               刷新数据

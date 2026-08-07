@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
 import asyncio
 import time
@@ -42,6 +42,7 @@ SHUTDOWN_DRAIN_SECONDS = 5.0
 
 logger = get_logger("maisaka_reply_effect")
 _EVALUATION_SEMAPHORES: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = WeakKeyDictionary()
+_ACTIVE_TRACKERS: WeakSet[Any] = WeakSet()
 
 
 def _get_evaluation_semaphore() -> asyncio.Semaphore:
@@ -103,6 +104,7 @@ class ReplyEffectTracker:
         self._evaluation_tasks: Dict[str, asyncio.Task[None]] = {}
         self._state_lock = asyncio.Lock()
         self._started = False
+        _ACTIVE_TRACKERS.add(self)
 
     async def start(self) -> None:
         """恢复未完成记录，并重新建立观察计时器与评审任务。"""
@@ -280,6 +282,20 @@ class ReplyEffectTracker:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+
+    async def clear(self) -> None:
+        """取消当前观察与评审，确保清空后旧记录不会被后台任务重新写回。"""
+
+        async with self._state_lock:
+            tasks = [*self._timeout_tasks.values(), *self._evaluation_tasks.values()]
+            self._pending_records.clear()
+            self._tracked_records.clear()
+            self._timeout_tasks.clear()
+            self._evaluation_tasks.clear()
+            for task in tasks:
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def finalize(self, effect_id: str, reason: str) -> None:
         task = await self._schedule_evaluation(effect_id, reason)
@@ -476,6 +492,15 @@ class ReplyEffectTracker:
                 {item.user_id for item in record.followup_messages if item.message_id in associated_ids}
             ),
         }
+
+
+async def clear_active_reply_effect_trackers() -> int:
+    """清空当前进程中的全部观察状态，返回受影响的追踪器数量。"""
+
+    trackers = list(_ACTIVE_TRACKERS)
+    if trackers:
+        await asyncio.gather(*(tracker.clear() for tracker in trackers))
+    return len(trackers)
 
 
 def _count_pre_activity(context_snapshot: List[Dict[str, Any]]) -> int:
