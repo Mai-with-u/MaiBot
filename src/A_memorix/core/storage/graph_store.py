@@ -136,6 +136,8 @@ class GraphStore:
         self._batch_nodes_changed = False
         self._graph_revision = 0
         self._node_revision = 0
+        # 上次成功落盘时的图版本，用于脏检测（跳过无变更的全量保存）
+        self._last_saved_graph_revision = 0
 
         # 状态管理
         self._adjacency_T: Optional[Union[csr_matrix, csc_matrix]] = None
@@ -1465,6 +1467,8 @@ class GraphStore:
         except OSError as exc:
             logger.warning(f"清理旧图快照失败，当前快照已成功激活: {exc}")
 
+        # 全部落盘成功后才记录已保存版本，供脏检测使用
+        self._last_saved_graph_revision = self._graph_revision
         logger.info(f"图存储已保存到: {data_dir}")
 
     def load(self, data_dir: Optional[Union[str, Path]] = None) -> None:
@@ -1574,6 +1578,8 @@ class GraphStore:
         self._adjacency_dirty = True
         self._saliency_cache = None
         self._record_graph_change(nodes_changed=True)
+        # 加载完成后内存与磁盘一致，同步已保存版本避免误判为脏
+        self._last_saved_graph_revision = self._graph_revision
         logger.info(
             f"图存储已加载: 节点={len(self._nodes)}, 边={self._adjacency.nnz if self._adjacency is not None else 0}"
         )
@@ -1649,6 +1655,10 @@ class GraphStore:
     def graph_revision(self) -> int:
         """运行期图拓扑与边权重版本。"""
         return self._graph_revision
+
+    def has_pending_changes(self) -> bool:
+        """是否存在尚未落盘的图变更（用于跳过无变更的全量保存）。"""
+        return self._graph_revision != self._last_saved_graph_revision
 
     @property
     def node_revision(self) -> int:

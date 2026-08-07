@@ -80,6 +80,31 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
         rebuild_required = False
         if vector_available and not force_vectors:
             rebuild_required = bool(self._vector_rebuild_status().get("vector_rebuild_required", False))
+        # 脏检测：图与向量均无未落盘变更时跳过全量保存。
+        # force_vectors 或向量重建需求等强制路径不做跳过，保证落盘语义不变。
+        # 无法判断是否支持脏检测的对象一律视为有变更（保守，拿不准就保存）。
+        if not force_vectors and not rebuild_required:
+            graph_dirty = self.graph_store is not None and (
+                not hasattr(self.graph_store, "has_pending_changes")
+                or self.graph_store.has_pending_changes()
+            )
+            vector_dirty = any(
+                store is not None
+                and (
+                    not hasattr(store, "has_pending_changes")
+                    or store.has_pending_changes()
+                )
+                for store in (
+                    self.vector_store,
+                    self.paragraph_vector_store,
+                    self.graph_vector_store,
+                )
+            )
+            if not graph_dirty and not vector_dirty:
+                # 稀疏索引加载与图/向量变更无关，仍保持原有加载行为
+                if self.sparse_index is not None and getattr(self.sparse_index.config, "enabled", False):
+                    self.sparse_index.ensure_loaded()
+                return
         if self.vector_store is not None and not self._dual_vector_pools_enabled():
             if rebuild_required:
                 kernel_module.logger.debug("检测到向量库需要重建，跳过向量库持久化以保留重建提示")
