@@ -219,6 +219,7 @@ interface ReplyEffectClearResult {
   deleted_records: number
   deleted_mirrors: number
   cleared_trackers: number
+  space_reclaimed: boolean
 }
 
 const STRATEGY_NAMES: Record<string, string> = {
@@ -917,7 +918,7 @@ export function ReplyEffectsPage() {
       )
       toast({
         title: '评分已清空',
-        description: `已删除 ${result.deleted_records} 条评分和 ${result.deleted_mirrors} 个诊断镜像`,
+        description: `已删除 ${result.deleted_records} 条评分和 ${result.deleted_mirrors} 个诊断镜像${result.space_reclaimed ? '' : '；数据库空页将在后续写入时复用'}`,
       })
       refreshPage()
     } catch (requestError) {

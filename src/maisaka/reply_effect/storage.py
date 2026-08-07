@@ -8,10 +8,12 @@ import gzip
 import json
 import time
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import col, delete, select
 
 from src.common.database.database import engine, get_db_session
 from src.common.database.database_model import MaisakaReplyEffect
+from src.common.logger import get_logger
 from src.common.reply_effect_record_codec import decode_record_payload, encode_record_payload
 
 from .models import ReplyEffectRecord, ReplyEffectStatus, reply_effect_record_from_dict
@@ -21,6 +23,7 @@ LEGACY_RETRYABLE_EVALUATION_ERRORS = {
     "回复效果评审连续两次校验失败：Connection error.",
     "回复效果评审连续两次校验失败：Request timed out.",
 }
+logger = get_logger("maisaka_reply_effect_storage")
 
 
 class ReplyEffectStorage:
@@ -28,6 +31,7 @@ class ReplyEffectStorage:
 
     _DEFAULT_MAX_RECORDS_PER_CHAT = 256
     _TRIM_COUNT = 100
+    _CLEARED_EFFECT_IDS: set[str] = set()
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base_dir = base_dir or BASE_DIR
@@ -52,6 +56,10 @@ class ReplyEffectStorage:
     def save_record(self, record: ReplyEffectRecord) -> None:
         """原子写入记录 JSON。"""
 
+        if record.effect_id in self._CLEARED_EFFECT_IDS:
+            if record.file_path is not None:
+                record.file_path.unlink(missing_ok=True)
+            return
         if record.file_path is None:
             self.create_record_file(record)
             return
@@ -200,11 +208,12 @@ class ReplyEffectStorage:
             serialized = file_path.read_text(encoding="utf-8")
         return json.loads(serialized)
 
-    def clear_all_records(self) -> tuple[int, int]:
+    def clear_all_records(self) -> tuple[int, int, bool]:
         """删除全部数据库记录与诊断镜像，并回收数据库文件空间。"""
 
         with get_db_session() as session:
             effect_ids = list(session.exec(select(MaisakaReplyEffect.effect_id)).all())
+            self._CLEARED_EFFECT_IDS.update(effect_ids)
             session.exec(delete(MaisakaReplyEffect))
 
         removed_files = 0
@@ -215,11 +224,22 @@ class ReplyEffectStorage:
                 file_path.unlink()
                 removed_files += 1
 
-        with engine.connect() as connection:
-            connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
-            connection.commit()
-            connection.exec_driver_sql("VACUUM")
-        return len(effect_ids), removed_files
+        space_reclaimed = True
+        try:
+            with engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+                connection.commit()
+                connection.exec_driver_sql("VACUUM")
+        except OperationalError as exc:
+            space_reclaimed = False
+            logger.warning(f"评分数据已清空，但数据库空间暂时无法回收：{exc}")
+        return len(effect_ids), removed_files, space_reclaimed
+
+    @classmethod
+    def restore_record_ids(cls, effect_ids: List[str]) -> None:
+        """导入备份时允许被清空过的记录 ID 重新写入。"""
+
+        cls._CLEARED_EFFECT_IDS.difference_update(effect_ids)
 
     def _find_record_file(self, record: ReplyEffectRecord) -> Path | None:
         """定位记录已有的诊断镜像，避免恢复后重复创建 JSON。"""

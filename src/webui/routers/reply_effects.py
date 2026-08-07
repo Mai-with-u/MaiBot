@@ -486,6 +486,7 @@ async def import_reply_effects(file: UploadFile = File(...)) -> dict[str, int]:
                 conflicts += 1
 
     storage = ReplyEffectStorage()
+    storage.restore_record_ids([record.effect_id for record in imported_records])
     for record in sorted(imported_records, key=lambda item: item.created_at):
         storage.create_record_file(record)
 
@@ -498,15 +499,16 @@ async def import_reply_effects(file: UploadFile = File(...)) -> dict[str, int]:
 
 
 @router.delete("/clear")
-async def clear_reply_effects() -> dict[str, int]:
+async def clear_reply_effects() -> dict[str, int | bool]:
     """清空全部评分记录、镜像及仍在运行的观察任务。"""
 
     tracker_count = await clear_active_reply_effect_trackers()
-    record_count, mirror_count = ReplyEffectStorage().clear_all_records()
+    record_count, mirror_count, space_reclaimed = ReplyEffectStorage().clear_all_records()
     return {
         "deleted_records": record_count,
         "deleted_mirrors": mirror_count,
         "cleared_trackers": tracker_count,
+        "space_reclaimed": space_reclaimed,
     }
 
 

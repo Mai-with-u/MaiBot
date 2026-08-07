@@ -103,12 +103,18 @@ class ReplyEffectTracker:
         self._timeout_tasks: Dict[str, asyncio.Task[None]] = {}
         self._evaluation_tasks: Dict[str, asyncio.Task[None]] = {}
         self._state_lock = asyncio.Lock()
+        try:
+            self._event_loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._event_loop = None
         self._started = False
         _ACTIVE_TRACKERS.add(self)
 
     async def start(self) -> None:
         """恢复未完成记录，并重新建立观察计时器与评审任务。"""
 
+        if self._event_loop is None:
+            self._event_loop = asyncio.get_running_loop()
         if self._started:
             return
         self._started = True
@@ -498,8 +504,33 @@ async def clear_active_reply_effect_trackers() -> int:
     """清空当前进程中的全部观察状态，返回受影响的追踪器数量。"""
 
     trackers = list(_ACTIVE_TRACKERS)
-    if trackers:
-        await asyncio.gather(*(tracker.clear() for tracker in trackers))
+    current_loop = asyncio.get_running_loop()
+    local_trackers = [tracker for tracker in trackers if tracker._event_loop in {None, current_loop}]
+    foreign_trackers = [
+        tracker
+        for tracker in trackers
+        if tracker._event_loop is not None
+        and tracker._event_loop is not current_loop
+        and tracker._event_loop.is_running()
+    ]
+    if local_trackers:
+        await asyncio.gather(*(tracker.clear() for tracker in local_trackers), return_exceptions=True)
+    foreign_futures = []
+    for tracker in foreign_trackers:
+        if tracker._event_loop is None:
+            continue
+        clear_coroutine = tracker.clear()
+        try:
+            foreign_futures.append(
+                asyncio.run_coroutine_threadsafe(clear_coroutine, tracker._event_loop)
+            )
+        except RuntimeError:
+            clear_coroutine.close()
+    if foreign_futures:
+        await asyncio.gather(
+            *(asyncio.wrap_future(future) for future in foreign_futures),
+            return_exceptions=True,
+        )
     return len(trackers)
 
 
