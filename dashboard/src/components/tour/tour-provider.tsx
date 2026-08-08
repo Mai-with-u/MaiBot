@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { Step, CallBackProps, Status } from 'react-joyride'
 import { TourContext } from './tour-context'
 import type { TourId, TourState } from './types'
@@ -32,6 +32,16 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const [completedTours, setCompletedTours] = useState<Set<TourId>>(getCompletedTours)
   // 用于强制重新渲染的计数器
   const [, forceUpdate] = useState(0)
+
+  useEffect(() => {
+    const handleGuidesReset = () => {
+      setCompletedTours(new Set())
+      setState({ activeTourId: null, stepIndex: 0, isRunning: false })
+    }
+
+    window.addEventListener('maibot-guides-reset', handleGuidesReset)
+    return () => window.removeEventListener('maibot-guides-reset', handleGuidesReset)
+  }, [])
 
   const registerTour = useCallback((tourId: TourId, steps: Step[]) => {
     tours.set(tourId, steps)

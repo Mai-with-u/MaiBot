@@ -423,6 +423,11 @@
     },
     "other": {
       "display": "표시 설정",
+      "guidesAndNotices": "가이드 및 알림",
+      "guidesAndNoticesDesc": "완료한 가이드와 닫은 알림을 초기화합니다. 다른 설정이나 데이터에는 영향을 주지 않습니다.",
+      "resetGuidesAndNotices": "모든 가이드 및 알림 초기화",
+      "guidesResetDone": "가이드 및 알림 초기화 완료",
+      "guidesResetDoneDesc": "저장된 상태 {{count}}개를 삭제했습니다. 해당 페이지를 다시 열면 표시됩니다.",
       "enableAvatarFetch": "사용자 아바타 가져오기 및 표시",
       "enableAvatarFetchDesc": "끄면 채팅과 추론 과정 화면에서 아바타 이미지를 요청하지 않고 기본 아바타를 표시합니다.",
       "performance": "성능 & 저장소",

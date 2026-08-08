@@ -270,7 +270,7 @@ describe('ModelConfigPage 特征化', () => {
   it('切到任务页可见 embedding 配置卡片', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '为模型分配功能' }))
+    await user.click(screen.getByRole('tab', { name: '功能分配' }))
     expect(await screen.findByTestId('task-config-card')).toBeInTheDocument()
     expect(screen.getByTestId('task-models')).toHaveTextContent('old-embed-model')
   })
@@ -279,7 +279,7 @@ describe('ModelConfigPage 特征化', () => {
     it('更改 embedding 模型弹出警告对话框，确认后应用变更', async () => {
       const user = userEvent.setup()
       await renderModelPage()
-      await user.click(screen.getByRole('tab', { name: '为模型分配功能' }))
+      await user.click(screen.getByRole('tab', { name: '功能分配' }))
       await user.click(await screen.findByText('change-embedding'))
 
       // 弹出警告
@@ -297,7 +297,7 @@ describe('ModelConfigPage 特征化', () => {
     it('取消则不应用变更', async () => {
       const user = userEvent.setup()
       await renderModelPage()
-      await user.click(screen.getByRole('tab', { name: '为模型分配功能' }))
+      await user.click(screen.getByRole('tab', { name: '功能分配' }))
       await user.click(await screen.findByText('change-embedding'))
       expect(await screen.findByText('更换嵌入模型警告')).toBeInTheDocument()
 
@@ -311,7 +311,7 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     await renderModelPage()
     // 先经 embedding 确认产生一次变更（hasUnsavedChanges = true）
-    await user.click(screen.getByRole('tab', { name: '为模型分配功能' }))
+    await user.click(screen.getByRole('tab', { name: '功能分配' }))
     await user.click(await screen.findByText('change-embedding'))
     await user.click(screen.getByRole('button', { name: '确认更换' }))
 

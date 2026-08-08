@@ -37,6 +37,7 @@ interface TaskConfigCardProps {
   advanced?: boolean
   showAdvancedSettings?: boolean
   dataTour?: string
+  singleModel?: boolean
 }
 
 const selectionStrategyOptions = [
@@ -72,6 +73,7 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
   advanced = false,
   showAdvancedSettings = false,
   dataTour,
+  singleModel = false,
 }: TaskConfigCardProps) {
   const temperatureInputId = React.useId()
   const selectedModels = taskConfig.model_list || []
@@ -103,6 +105,7 @@ export const TaskConfigCard = React.memo(function TaskConfigCard({
             placeholder="选择模型..."
             emptyText="暂无可用模型"
             compact
+            singleSelect={singleModel}
           />
         </div>
 

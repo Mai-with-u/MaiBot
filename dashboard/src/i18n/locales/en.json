@@ -505,6 +505,11 @@
     },
     "other": {
       "display": "Display",
+      "guidesAndNotices": "Guides and notices",
+      "guidesAndNoticesDesc": "Reset all completed guides and dismissed notices without changing other settings or application data.",
+      "resetGuidesAndNotices": "Reset all guides and notices",
+      "guidesResetDone": "Guides and notices reset",
+      "guidesResetDoneDesc": "Cleared {{count}} saved states. Reopen the relevant pages to see them again.",
       "enableAvatarFetch": "Fetch and show user avatars",
       "enableAvatarFetchDesc": "When disabled, chat and reasoning views stop requesting avatar images and use default avatars.",
       "performance": "Performance & Storage",

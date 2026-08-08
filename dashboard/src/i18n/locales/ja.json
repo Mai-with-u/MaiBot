@@ -433,6 +433,11 @@
     },
     "other": {
       "display": "表示設定",
+      "guidesAndNotices": "ガイドとお知らせ",
+      "guidesAndNoticesDesc": "完了済みのガイドと閉じたお知らせをリセットします。他の設定やデータには影響しません。",
+      "resetGuidesAndNotices": "すべてのガイドとお知らせをリセット",
+      "guidesResetDone": "ガイドとお知らせをリセットしました",
+      "guidesResetDoneDesc": "{{count}} 件の状態を消去しました。該当ページを開き直すと再表示されます。",
       "enableAvatarFetch": "ユーザーアバターを取得して表示",
       "enableAvatarFetchDesc": "無効にすると、チャットと推論過程ビューはアバター画像を要求せず、既定のアバターを表示します。",
       "performance": "パフォーマンス & ストレージ",

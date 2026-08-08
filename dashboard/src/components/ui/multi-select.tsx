@@ -53,6 +53,7 @@ interface MultiSelectProps {
   className?: string
   compact?: boolean
   disabled?: boolean
+  singleSelect?: boolean
 }
 
 // 可排序的标签组件
@@ -165,6 +166,7 @@ export function MultiSelect({
   className,
   compact = false,
   disabled = false,
+  singleSelect = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false)
 
@@ -190,6 +192,10 @@ export function MultiSelect({
     if (selected.includes(value)) {
       // 取消选择
       onChange(selected.filter((item) => item !== value))
+    } else if (singleSelect) {
+      // 单选模式仅限制 WebUI 操作，不裁剪配置文件中已有的多选值
+      onChange([value])
+      setOpen(false)
     } else {
       // 添加选择
       onChange([...selected, value])

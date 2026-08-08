@@ -1,4 +1,4 @@
-import { Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react'
+import { Plus } from 'lucide-react'
 
 import type { TestConnectionResult } from '@/lib/config-api'
 import { Button } from '@/components/ui/button'
@@ -15,10 +15,6 @@ interface ProviderSidebarProps {
   testResults: Map<string, TestConnectionResult>
   onSelectProvider: (providerName: string) => void
   onAdd: () => void
-  onEdit: (provider: APIProvider, index: number) => void
-  onDelete: (index: number) => void
-  onTest: (providerName: string) => void
-  onTestAll: () => void
 }
 
 export function ProviderSidebar({
@@ -29,37 +25,23 @@ export function ProviderSidebar({
   testResults,
   onSelectProvider,
   onAdd,
-  onEdit,
-  onDelete,
-  onTest,
-  onTestAll,
 }: ProviderSidebarProps) {
   const totalModels = Array.from(modelCounts.values()).reduce((total, count) => total + count, 0)
+  const sortedProviders = providers
+    .map((provider, index) => ({ provider, index }))
+    .sort((a, b) => {
+      const countDifference = (modelCounts.get(b.provider.name) ?? 0) - (modelCounts.get(a.provider.name) ?? 0)
+      return countDifference || a.index - b.index
+    })
 
   return (
-    <aside className="bg-card/30 min-w-0 rounded-lg border" data-config-field-path="api_providers">
+    <aside
+      className="bg-card/30 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border lg:h-full"
+      data-config-field-path="api_providers"
+    >
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-        <div>
-          <h2 className="text-sm font-semibold">模型厂商</h2>
-          <p className="text-muted-foreground text-xs">选择后筛选右侧模型</p>
-        </div>
+        <h2 className="text-sm font-semibold">模型厂商</h2>
         <div className="flex shrink-0 gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={onTestAll}
-            disabled={providers.length === 0 || testingProviders.size > 0}
-            title="测试全部连接"
-            aria-label="测试全部厂商连接"
-          >
-            {testingProviders.size > 0 ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Zap className="h-4 w-4" />
-            )}
-          </Button>
           <Button
             type="button"
             variant="outline"
@@ -75,7 +57,7 @@ export function ProviderSidebar({
         </div>
       </div>
 
-      <div className="max-h-[36rem] space-y-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:h-0">
         <button
           type="button"
           className={cn(
@@ -97,7 +79,7 @@ export function ProviderSidebar({
           </span>
         </button>
 
-        {providers.map((provider, index) => {
+        {sortedProviders.map(({ provider }) => {
           const testStatus = getProviderTestStatus(
             testResults.get(provider.name),
             testingProviders.has(provider.name)
@@ -108,13 +90,13 @@ export function ProviderSidebar({
             <div
               key={provider.name}
               className={cn(
-                'group flex min-w-0 items-center gap-1 rounded-md border border-transparent px-2 py-1 transition-colors',
-                isSelected ? 'border-primary/30 bg-primary/10' : 'hover:bg-muted/70'
+                'group flex min-w-0 items-center gap-1 rounded-md px-3 py-2 text-sm transition-colors',
+                isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
               )}
             >
               <button
                 type="button"
-                className="min-w-0 flex-1 truncate text-left"
+                className="min-w-0 flex-1 text-left"
                 onClick={() => onSelectProvider(provider.name)}
                 aria-pressed={isSelected}
                 aria-label={`筛选厂商 ${provider.name}`}
@@ -128,50 +110,23 @@ export function ProviderSidebar({
                 >
                   {provider.name}
                 </span>
+                <span
+                  className={cn(
+                    'mt-0.5 hidden truncate text-[11px] xl:block',
+                    isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                  )}
+                >
+                  {provider.base_url}
+                </span>
               </button>
-              <span className="text-muted-foreground w-5 shrink-0 text-right text-xs">
+              <span
+                className={cn(
+                  'w-5 shrink-0 text-right text-xs',
+                  isSelected ? 'text-primary-foreground/75' : 'text-muted-foreground'
+                )}
+              >
                 {modelCounts.get(provider.name) ?? 0}
               </span>
-              <div className="flex shrink-0 gap-0.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => onTest(provider.name)}
-                  disabled={testingProviders.has(provider.name)}
-                  title="测试连接"
-                  aria-label={`测试厂商 ${provider.name} 连接`}
-                >
-                  {testingProviders.has(provider.name) ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Zap className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => onEdit(provider, index)}
-                  title="编辑"
-                  aria-label={`编辑厂商 ${provider.name}`}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="text-destructive hover:text-destructive h-7 w-7"
-                  onClick={() => onDelete(index)}
-                  title="删除"
-                  aria-label={`删除厂商 ${provider.name}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
             </div>
           )
         })}

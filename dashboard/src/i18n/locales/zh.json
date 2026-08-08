@@ -505,6 +505,11 @@
     },
     "other": {
       "display": "展示设置",
+      "guidesAndNotices": "引导与提示",
+      "guidesAndNoticesDesc": "重置所有已完成的引导和已关闭的提示，不影响其他设置或业务数据。",
+      "resetGuidesAndNotices": "重置所有引导和提示",
+      "guidesResetDone": "引导和提示已重置",
+      "guidesResetDoneDesc": "已清除 {{count}} 项状态，重新进入对应页面后生效。",
       "enableAvatarFetch": "获取并显示用户头像",
       "enableAvatarFetchDesc": "关闭后，聊天页和推理过程不再请求头像接口，界面会显示默认头像。",
       "performance": "性能与存储",
