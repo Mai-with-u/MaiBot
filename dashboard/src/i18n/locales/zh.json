@@ -25,7 +25,8 @@
       "overview": "概览",
       "botConfig": "麦麦配置编辑",
       "botResources": "麦麦资源管理",
-      "extensionsMonitor": "扩展与维护",
+      "extensionsMonitor": "扩展与集成",
+      "advancedTools": "高级工具",
       "system": "系统"
     },
     "menu": {

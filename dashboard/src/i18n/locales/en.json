@@ -25,7 +25,8 @@
       "overview": "Overview",
       "botConfig": "Bot Configuration",
       "botResources": "Bot Resources",
-      "extensionsMonitor": "Extensions & Maintenance",
+      "extensionsMonitor": "Extensions & Integrations",
+      "advancedTools": "Advanced Tools",
       "system": "System"
     },
     "menu": {

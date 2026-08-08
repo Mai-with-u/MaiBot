@@ -25,7 +25,8 @@
       "overview": "概要",
       "botConfig": "ボット設定",
       "botResources": "ボットリソース",
-      "extensionsMonitor": "拡張とメンテナンス",
+      "extensionsMonitor": "拡張と連携",
+      "advancedTools": "高度なツール",
       "system": "システム"
     },
     "menu": {

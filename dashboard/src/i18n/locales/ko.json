@@ -25,7 +25,8 @@
       "overview": "개요",
       "botConfig": "봇 설정",
       "botResources": "봇 리소스",
-      "extensionsMonitor": "확장 및 유지관리",
+      "extensionsMonitor": "확장 및 연동",
+      "advancedTools": "고급 도구",
       "system": "시스템"
     },
     "menu": {

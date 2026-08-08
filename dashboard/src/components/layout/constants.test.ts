@@ -8,12 +8,13 @@ import type { MenuItem } from './types'
 const allItems: MenuItem[] = menuSections.flatMap((section) => section.items)
 
 describe('menuSections 菜单结构', () => {
-  it('包含概览/机器人配置/资源/扩展监控四个分组且顺序固定', () => {
+  it('包含概览/机器人配置/资源/扩展与集成/高级工具五个分组且顺序固定', () => {
     expect(menuSections.map((section) => section.title)).toEqual([
       'sidebar.groups.overview',
       'sidebar.groups.botConfig',
       'sidebar.groups.botResources',
       'sidebar.groups.extensionsMonitor',
+      'sidebar.groups.advancedTools',
     ])
   })
 
@@ -59,44 +60,50 @@ describe('menuSections 菜单结构', () => {
     expect(modelItem?.tourId).toBe('sidebar-model-management')
   })
 
-  it('数据管理位于扩展与维护分组，并排在 MCP 设置上方', () => {
-    const extensionsSection = menuSections.find(
-      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+  it('数据管理位于高级工具分组末尾', () => {
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
     )
-    const dataTransferItem = extensionsSection?.items.find((item) => item.path === '/data-transfer')
-    const dataTransferIndex =
-      extensionsSection?.items.findIndex((item) => item.path === '/data-transfer') ?? -1
-    const mcpIndex =
-      extensionsSection?.items.findIndex((item) => item.path === '/mcp-settings') ?? -1
+    const dataTransferItem = advancedToolsSection?.items.at(-1)
 
     expect(dataTransferItem?.label).toBe('sidebar.menu.dataTransfer')
+    expect(dataTransferItem?.path).toBe('/data-transfer')
     expect(dataTransferItem?.searchDescription).toBe('search.items.dataTransferDesc')
-    expect(dataTransferIndex).toBeGreaterThanOrEqual(0)
-    expect(dataTransferIndex).toBeLessThan(mcpIndex)
   })
 
-  it('适配器管理拥有独立入口并位于普通插件管理上方', () => {
-    const extensionsSection = menuSections.find(
-      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+  it('Prompt 管理位于高级工具分组首位', () => {
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
+    )
+
+    expect(advancedToolsSection?.items[0]).toMatchObject({
+      label: 'sidebar.menu.promptManagement',
+      path: '/config/prompts',
+    })
+  })
+
+  it('适配器管理拥有独立入口并位于麦麦配置编辑分组', () => {
+    const botConfigSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.botConfig'
     )
     const adapterIndex =
-      extensionsSection?.items.findIndex((item) => item.path === '/adapter-management') ?? -1
-    const pluginIndex =
-      extensionsSection?.items.findIndex((item) => item.path === '/plugin-config') ?? -1
+      botConfigSection?.items.findIndex((item) => item.path === '/adapter-management') ?? -1
+    const modelIndex =
+      botConfigSection?.items.findIndex((item) => item.path === '/config/model') ?? -1
 
     expect(adapterIndex).toBeGreaterThanOrEqual(0)
-    expect(adapterIndex).toBeLessThan(pluginIndex)
+    expect(adapterIndex).toBeGreaterThan(modelIndex)
   })
 
   it('详细统计数据不再占用主侧边栏入口', () => {
-    const extensionsSection = menuSections.find(
-      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
     )
 
-    expect(extensionsSection?.items).not.toEqual(
+    expect(advancedToolsSection?.items).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ path: '/statistics' })])
     )
-    expect(extensionsSection?.items).toEqual(
+    expect(advancedToolsSection?.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: 'sidebar.menu.replyEffects', path: '/reply-effects' }),
       ])

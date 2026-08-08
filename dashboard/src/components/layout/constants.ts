@@ -68,7 +68,11 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.modelDesc',
         tourId: 'sidebar-model-management',
       },
-      { icon: PromptIcon, label: 'sidebar.menu.promptManagement', path: '/config/prompts' },
+      {
+        icon: AdapterManagementIcon,
+        label: 'sidebar.menu.adapterManagement',
+        path: '/adapter-management',
+      },
     ],
   },
   {
@@ -109,11 +113,6 @@ export const menuSections: MenuSection[] = [
   {
     title: 'sidebar.groups.extensionsMonitor',
     items: [
-      {
-        icon: AdapterManagementIcon,
-        label: 'sidebar.menu.adapterManagement',
-        path: '/adapter-management',
-      },
       { icon: PluginConfigIcon, label: 'sidebar.menu.pluginConfig', path: '/plugin-config' },
       {
         icon: PluginMarketIcon,
@@ -121,17 +120,23 @@ export const menuSections: MenuSection[] = [
         path: '/plugins',
         searchDescription: 'search.items.pluginsDesc',
       },
+      { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
+    ],
+  },
+  {
+    title: 'sidebar.groups.advancedTools',
+    items: [
+      { icon: PromptIcon, label: 'sidebar.menu.promptManagement', path: '/config/prompts' },
+      {
+        icon: ReplyEffectsIcon,
+        label: 'sidebar.menu.replyEffects',
+        path: '/reply-effects',
+      },
       {
         icon: DataTransferIcon,
         label: 'sidebar.menu.dataTransfer',
         path: '/data-transfer',
         searchDescription: 'search.items.dataTransferDesc',
-      },
-      { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
-      {
-        icon: ReplyEffectsIcon,
-        label: 'sidebar.menu.replyEffects',
-        path: '/reply-effects',
       },
     ],
   },

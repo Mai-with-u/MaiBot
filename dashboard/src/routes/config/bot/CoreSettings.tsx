@@ -95,10 +95,11 @@ function CoreSettingCard({
         id={`core-setting-${field}`}
         aria-describedby={descriptionId}
         data-core-setting-field={field}
+        autoResize={false}
         value={value}
         onChange={(event) => onChange(field, event.target.value)}
         placeholder={placeholder}
-        className="bg-muted/20 focus-visible:bg-background h-28 min-h-28 flex-1 resize-none rounded-xl border px-3 py-2.5 text-sm leading-6 shadow-inner focus-visible:ring-2 xl:h-32 xl:min-h-32"
+        className="bg-muted/20 focus-visible:bg-background h-40 min-h-40 flex-1 resize-y rounded-xl border px-3 py-2.5 text-sm leading-6 shadow-inner focus-visible:ring-2 xl:h-48 xl:min-h-48"
       />
     </article>
   )
