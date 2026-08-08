@@ -275,7 +275,7 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
     # 当目标会话没有可继承的上下文消息时，至少补齐当前平台账号，
     # 让按 ``platform + account_id`` 绑定的路由仍有机会命中。
     if not RouteKeyFactory.extract_components(inherited_metadata)[0]:
-        bot_account = get_bot_account(target_stream.platform)
+        bot_account = get_bot_account(target_stream.platform, target_stream.account_id)
         if bot_account:
             inherited_metadata["platform_io_account_id"] = bot_account
 
@@ -538,7 +538,7 @@ def _build_outbound_session_message(
         logger.error(f"[SendService] 未找到聊天流: {stream_id}")
         return None
 
-    bot_user_id = get_bot_account(target_stream.platform)
+    bot_user_id = get_bot_account(target_stream.platform, target_stream.account_id)
     if not bot_user_id:
         logger.error(f"[SendService] 平台 {target_stream.platform} 未配置机器人账号，无法发送消息")
         return None

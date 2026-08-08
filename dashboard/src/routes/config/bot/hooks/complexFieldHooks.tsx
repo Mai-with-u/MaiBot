@@ -38,6 +38,11 @@ import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { getChatStreams, resolveChatTargets, type ChatStream, type ChatTargetResolveRequest } from '@/lib/chat-management-api'
 import { formatChatDisplayName } from '@/lib/chat-display'
 import { getBotConfigCached } from '@/lib/config-api'
+import {
+  getDiscoveredBotAccounts,
+  setDiscoveredBotAccountDisabled,
+  type BotPlatformAccount,
+} from '@/lib/bot-accounts-api'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import type { FieldHookComponent } from '@/lib/field-hooks'
 import type { ConfigSchema } from '@/types/config-schema'
@@ -2850,6 +2855,10 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
   parentValues,
   value,
 }) => {
+  const [discoveredAccounts, setDiscoveredAccounts] = useState<BotPlatformAccount[]>([])
+  const [accountsLoading, setAccountsLoading] = useState(true)
+  const [accountsError, setAccountsError] = useState('')
+  const [mutatingAccountId, setMutatingAccountId] = useState<number | null>(null)
   const primaryPlatform = typeof value === 'string' ? value : ''
   const qqAccountValue = parentValues?.qq_account
   const qqAccount =
@@ -2858,6 +2867,37 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
       : ''
   const platforms = normalizePlatformAccounts(parentValues?.platforms)
   const rows = platforms.map(parsePlatformAccount)
+
+  const loadDiscoveredAccounts = async () => {
+    setAccountsLoading(true)
+    setAccountsError('')
+    try {
+      setDiscoveredAccounts(await getDiscoveredBotAccounts())
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : '读取适配器账号失败')
+    } finally {
+      setAccountsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadDiscoveredAccounts()
+  }, [])
+
+  const toggleDiscoveredAccount = async (account: BotPlatformAccount) => {
+    setMutatingAccountId(account.id)
+    setAccountsError('')
+    try {
+      const updated = await setDiscoveredBotAccountDisabled(account.id, !account.disabled)
+      setDiscoveredAccounts((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      )
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : '更新适配器账号失败')
+    } finally {
+      setMutatingAccountId(null)
+    }
+  }
 
   const updateRows = (nextRows: PlatformAccountRow[]) => {
     onParentChange?.('platforms', nextRows.map(formatPlatformAccount))
@@ -2877,9 +2917,71 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
 
   return (
     <div className="space-y-3">
+      <div className="space-y-2 rounded-md border p-3">
+        <div className="space-y-1">
+          <Label className="text-[15px] font-semibold leading-6">适配器已发现账号</Label>
+          <p className="text-xs text-muted-foreground">
+            由已注册适配器实际报告并持久保存。禁用只影响 Bot 自身身份判断，不会断开适配器。
+          </p>
+        </div>
+        {accountsLoading ? (
+          <p className="text-sm text-muted-foreground">正在读取适配器账号…</p>
+        ) : discoveredAccounts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">尚未收到适配器上报的账号。</p>
+        ) : (
+          <div className="space-y-2">
+            {discoveredAccounts.map((account) => (
+              <div
+                key={account.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-3"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{account.platform}</span>
+                    <span className="font-mono text-sm">{account.account_id}</span>
+                    <Badge variant={account.online ? 'default' : 'outline'}>
+                      {account.online ? '在线' : '离线'}
+                    </Badge>
+                    {account.disabled && <Badge variant="destructive">已禁用</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    最近通过 {account.last_source === 'ready' ? '就绪状态' : '入站消息'}上报于{' '}
+                    {new Date(account.last_seen_at).toLocaleString()}
+                  </p>
+                  {account.disabled && account.online && (
+                    <p className="flex items-center gap-1 text-xs text-destructive">
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      此账号仍被在线适配器使用，但不会参与 Bot 自身判断。
+                    </p>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={account.disabled ? 'outline' : 'destructive'}
+                  disabled={mutatingAccountId === account.id}
+                  onClick={() => void toggleDiscoveredAccount(account)}
+                >
+                  {account.disabled ? '恢复' : '禁用'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {accountsError && (
+          <p className="flex items-center gap-1 text-xs text-destructive">
+            <AlertCircle className="h-3.5 w-3.5" />
+            {accountsError}
+          </p>
+        )}
+      </div>
+
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 space-y-1">
-          <Label className="text-[15px] font-semibold leading-6">平台账号</Label>
+          <Label className="text-[15px] font-semibold leading-6">备用平台账号</Label>
+          <p className="text-xs text-muted-foreground">
+            仅在对应平台没有适配器身份记录时使用；这些配置不会写入账号数据库。
+          </p>
         </div>
         <Button
           type="button"

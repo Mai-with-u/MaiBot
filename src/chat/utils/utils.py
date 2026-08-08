@@ -14,8 +14,8 @@ from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import AtComponent
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.core.local_operator import LOCAL_PLATFORM_BOT_IDS
 from src.person_info.person_info import Person
+from src.services.bot_account_service import get_bot_accounts
 from src.services.embedding_service import EmbeddingServiceClient
 
 from .typo_generator import ChineseTypoGenerator
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 logger = get_logger("chat_utils")
 _warned_unconfigured_platforms: set[str] = set()
-WEBUI_BOT_USER_ID = "self"
 
 
 @dataclass(frozen=True)
@@ -68,50 +67,34 @@ def _get_configured_qq_account() -> str:
     return qq_account
 
 
-def get_bot_account(platform: str) -> str:
-    """根据当前平台获取对应的机器人账号。"""
-    normalized_platform = str(platform or "").strip().lower()
-    if not normalized_platform:
-        return ""
+def get_bot_account(platform: str, preferred_account_id: Optional[str] = None) -> str:
+    """解析单个 Bot 账号；多账号且无会话归属时拒绝猜测。"""
 
-    # 本地平台使用保留 ID 表示机器人自身，不依赖任何外部平台账号。
-    if normalized_platform == "webui":
-        return WEBUI_BOT_USER_ID
-    if normalized_platform in LOCAL_PLATFORM_BOT_IDS:
-        return LOCAL_PLATFORM_BOT_IDS[normalized_platform]
-
-    qq_account = _get_configured_qq_account()
-    if normalized_platform == "qq":
-        return qq_account
-
-    platforms_list = getattr(global_config.bot, "platforms", []) or []
-    platform_accounts = parse_platform_accounts(platforms_list)
-    if normalized_platform in {"tg", "telegram"}:
-        return platform_accounts.get("tg", "") or platform_accounts.get("telegram", "")
-
-    return platform_accounts.get(normalized_platform, "")
+    preferred = str(preferred_account_id or "").strip()
+    if preferred:
+        return preferred
+    accounts = get_bot_accounts(platform)
+    if len(accounts) == 1:
+        return next(iter(accounts))
+    if len(accounts) > 1:
+        logger.error(f"平台 {platform} 存在多个 Bot 账号，缺少聊天流 account_id，无法选择发送身份")
+    return ""
 
 
-def get_all_bot_accounts() -> dict[str, str]:
-    """获取所有已配置的机器人运行时身份。"""
-    bot_accounts: dict[str, str] = {
-        "webui": WEBUI_BOT_USER_ID,
-        **LOCAL_PLATFORM_BOT_IDS,
-    }
+def get_configured_bot_accounts() -> dict[str, str]:
+    """读取 legacy 发送链使用的备用配置账号，不包含数据库身份。"""
+
+    bot_accounts: dict[str, str] = {}
     qq_account = _get_configured_qq_account()
     if qq_account:
-        bot_accounts["qq"] = qq_account
+        primary_platform = str(global_config.bot.platform or "qq").strip().lower()
+        bot_accounts[primary_platform] = qq_account
 
     platforms_list = getattr(global_config.bot, "platforms", []) or []
     platform_accounts = parse_platform_accounts(platforms_list)
 
-    telegram_account = platform_accounts.get("tg", "") or platform_accounts.get("telegram", "")
-    if telegram_account:
-        bot_accounts["telegram"] = telegram_account
-        bot_accounts["tg"] = telegram_account
-
     for platform_name, account in platform_accounts.items():
-        if platform_name in {"tg", "telegram", "qq", "webui"}:
+        if platform_name in {"qq", "webui"}:
             continue
         bot_accounts[platform_name] = account
 
@@ -139,9 +122,9 @@ def is_bot_self(platform: str, user_id: str) -> bool:
     if not user_id_str:
         return False
 
-    bot_account = get_bot_account(normalized_platform)
-    if bot_account:
-        return user_id_str == bot_account
+    bot_accounts = get_bot_accounts(normalized_platform)
+    if bot_accounts:
+        return user_id_str in bot_accounts
 
     if normalized_platform not in _warned_unconfigured_platforms:
         _warned_unconfigured_platforms.add(normalized_platform)
@@ -164,8 +147,7 @@ def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, fl
     text = message.processed_plain_text or ""
     platform = str(message.platform or "").strip().lower()
 
-    # 获取当前平台对应的账号
-    current_account = get_bot_account(platform)
+    current_accounts = get_bot_accounts(platform)
 
     nickname = str(global_config.bot.nickname or "")
     alias_names = list(getattr(global_config.bot, "alias_names", []) or [])
@@ -219,17 +201,17 @@ def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, fl
         is_mentioned = True
 
     # 5) 统一的 @ 检测逻辑
-    if current_account and not is_at and not is_mentioned:
-        if platform == "qq":
-            # QQ 格式: @<name:qq_id>
-            if re.search(rf"@<(.+?):{re.escape(current_account)}>", text):
+    if current_accounts and not is_at and not is_mentioned:
+        for current_account in current_accounts:
+            pattern = (
+                rf"@<(.+?):{re.escape(current_account)}>"
+                if platform == "qq"
+                else rf"@{re.escape(current_account)}(\b|$)"
+            )
+            if re.search(pattern, text, flags=re.IGNORECASE):
                 is_at = True
                 is_mentioned = True
-        else:
-            # 其他平台格式: @username 或 @account
-            if re.search(rf"@{re.escape(current_account)}(\b|$)", text, flags=re.IGNORECASE):
-                is_at = True
-                is_mentioned = True
+                break
 
     # 6) 统一的回复检测逻辑
     if not is_mentioned:
@@ -237,13 +219,17 @@ def is_mentioned_bot_in_message(message: SessionMessage) -> tuple[bool, bool, fl
         if re.search(r"\[回复 .*?\(你\)：", text) or re.search(r"\[回复 .*?（你）：", text):
             is_mentioned = True
         # ID 形式的回复检测
-        elif current_account:
-            if re.search(rf"\[回复 (.+?)\({re.escape(current_account)}\)：(.+?)\]，说：", text):
-                is_mentioned = True
-            elif re.search(
-                rf"\[回复<(.+?)(?=:{re.escape(current_account)}>)\:{re.escape(current_account)}>：(.+?)\]，说：", text
-            ):
-                is_mentioned = True
+        elif current_accounts:
+            for current_account in current_accounts:
+                if re.search(rf"\[回复 (.+?)\({re.escape(current_account)}\)：(.+?)\]，说：", text):
+                    is_mentioned = True
+                    break
+                if re.search(
+                    rf"\[回复<(.+?)(?=:{re.escape(current_account)}>)\:{re.escape(current_account)}>：(.+?)\]，说：",
+                    text,
+                ):
+                    is_mentioned = True
+                    break
 
     # 7) 名称/别名 提及（去除 @/回复标记后再匹配）
     if not is_mentioned and keywords:

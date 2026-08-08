@@ -319,7 +319,7 @@ async def test_text_to_stream_triggers_real_chat_summary_writeback(
     monkeypatch.setattr(memory_flow_service_module, "memory_automation_service", service)
     monkeypatch.setattr(send_service, "_get_runtime_manager", lambda: _NoopRuntimeManager())
     monkeypatch.setattr(send_service, "get_platform_io_manager", lambda: fake_platform_io_manager)
-    monkeypatch.setattr(send_service, "get_bot_account", lambda platform: "bot-qq")
+    monkeypatch.setattr(send_service, "get_bot_account", lambda platform, preferred_account_id=None: "bot-qq")
     monkeypatch.setattr(
         send_service._chat_manager,
         "get_session_by_session_id",

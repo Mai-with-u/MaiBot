@@ -32,6 +32,7 @@ const JargonIcon = createStreamlineIcon('sign-hashtag-solid', Hash)
 const BehaviorIcon = createStreamlineIcon('cyborg-solid', Brain)
 const KnowledgeIcon = createStreamlineIcon('user-sticker-square-remix', Database)
 const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
+const AdapterManagementIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const DataTransferIcon: MenuIcon = (props) => createElement(HardDrive, props)
@@ -108,6 +109,11 @@ export const menuSections: MenuSection[] = [
   {
     title: 'sidebar.groups.extensionsMonitor',
     items: [
+      {
+        icon: AdapterManagementIcon,
+        label: 'sidebar.menu.adapterManagement',
+        path: '/adapter-management',
+      },
       { icon: PluginConfigIcon, label: 'sidebar.menu.pluginConfig', path: '/plugin-config' },
       {
         icon: PluginMarketIcon,

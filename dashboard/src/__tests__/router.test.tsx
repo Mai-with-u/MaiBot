@@ -52,6 +52,7 @@ const expectedPaths = [
   '/plugins',
   '/model-presets',
   '/plugin-config',
+  '/adapter-management',
   '/plugin-mirrors',
   '/mcp-settings',
   '/data-transfer',

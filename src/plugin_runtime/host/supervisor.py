@@ -65,6 +65,12 @@ from src.plugin_runtime.protocol.envelope import (
 from src.plugin_runtime.protocol.codec import MsgPackCodec
 from src.plugin_runtime.protocol.errors import ErrorCode, RPCError
 from src.plugin_runtime.transport.factory import create_transport_server
+from src.services.bot_account_service import (
+    BOT_ACCOUNT_SOURCE_INBOUND,
+    BOT_ACCOUNT_SOURCE_READY,
+    AdapterAccountIdentity,
+    record_adapter_account,
+)
 
 from .authorization import AuthorizationManager
 from .api_registry import APIRegistry
@@ -1471,6 +1477,7 @@ class PluginRunnerSupervisor:
             route_metadata: 插件通过 RPC 补充的原始路由辅助元数据。
         """
 
+        session_message.platform = route_key.platform
         additional_config = session_message.message_info.additional_config
         if not isinstance(additional_config, dict):
             additional_config = {}
@@ -1603,6 +1610,17 @@ class PluginRunnerSupervisor:
         try:
             if payload.ready:
                 route_key = self._build_message_gateway_route_key(gateway_entry, payload)
+                if route_key.account_id:
+                    record_adapter_account(
+                        AdapterAccountIdentity(
+                            platform=route_key.platform,
+                            account_id=route_key.account_id,
+                            adapter_id=self._build_message_gateway_driver_id(envelope.plugin_id, gateway_entry.name),
+                            plugin_id=envelope.plugin_id,
+                            gateway_name=gateway_entry.name,
+                        ),
+                        BOT_ACCOUNT_SOURCE_READY,
+                    )
                 await self._register_message_gateway_driver(envelope.plugin_id, gateway_entry, route_key)
             else:
                 await self._unregister_message_gateway_driver(envelope.plugin_id, gateway_entry.name)
@@ -1677,6 +1695,17 @@ class PluginRunnerSupervisor:
                     },
                 )
                 return envelope.make_response(payload=response.model_dump())
+            if route_key.account_id:
+                record_adapter_account(
+                    AdapterAccountIdentity(
+                        platform=route_key.platform,
+                        account_id=route_key.account_id,
+                        adapter_id=self._build_message_gateway_driver_id(envelope.plugin_id, gateway_entry.name),
+                        plugin_id=envelope.plugin_id,
+                        gateway_name=gateway_entry.name,
+                    ),
+                    BOT_ACCOUNT_SOURCE_INBOUND,
+                )
             session_message = self._message_gateway.build_session_message(payload.message)
             self._attach_inbound_route_metadata(session_message, route_key, payload.route_metadata)
         except Exception as exc:

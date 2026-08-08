@@ -44,6 +44,7 @@ from .v35_to_v36 import migrate_v35_to_v36
 from .v36_to_v37 import migrate_v36_to_v37
 from .v37_to_v38 import migrate_v37_to_v38
 from .v38_to_v39 import migrate_v38_to_v39
+from .v39_to_v40 import migrate_v39_to_v40
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -86,7 +87,8 @@ V36_SCHEMA_VERSION = 36
 V37_SCHEMA_VERSION = 37
 V38_SCHEMA_VERSION = 38
 V39_SCHEMA_VERSION = 39
-LATEST_SCHEMA_VERSION = 39
+V40_SCHEMA_VERSION = 40
+LATEST_SCHEMA_VERSION = 40
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -1914,6 +1916,13 @@ def build_default_migration_registry() -> MigrationRegistry:
                 description="无损压缩回复效果完整记录与诊断镜像。",
                 handler=migrate_v38_to_v39,
                 transactional=False,
+            ),
+            MigrationStep(
+                version_from=V39_SCHEMA_VERSION,
+                version_to=V40_SCHEMA_VERSION,
+                name="v39_to_v40",
+                description="新增适配器上报的 Bot 平台账号表。",
+                handler=migrate_v39_to_v40,
             ),
         ]
     )

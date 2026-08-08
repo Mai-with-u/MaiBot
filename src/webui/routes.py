@@ -15,6 +15,7 @@ from src.webui.core.security import TOKEN_SOURCE_TEMPORARY
 from src.webui.dependencies import require_auth, verify_token_optional
 from src.webui.routers.avatar import router as avatar_router
 from src.webui.routers.behavior import router as behavior_router
+from src.webui.routers.bot_accounts import router as bot_accounts_router
 from src.webui.routers.config import router as config_router
 from src.webui.routers.data_transfer import router as data_transfer_router
 from src.webui.routers.emoji import router as emoji_router
@@ -56,6 +57,7 @@ router.include_router(expression_router)
 router.include_router(jargon_router)
 # 注册表情包管理路由
 router.include_router(behavior_router)
+router.include_router(bot_accounts_router)
 router.include_router(emoji_router)
 router.include_router(avatar_router)
 router.include_router(user_emoji_router)

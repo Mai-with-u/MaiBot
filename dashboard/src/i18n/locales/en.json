@@ -46,6 +46,7 @@
       "pluginMarket": "Plugin Market",
       "configTemplate": "Config Templates",
       "pluginConfig": "Plugin Management",
+      "adapterManagement": "Adapter Management",
       "mcpSettings": "MCP Settings",
       "dataTransfer": "Data Management",
       "statistics": "Detailed Statistics",

@@ -117,9 +117,9 @@ class BotConfig(ConfigBase):
         default="",
         json_schema_extra={
             "label": {
-                "zh_CN": "平台",
-                "en_US": "Platform",
-                "ja_JP": "プラットフォーム",
+                "zh_CN": "备用主平台",
+                "en_US": "Fallback primary platform",
+                "ja_JP": "予備のメインプラットフォーム",
             },
             "x-widget": "input",
             "x-layout": "inline-right",
@@ -127,15 +127,15 @@ class BotConfig(ConfigBase):
             "x-row": "bot-platform-account",
         },
     )
-    """麦麦主账号所在的平台，例如 qq。"""
+    """适配器没有上报身份时使用的备用主平台，例如 qq。"""
 
     qq_account: str = Field(
         default="",
         json_schema_extra={
             "label": {
-                "zh_CN": "QQ账号",
-                "en_US": "QQ account",
-                "ja_JP": "QQアカウント",
+                "zh_CN": "备用 QQ 账号",
+                "en_US": "Fallback QQ account",
+                "ja_JP": "予備の QQ アカウント",
             },
             "x-widget": "input",
             "x-layout": "inline-right",
@@ -143,20 +143,20 @@ class BotConfig(ConfigBase):
             "x-row": "bot-platform-account",
         },
     )
-    """麦麦主账号 ID，用来识别哪些消息是麦麦自己发的。"""
+    """适配器没有上报 QQ 身份时使用的备用账号 ID。"""
 
     platforms: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
             "label": {
-                "zh_CN": "其他平台",
-                "en_US": "Other platforms",
-                "ja_JP": "他のプラットフォーム",
+                "zh_CN": "其他备用平台",
+                "en_US": "Other fallback platforms",
+                "ja_JP": "その他の予備プラットフォーム",
             },
             "x-widget": "custom",
         },
     )
-    """其他平台账号，格式为 platform:账号；没有多平台时不用填。"""
+    """其他平台的备用账号，格式为 platform:账号；适配器身份存在时不参与判断。"""
 
     nickname: str = Field(
         default="麦麦",

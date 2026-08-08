@@ -295,12 +295,12 @@ class PlatformIOManager:
 
     async def _sync_legacy_send_drivers(self) -> None:
         """根据当前配置同步 legacy fallback driver。"""
-        from src.chat.utils.utils import get_all_bot_accounts
+        from src.chat.utils.utils import get_configured_bot_accounts
         from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
 
         desired_accounts = {
             platform: account_id
-            for platform, account_id in get_all_bot_accounts().items()
+            for platform, account_id in get_configured_bot_accounts().items()
             if platform not in LOCAL_PLATFORM_BOT_IDS
         }
         desired_platforms = set(desired_accounts.keys())

@@ -162,16 +162,16 @@ def find_messages(
             after_time=after_time,
         )
         if filter_bot:
-            from src.chat.utils.utils import get_all_bot_accounts
+            from src.services.bot_account_service import get_all_bot_account_pairs
 
-            bot_accounts = get_all_bot_accounts()
+            bot_accounts = get_all_bot_account_pairs()
             exclusion_conditions: list[Any] = []
             if bot_accounts:
                 exclusion_conditions.append(
                     or_(
                         *[
                             and_(Messages.platform == platform_name, Messages.user_id == account)
-                            for platform_name, account in bot_accounts.items()
+                            for platform_name, account in bot_accounts
                         ]
                     )
                 )

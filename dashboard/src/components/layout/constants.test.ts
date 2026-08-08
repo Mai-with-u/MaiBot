@@ -66,12 +66,26 @@ describe('menuSections 菜单结构', () => {
     const dataTransferItem = extensionsSection?.items.find((item) => item.path === '/data-transfer')
     const dataTransferIndex =
       extensionsSection?.items.findIndex((item) => item.path === '/data-transfer') ?? -1
-    const mcpIndex = extensionsSection?.items.findIndex((item) => item.path === '/mcp-settings') ?? -1
+    const mcpIndex =
+      extensionsSection?.items.findIndex((item) => item.path === '/mcp-settings') ?? -1
 
     expect(dataTransferItem?.label).toBe('sidebar.menu.dataTransfer')
     expect(dataTransferItem?.searchDescription).toBe('search.items.dataTransferDesc')
     expect(dataTransferIndex).toBeGreaterThanOrEqual(0)
     expect(dataTransferIndex).toBeLessThan(mcpIndex)
+  })
+
+  it('适配器管理拥有独立入口并位于普通插件管理上方', () => {
+    const extensionsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+    )
+    const adapterIndex =
+      extensionsSection?.items.findIndex((item) => item.path === '/adapter-management') ?? -1
+    const pluginIndex =
+      extensionsSection?.items.findIndex((item) => item.path === '/plugin-config') ?? -1
+
+    expect(adapterIndex).toBeGreaterThanOrEqual(0)
+    expect(adapterIndex).toBeLessThan(pluginIndex)
   })
 
   it('详细统计数据不再占用主侧边栏入口', () => {

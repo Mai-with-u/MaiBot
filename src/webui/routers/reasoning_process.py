@@ -28,6 +28,7 @@ from src.llm_models.request_snapshot import (
     serialize_context_item_snapshot,
 )
 from src.services.llm_service import generate as generate_llm_response
+from src.services.bot_account_service import get_all_bot_account_pairs
 from src.services.service_task_resolver import get_available_models
 from src.webui.dependencies import require_auth
 from src.webui.routers.avatar import build_webui_avatar_url
@@ -438,24 +439,9 @@ def _resolve_session_name(session: str, sessions: list[str]) -> str:
 
 
 def _get_configured_platform_accounts() -> set[tuple[str, str]]:
-    """读取当前配置中的平台账号对。"""
+    """读取当前实例全部有效的平台账号对。"""
 
-    from src.config.config import global_config
-
-    pairs: set[tuple[str, str]] = set()
-    base_platform = str(global_config.bot.platform or "").strip()
-    base_account = str(global_config.bot.qq_account or "").strip()
-    if base_platform and base_account:
-        pairs.add((base_platform, base_account))
-
-    for item in global_config.bot.platforms:
-        platform, separator, account_id = str(item or "").partition(":")
-        platform = platform.strip()
-        account_id = account_id.strip()
-        if separator and platform and account_id:
-            pairs.add((platform, account_id))
-
-    return pairs
+    return get_all_bot_account_pairs()
 
 
 def _parse_session_directory_name(name: str) -> tuple[str, str, str] | None:

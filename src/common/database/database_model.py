@@ -558,3 +558,24 @@ class ChatSession(SQLModel, table=True):
     platform: str = Field(index=True, max_length=100)  # 会话所在平台
     account_id: Optional[str] = Field(default=None, index=True, max_length=255, nullable=True)  # 平台账号 ID
     scope: Optional[str] = Field(default=None, index=True, max_length=255, nullable=True)  # 路由作用域
+
+
+class BotPlatformAccount(SQLModel, table=True):
+    """适配器实际上报的 Bot 平台账号。"""
+
+    __tablename__ = "bot_platform_accounts"  # type: ignore
+    __table_args__ = (
+        UniqueConstraint("platform", "account_id", name="uq_bot_platform_accounts_platform_account"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    platform: str = Field(index=True, max_length=100)
+    account_id: str = Field(index=True, max_length=255)
+    disabled: bool = Field(default=False, index=True)
+    first_seen_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    last_seen_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+    disabled_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))
+    last_source: str = Field(default="", max_length=32)
+    last_adapter_id: Optional[str] = Field(default=None, max_length=255, nullable=True)
+    last_plugin_id: Optional[str] = Field(default=None, max_length=255, nullable=True)
+    last_gateway_name: Optional[str] = Field(default=None, max_length=255, nullable=True)
