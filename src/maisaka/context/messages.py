@@ -7,7 +7,6 @@ from enum import Enum
 from io import BytesIO
 from typing import Any, Optional, Sequence
 import base64
-import uuid
 
 from PIL import Image as PILImage
 
@@ -25,20 +24,8 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
     VoiceComponent,
 )
-from src.llm_models.payload_content.context_item import (
-    AssistantMessageItem,
-    ContextItem,
-    ContextItemBuilder,
-    ContextItemMeta,
-    FunctionCallOutputItem,
-    ModelOutputItem,
-    ProviderActivityItem,
-    ProviderOpaqueItem,
-    ReasoningItem,
-    RoleType,
-    get_item_text,
-    get_response_tool_calls,
-)
+from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.tool_option import ToolCall
 
 FORWARD_PREVIEW_LIMIT = 4
@@ -59,7 +46,7 @@ def _guess_image_format(image_bytes: bytes) -> Optional[str]:
 
 
 def _append_emoji_component(
-    builder: ContextItemBuilder,
+    builder: MessageBuilder,
     component: EmojiComponent,
     *,
     enable_visual_message: bool,
@@ -81,7 +68,7 @@ def _append_emoji_component(
 
 
 def _append_image_component(
-    builder: ContextItemBuilder,
+    builder: MessageBuilder,
     component: ImageComponent,
     *,
     enable_visual_message: bool,
@@ -101,7 +88,7 @@ def _append_image_component(
     return True
 
 
-def _append_reply_component(builder: ContextItemBuilder, component: ReplyComponent) -> bool:
+def _append_reply_component(builder: MessageBuilder, component: ReplyComponent) -> bool:
     """回复关系已放入消息元信息，不再作为正文内容追加。"""
 
     del builder
@@ -116,7 +103,7 @@ def _render_at_component_text(component: AtComponent) -> str:
     return f"@{target_name}".strip()
 
 
-def _append_at_component(builder: ContextItemBuilder, component: AtComponent) -> bool:
+def _append_at_component(builder: MessageBuilder, component: AtComponent) -> bool:
     """灏?@ 缁勪欢杞崲涓烘枃鏈苟鍐欏叆 LLM 娑堟伅銆?"""
 
     rendered_text = _render_at_component_text(component)
@@ -133,8 +120,8 @@ def contains_complex_message(message_sequence: MessageSequence) -> bool:
     return any(isinstance(component, ForwardNodeComponent) for component in message_sequence.components)
 
 
-async def build_full_complex_message_content(message: SessionMessage, path: Sequence[int] = ()) -> str:
-    """按路径构造转发消息当前层级的文本内容。"""
+async def build_full_complex_message_content(message: SessionMessage) -> str:
+    """构造转发消息的完整文本内容。"""
 
     if _prepare_unresolved_visual_components(message.raw_message.components):
         await message.process(
@@ -142,7 +129,7 @@ async def build_full_complex_message_content(message: SessionMessage, path: Sequ
             enable_voice_transcription=False,
         )
 
-    full_content = _build_complex_message_full_text(message.raw_message, path)
+    full_content = _build_complex_message_full_text(message.raw_message)
     if full_content:
         return full_content
 
@@ -151,13 +138,10 @@ async def build_full_complex_message_content(message: SessionMessage, path: Sequ
     return (message.processed_plain_text or "").strip()
 
 
-def build_full_complex_message_content_from_sequence(
-    message_sequence: MessageSequence,
-    path: Sequence[int] = (),
-) -> str:
-    """从消息组件序列按路径构造转发消息当前层级的文本内容。"""
+def build_full_complex_message_content_from_sequence(message_sequence: MessageSequence) -> str:
+    """从消息组件序列构造转发消息的完整文本内容。"""
 
-    return _build_complex_message_full_text(message_sequence, path)
+    return _build_complex_message_full_text(message_sequence)
 
 
 def _prepare_unresolved_visual_components(components: Sequence[StandardMessageComponents]) -> bool:
@@ -191,91 +175,27 @@ def _prepare_unresolved_visual_components(components: Sequence[StandardMessageCo
     return found_unresolved
 
 
-def _build_complex_message_full_text(message_sequence: MessageSequence, path: Sequence[int]) -> str:
-    """构造转发消息浏览工具返回的当前层级文本。"""
+def _build_complex_message_full_text(message_sequence: MessageSequence) -> str:
+    """构造转发消息浏览工具返回的完整文本。"""
 
-    root_components = [
-        component for component in message_sequence.components if isinstance(component, ForwardNodeComponent)
-    ]
-    if path:
-        target_component = _resolve_forward_component(root_components, path)
-        return _build_forward_full_text(target_component, tuple(path))
+    full_parts: list[str] = []
+    for component in message_sequence.components:
+        if isinstance(component, ForwardNodeComponent):
+            full_parts.append(_build_forward_full_text(component))
 
-    return "\n".join(
-        _build_forward_full_text(component, (index,)) for index, component in enumerate(root_components)
-    ).strip()
+    return "\n".join(part for part in full_parts if part).strip()
 
 
-def _resolve_forward_component(
-    root_components: Sequence[ForwardNodeComponent],
-    path: Sequence[int],
-) -> ForwardNodeComponent:
-    """根据转发组件路径定位需要展开的节点。"""
-
-    current_components = list(root_components)
-    current_component: ForwardNodeComponent | None = None
-    for depth, component_index in enumerate(path):
-        if component_index < 0 or component_index >= len(current_components):
-            raise ValueError(f"转发消息路径无效：第 {depth + 1} 级索引 {component_index} 超出范围。")
-        current_component = current_components[component_index]
-        current_components = _collect_nested_forward_components(current_component)
-
-    if current_component is None:
-        raise ValueError("转发消息路径不能为空。")
-    return current_component
-
-
-def _collect_nested_forward_components(component: ForwardNodeComponent) -> list[ForwardNodeComponent]:
-    """按消息顺序收集当前层级直接包含的嵌套转发组件。"""
-
-    return [
-        nested_component
-        for node in component.forward_components
-        for nested_component in node.content
-        if isinstance(nested_component, ForwardNodeComponent)
-    ]
-
-
-def _build_forward_full_text(component: ForwardNodeComponent, path: tuple[int, ...]) -> str:
-    """构造合并转发消息的当前层级文本。"""
+def _build_forward_full_text(component: ForwardNodeComponent) -> str:
+    """构造合并转发消息的完整文本。"""
 
     forward_lines = ["【合并转发消息:"]
-    nested_component_index = 0
     for node in component.forward_components:
         sender_name = node.user_cardname or node.user_nickname or node.user_id or "未知用户"
-        content, nested_component_index = _render_components_for_browser(
-            node.content,
-            path,
-            nested_component_index,
-        )
-        forward_lines.append(f"【{sender_name}】: {content or '[空消息]'}")
+        content = _render_components_inline(node.content, expand_nested_forwards=True) or "[空消息]"
+        forward_lines.append(f"【{sender_name}】: {content}")
     forward_lines.append("】")
     return "\n".join(forward_lines)
-
-
-def _render_components_for_browser(
-    components: Sequence[StandardMessageComponents],
-    parent_path: tuple[int, ...],
-    nested_component_index: int,
-) -> tuple[str, int]:
-    """渲染当前层级组件，并为嵌套转发提供下一次展开路径。"""
-
-    rendered_parts: list[str] = []
-    for component in components:
-        if isinstance(component, ForwardNodeComponent):
-            nested_path = [*parent_path, nested_component_index]
-            rendered_parts.append(
-                f"[嵌套转发消息，path={nested_path}，可再次调用 view_forward_message 展开]"
-            )
-            nested_component_index += 1
-            continue
-
-        rendered_text = _render_component_for_prompt(component)
-        normalized_text = _normalize_inline_text(rendered_text)
-        if normalized_text:
-            rendered_parts.append(normalized_text)
-
-    return " ".join(rendered_parts).strip(), nested_component_index
 
 
 def _build_complex_message_prompt_text(message_sequence: MessageSequence) -> str:
@@ -380,7 +300,7 @@ def _normalize_inline_text(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
 
-def _build_item_from_sequence(
+def _build_message_from_sequence(
     role: RoleType,
     message_sequence: MessageSequence,
     fallback_text: str,
@@ -388,12 +308,12 @@ def _build_item_from_sequence(
     enable_visual_message: bool = True,
     tool_call_id: Optional[str] = None,
     tool_name: Optional[str] = None,
-    meta: ContextItemMeta | None = None,
-) -> Optional[ContextItem]:
-    """根据消息片段构造统一 Context Item。"""
-    builder = ContextItemBuilder().set_role(role)
-    if meta is not None:
-        builder.set_meta(meta)
+    tool_calls: Optional[list[ToolCall]] = None,
+) -> Optional[Message]:
+    """根据消息片段构造统一 LLM 消息。"""
+    builder = MessageBuilder().set_role(role)
+    if role == RoleType.Assistant and tool_calls:
+        builder.set_tool_calls(tool_calls)
     if role == RoleType.Tool and tool_call_id:
         builder.add_tool_call(tool_call_id)
     if role == RoleType.Tool and tool_name:
@@ -452,7 +372,7 @@ def _build_item_from_sequence(
         builder.add_text_content(fallback_text)
         has_content = True
 
-    if not has_content:
+    if not has_content and not (role == RoleType.Assistant and tool_calls):
         return None
     return builder.build()
 
@@ -495,8 +415,8 @@ class LLMContextMessage(ABC):
         return self.__class__.__name__
 
     @abstractmethod
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
-        """转换为唯一的统一 Context Item；没有模型上下文内容时返回 None。"""
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
+        """转换为统一 LLM 消息。"""
 
     def consume_once(self) -> bool:
         """消费一次生命周期，返回是否继续保留。"""
@@ -513,7 +433,6 @@ class SessionBackedMessage(LLMContextMessage):
     message_id: Optional[str] = None
     original_message: Optional[SessionMessage] = None
     source_kind: str = "user"
-    context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
     def role(self) -> str:
@@ -527,13 +446,12 @@ class SessionBackedMessage(LLMContextMessage):
     def source(self) -> str:
         return self.source_kind
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
-        return _build_item_from_sequence(
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
+        return _build_message_from_sequence(
             RoleType.User,
             self.raw_message,
             self.processed_plain_text,
             enable_visual_message=enable_visual_message,
-            meta=ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp),
         )
 
     @classmethod
@@ -567,14 +485,13 @@ class ComplexSessionMessage(SessionBackedMessage):
     def source(self) -> str:
         return f"{self.source_kind}:{self.complex_message_type}"
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
         del enable_visual_message
         message_sequence = MessageSequence([TextComponent(self.prompt_text)])
-        return _build_item_from_sequence(
+        return _build_message_from_sequence(
             RoleType.User,
             message_sequence,
             self.prompt_text,
-            meta=ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp),
         )
 
     @classmethod
@@ -612,7 +529,6 @@ class ReferenceMessage(LLMContextMessage):
     reference_type: ReferenceMessageType = ReferenceMessageType.CUSTOM
     remaining_uses_value: Optional[int] = 1
     display_prefix: str = "[参考消息]"
-    context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
     def role(self) -> str:
@@ -630,15 +546,10 @@ class ReferenceMessage(LLMContextMessage):
     def source(self) -> str:
         return self.reference_type.value
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem | None:
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
         del enable_visual_message
         message_sequence = MessageSequence([TextComponent(self.processed_plain_text)])
-        return _build_item_from_sequence(
-            RoleType.User,
-            message_sequence,
-            self.processed_plain_text,
-            meta=ContextItemMeta.create(item_id=self.context_item_id, timestamp=self.timestamp),
-        )
+        return _build_message_from_sequence(RoleType.User, message_sequence, self.processed_plain_text)
 
     def consume_once(self) -> bool:
         if self.remaining_uses_value is None:
@@ -649,47 +560,23 @@ class ReferenceMessage(LLMContextMessage):
 
 
 @dataclass(slots=True)
-class ModelOutputContextMessage(LLMContextMessage):
-    """单个模型输出 Item 的 MaiSaka 历史条目。"""
+class AssistantMessage(LLMContextMessage):
+    """内部 assistant 消息。"""
 
-    output_item: ModelOutputItem
+    content: str
+    timestamp: datetime
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    reasoning_content: str = field(default="", repr=False)
+    provider_state: ProviderState | None = field(default=None, repr=False)
     source_kind: str = "assistant"
 
     @property
-    def content(self) -> str:
-        if not isinstance(self.output_item, AssistantMessageItem):
-            return ""
-        return get_item_text(self.output_item)
-
-    @property
-    def tool_calls(self) -> list[ToolCall]:
-        return [
-            ToolCall(
-                call_id=tool_call.call_id,
-                func_name=tool_call.func_name,
-                args=tool_call.materialize_args(),
-                extra_content=tool_call.materialize_extra_content(),
-            )
-            for tool_call in get_response_tool_calls((self.output_item,))
-        ]
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.output_item.meta.timestamp
-
-    @property
     def role(self) -> str:
-        if isinstance(self.output_item, ReasoningItem):
-            return "reasoning"
-        if isinstance(self.output_item, ProviderActivityItem):
-            return "provider_activity"
-        if isinstance(self.output_item, ProviderOpaqueItem):
-            return "provider_opaque"
         return RoleType.Assistant.value
 
     @property
     def processed_plain_text(self) -> str:
-        return get_item_text(self.output_item)
+        return self.content
 
     @property
     def count_in_context(self) -> bool:
@@ -699,19 +586,20 @@ class ModelOutputContextMessage(LLMContextMessage):
     def source(self) -> str:
         return self.source_kind
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem:
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
         del enable_visual_message
-        return self.output_item
-
-
-def build_model_output_context_messages(
-    output_items: Sequence[ModelOutputItem],
-    *,
-    source_kind: str = "assistant",
-) -> list[ModelOutputContextMessage]:
-    """把模型输出按 Item 粒度写入 MaiSaka 历史，不创建响应级容器。"""
-
-    return [ModelOutputContextMessage(output_item=item, source_kind=source_kind) for item in output_items]
+        builder = MessageBuilder().set_role(RoleType.Assistant)
+        if self.content:
+            builder.add_text_content(self.content)
+        if self.tool_calls:
+            builder.set_tool_calls(self.tool_calls)
+        if self.reasoning_content:
+            builder.set_reasoning_content(self.reasoning_content)
+        if self.provider_state is not None:
+            builder.set_provider_state(self.provider_state)
+        if not self.content and not self.tool_calls and not self.reasoning_content and self.provider_state is None:
+            return None
+        return builder.build()
 
 
 @dataclass(slots=True)
@@ -721,17 +609,9 @@ class ToolResultMessage(LLMContextMessage):
     content: str
     timestamp: datetime
     tool_call_id: str
-    logical_turn_id: str
     tool_name: str = ""
     success: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
-    context_item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
-
-    def __post_init__(self) -> None:
-        if not self.tool_call_id.strip():
-            raise ValueError("工具结果的调用 ID 不能为空")
-        if not self.logical_turn_id or not self.logical_turn_id.strip():
-            raise ValueError(f"工具结果必须具有 logical_turn_id: {self.tool_call_id}")
 
     @property
     def role(self) -> str:
@@ -749,27 +629,23 @@ class ToolResultMessage(LLMContextMessage):
     def source(self) -> str:
         return self.tool_name or "tool"
 
-    def to_context_item(self, enable_visual_message: bool = True) -> ContextItem:
+    def to_llm_message(self, enable_visual_message: bool = True) -> Optional[Message]:
         del enable_visual_message
-        return FunctionCallOutputItem(
-            meta=ContextItemMeta.create(
-                item_id=self.context_item_id,
-                logical_turn_id=self.logical_turn_id,
-                timestamp=self.timestamp,
-            ),
-            call_id=self.tool_call_id,
-            output=self.content,
+        message_sequence = MessageSequence([TextComponent(self.content)])
+        return _build_message_from_sequence(
+            RoleType.Tool,
+            message_sequence,
+            self.content,
+            tool_call_id=self.tool_call_id,
             tool_name=self.tool_name,
-            success=self.success,
         )
 
 
-def build_context_items_from_history_entry(
+def build_llm_message_from_context(
     context_message: LLMContextMessage,
     *,
     enable_visual_message: bool = True,
-) -> tuple[ContextItem, ...]:
-    """将 Maisaka 历史条目转换为发给 LLM 的统一 Context Items。"""
+) -> Optional[Message]:
+    """将 Maisaka 内部上下文消息转换为发给 LLM 的统一消息。"""
 
-    item = context_message.to_context_item(enable_visual_message=enable_visual_message)
-    return (item,) if item is not None else ()
+    return context_message.to_llm_message(enable_visual_message=enable_visual_message)

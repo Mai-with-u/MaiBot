@@ -23,9 +23,6 @@ export type ReasoningPromptFile = {
   has_behavior_choice_insert: boolean
   model_name: string | null
   duration_ms: number | null
-  prompt_tokens: number | null
-  completion_tokens: number | null
-  total_tokens: number | null
   size: number
   modified_at: number
 }
@@ -76,9 +73,6 @@ export type ReasoningPromptContentResponse = {
   modified_at: number
   model_name: string | null
   duration_ms: number | null
-  prompt_tokens: number | null
-  completion_tokens: number | null
-  total_tokens: number | null
   message_avatars: Record<string, ReasoningPromptMessageAvatar>
 }
 
@@ -90,97 +84,29 @@ export type ReasoningPromptMessageAvatar = {
   avatar_url: string | null
 }
 
-export type ContextItemMetaSnapshot = {
-  item_id: string
-  logical_turn_id: string | null
-  timestamp: string
-}
-
-export type ContextItemSnapshot = {
-  item_type: string
-  meta: ContextItemMetaSnapshot
-  parts?: Record<string, unknown>[]
-  phase?: string | null
-  representation?: string
-  summary_parts?: string[]
-  text_parts?: string[]
-  tool_call?: Record<string, unknown>
-  call_id?: string
-  output?: string
-  success?: boolean
-  tool_name?: string
-  action_type?: string
-  details?: string[]
-  display_summary?: string
-  provider_type?: string
-  source_count?: number
-  status?: string
-  [key: string]: unknown
-}
-
-export type GenerationTraceSnapshot = {
-  provider: string
-  endpoint: string
-  model: string
-  response_id: string | null
-  status: string
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
-  prompt_cache_hit_tokens: number
-  prompt_cache_miss_tokens: number
-  output_item_ids: string[]
-}
-
-export type GenerationAttemptSnapshot = {
-  attempt_id: string
-  workflow_purpose: string
-  workflow_attempt: number
-  provider_attempt: number
-  model_attempt: number
-  status: string
-  started_at: string
-  duration_ms: number
-  provider: string
-  endpoint: string
-  model: string
-  client_type: string
-  operation: string
-  wire_protocol: string
-  request_items: ContextItemSnapshot[]
-  tool_definitions: Record<string, unknown>[]
-  request_parameters: Record<string, unknown>
-  wire_request: unknown
-  wire_response: unknown
-  output_items: ContextItemSnapshot[]
-  trace?: GenerationTraceSnapshot | null
-  error?: {
-    type?: string
-    status_code?: number | null
-    message?: string
-    response_body?: unknown
-  } | null
-  retry_interval?: number
-  [key: string]: unknown
+export type ReasoningReplayMessage = {
+  role: string
+  content: unknown
+  tool_call_id?: string
+  tool_calls?: unknown[]
 }
 
 export type ReasoningReplayRequest = {
   source_path?: string | null
   stage?: string
   model_name: string
-  item_schema_version: number
-  request_items: ContextItemSnapshot[]
+  messages: ReasoningReplayMessage[]
   tool_definitions?: Record<string, unknown>[]
   temperature?: number | null
   max_tokens?: number | null
 }
 
 export type ReasoningReplayResponse = {
-  schema_version: 6
   success: boolean
-  output_items: ContextItemSnapshot[]
-  generation_attempts: GenerationAttemptSnapshot[]
+  response: string
+  reasoning: string
   model_name: string
+  tool_calls?: unknown[] | null
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number

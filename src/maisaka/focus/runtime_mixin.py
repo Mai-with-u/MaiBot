@@ -665,10 +665,6 @@ class MaisakaFocusRuntimeMixin:
         if switch_error:
             return False, switch_error, {}, {}
 
-        source_logical_turn_id = self._reasoning_engine.active_logical_turn_id
-        if not source_logical_turn_id:
-            raise RuntimeError("switch_chat 必须在已登记的逻辑工具轮次内执行")
-
         target_unread_count = target_runtime._get_pending_message_count()
         switch_new_messages = target_runtime._get_focus_switch_new_messages(limit=FOCUS_SWITCH_NEW_MESSAGE_LIMIT)
         copied_history = deepcopy(
@@ -694,7 +690,6 @@ class MaisakaFocusRuntimeMixin:
                     content=result_content,
                     timestamp=datetime.now(),
                     tool_call_id=tool_call_id,
-                    logical_turn_id=source_logical_turn_id,
                     tool_name=tool_name,
                 )
             )
@@ -735,10 +730,7 @@ class MaisakaFocusRuntimeMixin:
         target_runtime._mark_message_turn_unscheduled()
         target_runtime._clear_message_debounce_required()
         target_runtime._enter_stop_state()
-        target_runtime._queue_proactive_turn(
-            switch_trigger_message,
-            logical_turn_id=source_logical_turn_id,
-        )
+        target_runtime._queue_proactive_turn(switch_trigger_message)
 
         self._enter_stop_state()
         structured_content = {

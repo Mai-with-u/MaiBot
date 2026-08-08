@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
@@ -10,12 +10,12 @@ from sqlmodel import select
 from src.chat.replyer.expression_vector_index import ExpressionVectorIndexUpsertItem, expression_vector_index
 from src.chat.utils.utils import is_bot_self
 from src.common.data_models.expression_data_model import MaiExpression
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
+from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Expression, ModifiedBy
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
+from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 
 logger = get_logger("expressor")
 
-express_learn_model = LLMServiceClient(task_name="learner", request_type="expression.learner")
+express_learn_model = LLMServiceClient(
+    task_name="learner", request_type="expression.learner"
+)
 summary_model = LLMServiceClient(task_name="utils", request_type="expression.summary")
 
 
@@ -342,7 +344,9 @@ class ExpressionLearner:
 
         learning_session_id = self._resolve_learning_session_id(pending_messages)
         if learning_session_id is None:
-            logger.warning(f"表达学习已跳过：无法解析到有效聊天流，learner_session_id={self.session_id}")
+            logger.warning(
+                f"表达学习已跳过：无法解析到有效聊天流，learner_session_id={self.session_id}"
+            )
             return False
         if learning_session_id != self.session_id:
             logger.info(
@@ -391,7 +395,7 @@ class ExpressionLearner:
 
         try:
             learning_messages = await self._build_multi_learning_messages(pending_messages, prompt)
-            generation_result = await express_learn_model.generate_response_with_context(
+            generation_result = await express_learn_model.generate_response_with_messages(
                 lambda _client: learning_messages,
                 options=LLMGenerationOptions(temperature=0.3),
                 session_id=learning_session_id,
@@ -401,7 +405,8 @@ class ExpressionLearner:
                 session_id=learning_session_id,
                 source_message_count=len(pending_messages),
                 source_type="trimmed_history",
-                generation_result=generation_result,
+                output_content=generation_result.response or "",
+                provider_response=generation_result.provider_response,
             )
             response = generation_result.response
         except Exception as e:
@@ -444,9 +449,7 @@ class ExpressionLearner:
 
         learnt_expressions_str = "\n".join(f"{situation}->{style}" for situation, style in learnt_expressions)
         session_display_name = self._get_session_display_name(learning_session_id)
-        expression_log_title = (
-            "待优化的表达方式" if global_config.expression.expression_self_reflect else "学习到的表达"
-        )
+        expression_log_title = "待优化的表达方式" if global_config.expression.expression_self_reflect else "学习到的表达"
         logger.info(f"[{session_display_name}] {expression_log_title}：\n{learnt_expressions_str}")
 
         written_expressions: List[MaiExpression] = []
@@ -526,11 +529,11 @@ class ExpressionLearner:
         self,
         messages: List["SessionMessage"],
         system_prompt: str,
-    ) -> List[ContextItem]:
+    ) -> List[Message]:
         """构造表达学习使用的多 message 请求。"""
 
         learning_messages = [
-            ContextItemBuilder()
+            MessageBuilder()
             .set_role(RoleType.System)
             .add_text_content(
                 f"{system_prompt}\n\n"
@@ -549,7 +552,7 @@ class ExpressionLearner:
             if not content:
                 content = "[空消息]"
             learning_messages.append(
-                ContextItemBuilder()
+                MessageBuilder()
                 .set_role(RoleType.User)
                 .add_text_content(
                     "\n".join(
@@ -567,18 +570,22 @@ class ExpressionLearner:
             )
 
         learning_messages.append(
-            ContextItemBuilder().set_role(RoleType.User).add_text_content("请根据以上聊天消息输出 JSON。").build()
+            MessageBuilder()
+            .set_role(RoleType.User)
+            .add_text_content("请根据以上聊天消息输出 JSON。")
+            .build()
         )
         return learning_messages
 
     def _log_learning_context_preview(
         self,
-        messages: List[ContextItem],
+        messages: List[Message],
         *,
         session_id: str,
         source_message_count: int,
         source_type: str,
-        generation_result: LLMResponseResult,
+        output_content: str,
+        provider_response: dict[str, Any] | None,
     ) -> None:
         """保存表达学习上下文预览，并在日志中输出查看入口。"""
 
@@ -595,8 +602,8 @@ class ExpressionLearner:
                     f"真实聊天消息数: {source_message_count}\n"
                     f"构建消息数: {len(messages)}"
                 ),
-                output_items=generation_result.output_items,
-                generation_attempts=generation_result.generation_attempts,
+                output_content=output_content,
+                provider_response=provider_response,
             )
         except Exception as exc:
             logger.warning(f"{self.session_id} 表达学习上下文预览保存失败: {exc}")
@@ -750,17 +757,10 @@ class ExpressionLearner:
                 )
             )
 
-        try:
-            await expression_vector_index.upsert_expressions(
-                index_path=global_config.expression.expression_vector_index_path,
-                expressions=index_items,
-            )
-        except Exception:
-            # 表达数据库写入是主流程，向量索引是可从数据库重建的派生数据。
-            # 索引同步的系统性错误必须完整记录，但不应把已成功的表达学习改报为失败。
-            logger.exception(
-                f"表达向量索引同步失败，已保留数据库学习结果: count={len(index_items)}"
-            )
+        await expression_vector_index.upsert_expressions_and_recluster(
+            index_path=global_config.expression.expression_vector_index_path,
+            expressions=index_items,
+        )
 
     def _create_expression(
         self,

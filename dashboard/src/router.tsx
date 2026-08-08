@@ -76,12 +76,6 @@ const statisticsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/statistics'), 'StatisticsPage'),
 })
 
-const replyEffectsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/reply-effects',
-  component: lazyRouteComponent(() => import('./routes/reply-effects'), 'ReplyEffectsPage'),
-})
-
 // 沉浸专注陪伴路由
 const focusCompanionRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -365,7 +359,6 @@ const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
     indexRoute,
     statisticsRoute,
-    replyEffectsRoute,
     focusCompanionRoute,
     botConfigRoute,
     modelConfigRoute,
