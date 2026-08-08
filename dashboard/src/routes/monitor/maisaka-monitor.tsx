@@ -1412,6 +1412,7 @@ export function MaisakaMonitor() {
   const [autoScroll, setAutoScroll] = useState(true)
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previousSelectedSessionRef = useRef<string | null | undefined>(undefined)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('maisaka-monitor-sidebar-collapsed')
     return saved !== 'false'
@@ -1574,6 +1575,11 @@ export function MaisakaMonitor() {
   }, [visibleTimelineEntries.length, autoScroll, scrollToBottom])
 
   useEffect(() => {
+    if (previousSelectedSessionRef.current === selectedSession) {
+      return
+    }
+    previousSelectedSessionRef.current = selectedSession
+    setAutoScroll(true)
     requestAnimationFrame(() => scrollToBottom('auto'))
   }, [selectedSession, scrollToBottom])
 

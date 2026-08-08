@@ -60,6 +60,8 @@ async def refresh_chat_history_visual_placeholders(
         rebuilt_history_message = await build_history_message(original_message, history_message.source_kind)
         if rebuilt_history_message is None:
             continue
+        if isinstance(rebuilt_history_message, SessionBackedMessage):
+            rebuilt_history_message.context_item_id = history_message.context_item_id
 
         chat_history[index] = rebuilt_history_message
         refreshed_count += 1

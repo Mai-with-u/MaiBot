@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
@@ -35,11 +36,12 @@ from src.llm_models.model_client.base_client import (
     BaseClient,
     ClientRequest,
     EmbeddingRequest,
+    GenerationAttempt,
     RequestTraceContext,
     ResponseRequest,
-    UsageRecord,
     client_registry,
 )
+from src.llm_models.generation_diagnostics import sanitize_diagnostic_url, sanitize_generation_diagnostic
 from src.llm_models.request_snapshot import (
     attach_request_snapshot,
     format_request_snapshot_log_info,
@@ -50,12 +52,9 @@ from src.llm_models.request_snapshot import (
     serialize_client_request_snapshot,
     update_failed_request_attempt,
 )
-from src.llm_models.payload_content.message import Message, MessageBuilder
-from src.llm_models.payload_content.native_tool import NativeToolCallSummary
-from src.llm_models.payload_content.provider_state import ProviderState
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import (
-    ToolCall,
     ToolDefinitionInput,
     ToolOption,
     normalize_tool_options,
@@ -180,9 +179,9 @@ class LLMOrchestrator:
         """判断当前请求是否还可以通过压缩图片进行一次兜底重试。"""
         return (
             isinstance(active_request, ResponseRequest)
-            and bool(active_request.message_list)
+            and bool(active_request.context_items)
             and original_response_request is not None
-            and active_request.message_list == original_response_request.message_list
+            and active_request.context_items == original_response_request.context_items
         )
 
     @staticmethod
@@ -277,39 +276,31 @@ class LLMOrchestrator:
 
     @staticmethod
     def _build_generation_result(
-        content: str,
-        reasoning_content: str,
+        response: APIResponse,
         model_name: str,
-        tool_calls: List[ToolCall] | None,
-        usage: UsageRecord | None = None,
-        provider_state: ProviderState | None = None,
-        provider_response: Dict[str, Any] | None = None,
-        native_tool_calls: List[NativeToolCallSummary] | None = None,
     ) -> LLMResponseResult:
         """构建统一的文本响应结果。
 
         Args:
-            content: 模型返回的正文内容。
-            reasoning_content: 模型返回的推理内容。
+            response: 包含规范化输出 Items 的模型响应。
             model_name: 实际使用的模型名称。
-            tool_calls: 模型返回的工具调用列表。
 
         Returns:
             LLMResponseResult: 统一文本响应结果对象。
         """
         return LLMResponseResult(
-            response=content,
-            reasoning=reasoning_content,
+            output_items=response.output_items,
+            generation_trace=response.generation_trace,
+            generation_attempts=response.generation_attempts,
             model_name=model_name,
-            tool_calls=tool_calls,
-            prompt_tokens=usage.prompt_tokens if usage is not None else 0,
-            completion_tokens=usage.completion_tokens if usage is not None else 0,
-            total_tokens=usage.total_tokens if usage is not None else 0,
-            prompt_cache_hit_tokens=usage.prompt_cache_hit_tokens if usage is not None else 0,
-            prompt_cache_miss_tokens=usage.prompt_cache_miss_tokens if usage is not None else 0,
-            provider_state=provider_state,
-            provider_response=provider_response,
-            native_tool_calls=list(native_tool_calls or []),
+            prompt_tokens=response.usage.prompt_tokens if response.usage is not None else 0,
+            completion_tokens=response.usage.completion_tokens if response.usage is not None else 0,
+            total_tokens=response.usage.total_tokens if response.usage is not None else 0,
+            prompt_cache_hit_tokens=response.usage.prompt_cache_hit_tokens if response.usage is not None else 0,
+            prompt_cache_miss_tokens=response.usage.prompt_cache_miss_tokens if response.usage is not None else 0,
+            provider_response=response.provider_response,
+            wire_protocol=response.wire_protocol,
+            request_wire_payload=response.request_wire_payload,
         )
 
     async def generate_response_for_image(
@@ -338,17 +329,17 @@ class LLMOrchestrator:
         self._refresh_task_config()
         start_time = time.time()
 
-        def message_factory(client: BaseClient) -> List[Message]:
-            message_builder = MessageBuilder()
-            message_builder.add_text_content(prompt)
-            message_builder.add_image_content(
+        def context_factory(client: BaseClient) -> List[ContextItem]:
+            item_builder = ContextItemBuilder()
+            item_builder.add_text_content(prompt)
+            item_builder.add_image_content(
                 image_base64=image_base64, image_format=image_format, support_formats=client.get_support_image_formats()
             )
-            return [message_builder.build()]
+            return [item_builder.build()]
 
         execution_result = await self._execute_request(
             request_type=RequestType.RESPONSE,
-            message_factory=message_factory,
+            context_factory=context_factory,
             temperature=temperature,
             max_tokens=max_tokens,
             interrupt_flag=interrupt_flag,
@@ -356,12 +347,6 @@ class LLMOrchestrator:
         )
         response = execution_result.api_response
         model_info = execution_result.model_info
-        content = response.content or ""
-        reasoning_content = response.reasoning_content or ""
-        tool_calls = response.tool_calls
-        if not reasoning_content and content:
-            content, extracted_reasoning = self._extract_reasoning(content)
-            reasoning_content = extracted_reasoning
         time_cost = time.time() - start_time
         self._check_slow_request(time_cost, model_info.name)
         if usage := response.usage:
@@ -375,14 +360,8 @@ class LLMOrchestrator:
                 time_cost=time_cost,
             )
         return self._build_generation_result(
-            content,
-            reasoning_content,
+            response,
             model_info.name,
-            tool_calls,
-            response.usage,
-            response.provider_state,
-            response.provider_response,
-            response.native_tool_calls,
         )
 
     async def generate_response_for_voice(
@@ -437,16 +416,16 @@ class LLMOrchestrator:
         self._refresh_task_config()
         start_time = time.time()
 
-        def message_factory(client: BaseClient) -> List[Message]:
-            message_builder = MessageBuilder()
-            message_builder.add_text_content(prompt)
-            return [message_builder.build()]
+        def context_factory(client: BaseClient) -> List[ContextItem]:
+            item_builder = ContextItemBuilder()
+            item_builder.add_text_content(prompt)
+            return [item_builder.build()]
 
         tool_built = self._build_tool_options(tools)
 
         execution_result = await self._execute_request(
             request_type=RequestType.RESPONSE,
-            message_factory=message_factory,
+            context_factory=context_factory,
             temperature=temperature,
             max_tokens=max_tokens,
             model_name=model_name,
@@ -461,12 +440,6 @@ class LLMOrchestrator:
         logger.debug(f"LLM请求总耗时: {time.time() - start_time}")
         logger.debug(f"LLM生成内容: {response}")
 
-        content = response.content
-        reasoning_content = response.reasoning_content or ""
-        tool_calls = response.tool_calls
-        if not reasoning_content and content:
-            content, extracted_reasoning = self._extract_reasoning(content)
-            reasoning_content = extracted_reasoning
         if usage := response.usage:
             llm_usage_recorder.record_usage_to_database(
                 model_info=model_info,
@@ -478,19 +451,13 @@ class LLMOrchestrator:
                 time_cost=time.time() - start_time,
             )
         return self._build_generation_result(
-            content or "",
-            reasoning_content,
+            response,
             model_info.name,
-            tool_calls,
-            response.usage,
-            response.provider_state,
-            response.provider_response,
-            response.native_tool_calls,
         )
 
-    async def generate_response_with_message_async(
+    async def generate_response_with_context_async(
         self,
-        message_factory: Callable[..., List[Message] | Awaitable[List[Message]]],
+        context_factory: Callable[..., List[ContextItem] | Awaitable[List[ContextItem]]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         model_name: Optional[str] = None,
@@ -503,7 +470,7 @@ class LLMOrchestrator:
         """基于外部消息工厂异步生成响应。
 
         Args:
-            message_factory: 消息工厂，会根据客户端能力构建消息列表。
+            context_factory: Context Item 工厂，会根据客户端能力构建上下文。
             temperature: 显式指定的温度参数。
             max_tokens: 显式指定的最大输出 token 数。
             tools: 原始工具定义列表。
@@ -522,7 +489,7 @@ class LLMOrchestrator:
 
         execution_result = await self._execute_request(
             request_type=RequestType.RESPONSE,
-            message_factory=message_factory,
+            context_factory=context_factory,
             temperature=temperature,
             max_tokens=max_tokens,
             model_name=model_name,
@@ -538,12 +505,6 @@ class LLMOrchestrator:
         logger.debug(f"LLM请求总耗时: {time_cost}")
         logger.debug(f"LLM生成内容: {response}")
 
-        content = response.content
-        reasoning_content = response.reasoning_content or ""
-        tool_calls = response.tool_calls
-        if not reasoning_content and content:
-            content, extracted_reasoning = self._extract_reasoning(content)
-            reasoning_content = extracted_reasoning
         self._check_slow_request(time_cost, model_info.name)
         if usage := response.usage:
             llm_usage_recorder.record_usage_to_database(
@@ -556,14 +517,8 @@ class LLMOrchestrator:
                 time_cost=time_cost,
             )
         return self._build_generation_result(
-            content or "",
-            reasoning_content,
+            response,
             model_info.name,
-            tool_calls,
-            response.usage,
-            response.provider_state,
-            response.provider_response,
-            response.native_tool_calls,
         )
 
     async def get_embedding(self, embedding_input: str, *, session_id: str = "") -> LLMEmbeddingResult:
@@ -651,7 +606,7 @@ class LLMOrchestrator:
     def _build_response_request(
         self,
         model_info: ModelInfo,
-        message_list: List[Message],
+        context_items: List[ContextItem],
         tool_options: List[ToolOption] | None,
         response_format: RespFormat | None,
         stream_response_handler: Optional[Callable[..., Any]],
@@ -665,7 +620,7 @@ class LLMOrchestrator:
 
         Args:
             model_info: 当前模型信息。
-            message_list: 请求消息列表。
+            context_items: 请求 Context Items。
             tool_options: 工具定义列表。
             response_format: 输出格式定义。
             stream_response_handler: 流式响应处理函数。
@@ -679,7 +634,7 @@ class LLMOrchestrator:
         """
         return ResponseRequest(
             model_info=model_info,
-            message_list=list(message_list),
+            context_items=list(context_items),
             tool_options=None if tool_options is None else list(tool_options),
             max_tokens=self._resolve_effective_max_tokens(model_info, max_tokens),
             temperature=self._resolve_effective_temperature(model_info, temperature),
@@ -742,7 +697,7 @@ class LLMOrchestrator:
         self,
         request_type: RequestType,
         model_info: ModelInfo,
-        message_list: List[Message],
+        context_items: List[ContextItem],
         tool_options: List[ToolOption] | None,
         response_format: RespFormat | None,
         stream_response_handler: Optional[Callable[..., Any]],
@@ -759,7 +714,7 @@ class LLMOrchestrator:
         Args:
             request_type: 请求类型。
             model_info: 当前模型信息。
-            message_list: 请求消息列表。
+            context_items: 请求 Context Items。
             tool_options: 工具定义列表。
             response_format: 响应格式定义。
             stream_response_handler: 流式响应处理函数。
@@ -779,7 +734,7 @@ class LLMOrchestrator:
         if request_type == RequestType.RESPONSE:
             return self._build_response_request(
                 model_info=model_info,
-                message_list=message_list,
+                context_items=context_items,
                 tool_options=tool_options,
                 response_format=response_format,
                 stream_response_handler=stream_response_handler,
@@ -875,6 +830,74 @@ class LLMOrchestrator:
         self.model_usage[model_info.name] = (total_tokens, penalty, usage_penalty + 1)
         return model_info, api_provider, client
 
+    def _record_success_generation_attempt(
+        self,
+        *,
+        api_provider: APIProvider,
+        request: ClientRequest,
+        response: APIResponse,
+    ) -> None:
+        """记录一次实际成功的 Provider 调用。"""
+
+        trace_context = request.trace_context
+        if trace_context is None:
+            return
+        started_timestamp = trace_context.current_attempt_started_at or time.time()
+        internal_request = serialize_client_request_snapshot(request)
+        raw_tool_definitions = internal_request.get("tool_options")
+        tool_definitions = tuple(
+            dict(item)
+            for item in raw_tool_definitions
+            if isinstance(item, dict)
+        ) if isinstance(raw_tool_definitions, list) else ()
+        request_parameters = {
+            key: value
+            for key, value in internal_request.items()
+            if key
+            not in {
+                "audio_base64",
+                "context_items",
+                "embedding_input",
+                "model_info",
+                "request_kind",
+                "tool_options",
+            }
+        }
+        operation = {
+            ResponseRequest: "response",
+            EmbeddingRequest: "embedding",
+            AudioTranscriptionRequest: "audio_transcription",
+        }[type(request)]
+        request_items = tuple(request.context_items) if isinstance(request, ResponseRequest) else ()
+        attempt_number = trace_context.attempt or len(trace_context.generation_attempts) + 1
+        attempt = GenerationAttempt(
+            attempt_id=f"{trace_context.request_id}:{attempt_number}",
+            workflow_purpose=trace_context.request_type or trace_context.task_name,
+            workflow_attempt=1,
+            provider_attempt=attempt_number,
+            model_attempt=trace_context.model_attempt or 1,
+            status="succeeded",
+            started_at=datetime.fromtimestamp(started_timestamp).isoformat(timespec="milliseconds"),
+            duration_ms=round(max(0.0, time.time() - started_timestamp) * 1000, 2),
+            provider=api_provider.name,
+            endpoint=sanitize_diagnostic_url(api_provider.base_url),
+            model=request.model_info.model_identifier,
+            client_type=api_provider.client_type,
+            operation=operation,
+            wire_protocol=response.wire_protocol or api_provider.client_type,
+            request_items=request_items,
+            tool_definitions=tool_definitions,
+            request_parameters=sanitize_generation_diagnostic(request_parameters),
+            wire_request=sanitize_generation_diagnostic(response.request_wire_payload),
+            wire_response=sanitize_generation_diagnostic(
+                response.provider_response if response.provider_response is not None else response.raw_data
+            ),
+            output_items=response.output_items,
+            trace=response.generation_trace,
+        )
+        trace_context.generation_attempts.append(attempt)
+        response.generation_attempts = tuple(trace_context.generation_attempts)
+
     async def _attempt_request_on_model(
         self,
         api_provider: APIProvider,
@@ -924,6 +947,7 @@ class LLMOrchestrator:
             if active_request.trace_context is not None:
                 active_request.trace_context.attempt += 1
                 active_request.trace_context.model_attempt += 1
+                active_request.trace_context.current_attempt_started_at = time.time()
             try:
                 if isinstance(active_request, ResponseRequest):
                     response = await client.get_response(active_request)
@@ -931,7 +955,12 @@ class LLMOrchestrator:
                     response = await client.get_embedding(active_request)
                 else:
                     response = await client.get_audio_transcriptions(active_request)
-                mark_request_succeeded(active_request)
+                self._record_success_generation_attempt(
+                    api_provider=api_provider,
+                    request=active_request,
+                    response=response,
+                )
+                mark_request_succeeded(active_request, response)
                 return response
             except EmptyResponseException as e:
                 ensure_attempt_snapshot(e)
@@ -1030,10 +1059,10 @@ class LLMOrchestrator:
                         f"检测到单项上限 {data_uri_limit_bytes} 字节，尝试压缩图片后重试..."
                     )
                     compressed_messages = compress_messages(
-                        active_request.message_list,
+                        active_request.context_items,
                         img_target_size=target_size,
                     )
-                    active_request = active_request.copy_with(message_list=compressed_messages)
+                    active_request = active_request.copy_with(context_items=compressed_messages)
                     update_failed_request_attempt(e, status="retrying")
                     continue
 
@@ -1042,8 +1071,8 @@ class LLMOrchestrator:
                         f"任务 '{task_display}' 的模型 '{model_info.name}' 返回413请求体过大，尝试压缩后重试..."
                     )
                     # 压缩消息本身不消耗重试次数
-                    compressed_messages = compress_messages(active_request.message_list)
-                    active_request = active_request.copy_with(message_list=compressed_messages)
+                    compressed_messages = compress_messages(active_request.context_items)
+                    active_request = active_request.copy_with(context_items=compressed_messages)
                     update_failed_request_attempt(e, status="retrying")
                     continue
 
@@ -1140,7 +1169,7 @@ class LLMOrchestrator:
     async def _execute_request(
         self,
         request_type: RequestType,
-        message_factory: Optional[Callable[..., List[Message] | Awaitable[List[Message]]]] = None,
+        context_factory: Optional[Callable[..., List[ContextItem] | Awaitable[List[ContextItem]]]] = None,
         tool_options: List[ToolOption] | None = None,
         response_format: RespFormat | None = None,
         stream_response_handler: Optional[Callable[..., Any]] = None,
@@ -1157,7 +1186,7 @@ class LLMOrchestrator:
 
         Args:
             request_type: 请求类型。
-            message_factory: 消息工厂，仅在响应请求中使用。
+            context_factory: Context Item 工厂，仅在响应请求中使用。
             tool_options: 工具定义列表。
             response_format: 响应格式定义。
             stream_response_handler: 流式响应处理函数。
@@ -1188,22 +1217,22 @@ class LLMOrchestrator:
             )
             last_model_name = model_info.name
             trace_context.model_attempt = 0
-            message_list = []
-            if message_factory:
-                parameter_count = len(inspect.signature(message_factory).parameters)
+            context_items: List[ContextItem] = []
+            if context_factory:
+                parameter_count = len(inspect.signature(context_factory).parameters)
                 if parameter_count >= 2:
-                    message_result = message_factory(client, model_info)
+                    context_result = context_factory(client, model_info)
                 else:
-                    message_result = message_factory(client)
-                if inspect.isawaitable(message_result):
-                    message_list = await message_result
+                    context_result = context_factory(client)
+                if inspect.isawaitable(context_result):
+                    context_items = await context_result
                 else:
-                    message_list = message_result
+                    context_items = context_result
             try:
                 request = self._build_client_request(
                     request_type=request_type,
                     model_info=model_info,
-                    message_list=message_list,
+                    context_items=context_items,
                     tool_options=tool_options,
                     response_format=response_format,
                     stream_response_handler=stream_response_handler,

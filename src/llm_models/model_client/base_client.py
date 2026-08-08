@@ -3,15 +3,23 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
 
 import asyncio
+import dataclasses
 import time
 import uuid
 
 from src.common.logger import get_logger
 from src.config.config import config_manager
 from src.config.model_configs import APIProvider, ModelInfo
-from src.llm_models.payload_content.message import Message
+from src.llm_models.payload_content.context_item import (
+    ContextItem,
+    ModelOutputItem,
+    ProviderActivityItem,
+    bind_output_items_to_turn,
+    get_response_reasoning,
+    get_response_text,
+    get_response_tool_calls,
+)
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
-from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolOption
 
@@ -46,20 +54,65 @@ class UsageRecord:
     """输入中缓存未命中的 token 数"""
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationTrace:
+    """一次 Provider API 响应的诊断记录，不参与上下文或裁切。"""
+
+    provider: str
+    endpoint: str
+    model: str
+    response_id: str | None
+    status: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    prompt_cache_hit_tokens: int
+    prompt_cache_miss_tokens: int
+    output_item_ids: Tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationAttempt:
+    """一次实际 Provider 调用的完整诊断记录。"""
+
+    attempt_id: str
+    workflow_purpose: str
+    workflow_attempt: int
+    provider_attempt: int
+    model_attempt: int
+    status: str
+    started_at: str
+    duration_ms: float
+    provider: str
+    endpoint: str
+    model: str
+    client_type: str
+    operation: str
+    wire_protocol: str
+    request_items: Tuple[ContextItem, ...]
+    tool_definitions: Tuple[Dict[str, Any], ...]
+    request_parameters: Dict[str, Any]
+    wire_request: Any = None
+    wire_response: Any = None
+    output_items: Tuple[ModelOutputItem, ...] = ()
+    trace: GenerationTrace | None = None
+    error: Dict[str, Any] | None = None
+
+
 @dataclass
 class APIResponse:
     """
     API响应类
     """
 
-    content: str | None = None
-    """响应内容"""
+    output_items: Tuple[ModelOutputItem, ...] = ()
+    """模型输出的不可变 Context Items，是响应内容的唯一事实来源。"""
 
-    reasoning_content: str | None = None
-    """推理内容"""
+    generation_trace: GenerationTrace | None = None
+    """本次 Provider 响应的诊断记录，不参与模型上下文。"""
 
-    tool_calls: List[ToolCall] | None = None
-    """工具调用 [(工具名称, 工具参数), ...]"""
+    generation_attempts: Tuple[GenerationAttempt, ...] = ()
+    """一次逻辑请求内按实际调用顺序排列的 Provider 尝试。"""
 
     embedding: List[float] | None = None
     """嵌入向量"""
@@ -70,14 +123,93 @@ class APIResponse:
     raw_data: Any = None
     """响应原始数据"""
 
-    provider_state: ProviderState | None = field(default=None, repr=False)
-    """供后续同 Provider、同模型请求原样续接的原生状态。"""
-
     provider_response: Dict[str, Any] | None = field(default=None, repr=False)
     """Provider 返回的完整结构化响应，仅用于诊断记录，不参与通用业务解析。"""
 
-    native_tool_calls: List[NativeToolCallSummary] = field(default_factory=list)
-    """本次响应中的 Provider 原生工具调用摘要，不参与上下文回放。"""
+    wire_protocol: str = ""
+    """本次成功请求实际使用的 Provider wire protocol。"""
+
+    request_wire_payload: Any = field(default=None, repr=False)
+    """本次成功请求的最终 wire 载荷，仅用于缓存诊断和可观测性。"""
+
+    @property
+    def content(self) -> str | None:
+        """只读派生模型可见正文。"""
+
+        return get_response_text(self.output_items) or None
+
+    @property
+    def reasoning_content(self) -> str | None:
+        """只读派生可展示 reasoning。"""
+
+        return get_response_reasoning(self.output_items) or None
+
+    @property
+    def tool_calls(self) -> List[ToolCall] | None:
+        """只读派生通用工具调用。"""
+
+        context_tool_calls = get_response_tool_calls(self.output_items)
+        if not context_tool_calls:
+            return None
+        return [
+            ToolCall(
+                call_id=tool_call.call_id,
+                func_name=tool_call.func_name,
+                args=tool_call.materialize_args(),
+                extra_content=tool_call.materialize_extra_content(),
+            )
+            for tool_call in context_tool_calls
+        ]
+
+    @property
+    def native_tool_calls(self) -> List[NativeToolCallSummary]:
+        """只读派生 Provider 原生活动摘要。"""
+
+        return [
+            NativeToolCallSummary(
+                tool_type=item.provider_type,
+                call_id=item.call_id,
+                status=item.status,
+                action_type=item.action_type,
+                details=list(item.details),
+                source_count=item.source_count,
+            )
+            for item in self.output_items
+            if isinstance(item, ProviderActivityItem)
+        ]
+
+    def bind_logical_turn(self, logical_turn_id: str) -> None:
+        """将本次输出 Items 绑定到调用方定义的完整逻辑工具轮次。"""
+
+        if self.output_items:
+            self.output_items = bind_output_items_to_turn(self.output_items, logical_turn_id)
+
+    def attach_generation_trace(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        model: str,
+        response_id: str | None = None,
+        status: str = "completed",
+    ) -> None:
+        """补齐与刷新独立于上下文的 Provider 诊断信息。"""
+
+        existing = self.generation_trace
+        usage = self.usage
+        self.generation_trace = GenerationTrace(
+            provider=existing.provider if existing is not None else provider,
+            endpoint=existing.endpoint if existing is not None else endpoint,
+            model=existing.model if existing is not None else model,
+            response_id=existing.response_id if existing is not None else response_id,
+            status=existing.status if existing is not None else status,
+            prompt_tokens=usage.prompt_tokens if usage is not None else 0,
+            completion_tokens=usage.completion_tokens if usage is not None else 0,
+            total_tokens=usage.total_tokens if usage is not None else 0,
+            prompt_cache_hit_tokens=usage.prompt_cache_hit_tokens if usage is not None else 0,
+            prompt_cache_miss_tokens=usage.prompt_cache_miss_tokens if usage is not None else 0,
+            output_item_ids=tuple(item.meta.item_id for item in self.output_items),
+        )
 
 
 UsageTuple = Tuple[int, ...]
@@ -105,6 +237,18 @@ class RequestTraceContext:
     attempt: int = 0
     model_attempt: int = 0
     snapshot_path: str = ""
+    current_attempt_started_at: float = 0.0
+    generation_attempts: List[GenerationAttempt] = field(default_factory=list)
+
+    def replace_attempt_status(self, attempt_number: int, status: str) -> None:
+        """更新指定 Provider 尝试的后续调度状态。"""
+
+        for index in range(len(self.generation_attempts) - 1, -1, -1):
+            attempt = self.generation_attempts[index]
+            if attempt.provider_attempt != attempt_number:
+                continue
+            self.generation_attempts[index] = dataclasses.replace(attempt, status=status)
+            return
 
 
 @dataclass(slots=True)
@@ -112,7 +256,7 @@ class ResponseRequest:
     """统一的文本/多模态响应请求。"""
 
     model_info: ModelInfo
-    message_list: List[Message]
+    context_items: List[ContextItem]
     tool_options: List[ToolOption] | None = None
     max_tokens: int | None = None
     temperature: float | None = None
@@ -122,6 +266,7 @@ class ResponseRequest:
     interrupt_flag: asyncio.Event | None = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
     trace_context: RequestTraceContext | None = None
+    logical_turn_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def copy_with(self, **changes: Any) -> "ResponseRequest":
         """基于当前请求创建一个带局部变更的新请求。
@@ -134,7 +279,7 @@ class ResponseRequest:
         """
         payload = {
             "model_info": self.model_info,
-            "message_list": list(self.message_list),
+            "context_items": list(self.context_items),
             "tool_options": None if self.tool_options is None else list(self.tool_options),
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
@@ -144,6 +289,7 @@ class ResponseRequest:
             "interrupt_flag": self.interrupt_flag,
             "extra_params": dict(self.extra_params),
             "trace_context": self.trace_context,
+            "logical_turn_id": self.logical_turn_id,
         }
         payload.update(changes)
         return ResponseRequest(**payload)
@@ -369,11 +515,7 @@ class ClientRegistry:
 
         normalized_client_types = [self._normalize_client_type(client_type) for client_type in client_types]
         duplicate_client_types = sorted(
-            {
-                client_type
-                for client_type in normalized_client_types
-                if normalized_client_types.count(client_type) > 1
-            }
+            {client_type for client_type in normalized_client_types if normalized_client_types.count(client_type) > 1}
         )
         if duplicate_client_types:
             raise ValueError(f"插件 {normalized_plugin_id} 重复声明 LLM Provider: {', '.join(duplicate_client_types)}")

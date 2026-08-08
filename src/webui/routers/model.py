@@ -20,7 +20,7 @@ from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.model_client import ensure_client_type_loaded
 from src.llm_models.model_client.base_client import client_registry
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
-from src.llm_models.payload_content.message import Message, MessageBuilder
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
 from src.webui.dependencies import require_auth
@@ -157,8 +157,8 @@ async def test_model_capability(request: ModelTestRequest):
     start_time = time.time()
     try:
         orchestrator = _SingleModelTestOrchestrator(model_name=model_name)
-        result = await orchestrator.generate_response_with_message_async(
-            message_factory=_build_model_test_message_factory(visual_enabled),
+        result = await orchestrator.generate_response_with_context_async(
+            context_factory=_build_model_test_context_factory(visual_enabled),
             temperature=0.0,
             max_tokens=512,
             model_name=model_name,
@@ -245,6 +245,7 @@ async def _fetch_models_from_provider(
     auth_query_name: str = "api_key",
     default_headers: Optional[Dict[str, str]] = None,
     default_query: Optional[Dict[str, str]] = None,
+    allow_configured_private_network: bool = False,
 ) -> List[Dict]:
     """从提供商 API 获取模型列表。
 
@@ -260,12 +261,16 @@ async def _fetch_models_from_provider(
         auth_query_name: Query 鉴权时使用的查询参数名称。
         default_headers: 默认附带的请求头。
         default_query: 默认附带的查询参数。
+        allow_configured_private_network: 是否允许已保存厂商配置指向回环或私网地址。
 
     Returns:
         List[Dict]: 解析后的模型列表。
     """
     try:
-        base_url = validate_public_url(_normalize_url(base_url))
+        base_url = validate_public_url(
+            _normalize_url(base_url),
+            allow_configured_private_network=allow_configured_private_network,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -489,11 +494,11 @@ def _build_model_test_tools() -> List[Dict[str, Any]]:
     ]
 
 
-def _build_model_test_message_factory(visual_enabled: bool):
+def _build_model_test_context_factory(visual_enabled: bool):
     """构造可按客户端图片格式能力生成消息的工厂。"""
 
-    def message_factory(client) -> List[Message]:
-        builder = MessageBuilder().add_text_content(_build_model_test_prompt(visual_enabled))
+    def context_factory(client) -> List[ContextItem]:
+        builder = ContextItemBuilder().add_text_content(_build_model_test_prompt(visual_enabled))
         if visual_enabled:
             builder.add_image_content(
                 image_format="png",
@@ -502,7 +507,7 @@ def _build_model_test_message_factory(visual_enabled: bool):
             )
         return [builder.build()]
 
-    return message_factory
+    return context_factory
 
 
 def _serialize_model_test_tool_calls(tool_calls: List[ToolCall] | None) -> List[ModelTestToolCall]:
@@ -587,6 +592,7 @@ async def get_provider_models(
         auth_query_name=provider_config.get("auth_query_name", "api_key"),
         default_headers=provider_config.get("default_headers", {}),
         default_query=provider_config.get("default_query", {}),
+        allow_configured_private_network=True,
     )
 
     return {
@@ -629,11 +635,11 @@ async def get_models_by_url(
     }
 
 
-@router.get("/test-connection")
-async def test_provider_connection(
-    base_url: str = Query(..., description="提供商的基础 URL"),
-    api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
-    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
+async def _test_provider_connection(
+    base_url: str,
+    api_key: Optional[str],
+    client_type: str,
+    allow_configured_private_network: bool = False,
 ):
     """
     测试提供商连接状态
@@ -655,7 +661,10 @@ async def test_provider_connection(
         raise HTTPException(status_code=400, detail="base_url 不能为空")
 
     try:
-        base_url = validate_public_url(base_url)
+        base_url = validate_public_url(
+            base_url,
+            allow_configured_private_network=allow_configured_private_network,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -670,7 +679,7 @@ async def test_provider_connection(
     # 第一步：测试网络连通性
     try:
         start_time = time.time()
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             # 尝试 GET 请求 base_url（不需要 API Key）
             response = await client.get(base_url)
             latency = (time.time() - start_time) * 1000
@@ -696,7 +705,7 @@ async def test_provider_connection(
     if api_key:
         try:
             start_time = time.time()
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
                 headers = {"Content-Type": "application/json"}
                 params = {}
 
@@ -726,6 +735,20 @@ async def test_provider_connection(
             result["api_key_valid"] = None
 
     return result
+
+
+@router.get("/test-connection")
+async def test_provider_connection(
+    base_url: str = Query(..., description="提供商的基础 URL"),
+    api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
+    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
+):
+    """测试任意厂商地址；该入口只允许访问公网目标。"""
+    return await _test_provider_connection(
+        base_url=base_url,
+        api_key=api_key,
+        client_type=client_type,
+    )
 
 
 @router.post("/test-connection-by-name")
@@ -758,8 +781,9 @@ async def test_provider_connection_by_name(
         raise HTTPException(status_code=400, detail="提供商配置缺少 base_url")
 
     # 调用测试接口
-    return await test_provider_connection(
+    return await _test_provider_connection(
         base_url=base_url,
         api_key=api_key if api_key else None,
         client_type=client_type,
+        allow_configured_private_network=True,
     )

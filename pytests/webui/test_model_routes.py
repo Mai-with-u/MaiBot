@@ -17,6 +17,7 @@ import pytest
 
 def load_model_routes(monkeypatch: pytest.MonkeyPatch):
     """在导入路由前 stub 配置与认证依赖模块，避免测试时触发真实初始化。"""
+
     class DummyConfigManager:
         def get_model_config(self):
             return SimpleNamespace(api_providers=[])
@@ -185,7 +186,7 @@ client_type = "gemini"
             "http_status": 200,
         }
 
-    monkeypatch.setattr(model_routes, "test_provider_connection", fake_test_provider_connection)
+    monkeypatch.setattr(model_routes, "_test_provider_connection", fake_test_provider_connection)
 
     result = await model_routes.test_provider_connection_by_name(provider_name="Gemini")
 
@@ -195,6 +196,7 @@ client_type = "gemini"
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "api_key": "valid-gemini-key",
         "client_type": "gemini",
+        "allow_configured_private_network": True,
     }
 
 
@@ -225,9 +227,9 @@ visual = true
         def __init__(self, model_name: str):
             captured["model_name"] = model_name
 
-        async def generate_response_with_message_async(self, **kwargs: Any):
+        async def generate_response_with_context_async(self, **kwargs: Any):
             captured.update(kwargs)
-            return model_routes.LLMResponseResult(
+            return model_routes.LLMResponseResult.from_portable_output(
                 response="",
                 model_name="vision-model",
                 tool_calls=[
@@ -244,9 +246,7 @@ visual = true
 
     monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
 
-    result = await model_routes.test_model_capability(
-        model_routes.ModelTestRequest(model_name="vision-model")
-    )
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="vision-model"))
 
     assert result.success is True
     assert result.visual_tested is True
@@ -289,7 +289,7 @@ model_list = ["embed-model"]
             captured["embedding_input"] = embedding_input
             return SimpleNamespace(embedding=[0.1] * 8, model_name="embed-model")
 
-        async def generate_response_with_message_async(self, **kwargs: Any):
+        async def generate_response_with_context_async(self, **kwargs: Any):
             raise AssertionError("嵌入模型测试不应调用对话接口")
 
     monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
@@ -334,8 +334,8 @@ model_list = ["other-embed-model"]
         async def get_embedding(self, embedding_input: str, **kwargs: Any):
             raise AssertionError("对话模型测试不应调用嵌入接口")
 
-        async def generate_response_with_message_async(self, **kwargs: Any):
-            return model_routes.LLMResponseResult(
+        async def generate_response_with_context_async(self, **kwargs: Any):
+            return model_routes.LLMResponseResult.from_portable_output(
                 response="",
                 model_name="chat-model",
                 tool_calls=[

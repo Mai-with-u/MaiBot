@@ -5,19 +5,26 @@
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, TypeAlias
+from typing import Any, Awaitable, Callable, Dict, List, TypeAlias
 
 import asyncio
+import uuid
 
 from src.common.data_models import BaseDataModel
+from src.llm_models.payload_content.context_item import (
+    ContextItem,
+    ContextToolCall,
+    ModelOutputItem,
+    ProviderActivityItem,
+    build_portable_output_items,
+    get_response_reasoning,
+    get_response_text,
+    get_response_tool_calls,
+)
+from src.llm_models.model_client.base_client import GenerationAttempt, GenerationTrace
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
-from src.llm_models.payload_content.provider_state import ProviderState
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput
-
-if TYPE_CHECKING:
-    from src.llm_models.payload_content.message import Message
-
 
 PromptMessage: TypeAlias = Dict[str, Any]
 """统一的原始提示消息结构。"""
@@ -25,8 +32,8 @@ PromptMessage: TypeAlias = Dict[str, Any]
 PromptInput: TypeAlias = str | List[PromptMessage]
 """统一的提示输入类型。"""
 
-MessageFactory: TypeAlias = Callable[..., List["Message"] | Awaitable[List["Message"]]]
-"""统一的消息工厂类型。"""
+ContextFactory: TypeAlias = Callable[..., List[ContextItem] | Awaitable[List[ContextItem]]]
+"""统一的 Context Item 工厂类型。"""
 
 
 @dataclass(slots=True)
@@ -37,7 +44,7 @@ class LLMServiceRequest(BaseDataModel):
     request_type: str
     session_id: str = ""
     prompt: PromptInput | None = None
-    message_factory: MessageFactory | None = None
+    context_factory: ContextFactory | None = None
     model_name: str | None = None
     tool_options: List[ToolDefinitionInput] | None = None
     temperature: float | None = None
@@ -49,7 +56,7 @@ class LLMServiceRequest(BaseDataModel):
         """校验请求对象的必要字段。
 
         Raises:
-            ValueError: 当 `task_name` 为空，或 `prompt` 与 `message_factory`
+            ValueError: 当 `task_name` 为空，或 `prompt` 与 `context_factory`
                 的组合非法时抛出。
         """
         self.task_name = self.task_name.strip()
@@ -57,27 +64,108 @@ class LLMServiceRequest(BaseDataModel):
         if not self.task_name:
             raise ValueError("`task_name` 不能为空")
         has_prompt = self.prompt is not None
-        has_message_factory = self.message_factory is not None
-        if has_prompt == has_message_factory:
-            raise ValueError("`prompt` 与 `message_factory` 必须且只能提供一个")
+        has_context_factory = self.context_factory is not None
+        if has_prompt == has_context_factory:
+            raise ValueError("`prompt` 与 `context_factory` 必须且只能提供一个")
 
 
 @dataclass(slots=True)
 class LLMResponseResult(BaseDataModel):
     """单次 LLM 响应结果。"""
 
-    response: str = field(default_factory=str)
-    reasoning: str = field(default_factory=str)
+    output_items: tuple[ModelOutputItem, ...] = ()
+    generation_trace: GenerationTrace | None = None
+    generation_attempts: tuple[GenerationAttempt, ...] = ()
     model_name: str = field(default_factory=str)
-    tool_calls: List[ToolCall] | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     prompt_cache_hit_tokens: int = 0
     prompt_cache_miss_tokens: int = 0
-    provider_state: ProviderState | None = field(default=None, repr=False)
     provider_response: Dict[str, Any] | None = field(default=None, repr=False)
-    native_tool_calls: List[NativeToolCallSummary] = field(default_factory=list)
+    wire_protocol: str = ""
+    request_wire_payload: Any = field(default=None, repr=False)
+
+    @property
+    def response(self) -> str:
+        """只读派生模型可见正文。"""
+
+        return get_response_text(self.output_items)
+
+    @property
+    def reasoning(self) -> str:
+        """只读派生可展示 reasoning。"""
+
+        return get_response_reasoning(self.output_items)
+
+    @property
+    def tool_calls(self) -> List[ToolCall] | None:
+        """只读派生通用工具调用。"""
+
+        context_tool_calls = get_response_tool_calls(self.output_items)
+        if not context_tool_calls:
+            return None
+        return [
+            ToolCall(
+                call_id=tool_call.call_id,
+                func_name=tool_call.func_name,
+                args=tool_call.materialize_args(),
+                extra_content=tool_call.materialize_extra_content(),
+            )
+            for tool_call in context_tool_calls
+        ]
+
+    @property
+    def native_tool_calls(self) -> List[NativeToolCallSummary]:
+        """只读派生 Provider 原生活动摘要。"""
+
+        return [
+            NativeToolCallSummary(
+                tool_type=item.provider_type,
+                call_id=item.call_id,
+                status=item.status,
+                action_type=item.action_type,
+                details=list(item.details),
+                source_count=item.source_count,
+            )
+            for item in self.output_items
+            if isinstance(item, ProviderActivityItem)
+        ]
+
+    @classmethod
+    def from_portable_output(
+        cls,
+        *,
+        response: str = "",
+        reasoning: str = "",
+        tool_calls: List[ToolCall] | None = None,
+        **kwargs: Any,
+    ) -> "LLMResponseResult":
+        """供无原生 Items 的边界结果创建规范化输出。"""
+
+        context_tool_calls = [
+            ContextToolCall.create(
+                call_id=tool_call.call_id,
+                func_name=tool_call.func_name,
+                args=tool_call.args,
+                extra_content=tool_call.extra_content,
+            )
+            for tool_call in (tool_calls or [])
+        ]
+        logical_turn_id = uuid.uuid4().hex
+        portable_items = build_portable_output_items(
+            content=response,
+            reasoning=reasoning,
+            tool_calls=context_tool_calls,
+            logical_turn_id=logical_turn_id,
+        )
+        if not portable_items:
+            return cls(**kwargs)
+
+        return cls(
+            output_items=portable_items,
+            **kwargs,
+        )
 
 
 @dataclass(slots=True)
@@ -117,7 +205,7 @@ class LLMServiceResult(BaseDataModel):
         """
         return cls(
             success=False,
-            completion=LLMResponseResult(response=error_message),
+            completion=LLMResponseResult.from_portable_output(response=error_message),
             error=error_detail or error_message,
         )
 
@@ -202,7 +290,7 @@ __all__ = [
     "LLMResponseResult",
     "LLMServiceRequest",
     "LLMServiceResult",
-    "MessageFactory",
+    "ContextFactory",
     "PromptInput",
     "PromptMessage",
 ]

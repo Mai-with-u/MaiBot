@@ -14,7 +14,7 @@ from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.cli.console import console
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.plugin_runtime.hook_payloads import deserialize_prompt_messages
+from src.llm_models.payload_content.context_item import AssistantMessageItem, ContextItemMeta, ContextTextPart
 
 from .display_utils import build_tool_call_summary_lines, format_token_count
 from .prompt_cli_renderer import PromptCLIVisualizer
@@ -108,14 +108,16 @@ class MaisakaRuntimeDisplayMixin:
     ) -> Optional[Panel]:
         """构建单个 cycle 阶段的展示卡片。"""
 
-        has_content = any([
-            selected_history_count is not None,
-            prompt_tokens is not None,
-            bool((model_name or "").strip()),
-            bool(response_text.strip()),
-            prompt_section is not None,
-            bool(extra_lines),
-        ])
+        has_content = any(
+            [
+                selected_history_count is not None,
+                prompt_tokens is not None,
+                bool((model_name or "").strip()),
+                bool(response_text.strip()),
+                prompt_section is not None,
+                bool(extra_lines),
+            ]
+        )
         if not has_content:
             return None
 
@@ -236,9 +238,7 @@ class MaisakaRuntimeDisplayMixin:
         return [
             result.strip()
             for result in tool_results
-            if isinstance(result, str)
-            and result.strip()
-            and result.strip() not in detailed_summaries
+            if isinstance(result, str) and result.strip() and result.strip() not in detailed_summaries
         ]
 
     @staticmethod
@@ -315,7 +315,9 @@ class MaisakaRuntimeDisplayMixin:
         tool_call_id: str,
         border_style: str = "bright_yellow",
         output_content: str = "",
+        output_items: Optional[list[Any]] = None,
         metadata: Optional[dict[str, Any]] = None,
+        generation_attempts: Optional[list[dict[str, Any]]] = None,
         prompt_title: str = "",
         prompt_category: str = "",
         request_kind: str = "",
@@ -330,23 +332,25 @@ class MaisakaRuntimeDisplayMixin:
         subtitle = selection_reason.strip() or f"会话ID: {self.session_id}"
         if tool_call_id:
             subtitle += f"\n调用ID: {tool_call_id}"
+        normalized_output_items = output_items or []
+        if not normalized_output_items and output_content.strip():
+            normalized_output_items = [
+                AssistantMessageItem(
+                    meta=ContextItemMeta.create(),
+                    parts=(ContextTextPart(output_content.strip()),),
+                )
+            ]
 
         if isinstance(request_messages, list) and request_messages:
-            try:
-                normalized_messages = deserialize_prompt_messages(request_messages)
-            except Exception as exc:
-                logger.debug(
-                    f"工具 {tool_name} 的 request_messages 无法还原为模型消息，将使用瘦身结构预览: {exc}"
-                )
-                normalized_messages = request_messages
             preview_access = PromptCLIVisualizer.build_prompt_preview_access(
-                normalized_messages,
+                request_messages,
                 category=active_prompt_category,
                 chat_id=self.session_id,
                 request_kind=active_request_kind,
                 selection_reason=subtitle,
-                output_content=output_content,
+                output_items=normalized_output_items,
                 metadata=metadata,
+                generation_attempts=generation_attempts or [],
             )
             return ToolPromptAccessPanel(
                 panel=Panel(
@@ -364,8 +368,9 @@ class MaisakaRuntimeDisplayMixin:
             chat_id=self.session_id,
             request_kind=active_request_kind,
             subtitle=subtitle,
-            output_content=output_content,
+            output_items=normalized_output_items,
             metadata=metadata,
+            generation_attempts=generation_attempts or [],
         )
         return ToolPromptAccessPanel(
             panel=Panel(
@@ -379,7 +384,7 @@ class MaisakaRuntimeDisplayMixin:
 
     @staticmethod
     def _build_prompt_preview_metadata_from_tool_metrics(metrics: Any) -> dict[str, Any]:
-        """从工具监控 metrics 中提取可写入 Prompt 预览的模型与耗时。"""
+        """从工具监控 metrics 中提取可写入 Prompt 预览的模型、耗时与 Token。"""
 
         if not isinstance(metrics, dict):
             return {}
@@ -395,6 +400,11 @@ class MaisakaRuntimeDisplayMixin:
                 metadata["duration_ms"] = duration_ms
                 break
 
+        for token_key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            token_count = metrics.get(token_key)
+            if isinstance(token_count, int) and not isinstance(token_count, bool):
+                metadata[token_key] = token_count
+
         return metadata
 
     def _normalize_tool_card_body_lines(self, body: Any) -> list[str]:
@@ -403,11 +413,7 @@ class MaisakaRuntimeDisplayMixin:
         if isinstance(body, str):
             return [line for line in body.splitlines() if line.strip()]
         if isinstance(body, list):
-            return [
-                str(item).strip()
-                for item in body
-                if str(item).strip()
-            ]
+            return [str(item).strip() for item in body if str(item).strip()]
         return []
 
     def _build_custom_tool_sub_cards(
@@ -427,9 +433,7 @@ class MaisakaRuntimeDisplayMixin:
                 continue
             title = str(sub_card.get("title") or "").strip() or "附加信息"
             border_style = str(sub_card.get("border_style") or "").strip() or default_border_style
-            body_lines = self._normalize_tool_card_body_lines(
-                sub_card.get("body_lines", sub_card.get("content", ""))
-            )
+            body_lines = self._normalize_tool_card_body_lines(sub_card.get("body_lines", sub_card.get("content", "")))
             if not body_lines:
                 continue
             renderables.append(
@@ -499,6 +503,10 @@ class MaisakaRuntimeDisplayMixin:
                 )
 
         output_text = str(detail.get("output_text") or "").strip()
+        output_items = detail.get("output_items") if isinstance(detail.get("output_items"), list) else None
+        generation_attempts = (
+            detail.get("generation_attempts") if isinstance(detail.get("generation_attempts"), list) else []
+        )
         prompt_text = str(detail.get("prompt_text") or "").strip()
         request_messages = detail.get("request_messages") if isinstance(detail.get("request_messages"), list) else None
         if prompt_text or request_messages:
@@ -509,7 +517,9 @@ class MaisakaRuntimeDisplayMixin:
                 tool_call_id=tool_call_id,
                 border_style=prompt_border_style,
                 output_content=output_text,
+                output_items=output_items,
                 metadata=preview_metadata,
+                generation_attempts=generation_attempts,
             )
             if prompt_access_panel.prompt_html_uri:
                 detail["prompt_html_uri"] = prompt_access_panel.prompt_html_uri
@@ -536,7 +546,15 @@ class MaisakaRuntimeDisplayMixin:
                     tool_call_id=tool_call_id,
                     border_style=prompt_border_style,
                     output_content=str(record.get("output_text") or ""),
+                    output_items=(
+                        record.get("output_items") if isinstance(record.get("output_items"), list) else None
+                    ),
                     metadata=record_metadata,
+                    generation_attempts=(
+                        record.get("generation_attempts")
+                        if isinstance(record.get("generation_attempts"), list)
+                        else []
+                    ),
                     prompt_title=str(record.get("prompt_title") or f"Prompt #{index}"),
                     prompt_category=str(record.get("prompt_category") or ""),
                     request_kind=str(record.get("request_kind") or ""),

@@ -45,6 +45,7 @@ async def handle_tool(
     entered, current_count, max_count = tool_ctx.runtime._try_enter_wait_state(
         seconds=wait_seconds,
         tool_call_id=invocation.call_id,
+        logical_turn_id=tool_ctx.engine.active_logical_turn_id,
     )
     if not entered:
         return tool_ctx.build_success_result(

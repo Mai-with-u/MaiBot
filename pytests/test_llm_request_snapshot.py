@@ -1,14 +1,16 @@
+from dataclasses import replace
 from pathlib import Path
 
 import base64
 import json
 
 from src.config.model_configs import APIProvider, ModelInfo
-from src.llm_models.model_client.base_client import RequestTraceContext, ResponseRequest
-from src.llm_models.payload_content.message import MessageBuilder
+from src.llm_models.generation_diagnostics import sanitize_generation_diagnostic
+from src.llm_models.model_client.base_client import APIResponse, RequestTraceContext, ResponseRequest
+from src.llm_models.payload_content.context_item import ContextItemBuilder
 from src.llm_models.request_snapshot import (
     attach_request_snapshot,
-    deserialize_structured_messages_snapshot,
+    deserialize_persisted_context_items_snapshot,
     mark_request_succeeded,
     save_failed_request_snapshot,
     serialize_response_request_snapshot,
@@ -64,8 +66,8 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
     )
     request = ResponseRequest(
         model_info=model_info,
-        message_list=[
-            MessageBuilder()
+        context_items=[
+            ContextItemBuilder()
             .add_text_content("分析这张图片")
             .add_image_content(image_format="png", image_base64=image_base64)
             .build()
@@ -103,33 +105,46 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
     assert first_path == second_path
     assert first_path is not None
     payload = json.loads(first_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 6
+    assert "messages" not in payload
+    assert "output" not in payload
     assert payload["request"]["task_name"] == "planner"
     assert payload["metadata"]["status"] == "retrying"
-    assert len(payload["attempts"]) == 2
+    assert len(payload["generation_attempts"]) == 2
     assert image_base64 not in first_path.read_text(encoding="utf-8")
-    image_part = payload["messages"][0]["content"][1]
+    image_part = payload["request_items"][0]["parts"][1]
     assert image_part["image_reference"]["base64_omitted"] is True
     assert (tmp_path / image_part["image_reference"]["image_path"]).is_file()
-    assert payload["provider_request"]["request_kwargs"]["messages"] == "[见 messages]"
-    assert payload["provider_request"]["request_kwargs"]["authorization"] == "[已脱敏]"
+    first_attempt = payload["generation_attempts"][0]
+    assert first_attempt["wire_request"]["request_kwargs"]["messages"] == ["重复请求体"]
+    assert first_attempt["wire_request"]["request_kwargs"]["authorization"] == "[REDACTED]"
     assert payload["api_provider"]["default_headers"]["Authorization"] == "[已脱敏]"
     assert payload["request_parameters"]["max_tokens"] == 256
-    restored_messages = deserialize_structured_messages_snapshot(payload["messages"])
-    assert restored_messages[0].parts[1].image_base64 == image_base64
+    restored_items = deserialize_persisted_context_items_snapshot(payload["request_items"])
+    assert restored_items[0].parts[1].image_base64 == image_base64
 
     retry_error = RuntimeError("第二次失败")
     attach_request_snapshot(retry_error, second_path)
     update_failed_request_attempt(retry_error, status="retrying", retry_interval=3)
     payload = json.loads(first_path.read_text(encoding="utf-8"))
-    assert payload["attempts"][-1]["retry_interval"] == 3
+    assert payload["generation_attempts"][-1]["retry_interval"] == 3
 
     trace_context.attempt = 3
     trace_context.model_attempt = 3
-    mark_request_succeeded(request)
+    trace_context.generation_attempts.append(
+        replace(
+            trace_context.generation_attempts[-1],
+            attempt_id="request-1:3",
+            provider_attempt=3,
+            model_attempt=3,
+            status="succeeded",
+            error=None,
+        )
+    )
+    mark_request_succeeded(request, APIResponse())
     payload = json.loads(first_path.read_text(encoding="utf-8"))
     assert payload["metadata"]["status"] == "succeeded_after_retry"
-    assert payload["attempts"][-1]["status"] == "succeeded"
+    assert payload["generation_attempts"][-1]["status"] == "succeeded"
 
 
 def test_failed_request_without_session_is_saved_under_system(monkeypatch, tmp_path: Path) -> None:
@@ -138,7 +153,7 @@ def test_failed_request_without_session_is_saved_under_system(monkeypatch, tmp_p
     trace_context = RequestTraceContext(request_id="system-request", task_name="utils", attempt=1)
     request = ResponseRequest(
         model_info=model_info,
-        message_list=[MessageBuilder().add_text_content("测试").build()],
+        context_items=[ContextItemBuilder().add_text_content("测试").build()],
         trace_context=trace_context,
     )
 
@@ -167,3 +182,25 @@ def test_llm_error_display_title_uses_final_status_and_latest_error() -> None:
     }
 
     assert _extract_llm_error_display_title(payload) == "重试后成功 · 第一次失败"
+
+
+def test_generation_diagnostic_sanitizes_credentials_private_fields_urls_and_binary() -> None:
+    raw_binary = base64.b64encode(b"x" * (64 * 1024)).decode("ascii")
+
+    sanitized = sanitize_generation_diagnostic(
+        {
+            "openai_api_key": "secret-key",
+            "endpoint": "https://user:pass@example.test/v1?api_key=secret&region=cn",
+            "encrypted_content": "encrypted-replay",
+            "nested": {"thought_signature": "private-signature"},
+            "image_base64": raw_binary,
+            "bytes": b"binary-data",
+        }
+    )
+
+    assert sanitized["openai_api_key"] == "[REDACTED]"
+    assert sanitized["endpoint"] == "https://example.test/v1?api_key=%5BREDACTED%5D&region=cn"
+    assert sanitized["encrypted_content"] == "[仅在内存 replay fragment 中保留]"
+    assert sanitized["nested"]["thought_signature"] == "[仅在内存 replay fragment 中保留]"
+    assert sanitized["image_base64"]["type"] == "omitted_binary"
+    assert sanitized["bytes"]["type"] == "omitted_binary"

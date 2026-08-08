@@ -243,16 +243,13 @@ class MaisakaExpressionSelector:
         if expression_intent_block:
             query_parts.append(expression_intent_block)
 
-        guide_parts: List[str] = []
+        reference_parts: List[str] = []
         if isinstance(reply_tool_args, dict):
-            reply_guide = str(reply_tool_args.get("reply_guide") or "").strip()
-            if reply_guide:
-                guide_parts.append(f"回复指引：\n{reply_guide}")
-            reference_info = str(reply_tool_args.get("reference_info") or "").strip()
-            if reference_info:
-                guide_parts.append(f"关键信息参考：\n{reference_info}")
-        if guide_parts:
-            query_parts.extend(guide_parts)
+            reply_reference = str(reply_tool_args.get("reply_reference") or "").strip()
+            if reply_reference:
+                reference_parts.append(f"回复信息参考：\n{reply_reference}")
+        if reference_parts:
+            query_parts.extend(reference_parts)
         else:
             normalized_reply_reason = str(reply_reason or "").strip()
             if normalized_reply_reason:
@@ -501,14 +498,20 @@ class MaisakaExpressionSelector:
                 reply_tool_args,
                 use_expression_intent=self._use_expression_intent(),
             )
-            vector_candidates = await expression_vector_index.select_candidates(
-                index_path=global_config.expression.expression_vector_index_path,
-                session_id=session_id,
-                query_text=expression_query_text,
-                scoped_candidates=all_candidates,
-                candidate_pool_size=global_config.expression.expression_vector_candidate_pool_size,
-                cluster_pool_size=self._VECTOR_CLUSTER_POOL_SIZE,
-            )
+            try:
+                vector_candidates = await expression_vector_index.select_candidates(
+                    index_path=global_config.expression.expression_vector_index_path,
+                    session_id=session_id,
+                    query_text=expression_query_text,
+                    scoped_candidates=all_candidates,
+                    candidate_pool_size=global_config.expression.expression_vector_candidate_pool_size,
+                    cluster_pool_size=self._VECTOR_CLUSTER_POOL_SIZE,
+                )
+            except Exception:
+                logger.exception(
+                    f"表达方式向量候选构建失败，回退随手候选: session_id={session_id}"
+                )
+                return self._sample_legacy_expression_candidates(all_candidates)
             if vector_candidates:
                 logger.debug(
                     f"表达方式向量候选池完成：session_id={session_id} "

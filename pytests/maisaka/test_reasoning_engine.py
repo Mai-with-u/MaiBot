@@ -1,15 +1,18 @@
 """Maisaka 推理引擎测试。"""
 
-from datetime import datetime
 from types import SimpleNamespace
 from typing import Optional
 
 import pytest
 
 from src.common.data_models.llm_service_data_models import LLMResponseResult
+from src.llm_models.model_client.base_client import GenerationAttempt, GenerationTrace
+from src.llm_models.payload_content.context_item import (
+    ContextItemMeta,
+    ProviderActivityItem,
+)
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
-from src.maisaka.context.messages import AssistantMessage
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.monitor.events import _serialize_planner_block
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
@@ -18,22 +21,19 @@ from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 def _build_chat_response(content: Optional[str], reasoning: str) -> ChatResponse:
     """构造仅包含 Planner 思考字段的响应。"""
 
+    result = LLMResponseResult.from_portable_output(
+        response=content or "",
+        reasoning=reasoning,
+    )
     return ChatResponse(
-        content=content,
-        tool_calls=[],
+        output_items=result.output_items,
         request_messages=[],
-        raw_message=AssistantMessage(
-            content=content or "",
-            timestamp=datetime.now(),
-            tool_calls=[],
-        ),
         selected_history_count=0,
         tool_count=0,
         prompt_tokens=0,
         built_message_count=0,
         completion_tokens=0,
         total_tokens=0,
-        reasoning=reasoning,
     )
 
 
@@ -89,39 +89,82 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
     """Provider 仅返回 reasoning 时，不应将其回填为 Planner 正文。"""
 
     class FakeLLMClient:
-        async def generate_response_with_messages(self, message_factory, options) -> LLMResponseResult:
-            del message_factory, options
-            return LLMResponseResult(
-                response="",
+        async def generate_response_with_context(self, context_factory, options) -> LLMResponseResult:
+            del context_factory, options
+            result = LLMResponseResult.from_portable_output(
                 reasoning="Provider 原生推理",
                 model_name="test-model",
-                provider_response={
-                    "id": "resp_test",
-                    "status": "completed",
-                    "output": [
-                        {
-                            "type": "reasoning",
-                            "id": "rs_test",
-                            "summary": [{"type": "summary_text", "text": "Provider 原生推理"}],
-                        },
-                        {
-                            "type": "web_search_call",
-                            "id": "ws_test",
-                            "status": "completed",
-                            "action": {"type": "search", "queries": ["Responses API"]},
-                        },
-                    ],
-                },
-                native_tool_calls=[
-                    NativeToolCallSummary(
-                        tool_type="web_search",
-                        call_id="ws_test",
-                        status="completed",
-                        action_type="search",
-                        details=["查询：Responses API"],
-                    )
-                ],
             )
+            logical_turn_id = result.output_items[0].meta.logical_turn_id
+            assert logical_turn_id is not None
+            result.output_items = (
+                *result.output_items,
+                ProviderActivityItem(
+                    meta=ContextItemMeta.create(
+                        logical_turn_id=logical_turn_id,
+                    ),
+                    provider_type="web_search",
+                    call_id="ws_test",
+                    status="completed",
+                    action_type="search",
+                    details=("查询：Responses API",),
+                ),
+            )
+            result.generation_trace = GenerationTrace(
+                provider="test-provider",
+                endpoint="responses",
+                model="test-model",
+                response_id="resp_test",
+                status="completed",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                prompt_cache_hit_tokens=0,
+                prompt_cache_miss_tokens=0,
+                output_item_ids=tuple(item.meta.item_id for item in result.output_items),
+            )
+            result.provider_response = {
+                "id": "resp_test",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "id": "rs_test",
+                        "summary": [{"type": "summary_text", "text": "Provider 原生推理"}],
+                    },
+                    {
+                        "type": "web_search_call",
+                        "id": "ws_test",
+                        "status": "completed",
+                        "action": {"type": "search", "queries": ["Responses API"]},
+                    },
+                ],
+            }
+            result.generation_attempts = (
+                GenerationAttempt(
+                    attempt_id="planner-attempt-1",
+                    workflow_purpose="planner",
+                    workflow_attempt=1,
+                    provider_attempt=1,
+                    model_attempt=1,
+                    status="succeeded",
+                    started_at="2026-08-05T00:00:00.000",
+                    duration_ms=1.0,
+                    provider="test-provider",
+                    endpoint="responses",
+                    model="test-model",
+                    client_type="openai_responses",
+                    operation="response",
+                    wire_protocol="responses",
+                    request_items=(),
+                    tool_definitions=(),
+                    request_parameters={},
+                    wire_response=result.provider_response,
+                    output_items=result.output_items,
+                    trace=result.generation_trace,
+                ),
+            )
+            return result
 
     class PassthroughRuntimeManager:
         def __init__(self) -> None:
@@ -160,26 +203,20 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
     after_response_kwargs = next(
         kwargs for hook_name, kwargs in runtime_manager.calls if hook_name == "maisaka.planner.after_response"
     )
-    assert after_response_kwargs["response"] == ""
+    assert len(after_response_kwargs["output_items"]) == 2
     assert response.content is None
-    assert response.raw_message.content == ""
+    assert all(message.content == "" for message in response.raw_messages)
     assert response.reasoning == "Provider 原生推理"
     assert response.native_tool_calls[0].call_id == "ws_test"
-    assert not hasattr(response.raw_message, "native_tool_calls")
-    assert prompt_preview_kwargs["output_tool_calls"] == [
-        {
-            "id": "ws_test",
-            "name": "web_search",
-            "arguments": {
-                "action_type": "search",
-                "status": "completed",
-                "details": ["查询：Responses API"],
-            },
-            "source": "provider",
-            "source_label": "Provider 原生调用",
-        }
-    ]
-    assert prompt_preview_kwargs["provider_response"] == {
+    assert all(not hasattr(message, "native_tool_calls") for message in response.raw_messages)
+    preview_output_items = prompt_preview_kwargs["output_items"]
+    assert isinstance(preview_output_items, tuple)
+    assert len(preview_output_items) == 2
+    assert preview_output_items[0].__class__.__name__ == "ReasoningItem"
+    assert preview_output_items[1].__class__.__name__ == "ProviderActivityItem"
+    generation_attempts = prompt_preview_kwargs["generation_attempts"]
+    assert isinstance(generation_attempts, tuple)
+    assert generation_attempts[0].wire_response == {
         "id": "resp_test",
         "status": "completed",
         "output": [

@@ -231,7 +231,7 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 
 
 def _serialize_native_tool_calls(tool_calls: List[Any]) -> List[Dict[str, Any]]:
-    """序列化 Provider 原生工具摘要，不读取完整 ProviderState。"""
+    """序列化 Provider 原生工具摘要，不读取 Item 的原生 replay fragment。"""
 
     serialized_calls: List[Dict[str, Any]] = []
     for tool_call in tool_calls:

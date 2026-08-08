@@ -6,8 +6,13 @@ from typing import Any, Dict, List, Sequence
 
 from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.llm_service_data_models import PromptMessage
-from src.llm_models.payload_content.message import Message
+from src.llm_models.payload_content.context_item import CONTEXT_ITEM_SCHEMA_VERSION, ContextItem
+from src.llm_models.payload_content.context_protocol import ContextProtocolMode, validate_context_items
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput, normalize_tool_options
+from src.llm_models.request_snapshot import (
+    deserialize_context_item_snapshot,
+    serialize_context_item_snapshot,
+)
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
 
 
@@ -115,56 +120,65 @@ def deserialize_tool_calls(raw_tool_calls: Any) -> List[ToolCall]:
     return normalized_tool_calls
 
 
-def serialize_prompt_messages(messages: Sequence[Message]) -> List[PromptMessage]:
-    """将 LLM 消息列表序列化为 Hook 可传输载荷。
+def serialize_prompt_items(items: Sequence[ContextItem]) -> List[PromptMessage]:
+    """将 Context Items 序列化为 Hook 可传输载荷，不暴露 replay payload。
 
     Args:
-        messages: 原始 LLM 消息列表。
+        items: 原始 Context Items。
 
     Returns:
-        List[PromptMessage]: 序列化后的消息字典列表。
+        List[PromptMessage]: 序列化后的 Item 字典列表。
     """
 
-    serialized_messages: List[PromptMessage] = []
-    for message in messages:
-        serialized_message: PromptMessage = {
-            "role": message.role.value,
-            "content": message.content,
-        }
-        if message.reasoning_content:
-            serialized_message["reasoning_content"] = message.reasoning_content
-        if message.tool_call_id:
-            serialized_message["tool_call_id"] = message.tool_call_id
-        if message.tool_calls:
-            serialized_message["tool_calls"] = serialize_tool_calls(message.tool_calls)
-        serialized_messages.append(serialized_message)
-    return serialized_messages
+    return [serialize_context_item_snapshot(item) for item in items]
 
 
-def deserialize_prompt_messages(raw_messages: Any) -> List[Message]:
-    """从 Hook 载荷恢复 LLM 消息列表。
+def deserialize_prompt_items(
+    raw_items: Any,
+    *,
+    item_schema_version: Any = CONTEXT_ITEM_SCHEMA_VERSION,
+    mode: ContextProtocolMode = ContextProtocolMode.REQUEST_CONTEXT,
+    original_items: Sequence[ContextItem] = (),
+) -> List[ContextItem]:
+    """从 Hook 载荷恢复 Items；未修改的 Item 保留原 replay，修改项仅自身失效。
 
     Args:
-        raw_messages: Hook 返回的消息列表。
+        raw_items: Hook 返回的 Item 列表。
+        item_schema_version: Hook 返回的 Item schema 版本。
+        mode: 当前 Hook 所处的协议边界。
+        original_items: Hook 调用前的原 Items。
 
     Returns:
-        List[Message]: 恢复后的 LLM 消息列表。
+        List[ContextItem]: 恢复后的 Context Items。
 
     Raises:
         ValueError: 结构不合法时抛出。
     """
 
-    if not isinstance(raw_messages, list):
-        raise ValueError("Hook 返回的 `messages` 必须是列表")
+    if not isinstance(raw_items, list):
+        raise ValueError("Hook 返回的 `items` 必须是列表")
+    if item_schema_version != CONTEXT_ITEM_SCHEMA_VERSION:
+        raise ValueError(
+            "Hook 返回的 item_schema_version 不受支持: "
+            f"{item_schema_version!r}（当前为 {CONTEXT_ITEM_SCHEMA_VERSION}）"
+        )
 
-    from src.services.llm_service import _build_message_from_dict
+    original_by_id = {item.meta.item_id: item for item in original_items}
+    original_payload_by_id = {item.meta.item_id: serialize_context_item_snapshot(item) for item in original_items}
+    normalized_items: List[ContextItem] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise ValueError("Hook 返回的 Item 必须是字典")
+        normalized_item = deserialize_context_item_snapshot(raw_item)
+        item_id = normalized_item.meta.item_id
+        # 先规范化再比较，未知字段和已废弃的 group/ordinal 不应使 replay 失效。
+        if serialize_context_item_snapshot(normalized_item) == original_payload_by_id.get(item_id):
+            normalized_items.append(original_by_id[item_id])
+            continue
+        normalized_items.append(normalized_item)
 
-    normalized_messages: List[Message] = []
-    for raw_message in raw_messages:
-        if not isinstance(raw_message, dict):
-            raise ValueError("Hook 返回的消息项必须是字典")
-        normalized_messages.append(_build_message_from_dict(raw_message))
-    return normalized_messages
+    validate_context_items(normalized_items, mode)
+    return normalized_items
 
 
 def serialize_tool_definitions(tool_definitions: Sequence[ToolDefinitionInput]) -> List[Dict[str, Any]]:

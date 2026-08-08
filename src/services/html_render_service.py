@@ -192,41 +192,6 @@ class HTMLRenderService:
             self._render_semaphore_limit = limit
         return self._render_semaphore
 
-    async def create_browser_context(
-        self,
-        *,
-        accept_downloads: bool = False,
-        locale: str = "zh-CN",
-        service_workers: Literal["allow", "block"] = "allow",
-        viewport_height: int = 720,
-        viewport_width: int = 1280,
-    ) -> Any:
-        """使用现有浏览器启动策略创建一个独立上下文。
-
-        调用方负责校验自身功能开关、配置页面网络策略并关闭返回的上下文。
-        该入口复用本机浏览器探测、托管 Chromium 自动安装和启动配置，避免各业务模块
-        分别维护 Playwright 生命周期。
-
-        Args:
-            accept_downloads: 是否允许页面下载文件。
-            locale: 浏览器上下文语言。
-            service_workers: 是否允许页面注册和运行 Service Worker。
-            viewport_height: 视口高度。
-            viewport_width: 视口宽度。
-
-        Returns:
-            Any: Playwright BrowserContext 对象。
-        """
-
-        config = self._get_render_config()
-        browser = await self._ensure_browser(config)
-        return await browser.new_context(
-            accept_downloads=accept_downloads,
-            locale=locale,
-            service_workers=service_workers,
-            viewport={"width": viewport_width, "height": viewport_height},
-        )
-
     async def render_html_to_png(self, request: HtmlRenderRequest) -> HtmlRenderResult:
         """将 HTML 内容渲染为 PNG 图片。
 

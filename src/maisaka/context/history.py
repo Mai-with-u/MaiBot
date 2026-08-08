@@ -1,11 +1,19 @@
-﻿"""Maisaka 历史消息处理辅助工具。"""
+"""Maisaka 历史消息处理辅助工具。"""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from src.common.data_models.message_component_data_model import MessageSequence, ReplyComponent, TextComponent
-
-from src.maisaka.context.message_adapter import build_visible_text_from_sequence, clone_message_sequence, format_speaker_content
-from .messages import AssistantMessage, LLMContextMessage, SessionBackedMessage, ToolResultMessage
+from src.llm_models.payload_content.context_item import ContextItem, FunctionCallItem
+from src.llm_models.payload_content.context_protocol import (
+    analyze_context_item_relations,
+    prune_context_items_for_history,
+)
+from src.maisaka.context.message_adapter import (
+    build_visible_text_from_sequence,
+    clone_message_sequence,
+    format_speaker_content,
+)
+from .messages import LLMContextMessage, ModelOutputContextMessage, SessionBackedMessage, ToolResultMessage
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -72,7 +80,7 @@ def drop_leading_orphan_tool_results(
     available_tool_call_ids = {
         tool_call.call_id
         for message in chat_history
-        if isinstance(message, AssistantMessage)
+        if isinstance(message, ModelOutputContextMessage)
         for tool_call in message.tool_calls
         if tool_call.call_id
     }
@@ -103,9 +111,18 @@ def drop_orphan_tool_results(
     folded_tool_call_ids = _collect_folded_tool_history_call_ids(chat_history)
     available_media_owner_ids = available_tool_call_ids | folded_tool_call_ids
 
+    orphan_results = [
+        message
+        for message in chat_history
+        if isinstance(message, ToolResultMessage) and message.tool_call_id not in available_tool_call_ids
+    ]
+    invalid_turn_ids = {message.logical_turn_id for message in orphan_results if message.logical_turn_id}
     filtered_history: list[LLMContextMessage] = []
     removed_count = 0
     for message in chat_history:
+        if _get_logical_turn_id(message) in invalid_turn_ids:
+            removed_count += 1
+            continue
         if isinstance(message, ToolResultMessage) and message.tool_call_id not in available_tool_call_ids:
             removed_count += 1
             continue
@@ -119,99 +136,116 @@ def drop_orphan_tool_results(
 
 def normalize_tool_call_result_pairs(
     chat_history: list[LLMContextMessage],
+    *,
+    pending_call_ids: set[str] | None = None,
 ) -> tuple[list[LLMContextMessage], dict[str, int]]:
     """统一清理并排序工具调用与工具结果，保证发送给模型的工具协议配对完整。"""
 
     processed_history, orphan_tool_result_count = drop_orphan_tool_results(chat_history)
-    processed_history, unanswered_tool_call_count = drop_unanswered_tool_calls(processed_history)
+    processed_history, unanswered_tool_call_count = drop_unanswered_tool_calls(
+        processed_history,
+        pending_call_ids=pending_call_ids,
+    )
     processed_history, moved_tool_result_count = normalize_tool_result_order(processed_history)
+    processed_history, invalid_tool_turn_count = drop_invalid_tool_turns(
+        processed_history,
+        pending_call_ids=pending_call_ids,
+    )
     return processed_history, {
         "orphan_tool_results": orphan_tool_result_count,
         "unanswered_tool_calls": unanswered_tool_call_count,
         "moved_tool_results": moved_tool_result_count,
+        "invalid_tool_turns": invalid_tool_turn_count,
     }
 
 
 def drop_unanswered_tool_calls(
     chat_history: list[LLMContextMessage],
+    *,
+    pending_call_ids: set[str] | None = None,
 ) -> tuple[list[LLMContextMessage], int]:
     """移除缺少对应工具结果的 assistant tool_call，避免破坏模型请求协议。"""
 
     if not chat_history:
         return chat_history, 0
 
-    answered_tool_call_ids = {
-        message.tool_call_id
+    relation_items = _build_tool_relation_items(chat_history)
+    relation_report = analyze_context_item_relations(
+        relation_items,
+        pending_call_ids=pending_call_ids or set(),
+    )
+    unanswered_call_ids = set(relation_report.unanswered_call_ids)
+    if not unanswered_call_ids:
+        return chat_history, 0
+
+    unanswered_messages = [
+        message
         for message in chat_history
-        if isinstance(message, ToolResultMessage) and message.tool_call_id
+        if isinstance(message, ModelOutputContextMessage)
+        and isinstance(message.output_item, FunctionCallItem)
+        and message.output_item.tool_call.call_id in unanswered_call_ids
+    ]
+    invalid_turn_ids = {
+        message.output_item.meta.logical_turn_id
+        for message in unanswered_messages
+        if message.output_item.meta.logical_turn_id
     }
-    if not answered_tool_call_ids:
-        return _drop_all_tool_calls_without_results(chat_history)
+    unanswered_item_ids = {message.output_item.meta.item_id for message in unanswered_messages}
+    filtered_history = [
+        message
+        for message in chat_history
+        if _get_logical_turn_id(message) not in invalid_turn_ids
+        and not (
+            isinstance(message, ModelOutputContextMessage)
+            and message.output_item.meta.item_id in unanswered_item_ids
+        )
+    ]
+    return filtered_history, len(unanswered_messages)
 
-    filtered_history: list[LLMContextMessage] = []
-    removed_count = 0
+
+def _build_tool_relation_items(chat_history: list[LLMContextMessage]) -> list[ContextItem]:
+    """把历史中的模型输出与工具结果映射为共享关系内核输入。"""
+
+    relation_items: list[ContextItem] = []
     for message in chat_history:
-        if not isinstance(message, AssistantMessage) or not message.tool_calls:
-            filtered_history.append(message)
-            continue
-
-        kept_tool_calls = [
-            tool_call
-            for tool_call in message.tool_calls
-            if tool_call.call_id in answered_tool_call_ids
-        ]
-        removed_count += len(message.tool_calls) - len(kept_tool_calls)
-        if kept_tool_calls:
-            if len(kept_tool_calls) == len(message.tool_calls):
-                filtered_history.append(message)
-            else:
-                filtered_history.append(
-                    AssistantMessage(
-                        content=message.content,
-                        timestamp=message.timestamp,
-                        tool_calls=kept_tool_calls,
-                        source_kind=message.source_kind,
-                    )
-                )
-            continue
-
-        if message.content.strip():
-            filtered_history.append(
-                AssistantMessage(
-                    content=message.content,
-                    timestamp=message.timestamp,
-                    tool_calls=[],
-                    source_kind=message.source_kind,
-                )
-            )
-
-    return filtered_history, removed_count
+        if isinstance(message, ModelOutputContextMessage):
+            relation_items.append(message.output_item)
+        elif isinstance(message, ToolResultMessage):
+            relation_items.append(message.to_context_item(enable_visual_message=False))
+    return relation_items
 
 
-def _drop_all_tool_calls_without_results(
+def drop_invalid_tool_turns(
     chat_history: list[LLMContextMessage],
+    *,
+    pending_call_ids: set[str] | None = None,
 ) -> tuple[list[LLMContextMessage], int]:
-    """处理窗口内完全没有 tool result 的快捷路径。"""
+    """删除共享 HISTORY 关系内核判定为非法的完整逻辑 turn。"""
 
-    filtered_history: list[LLMContextMessage] = []
-    removed_count = 0
-    for message in chat_history:
-        if not isinstance(message, AssistantMessage) or not message.tool_calls:
-            filtered_history.append(message)
-            continue
+    _, relation_report = prune_context_items_for_history(
+        _build_tool_relation_items(chat_history),
+        pending_call_ids=pending_call_ids or set(),
+    )
+    invalid_turn_ids = set(relation_report.invalid_turn_ids)
+    if not invalid_turn_ids:
+        return chat_history, 0
 
-        removed_count += len(message.tool_calls)
-        if message.content.strip():
-            filtered_history.append(
-                AssistantMessage(
-                    content=message.content,
-                    timestamp=message.timestamp,
-                    tool_calls=[],
-                    source_kind=message.source_kind,
-                )
-            )
+    filtered_history = [
+        message
+        for message in chat_history
+        if _get_logical_turn_id(message) not in invalid_turn_ids
+    ]
+    return filtered_history, len(chat_history) - len(filtered_history)
 
-    return filtered_history, removed_count
+
+def _get_logical_turn_id(message: LLMContextMessage) -> str | None:
+    """读取模型输出或工具结果所属的逻辑工具轮次。"""
+
+    if isinstance(message, ModelOutputContextMessage):
+        return message.output_item.meta.logical_turn_id
+    if isinstance(message, ToolResultMessage):
+        return message.logical_turn_id
+    return None
 
 
 def _collect_available_tool_call_ids(chat_history: list[LLMContextMessage]) -> set[str]:
@@ -220,7 +254,7 @@ def _collect_available_tool_call_ids(chat_history: list[LLMContextMessage]) -> s
     return {
         tool_call.call_id
         for message in chat_history
-        if isinstance(message, AssistantMessage)
+        if isinstance(message, ModelOutputContextMessage)
         for tool_call in message.tool_calls
         if tool_call.call_id
     }
@@ -292,12 +326,29 @@ def normalize_tool_result_order(
         if index in consumed_indexes:
             continue
 
-        normalized_history.append(message)
-        if not isinstance(message, AssistantMessage) or not message.tool_calls:
+        if not isinstance(message, ModelOutputContextMessage):
+            normalized_history.append(message)
             continue
 
+        output_indexes: list[int] = []
+        cursor = index
+        while cursor < len(chat_history) and isinstance(chat_history[cursor], ModelOutputContextMessage):
+            if cursor not in consumed_indexes:
+                output_indexes.append(cursor)
+            cursor += 1
+
+        output_messages = [cast(ModelOutputContextMessage, chat_history[output_index]) for output_index in output_indexes]
+        for output_index, output_message in zip(output_indexes, output_messages, strict=True):
+            consumed_indexes.add(output_index)
+            normalized_history.append(output_message)
+
+        tool_calls = [
+            tool_call
+            for output_message in output_messages
+            for tool_call in output_message.tool_calls
+        ]
         appended_tool_result_count = 0
-        for tool_call in message.tool_calls:
+        for tool_call in tool_calls:
             tool_call_id = str(tool_call.call_id or "").strip()
             if not tool_call_id:
                 continue
@@ -305,7 +356,7 @@ def normalize_tool_result_order(
             matching_index = _find_tool_result_index(
                 chat_history,
                 tool_call_id=tool_call_id,
-                start_index=index + 1,
+                start_index=output_indexes[0] + 1,
                 consumed_indexes=consumed_indexes,
             )
             if matching_index is None:
@@ -313,7 +364,7 @@ def normalize_tool_result_order(
 
             consumed_indexes.add(matching_index)
             normalized_history.append(chat_history[matching_index])
-            expected_index = index + appended_tool_result_count + 1
+            expected_index = output_indexes[0] + len(output_indexes) + appended_tool_result_count
             if matching_index != expected_index:
                 moved_count += 1
             appended_tool_result_count += 1

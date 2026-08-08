@@ -85,6 +85,11 @@ describe('menuSections 菜单结构', () => {
       path: '/statistics',
     })
     expect(statisticsItem?.external).toBeUndefined()
+    expect(extensionsSection?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'sidebar.menu.replyEffects', path: '/reply-effects' }),
+      ])
+    )
   })
 
   it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {

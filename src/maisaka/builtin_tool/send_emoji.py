@@ -19,7 +19,7 @@ from src.config.config import config_manager, global_config
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
 from src.emoji_system.emoji_manager import _is_vlm_task_configured, emoji_manager
 from src.emoji_system.maisaka_tool import send_emoji_for_maisaka
-from src.llm_models.payload_content.message import MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.maisaka.context.messages import (
     LLMContextMessage,
     ReferenceMessage,
@@ -367,15 +367,14 @@ async def _select_emoji_with_sub_agent(
         display_prefix="[表情包选择任务]",
     )
     request_messages = [
-        MessageBuilder().set_role(RoleType.System).add_text_content(system_prompt).build(),
+        ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt).build(),
     ]
-    prompt_llm_message = prompt_message.to_llm_message()
-    if prompt_llm_message is not None:
-        request_messages.append(prompt_llm_message)
-    candidate_to_llm_message = getattr(candidate_message, "to_llm_message", None)
-    candidate_llm_message = candidate_to_llm_message() if callable(candidate_to_llm_message) else None
-    if candidate_llm_message is not None:
-        request_messages.append(candidate_llm_message)
+    prompt_item = prompt_message.to_context_item()
+    if prompt_item is not None:
+        request_messages.append(prompt_item)
+    candidate_item = candidate_message.to_context_item()
+    if candidate_item is not None:
+        request_messages.append(candidate_item)
 
     model_task_name = _resolve_emoji_selector_model_task_name()
     if model_task_name == "vlm" and not _is_vlm_task_configured():
@@ -407,7 +406,7 @@ async def _select_emoji_with_sub_agent(
         logger.warning(f"{tool_ctx.runtime.log_prefix} 表情包子代理结果解析失败，将回退到候选首项: {exc}")
         if selection_metadata is not None:
             selection_metadata["monitor_detail"] = _build_send_emoji_monitor_detail(
-                request_messages=PromptCLIVisualizer.build_structured_message_payload(
+                request_messages=PromptCLIVisualizer.build_structured_context_item_payload(
                     request_messages,
                     keep_base64=False,
                 ),
@@ -427,7 +426,7 @@ async def _select_emoji_with_sub_agent(
     if selection_metadata is not None:
         selection_metadata["reason"] = selection.reason.strip()
         selection_metadata["monitor_detail"] = _build_send_emoji_monitor_detail(
-            request_messages=PromptCLIVisualizer.build_structured_message_payload(
+            request_messages=PromptCLIVisualizer.build_structured_context_item_payload(
                 request_messages,
                 keep_base64=False,
             ),

@@ -4,7 +4,12 @@ import json
 import pytest
 
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
-from src.llm_models.payload_content.message import Message, RoleType
+from src.llm_models.payload_content.context_item import (
+    ContextItem,
+    FunctionCallItem,
+    FunctionCallOutputItem,
+    get_item_text,
+)
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.webui.routers import search as search_router
 from src.webui.services import ai_search_agent as search_agent
@@ -15,18 +20,18 @@ from src.webui.services.ai_search_models import AISearchModelOutput
 
 class FakeSearchModel:
     def __init__(self) -> None:
-        self.calls: List[tuple[List[Message], LLMGenerationOptions]] = []
+        self.calls: List[tuple[List[ContextItem], LLMGenerationOptions]] = []
 
-    async def generate_response_with_messages(
+    async def generate_response_with_context(
         self,
-        message_factory,
+        context_factory,
         options: LLMGenerationOptions,
     ) -> LLMResponseResult:
-        messages = message_factory(None)
+        messages = context_factory(None)
         self.calls.append((messages, options))
 
         if len(self.calls) == 1:
-            return LLMResponseResult(
+            return LLMResponseResult.from_portable_output(
                 tool_calls=[
                     ToolCall(
                         call_id="read-docs",
@@ -36,8 +41,8 @@ class FakeSearchModel:
                 ]
             )
         if len(self.calls) == 2:
-            return LLMResponseResult(response="已读取配置文档")
-        return LLMResponseResult(
+            return LLMResponseResult.from_portable_output(response="已读取配置文档")
+        return LLMResponseResult.from_portable_output(
             response=(
                 '{"answer":"配置文件是 bot_config.toml","suggestions":[],"source_ids":[],'
                 '"expanded_terms":[],"results":[]}'
@@ -152,10 +157,10 @@ async def test_final_ai_search_request_preserves_tool_evidence(
     assert validation_calls == [model_output.answer]
     assert final_options.temperature == 0
     assert final_options.tool_options is None
-    assert all(message.role != RoleType.Tool for message in final_messages)
-    assert all(not message.tool_calls for message in final_messages)
-    assert any("bot_config.toml" in message.get_text_content() for message in final_messages)
-    assert any("config.yaml" in message.get_text_content() for message in final_messages)
+    assert all(not isinstance(message, FunctionCallOutputItem) for message in final_messages)
+    assert all(not isinstance(message, FunctionCallItem) for message in final_messages)
+    assert any("bot_config.toml" in get_item_text(message) for message in final_messages)
+    assert any("config.yaml" in get_item_text(message) for message in final_messages)
 
 
 @pytest.mark.asyncio
@@ -188,10 +193,7 @@ async def test_stream_ai_search_events_returns_progress_before_result(
         ],
     )
 
-    events = [
-        json.loads(line)
-        async for line in search_router._stream_ai_search_events(request)
-    ]
+    events = [json.loads(line) async for line in search_router._stream_ai_search_events(request)]
 
     assert [event["type"] for event in events] == ["progress", "progress", "progress", "result"]
     assert events[1]["tool"] == "search_official_docs"
@@ -291,10 +293,7 @@ async def test_stream_ai_search_events_reports_terminal_failure(
         ],
     )
 
-    events = [
-        json.loads(line)
-        async for line in search_router._stream_ai_search_events(request)
-    ]
+    events = [json.loads(line) async for line in search_router._stream_ai_search_events(request)]
 
     assert [event["type"] for event in events] == ["progress", "progress", "error"]
     assert events[-2]["stage"] == "failed"
@@ -310,15 +309,11 @@ def test_extract_model_output_identifies_truncated_json() -> None:
 
 def test_validate_model_output_evidence_rejects_hallucinated_config_field() -> None:
     model_output = AISearchModelOutput(
-        answer=(
-            "在 `config/bot_config.toml` 的 `[chat]` 中设置 "
-            "`reply_frequency_limit = 10`。"
-        ),
+        answer=("在 `config/bot_config.toml` 的 `[chat]` 中设置 `reply_frequency_limit = 10`。"),
         suggestions=["启用 `[[keyword_reaction.keyword_rules]]`。"],
     )
     evidence = (
-        '{"content":"config/bot_config.toml 使用 [chat.reply_timing]，'
-        '群聊频率字段为 talk_value，范围为 0 到 1。"}'
+        '{"content":"config/bot_config.toml 使用 [chat.reply_timing]，群聊频率字段为 talk_value，范围为 0 到 1。"}'
     )
 
     with pytest.raises(search_grounding.AISearchGroundingError) as exc_info:
@@ -331,15 +326,9 @@ def test_validate_model_output_evidence_rejects_hallucinated_config_field() -> N
 
 def test_validate_model_output_evidence_accepts_exact_config_claims() -> None:
     model_output = AISearchModelOutput(
-        answer=(
-            "在 `config/bot_config.toml` 的 `[chat.reply_timing]` 中调低 "
-            "`talk_value`，其范围为 `0` 到 `1`。"
-        ),
+        answer=("在 `config/bot_config.toml` 的 `[chat.reply_timing]` 中调低 `talk_value`，其范围为 `0` 到 `1`。"),
     )
-    evidence = (
-        '{"content":"config/bot_config.toml\\n[chat.reply_timing]\\n'
-        'talk_value = 1.0，范围为 0 到 1。"}'
-    )
+    evidence = '{"content":"config/bot_config.toml\\n[chat.reply_timing]\\ntalk_value = 1.0，范围为 0 到 1。"}'
 
     search_grounding.validate_model_output_evidence(model_output, evidence)
 
@@ -349,8 +338,7 @@ def test_validate_model_output_evidence_accepts_documented_field_wildcard() -> N
         answer="可检查 `no_action_backoff_*` 这一组空闲退避配置。",
     )
     evidence = (
-        '{"content":"no_action_backoff_base_seconds、no_action_backoff_cap_seconds、'
-        'no_action_backoff_start_count"}'
+        '{"content":"no_action_backoff_base_seconds、no_action_backoff_cap_seconds、no_action_backoff_start_count"}'
     )
 
     search_grounding.validate_model_output_evidence(model_output, evidence)
@@ -369,9 +357,7 @@ def test_validate_model_output_evidence_normalizes_escaped_quoted_value() -> Non
     model_output = AISearchModelOutput(
         answer=r"将 `chat.reply_timing.reply_trigger_mode` 设为 `\"reply_necessity\"`。",
     )
-    evidence = (
-        '{"content":"chat.reply_timing.reply_trigger_mode 支持 frequency 和 reply_necessity"}'
-    )
+    evidence = '{"content":"chat.reply_timing.reply_trigger_mode 支持 frequency 和 reply_necessity"}'
 
     claims = search_grounding.extract_verifiable_claims(model_output.answer)
 
@@ -397,8 +383,7 @@ def test_validate_model_output_evidence_accepts_verified_emoji_claims() -> None:
         ),
     )
     evidence = (
-        '{"documents":[{"content":"bot_config.toml\\n[emoji]\\nsteal_emoji = true\\n'
-        'self.ctx.emoji\\nbot_config"}]}'
+        '{"documents":[{"content":"bot_config.toml\\n[emoji]\\nsteal_emoji = true\\nself.ctx.emoji\\nbot_config"}]}'
     )
 
     search_grounding.validate_model_output_evidence(model_output, evidence)
@@ -410,17 +395,17 @@ async def test_ai_search_uses_search_evidence_and_rewrites_once_after_grounding_
 ) -> None:
     class CorrectingSearchModel:
         def __init__(self) -> None:
-            self.calls: List[tuple[List[Message], LLMGenerationOptions]] = []
+            self.calls: List[tuple[List[ContextItem], LLMGenerationOptions]] = []
 
-        async def generate_response_with_messages(
+        async def generate_response_with_context(
             self,
-            message_factory,
+            context_factory,
             options: LLMGenerationOptions,
         ) -> LLMResponseResult:
-            messages = message_factory(None)
+            messages = context_factory(None)
             self.calls.append((messages, options))
             if len(self.calls) == 1:
-                return LLMResponseResult(
+                return LLMResponseResult.from_portable_output(
                     tool_calls=[
                         ToolCall(
                             call_id="search-config",
@@ -430,15 +415,15 @@ async def test_ai_search_uses_search_evidence_and_rewrites_once_after_grounding_
                     ]
                 )
             if len(self.calls) == 2:
-                return LLMResponseResult(response="资料读取完成")
+                return LLMResponseResult.from_portable_output(response="资料读取完成")
             if len(self.calls) == 3:
-                return LLMResponseResult(
+                return LLMResponseResult.from_portable_output(
                     response=(
                         '{"answer":"调用 `POST /api/webui/auth/verify` 检查状态",'
                         '"suggestions":[],"source_ids":[],"expanded_terms":[],"results":[]}'
                     )
                 )
-            return LLMResponseResult(
+            return LLMResponseResult.from_portable_output(
                 response=(
                     '{"answer":"检查 `no_action_backoff_*` 相关配置",'
                     '"suggestions":[],"source_ids":[],"expanded_terms":[],"results":[]}'
@@ -490,5 +475,5 @@ async def test_ai_search_uses_search_evidence_and_rewrites_once_after_grounding_
     assert "POST /api/webui/auth/verify" in validation_calls[0]
     assert "no_action_backoff_*" in validation_calls[1]
     assert any(event.stage == "correcting" for event in progress_events)
-    correction_prompt = model.calls[-1][0][-1].get_text_content()
+    correction_prompt = get_item_text(model.calls[-1][0][-1])
     assert "POST /api/webui/auth/verify" in correction_prompt

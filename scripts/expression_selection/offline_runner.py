@@ -35,7 +35,7 @@ from src.chat.replyer.maisaka_expression_selector import maisaka_expression_sele
 from src.chat.replyer.expression_vector_index import expression_vector_index  # noqa: E402
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions  # noqa: E402
 from src.config.config import global_config  # noqa: E402
-from src.services.llm_service import LLMServiceClient, _build_message_from_dict  # noqa: E402
+from src.services.llm_service import LLMServiceClient, _build_context_items_from_dict  # noqa: E402
 
 DEFAULT_INPUT_JSON = "data/analysis/expression_selection_batch_compare_live_intent_20260622_164359.json"
 DEFAULT_INDEX_JSON = "data/expression_selection/expression_vector_index.json"
@@ -198,9 +198,9 @@ def build_reply_tool_args(sample: dict[str, Any]) -> dict[str, Any]:
     """从样本中恢复 reply 工具参数。"""
 
     reply_tool_args: dict[str, Any] = {}
-    reply_guide = str(sample.get("reply_guide") or "").strip()
-    if reply_guide:
-        reply_tool_args["reply_guide"] = reply_guide
+    reply_reference = str(sample.get("reply_reference") or "").strip()
+    if reply_reference:
+        reply_tool_args["reply_reference"] = reply_reference
     expression_intent = sample.get("expression_intent")
     if isinstance(expression_intent, dict) and expression_intent:
         reply_tool_args["expression_intent"] = expression_intent
@@ -262,25 +262,19 @@ async def replay_precise_selector(
     system_prompt = maisaka_expression_selector._build_selector_prompt(candidates=candidates)
     raw_messages = load_selector_context_messages(str(sample.get("selector_log") or ""), system_prompt)
 
-    def message_factory(_client: object) -> list[Any]:
+    def context_factory(_client: object) -> list[Any]:
         del _client
-        return [_build_message_from_dict(message) for message in raw_messages]
+        return [item for message in raw_messages for item in _build_context_items_from_dict(message)]
 
-    response = await llm_client.generate_response_with_messages(
-        message_factory,
+    response = await llm_client.generate_response_with_context(
+        context_factory,
         LLMGenerationOptions(temperature=0, max_tokens=max(1, int(max_tokens))),
         session_id=str(sample.get("target_session_id") or ""),
     )
     selected_ids = parse_selector_response(response.response.strip(), candidates)
-    candidate_map = {
-        candidate["id"]: candidate
-        for candidate in candidates
-        if isinstance(candidate.get("id"), int)
-    }
+    candidate_map = {candidate["id"]: candidate for candidate in candidates if isinstance(candidate.get("id"), int)}
     selected_expressions = [
-        candidate_map[expression_id]
-        for expression_id in selected_ids
-        if expression_id in candidate_map
+        candidate_map[expression_id] for expression_id in selected_ids if expression_id in candidate_map
     ]
     return SelectorReplayResult(
         candidate_pool_size=len(candidates),
@@ -302,15 +296,11 @@ def build_online_vector_intent_result(sample: dict[str, Any]) -> dict[str, Any]:
         "method": "online_log_vector_intent_precise",
         "candidate_pool_size": len(vector_recall.get("candidate_pool") or []),
         "candidate_pool": [
-            normalize_item(item)
-            for item in vector_recall.get("candidate_pool") or []
-            if isinstance(item, dict)
+            normalize_item(item) for item in vector_recall.get("candidate_pool") or [] if isinstance(item, dict)
         ],
         "selected_ids": list(vector_recall.get("selected_ids") or []),
         "selected_expressions": [
-            normalize_item(item)
-            for item in vector_recall.get("matches") or []
-            if isinstance(item, dict)
+            normalize_item(item) for item in vector_recall.get("matches") or [] if isinstance(item, dict)
         ],
         "raw_response": str(vector_recall.get("raw_selector_response") or ""),
         "model_name": str(vector_recall.get("selector_model_name") or ""),

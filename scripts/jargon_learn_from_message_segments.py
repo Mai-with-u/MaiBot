@@ -26,12 +26,14 @@ from src.common.logger import get_logger
 from src.config.config import global_config
 from src.learners.jargon_learner import JargonLearner, jargon_learn_model
 from src.learners.jargon_miner import JargonMiner
-from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.prompt.prompt_manager import prompt_manager
 
 logger = get_logger("jargon_segment_script")
 
-SEGMENT_RECORD_PATH = PROJECT_ROOT / "logs" / "maisaka_prompt" / "jargon_offline_learning_records" / "message_segments.jsonl"
+SEGMENT_RECORD_PATH = (
+    PROJECT_ROOT / "logs" / "maisaka_prompt" / "jargon_offline_learning_records" / "message_segments.jsonl"
+)
 
 
 @dataclass(frozen=True)
@@ -55,9 +57,9 @@ class PlainTextJargonLearner(JargonLearner):
         self,
         messages: List[SessionMessage],
         system_prompt: str,
-    ) -> List[Message]:
+    ) -> List[ContextItem]:
         learning_messages = [
-            MessageBuilder()
+            ContextItemBuilder()
             .set_role(RoleType.System)
             .add_text_content(
                 f"{system_prompt}\n\n"
@@ -73,7 +75,7 @@ class PlainTextJargonLearner(JargonLearner):
             speaker_kind = "SELF" if self._is_self_message(message) else "USER"
             content = (message.processed_plain_text or "").strip() or "[空消息]"
             learning_messages.append(
-                MessageBuilder()
+                ContextItemBuilder()
                 .set_role(RoleType.User)
                 .add_text_content(
                     "\n".join(
@@ -91,7 +93,7 @@ class PlainTextJargonLearner(JargonLearner):
             )
 
         learning_messages.append(
-            MessageBuilder().set_role(RoleType.User).add_text_content("请根据以上聊天消息输出 JSON。").build()
+            ContextItemBuilder().set_role(RoleType.User).add_text_content("请根据以上聊天消息输出 JSON。").build()
         )
         return learning_messages
 
@@ -227,10 +229,10 @@ def load_session_messages(session_id: str) -> List[Messages]:
     with get_db_session(auto_commit=False) as session:
         return list(
             session.exec(
-            select(Messages)
-            .where(*_message_filters())
-            .where(Messages.session_id == session_id)
-            .order_by(Messages.timestamp, Messages.id)
+                select(Messages)
+                .where(*_message_filters())
+                .where(Messages.session_id == session_id)
+                .order_by(Messages.timestamp, Messages.id)
             ).all()
         )
 
@@ -282,10 +284,7 @@ def select_balanced_segments(args: Namespace) -> List[MessageSegment]:
         recorded_count = sum(
             1 for segment in segments if _segment_record_key(session_id, args.segment_length, segment) in recorded_keys
         )
-        print(
-            f"候选聊天: {session_id} 可学习消息={message_count} "
-            f"可用段={len(segments)} 已记录段={recorded_count}"
-        )
+        print(f"候选聊天: {session_id} 可学习消息={message_count} 可用段={len(segments)} 已记录段={recorded_count}")
 
     selected_segments: List[MessageSegment] = []
     round_index = 0
@@ -333,7 +332,9 @@ async def run_learning(segments: List[MessageSegment]) -> None:
                 jargon_miner=miner,
             )
         except Exception as exc:
-            logger.error(f"离线黑话学习失败: session_id={segment.session_id}, segment={segment.index_in_chat + 1}, error={exc}")
+            logger.error(
+                f"离线黑话学习失败: session_id={segment.session_id}, segment={segment.index_in_chat + 1}, error={exc}"
+            )
             continue
         record_segment(segment)
         print(f"    结果: {'写入或更新了黑话' if learned else '没有可学习黑话'}")

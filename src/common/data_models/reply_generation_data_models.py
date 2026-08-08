@@ -132,7 +132,15 @@ class ReplyGenerationResult(BaseDataModel):
     )
     request_messages: List[PromptMessage] = field(
         default_factory=list,
-        metadata={"description": "本次 replyer 的预览用瘦身请求消息列表。"},
+        metadata={"description": "本次 replyer 的预览用 Context Item 快照列表。"},
+    )
+    output_items: List[PromptMessage] = field(
+        default_factory=list,
+        metadata={"description": "本次 replyer 的预览用输出 Item 快照列表。"},
+    )
+    generation_attempts: List[Dict[str, Any]] = field(
+        default_factory=list,
+        metadata={"description": "本次 replyer 完整的 Provider 调用诊断链。"},
     )
 
 def _format_selected_expression_line(expression: Dict[str, Any], fallback_id: Optional[int] = None) -> str:
@@ -213,6 +221,10 @@ def build_reply_monitor_detail(result: ReplyGenerationResult) -> Dict[str, Any]:
         detail["reasoning_text"] = reasoning_text
     if output_text:
         detail["output_text"] = output_text
+    if result.output_items:
+        detail["output_items"] = result.output_items
+    if result.generation_attempts:
+        detail["generation_attempts"] = result.generation_attempts
 
     metrics: Dict[str, Any] = {}
     if result.completion.model_name.strip():

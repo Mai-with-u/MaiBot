@@ -421,6 +421,10 @@ def write_index(
 ) -> None:
     """写入索引 JSON 与向量 npz。"""
 
+    from src.chat.replyer.expression_vector_index import (
+        CLUSTER_STATE_STABLE,
+        FULL_RECLUSTER_CHANGE_RATIO,
+    )
     from src.common.database.database import DATABASE_URL
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -463,6 +467,16 @@ def write_index(
             }
         ],
         "sample_count": len(samples),
+        "cluster_maintenance": {
+            "state": CLUSTER_STATE_STABLE,
+            "profile_marker": embedding_profile_marker,
+            "changes_since_recluster": 0,
+            "changed_expression_ids": [],
+            "change_ratio_threshold": FULL_RECLUSTER_CHANGE_RATIO,
+            "last_recluster_at": datetime.now().isoformat(timespec="seconds"),
+            "last_recluster_sample_count": len(samples),
+            "stabilized_at": datetime.now().isoformat(timespec="seconds"),
+        },
         "clusters": build_cluster_summaries(
             samples,
             labels,
@@ -577,7 +591,9 @@ async def build_index_async(args: Namespace) -> None:
         expression_vector_index,
     )
 
-    embedding_profile = await expression_vector_index.get_current_embedding_profile()
+    embedding_profile = await expression_vector_index.get_current_embedding_profile(
+        index_path=str(output_json)
+    )
     if normalize_text(args.embedding_cache):
         embeddings, model_name, profile_marker = load_cached_embeddings(samples, str(args.embedding_cache))
         if profile_marker != embedding_profile.marker:
@@ -626,7 +642,9 @@ async def refresh_profile_async(args: Namespace) -> None:
 
     from src.chat.replyer.expression_vector_index import expression_vector_index
 
-    current_profile = await expression_vector_index.get_current_embedding_profile()
+    current_profile = await expression_vector_index.get_current_embedding_profile(
+        index_path=str(index_path)
+    )
     limit = 0 if bool(args.all) else max(1, int(args.limit))
     expression_ids = load_mismatched_expression_ids(index_path, current_profile.marker, limit=limit)
     if not expression_ids:
@@ -641,9 +659,10 @@ async def refresh_profile_async(args: Namespace) -> None:
         print(f"索引中找到 {len(expression_ids)} 条不匹配表达，但数据库没有可刷新内容")
         return
 
-    await expression_vector_index.upsert_expressions_and_recluster(
+    await expression_vector_index.upsert_expressions(
         index_path=str(index_path),
         expressions=items,
+        force_recluster=True,
     )
     print(
         f"已刷新表达向量 profile: count={len(items)} index={index_path} "

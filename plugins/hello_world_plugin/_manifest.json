@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "2.0.0",
+  "version": "2.0.1",
   "name": "Hello World 示例插件 (模板插件/勿使用)",
   "description": "我的第一个 MaiCore 插件，包含问候功能和时间查询等基础示例",
   "author": {
@@ -17,7 +17,7 @@
   "changelog": "CHANGELOG.md",
   "host_application": {
     "min_version": "1.0.0",
-    "max_version": "1.1.0"
+    "max_version": "1.2.99"
   },
   "sdk": {
     "min_version": "2.0.0",
