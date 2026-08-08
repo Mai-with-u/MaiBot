@@ -73,7 +73,7 @@ const indexRoute = createRoute({
 const statisticsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/statistics',
-  component: lazyRouteComponent(() => import('./routes/statistics'), 'StatisticsPage'),
+  component: lazyRouteComponent(() => import('./routes/logs'), 'StatisticsLogViewerPage'),
 })
 
 const replyEffectsRoute = createRoute({

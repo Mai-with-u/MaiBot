@@ -53,7 +53,8 @@ export function Layout({ children }: LayoutProps) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const routeStatus = useRouterState({ select: (state) => state.status })
   const announce = useAnnounce()
-  const isLogsPath = pathname === '/logs' || pathname.startsWith('/reasoning-process')
+  const isLogsPath =
+    pathname === '/logs' || pathname === '/statistics' || pathname.startsWith('/reasoning-process')
   const workspaceMode = pathname === '/chat' ? 'chat' : isLogsPath ? 'logs' : 'settings'
   const isSettingsWorkspace = workspaceMode === 'settings'
   const showBackToTop = isSettingsWorkspace && pathname !== '/planner-monitor'

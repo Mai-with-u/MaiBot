@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { LogViewerPage, ReasoningLogViewerPage } from '../logs'
+import { LogViewerPage, ReasoningLogViewerPage, StatisticsLogViewerPage } from '../logs'
 import type { LogEntry } from '@/lib/log-websocket'
 
 // 全局日志 WebSocket 管理器桩：页面只依赖这四个方法
@@ -59,7 +59,12 @@ vi.mock('../reasoning-process', () => ({
   ),
 }))
 
+vi.mock('../statistics', () => ({
+  StatisticsPage: () => <div data-testid="statistics-page-stub">详细统计内容</div>,
+}))
+
 const HINT_DISMISSED_KEY = 'log-viewer-switch-hint-dismissed'
+const ACTIVE_TAB_KEY = 'log-viewer-active-tab'
 
 function makeLog(id: string, overrides: Partial<LogEntry> = {}): LogEntry {
   return {
@@ -373,6 +378,25 @@ describe('LogViewerPage 页签与提示', () => {
     expect(screen.queryByText('暂无日志数据')).not.toBeInTheDocument()
   })
 
+  it('详细统计与终端和推理过程并列，并记住离开前选中的页签', async () => {
+    const user = userEvent.setup()
+    render(<LogViewerPage />)
+
+    await user.click(screen.getByRole('tab', { name: '详细统计' }))
+    expect(await screen.findByTestId('statistics-page-stub')).toBeInTheDocument()
+    expect(window.localStorage.getItem(ACTIVE_TAB_KEY)).toBe('statistics')
+
+    cleanup()
+    render(<LogViewerPage />)
+    expect(await screen.findByTestId('statistics-page-stub')).toBeInTheDocument()
+  })
+
+  it('旧详细统计地址默认进入麦麦日志的详细统计页签', async () => {
+    render(<StatisticsLogViewerPage />)
+
+    expect(await screen.findByTestId('statistics-page-stub')).toBeInTheDocument()
+  })
+
   it('顶栏容器存在时通过 Portal 渲染页签切换器与测量节点', async () => {
     const topbarRoot = document.createElement('div')
     topbarRoot.id = 'log-viewer-topbar-tabs'
@@ -387,6 +411,7 @@ describe('LogViewerPage 页签与提示', () => {
       })
       expect(within(topbarRoot).getByRole('tab', { name: '终端' })).toBeInTheDocument()
       expect(within(topbarRoot).getByRole('tab', { name: '推理过程' })).toBeInTheDocument()
+      expect(within(topbarRoot).getByRole('tab', { name: '详细统计' })).toBeInTheDocument()
       // 用于紧凑模式测量的隐藏节点也随 Portal 渲染
       expect(
         topbarRoot.querySelector('[data-log-viewer-switcher-measure="true"]')

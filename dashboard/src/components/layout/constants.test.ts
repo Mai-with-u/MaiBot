@@ -74,17 +74,14 @@ describe('menuSections 菜单结构', () => {
     expect(dataTransferIndex).toBeLessThan(mcpIndex)
   })
 
-  it('详细统计数据位于扩展与维护分组最底部并使用站内页面', () => {
+  it('详细统计数据不再占用主侧边栏入口', () => {
     const extensionsSection = menuSections.find(
       (section) => section.title === 'sidebar.groups.extensionsMonitor'
     )
-    const statisticsItem = extensionsSection?.items.at(-1)
 
-    expect(statisticsItem).toMatchObject({
-      label: 'sidebar.menu.statistics',
-      path: '/statistics',
-    })
-    expect(statisticsItem?.external).toBeUndefined()
+    expect(extensionsSection?.items).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: '/statistics' })])
+    )
     expect(extensionsSection?.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: 'sidebar.menu.replyEffects', path: '/reply-effects' }),

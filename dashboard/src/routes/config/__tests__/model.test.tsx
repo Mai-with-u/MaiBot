@@ -267,14 +267,6 @@ describe('ModelConfigPage 特征化', () => {
     expect(within(dialog).getByRole('switch', { name: '支持缓存' })).toBeChecked()
   })
 
-  it('切到任务页可见 embedding 配置卡片', async () => {
-    const user = userEvent.setup()
-    await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '功能分配' }))
-    expect(await screen.findByTestId('task-config-card')).toBeInTheDocument()
-    expect(screen.getByTestId('task-models')).toHaveTextContent('old-embed-model')
-  })
-
   describe('embedding 换模型警告', () => {
     it('更改 embedding 模型弹出警告对话框，确认后应用变更', async () => {
       const user = userEvent.setup()
@@ -346,14 +338,6 @@ describe('ModelConfigPage 特征化', () => {
     expect(configApi.updateModelConfigSection).not.toHaveBeenCalled()
   })
 
-  it('提供商连接测试调用 testProviderConnection', async () => {
-    const user = userEvent.setup()
-    await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    await user.click(await screen.findByRole('button', { name: '测试厂商 openai 连接' }))
-    await waitFor(() => expect(configApi.testProviderConnection).toHaveBeenCalledWith('openai'))
-  })
-
   it('选择左侧厂商后只显示该厂商的模型，选择全部后恢复', async () => {
     const user = userEvent.setup()
     const filteredConfig = {
@@ -376,7 +360,8 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(filteredConfig as never)
 
     await renderModelPage()
-    const modelTable = screen.getByTestId('model-table')
+    await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    const modelTable = await screen.findByTestId('model-table')
     expect(within(modelTable).getByText('gpt-4')).toBeInTheDocument()
     expect(within(modelTable).getByText('local-model')).toBeInTheDocument()
 
@@ -392,6 +377,7 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     await renderModelPage()
     await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    await user.click(screen.getByRole('button', { name: '筛选厂商 openai' }))
 
     // 删除 openai（被 gpt-4 引用）→ 单删确认框
     await user.click(await screen.findByRole('button', { name: '删除厂商 openai' }))

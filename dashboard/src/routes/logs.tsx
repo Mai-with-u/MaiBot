@@ -1,7 +1,31 @@
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import { BrainCircuit, Calendar as CalendarIcon, ChevronDown, ChevronUp, Download, Filter, Pause, Play, Search, Terminal, Trash2, Type, X } from 'lucide-react'
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  BarChart3,
+  BrainCircuit,
+  Calendar as CalendarIcon,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Filter,
+  Pause,
+  Play,
+  Search,
+  Terminal,
+  Trash2,
+  Type,
+  X,
+} from 'lucide-react'
+import {
+  lazy,
+  Suspense,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
@@ -26,15 +50,21 @@ import { cn } from '@/lib/utils'
 
 import { ReasoningProcessPage } from './reasoning-process'
 
+const StatisticsPage = lazy(() =>
+  import('./statistics').then((module) => ({ default: module.StatisticsPage }))
+)
+
 // 字号配置
 type FontSize = 'xs' | 'sm' | 'base'
 type LogLevelFilter = LogEntry['level'] | 'all'
+type LogViewerTab = 'terminal' | 'reasoning' | 'statistics'
 
 const LINE_SPACING_MAX = 12
 const LINE_SPACING_MIN = 0
 const COLUMN_WIDTH_EXTRA_MAX = 96
 const COLUMN_WIDTH_EXTRA_MIN = 0
 const LOG_VIEWER_SWITCH_HINT_DISMISSED_KEY = 'log-viewer-switch-hint-dismissed'
+const LOG_VIEWER_ACTIVE_TAB_KEY = 'log-viewer-active-tab'
 const TOPBAR_SWITCH_COMPACT_GAP = 12
 const TOPBAR_SWITCH_EXPAND_GAP = 72
 
@@ -128,6 +158,13 @@ function isFontSize(value: string): value is FontSize {
 
 function isLogLevelFilter(value: string): value is LogLevelFilter {
   return value === 'all' || value in levelPriority
+}
+
+function loadStoredLogViewerTab(): LogViewerTab {
+  if (typeof window === 'undefined') return 'terminal'
+
+  const storedTab = localStorage.getItem(LOG_VIEWER_ACTIVE_TAB_KEY)
+  return storedTab === 'reasoning' || storedTab === 'statistics' ? storedTab : 'terminal'
 }
 
 interface LogTerminalPaneProps {
@@ -820,15 +857,17 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
 }
 
 interface LogViewerPageProps {
-  defaultTab?: 'terminal' | 'reasoning'
+  defaultTab?: LogViewerTab
 }
 
-export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
-  const [activeTab, setActiveTab] = useState(defaultTab)
+export function LogViewerPage({ defaultTab }: LogViewerPageProps) {
+  const [activeTab, setActiveTab] = useState<LogViewerTab>(() =>
+    defaultTab ?? loadStoredLogViewerTab()
+  )
   const [topbarTabsRoot, setTopbarTabsRoot] = useState<HTMLElement | null>(null)
   const [topbarTabsCompact, setTopbarTabsCompact] = useState(false)
   const topbarTabsCompactRef = useRef(false)
-  const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(defaultTab === 'reasoning')
+  const [reasoningToolbarVisible, setReasoningToolbarVisible] = useState(activeTab === 'reasoning')
   const [showSwitchHint, setShowSwitchHint] = useState(() =>
     typeof window === 'undefined'
       ? false
@@ -849,6 +888,10 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
   useEffect(() => {
     topbarTabsCompactRef.current = topbarTabsCompact
   }, [topbarTabsCompact])
+
+  useEffect(() => {
+    localStorage.setItem(LOG_VIEWER_ACTIVE_TAB_KEY, activeTab)
+  }, [activeTab])
 
   useEffect(() => {
     if (!topbarTabsRoot) return
@@ -923,6 +966,10 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
             <BrainCircuit className="h-4 w-4" />
             <span>推理过程</span>
           </div>
+          <div className="inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap">
+            <BarChart3 className="h-4 w-4" />
+            <span>详细统计</span>
+          </div>
         </div>
         {showReasoningRefresh && <div className="h-9 w-9" />}
       </div>
@@ -946,6 +993,10 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
             <BrainCircuit className="h-4 w-4" />
             <span className={labelClassName}>推理过程</span>
           </TabsTrigger>
+          <TabsTrigger value="statistics" className="gap-1.5" aria-label="详细统计">
+            <BarChart3 className="h-4 w-4" />
+            <span className={labelClassName}>详细统计</span>
+          </TabsTrigger>
         </TabsList>
         {includeTopbarActions && (
           <div id={reasoningTopbarActionsContainerId} className="hidden items-center sm:flex" />
@@ -968,12 +1019,14 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
   }
 
   return (
-    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'terminal' | 'reasoning')} className="flex h-full min-h-0 flex-col overflow-hidden">
+    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as LogViewerTab)} className="flex h-full min-h-0 flex-col overflow-hidden">
       {topbarTabsPortal}
       <div
         className={cn(
           'flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-1 lg:px-4',
-          activeTab === 'reasoning' && !reasoningToolbarVisible && 'sm:hidden'
+          ((activeTab === 'reasoning' && !reasoningToolbarVisible) ||
+            activeTab === 'statistics') &&
+            'sm:hidden'
         )}
       >
         <div className="sm:hidden">{renderTabSwitcher()}</div>
@@ -985,7 +1038,7 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="font-medium text-foreground">小提示</span>
               <span className="text-muted-foreground">
-                可以在左上角切换「终端」和「推理过程」，分别查看实时日志和麦麦推理记录。
+                可以在左上角切换「终端」「推理过程」和「详细统计」。
               </span>
             </div>
             <Button
@@ -1015,10 +1068,25 @@ export function LogViewerPage({ defaultTab = 'terminal' }: LogViewerPageProps) {
           onToolbarContentVisibleChange={setReasoningToolbarVisible}
         />
       </TabsContent>
+      <TabsContent value="statistics" className="m-0 min-h-0 flex-1 overflow-y-auto">
+        <Suspense
+          fallback={
+            <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
+              正在加载详细统计…
+            </div>
+          }
+        >
+          <StatisticsPage />
+        </Suspense>
+      </TabsContent>
     </Tabs>
   )
 }
 
 export function ReasoningLogViewerPage() {
   return <LogViewerPage defaultTab="reasoning" />
+}
+
+export function StatisticsLogViewerPage() {
+  return <LogViewerPage defaultTab="statistics" />
 }
