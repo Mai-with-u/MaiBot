@@ -272,7 +272,6 @@ function ModelConfigPageContent() {
     handleTestModelCapability,
     // 模型批量
     selectedModels,
-    setSelectedModels,
     toggleModelSelection,
     toggleSelectAll,
     batchDeleteDialogOpen,

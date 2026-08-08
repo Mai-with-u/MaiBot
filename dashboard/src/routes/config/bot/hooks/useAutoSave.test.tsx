@@ -35,6 +35,26 @@ afterEach(() => {
 })
 
 describe('useAutoSave', () => {
+  it('切换页面时立即保存仍处于防抖期的配置', async () => {
+    vi.useFakeTimers()
+    updateBotConfigSectionMock.mockResolvedValue({} as never)
+    const { result, unmount } = renderHook(() => useAutoSave(false, vi.fn(), vi.fn()))
+
+    act(() => {
+      result.current.triggerAutoSave('personality', { reply_style: '离开前的最新内容' })
+    })
+    unmount()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(updateBotConfigSectionMock).toHaveBeenCalledOnce()
+    expect(updateBotConfigSectionMock).toHaveBeenCalledWith('personality', {
+      reply_style: '离开前的最新内容',
+    })
+  })
+
   it('不同配置分区分别防抖，互不取消保存', async () => {
     vi.useFakeTimers()
     updateBotConfigSectionMock.mockResolvedValue({} as never)
