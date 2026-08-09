@@ -258,13 +258,30 @@ describe('ModelConfigPage 特征化', () => {
         ),
       },
     })
-    await user.click(within(extraParamsDialog).getByRole('button', { name: '保存' }))
+    const saveExtraParamsButton = within(extraParamsDialog).getByRole('button', { name: '保存' })
+    fireEvent.pointerDown(saveExtraParamsButton, { pointerType: 'touch' })
+    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
+    await user.click(saveExtraParamsButton)
+    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
     expect(thinkingSwitch).toBeChecked()
     expect(effortSelect).toBeEnabled()
     expect(effortSelect).toHaveTextContent('最高')
 
     await user.click(within(dialog).getByRole('button', { name: '高级设置' }))
     expect(within(dialog).getByRole('switch', { name: '支持缓存' })).toBeChecked()
+
+    await user.click(within(dialog).getByRole('button', { name: '已配置 2 个参数' }))
+    const reopenedExtraParamsDialog = await screen.findByRole('dialog', {
+      name: '编辑额外参数',
+    })
+    await user.click(within(reopenedExtraParamsDialog).getByRole('tab', { name: 'JSON 编辑' }))
+    fireEvent.change(within(reopenedExtraParamsDialog).getByRole('textbox'), {
+      target: { value: '' },
+    })
+    await user.click(within(reopenedExtraParamsDialog).getByRole('button', { name: '保存' }))
+
+    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByText('未配置额外参数')).toBeInTheDocument()
   })
 
   describe('embedding 换模型警告', () => {
@@ -297,6 +314,17 @@ describe('ModelConfigPage 特征化', () => {
       await waitFor(() => expect(screen.queryByText('更换嵌入模型警告')).not.toBeInTheDocument())
       expect(screen.getByTestId('task-models')).toHaveTextContent('old-embed-model')
     })
+  })
+
+  it('移动端由页面承载纵向滚动，子标签内容不被裁切', async () => {
+    await renderModelPage()
+
+    const page = document.querySelector('[data-model-config-page="true"]')
+    expect(page?.parentElement).toHaveClass('overflow-y-auto', 'lg:overflow-hidden')
+    expect(page).toHaveClass('min-h-full', 'lg:h-full', 'lg:overflow-hidden')
+
+    const configurationPanel = screen.getByRole('tabpanel')
+    expect(configurationPanel).toHaveClass('overflow-visible', 'lg:overflow-hidden')
   })
 
   it('保存配置：产生变更后点击保存调用 getModelConfig + updateModelConfig', async () => {

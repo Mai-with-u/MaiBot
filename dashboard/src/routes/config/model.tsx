@@ -509,6 +509,13 @@ function ModelConfigPageContent() {
     openProviderDialogBase(provider, index)
   }
 
+  const handleModelEditDialogOpenChange = (open: boolean) => {
+    // 移动端触摸嵌套弹窗时，Radix 可能把内层操作判定为外层的 outside-interaction。
+    // 额外参数弹窗打开期间只允许内层处理关闭，避免保存参数时连带退出模型编辑。
+    if (!open && extraParamsDialogOpen) return
+    handleEditDialogClose(open)
+  }
+
   // 当选择的提供商变化时，获取模型列表
   useEffect(() => {
     if (editDialogOpen && editingModel?.api_provider) {
@@ -577,10 +584,10 @@ function ModelConfigPageContent() {
   }
 
   return (
-    <div className="h-full overflow-hidden">
+    <div className="h-full overflow-y-auto lg:overflow-hidden">
       <div
         data-model-config-page="true"
-        className="flex h-full flex-col gap-4 overflow-hidden p-4 sm:gap-6 sm:p-6"
+        className="flex min-h-full flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:h-full lg:overflow-hidden"
       >
         {/* 无效模型引用警告 */}
         {invalidModelRefs.length > 0 && (
@@ -711,7 +718,10 @@ function ModelConfigPageContent() {
             </div>
           </div>
           {/* 厂商与模型合并配置视图 */}
-          <TabsContent value="configuration" className="mt-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent
+            value="configuration"
+            className="mt-0 min-h-0 flex-1 overflow-visible lg:overflow-hidden"
+          >
             <div
               ref={modelConfigurationRef}
               data-model-config-layout="true"
@@ -895,7 +905,7 @@ function ModelConfigPageContent() {
         {/* 模型任务配置标签页 */}
         <TabsContent
           value="tasks"
-          className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+          className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-visible lg:overflow-hidden"
         >
           <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">
@@ -1300,11 +1310,13 @@ function ModelConfigPageContent() {
       </AlertDialog>
 
       {/* 编辑模型对话框 */}
-      <Dialog open={editDialogOpen} onOpenChange={handleEditDialogClose}>
+      <Dialog open={editDialogOpen} onOpenChange={handleModelEditDialogOpenChange}>
         <DialogContent 
           className="max-w-[95vw] gap-3 p-4 sm:gap-4 sm:p-6 sm:[--dialog-width:64rem]"
           data-tour="model-dialog"
-          preventOutsideClose={tourIsRunning}
+          // 模型编辑是数据录入弹窗，只通过关闭按钮和底部操作显式退出。
+          // 始终拦截 outside-interaction，避免内层弹窗关闭后的延迟触摸事件击穿外层。
+          preventOutsideClose
           confirmOnEnter
         >
           <DialogHeader>
