@@ -16,7 +16,7 @@ from src.common.database.database_model import MaisakaReplyEffect
 from src.common.logger import get_logger
 from src.common.reply_effect_record_codec import decode_record_payload, encode_record_payload
 
-from .models import ReplyEffectRecord, ReplyEffectStatus, reply_effect_record_from_dict
+from .models import SCHEMA_VERSION, ReplyEffectRecord, ReplyEffectStatus, reply_effect_record_from_dict
 from .path_utils import BASE_DIR, build_reply_effect_chat_dir, normalize_preview_name
 
 LEGACY_RETRYABLE_EVALUATION_ERRORS = {
@@ -79,25 +79,6 @@ class ReplyEffectStorage:
         temp_path.replace(file_path)
         self._save_database_summary(record)
 
-    def load_finalized_records(self, *, exclude_effect_id: str = "") -> List[ReplyEffectRecord]:
-        """读取 v2 已完成记录，供同场景相对基线计算。"""
-
-        with get_db_session(auto_commit=False) as session:
-            statement = select(MaisakaReplyEffect).where(MaisakaReplyEffect.status == "finalized")
-            if exclude_effect_id:
-                statement = statement.where(MaisakaReplyEffect.effect_id != exclude_effect_id)
-            rows = session.exec(statement.order_by(col(MaisakaReplyEffect.finalized_at).desc()).limit(5000)).all()
-        records: List[ReplyEffectRecord] = []
-        for row in rows:
-            try:
-                payload = decode_record_payload(row.record_json, row.record_blob)
-                if int(payload.get("schema_version", 0)) != 2:
-                    continue
-                records.append(reply_effect_record_from_dict(payload))
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                continue
-        return records
-
     def load_unfinished_records(self, session_id: str) -> List[ReplyEffectRecord]:
         """读取待结算记录，并恢复旧版本错误重试造成的瞬时失败。"""
 
@@ -116,7 +97,7 @@ class ReplyEffectStorage:
         for row in rows:
             try:
                 payload = decode_record_payload(row.record_json, row.record_blob)
-                if int(payload.get("schema_version", 0)) != 2:
+                if int(payload.get("schema_version", 0)) != SCHEMA_VERSION:
                     continue
                 record = reply_effect_record_from_dict(payload)
                 if (
@@ -143,7 +124,7 @@ class ReplyEffectStorage:
         for row in rows:
             try:
                 payload = decode_record_payload(row.record_json, row.record_blob)
-                if int(payload.get("schema_version", 0)) != 2:
+                if int(payload.get("schema_version", 0)) != SCHEMA_VERSION:
                     continue
                 records.append(reply_effect_record_from_dict(payload))
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -173,12 +154,11 @@ class ReplyEffectStorage:
             row.model_name = record.reply.model_name
             row.request_fingerprint = record.reply.request_fingerprint
             row.prompt_fingerprint = record.reply.prompt_fingerprint
-            row.scorer_version = record.scorer_version
+            row.evaluation_version = record.evaluation_version
             row.response_score = scores.response_score if scores else None
             row.reception_score = scores.reception_score if scores else None
             row.conversation_score = scores.conversation_score if scores else None
             row.raw_score = scores.raw_score if scores else None
-            row.relative_score = scores.relative_score if scores else None
             row.confidence = scores.confidence if scores else 0.0
             row.record_json = "{}"
             row.record_blob = encode_record_payload(payload)

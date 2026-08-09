@@ -9,6 +9,7 @@ import json
 
 from .models import (
     CONTRIBUTIONS,
+    EVALUATION_VERSION,
     STANCES,
     STANCE_TARGETS,
     STRATEGIES,
@@ -49,10 +50,15 @@ async def judge_reply_effect(
 
 def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[ReplyEffectRecord]) -> str:
     instruction = (
-        "请你评估下面 Bot 回复引起的讨论程度、后续互动和情绪反应。\n"
+        f"回复效果评估标准版本：v{EVALUATION_VERSION}。\n"
+        "请先判断每条后续用户消息是否确实承接、回应或评价了某条候选 Bot 回复；"
+        "观察窗口中的消息不一定与 Bot 有关。\n"
+        "允许候选只限定消息发生时可以选择的 Bot 回复范围，不代表这些回复与消息实际相关。\n"
+        "没有明确的引用、回复、指代、语义承接或情绪反馈证据时，必须返回 associations: []；"
+        "不要为了评价话题转移、无人回应或回复未吸引讨论而强行建立关联。\n"
         "候选 Bot 回复一定先于与其关联的后续用户消息，请严格按照发送时间判断先后关系。\n"
         "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 effect_id。\n"
-        "评价必须拆成两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"
+        "只对已经确认存在关联的消息评价两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"
         "对话题或第三方的负面喜好不等于反感 bot；指出 bot 的事实错误使用 factual_correction + advance；"
         "针对 bot 的厌烦或攻击使用 bot_attack + wrong_push。"
     )
@@ -61,14 +67,19 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         "secondary 也只能使用这些值。\n"
         "stance_target 只能是 topic_or_third_party/bot_content/bot_persona。\n"
         "stance 只能是 appreciation/playful/neutral/confusion/factual_correction/rejection/bot_attack。\n"
-        "contribution 只能是 advance/maintain/acknowledge/close/unrelated/wrong_push。\n"
+        "contribution 只能是 advance/maintain/acknowledge/close/wrong_push；"
+        "无关消息必须使用空 associations，不存在 unrelated 关联标签。\n"
         "confidence 与 attribution_confidence 必须是 0 到 1。\n"
-        "严格输出：\n"
+        "严格输出；下面同时给出无关联与有关联消息的格式：\n"
         "{\n"
         '  "strategy": {"primary": "answer", "secondary": [], "confidence": 0.8},\n'
-        '  "messages": [{"message_id": "...", "associations": [{"effect_id": "...", '
+        '  "messages": [\n'
+        '    {"message_id": "无关联消息ID", "associations": []},\n'
+        '    {"message_id": "有关联消息ID", "associations": [{"effect_id": "候选effect_id", '
         '"attribution_confidence": 0.8, "stance_target": "bot_content", "stance": "neutral", '
-        '"contribution": "advance", "reason": "...", "evidence_spans": ["..."], "confidence": 0.8}]}]\n'
+        '"contribution": "advance", "reason": "具体关联理由", '
+        '"evidence_spans": ["来自后续用户消息的证据"], "confidence": 0.8}]}\n'
+        "  ]\n"
         "}"
     )
     section_template = (
@@ -239,7 +250,7 @@ def _format_followups(followups: list[FollowupMessageSnapshot], max_chars: int) 
     line_prefixes: list[str] = []
     for item in followups:
         display_name = item.cardname or item.nickname or "用户"
-        metadata = [f"可关联回复={item.candidate_effect_ids}"]
+        metadata = [f"允许候选（不代表相关）={item.candidate_effect_ids}"]
         if item.reply_to:
             metadata.append(f"回复消息={item.reply_to}")
         if item.quote_target_ids:

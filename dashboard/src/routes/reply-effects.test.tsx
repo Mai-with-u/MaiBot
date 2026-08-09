@@ -20,14 +20,14 @@ const versionAggregates = [
     conversation_score_std: 6,
     raw_score: 54,
     raw_score_std: 7,
-    relative_score: 55,
-    relative_score_std: 8,
     confidence: 0.8,
     confidence_std: 0.05,
     model_name: 'model-a',
     prompt_fingerprint: 'prompt-a',
+    evaluation_version: 3,
     model_names: ['model-a'],
     prompt_fingerprints: ['prompt-a'],
+    evaluation_versions: [3],
     first_seen: '2026-01-01T00:00:00',
     last_seen: '2026-01-02T00:00:00',
     collapsed_models: false,
@@ -45,14 +45,14 @@ const versionAggregates = [
     conversation_score_std: 7,
     raw_score: 62,
     raw_score_std: 6,
-    relative_score: 64,
-    relative_score_std: 7,
     confidence: 0.82,
     confidence_std: 0.04,
     model_name: 'model-b',
     prompt_fingerprint: 'prompt-b',
+    evaluation_version: 3,
     model_names: ['model-b'],
     prompt_fingerprints: ['prompt-b'],
+    evaluation_versions: [3],
     first_seen: '2026-01-01T00:00:00',
     last_seen: '2026-01-02T00:00:00',
     collapsed_models: false,
@@ -72,7 +72,6 @@ describe('ReplyEffectsPage', () => {
             reception_score: 70,
             conversation_score: 60,
             raw_score: 72,
-            relative_score: null,
             confidence: 0.8,
           },
           strategies: [
@@ -83,7 +82,6 @@ describe('ReplyEffectsPage', () => {
               reception_score: 70,
               conversation_score: 60,
               raw_score: 72,
-              relative_score: null,
               confidence: 0.8,
             },
           ],
@@ -100,7 +98,7 @@ describe('ReplyEffectsPage', () => {
           finalized_at: '2026-01-01T00:10:00',
           finalize_reason: 'session_followups_limit',
           evaluation_error: '',
-          scorer_version: 2,
+          evaluation_version: 3,
           session: { session_name: '测试群' },
           reply: {
             target_message_id: '-1085252920',
@@ -114,10 +112,7 @@ describe('ReplyEffectsPage', () => {
             reception_score: 70,
             conversation_score: 60,
             raw_score: 72,
-            relative_score: null,
             confidence: 0.8,
-            baseline_sample_size: 0,
-            baseline_level: 'insufficient',
           },
           context_snapshot: [
             {
@@ -159,7 +154,6 @@ describe('ReplyEffectsPage', () => {
             reception_score: 70,
             conversation_score: 60,
             raw_score: 72,
-            relative_score: null,
             confidence: 0.8,
             evaluation_error: '',
           },
@@ -203,7 +197,7 @@ describe('ReplyEffectsPage', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0)
 
     const requestPaths = vi.mocked(backendApi.get).mock.calls.map(([path]) => path)
-    expect(requestPaths.find((path) => path.includes('/overview'))).toContain('min_confidence=0.6')
+    expect(requestPaths.find((path) => path.includes('/overview'))).toContain('min_confidence=0')
   })
 
   it('以结构化消息样式展示评估上下文且不显示消息 ID', async () => {
@@ -216,6 +210,7 @@ describe('ReplyEffectsPage', () => {
     expect(screen.getByText('明光')).toBeInTheDocument()
     expect(screen.getByText('应该只有群里有吧')).toBeInTheDocument()
     expect(screen.getByText('目标消息')).toBeInTheDocument()
+    expect(screen.getByText('评估标准 v3')).toBeInTheDocument()
     expect(screen.queryByText(/msg_id:/)).not.toBeInTheDocument()
   })
 
@@ -230,9 +225,15 @@ describe('ReplyEffectsPage', () => {
     expect(screen.getByText('显著')).toBeInTheDocument()
     expect(backendApi.post).toHaveBeenCalledWith('/api/webui/reply-effects/compare', {
       body: expect.objectContaining({
-        left: expect.objectContaining({ model_names: ['model-a'] }),
-        right: expect.objectContaining({ model_names: ['model-b'] }),
-        min_confidence: 0.6,
+        left: expect.objectContaining({
+          model_names: ['model-a'],
+          evaluation_versions: [3],
+        }),
+        right: expect.objectContaining({
+          model_names: ['model-b'],
+          evaluation_versions: [3],
+        }),
+        min_confidence: 0,
       }),
     })
   })

@@ -14,7 +14,6 @@ import {
   BarChart3,
   CalendarDays,
   ChevronRight,
-  CircleGauge,
   Download,
   Filter,
   FlaskConical,
@@ -98,17 +97,18 @@ interface Aggregate {
   conversation_score_std?: number | null
   raw_score: number | null
   raw_score_std?: number | null
-  relative_score: number | null
-  relative_score_std?: number | null
   confidence: number | null
   confidence_std?: number | null
+  reception_score_count?: number
 }
 
 interface VersionAggregate extends Aggregate {
   model_name: string
   prompt_fingerprint: string
+  evaluation_version: number
   model_names: string[]
   prompt_fingerprints: string[]
+  evaluation_versions: number[]
   first_seen: string
   last_seen: string
   collapsed_models: boolean
@@ -116,11 +116,7 @@ interface VersionAggregate extends Aggregate {
   score_distributions?: Partial<Record<DistributionMetric, ScoreDistribution>>
 }
 
-type DistributionMetric =
-  | 'response_score'
-  | 'reception_score'
-  | 'conversation_score'
-  | 'relative_score'
+type DistributionMetric = 'response_score' | 'reception_score' | 'conversation_score'
 
 interface ScoreDistributionBucket {
   score: number
@@ -151,6 +147,7 @@ interface ComparisonOption {
   label: string
   modelNames: string[]
   promptFingerprints: string[]
+  evaluationVersions: number[]
 }
 
 interface SignificanceMetric {
@@ -194,6 +191,7 @@ interface PromptVersionSession {
 
 interface PromptVersionDetail {
   prompt_fingerprint: string
+  evaluation_version: number
   model_name: string
   sample_count: number
   first_seen: string
@@ -273,29 +271,31 @@ function strategyName(value: string) {
 
 function readablePromptVersionName(
   item: VersionAggregate,
-  index: number,
+  _index: number,
   items: VersionAggregate[]
 ) {
+  const evaluationLabel = `评估标准 v${item.evaluation_version}`
   if (item.collapsed_versions) {
     return item.collapsed_models
-      ? '全部模型 · 全部版本'
-      : `${item.model_name || '未知模型'} · 全部版本`
+      ? `全部模型 · 全部版本 · ${evaluationLabel}`
+      : `${item.model_name || '未知模型'} · 全部版本 · ${evaluationLabel}`
   }
-  const versionNumber =
-    items.slice(0, index).filter((candidate) => {
-      if (item.collapsed_models) return true
-      return candidate.model_name === item.model_name
-    }).length + 1
+  const comparableItems = items.filter(
+    (candidate) => item.collapsed_models || candidate.model_name === item.model_name
+  )
+  const promptVersions = [...new Set(comparableItems.map((candidate) => candidate.prompt_fingerprint))]
+  const versionNumber = promptVersions.indexOf(item.prompt_fingerprint) + 1
   const modelLabel = item.collapsed_models ? '全部模型' : item.model_name || '未知模型'
-  return `${modelLabel} · 版本 ${versionNumber}`
+  return `${modelLabel} · 版本 ${versionNumber} · ${evaluationLabel}`
 }
 
 function buildComparisonOptions(versions: VersionAggregate[]): ComparisonOption[] {
   return versions.map((item, index, items) => ({
-    key: `${index}:${item.model_names.join(',')}:${item.prompt_fingerprints.join(',')}`,
+    key: `${index}:${item.model_names.join(',')}:${item.prompt_fingerprints.join(',')}:${item.evaluation_versions.join(',')}`,
     label: readablePromptVersionName(item, index, items),
     modelNames: item.model_names,
     promptFingerprints: item.prompt_fingerprints,
+    evaluationVersions: item.evaluation_versions,
   }))
 }
 
@@ -710,7 +710,7 @@ export function ReplyEffectsPage() {
   const [strategy, setStrategy] = useState('')
   const [startAt, setStartAt] = useState('')
   const [endAt, setEndAt] = useState('')
-  const [minConfidence, setMinConfidence] = useState('0.6')
+  const [minConfidence, setMinConfidence] = useState('0')
   const [collapseVersions, setCollapseVersions] = useState(false)
   const [collapseModels, setCollapseModels] = useState(false)
   const [selectedPromptVersion, setSelectedPromptVersion] = useState<VersionAggregate | null>(null)
@@ -784,6 +784,7 @@ export function ReplyEffectsPage() {
     try {
       const params = new URLSearchParams()
       if (version.model_name) params.set('model_name', version.model_name)
+      params.set('evaluation_version', String(version.evaluation_version))
       if (targetSessionId || sessionId) params.set('session_id', targetSessionId || sessionId)
       const query = params.toString()
       const path = `/api/webui/reply-effects/prompt-versions/${encodeURIComponent(version.prompt_fingerprint)}${query ? `?${query}` : ''}`
@@ -806,11 +807,13 @@ export function ReplyEffectsPage() {
         name: selectedLeftOption.label,
         model_names: selectedLeftOption.modelNames,
         prompt_fingerprints: selectedLeftOption.promptFingerprints,
+        evaluation_versions: selectedLeftOption.evaluationVersions,
       },
       right: {
         name: selectedRightOption.label,
         model_names: selectedRightOption.modelNames,
         prompt_fingerprints: selectedRightOption.promptFingerprints,
+        evaluation_versions: selectedRightOption.evaluationVersions,
       },
       min_confidence: Number(minConfidence || 0),
     }
@@ -840,12 +843,12 @@ export function ReplyEffectsPage() {
     setStrategy('')
     setStartAt('')
     setEndAt('')
-    setMinConfidence('0.6')
+    setMinConfidence('0')
   }
 
   const summary = overview?.summary
   const hasActiveFilters = Boolean(
-    sessionId || strategy || startAt || endAt || minConfidence !== '0.6'
+    sessionId || strategy || startAt || endAt || minConfidence !== '0'
   )
   const refreshPage = () => {
     void refresh()
@@ -1142,7 +1145,7 @@ export function ReplyEffectsPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <MetricCard
                 label="有效样本"
                 value={loading ? '…' : (summary?.count ?? 0)}
@@ -1168,7 +1171,11 @@ export function ReplyEffectsPage() {
                     ? '…'
                     : scoreWithStdText(summary?.reception_score, summary?.reception_score_std)
                 }
-                detail="针对回复内容与 Bot 的态度"
+                detail={
+                  summary?.reception_score_count == null
+                    ? '针对回复内容与 Bot 的态度'
+                    : `情绪证据 ${summary.reception_score_count}/${summary.count} 条`
+                }
                 icon={HeartHandshake}
                 tone="rose"
               />
@@ -1182,17 +1189,6 @@ export function ReplyEffectsPage() {
                 detail="延续、参与和互动链变化"
                 icon={MessagesSquare}
                 tone="violet"
-              />
-              <MetricCard
-                label="相对分"
-                value={
-                  loading
-                    ? '…'
-                    : scoreWithStdText(summary?.relative_score, summary?.relative_score_std)
-                }
-                detail={summary?.relative_score == null ? '基线建立中' : '同群同场景百分位'}
-                icon={CircleGauge}
-                tone="amber"
               />
             </div>
 
@@ -1257,7 +1253,7 @@ export function ReplyEffectsPage() {
 
               <SectionPanel
                 title="策略对比"
-                description="比较固定语义策略在当前评分器下的表现"
+                description="比较固定语义策略在当前评估标准下的表现"
                 icon={Sparkles}
               >
                 <div className="overflow-x-auto p-4 sm:p-5">
@@ -1267,7 +1263,6 @@ export function ReplyEffectsPage() {
                         <TableHead>策略</TableHead>
                         <TableHead>样本</TableHead>
                         <TableHead>原始分</TableHead>
-                        <TableHead>相对分</TableHead>
                         <TableHead>置信度</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1280,14 +1275,11 @@ export function ReplyEffectsPage() {
                             <TableCell>
                               {scoreWithStdText(item.raw_score, item.raw_score_std)}
                             </TableCell>
-                            <TableCell>
-                              {scoreWithStdText(item.relative_score, item.relative_score_std)}
-                            </TableCell>
                             <TableCell>{confidenceText(item.confidence)}</TableCell>
                           </TableRow>
                         ))
                       ) : (
-                        <EmptyTableRow colSpan={5}>暂无可对比的策略数据</EmptyTableRow>
+                        <EmptyTableRow colSpan={4}>暂无可对比的策略数据</EmptyTableRow>
                       )}
                     </TableBody>
                   </Table>
@@ -1331,7 +1323,6 @@ export function ReplyEffectsPage() {
                       <TableHead>回应度</TableHead>
                       <TableHead>接受度</TableHead>
                       <TableHead>推动度</TableHead>
-                      <TableHead>相对分</TableHead>
                       <TableHead>观察时间</TableHead>
                       <TableHead className="w-10" />
                     </TableRow>
@@ -1352,13 +1343,13 @@ export function ReplyEffectsPage() {
                             {scoreWithStdText(item.response_score, item.response_score_std)}
                           </TableCell>
                           <TableCell>
-                            {scoreWithStdText(item.reception_score, item.reception_score_std)}
+                            <div>{scoreWithStdText(item.reception_score, item.reception_score_std)}</div>
+                            <div className="text-muted-foreground mt-0.5 text-[11px]">
+                              情绪样本 {item.reception_score_count ?? 0}/{item.count}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {scoreWithStdText(item.conversation_score, item.conversation_score_std)}
-                          </TableCell>
-                          <TableCell>
-                            {scoreWithStdText(item.relative_score, item.relative_score_std)}
                           </TableCell>
                           <TableCell className="text-muted-foreground whitespace-nowrap">
                             {new Date(item.first_seen).toLocaleDateString()}—
@@ -1372,7 +1363,7 @@ export function ReplyEffectsPage() {
                         </TableRow>
                       ))
                     ) : (
-                      <EmptyTableRow colSpan={8}>暂无模型版本统计</EmptyTableRow>
+                      <EmptyTableRow colSpan={7}>暂无模型版本统计</EmptyTableRow>
                     )}
                   </TableBody>
                 </Table>
@@ -1400,11 +1391,6 @@ export function ReplyEffectsPage() {
                   <ScoreDistributionChart
                     title="聊天推动度分布"
                     metric="conversation_score"
-                    versions={overview?.versions ?? []}
-                  />
-                  <ScoreDistributionChart
-                    title="相对分分布"
-                    metric="relative_score"
                     versions={overview?.versions ?? []}
                   />
                 </div>

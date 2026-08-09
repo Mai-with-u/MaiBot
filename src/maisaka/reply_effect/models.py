@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-SCHEMA_VERSION = 2
-SCORER_VERSION = 2
+SCHEMA_VERSION = 3
+EVALUATION_VERSION = 3
 
 
 class ReplyEffectStatus(str, Enum):
@@ -30,7 +30,7 @@ STANCES = {
     "rejection",
     "bot_attack",
 }
-CONTRIBUTIONS = {"advance", "maintain", "acknowledge", "close", "unrelated", "wrong_push"}
+CONTRIBUTIONS = {"advance", "maintain", "acknowledge", "close", "wrong_push"}
 STRATEGIES = {"answer", "opinion", "empathy", "humor", "question", "topic_start", "acknowledgement", "other"}
 
 
@@ -106,16 +106,13 @@ class FollowupMessageSnapshot:
 @dataclass(slots=True)
 class ReplyEffectScores:
     response_score: float
-    reception_score: float
+    reception_score: Optional[float]
     conversation_score: float
     raw_score: float
-    relative_score: Optional[float]
     confidence: float
     response_evidence_confidence: float
     reception_evidence_confidence: float
     conversation_evidence_confidence: float
-    baseline_sample_size: int = 0
-    baseline_level: str = "insufficient"
 
 
 @dataclass(slots=True)
@@ -137,7 +134,7 @@ class ReplyEffectRecord:
     confidence_note: str = ""
     followup_summary: Dict[str, Any] = field(default_factory=dict)
     evaluation_error: str = ""
-    scorer_version: int = SCORER_VERSION
+    evaluation_version: int = EVALUATION_VERSION
     file_path: Optional[Path] = field(default=None, repr=False)
 
     def to_json_dict(self) -> Dict[str, Any]:
@@ -153,7 +150,7 @@ def now_iso() -> str:
 
 
 def reply_effect_record_from_dict(payload: Dict[str, Any]) -> ReplyEffectRecord:
-    """从 v2 JSON 载荷恢复记录，供相对基线与 WebUI 详情复用。"""
+    """从当前 JSON 载荷恢复回复效果记录。"""
 
     reply_payload = dict(payload.get("reply") or {})
     session_payload = dict(payload.get("session") or {})
@@ -182,5 +179,5 @@ def reply_effect_record_from_dict(payload: Dict[str, Any]) -> ReplyEffectRecord:
         confidence_note=str(payload.get("confidence_note") or ""),
         followup_summary=dict(payload.get("followup_summary") or {}),
         evaluation_error=str(payload.get("evaluation_error") or ""),
-        scorer_version=int(payload.get("scorer_version", SCORER_VERSION)),
+        evaluation_version=int(payload["evaluation_version"]),
     )

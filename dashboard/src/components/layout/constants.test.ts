@@ -105,17 +105,25 @@ describe('menuSections 菜单结构', () => {
     )
     expect(advancedToolsSection?.items).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ label: 'sidebar.menu.replyEffects', path: '/reply-effects' }),
+        expect.objectContaining({
+          label: 'sidebar.menu.replyEffects',
+          path: '/reply-effects',
+          featureFlag: 'replyEffects',
+        }),
       ])
     )
   })
 
-  it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {
+  it('行为学习与回复效果入口分别受特性开关控制', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 
-    expect(flaggedItems).toHaveLength(1)
-    expect(flaggedItems[0].path).toBe('/resource/behavior')
-    expect(flaggedItems[0].featureFlag).toBe('behaviorLearning')
+    expect(flaggedItems).toHaveLength(2)
+    expect(flaggedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: '/resource/behavior', featureFlag: 'behaviorLearning' }),
+        expect.objectContaining({ path: '/reply-effects', featureFlag: 'replyEffects' }),
+      ])
+    )
   })
 
   it('searchDescription 均为 search.items 命名空间的 i18n key', () => {

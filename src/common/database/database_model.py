@@ -187,7 +187,11 @@ class MaisakaReplyEffect(SQLModel, table=True):
     model_name: str = Field(default="", index=True, max_length=255)
     request_fingerprint: str = Field(default="", index=True, max_length=64)
     prompt_fingerprint: str = Field(default="", index=True, max_length=64)
-    scorer_version: int = Field(default=2, index=True)
+    # ORM 使用统一命名，物理列沿用 scorer_version 以避免重建回复效果表。
+    evaluation_version: int = Field(
+        default=2,
+        sa_column=Column("scorer_version", Integer, nullable=False, index=True),
+    )
     response_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
     reception_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
     conversation_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))

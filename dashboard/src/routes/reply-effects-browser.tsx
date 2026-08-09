@@ -37,12 +37,12 @@ interface RecordItem {
   created_at: string
   strategy_primary: string
   model_name: string
+  evaluation_version: number
   reply_text: string
   response_score: number | null
   reception_score: number | null
   conversation_score: number | null
   raw_score: number | null
-  relative_score: number | null
   confidence: number
   evaluation_error: string
 }
@@ -107,7 +107,7 @@ interface EffectDetail {
   finalize_reason: string
   evaluation_error: string
   confidence_note: string
-  scorer_version: number
+  evaluation_version: number
   pre_activity_count: number
   pre_activity_bucket: string
   session?: { session_name?: string }
@@ -122,16 +122,13 @@ interface EffectDetail {
   }
   scores?: {
     response_score: number
-    reception_score: number
+    reception_score: number | null
     conversation_score: number
     raw_score: number
-    relative_score: number | null
     confidence: number
     response_evidence_confidence: number
     reception_evidence_confidence: number
     conversation_evidence_confidence: number
-    baseline_sample_size: number
-    baseline_level: string
   }
   context_snapshot?: ContextMessage[]
   followup_messages?: DetailFollowup[]
@@ -190,7 +187,6 @@ const CONTRIBUTION_NAMES: Record<string, string> = {
 const SORT_OPTIONS = [
   ['created_at', '评估时间'],
   ['raw_score', '原始总分'],
-  ['relative_score', '相对分'],
   ['response_score', '回应度'],
   ['reception_score', '接受度'],
   ['conversation_score', '推动度'],
@@ -434,7 +430,7 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
               <span>{detail.session?.session_name || '未知聊天流'}</span>
               <span>{new Date(detail.created_at).toLocaleString()}</span>
               <span>{detail.reply?.model_name || '未记录模型'}</span>
-              <span>评分器 v{detail.scorer_version}</span>
+              <span>评估标准 v{detail.evaluation_version}</span>
             </div>
           </div>
           <StatusBadge status={detail.status} />
@@ -461,12 +457,11 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
           <CircleGauge className="text-primary h-4 w-4" />
           <h3 className="text-sm font-semibold">评分结果</h3>
         </div>
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           <DetailScore label="回应度" value={scores?.response_score} />
           <DetailScore label="情感接受度" value={scores?.reception_score} />
           <DetailScore label="聊天推动度" value={scores?.conversation_score} />
           <DetailScore label="原始总分" value={scores?.raw_score} />
-          <DetailScore label="相对分" value={scores?.relative_score} />
           <div className="bg-card rounded-lg border p-3">
             <div className="text-muted-foreground text-xs">综合置信度</div>
             <div className="mt-1 text-xl font-bold tabular-nums">
@@ -477,11 +472,12 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
         {scores && (
           <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <span>回应证据 {confidenceText(scores.response_evidence_confidence)}</span>
-            <span>接受证据 {confidenceText(scores.reception_evidence_confidence)}</span>
-            <span>推动证据 {confidenceText(scores.conversation_evidence_confidence)}</span>
             <span>
-              相对基线 {scores.baseline_level} · {scores.baseline_sample_size} 条
+              {scores.reception_score == null
+                ? '接受度：无针对 Bot 的情绪证据'
+                : `接受证据 ${confidenceText(scores.reception_evidence_confidence)}`}
             </span>
+            <span>推动证据 {confidenceText(scores.conversation_evidence_confidence)}</span>
             {detail.confidence_note && <span>{detail.confidence_note}</span>}
           </div>
         )}

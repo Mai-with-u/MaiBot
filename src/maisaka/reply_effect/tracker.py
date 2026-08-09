@@ -18,6 +18,7 @@ from src.maisaka.context.history import build_session_message_visible_text
 from .image_utils import extract_visual_attachments_from_sequence
 from .judge import JudgeRunner, judge_reply_effect
 from .models import (
+    EVALUATION_VERSION,
     FollowupMessageSnapshot,
     ReplyAssociation,
     ReplyEffectRecord,
@@ -32,8 +33,8 @@ from .quote_utils import extract_quote_target_ids
 from .scoring import activity_bucket, score_reply_effect
 from .storage import ReplyEffectStorage
 
-SESSION_FOLLOWUP_LIMIT = 10
-OBSERVATION_WINDOW_SECONDS = 600.0
+SESSION_FOLLOWUP_LIMIT = 15
+OBSERVATION_WINDOW_SECONDS = 1800.0
 EVALUATION_CONCURRENCY = 2
 # Provider 的 30 秒 timeout 和模型任务的 240 秒 hard_timeout 仍各自生效；
 # 此处限制单条回复效果评审的完整流程，包含一次 JSON 校验重试。
@@ -361,6 +362,7 @@ class ReplyEffectTracker:
                 ),
             )
             try:
+                record.evaluation_version = EVALUATION_VERSION
                 primary, secondary, strategy_confidence, associations = await _judge_with_total_timeout(
                     record,
                     candidates,
@@ -370,10 +372,8 @@ class ReplyEffectTracker:
                 record.reply.strategy_secondary = secondary
                 record.reply.strategy_confidence = strategy_confidence
                 await self._apply_associations(associations)
-                history = self._storage.load_finalized_records(exclude_effect_id=record.effect_id)
                 record.scores = score_reply_effect(
                     record,
-                    history,
                     observation_complete=reason in {"window_timeout", "session_followups_limit"},
                 )
                 record.status = ReplyEffectStatus.FINALIZED

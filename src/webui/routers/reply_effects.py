@@ -7,11 +7,13 @@ from io import BytesIO
 from math import isfinite, sqrt
 from statistics import pstdev, variance
 from typing import Any, Optional
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from scipy.stats import t as student_t
 from sqlmodel import col, select
+
 import gzip
 import json
 import zlib
@@ -24,7 +26,7 @@ from src.common.reply_effect_fingerprint import (
 )
 from src.common.reply_effect_record_codec import decode_record_payload
 from src.maisaka.context.message_adapter import parse_speaker_content
-from src.maisaka.reply_effect.models import reply_effect_record_from_dict
+from src.maisaka.reply_effect.models import SCHEMA_VERSION, reply_effect_record_from_dict
 from src.maisaka.reply_effect.storage import ReplyEffectStorage
 from src.maisaka.reply_effect.tracker import clear_active_reply_effect_trackers
 from src.webui.dependencies import require_auth
@@ -33,7 +35,7 @@ from src.webui.routers.avatar import build_webui_avatar_url
 router = APIRouter(prefix="/reply-effects", tags=["reply-effects"], dependencies=[Depends(require_auth)])
 
 _EXPORT_FORMAT = "maibot-reply-effects"
-_EXPORT_FORMAT_VERSION = 1
+_EXPORT_FORMAT_VERSION = 2
 _MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024
 _MAX_IMPORT_JSON_BYTES = 256 * 1024 * 1024
 _SIGNIFICANCE_ALPHA = 0.05
@@ -42,7 +44,6 @@ _SIGNIFICANCE_METRICS = {
     "reception_score": "情感接受度",
     "conversation_score": "聊天推动度",
     "raw_score": "原始总分",
-    "relative_score": "相对分",
 }
 
 
@@ -52,6 +53,7 @@ class ReplyEffectComparisonGroup(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     model_names: list[str] = Field(min_length=1, max_length=200)
     prompt_fingerprints: list[str] = Field(min_length=1, max_length=200)
+    evaluation_versions: list[int] = Field(min_length=1, max_length=20)
 
 
 class ReplyEffectComparisonRequest(BaseModel):
@@ -63,7 +65,7 @@ class ReplyEffectComparisonRequest(BaseModel):
     strategy: str = ""
     start_at: Optional[datetime] = None
     end_at: Optional[datetime] = None
-    min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 def _load_context_message_rows(message_ids: list[str], session_id: str) -> dict[str, Messages]:
@@ -159,6 +161,7 @@ def _filtered_rows(
     strategy: str = "",
     model_name: str = "",
     prompt_fingerprint: str = "",
+    evaluation_version: int = 0,
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     min_confidence: float = 0.0,
@@ -174,6 +177,8 @@ def _filtered_rows(
         statement = statement.where(MaisakaReplyEffect.strategy_primary == strategy)
     if model_name:
         statement = statement.where(MaisakaReplyEffect.model_name == model_name)
+    if evaluation_version > 0:
+        statement = statement.where(MaisakaReplyEffect.evaluation_version == evaluation_version)
     if start_at:
         statement = statement.where(MaisakaReplyEffect.created_at >= start_at)
     if end_at:
@@ -183,14 +188,10 @@ def _filtered_rows(
     if status:
         statement = statement.where(MaisakaReplyEffect.status == status)
     if finalized_only:
-        statement = statement.where(
-            MaisakaReplyEffect.status == "finalized",
-            MaisakaReplyEffect.scorer_version == 2,
-        )
+        statement = statement.where(MaisakaReplyEffect.status == "finalized")
     sort_column = {
         "created_at": col(MaisakaReplyEffect.created_at),
         "raw_score": col(MaisakaReplyEffect.raw_score),
-        "relative_score": col(MaisakaReplyEffect.relative_score),
         "response_score": col(MaisakaReplyEffect.response_score),
         "reception_score": col(MaisakaReplyEffect.reception_score),
         "conversation_score": col(MaisakaReplyEffect.conversation_score),
@@ -216,7 +217,7 @@ async def get_reply_effect_overview(
     prompt_fingerprint: str = "",
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
-    min_confidence: float = Query(default=0.6, ge=0.0, le=1.0),
+    min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
     collapse_versions: bool = False,
     collapse_models: bool = False,
 ) -> dict[str, Any]:
@@ -232,7 +233,7 @@ async def get_reply_effect_overview(
     )
     filter_rows = _filtered_rows(finalized_only=True)
     strategy_groups: dict[str, list[MaisakaReplyEffect]] = defaultdict(list)
-    version_groups: dict[tuple[str, str], list[MaisakaReplyEffect]] = defaultdict(list)
+    version_groups: dict[tuple[str, str, int], list[MaisakaReplyEffect]] = defaultdict(list)
     trend_groups: dict[str, list[MaisakaReplyEffect]] = defaultdict(list)
     for row in rows:
         strategy_groups[row.strategy_primary].append(row)
@@ -240,6 +241,7 @@ async def get_reply_effect_overview(
         version_groups[
             "" if collapse_models else row.model_name or "unknown",
             "" if collapse_versions else prompt_version_fingerprint,
+            row.evaluation_version,
         ].append(row)
         trend_groups[row.created_at.date().isoformat()].append(row)
     versions = [
@@ -247,10 +249,11 @@ async def get_reply_effect_overview(
             items,
             model_name=model_group,
             prompt_fingerprint=prompt_group,
+            evaluation_version=evaluation_group,
             collapse_models=collapse_models,
             collapse_versions=collapse_versions,
         )
-        for (model_group, prompt_group), items in version_groups.items()
+        for (model_group, prompt_group, evaluation_group), items in version_groups.items()
     ]
     versions.sort(key=lambda item: (item["first_seen"], item["name"]))
     return {
@@ -281,7 +284,7 @@ async def list_reply_effects(
     status: str = Query(default="", pattern="^(|pending|evaluating|finalized|evaluation_failed)$"),
     sort_by: str = Query(
         default="created_at",
-        pattern="^(created_at|raw_score|relative_score|response_score|reception_score|conversation_score|confidence)$",
+        pattern="^(created_at|raw_score|response_score|reception_score|conversation_score|confidence)$",
     ),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     cursor: int = Query(default=0, ge=0),
@@ -353,12 +356,14 @@ async def get_prompt_version_detail(
     prompt_fingerprint: str,
     model_name: str = "",
     session_id: str = "",
+    evaluation_version: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     """返回版本的代表 Prompt，以及与同聊天流最新实发 Prompt 的差异。"""
 
     version_rows = _filtered_rows(
         model_name=model_name,
         prompt_fingerprint=prompt_fingerprint,
+        evaluation_version=evaluation_version,
         finalized_only=True,
     )
     if not version_rows:
@@ -391,6 +396,7 @@ async def get_prompt_version_detail(
     )
     return {
         "prompt_fingerprint": prompt_fingerprint,
+        "evaluation_version": representative.evaluation_version,
         "model_name": resolved_model_name,
         "sample_count": len(version_rows),
         "first_seen": min(row.created_at for row in version_rows).isoformat(),
@@ -461,8 +467,8 @@ async def import_reply_effects(file: UploadFile = File(...)) -> dict[str, int]:
     incoming_payloads: dict[str, dict[str, Any]] = {}
     try:
         for raw_record in raw_records:
-            if not isinstance(raw_record, dict) or int(raw_record.get("schema_version", 0)) != 2:
-                raise ValueError("仅支持 schema v2 回复效果记录")
+            if not isinstance(raw_record, dict) or int(raw_record.get("schema_version", 0)) != SCHEMA_VERSION:
+                raise ValueError(f"仅支持 schema v{SCHEMA_VERSION} 回复效果记录")
             record = reply_effect_record_from_dict(raw_record)
             if record.effect_id in incoming_payloads:
                 raise ValueError(f"评分数据文件包含重复 effect_id：{record.effect_id}")
@@ -547,12 +553,12 @@ def _row_summary(row: MaisakaReplyEffect) -> dict[str, Any]:
         "model_name": row.model_name,
         "request_fingerprint": request_fingerprint,
         "prompt_fingerprint": prompt_version_fingerprint,
+        "evaluation_version": row.evaluation_version,
         "reply_text": str(reply.get("reply_text") or ""),
         "response_score": row.response_score,
         "reception_score": row.reception_score,
         "conversation_score": row.conversation_score,
         "raw_score": row.raw_score,
-        "relative_score": row.relative_score,
         "confidence": row.confidence,
         "evaluation_error": str(payload.get("evaluation_error") or ""),
     }
@@ -566,11 +572,13 @@ def _select_comparison_rows(
 
     model_names = set(group.model_names)
     prompt_fingerprints = set(group.prompt_fingerprints)
+    evaluation_versions = set(group.evaluation_versions)
     return [
         row
         for row in rows
         if (row.model_name or "unknown") in model_names
         and _resolve_row_fingerprints(row)[1] in prompt_fingerprints
+        and row.evaluation_version in evaluation_versions
     ]
 
 
@@ -658,6 +666,7 @@ def _aggregate_version_group(
     *,
     model_name: str,
     prompt_fingerprint: str,
+    evaluation_version: int,
     collapse_models: bool,
     collapse_versions: bool,
 ) -> dict[str, Any]:
@@ -667,20 +676,28 @@ def _aggregate_version_group(
     model_names = sorted({row.model_name or "unknown" for row in rows})
     prompt_fingerprints = sorted({_resolve_row_fingerprints(row)[1] for row in rows})
     if collapse_models and collapse_versions:
-        name = "全部模型 · 全部版本"
+        name = f"全部模型 · 全部版本 · 评估标准 v{evaluation_version}"
     elif collapse_versions:
-        name = f"{model_name} · 全部版本"
+        name = f"{model_name} · 全部版本 · 评估标准 v{evaluation_version}"
     elif collapse_models:
-        name = f"全部模型 · {prompt_fingerprint[:8] or '无版本指纹'}"
+        name = (
+            f"全部模型 · {prompt_fingerprint[:8] or '无版本指纹'} · "
+            f"评估标准 v{evaluation_version}"
+        )
     else:
-        name = f"{model_name} · {prompt_fingerprint[:8] or '无版本指纹'}"
+        name = (
+            f"{model_name} · {prompt_fingerprint[:8] or '无版本指纹'} · "
+            f"评估标准 v{evaluation_version}"
+        )
     aggregate.update(
         {
             "name": name,
             "model_name": "" if collapse_models else model_name,
             "prompt_fingerprint": "" if collapse_versions else prompt_fingerprint,
+            "evaluation_version": evaluation_version,
             "model_names": model_names,
             "prompt_fingerprints": prompt_fingerprints,
+            "evaluation_versions": [evaluation_version],
             "first_seen": min(row.created_at for row in rows).isoformat(),
             "last_seen": max(row.created_at for row in rows).isoformat(),
             "collapsed_models": collapse_models,
@@ -691,7 +708,6 @@ def _aggregate_version_group(
                     "response_score",
                     "reception_score",
                     "conversation_score",
-                    "relative_score",
                 )
             },
         }
@@ -784,7 +800,11 @@ def _resolve_row_fingerprints(
 def _load_row_payload(row: MaisakaReplyEffect) -> dict[str, Any]:
     """透明读取明文或无损压缩的完整评估详情。"""
 
-    return decode_record_payload(row.record_json, row.record_blob)
+    payload = decode_record_payload(row.record_json, row.record_blob)
+    payload.pop("judge_version", None)
+    payload.pop("scorer_version", None)
+    payload["evaluation_version"] = row.evaluation_version
+    return payload
 
 
 def _decompress_import_file(uploaded: bytes) -> str:
@@ -812,7 +832,6 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
         "reception_score",
         "conversation_score",
         "raw_score",
-        "relative_score",
         "confidence",
     )
     score_summaries = {field_name: summarize(field_name) for field_name in score_fields}
@@ -824,4 +843,7 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
     for field_name, (average, standard_deviation) in score_summaries.items():
         aggregate[field_name] = average
         aggregate[f"{field_name}_std"] = standard_deviation
+        aggregate[f"{field_name}_count"] = sum(
+            getattr(row, field_name) is not None for row in rows
+        )
     return aggregate

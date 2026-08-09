@@ -7,11 +7,11 @@ from src.maisaka.reply_effect.models import (
     FollowupMessageSnapshot,
     ReplyAssociation,
     ReplyEffectRecord,
-    ReplyEffectScores,
     ReplyEffectStatus,
     ReplySnapshot,
     SessionSnapshot,
     UserSnapshot,
+    reply_effect_record_from_dict,
 )
 from src.maisaka.reply_effect.scoring import score_reply_effect
 
@@ -38,6 +38,8 @@ def add_followup(
     stance: str,
     contribution: str,
     latency: float = 10.0,
+    attribution_confidence: float = 1.0,
+    evaluator_confidence: float = 1.0,
 ) -> None:
     record.followup_messages.append(
         FollowupMessageSnapshot(
@@ -55,11 +57,11 @@ def add_followup(
                 ReplyAssociation(
                     effect_id=record.effect_id,
                     attribution_type="semantic",
-                    attribution_confidence=1.0,
+                    attribution_confidence=attribution_confidence,
                     stance_target=stance_target,
                     stance=stance,
                     contribution=contribution,
-                    evaluator_confidence=1.0,
+                    evaluator_confidence=evaluator_confidence,
                 )
             ],
         )
@@ -79,7 +81,7 @@ def test_topic_negative_does_not_reduce_reception_and_advances_chat() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == 50.0
+    assert scores.reception_score is None
     assert scores.conversation_score > 0
 
 
@@ -142,21 +144,85 @@ def test_reception_averages_users_instead_of_message_count() -> None:
     assert scores.reception_score == pytest.approx(55.0)
 
 
-def test_relative_score_requires_thirty_comparable_records() -> None:
+def test_missing_reception_is_removed_from_raw_score_weights() -> None:
     record = build_record()
-    history = []
-    for index in range(29):
-        item = build_record(f"history-{index}")
-        item.status = ReplyEffectStatus.FINALIZED
-        item.scores = ReplyEffectScores(10, 50, 10, 22, None, 1, 1, 1, 1)
-        history.append(item)
+    scores = score_reply_effect(record)
 
-    assert score_reply_effect(record, history).relative_score is None
-    item = build_record("history-30")
-    item.status = ReplyEffectStatus.FINALIZED
-    item.scores = ReplyEffectScores(10, 50, 10, 22, None, 1, 1, 1, 1)
-    history.append(item)
-    assert score_reply_effect(record, history).relative_score is not None
+    assert scores.reception_score is None
+    assert scores.raw_score == 0.0
+    assert scores.confidence == pytest.approx(0.35)
+
+
+def test_low_confidence_emotion_shrinks_toward_neutral() -> None:
+    record = build_record()
+    add_followup(
+        record,
+        message_id="positive",
+        user_id="member-a",
+        stance_target="bot_content",
+        stance="appreciation",
+        contribution="maintain",
+        attribution_confidence=0.5,
+        evaluator_confidence=0.8,
+    )
+
+    scores = score_reply_effect(record)
+
+    assert scores.reception_score == 70.0
+    assert scores.reception_evidence_confidence == pytest.approx(1 / 3, abs=0.0001)
+
+
+def test_incomplete_observation_reduces_overall_confidence() -> None:
+    record = build_record()
+    add_followup(
+        record,
+        message_id="positive",
+        user_id="member-a",
+        stance_target="bot_content",
+        stance="appreciation",
+        contribution="maintain",
+    )
+
+    complete = score_reply_effect(record, observation_complete=True)
+    incomplete = score_reply_effect(record, observation_complete=False)
+
+    assert incomplete.confidence == pytest.approx(complete.confidence * 0.6, abs=0.0001)
+
+
+def test_semantic_multi_candidate_association_reduces_confidence() -> None:
+    record = build_record()
+    add_followup(
+        record,
+        message_id="ambiguous",
+        user_id="member-a",
+        stance_target="bot_content",
+        stance="appreciation",
+        contribution="maintain",
+    )
+    record.followup_messages[0].associations.append(
+        ReplyAssociation(
+            effect_id="other-effect",
+            attribution_type="semantic",
+            attribution_confidence=1.0,
+            stance_target="bot_content",
+            stance="appreciation",
+            contribution="maintain",
+            evaluator_confidence=1.0,
+        )
+    )
+
+    scores = score_reply_effect(record)
+
+    assert scores.reception_score == 75.0
+    assert scores.reception_evidence_confidence == pytest.approx(5 / 12, abs=0.0001)
+
+
+def test_record_restores_evaluation_version() -> None:
+    payload = build_record().to_json_dict()
+
+    restored = reply_effect_record_from_dict(payload)
+
+    assert restored.evaluation_version == 3
 
 
 def test_parser_rejects_missing_locked_quote() -> None:
@@ -234,3 +300,70 @@ def test_parser_rejects_candidate_unavailable_when_followup_was_received() -> No
 
     with pytest.raises(ValueError, match="当时尚不存在或已结束观察"):
         parse_judge_result(payload, record, [record, future_record])
+
+
+def test_parser_accepts_empty_associations_for_unrelated_message() -> None:
+    record = build_record()
+    record.followup_messages.append(
+        FollowupMessageSnapshot(
+            message_id="user-1",
+            timestamp=record.created_at,
+            user_id="member-a",
+            nickname="A",
+            cardname="",
+            visible_text="完全无关的消息",
+            plain_text="完全无关的消息",
+            latency_seconds=1,
+            is_target_user=False,
+            candidate_effect_ids=[record.effect_id],
+        )
+    )
+    payload = {
+        "strategy": {"primary": "answer", "secondary": [], "confidence": 1.0},
+        "messages": [{"message_id": "user-1", "associations": []}],
+    }
+
+    _, _, _, associations = parse_judge_result(payload, record, [record])
+
+    assert associations == {"user-1": []}
+
+
+def test_parser_rejects_unrelated_as_an_association_label() -> None:
+    record = build_record()
+    record.followup_messages.append(
+        FollowupMessageSnapshot(
+            message_id="user-1",
+            timestamp=record.created_at,
+            user_id="member-a",
+            nickname="A",
+            cardname="",
+            visible_text="完全无关的消息",
+            plain_text="完全无关的消息",
+            latency_seconds=1,
+            is_target_user=False,
+            candidate_effect_ids=[record.effect_id],
+        )
+    )
+    payload = {
+        "strategy": {"primary": "answer", "secondary": [], "confidence": 1.0},
+        "messages": [
+            {
+                "message_id": "user-1",
+                "associations": [
+                    {
+                        "effect_id": record.effect_id,
+                        "attribution_confidence": 0.6,
+                        "stance_target": "topic_or_third_party",
+                        "stance": "neutral",
+                        "contribution": "unrelated",
+                        "reason": "无关",
+                        "evidence_spans": ["完全无关的消息"],
+                        "confidence": 0.6,
+                    }
+                ],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="contribution 取值非法"):
+        parse_judge_result(payload, record, [record])
