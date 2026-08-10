@@ -180,6 +180,36 @@ describe('LogViewerPage 终端面板', () => {
     expect(screen.getByText('2 / 2')).toBeInTheDocument()
   })
 
+  it('模块按中文名显示为可换行标签，点击可切换显示状态', async () => {
+    const user = userEvent.setup()
+    logWsMocks.getAllLogs.mockReturnValue([
+      makeLog('a1', { message: '聊天消息', moduleDisplayName: '聊天管理' }),
+      makeLog('b1', { message: '心跳包', module: 'net.ws', moduleDisplayName: '网络连接' }),
+    ])
+
+    render(<LogViewerPage />)
+
+    const moduleFilters = screen.getByLabelText('模块显示筛选')
+    expect(moduleFilters).toHaveClass('flex-wrap')
+    expect(moduleFilters).toHaveClass('overflow-y-auto', 'border', 'h-10', 'max-h-10')
+    const chatModuleButton = within(moduleFilters).getByRole('button', { name: /隐藏 聊天管理/ })
+    expect(chatModuleButton).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(chatModuleButton)
+    expect(screen.queryAllByText('聊天消息')).toHaveLength(0)
+    expect(screen.getAllByText('心跳包').length).toBeGreaterThan(0)
+    expect(chatModuleButton).toHaveAttribute('aria-pressed', 'false')
+    expect(window.localStorage.getItem('maibot-log-module-filter')).toBe('["core.chat"]')
+
+    await user.click(chatModuleButton)
+    expect(screen.getAllByText('聊天消息').length).toBeGreaterThan(0)
+    expect(window.localStorage.getItem('maibot-log-module-filter')).toBe('all')
+
+    await user.click(screen.getByRole('button', { name: '筛选' }))
+    expect(moduleFilters).toHaveClass('max-h-[104px]', 'lg:min-h-full')
+    expect(moduleFilters).not.toHaveClass('h-10', 'max-h-10')
+  })
+
   it('搜索按消息与模块过滤，Escape 与清空按钮均可清除关键字', async () => {
     const user = userEvent.setup()
     logWsMocks.getAllLogs.mockReturnValue([
@@ -413,9 +443,7 @@ describe('LogViewerPage 页签与提示', () => {
       expect(within(topbarRoot).getByRole('tab', { name: '推理过程' })).toBeInTheDocument()
       expect(within(topbarRoot).getByRole('tab', { name: '详细统计' })).toBeInTheDocument()
       // 用于紧凑模式测量的隐藏节点也随 Portal 渲染
-      expect(
-        topbarRoot.querySelector('[data-log-viewer-switcher-measure="true"]')
-      ).not.toBeNull()
+      expect(topbarRoot.querySelector('[data-log-viewer-switcher-measure="true"]')).not.toBeNull()
     } finally {
       topbarRoot.remove()
     }
