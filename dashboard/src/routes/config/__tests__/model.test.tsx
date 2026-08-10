@@ -208,7 +208,8 @@ describe('ModelConfigPage 特征化', () => {
     expect(addModelButton).not.toBeNull()
     await user.click(addModelButton!)
 
-    const dialog = await screen.findByRole('dialog', { name: '添加模型' })
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
     expect(within(dialog).queryByText('支持缓存')).not.toBeInTheDocument()
     const thinkingSwitch = within(dialog).getByRole('switch', { name: '启用思考' })
     const effortSelect = within(dialog).getByRole('combobox', { name: '思考力度' })
@@ -260,9 +261,10 @@ describe('ModelConfigPage 特征化', () => {
     })
     const saveExtraParamsButton = within(extraParamsDialog).getByRole('button', { name: '保存' })
     fireEvent.pointerDown(saveExtraParamsButton, { pointerType: 'touch' })
-    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
+    // 内层弹窗打开时 Radix 会把外层弹窗标记为 aria-hidden，但外层不应被触摸事件卸载。
+    expect(dialog).toBeInTheDocument()
     await user.click(saveExtraParamsButton)
-    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
     expect(thinkingSwitch).toBeChecked()
     expect(effortSelect).toBeEnabled()
     expect(effortSelect).toHaveTextContent('最高')
@@ -280,7 +282,7 @@ describe('ModelConfigPage 特征化', () => {
     })
     await user.click(within(reopenedExtraParamsDialog).getByRole('button', { name: '保存' }))
 
-    expect(screen.getByRole('dialog', { name: '添加模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
     expect(within(dialog).getByText('未配置额外参数')).toBeInTheDocument()
   })
 

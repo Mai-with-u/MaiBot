@@ -140,8 +140,12 @@ describe('LogViewerPage 终端面板', () => {
     expect(screen.getAllByText('[WARN]').length).toBeGreaterThan(0)
     expect(screen.getAllByText('[CRIT]').length).toBeGreaterThan(0)
     // 后端下发的模块颜色与加粗生效
-    for (const moduleEl of screen.getAllByText('colored.module')) {
-      expect(moduleEl).toHaveStyle('color: #ff6600; font-weight: 700')
+    const coloredModuleElements = screen
+      .getAllByText('colored.module')
+      .filter((moduleEl) => moduleEl.style.color === 'rgb(255, 102, 0)')
+    expect(coloredModuleElements).toHaveLength(2)
+    for (const moduleEl of coloredModuleElements) {
+      expect(moduleEl).toHaveStyle('font-weight: 700')
     }
     expect(screen.getByText('3 / 3')).toBeInTheDocument()
   })

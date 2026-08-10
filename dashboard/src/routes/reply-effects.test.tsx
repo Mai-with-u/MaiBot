@@ -194,7 +194,9 @@ describe('ReplyEffectsPage', () => {
     expect(screen.getAllByText('回应度').length).toBeGreaterThan(0)
     expect(screen.getByText('情感接受度')).toBeInTheDocument()
     expect(screen.getByText('聊天推动度')).toBeInTheDocument()
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('80.0').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('70.0').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('60.0').length).toBeGreaterThan(0)
 
     const requestPaths = vi.mocked(backendApi.get).mock.calls.map(([path]) => path)
     expect(requestPaths.find((path) => path.includes('/overview'))).toContain('min_confidence=0')

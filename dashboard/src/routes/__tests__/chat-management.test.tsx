@@ -33,8 +33,10 @@ vi.mock('@/lib/chat-management-api', () => ({
   deleteChatStream: vi.fn(),
   deleteChatStreamPrompt: vi.fn(),
   deleteChatStreamTalkFrequency: vi.fn(),
+  getAdapterPolicyDefaults: vi.fn(),
   getChatStreamDetail: vi.fn(),
   getChatStreams: vi.fn(),
+  updateAdapterPolicyDefaults: vi.fn(),
   updateChatStreamAdapterPolicy: vi.fn(),
   updateChatStreamLearning: vi.fn(),
   updateChatStreamTalkFrequency: vi.fn(),
@@ -259,6 +261,14 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/')
   vi.mocked(chatApi.getChatStreams).mockResolvedValue([groupChat, privateChat])
   vi.mocked(chatApi.getChatStreamDetail).mockResolvedValue(makeDetail())
+  vi.mocked(chatApi.getAdapterPolicyDefaults).mockResolvedValue({
+    group: 'allow',
+    private: 'allow',
+  })
+  vi.mocked(chatApi.updateAdapterPolicyDefaults).mockResolvedValue({
+    group: 'allow',
+    private: 'allow',
+  })
   vi.mocked(chatApi.updateChatStreamLearning).mockResolvedValue(makeDetail())
   vi.mocked(chatApi.updateChatStreamAdapterPolicy).mockResolvedValue(makeDetail())
   vi.mocked(chatApi.updateChatStreamTalkFrequency).mockResolvedValue(makeDetail())
@@ -604,9 +614,9 @@ describe('ChatManagementPage 删除聊天流', () => {
     const dialog = await openDetail(user)
 
     await user.click(within(dialog).getByRole('button', { name: '删除聊天流' }))
-    const deleteDialog = (
-      await screen.findByText('严肃确认：删除聊天流')
-    ).closest('[role="dialog"]') as HTMLElement
+    const deleteDialog = (await screen.findByText('严肃确认：删除聊天流')).closest(
+      '[role="dialog"]'
+    ) as HTMLElement
     const confirmButton = within(deleteDialog).getByRole('button', { name: '永久删除' })
     expect(confirmButton).toBeDisabled()
 
@@ -641,9 +651,9 @@ describe('ChatManagementPage 删除聊天流', () => {
     const dialog = await openDetail(user)
 
     await user.click(within(dialog).getByRole('button', { name: '删除聊天流' }))
-    const deleteDialog = (
-      await screen.findByText('严肃确认：删除聊天流')
-    ).closest('[role="dialog"]') as HTMLElement
+    const deleteDialog = (await screen.findByText('严肃确认：删除聊天流')).closest(
+      '[role="dialog"]'
+    ) as HTMLElement
     const confirmInput = within(deleteDialog).getByLabelText('请输入完整 session_id 以确认删除')
     await user.type(confirmInput, 'sess-1')
     await user.click(within(deleteDialog).getByRole('button', { name: '永久删除' }))
@@ -735,9 +745,7 @@ describe('ChatManagementPage 共享组管理', () => {
     expect(within(dialog).queryByText('测试群 · 账号 123')).not.toBeInTheDocument()
 
     // 搜索无匹配时显示空态
-    const searchInput = within(dialog).getByPlaceholderText(
-      '搜索名称、平台、用户、群号或会话 ID'
-    )
+    const searchInput = within(dialog).getByPlaceholderText('搜索名称、平台、用户、群号或会话 ID')
     await user.type(searchInput, '不存在的关键词')
     expect(await within(dialog).findByText('没有可加入的聊天流')).toBeInTheDocument()
     await user.clear(searchInput)
