@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 import base64
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -2013,6 +2014,18 @@ async def get_reasoning_prompt_file(path: str = Query(...)):
         total_tokens=metadata.get("total_tokens") if isinstance(metadata.get("total_tokens"), int) else None,
         message_avatars=message_avatars,
     )
+
+
+@router.get("/image")
+async def get_reasoning_prompt_image(path: str = Query(...)):
+    """读取推理记录引用的本地图片，只允许访问既有图片缓存目录。"""
+
+    try:
+        image_path = _resolve_replay_image_path(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    media_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+    return FileResponse(image_path, media_type=media_type)
 
 
 @router.post("/replay", response_model=ReasoningReplayResponse)

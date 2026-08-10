@@ -7,6 +7,7 @@ import {
   clearReasoningPromptStage,
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
+  getReasoningPromptImageUrl,
   listReasoningPromptFiles,
   listReasoningPromptStages,
   replayReasoningPrompt,
@@ -199,6 +200,21 @@ describe('getReasoningPromptHtmlUrl', () => {
     )
     expect(resolveApiPathMock).toHaveBeenCalledWith(
       '/api/webui/reasoning-process/html?path=%2Fdata%2Fa%20b.html'
+    )
+  })
+})
+
+describe('getReasoningPromptImageUrl', () => {
+  it('图片路径编码进受限图片端点并交由 resolveApiPath 解析', async () => {
+    resolveApiPathMock.mockResolvedValue(
+      'http://backend:8000/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
+    )
+
+    await expect(getReasoningPromptImageUrl('data/prompt_imgs/a.png')).resolves.toBe(
+      'http://backend:8000/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
+    )
+    expect(resolveApiPathMock).toHaveBeenCalledWith(
+      '/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
     )
   })
 })

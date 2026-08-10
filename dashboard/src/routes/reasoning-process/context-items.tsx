@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- 本模块同时导出 Item 展示组件及其共享格式化函数。 */
 
-import { type CSSProperties, useState } from 'react'
+import { type CSSProperties, useEffect, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -12,6 +12,7 @@ import type {
   ReasoningPromptMessageAvatar,
   ReasoningPromptSessionInfo,
 } from '@/lib/reasoning-process-api'
+import { getReasoningPromptImageUrl } from '@/lib/reasoning-process-api'
 import { cn } from '@/lib/utils'
 import {
   isRecord,
@@ -201,6 +202,75 @@ export function getContextItemReadableText(item: ContextItemSnapshot): string {
     return String(item.display_summary || '')
   }
   return ''
+}
+
+export type ContextItemImage = {
+  path: string
+  mimeType: string
+  sizeBytes?: number
+}
+
+export function getContextItemImages(item: ContextItemSnapshot): ContextItemImage[] {
+  if (!['SystemMessageItem', 'UserMessageItem', 'AssistantMessageItem'].includes(item.item_type)) {
+    return []
+  }
+
+  return (item.parts ?? []).flatMap((part) => {
+    const partType = String(part.type || '')
+      .trim()
+      .toLowerCase()
+    if (!['image', 'image_url', 'input_image'].includes(partType)) return []
+
+    const imageFormat = String(part.image_format || part.format || 'png')
+      .trim()
+      .toLowerCase()
+      .replace(/^image\//, '')
+    const mimeType = `image/${imageFormat || 'png'}`
+    const imageReference = isRecord(part.image_reference) ? part.image_reference : {}
+    const imagePath = String(part.image_path || imageReference.image_path || '').trim()
+    if (!imagePath) return []
+
+    return [
+      {
+        path: imagePath,
+        mimeType,
+        sizeBytes: typeof part.size_bytes === 'number' ? part.size_bytes : undefined,
+      },
+    ]
+  })
+}
+
+function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
+  const [src, setSrc] = useState('')
+
+  useEffect(() => {
+    let ignore = false
+    void getReasoningPromptImageUrl(image.path).then((resolvedUrl) => {
+      if (!ignore) setSrc(resolvedUrl)
+    })
+    return () => {
+      ignore = true
+    }
+  }, [image.path])
+
+  if (!src) {
+    return <div className="bg-muted/20 h-32 animate-pulse rounded-md border" />
+  }
+
+  return (
+    <figure className="bg-background/60 mx-auto w-4/5 rounded-md border p-2">
+      <img
+        src={src}
+        alt={`请求图片 ${index + 1}`}
+        loading="lazy"
+        className="max-h-[32rem] w-full rounded object-contain"
+      />
+      <figcaption className="text-muted-foreground mt-1.5 text-xs">
+        {image.mimeType}
+        {image.sizeBytes !== undefined ? ` · ${image.sizeBytes} B` : ''}
+      </figcaption>
+    </figure>
+  )
 }
 
 export function getContextItemToolCalls(item: ContextItemSnapshot): unknown[] {
@@ -723,6 +793,7 @@ export function ContextItemCard({
     isBotSelfContextItem(item, botSelfNames)
   )
   const readableText = getContextItemReadableText(item)
+  const images = getContextItemImages(item)
   const toolCalls = getContextItemToolCalls(item)
   const callId =
     item.item_type === 'FunctionCallItem' && isRecord(item.tool_call)
@@ -761,13 +832,24 @@ export function ContextItemCard({
           <div className="text-muted-foreground font-mono text-[11px]">call_id: {callId}</div>
         )}
         {readableText && <NaturalLanguageText text={readableText} avatarMap={avatarMap} />}
+        {images.length > 0 && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {images.map((image, imageIndex) => (
+              <ContextItemImagePreview
+                key={`${image.path}-${imageIndex}`}
+                image={image}
+                index={imageIndex}
+              />
+            ))}
+          </div>
+        )}
         {toolCalls.length > 0 && <ToolCallsCollapsible toolCalls={toolCalls} />}
         {item.item_type === 'ProviderActivityItem' && item.details && item.details.length > 0 && (
           <pre className="bg-muted/20 max-h-64 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
             {item.details.join('\n')}
           </pre>
         )}
-        {!readableText && toolCalls.length === 0 && (
+        {!readableText && images.length === 0 && toolCalls.length === 0 && (
           <p className="text-muted-foreground text-xs">
             此 Item 没有可见文本；完整字段见 Item JSON。
           </p>

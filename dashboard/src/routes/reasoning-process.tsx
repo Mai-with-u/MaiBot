@@ -533,7 +533,7 @@ export function ReasoningProcessPage({
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
-  const hasToolbarContent = Boolean(returnTo)
+  const hasToolbarContent = browsingStage || Boolean(returnTo)
 
   useEffect(() => {
     if (!replayPanelOpen) {
@@ -1078,11 +1078,8 @@ export function ReasoningProcessPage({
   const toolbarPortal =
     embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
   const topbarActionsPortal =
-    embedded && toolbarVisible && topbarActionsRoot
-      ? createPortal(
-          browsingStage ? renderTypeButton(true) : renderRefreshButton('topbar'),
-          topbarActionsRoot
-        )
+    embedded && toolbarVisible && !browsingStage && topbarActionsRoot
+      ? createPortal(renderRefreshButton('topbar'), topbarActionsRoot)
       : null
   const showBrowsingControlsInline = browsingStage && (!embedded || !toolbarVisible || !toolbarRoot)
   const renderStageCard = (item: ReasoningPromptStageInfo) => (
@@ -1299,6 +1296,7 @@ export function ReasoningProcessPage({
             {embedded && browsingStage && (
               <div className="flex flex-shrink-0 flex-col gap-2 border-b p-2">
                 <div className="flex items-center gap-2">
+                  {renderTypeButton(true)}
                   <div className="min-w-0 flex-1">{renderSessionSelect('sidebarRow')}</div>
                   {renderRefreshButton('toolbar')}
                 </div>

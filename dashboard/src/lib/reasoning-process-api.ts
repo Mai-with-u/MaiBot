@@ -250,6 +250,10 @@ export async function getReasoningPromptHtmlUrl(path: string): Promise<string> {
   return resolveApiPath(`${API_BASE}/html?path=${encodeURIComponent(path)}`)
 }
 
+export async function getReasoningPromptImageUrl(path: string): Promise<string> {
+  return resolveApiPath(`${API_BASE}/image?path=${encodeURIComponent(path)}`)
+}
+
 export async function replayReasoningPrompt(
   request: ReasoningReplayRequest
 ): Promise<ReasoningReplayResponse> {
