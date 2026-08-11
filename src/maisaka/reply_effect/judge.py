@@ -57,7 +57,8 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         "没有明确的引用、回复、指代、语义承接或情绪反馈证据时，必须返回 associations: []；"
         "不要为了评价话题转移、无人回应或回复未吸引讨论而强行建立关联。\n"
         "候选 Bot 回复一定先于与其关联的后续用户消息，请严格按照发送时间判断先后关系。\n"
-        "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 effect_id。\n"
+        "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 candidate_id。\n"
+        "messages 必须逐条覆盖给出的全部后续消息，即使无关也要返回该 message_id 和空 associations。\n"
         "只对已经确认存在关联的消息评价两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"
         "对话题或第三方的负面喜好不等于反感 bot；指出 bot 的事实错误使用 factual_correction + advance；"
         "针对 bot 的厌烦或攻击使用 bot_attack + wrong_push。"
@@ -70,12 +71,13 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         "contribution 只能是 advance/maintain/acknowledge/close/wrong_push；"
         "无关消息必须使用空 associations，不存在 unrelated 关联标签。\n"
         "confidence 与 attribution_confidence 必须是 0 到 1。\n"
+        "association 中的 candidate_id 必须使用候选 Bot 回复前的短编号。\n"
         "严格输出；下面同时给出无关联与有关联消息的格式：\n"
         "{\n"
         '  "strategy": {"primary": "answer", "secondary": [], "confidence": 0.8},\n'
         '  "messages": [\n'
         '    {"message_id": "无关联消息ID", "associations": []},\n'
-        '    {"message_id": "有关联消息ID", "associations": [{"effect_id": "候选effect_id", '
+        '    {"message_id": "有关联消息ID", "associations": [{"candidate_id": "c1", '
         '"attribution_confidence": 0.8, "stance_target": "bot_content", "stance": "neutral", '
         '"contribution": "advance", "reason": "具体关联理由", '
         '"evidence_spans": ["来自后续用户消息的证据"], "confidence": 0.8}]}\n'
@@ -99,14 +101,24 @@ def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[Re
         )
     )
     content_budget = max(0, MAX_PROMPT_CHARS - fixed_length)
-    context_budget = int(content_budget * 0.20)
-    candidate_budget = int(content_budget * 0.50)
-    followup_budget = content_budget - context_budget - candidate_budget
+    candidate_aliases = {
+        candidate.effect_id: f"c{index}"
+        for index, candidate in enumerate(candidate_records, start=1)
+    }
+    candidate_minimum = _candidate_required_chars(candidate_records)
+    followup_minimum = _followup_required_chars(record.followup_messages, candidate_aliases)
+    remaining_budget = max(0, content_budget - candidate_minimum - followup_minimum)
+    context_budget = min(int(content_budget * 0.20), remaining_budget // 3)
+    remaining_budget -= context_budget
+    candidate_budget = candidate_minimum + int(remaining_budget * 0.40)
+    followup_budget = followup_minimum + remaining_budget - int(remaining_budget * 0.40)
     prompt = section_template.format(
         instruction=instruction,
         context=_format_context(record.context_snapshot, record.reply.target_message_id, context_budget) or "（无）",
-        candidates=_format_candidates(candidate_records, candidate_budget) or "（无）",
-        followups=_format_followups(record.followup_messages, followup_budget) or "（无）",
+        candidates=_format_candidates(candidate_records, candidate_aliases, candidate_budget) or "（无）",
+        followups=(
+            _format_followups(record.followup_messages, candidate_aliases, followup_budget) or "（无）"
+        ),
         output_contract=output_contract,
     )
     return prompt
@@ -118,6 +130,10 @@ def parse_judge_result(
     candidate_records: Sequence[ReplyEffectRecord],
 ) -> Tuple[str, list[str], float, Dict[str, list[ReplyAssociation]]]:
     candidate_ids = {item.effect_id for item in candidate_records}
+    effect_ids_by_alias = {
+        f"c{index}": candidate.effect_id
+        for index, candidate in enumerate(candidate_records, start=1)
+    }
     followup_ids = {item.message_id for item in record.followup_messages}
     allowed_effects_by_message = {
         item.message_id: set(item.candidate_effect_ids) for item in record.followup_messages
@@ -155,9 +171,10 @@ def parse_judge_result(
         seen_effects: set[str] = set()
         for raw_association in raw_associations:
             item = _require_dict(raw_association, "associations[]")
-            effect_id = str(item.get("effect_id") or "").strip()
+            candidate_id = str(item.get("candidate_id") or "").strip()
+            effect_id = effect_ids_by_alias.get(candidate_id, "")
             if effect_id not in candidate_ids or effect_id in seen_effects:
-                raise ValueError(f"消息 {message_id} 包含未知或重复候选：{effect_id}")
+                raise ValueError(f"消息 {message_id} 包含未知或重复候选：{candidate_id}")
             if effect_id not in allowed_effects_by_message[message_id]:
                 raise ValueError(
                     f"消息 {message_id} 关联了当时尚不存在或已结束观察的 Bot 回复：{effect_id}"
@@ -186,7 +203,11 @@ def parse_judge_result(
             raise ValueError(f"消息 {message_id} 的显式引用关联被遗漏")
         parsed[message_id] = associations
     if seen_messages != followup_ids:
-        raise ValueError("评审结果未覆盖全部后续消息")
+        missing_message_ids = sorted(followup_ids - seen_messages)
+        raise ValueError(
+            "评审结果未覆盖全部后续消息，缺少 message_id："
+            + "、".join(missing_message_ids)
+        )
     return primary, list(dict.fromkeys(secondary)), strategy_confidence, parsed
 
 
@@ -224,33 +245,51 @@ def _format_context(context_snapshot: list[dict[str, Any]], target_message_id: s
     return "\n".join(lines)
 
 
-def _format_candidates(candidate_records: Sequence[ReplyEffectRecord], max_chars: int) -> str:
+def _candidate_prefixes(
+    candidate_records: Sequence[ReplyEffectRecord],
+    candidate_aliases: dict[str, str],
+) -> list[str]:
+    return [
+        f"- candidate_id={candidate_aliases[item.effect_id]} time={item.created_at} Bot: "
+        for item in candidate_records
+    ]
+
+
+def _candidate_required_chars(candidate_records: Sequence[ReplyEffectRecord]) -> int:
+    aliases = {item.effect_id: f"c{index}" for index, item in enumerate(candidate_records, start=1)}
+    return sum(len(prefix) + 1 for prefix in _candidate_prefixes(candidate_records, aliases))
+
+
+def _format_candidates(
+    candidate_records: Sequence[ReplyEffectRecord],
+    candidate_aliases: dict[str, str],
+    max_chars: int,
+) -> str:
     if not candidate_records or max_chars <= 0:
         return ""
-    line_prefixes = [
-        f"- effect_id={item.effect_id} time={item.created_at} Bot: " for item in candidate_records
-    ]
+    line_prefixes = _candidate_prefixes(candidate_records, candidate_aliases)
     fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
-    text_limit = max(1, (max_chars - fixed_chars) // len(candidate_records))
+    text_limit = max(0, (max_chars - fixed_chars) // len(candidate_records))
     lines: list[str] = []
-    used = 0
     for prefix, item in zip(line_prefixes, candidate_records, strict=True):
-        line = f"{prefix}{normalize_text_for_prompt(item.reply.reply_text, text_limit)}"
-        remaining = max_chars - used
-        if remaining <= 0:
-            break
-        lines.append(line[:remaining])
-        used += len(lines[-1]) + 1
+        text = normalize_text_for_prompt(item.reply.reply_text, text_limit) if text_limit else ""
+        lines.append(f"{prefix}{text}")
     return "\n".join(lines)
 
 
-def _format_followups(followups: list[FollowupMessageSnapshot], max_chars: int) -> str:
-    if not followups or max_chars <= 0:
-        return ""
+def _followup_prefixes(
+    followups: list[FollowupMessageSnapshot],
+    candidate_aliases: dict[str, str],
+) -> list[str]:
     line_prefixes: list[str] = []
     for item in followups:
         display_name = item.cardname or item.nickname or "用户"
-        metadata = [f"允许候选（不代表相关）={item.candidate_effect_ids}"]
+        allowed_candidates = [
+            candidate_aliases[effect_id]
+            for effect_id in item.candidate_effect_ids
+            if effect_id in candidate_aliases
+        ]
+        metadata = [f"允许候选（不代表相关）={allowed_candidates}"]
         if item.reply_to:
             metadata.append(f"回复消息={item.reply_to}")
         if item.quote_target_ids:
@@ -261,20 +300,38 @@ def _format_followups(followups: list[FollowupMessageSnapshot], max_chars: int) 
             if association.attribution_type == "explicit_quote"
         ]
         if confirmed_effect_ids:
-            metadata.append(f"已确认关联={confirmed_effect_ids}")
+            confirmed_candidates = [candidate_aliases[effect_id] for effect_id in confirmed_effect_ids]
+            metadata.append(f"已确认关联={confirmed_candidates}")
         metadata_text = f" ({'，'.join(metadata)})"
         line_prefixes.append(f"- [{item.timestamp}] message_id={item.message_id} {display_name}{metadata_text}: ")
+    return line_prefixes
+
+
+def _followup_required_chars(
+    followups: list[FollowupMessageSnapshot],
+    candidate_aliases: dict[str, str],
+) -> int:
+    return sum(len(prefix) + 1 for prefix in _followup_prefixes(followups, candidate_aliases))
+
+
+def _format_followups(
+    followups: list[FollowupMessageSnapshot],
+    candidate_aliases: dict[str, str],
+    max_chars: int,
+) -> str:
+    if not followups or max_chars <= 0:
+        return ""
+    line_prefixes = _followup_prefixes(followups, candidate_aliases)
     fixed_chars = sum(len(prefix) + 1 for prefix in line_prefixes)
-    text_limit = max(1, (max_chars - fixed_chars) // len(followups))
+    text_limit = max(0, (max_chars - fixed_chars) // len(followups))
     lines: list[str] = []
-    used = 0
     for prefix, item in zip(line_prefixes, followups, strict=True):
-        line = f"{prefix}{normalize_text_for_prompt(item.visible_text or item.plain_text, text_limit)}"
-        remaining = max_chars - used
-        if remaining <= 0:
-            break
-        lines.append(line[:remaining])
-        used += len(lines[-1]) + 1
+        text = (
+            normalize_text_for_prompt(item.visible_text or item.plain_text, text_limit)
+            if text_limit
+            else ""
+        )
+        lines.append(f"{prefix}{text}")
     return "\n".join(lines)
 
 

@@ -294,7 +294,7 @@ def test_parser_rejects_candidate_unavailable_when_followup_was_received() -> No
                 "message_id": "user-1",
                 "associations": [
                     {
-                        "effect_id": future_record.effect_id,
+                        "candidate_id": "c2",
                         "attribution_confidence": 1.0,
                         "stance_target": "bot_content",
                         "stance": "neutral",
@@ -338,6 +338,32 @@ def test_parser_accepts_empty_associations_for_unrelated_message() -> None:
     assert associations == {"user-1": []}
 
 
+def test_parser_reports_missing_followup_ids() -> None:
+    record = build_record()
+    for message_id in ("user-1", "user-2"):
+        record.followup_messages.append(
+            FollowupMessageSnapshot(
+                message_id=message_id,
+                timestamp=record.created_at,
+                user_id="member-a",
+                nickname="A",
+                cardname="",
+                visible_text="后续消息",
+                plain_text="后续消息",
+                latency_seconds=1,
+                is_target_user=False,
+                candidate_effect_ids=[record.effect_id],
+            )
+        )
+    payload = {
+        "strategy": {"primary": "answer", "secondary": [], "confidence": 1.0},
+        "messages": [{"message_id": "user-1", "associations": []}],
+    }
+
+    with pytest.raises(ValueError, match="缺少 message_id：user-2"):
+        parse_judge_result(payload, record, [record])
+
+
 def test_parser_rejects_unrelated_as_an_association_label() -> None:
     record = build_record()
     record.followup_messages.append(
@@ -361,7 +387,7 @@ def test_parser_rejects_unrelated_as_an_association_label() -> None:
                 "message_id": "user-1",
                 "associations": [
                     {
-                        "effect_id": record.effect_id,
+                        "candidate_id": "c1",
                         "attribution_confidence": 0.6,
                         "stance_target": "topic_or_third_party",
                         "stance": "neutral",

@@ -200,13 +200,23 @@ function confidenceText(value: number | null | undefined) {
   return value == null ? '—' : `${Math.round(value * 100)}%`
 }
 
-function ConfidenceIndicator({ value, incomplete }: { value: number | null; incomplete: boolean }) {
+function ConfidenceIndicator({ value, status }: { value: number | null; status: string }) {
   if (value == null) {
+    const emptyLabel =
+      status === 'incomplete'
+        ? '不完整'
+        : status === 'evaluation_failed'
+          ? '评估失败'
+          : status === 'pending'
+            ? '等待结算'
+            : status === 'evaluating'
+              ? '正在评估'
+              : '已完成 / 无信息'
     return (
       <div className="mt-2">
         <div className="text-muted-foreground flex items-center justify-between text-[11px]">
           <span>置信度</span>
-          <span>{incomplete ? '不完整' : '已完成 / 无信息'}</span>
+          <span>{emptyLabel}</span>
         </div>
         <div className="bg-muted mt-1 h-1.5 overflow-hidden rounded-full" />
       </div>
@@ -510,6 +520,8 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
               {scores == null
                 ? incomplete
                   ? '不完整'
+                  : detail.status === 'evaluation_failed'
+                    ? '评估失败'
                   : '—'
                 : scores.confidence == null
                   ? '已完成 / 无信息'
@@ -896,10 +908,7 @@ export function ReplyEffectsBrowser({
                         推 {scoreText(item.conversation_score)}
                       </span>
                     </div>
-                    <ConfidenceIndicator
-                      value={item.confidence}
-                      incomplete={item.status === 'incomplete'}
-                    />
+                    <ConfidenceIndicator value={item.confidence} status={item.status} />
                   </button>
                 ))}
               </div>

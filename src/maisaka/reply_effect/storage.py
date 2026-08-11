@@ -22,6 +22,7 @@ from .path_utils import BASE_DIR, build_reply_effect_chat_dir, normalize_preview
 LEGACY_RETRYABLE_EVALUATION_ERRORS = {
     "回复效果评审连续两次校验失败：Connection error.",
     "回复效果评审连续两次校验失败：Request timed out.",
+    "回复效果评审连续两次校验失败：评审结果未覆盖全部后续消息",
 }
 logger = get_logger("maisaka_reply_effect_storage")
 
