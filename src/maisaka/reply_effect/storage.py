@@ -158,8 +158,7 @@ class ReplyEffectStorage:
             row.response_score = scores.response_score if scores else None
             row.reception_score = scores.reception_score if scores else None
             row.conversation_score = scores.conversation_score if scores else None
-            row.raw_score = scores.raw_score if scores else None
-            row.confidence = scores.confidence if scores else 0.0
+            row.confidence = scores.confidence if scores and scores.confidence is not None else 0.0
             row.record_json = "{}"
             row.record_blob = encode_record_payload(payload)
             session.add(row)

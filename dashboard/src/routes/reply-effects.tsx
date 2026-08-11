@@ -95,8 +95,6 @@ interface Aggregate {
   reception_score_std?: number | null
   conversation_score: number | null
   conversation_score_std?: number | null
-  raw_score: number | null
-  raw_score_std?: number | null
   confidence: number | null
   confidence_std?: number | null
   reception_score_count?: number
@@ -1262,7 +1260,9 @@ export function ReplyEffectsPage() {
                       <TableRow>
                         <TableHead>策略</TableHead>
                         <TableHead>样本</TableHead>
-                        <TableHead>原始分</TableHead>
+                        <TableHead>回应度</TableHead>
+                        <TableHead>接受度</TableHead>
+                        <TableHead>推动度</TableHead>
                         <TableHead>置信度</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1273,13 +1273,22 @@ export function ReplyEffectsPage() {
                             <TableCell className="font-medium">{strategyName(item.name)}</TableCell>
                             <TableCell>{item.count}</TableCell>
                             <TableCell>
-                              {scoreWithStdText(item.raw_score, item.raw_score_std)}
+                              {scoreWithStdText(item.response_score, item.response_score_std)}
+                            </TableCell>
+                            <TableCell>
+                              {scoreWithStdText(item.reception_score, item.reception_score_std)}
+                            </TableCell>
+                            <TableCell>
+                              {scoreWithStdText(
+                                item.conversation_score,
+                                item.conversation_score_std
+                              )}
                             </TableCell>
                             <TableCell>{confidenceText(item.confidence)}</TableCell>
                           </TableRow>
                         ))
                       ) : (
-                        <EmptyTableRow colSpan={4}>暂无可对比的策略数据</EmptyTableRow>
+                        <EmptyTableRow colSpan={6}>暂无可对比的策略数据</EmptyTableRow>
                       )}
                     </TableBody>
                   </Table>

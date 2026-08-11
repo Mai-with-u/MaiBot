@@ -18,6 +18,7 @@ from src.maisaka.context.history import build_session_message_visible_text
 from .image_utils import extract_visual_attachments_from_sequence
 from .judge import JudgeRunner, judge_reply_effect
 from .models import (
+    COMPLETE_OBSERVATION_REASONS,
     EVALUATION_VERSION,
     FollowupMessageSnapshot,
     ReplyAssociation,
@@ -277,7 +278,7 @@ class ReplyEffectTracker:
         await self.wait_for_idle()
 
     async def stop(self) -> None:
-        """短暂排空评审任务；未完成项保留 evaluating，供下次启动恢复。"""
+        """短暂排空评审任务，并将未走完观察窗口的记录结算为不完整。"""
 
         for effect_id in list(self._pending_records):
             await self._schedule_evaluation(effect_id, "runtime_stop")
@@ -333,6 +334,17 @@ class ReplyEffectTracker:
                 timeout_task.cancel()
             if reason == "session_followups_limit":
                 record.followup_messages = record.followup_messages[:SESSION_FOLLOWUP_LIMIT]
+            if reason not in COMPLETE_OBSERVATION_REASONS:
+                record.evaluation_version = EVALUATION_VERSION
+                record.status = ReplyEffectStatus.INCOMPLETE
+                record.scores = None
+                record.finalized_at = now_iso()
+                record.updated_at = record.finalized_at
+                record.finalize_reason = reason
+                record.confidence_note = self._build_confidence_note(record)
+                record.followup_summary = self._build_followup_summary(record)
+                self._storage.save_record(record)
+                return None
             record.status = ReplyEffectStatus.EVALUATING
             record.finalize_reason = reason
             record.updated_at = now_iso()
@@ -372,10 +384,7 @@ class ReplyEffectTracker:
                 record.reply.strategy_secondary = secondary
                 record.reply.strategy_confidence = strategy_confidence
                 await self._apply_associations(associations)
-                record.scores = score_reply_effect(
-                    record,
-                    observation_complete=reason in {"window_timeout", "session_followups_limit"},
-                )
+                record.scores = score_reply_effect(record)
                 record.status = ReplyEffectStatus.FINALIZED
             except _EvaluationTotalTimeoutError:
                 record.status = ReplyEffectStatus.EVALUATION_FAILED
@@ -476,12 +485,10 @@ class ReplyEffectTracker:
     def _build_confidence_note(record: ReplyEffectRecord) -> str:
         if record.status == ReplyEffectStatus.EVALUATION_FAILED:
             return "评审输出校验失败，本记录未参与策略统计。"
+        if record.status == ReplyEffectStatus.INCOMPLETE:
+            return "观察窗口不完整，未进行评分。"
         if not record.followup_messages:
             return "观察窗口内没有后续用户消息。"
-        if record.finalize_reason == "runtime_stop":
-            return "运行时停止导致观察窗口不完整，置信度已降低。"
-        if record.finalize_reason == "runtime_recovery":
-            return "重启恢复的观察窗口可能不完整，置信度已降低。"
         return "已完成完整观察窗口与语义归因。"
 
     @staticmethod

@@ -13,7 +13,7 @@ from src.maisaka.reply_effect.models import (
     UserSnapshot,
     reply_effect_record_from_dict,
 )
-from src.maisaka.reply_effect.scoring import score_reply_effect
+from src.maisaka.reply_effect.scoring import calculate_response_score, score_reply_effect
 
 
 def build_record(effect_id: str = "effect-1") -> ReplyEffectRecord:
@@ -144,13 +144,40 @@ def test_reception_averages_users_instead_of_message_count() -> None:
     assert scores.reception_score == pytest.approx(55.0)
 
 
-def test_missing_reception_is_removed_from_raw_score_weights() -> None:
+def test_no_associations_have_no_reception_or_confidence() -> None:
     record = build_record()
     scores = score_reply_effect(record)
 
     assert scores.reception_score is None
-    assert scores.raw_score == 0.0
-    assert scores.confidence == pytest.approx(0.35)
+    assert scores.confidence is None
+
+
+def test_response_score_does_not_depend_on_latency() -> None:
+    fast_record = build_record("fast")
+    slow_record = build_record("slow")
+    add_followup(
+        fast_record,
+        message_id="fast-reply",
+        user_id="member-a",
+        stance_target="bot_content",
+        stance="neutral",
+        contribution="acknowledge",
+        latency=1.0,
+    )
+    add_followup(
+        slow_record,
+        message_id="slow-reply",
+        user_id="member-a",
+        stance_target="bot_content",
+        stance="neutral",
+        contribution="acknowledge",
+        latency=1_000.0,
+    )
+
+    fast_score, _ = calculate_response_score(fast_record)
+    slow_score, _ = calculate_response_score(slow_record)
+
+    assert fast_score == slow_score == 63.7
 
 
 def test_low_confidence_emotion_shrinks_toward_neutral() -> None:
@@ -170,23 +197,6 @@ def test_low_confidence_emotion_shrinks_toward_neutral() -> None:
 
     assert scores.reception_score == 70.0
     assert scores.reception_evidence_confidence == pytest.approx(1 / 3, abs=0.0001)
-
-
-def test_incomplete_observation_reduces_overall_confidence() -> None:
-    record = build_record()
-    add_followup(
-        record,
-        message_id="positive",
-        user_id="member-a",
-        stance_target="bot_content",
-        stance="appreciation",
-        contribution="maintain",
-    )
-
-    complete = score_reply_effect(record, observation_complete=True)
-    incomplete = score_reply_effect(record, observation_complete=False)
-
-    assert incomplete.confidence == pytest.approx(complete.confidence * 0.6, abs=0.0001)
 
 
 def test_semantic_multi_candidate_association_reduces_confidence() -> None:
@@ -222,7 +232,7 @@ def test_record_restores_evaluation_version() -> None:
 
     restored = reply_effect_record_from_dict(payload)
 
-    assert restored.evaluation_version == 3
+    assert restored.evaluation_version == 5
 
 
 def test_parser_rejects_missing_locked_quote() -> None:

@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional
 
 
 SCHEMA_VERSION = 3
-EVALUATION_VERSION = 3
+EVALUATION_VERSION = 5
+COMPLETE_OBSERVATION_REASONS = frozenset({"window_timeout", "session_followups_limit"})
 
 
 class ReplyEffectStatus(str, Enum):
@@ -17,6 +18,7 @@ class ReplyEffectStatus(str, Enum):
     PENDING = "pending"
     EVALUATING = "evaluating"
     FINALIZED = "finalized"
+    INCOMPLETE = "incomplete"
     EVALUATION_FAILED = "evaluation_failed"
 
 
@@ -108,8 +110,7 @@ class ReplyEffectScores:
     response_score: float
     reception_score: Optional[float]
     conversation_score: float
-    raw_score: float
-    confidence: float
+    confidence: Optional[float]
     response_evidence_confidence: float
     reception_evidence_confidence: float
     conversation_evidence_confidence: float

@@ -26,7 +26,11 @@ from src.common.reply_effect_fingerprint import (
 )
 from src.common.reply_effect_record_codec import decode_record_payload
 from src.maisaka.context.message_adapter import parse_speaker_content
-from src.maisaka.reply_effect.models import SCHEMA_VERSION, reply_effect_record_from_dict
+from src.maisaka.reply_effect.models import (
+    COMPLETE_OBSERVATION_REASONS,
+    SCHEMA_VERSION,
+    reply_effect_record_from_dict,
+)
 from src.maisaka.reply_effect.storage import ReplyEffectStorage
 from src.maisaka.reply_effect.tracker import clear_active_reply_effect_trackers
 from src.webui.dependencies import require_auth
@@ -43,7 +47,6 @@ _SIGNIFICANCE_METRICS = {
     "response_score": "回应度",
     "reception_score": "情感接受度",
     "conversation_score": "聊天推动度",
-    "raw_score": "原始总分",
 }
 
 
@@ -185,13 +188,10 @@ def _filtered_rows(
         statement = statement.where(MaisakaReplyEffect.created_at <= end_at)
     if min_confidence > 0:
         statement = statement.where(MaisakaReplyEffect.confidence >= min_confidence)
-    if status:
-        statement = statement.where(MaisakaReplyEffect.status == status)
     if finalized_only:
         statement = statement.where(MaisakaReplyEffect.status == "finalized")
     sort_column = {
         "created_at": col(MaisakaReplyEffect.created_at),
-        "raw_score": col(MaisakaReplyEffect.raw_score),
         "response_score": col(MaisakaReplyEffect.response_score),
         "reception_score": col(MaisakaReplyEffect.reception_score),
         "conversation_score": col(MaisakaReplyEffect.conversation_score),
@@ -204,6 +204,12 @@ def _filtered_rows(
                 statement.order_by(order_expression, col(MaisakaReplyEffect.created_at).desc())
             ).all()
         )
+    if min_confidence > 0:
+        rows = [row for row in rows if _row_observation_complete(row) and _row_has_evidence(row)]
+    if finalized_only:
+        rows = [row for row in rows if _row_observation_complete(row)]
+    if status:
+        rows = [row for row in rows if _normalized_row_status(row) == status]
     if prompt_fingerprint:
         rows = [row for row in rows if _resolve_row_fingerprints(row)[1] == prompt_fingerprint]
     return rows
@@ -281,10 +287,10 @@ async def list_reply_effects(
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
-    status: str = Query(default="", pattern="^(|pending|evaluating|finalized|evaluation_failed)$"),
+    status: str = Query(default="", pattern="^(|pending|evaluating|finalized|incomplete|evaluation_failed)$"),
     sort_by: str = Query(
         default="created_at",
-        pattern="^(created_at|raw_score|response_score|reception_score|conversation_score|confidence)$",
+        pattern="^(created_at|response_score|reception_score|conversation_score|confidence)$",
     ),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     cursor: int = Query(default=0, ge=0),
@@ -542,24 +548,25 @@ async def get_reply_effect_detail(effect_id: str) -> dict[str, Any]:
 def _row_summary(row: MaisakaReplyEffect) -> dict[str, Any]:
     payload = _load_row_payload(row)
     reply = payload.get("reply") or {}
+    incomplete = payload["status"] == "incomplete"
     request_fingerprint, prompt_version_fingerprint = _resolve_row_fingerprints(row, payload)
     return {
         "effect_id": row.effect_id,
         "session_id": row.session_id,
         "session_name": row.session_name or row.session_id,
-        "status": row.status,
+        "status": payload["status"],
         "created_at": row.created_at.isoformat(),
+        "finalize_reason": str(payload.get("finalize_reason") or ""),
         "strategy_primary": row.strategy_primary,
         "model_name": row.model_name,
         "request_fingerprint": request_fingerprint,
         "prompt_fingerprint": prompt_version_fingerprint,
         "evaluation_version": row.evaluation_version,
         "reply_text": str(reply.get("reply_text") or ""),
-        "response_score": row.response_score,
-        "reception_score": row.reception_score,
-        "conversation_score": row.conversation_score,
-        "raw_score": row.raw_score,
-        "confidence": row.confidence,
+        "response_score": None if incomplete else row.response_score,
+        "reception_score": None if incomplete else row.reception_score,
+        "conversation_score": None if incomplete else row.conversation_score,
+        "confidence": row.confidence if not incomplete and _row_has_evidence(row) else None,
         "evaluation_error": str(payload.get("evaluation_error") or ""),
     }
 
@@ -804,6 +811,20 @@ def _load_row_payload(row: MaisakaReplyEffect) -> dict[str, Any]:
     payload.pop("judge_version", None)
     payload.pop("scorer_version", None)
     payload["evaluation_version"] = row.evaluation_version
+    payload["status"] = _normalized_row_status(row, payload)
+    scores = payload.get("scores")
+    followup_summary = payload.get("followup_summary")
+    if (
+        isinstance(scores, dict)
+        and isinstance(followup_summary, dict)
+        and int(followup_summary.get("associated_count", 0)) == 0
+    ):
+        scores["confidence"] = None
+    if isinstance(scores, dict):
+        scores.pop("raw_score", None)
+    if payload["status"] == "incomplete":
+        payload["scores"] = None
+        payload["confidence_note"] = "观察窗口不完整，未进行评分。"
     return payload
 
 
@@ -822,7 +843,12 @@ def _decompress_import_file(uploaded: bytes) -> str:
 
 def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, Any]:
     def summarize(field_name: str) -> tuple[Optional[float], Optional[float]]:
-        values = [float(value) for row in rows if (value := getattr(row, field_name)) is not None]
+        values = [
+            float(value)
+            for row in rows
+            if (field_name != "confidence" or _row_has_evidence(row))
+            if (value := getattr(row, field_name)) is not None
+        ]
         if not values:
             return None, None
         return round(sum(values) / len(values), 2), round(pstdev(values), 2)
@@ -831,7 +857,6 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
         "response_score",
         "reception_score",
         "conversation_score",
-        "raw_score",
         "confidence",
     )
     score_summaries = {field_name: summarize(field_name) for field_name in score_fields}
@@ -844,6 +869,39 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
         aggregate[field_name] = average
         aggregate[f"{field_name}_std"] = standard_deviation
         aggregate[f"{field_name}_count"] = sum(
-            getattr(row, field_name) is not None for row in rows
+            getattr(row, field_name) is not None
+            and (field_name != "confidence" or _row_has_evidence(row))
+            for row in rows
         )
     return aggregate
+
+
+def _row_has_evidence(row: MaisakaReplyEffect) -> bool:
+    """判断记录是否包含与当前 Bot 回复相关的有效信息。"""
+
+    return any(
+        value not in {None, 0.0}
+        for value in (row.response_score, row.reception_score, row.conversation_score)
+    )
+
+
+def _row_observation_complete(row: MaisakaReplyEffect) -> bool:
+    """判断记录是否完整走完观察窗口。"""
+
+    if row.status != "finalized":
+        return False
+    payload = decode_record_payload(row.record_json, row.record_blob)
+    return str(payload.get("finalize_reason") or "") in COMPLETE_OBSERVATION_REASONS
+
+
+def _normalized_row_status(
+    row: MaisakaReplyEffect,
+    payload: Optional[dict[str, Any]] = None,
+) -> str:
+    """把旧记录中误标为已完成的不完整观察归一化。"""
+
+    if row.status != "finalized":
+        return row.status
+    resolved_payload = payload or decode_record_payload(row.record_json, row.record_blob)
+    finalize_reason = str(resolved_payload.get("finalize_reason") or "")
+    return "finalized" if finalize_reason in COMPLETE_OBSERVATION_REASONS else "incomplete"

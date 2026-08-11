@@ -5,7 +5,9 @@ import pytest
 from src.common.database.database_model import MaisakaReplyEffect
 from src.webui.routers.reply_effects import (
     ReplyEffectComparisonGroup,
+    _aggregate,
     _aggregate_version_group,
+    _row_summary,
     _select_comparison_rows,
     _welch_comparison,
 )
@@ -58,30 +60,70 @@ def test_welch_comparison_requires_two_samples_in_each_group() -> None:
     assert result["reason"] == "两组都至少需要 2 个有效样本"
 
 
+def test_aggregate_excludes_no_information_records_from_confidence() -> None:
+    no_information = _build_summary_row("no-information", 4)
+    no_information.response_score = 0.0
+    no_information.reception_score = None
+    no_information.conversation_score = 0.0
+    no_information.confidence = 0.0
+    with_evidence = _build_summary_row("with-evidence", 4)
+    with_evidence.response_score = 50.0
+    with_evidence.reception_score = None
+    with_evidence.conversation_score = 20.0
+    with_evidence.confidence = 0.8
+
+    aggregate = _aggregate([no_information, with_evidence])
+
+    assert aggregate["confidence"] == 0.8
+    assert aggregate["confidence_count"] == 1
+
+
+def test_incomplete_historical_record_has_no_scores() -> None:
+    row = _build_summary_row("incomplete", 3)
+    row.response_score = 60.0
+    row.reception_score = 50.0
+    row.conversation_score = 40.0
+    row.confidence = 0.21
+    row.record_json = (
+        '{"status":"finalized","finalize_reason":"runtime_stop",'
+        '"reply":{"reply_text":"观察被中断"},'
+        '"scores":{"response_score":60,"reception_score":50,'
+        '"conversation_score":40,"confidence":0.21}}'
+    )
+
+    summary = _row_summary(row)
+
+    assert summary["status"] == "incomplete"
+    assert summary["response_score"] is None
+    assert summary["reception_score"] is None
+    assert summary["conversation_score"] is None
+    assert summary["confidence"] is None
+
+
 def test_version_aggregate_exposes_evaluation_version() -> None:
     aggregate = _aggregate_version_group(
-        [_build_summary_row("effect-v3", 3)],
+        [_build_summary_row("effect-v5", 5)],
         model_name="model-a",
         prompt_fingerprint="prompt-a",
-        evaluation_version=3,
+        evaluation_version=5,
         collapse_models=False,
         collapse_versions=False,
     )
 
-    assert aggregate["evaluation_version"] == 3
-    assert aggregate["evaluation_versions"] == [3]
-    assert aggregate["name"].endswith("评估标准 v3")
+    assert aggregate["evaluation_version"] == 5
+    assert aggregate["evaluation_versions"] == [5]
+    assert aggregate["name"].endswith("评估标准 v5")
 
 
 def test_comparison_selection_does_not_mix_evaluation_versions() -> None:
-    rows = [_build_summary_row("effect-v2", 2), _build_summary_row("effect-v3", 3)]
+    rows = [_build_summary_row("effect-v4", 4), _build_summary_row("effect-v5", 5)]
     group = ReplyEffectComparisonGroup(
-        name="model-a · prompt-a · 评估标准 v3",
+        name="model-a · prompt-a · 评估标准 v5",
         model_names=["model-a"],
         prompt_fingerprints=["prompt-a"],
-        evaluation_versions=[3],
+        evaluation_versions=[5],
     )
 
     selected = _select_comparison_rows(rows, group)
 
-    assert [row.effect_id for row in selected] == ["effect-v3"]
+    assert [row.effect_id for row in selected] == ["effect-v5"]

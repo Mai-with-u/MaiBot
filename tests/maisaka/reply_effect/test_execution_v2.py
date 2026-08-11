@@ -135,7 +135,7 @@ def test_judge_prompt_has_total_limit_and_keeps_required_ids() -> None:
     assert "目标消息" in prompt
     assert record.followup_messages[-1].message_id in prompt
     assert candidates[-1].effect_id in prompt
-    assert "回复效果评估标准版本：v3。" in prompt
+    assert "回复效果评估标准版本：v5。" in prompt
     assert "观察窗口中的消息不一定与 Bot 有关" in prompt
     assert '"message_id": "无关联消息ID", "associations": []' in prompt
     assert "显式引用关系已经由程序锁定" not in prompt
@@ -362,7 +362,33 @@ async def test_start_restores_ready_pending_record() -> None:
 
     assert record.status == ReplyEffectStatus.FINALIZED
     assert record.finalize_reason == "session_followups_limit"
-    assert record.evaluation_version == 3
+    assert record.evaluation_version == 5
+
+
+@pytest.mark.asyncio
+async def test_incomplete_observation_is_not_scored() -> None:
+    record = build_record()
+    storage = FakeStorage()
+    call_count = 0
+
+    async def runner(_prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        return build_judge_payload(record)
+
+    tracker = build_tracker(storage=storage, judge_runner=runner)
+    tracker._started = True
+    tracker._pending_records[record.effect_id] = record
+    tracker._tracked_records[record.effect_id] = record
+
+    await tracker.finalize(record.effect_id, "runtime_stop")
+
+    assert call_count == 0
+    assert record.status == ReplyEffectStatus.INCOMPLETE
+    assert record.scores is None
+    assert record.confidence_note == "观察窗口不完整，未进行评分。"
+    assert record.finalize_reason == "runtime_stop"
+    assert record.evaluation_version == 5
 
 
 @pytest.mark.asyncio

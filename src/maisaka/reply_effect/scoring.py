@@ -1,10 +1,8 @@
-"""回复效果 v3 确定性评分规则。"""
+"""回复效果 v4 确定性评分规则。"""
 
 from __future__ import annotations
 
 from collections import defaultdict
-from math import exp
-
 from .models import FollowupMessageSnapshot, ReplyAssociation, ReplyEffectRecord, ReplyEffectScores
 
 STANCE_VALUES = {
@@ -81,11 +79,8 @@ def calculate_response_score(record: ReplyEffectRecord) -> tuple[float, float]:
         )
     breadth = clamp(sum(per_user.values()) / 3.0)
     depth = clamp(sum(confidences) / 5.0)
-    speed = max(
-        association.attribution_confidence * exp(-followup.latency_seconds / 300.0)
-        for followup, association in edges
-    )
-    score = 100.0 * (0.45 * presence + 0.25 * breadth + 0.20 * depth + 0.10 * speed)
+    # 移除回应速度后，其余三项按原始 45:25:20 的比例归一化。
+    score = 100.0 * (0.45 * presence + 0.25 * breadth + 0.20 * depth) / 0.90
     confidence = sum(per_user.values()) / len(per_user)
     confidence *= _breadth_confidence_factor(len(per_user))
     return round(score, 2), round(clamp(confidence), 4)
@@ -173,31 +168,26 @@ def calculate_conversation_score(record: ReplyEffectRecord) -> tuple[float, floa
 
 def score_reply_effect(
     record: ReplyEffectRecord,
-    *,
-    observation_complete: bool = True,
 ) -> ReplyEffectScores:
+    associations = _record_associations(record)
     response, response_confidence = calculate_response_score(record)
     reception, reception_confidence = calculate_reception_score(record)
     conversation, conversation_confidence = calculate_conversation_score(record)
 
-    weighted_scores = [(response, 0.40), (conversation, 0.30)]
     weighted_confidences = [(response_confidence, 0.40), (conversation_confidence, 0.30)]
     if reception is not None:
-        weighted_scores.append((reception, 0.30))
         weighted_confidences.append((reception_confidence, 0.30))
-    active_weight = sum(weight for _, weight in weighted_scores)
-    raw_score = sum(score * weight for score, weight in weighted_scores) / active_weight
+    active_weight = sum(weight for _, weight in weighted_confidences)
     evidence_confidence = sum(value * weight for value, weight in weighted_confidences) / active_weight
 
-    observation_confidence = 1.0 if observation_complete else 0.6
-    # 完整窗口提供基础可信度，关联与轴向证据决定其余可信度；没有证据时不会得到高置信。
-    confidence = observation_confidence * (0.35 + 0.65 * evidence_confidence)
+    confidence: float | None = None
+    if associations:
+        confidence = 0.35 + 0.65 * evidence_confidence
     return ReplyEffectScores(
         response_score=response,
         reception_score=reception,
         conversation_score=conversation,
-        raw_score=round(raw_score, 2),
-        confidence=round(clamp(confidence), 4),
+        confidence=round(clamp(confidence), 4) if confidence is not None else None,
         response_evidence_confidence=response_confidence,
         reception_evidence_confidence=reception_confidence,
         conversation_evidence_confidence=conversation_confidence,
