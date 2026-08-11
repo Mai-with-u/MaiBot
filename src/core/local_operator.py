@@ -1,6 +1,6 @@
 """本地操作员身份与插件管理权限判定。"""
 
-from typing import Any, Dict, Iterable, Set
+from typing import Any, Dict, Iterable, Mapping, Set
 
 BOT_CONSOLE_PLATFORM = "bot_console"
 BOT_CONSOLE_USER_ID = "local_operator"
@@ -53,3 +53,39 @@ def has_plugin_management_permission(
         return True
     scoped_user_id = build_scoped_user_id(platform, user_id)
     return bool(scoped_user_id) and scoped_user_id in normalize_operator_permissions(permission_list)
+
+
+def has_command_permission(
+    command_id: str,
+    platform: str,
+    user_id: str,
+    session_id: str,
+    operator_permissions: Iterable[str],
+    command_permissions: Mapping[str, Any],
+    *,
+    local_operator: bool,
+) -> bool:
+    """判断用户或聊天是否被允许执行受保护命令。"""
+
+    if has_plugin_management_permission(
+        platform,
+        user_id,
+        operator_permissions,
+        local_operator=local_operator,
+    ):
+        return True
+
+    rule = command_permissions.get(command_id)
+    if rule is None:
+        return False
+
+    if isinstance(rule, Mapping):
+        rule_users = rule.get("allow_users", [])
+        rule_chats = rule.get("allow_chats", [])
+    else:
+        rule_users = rule.allow_users
+        rule_chats = rule.allow_chats
+    allowed_users = normalize_operator_permissions(rule_users)
+    allowed_chats = {chat_id.strip() for chat_id in rule_chats if chat_id.strip()}
+    scoped_user_id = build_scoped_user_id(platform, user_id)
+    return scoped_user_id in allowed_users or session_id in allowed_chats

@@ -208,6 +208,7 @@ class ComponentQueryService:
             description=str(metadata.get("description", "") or ""),
             enabled=bool(entry.enabled),
             plugin_name=entry.plugin_id,
+            permission=str(metadata.get("permission", "public") or "public"),
         )
 
     @staticmethod

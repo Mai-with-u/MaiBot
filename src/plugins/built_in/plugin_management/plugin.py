@@ -10,7 +10,7 @@ import shlex
 
 from maibot_sdk import Command, Field, MaiBotPlugin, PluginConfigBase
 
-from src.core.local_operator import has_plugin_management_permission
+from src.core.local_operator import has_command_permission
 
 
 _VALID_COMPONENT_TYPES = ("tool", "command", "event_handler")
@@ -134,6 +134,7 @@ class PluginManagementPlugin(MaiBotPlugin):
         "management",
         description="管理插件和组件的生命周期",
         pattern=r"(?P<manage_command>^/pm(?:\s+.+)?\s*$)",
+        permission="operator",
     )
     async def handle_management(
         self, stream_id: str = "", platform: str = "", user_id: str = "", matched_groups: dict | None = None, **kwargs
@@ -142,11 +143,16 @@ class PluginManagementPlugin(MaiBotPlugin):
         # 权限检查
         permission_result = await self.ctx.config.get("plugin.permission")
         permission_list = permission_result if isinstance(permission_result, list) else []
+        command_permission_result = await self.ctx.config.get("plugin.command_permissions")
+        command_permissions = command_permission_result if isinstance(command_permission_result, dict) else {}
         is_local_operator = kwargs.get("is_local_operator") is True
-        if not has_plugin_management_permission(
+        if not has_command_permission(
+            f"{_PLUGIN_MANAGEMENT_ID}.management",
             platform,
             user_id,
+            stream_id,
             permission_list,
+            command_permissions,
             local_operator=is_local_operator,
         ):
             await self.ctx.send.text("你没有权限使用插件管理命令", stream_id)

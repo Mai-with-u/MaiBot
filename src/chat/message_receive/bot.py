@@ -15,7 +15,7 @@ from src.common.utils.utils_message import MessageUtils
 from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 from src.core.announcement_manager import global_announcement_manager
-from src.core.local_operator import has_plugin_management_permission, is_local_operator
+from src.core.local_operator import has_command_permission, has_plugin_management_permission, is_local_operator
 from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.component_query import component_query_service
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
@@ -272,6 +272,25 @@ class ChatBot:
                     logger.info("用户禁用的命令，跳过处理")
                     return False, None, True
 
+                if command_info.permission == "operator" and not has_command_permission(
+                    f"{plugin_name}.{command_name}",
+                    message.platform,
+                    message.message_info.user_info.user_id,
+                    message.session_id,
+                    global_config.plugin.permission,
+                    global_config.plugin.command_permissions,
+                    local_operator=is_local_operator(
+                        message.platform,
+                        message.message_info.additional_config,
+                    ),
+                ):
+                    from src.services.send_service import text_to_stream
+
+                    self._mark_command_message(message, intercept_message_level=1)
+                    await self._store_intercepted_command_message(message)
+                    await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
+                    return True, "没有权限", False
+
                 message.is_command = True
                 before_result, message = await self._invoke_message_hook(
                     "chat.command.before_execute",
@@ -347,6 +366,33 @@ class ChatBot:
             logger.error(f"处理命令时出错: {e}")
             return False, None, True  # 出错时继续处理消息
 
+    @staticmethod
+    def _is_command_candidate(message: SessionMessage) -> bool:
+        """判断消息是否会进入内置或插件命令链。"""
+
+        command_text = (message.processed_plain_text or "").strip()
+        if command_text in {"/offline", "/online"}:
+            return True
+
+        message_is_local_operator = is_local_operator(
+            message.platform,
+            message.message_info.additional_config,
+        )
+        if message_is_local_operator:
+            if command_text == CLEAR_CONTEXT_COMMAND or command_text.startswith(f"{CLEAR_CONTEXT_COMMAND} "):
+                return True
+        elif global_config.debug.enable_clear_context_command and is_clear_context_command(command_text):
+            return True
+
+        command_result = component_query_service.find_command_by_text(command_text)
+        if command_result is None:
+            return False
+        _, _, command_info = command_result
+        return not (
+            message.session_id
+            and command_info.name in global_announcement_manager.get_disabled_chat_commands(message.session_id)
+        )
+
     async def _process_clear_context_command(self, message: SessionMessage) -> bool:
         """处理内置 ``/clear`` 指令并清空当前聊天流的 Maisaka 上下文。"""
 
@@ -363,6 +409,22 @@ class ChatBot:
                 return False
         elif not is_clear_context_command(command_text):
             return False
+
+        if not has_command_permission(
+            "core.clear",
+            message.platform,
+            message.message_info.user_info.user_id,
+            message.session_id,
+            global_config.plugin.permission,
+            global_config.plugin.command_permissions,
+            local_operator=message_is_local_operator,
+        ):
+            from src.services.send_service import text_to_stream
+
+            self._mark_command_message(message, intercept_message_level=1)
+            await self._store_intercepted_command_message(message)
+            await text_to_stream("你没有权限使用此命令。", message.session_id, storage_message=False)
+            return True
 
         from src.services.send_service import text_to_stream
 
@@ -734,20 +796,21 @@ class ChatBot:
 
             # 平台层的 @ 检测由底层 is_mentioned_bot_in_message 统一处理；此处不做用户名硬编码匹配
 
-            # 过滤检查
+            # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。
             text = message.processed_plain_text or ""
-            is_banned, word = MessageUtils.check_ban_words(text)
-            if is_banned:
-                chat_name = group_info.group_name if group_info else "私聊"
-                logger.info(f"[{chat_name}]{user_info.user_nickname}:{text}")
-                logger.info(f"[过滤词识别]消息中含有{word}，filtered")
-                return
-            is_banned_regex, pattern = MessageUtils.check_ban_regex(text)
-            if is_banned_regex:
-                chat_name = group_info.group_name if group_info else "私聊"
-                logger.info(f"[{chat_name}]{user_info.user_nickname}:{text}")
-                logger.info(f"[正则表达式过滤]消息匹配到{pattern}，filtered")
-                return
+            if not self._is_command_candidate(message):
+                is_banned, word = MessageUtils.check_ban_words(text)
+                if is_banned:
+                    chat_name = group_info.group_name if group_info else "私聊"
+                    logger.info(f"[{chat_name}]{user_info.user_nickname}:{text}")
+                    logger.info(f"[过滤词识别]消息中含有{word}，filtered")
+                    return
+                is_banned_regex, pattern = MessageUtils.check_ban_regex(text)
+                if is_banned_regex:
+                    chat_name = group_info.group_name if group_info else "私聊"
+                    logger.info(f"[{chat_name}]{user_info.user_nickname}:{text}")
+                    logger.info(f"[正则表达式过滤]消息匹配到{pattern}，filtered")
+                    return
 
             chat_manager.register_message(message)
 

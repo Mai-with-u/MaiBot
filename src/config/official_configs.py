@@ -1,4 +1,4 @@
-from typing import Final, List, Literal, Optional
+from typing import Dict, Final, List, Literal, Optional
 
 import re
 
@@ -5756,6 +5756,16 @@ class MCPConfig(ConfigBase):
         return super().model_post_init(context)
 
 
+class CommandPermissionConfig(ConfigBase):
+    """单个命令的额外放行规则。"""
+
+    allow_users: list[str] = Field(default_factory=list)
+    """允许执行命令的用户，格式如 qq:123456789。"""
+
+    allow_chats: list[str] = Field(default_factory=list)
+    """允许执行命令的真实聊天流 ID。"""
+
+
 class PluginConfig(ConfigBase):
     """插件管理配置类"""
 
@@ -5776,6 +5786,12 @@ class PluginConfig(ConfigBase):
         },
     )
     """允许用聊天命令管理插件的用户，格式如 qq:123456789。"""
+
+    command_permissions: Dict[str, CommandPermissionConfig] = Field(
+        default_factory=dict,
+        json_schema_extra={"hidden": True},
+    )
+    """受保护命令按用户和真实聊天流配置的额外放行规则。"""
 
 
 class PluginRuntimeRenderConfig(ConfigBase):
