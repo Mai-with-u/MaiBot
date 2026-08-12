@@ -1758,10 +1758,16 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             if self._wait_timeout_task is not None and self._pending_wait_tool_call_id == tool_call_id:
                 self._wait_timeout_task = None
 
-    def _consume_pending_wait_state(self) -> tuple[str, float, Optional[float]]:
-        """消费当前 wait 挂起状态，供 wait 完成消息回填。"""
+    def _consume_pending_wait_state(self) -> tuple[Optional[str], float, Optional[float]]:
+        """消费当前 wait 挂起状态，供 wait 完成消息回填。
 
-        tool_call_id = self._pending_wait_tool_call_id or "wait_timeout"
+        返回 ``(None, elapsed, requested)`` 表示当前没有与真实
+        ``tool_calls`` 挂钩的等待状态，调用方不应生成孤立的
+        ``ToolResultMessage``（否则下游客户端（如 Gemini）会因
+        找不到对应的工具名而崩溃，见 issue #1926）。
+        """
+
+        tool_call_id = self._pending_wait_tool_call_id
         started_at = self._pending_wait_started_at
         requested_seconds = self._pending_wait_seconds
         elapsed_seconds = max(0.0, time.time() - started_at) if started_at is not None else 0.0

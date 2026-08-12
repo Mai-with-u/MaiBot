@@ -1153,8 +1153,18 @@ class MaisakaReasoningEngine:
 
         return message_triggered, timeout_triggered, proactive_triggered
 
-    def _build_wait_completed_message(self, *, has_new_messages: bool) -> ToolResultMessage:
-        """构造 wait 完成后的工具结果消息。"""
+    def _build_wait_completed_message(self, *, has_new_messages: bool) -> LLMContextMessage:
+        """构造 wait 完成后的消息。
+
+        当存在与真实 ``tool_calls`` 挂钩的 ``tool_call_id`` 时，返回
+        ``ToolResultMessage``（正常路径）。
+
+        当 ``tool_call_id`` 为空（例如模型仅在文本中思考了"建议调用
+        wait" 但未下发结构化 ``tool_calls``，或跨回合 ID 碰撞导致挂起
+        状态被错配）时，返回 ``AssistantMessage`` 而非孤立的
+        ``ToolResultMessage``，避免下游客户端（如 Gemini）因找不到对应
+        工具名而崩溃（issue #1926）。
+        """
         tool_call_id, elapsed_seconds, requested_seconds = self._runtime._consume_pending_wait_state()
         elapsed_text = f"{elapsed_seconds:.1f} 秒"
         requested_text = f"，原计划等待 {requested_seconds:.1f} 秒" if requested_seconds is not None else ""
@@ -1163,6 +1173,18 @@ class MaisakaReasoningEngine:
             if has_new_messages
             else f"等待已超时，实际等待 {elapsed_text}{requested_text}，期间没有收到新的用户输入。请基于现有上下文继续下一轮思考。"
         )
+        if tool_call_id is None:
+            # 没有与真实 tool_calls 挂钩的等待状态，注入为普通 assistant
+            # 文本消息，避免生成无源的 ToolResultMessage 导致 Gemini 等
+            # 客户端反查工具名时崩溃。
+            logger.warning(
+                f"{self._runtime.log_prefix} wait 超时回填时未找到对应的 tool_call_id，"
+                "降级为 assistant 文本消息而非 ToolResultMessage"
+            )
+            return AssistantMessage(
+                content=content,
+                timestamp=datetime.now(),
+            )
         return ToolResultMessage(
             content=content,
             timestamp=datetime.now(),
