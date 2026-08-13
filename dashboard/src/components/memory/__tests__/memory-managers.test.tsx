@@ -10,6 +10,7 @@ import type {
   MemoryEpisodeActionPayload,
   MemoryEpisodeDetailPayload,
   MemoryEpisodeItemPayload,
+  MemoryEpisodeListPayload,
   MemoryEpisodeStatusPayload,
   MemoryImportChatTargetPayload,
   MemoryTimelineEventPayload,
@@ -552,7 +553,7 @@ describe('MemoryEpisodeManager 列表、筛选与空态', () => {
   }
 
   it('首次加载中显示加载态，空列表与空详情展示占位', async () => {
-    let resolveList: (value: { success: boolean; items?: MemoryEpisodeItemPayload[] }) => void = () => {}
+    let resolveList: (value: MemoryEpisodeListPayload) => void = () => {}
     vi.mocked(memoryApi.getMemoryEpisodes).mockImplementation(
       () => new Promise((resolve) => {
         resolveList = resolve
@@ -563,7 +564,7 @@ describe('MemoryEpisodeManager 列表、筛选与空态', () => {
     expect(screen.getByLabelText('加载中')).toBeInTheDocument()
     expect(screen.queryByText('没有匹配的 Episode')).not.toBeInTheDocument()
 
-    resolveList({ success: true })
+    resolveList({ success: true, items: [] })
     expect(await screen.findByText('没有匹配的 Episode')).toBeInTheDocument()
     expect(screen.getByText('选择一个 Episode 查看详情。')).toBeInTheDocument()
   })
@@ -1273,8 +1274,8 @@ describe('MemoryTimelineManager 范围、筛选与分页', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '时间轴滑块提交' }))
     await waitFor(() => {
-      expect(memoryApi.getMemoryTimeline.mock.calls.length).toBeGreaterThan(callsBefore)
-      const last = memoryApi.getMemoryTimeline.mock.calls.at(-1)?.[0]
+      expect(vi.mocked(memoryApi.getMemoryTimeline).mock.calls.length).toBeGreaterThan(callsBefore)
+      const last = vi.mocked(memoryApi.getMemoryTimeline).mock.calls.at(-1)?.[0]
       expect(last?.timeStart).toBeGreaterThan(1_700_000_000)
     })
   })

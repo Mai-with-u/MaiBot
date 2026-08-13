@@ -770,7 +770,7 @@ describe('ReasoningProcessPage 浏览筛选与分页', () => {
     const callsBefore = vi.mocked(reasoningApi.listReasoningPromptFiles).mock.calls.length
     await user.click(screen.getByRole('button', { name: '刷新' }))
     await waitFor(() => {
-      expect(reasoningApi.listReasoningPromptFiles.mock.calls.length).toBeGreaterThan(callsBefore)
+      expect(vi.mocked(reasoningApi.listReasoningPromptFiles).mock.calls.length).toBeGreaterThan(callsBefore)
     })
     expect(screen.getAllByText(/规划器\/测试群\/晚饭计划/).length).toBeGreaterThan(0)
   })

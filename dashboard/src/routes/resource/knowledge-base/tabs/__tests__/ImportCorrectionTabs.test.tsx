@@ -3,7 +3,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { Tabs } from '@/components/ui/tabs'
 import type {
@@ -27,6 +27,14 @@ import { ImportTab } from '../ImportTab'
 afterEach(() => {
   cleanup()
 })
+
+/** makeCorrection 里 setter 实际是 vi.fn()，但对外类型是 React Dispatch */
+function pageUpdater(
+  setter: UseMemoryCorrectionResult['setPlanPage'],
+  callIndex: number,
+): (current: number) => number {
+  return (setter as unknown as Mock).mock.calls[callIndex][0] as (current: number) => number
+}
 
 beforeEach(() => {
   if (!Element.prototype.hasPointerCapture) {
@@ -1331,11 +1339,11 @@ describe('CorrectionTab', () => {
     expect(correction.setPlanScopeFilter).toHaveBeenCalledWith('person_profile')
 
     await user.click(screen.getByRole('button', { name: '上一页' }))
-    const prev = correction.setPlanPage.mock.calls[0][0] as (current: number) => number
+    const prev = pageUpdater(correction.setPlanPage, 0)
     expect(prev(2)).toBe(1)
     expect(prev(1)).toBe(1)
     await user.click(screen.getByRole('button', { name: '下一页' }))
-    const next = correction.setPlanPage.mock.calls[1][0] as (current: number) => number
+    const next = pageUpdater(correction.setPlanPage, 1)
     expect(next(2)).toBe(3)
     expect(next(3)).toBe(3)
 

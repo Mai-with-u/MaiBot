@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PluginConfigPage } from '../plugin-config'
 import * as chatApi from '@/lib/chat-management-api'
 import * as pluginApi from '@/lib/plugin-api'
-import type { ConfigFieldSchema, PluginRuntimeComponent } from '@/lib/plugin-api'
+import type { ConfigFieldSchema, InstalledPlugin, PluginRuntimeComponent } from '@/lib/plugin-api'
 
 // jsdom 未完整实现 Pointer Capture，文档浮窗拖拽会调用这些方法
 Element.prototype.setPointerCapture = function setPointerCapture() {}
@@ -169,14 +169,14 @@ vi.mock('@/lib/plugin-api', () => ({
   getLocalPluginChangelog: vi.fn(),
 }))
 
-function makePlugin(id: string, name: string) {
+function makePlugin(id: string, name: string): InstalledPlugin {
   return {
     id,
     path: `/plugins/${id}`,
     enabled: true,
-    load_status: 'success' as const,
-    load_error: undefined as string | undefined,
-    changelog: null as string | null,
+    load_status: 'success',
+    load_error: undefined,
+    changelog: null,
     manifest: {
       manifest_version: 2,
       id,
@@ -187,7 +187,7 @@ function makePlugin(id: string, name: string) {
       license: 'MIT',
       host_application: {
         min_version: '1.0.0',
-        max_version: undefined as string | undefined,
+        max_version: undefined,
       },
     },
   }
@@ -1771,9 +1771,11 @@ describe('PluginConfigPage 列表操作与状态', () => {
   })
 
   it('删除插件成功、失败与 loading 时不可关闭', async () => {
-    let resolveUninstall: (value: unknown) => void = () => undefined
+    let resolveUninstall: (value?: unknown) => void = () => undefined
     vi.mocked(pluginApi.uninstallPlugin).mockImplementation(
-      () => new Promise((resolve) => { resolveUninstall = resolve })
+      () => new Promise((resolve) => {
+        resolveUninstall = (value) => resolve(value as never)
+      })
     )
     const user = userEvent.setup()
     renderPage()
@@ -1821,9 +1823,11 @@ describe('PluginConfigPage 列表操作与状态', () => {
       },
     ] as never)
 
-    let resolveUpdate: (value: unknown) => void = () => undefined
+    let resolveUpdate: (value?: unknown) => void = () => undefined
     vi.mocked(pluginApi.updatePlugin).mockImplementation(
-      () => new Promise((resolve) => { resolveUpdate = resolve })
+      () => new Promise((resolve) => {
+        resolveUpdate = (value) => resolve(value as never)
+      })
     )
 
     const user = userEvent.setup()
@@ -2008,7 +2012,7 @@ describe('PluginConfigPage 列表操作与状态', () => {
     renderPage()
     await screen.findByText('Emoji Plugin')
     await user.click(screen.getByRole('button', { name: '刷新' }))
-    await waitFor(() => expect(pluginApi.getInstalledPlugins.mock.calls.length).toBeGreaterThan(1))
+    await waitFor(() => expect(vi.mocked(pluginApi.getInstalledPlugins).mock.calls.length).toBeGreaterThan(1))
     await user.click(screen.getByRole('button', { name: /重启麦麦/ }))
     expect(restartState.triggerRestart).toHaveBeenCalled()
   })

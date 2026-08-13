@@ -1,4 +1,5 @@
 import type { ComponentProps } from 'react'
+import type { PluginManifest } from '@/types/plugin'
 import type {
   GitStatus,
   MaimaiVersion,
@@ -34,7 +35,10 @@ function daysAgo(days: number): string {
   return new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
-function makePlugin(id: string, overrides: Partial<PluginInfo> = {}): PluginInfo {
+function makePlugin(
+  id: string,
+  overrides: Omit<Partial<PluginInfo>, 'manifest'> & { manifest?: Partial<PluginManifest> } = {},
+): PluginInfo {
   const { manifest: manifestOverrides, ...pluginOverrides } = overrides
   return {
     id,

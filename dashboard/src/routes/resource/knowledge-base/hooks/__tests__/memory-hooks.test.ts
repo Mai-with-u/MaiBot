@@ -24,6 +24,7 @@ import {
 } from '../../constants'
 import { useImportQueue } from '../useImportQueue'
 import { useMemoryCorrection } from '../useMemoryCorrection'
+import type { UseMemoryCorrectionOptions } from '../useMemoryCorrection'
 
 const toastMock = vi.hoisted(() => vi.fn())
 
@@ -258,12 +259,11 @@ function renderQueue(
   )
 }
 
-function renderCorrection(
-  options: Parameters<typeof useMemoryCorrection>[0] = { active: true },
-) {
-  return renderHook((props: Parameters<typeof useMemoryCorrection>[0]) => useMemoryCorrection(props), {
+function renderCorrection(options: Partial<UseMemoryCorrectionOptions> = {}) {
+  const { active = true, ...rest } = options
+  return renderHook((props: UseMemoryCorrectionOptions) => useMemoryCorrection(props), {
     wrapper: makeWrapper(),
-    initialProps: { active: true, ...options },
+    initialProps: { ...rest, active },
   })
 }
 

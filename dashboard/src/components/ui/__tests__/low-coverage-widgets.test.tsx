@@ -248,7 +248,7 @@ describe('ChartTooltipContent', () => {
     renderTooltip({
       active: true,
       labelKey: 'kind',
-      labelFormatter: (value) => `格式化:${String(value)}`,
+      labelFormatter: (value: unknown) => `格式化:${String(value)}`,
       payload: [
         {
           dataKey: 'visits',
@@ -378,9 +378,8 @@ describe('ChartTooltipContent', () => {
             {
               dataKey: 'desktop',
               name: 'desktop',
-              kind: 'missing-key',
               value: 1,
-              payload: {},
+              payload: { kind: 'missing-key' },
             },
           ]}
         />

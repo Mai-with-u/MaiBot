@@ -921,8 +921,8 @@ describe('ExpressionManagementPage 导入导出清除与分页', () => {
     vi.mocked(expressionApi.getExpressionList).mockImplementation(async (params) => ({
       success: true,
       total: 50,
-      page: params.page,
-      page_size: params.page_size,
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
       data: [makeExpr(1, '情境A'), makeExpr(2, '情境B')],
     }))
     await renderPage()

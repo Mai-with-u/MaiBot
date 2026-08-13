@@ -3,15 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { reducer, toast, useToast } from '../use-toast'
 
-type ToastItem = {
-  id: string
-  title?: string
-  description?: string
-  open?: boolean
-}
+type ToastState = Parameters<typeof reducer>[0]
+type ToasterToast = ToastState['toasts'][number]
 
 /** 构造 reducer 用的最小 toast，避免每个用例重复字段 */
-function makeToast(overrides: ToastItem): ToastItem {
+function makeToast(overrides: Pick<ToasterToast, 'id'> & Partial<ToasterToast>): ToasterToast {
   return { open: true, title: overrides.title ?? overrides.id, ...overrides }
 }
 
@@ -39,7 +35,7 @@ afterEach(() => {
 
 describe('reducer', () => {
   it('ADD_TOAST 新项前置，并裁剪到最多 5 条', () => {
-    let state = { toasts: [] as ToastItem[] }
+    let state: ToastState = { toasts: [] }
 
     for (let index = 1; index <= 6; index += 1) {
       state = reducer(state, {

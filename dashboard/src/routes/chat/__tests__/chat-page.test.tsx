@@ -753,7 +753,7 @@ describe('聊天页 ChatPage', () => {
     const OriginalFileReader = window.FileReader
     window.FileReader = class extends OriginalFileReader {
       override readAsDataURL() {
-        this.onerror?.(new ProgressEvent('error'))
+        this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
       }
     } as typeof FileReader
 
@@ -780,7 +780,7 @@ describe('聊天页 ChatPage', () => {
     window.FileReader = class extends OriginalFileReader {
       override readAsDataURL() {
         Object.defineProperty(this, 'result', { value: 'data:text/plain;base64,AAAA' })
-        this.onload?.(new ProgressEvent('load'))
+        this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>)
       }
     } as typeof FileReader
 

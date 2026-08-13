@@ -20,7 +20,7 @@ describe('createJsonFieldHook', () => {
       placeholder: '{}',
     })
 
-    render(<JsonHook fieldPath="mcp.roots" onChange={vi.fn()} schema={fieldSchema} />)
+    render(<JsonHook fieldPath="mcp.roots" onChange={vi.fn()} schema={fieldSchema} value={undefined} />)
 
     expect(screen.getByDisplayValue(/"enabled": true/)).toBeInTheDocument()
     expect(screen.getByText('JSON 有效，修改会立即写回配置草稿。')).toBeInTheDocument()

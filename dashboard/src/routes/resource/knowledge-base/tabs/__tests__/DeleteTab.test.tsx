@@ -3,7 +3,7 @@
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { Tabs } from '@/components/ui/tabs'
 import type {
@@ -19,6 +19,14 @@ import { DeleteTab } from '../DeleteTab'
 afterEach(() => {
   cleanup()
 })
+
+/** makeDelete 里 setter 实际是 vi.fn()，但对外类型是 React Dispatch */
+function pageUpdater(
+  setter: UseMemoryDeleteResult['setOperationPage'],
+  callIndex: number,
+): (current: number) => number {
+  return (setter as unknown as Mock).mock.calls[callIndex][0] as (current: number) => number
+}
 
 beforeEach(() => {
   if (!Element.prototype.hasPointerCapture) {
@@ -277,11 +285,11 @@ describe('DeleteTab', () => {
     expect(memoryDelete.setOperationStatusFilter).toHaveBeenCalledWith('executed')
 
     await user.click(screen.getByRole('button', { name: '上一页' }))
-    const prev = memoryDelete.setOperationPage.mock.calls[0][0] as (current: number) => number
+    const prev = pageUpdater(memoryDelete.setOperationPage, 0)
     expect(prev(2)).toBe(1)
     expect(prev(1)).toBe(1)
     await user.click(screen.getByRole('button', { name: '下一页' }))
-    const next = memoryDelete.setOperationPage.mock.calls[1][0] as (current: number) => number
+    const next = pageUpdater(memoryDelete.setOperationPage, 1)
     expect(next(2)).toBe(3)
     expect(next(3)).toBe(3)
   })
@@ -418,15 +426,11 @@ describe('DeleteTab', () => {
     const prevButtons = screen.getAllByRole('button', { name: '上一页' })
     const nextButtons = screen.getAllByRole('button', { name: '下一页' })
     await user.click(prevButtons[1])
-    const prev = memoryDelete.setSelectedOperationItemPage.mock.calls[0][0] as (
-      current: number,
-    ) => number
+    const prev = pageUpdater(memoryDelete.setSelectedOperationItemPage, 0)
     expect(prev(2)).toBe(1)
     expect(prev(1)).toBe(1)
     await user.click(nextButtons[1])
-    const next = memoryDelete.setSelectedOperationItemPage.mock.calls[1][0] as (
-      current: number,
-    ) => number
+    const next = pageUpdater(memoryDelete.setSelectedOperationItemPage, 1)
     expect(next(2)).toBe(3)
     expect(next(3)).toBe(3)
   })

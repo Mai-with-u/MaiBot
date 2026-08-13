@@ -17,6 +17,7 @@ import * as chatApi from '@/lib/chat-management-api'
 import * as configApi from '@/lib/config-api'
 
 import type {
+  AdapterPolicyStatus,
   ChatAdapterStatus,
   ChatStream,
   ChatStreamDeleteResult,
@@ -72,6 +73,20 @@ vi.mock('@/lib/config-api', () => ({
   getBotConfig: vi.fn(),
   updateBotConfigSection: vi.fn(),
 }))
+
+function makePolicy(overrides: Partial<AdapterPolicyStatus> = {}): AdapterPolicyStatus {
+  return {
+    allowed: true,
+    configured: true,
+    chat_type: 'group',
+    target_id: '1',
+    list_type: '',
+    source: '',
+    reason: '',
+    matched_ids: [],
+    ...overrides,
+  }
+}
 
 /** 构造一个字段完整的聊天流（按需覆盖）。 */
 function makeChat(id: number, overrides: Partial<ChatStream> = {}): ChatStream {
@@ -1220,52 +1235,52 @@ describe('ChatManagementPage 详情空态与错误', () => {
           makeAdapter({
             adapter_id: 'allow-1',
             gateway_name: 'onebot.gateway',
-            policy: { reason: 'matched_allow_override', configured: true, allowed: true },
+            policy: makePolicy({ reason: 'matched_allow_override', configured: true, allowed: true }),
           }),
           makeAdapter({
             adapter_id: 'deny-1',
             gateway_name: 'deny-gw',
-            policy: { reason: 'matched_deny_override', configured: true, allowed: false },
+            policy: makePolicy({ reason: 'matched_deny_override', configured: true, allowed: false }),
           }),
           makeAdapter({
             adapter_id: 'bl-miss',
             gateway_name: 'list-gw',
-            policy: {
+            policy: makePolicy({
               configured: true,
               allowed: true,
               list_type: 'blacklist',
               source: 'defaults',
-            },
+            }),
           }),
           makeAdapter({
             adapter_id: 'wl-pass',
             gateway_name: 'wl-gw',
-            policy: {
+            policy: makePolicy({
               configured: true,
               allowed: true,
               list_type: 'whitelist',
               source: 'adapter',
-            },
+            }),
           }),
           makeAdapter({
             adapter_id: 'bl-hit',
             gateway_name: 'bl-gw',
-            policy: {
+            policy: makePolicy({
               configured: true,
               allowed: false,
               list_type: 'blacklist',
               source: 'defaults',
-            },
+            }),
           }),
           makeAdapter({
             adapter_id: 'wl-miss',
             gateway_name: 'wl-miss-gw',
-            policy: {
+            policy: makePolicy({
               configured: true,
               allowed: false,
               list_type: 'whitelist',
               source: 'adapter',
-            },
+            }),
           }),
           makeAdapter({
             adapter_id: 'adapter',
@@ -1276,7 +1291,7 @@ describe('ChatManagementPage 详情空态与错误', () => {
             routed: false,
             send_bound: false,
             receive_bound: false,
-            policy: { configured: false, allowed: false },
+            policy: makePolicy({ configured: false, allowed: false }),
           }),
           makeAdapter({
             adapter_id: 'recv-only',
@@ -1286,7 +1301,7 @@ describe('ChatManagementPage 详情空态与错误', () => {
             send_bound: false,
             receive_bound: true,
             account_id: null,
-            policy: { configured: false, allowed: true },
+            policy: makePolicy({ configured: false, allowed: true }),
           }),
         ],
       })

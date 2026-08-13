@@ -1642,7 +1642,7 @@ describe('FocusCompanionExperience 三维模型加载', () => {
   it('ResizeObserver 按挂载节点尺寸调用 setSize', async () => {
     const observers: ResizeObserverCallback[] = []
     class CapturingResizeObserver {
-      constructor(private readonly callback: ResizeObserverCallback) {
+      constructor(callback: ResizeObserverCallback) {
         observers.push(callback)
       }
       observe() {}

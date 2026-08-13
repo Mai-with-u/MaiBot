@@ -372,7 +372,7 @@ describe('createListItemEditorHook', () => {
     const ListHook = createListItemEditorHook()
 
     const { rerender } = render(
-      <ListHook fieldPath="demo.items" onChange={vi.fn()} schema={fieldSchema} nestedSchema={itemSchema} />,
+      <ListHook fieldPath="demo.items" onChange={vi.fn()} schema={fieldSchema} nestedSchema={itemSchema} value={undefined} />,
     )
     expect(screen.getByText('尚未添加任何条目，点击下方按钮新增。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '添加一项' })).toBeInTheDocument()

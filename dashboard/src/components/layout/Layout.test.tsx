@@ -9,7 +9,7 @@ const routerMocks = vi.hoisted(() => ({
   navigate: vi.fn(() => Promise.resolve()),
   pathname: '/',
   status: 'idle' as 'idle' | 'pending',
-  subscribe: vi.fn(() => () => {}),
+  subscribe: vi.fn((_event?: string, _callback?: () => void) => () => {}),
 }))
 
 const layoutMocks = vi.hoisted(() => {
@@ -689,7 +689,7 @@ describe('Layout 壳层、快捷键与公告入口', () => {
         items: [{ path: '/config/bot', label: 'sidebar.menu.botMainConfig' }],
       },
     ]
-    routerMocks.subscribe.mockImplementation((_event, callback: () => void) => {
+    routerMocks.subscribe.mockImplementation((_event?: string, callback?: () => void) => {
       onResolved = callback
       return unsubscribe
     })
