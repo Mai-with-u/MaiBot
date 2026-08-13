@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 
 SCHEMA_VERSION = 3
-EVALUATION_VERSION = 5
+EVALUATION_VERSION = 6
 COMPLETE_OBSERVATION_REASONS = frozenset({"window_timeout", "session_followups_limit"})
 
 
@@ -108,7 +108,8 @@ class FollowupMessageSnapshot:
 @dataclass(slots=True)
 class ReplyEffectScores:
     response_score: float
-    reception_score: Optional[float]
+    reception_categories: List[str]
+    reception_counts: Dict[str, int]
     conversation_score: float
     confidence: Optional[float]
     response_evidence_confidence: float

@@ -135,7 +135,9 @@ def test_judge_prompt_has_total_limit_and_keeps_required_ids() -> None:
     assert "目标消息" in prompt
     assert record.followup_messages[-1].message_id in prompt
     assert "candidate_id=c60" in prompt
-    assert "回复效果评估标准版本：v5。" in prompt
+    assert "回复效果评估标准版本：v6。" in prompt
+    assert "Bot 身份名称：" in prompt
+    assert "紧邻消息继续评价 Bot 的回答、能力、人格或近期表现" in prompt
     assert "观察窗口中的消息不一定与 Bot 有关" in prompt
     assert '"message_id": "无关联消息ID", "associations": []' in prompt
     assert '"candidate_id": "c1"' in prompt
@@ -379,7 +381,7 @@ async def test_start_restores_ready_pending_record() -> None:
 
     assert record.status == ReplyEffectStatus.FINALIZED
     assert record.finalize_reason == "session_followups_limit"
-    assert record.evaluation_version == 5
+    assert record.evaluation_version == 6
 
 
 @pytest.mark.asyncio
@@ -405,7 +407,7 @@ async def test_incomplete_observation_is_not_scored() -> None:
     assert record.scores is None
     assert record.confidence_note == "观察窗口不完整，未进行评分。"
     assert record.finalize_reason == "runtime_stop"
-    assert record.evaluation_version == 5
+    assert record.evaluation_version == 6
 
 
 @pytest.mark.asyncio

@@ -45,7 +45,6 @@ _MAX_IMPORT_JSON_BYTES = 256 * 1024 * 1024
 _SIGNIFICANCE_ALPHA = 0.05
 _SIGNIFICANCE_METRICS = {
     "response_score": "回应度",
-    "reception_score": "情感接受度",
     "conversation_score": "聊天推动度",
 }
 
@@ -193,7 +192,6 @@ def _filtered_rows(
     sort_column = {
         "created_at": col(MaisakaReplyEffect.created_at),
         "response_score": col(MaisakaReplyEffect.response_score),
-        "reception_score": col(MaisakaReplyEffect.reception_score),
         "conversation_score": col(MaisakaReplyEffect.conversation_score),
         "confidence": col(MaisakaReplyEffect.confidence),
     }[sort_by]
@@ -290,7 +288,7 @@ async def list_reply_effects(
     status: str = Query(default="", pattern="^(|pending|evaluating|finalized|incomplete|evaluation_failed)$"),
     sort_by: str = Query(
         default="created_at",
-        pattern="^(created_at|response_score|reception_score|conversation_score|confidence)$",
+        pattern="^(created_at|response_score|conversation_score|confidence)$",
     ),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
     cursor: int = Query(default=0, ge=0),
@@ -564,7 +562,8 @@ def _row_summary(row: MaisakaReplyEffect) -> dict[str, Any]:
         "evaluation_version": row.evaluation_version,
         "reply_text": str(reply.get("reply_text") or ""),
         "response_score": None if incomplete else row.response_score,
-        "reception_score": None if incomplete else row.reception_score,
+        "reception_categories": [] if incomplete else _reception_categories(payload),
+        "reception_counts": {} if incomplete else _reception_counts(payload),
         "conversation_score": None if incomplete else row.conversation_score,
         "confidence": row.confidence if not incomplete and _row_has_evidence(row) else None,
         "evaluation_error": str(payload.get("evaluation_error") or ""),
@@ -713,7 +712,6 @@ def _aggregate_version_group(
                 field_name: _score_distribution(rows, field_name)
                 for field_name in (
                     "response_score",
-                    "reception_score",
                     "conversation_score",
                 )
             },
@@ -726,33 +724,15 @@ def _score_distribution(
     rows: list[MaisakaReplyEffect],
     field_name: str,
 ) -> dict[str, Any]:
-    """按 5 分区间统计真实评分分布，并转换为组内样本占比。"""
+    """返回散点图所需的逐条真实评分。"""
 
-    bucket_width = 5
-    bucket_count = 100 // bucket_width
-    counts = [0] * bucket_count
     values = [float(value) for row in rows if (value := getattr(row, field_name)) is not None]
     for value in values:
         if not 0 <= value <= 100:
             raise ValueError(f"回复效果分数超出 0～100：field={field_name} value={value}")
-        bucket_index = min(int(value // bucket_width), bucket_count - 1)
-        counts[bucket_index] += 1
-
-    sample_count = len(values)
     return {
-        "sample_count": sample_count,
-        "buckets": [
-            {
-                "score": bucket_index * bucket_width,
-                "range": (
-                    f"{bucket_index * bucket_width}～"
-                    f"{(bucket_index + 1) * bucket_width}"
-                ),
-                "count": count,
-                "percentage": round(count * 100 / sample_count, 2) if sample_count else 0.0,
-            }
-            for bucket_index, count in enumerate(counts)
-        ],
+        "sample_count": len(values),
+        "values": values,
     }
 
 
@@ -822,6 +802,9 @@ def _load_row_payload(row: MaisakaReplyEffect) -> dict[str, Any]:
         scores["confidence"] = None
     if isinstance(scores, dict):
         scores.pop("raw_score", None)
+        scores.pop("reception_score", None)
+        scores.setdefault("reception_categories", [])
+        scores.setdefault("reception_counts", {})
     if payload["status"] == "incomplete":
         payload["scores"] = None
         payload["confidence_note"] = "观察窗口不完整，未进行评分。"
@@ -855,7 +838,6 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
 
     score_fields = (
         "response_score",
-        "reception_score",
         "conversation_score",
         "confidence",
     )
@@ -873,16 +855,53 @@ def _aggregate(rows: list[MaisakaReplyEffect], *, name: str = "") -> dict[str, A
             and (field_name != "confidence" or _row_has_evidence(row))
             for row in rows
         )
+    reception_counts: dict[str, int] = defaultdict(int)
+    reception_record_count = 0
+    for row in rows:
+        counts = _reception_counts(_load_row_payload(row))
+        if counts:
+            reception_record_count += 1
+        for category, count in counts.items():
+            reception_counts[category] += count
+    aggregate["reception_counts"] = dict(reception_counts)
+    aggregate["reception_record_count"] = reception_record_count
     return aggregate
+
+
+def _reception_counts(payload: dict[str, Any]) -> dict[str, int]:
+    scores = payload.get("scores")
+    if not isinstance(scores, dict):
+        return {}
+    raw_counts = scores.get("reception_counts")
+    if not isinstance(raw_counts, dict):
+        return {}
+    return {
+        str(category): int(count)
+        for category, count in raw_counts.items()
+        if isinstance(count, int) and count > 0
+    }
+
+
+def _reception_categories(payload: dict[str, Any]) -> list[str]:
+    scores = payload.get("scores")
+    if not isinstance(scores, dict):
+        return []
+    categories = scores.get("reception_categories")
+    if not isinstance(categories, list):
+        return []
+    return [str(category) for category in categories]
 
 
 def _row_has_evidence(row: MaisakaReplyEffect) -> bool:
     """判断记录是否包含与当前 Bot 回复相关的有效信息。"""
 
-    return any(
+    has_continuous_score = any(
         value not in {None, 0.0}
-        for value in (row.response_score, row.reception_score, row.conversation_score)
+        for value in (row.response_score, row.conversation_score)
     )
+    if has_continuous_score:
+        return True
+    return bool(_reception_categories(_load_row_payload(row)))
 
 
 def _row_observation_complete(row: MaisakaReplyEffect) -> bool:

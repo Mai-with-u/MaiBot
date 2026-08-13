@@ -8,6 +8,7 @@ from src.webui.routers.reply_effects import (
     _aggregate,
     _aggregate_version_group,
     _row_summary,
+    _score_distribution,
     _select_comparison_rows,
     _welch_comparison,
 )
@@ -78,6 +79,26 @@ def test_aggregate_excludes_no_information_records_from_confidence() -> None:
     assert aggregate["confidence_count"] == 1
 
 
+def test_aggregate_counts_reception_categories_without_numeric_score() -> None:
+    positive = _build_summary_row("positive", 6)
+    positive.record_json = (
+        '{"status":"finalized","finalize_reason":"window_timeout",'
+        '"scores":{"reception_categories":["appreciation"],'
+        '"reception_counts":{"appreciation":2}}}'
+    )
+    correction = _build_summary_row("correction", 6)
+    correction.record_json = (
+        '{"status":"finalized","finalize_reason":"window_timeout",'
+        '"scores":{"reception_categories":["factual_correction"],'
+        '"reception_counts":{"factual_correction":1}}}'
+    )
+
+    aggregate = _aggregate([positive, correction])
+
+    assert aggregate["reception_counts"] == {"appreciation": 2, "factual_correction": 1}
+    assert aggregate["reception_record_count"] == 2
+
+
 def test_incomplete_historical_record_has_no_scores() -> None:
     row = _build_summary_row("incomplete", 3)
     row.response_score = 60.0
@@ -95,7 +116,8 @@ def test_incomplete_historical_record_has_no_scores() -> None:
 
     assert summary["status"] == "incomplete"
     assert summary["response_score"] is None
-    assert summary["reception_score"] is None
+    assert summary["reception_categories"] == []
+    assert summary["reception_counts"] == {}
     assert summary["conversation_score"] is None
     assert summary["confidence"] is None
 
@@ -113,6 +135,17 @@ def test_version_aggregate_exposes_evaluation_version() -> None:
     assert aggregate["evaluation_version"] == 5
     assert aggregate["evaluation_versions"] == [5]
     assert aggregate["name"].endswith("评估标准 v5")
+
+
+def test_score_distribution_returns_raw_samples_for_scatter_plot() -> None:
+    first = _build_summary_row("first", 5)
+    first.response_score = 0.0
+    second = _build_summary_row("second", 5)
+    second.response_score = 63.75
+
+    distribution = _score_distribution([first, second], "response_score")
+
+    assert distribution == {"sample_count": 2, "values": [0.0, 63.75]}
 
 
 def test_comparison_selection_does_not_mix_evaluation_versions() -> None:

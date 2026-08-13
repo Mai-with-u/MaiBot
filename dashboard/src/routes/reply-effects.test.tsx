@@ -14,8 +14,8 @@ const versionAggregates = [
     count: 12,
     response_score: 52,
     response_score_std: 8,
-    reception_score: 60,
-    reception_score_std: 7,
+    reception_counts: { appreciation: 5, neutral: 2 },
+    reception_record_count: 6,
     conversation_score: 50,
     conversation_score_std: 6,
     confidence: 0.8,
@@ -30,15 +30,18 @@ const versionAggregates = [
     last_seen: '2026-01-02T00:00:00',
     collapsed_models: false,
     collapsed_versions: false,
-    score_distributions: {},
+    score_distributions: {
+      response_score: { sample_count: 3, values: [0, 52, 76] },
+      conversation_score: { sample_count: 3, values: [0, 34, 58] },
+    },
   },
   {
     name: 'model-b · prompt-b',
     count: 10,
     response_score: 66,
     response_score_std: 7,
-    reception_score: 62,
-    reception_score_std: 6,
+    reception_counts: { appreciation: 3, neutral: 4 },
+    reception_record_count: 5,
     conversation_score: 58,
     conversation_score_std: 7,
     confidence: 0.82,
@@ -53,7 +56,10 @@ const versionAggregates = [
     last_seen: '2026-01-02T00:00:00',
     collapsed_models: false,
     collapsed_versions: false,
-    score_distributions: {},
+    score_distributions: {
+      response_score: { sample_count: 3, values: [0, 66, 82] },
+      conversation_score: { sample_count: 3, values: [0, 40, 65] },
+    },
   },
 ]
 
@@ -65,7 +71,8 @@ describe('ReplyEffectsPage', () => {
           summary: {
             count: 1,
             response_score: 80,
-            reception_score: 70,
+            reception_counts: { appreciation: 1 },
+            reception_record_count: 1,
             conversation_score: 60,
             confidence: 0.8,
           },
@@ -74,7 +81,8 @@ describe('ReplyEffectsPage', () => {
               name: 'answer',
               count: 1,
               response_score: 80,
-              reception_score: 70,
+              reception_counts: { appreciation: 1 },
+              reception_record_count: 1,
               conversation_score: 60,
               confidence: 0.8,
             },
@@ -103,7 +111,8 @@ describe('ReplyEffectsPage', () => {
           },
           scores: {
             response_score: 0,
-            reception_score: null,
+            reception_categories: [],
+            reception_counts: {},
             conversation_score: 0,
             confidence: null,
           },
@@ -146,7 +155,8 @@ describe('ReplyEffectsPage', () => {
             evaluation_version: 5,
             reply_text: '你好',
             response_score: 80,
-            reception_score: 70,
+            reception_categories: ['appreciation'],
+            reception_counts: { appreciation: 1 },
             conversation_score: 60,
             confidence: 0.8,
             evaluation_error: '',
@@ -162,7 +172,8 @@ describe('ReplyEffectsPage', () => {
             evaluation_version: 5,
             reply_text: '观察被中断',
             response_score: null,
-            reception_score: null,
+            reception_categories: [],
+            reception_counts: {},
             conversation_score: null,
             confidence: null,
             evaluation_error: '',
@@ -202,11 +213,12 @@ describe('ReplyEffectsPage', () => {
     expect(screen.queryByRole('heading', { name: '回复效果评估' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新数据' })).toBeInTheDocument()
     expect(screen.getAllByText('回应度').length).toBeGreaterThan(0)
-    expect(screen.getByText('情感接受度')).toBeInTheDocument()
+    expect(screen.getByText('反馈倾向')).toBeInTheDocument()
     expect(screen.getByText('聊天推动度')).toBeInTheDocument()
     expect(screen.getAllByText('80.0').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('70.0').length).toBeGreaterThan(0)
     expect(screen.getAllByText('60.0').length).toBeGreaterThan(0)
+    expect(screen.getByText('回应度分布')).toBeInTheDocument()
+    expect(screen.getAllByText(/每个点代表一条实际评分/).length).toBe(2)
 
     const requestPaths = vi.mocked(backendApi.get).mock.calls.map(([path]) => path)
     expect(requestPaths.find((path) => path.includes('/overview'))).toContain('min_confidence=0')

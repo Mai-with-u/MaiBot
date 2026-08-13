@@ -41,7 +41,8 @@ interface RecordItem {
   evaluation_version: number
   reply_text: string
   response_score: number | null
-  reception_score: number | null
+  reception_categories: string[]
+  reception_counts: Record<string, number>
   conversation_score: number | null
   confidence: number | null
   evaluation_error: string
@@ -122,7 +123,8 @@ interface EffectDetail {
   }
   scores?: {
     response_score: number
-    reception_score: number | null
+    reception_categories: string[]
+    reception_counts: Record<string, number>
     conversation_score: number
     confidence: number | null
     response_evidence_confidence: number
@@ -184,10 +186,24 @@ const CONTRIBUTION_NAMES: Record<string, string> = {
   wrong_push: '错误推动',
 }
 
+const RECEPTION_NAMES: Record<string, string> = {
+  appreciation: '正向认可',
+  playful: '轻松互动',
+  neutral: '中性回应',
+  confusion: '困惑',
+  factual_correction: '事实纠正',
+  rejection: '拒绝/反对',
+  bot_attack: '攻击 Bot',
+}
+
+function receptionText(categories: string[] | undefined) {
+  if (!categories?.length) return '无情绪证据'
+  return categories.map((category) => RECEPTION_NAMES[category] ?? category).join('、')
+}
+
 const SORT_OPTIONS = [
   ['created_at', '评估时间'],
   ['response_score', '回应度'],
-  ['reception_score', '接受度'],
   ['conversation_score', '推动度'],
   ['confidence', '置信度'],
 ] as const
@@ -512,7 +528,12 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
         </div>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <DetailScore label="回应度" value={scores?.response_score} />
-          <DetailScore label="情感接受度" value={scores?.reception_score} />
+          <div className="bg-card rounded-lg border p-3">
+            <div className="text-muted-foreground text-xs">反馈倾向</div>
+            <div className="mt-1 text-lg font-bold">
+              {scores == null ? '—' : receptionText(scores.reception_categories)}
+            </div>
+          </div>
           <DetailScore label="聊天推动度" value={scores?.conversation_score} />
           <div className="bg-card rounded-lg border p-3">
             <div className="text-muted-foreground text-xs">综合置信度</div>
@@ -522,7 +543,7 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
                   ? '不完整'
                   : detail.status === 'evaluation_failed'
                     ? '评估失败'
-                  : '—'
+                    : '—'
                 : scores.confidence == null
                   ? '已完成 / 无信息'
                   : confidenceText(scores.confidence)}
@@ -530,9 +551,7 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
           </div>
         </div>
         {incomplete && (
-          <div className="text-muted-foreground mt-3 text-xs">
-            观察窗口不完整，未进行评分。
-          </div>
+          <div className="text-muted-foreground mt-3 text-xs">观察窗口不完整，未进行评分。</div>
         )}
         {!incomplete && scores && scores.confidence == null && (
           <div className="text-muted-foreground mt-3 text-xs">
@@ -543,9 +562,9 @@ function EvaluationDetail({ detail }: { detail: EffectDetail }) {
           <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <span>回应证据 {confidenceText(scores.response_evidence_confidence)}</span>
             <span>
-              {scores.reception_score == null
-                ? '接受度：无针对 Bot 的情绪证据'
-                : `接受证据 ${confidenceText(scores.reception_evidence_confidence)}`}
+              {scores.reception_categories.length === 0
+                ? '反馈倾向：无针对 Bot 的情绪证据'
+                : `情绪分类证据 ${confidenceText(scores.reception_evidence_confidence)}`}
             </span>
             <span>推动证据 {confidenceText(scores.conversation_evidence_confidence)}</span>
             {detail.confidence_note && <span>{detail.confidence_note}</span>}
@@ -902,7 +921,7 @@ export function ReplyEffectsBrowser({
                         回 {scoreText(item.response_score)}
                       </span>
                       <span className="bg-muted/45 rounded px-1 py-1">
-                        接 {scoreText(item.reception_score)}
+                        情 {receptionText(item.reception_categories)}
                       </span>
                       <span className="bg-muted/45 rounded px-1 py-1">
                         推 {scoreText(item.conversation_score)}

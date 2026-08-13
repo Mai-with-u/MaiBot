@@ -81,7 +81,7 @@ def test_topic_negative_does_not_reduce_reception_and_advances_chat() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score is None
+    assert scores.reception_categories == []
     assert scores.conversation_score > 0
 
 
@@ -98,7 +98,8 @@ def test_factual_correction_reduces_reception_but_is_constructive() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == 25.0
+    assert scores.reception_categories == ["factual_correction"]
+    assert scores.reception_counts == {"factual_correction": 1}
     assert scores.conversation_score > 0
 
 
@@ -115,11 +116,11 @@ def test_bot_attack_is_wrong_push() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == 0.0
+    assert scores.reception_categories == ["bot_attack"]
     assert scores.conversation_score == 0.0
 
 
-def test_reception_averages_users_instead_of_message_count() -> None:
+def test_reception_preserves_category_counts() -> None:
     record = build_record()
     for index in range(3):
         add_followup(
@@ -141,14 +142,15 @@ def test_reception_averages_users_instead_of_message_count() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == pytest.approx(55.0)
+    assert scores.reception_categories == ["appreciation", "rejection"]
+    assert scores.reception_counts == {"appreciation": 3, "rejection": 1}
 
 
 def test_no_associations_have_no_reception_or_confidence() -> None:
     record = build_record()
     scores = score_reply_effect(record)
 
-    assert scores.reception_score is None
+    assert scores.reception_categories == []
     assert scores.confidence is None
 
 
@@ -180,7 +182,7 @@ def test_response_score_does_not_depend_on_latency() -> None:
     assert fast_score == slow_score == 63.7
 
 
-def test_low_confidence_emotion_shrinks_toward_neutral() -> None:
+def test_low_confidence_emotion_keeps_category_and_reduces_confidence() -> None:
     record = build_record()
     add_followup(
         record,
@@ -195,7 +197,7 @@ def test_low_confidence_emotion_shrinks_toward_neutral() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == 70.0
+    assert scores.reception_categories == ["appreciation"]
     assert scores.reception_evidence_confidence == pytest.approx(1 / 3, abs=0.0001)
 
 
@@ -223,7 +225,7 @@ def test_semantic_multi_candidate_association_reduces_confidence() -> None:
 
     scores = score_reply_effect(record)
 
-    assert scores.reception_score == 75.0
+    assert scores.reception_categories == ["appreciation"]
     assert scores.reception_evidence_confidence == pytest.approx(5 / 12, abs=0.0001)
 
 
@@ -232,7 +234,7 @@ def test_record_restores_evaluation_version() -> None:
 
     restored = reply_effect_record_from_dict(payload)
 
-    assert restored.evaluation_version == 5
+    assert restored.evaluation_version == 6
 
 
 def test_parser_rejects_missing_locked_quote() -> None:

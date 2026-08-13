@@ -7,6 +7,8 @@ from typing import Any, Dict, Tuple
 
 import json
 
+from src.config.config import global_config
+
 from .models import (
     CONTRIBUTIONS,
     EVALUATION_VERSION,
@@ -49,14 +51,25 @@ async def judge_reply_effect(
 
 
 def build_judge_prompt(record: ReplyEffectRecord, candidate_records: Sequence[ReplyEffectRecord]) -> str:
+    bot_names = [global_config.bot.nickname.strip(), *global_config.bot.alias_names]
+    normalized_bot_names = list(dict.fromkeys(name.strip() for name in bot_names if name.strip()))
+    bot_identity = "、".join(normalized_bot_names) or "（未配置昵称）"
     instruction = (
         f"回复效果评估标准版本：v{EVALUATION_VERSION}。\n"
+        f"Bot 身份名称：{bot_identity}。这些名称在对话中指向当前 Bot，而不是第三方；"
+        "出现名称本身不自动证明关联，仍需结合评价内容和连续语境判断。\n"
         "请先判断每条后续用户消息是否确实承接、回应或评价了某条候选 Bot 回复；"
         "观察窗口中的消息不一定与 Bot 有关。\n"
         "允许候选只限定消息发生时可以选择的 Bot 回复范围，不代表这些回复与消息实际相关。\n"
         "没有明确的引用、回复、指代、语义承接或情绪反馈证据时，必须返回 associations: []；"
         "不要为了评价话题转移、无人回应或回复未吸引讨论而强行建立关联。\n"
         "候选 Bot 回复一定先于与其关联的后续用户消息，请严格按照发送时间判断先后关系。\n"
+        "必须把同一用户的相邻消息作为连续表达判断：如果前一条消息已明确承接某个候选 Bot 回复，"
+        "紧邻消息继续评价 Bot 的回答、能力、人格或近期表现，应继承该对话焦点；"
+        "只有明确换题、引用第三方或出现新的指向对象时才终止继承。\n"
+        "明确称呼 Bot 并评价其回答或表现属于 bot_content 或 bot_persona 情绪反馈，"
+        "不能仅因没有显式引用而返回空关联。若评价明确覆盖多轮 Bot 表现，可以关联多个候选；"
+        "不得只因存在多个候选就机械关联全部候选。\n"
         "每条后续消息可以关联零个、一个或多个候选 bot 回复；只能返回给出的 candidate_id。\n"
         "messages 必须逐条覆盖给出的全部后续消息，即使无关也要返回该 message_id 和空 associations。\n"
         "只对已经确认存在关联的消息评价两个轴：评价目标 stance_target 与讨论贡献 contribution。\n"

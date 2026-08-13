@@ -31,16 +31,17 @@ import {
   Upload,
 } from 'lucide-react'
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Legend,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from 'recharts'
 
 import { Badge } from '@/components/ui/badge'
@@ -91,13 +92,12 @@ interface Aggregate {
   count: number
   response_score: number | null
   response_score_std?: number | null
-  reception_score: number | null
-  reception_score_std?: number | null
+  reception_counts: Record<string, number>
+  reception_record_count: number
   conversation_score: number | null
   conversation_score_std?: number | null
   confidence: number | null
   confidence_std?: number | null
-  reception_score_count?: number
 }
 
 interface VersionAggregate extends Aggregate {
@@ -114,18 +114,11 @@ interface VersionAggregate extends Aggregate {
   score_distributions?: Partial<Record<DistributionMetric, ScoreDistribution>>
 }
 
-type DistributionMetric = 'response_score' | 'reception_score' | 'conversation_score'
-
-interface ScoreDistributionBucket {
-  score: number
-  range: string
-  count: number
-  percentage: number
-}
+type DistributionMetric = 'response_score' | 'conversation_score'
 
 interface ScoreDistribution {
   sample_count: number
-  buckets: ScoreDistributionBucket[]
+  values: number[]
 }
 
 interface Overview {
@@ -229,6 +222,16 @@ const STRATEGY_NAMES: Record<string, string> = {
   other: '其他',
 }
 
+const RECEPTION_NAMES: Record<string, string> = {
+  appreciation: '正向认可',
+  playful: '轻松互动',
+  neutral: '中性回应',
+  confusion: '困惑',
+  factual_correction: '事实纠正',
+  rejection: '拒绝/反对',
+  bot_attack: '攻击 Bot',
+}
+
 const DISTRIBUTION_COLORS = [
   '#e4572e',
   '#168aad',
@@ -253,6 +256,15 @@ function scoreWithStdText(
 
 function confidenceText(value: number | null | undefined) {
   return value == null ? '—' : `${Math.round(value * 100)}%`
+}
+
+function receptionSummary(counts: Record<string, number> | undefined) {
+  const entries = Object.entries(counts ?? {}).sort((left, right) => right[1] - left[1])
+  if (!entries.length) return '无情绪证据'
+  return entries
+    .slice(0, 2)
+    .map(([category, count]) => `${RECEPTION_NAMES[category] ?? category} ${count}`)
+    .join(' · ')
 }
 
 function diffLineClass(line: string) {
@@ -281,7 +293,9 @@ function readablePromptVersionName(
   const comparableItems = items.filter(
     (candidate) => item.collapsed_models || candidate.model_name === item.model_name
   )
-  const promptVersions = [...new Set(comparableItems.map((candidate) => candidate.prompt_fingerprint))]
+  const promptVersions = [
+    ...new Set(comparableItems.map((candidate) => candidate.prompt_fingerprint)),
+  ]
   const versionNumber = promptVersions.indexOf(item.prompt_fingerprint) + 1
   const modelLabel = item.collapsed_models ? '全部模型' : item.model_name || '未知模型'
   return `${modelLabel} · 版本 ${versionNumber} · ${evaluationLabel}`
@@ -330,29 +344,34 @@ function ScoreDistributionChart({
   versions: VersionAggregate[]
 }) {
   const series = versions
-    .map((version, index, items) => ({
-      key: `series_${index}`,
-      label: readablePromptVersionName(version, index, items),
-      color: DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
-      distribution: version.score_distributions?.[metric],
-    }))
+    .map((version, index, items) => {
+      const distribution = version.score_distributions?.[metric]
+      const label = readablePromptVersionName(version, index, items)
+      return {
+        key: `series_${index}`,
+        label,
+        shortLabel: label.split(' · ')[0],
+        color: DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
+        distribution,
+        points: (distribution?.values ?? []).map((score, sampleIndex) => ({
+          score,
+          row: items.length - index - 1 + (((sampleIndex * 37) % 17) - 8) / 32,
+          sample: sampleIndex + 1,
+          label,
+        })),
+      }
+    })
     .filter((item) => (item.distribution?.sample_count ?? 0) > 0)
-  const buckets = series[0]?.distribution?.buckets ?? []
-  const chartData = buckets.map((bucket, bucketIndex) => {
-    const point: Record<string, string | number> = {
-      score: bucket.score,
-      range: bucket.range,
-    }
-    for (const item of series) {
-      point[item.key] = item.distribution?.buckets[bucketIndex]?.percentage ?? 0
-    }
-    return point
-  })
+  const rowLabels = new Map(
+    series.map((item, index) => [series.length - index - 1, item.shortLabel])
+  )
 
   return (
     <div className="bg-muted/15 min-w-0 rounded-xl border p-3 sm:p-4">
       <h3 className="text-sm font-semibold">{title}</h3>
-      <p className="text-muted-foreground mt-1 text-xs">每 5 分一档 · 纵轴为组内样本占比</p>
+      <p className="text-muted-foreground mt-1 text-xs">
+        每个点代表一条实际评分 · 纵向轻微错位仅用于避免同分点重叠
+      </p>
       {series.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
           {series.map((item) => (
@@ -361,7 +380,7 @@ function ScoreDistributionChart({
               className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-[11px]"
             >
               <span
-                className="h-0.5 w-5 shrink-0 rounded-full"
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ backgroundColor: item.color }}
               />
               <span className="max-w-52 truncate" title={item.label}>
@@ -375,44 +394,53 @@ function ScoreDistributionChart({
       <div className="mt-3 h-64">
         {series.length ? (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 8, right: 10, left: -10, bottom: 0 }}>
-              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+            <ScatterChart margin={{ top: 8, right: 10, left: 20, bottom: 0 }}>
+              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
               <XAxis
                 dataKey="score"
                 domain={[0, 100]}
                 ticks={[0, 20, 40, 60, 80, 100]}
                 type="number"
+                name="评分"
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
               />
               <YAxis
-                unit="%"
+                dataKey="row"
+                domain={[-0.5, series.length - 0.5]}
+                ticks={series.map((_, index) => index)}
+                type="number"
+                width={105}
+                tickFormatter={(value) => rowLabels.get(Number(value)) ?? ''}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
               />
+              <ZAxis range={[42, 42]} />
               <Tooltip
-                labelFormatter={(_, payload) =>
-                  payload?.[0]?.payload?.range ? `分数 ${payload[0].payload.range}` : ''
-                }
-                formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                cursor={{ strokeDasharray: '3 3' }}
+                formatter={(value, name, item) => {
+                  if (name === '评分') {
+                    const point = item.payload as { label?: string; sample?: number }
+                    return [
+                      `${Number(value).toFixed(1)}（样本 ${point.sample ?? '—'}）`,
+                      point.label,
+                    ]
+                  }
+                  return [null, null]
+                }}
               />
               {series.map((item) => (
-                <Area
+                <Scatter
                   key={item.key}
-                  type="monotone"
-                  dataKey={item.key}
+                  data={item.points}
                   name={item.label}
-                  stroke={item.color}
                   fill={item.color}
-                  fillOpacity={0.2}
-                  strokeWidth={2.5}
-                  dot={false}
-                  activeDot={{ r: 3 }}
+                  fillOpacity={0.72}
                 />
               ))}
-            </AreaChart>
+            </ScatterChart>
           </ResponsiveContainer>
         ) : (
           <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
@@ -1163,17 +1191,9 @@ export function ReplyEffectsPage() {
                 tone="blue"
               />
               <MetricCard
-                label="情感接受度"
-                value={
-                  loading
-                    ? '…'
-                    : scoreWithStdText(summary?.reception_score, summary?.reception_score_std)
-                }
-                detail={
-                  summary?.reception_score_count == null
-                    ? '针对回复内容与 Bot 的态度'
-                    : `情绪证据 ${summary.reception_score_count}/${summary.count} 条`
-                }
+                label="反馈倾向"
+                value={loading ? '…' : receptionSummary(summary?.reception_counts)}
+                detail={`有情绪证据 ${summary?.reception_record_count ?? 0}/${summary?.count ?? 0} 条`}
                 icon={HeartHandshake}
                 tone="rose"
               />
@@ -1191,7 +1211,7 @@ export function ReplyEffectsPage() {
             </div>
 
             <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-              <SectionPanel title="趋势" description="按天汇总三个评分维度" icon={BarChart3}>
+              <SectionPanel title="趋势" description="按天汇总两个连续评分维度" icon={BarChart3}>
                 <div className="h-80 p-4 sm:p-5">
                   {overview?.trend.length ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1225,12 +1245,6 @@ export function ReplyEffectsPage() {
                           radius={[3, 3, 0, 0]}
                         />
                         <Bar
-                          dataKey="reception_score"
-                          name="接受度"
-                          fill="var(--chart-2)"
-                          radius={[3, 3, 0, 0]}
-                        />
-                        <Bar
                           dataKey="conversation_score"
                           name="推动度"
                           fill="var(--chart-3)"
@@ -1261,7 +1275,7 @@ export function ReplyEffectsPage() {
                         <TableHead>策略</TableHead>
                         <TableHead>样本</TableHead>
                         <TableHead>回应度</TableHead>
-                        <TableHead>接受度</TableHead>
+                        <TableHead>反馈倾向</TableHead>
                         <TableHead>推动度</TableHead>
                         <TableHead>置信度</TableHead>
                       </TableRow>
@@ -1275,9 +1289,7 @@ export function ReplyEffectsPage() {
                             <TableCell>
                               {scoreWithStdText(item.response_score, item.response_score_std)}
                             </TableCell>
-                            <TableCell>
-                              {scoreWithStdText(item.reception_score, item.reception_score_std)}
-                            </TableCell>
+                            <TableCell>{receptionSummary(item.reception_counts)}</TableCell>
                             <TableCell>
                               {scoreWithStdText(
                                 item.conversation_score,
@@ -1330,7 +1342,7 @@ export function ReplyEffectsPage() {
                       <TableHead>版本</TableHead>
                       <TableHead>样本</TableHead>
                       <TableHead>回应度</TableHead>
-                      <TableHead>接受度</TableHead>
+                      <TableHead>反馈倾向</TableHead>
                       <TableHead>推动度</TableHead>
                       <TableHead>观察时间</TableHead>
                       <TableHead className="w-10" />
@@ -1352,9 +1364,9 @@ export function ReplyEffectsPage() {
                             {scoreWithStdText(item.response_score, item.response_score_std)}
                           </TableCell>
                           <TableCell>
-                            <div>{scoreWithStdText(item.reception_score, item.reception_score_std)}</div>
+                            <div>{receptionSummary(item.reception_counts)}</div>
                             <div className="text-muted-foreground mt-0.5 text-[11px]">
-                              情绪样本 {item.reception_score_count ?? 0}/{item.count}
+                              情绪样本 {item.reception_record_count ?? 0}/{item.count}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -1390,11 +1402,6 @@ export function ReplyEffectsPage() {
                   <ScoreDistributionChart
                     title="回应度分布"
                     metric="response_score"
-                    versions={overview?.versions ?? []}
-                  />
-                  <ScoreDistributionChart
-                    title="情感接受度分布"
-                    metric="reception_score"
                     versions={overview?.versions ?? []}
                   />
                   <ScoreDistributionChart

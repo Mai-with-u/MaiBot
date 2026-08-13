@@ -157,7 +157,8 @@ class ReplyEffectStorage:
             row.prompt_fingerprint = record.reply.prompt_fingerprint
             row.evaluation_version = record.evaluation_version
             row.response_score = scores.response_score if scores else None
-            row.reception_score = scores.reception_score if scores else None
+            # v6 起情绪反馈保留为分类，旧数值列不再写入。
+            row.reception_score = None
             row.conversation_score = scores.conversation_score if scores else None
             row.confidence = scores.confidence if scores and scores.confidence is not None else 0.0
             row.record_json = "{}"

@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from .models import FollowupMessageSnapshot, ReplyAssociation, ReplyEffectRecord, ReplyEffectScores
 
-STANCE_VALUES = {
-    "appreciation": 1.0,
-    "playful": 0.6,
-    "neutral": 0.0,
-    "confusion": -0.3,
-    "factual_correction": -0.5,
-    "rejection": -0.8,
-    "bot_attack": -1.0,
-}
+RECEPTION_CATEGORY_ORDER = (
+    "appreciation",
+    "playful",
+    "neutral",
+    "confusion",
+    "factual_correction",
+    "rejection",
+    "bot_attack",
+)
 CONTRIBUTION_VALUES = {
     "advance": 1.0,
     "maintain": 0.6,
@@ -86,32 +85,30 @@ def calculate_response_score(record: ReplyEffectRecord) -> tuple[float, float]:
     return round(score, 2), round(clamp(confidence), 4)
 
 
-def calculate_reception_score(record: ReplyEffectRecord) -> tuple[float | None, float]:
-    per_user_values: dict[str, list[tuple[float, float]]] = defaultdict(list)
+def classify_reception(record: ReplyEffectRecord) -> tuple[list[str], dict[str, int], float]:
+    """保留 Bot 定向反馈的原始类别，不再压缩为含义模糊的连续分数。"""
+
+    category_counts = {category: 0 for category in RECEPTION_CATEGORY_ORDER}
+    per_user_confidence: dict[str, float] = {}
     for followup, association in _record_associations(record):
         if association.stance_target not in {"bot_content", "bot_persona"}:
             continue
         weight = _association_reliability(followup, association)
         if weight <= 0:
             continue
-        per_user_values[followup.user_id].append((STANCE_VALUES[association.stance], weight))
-    if not per_user_values:
-        return None, 0.0
+        category_counts[association.stance] += 1
+        per_user_confidence[followup.user_id] = max(
+            per_user_confidence.get(followup.user_id, 0.0),
+            weight,
+        )
+    populated_counts = {category: count for category, count in category_counts.items() if count > 0}
+    if not populated_counts:
+        return [], {}, 0.0
 
-    effective_user_stances: list[float] = []
-    user_confidences: list[float] = []
-    for values in per_user_values.values():
-        total_weight = sum(weight for _, weight in values)
-        user_stance = sum(value * weight for value, weight in values) / total_weight
-        # 同一用户重复发言不叠加可信度，低置信情绪向中性 50 分收缩。
-        user_confidence = max(weight for _, weight in values)
-        effective_user_stances.append(user_stance * user_confidence)
-        user_confidences.append(user_confidence)
-
-    score = 50.0 + 50.0 * sum(effective_user_stances) / len(effective_user_stances)
-    confidence = sum(user_confidences) / len(user_confidences)
-    confidence *= _breadth_confidence_factor(len(user_confidences))
-    return round(clamp(score / 100.0) * 100.0, 2), round(clamp(confidence), 4)
+    confidence = sum(per_user_confidence.values()) / len(per_user_confidence)
+    confidence *= _breadth_confidence_factor(len(per_user_confidence))
+    categories = [category for category in RECEPTION_CATEGORY_ORDER if category in populated_counts]
+    return categories, populated_counts, round(clamp(confidence), 4)
 
 
 def calculate_conversation_score(record: ReplyEffectRecord) -> tuple[float, float]:
@@ -171,11 +168,11 @@ def score_reply_effect(
 ) -> ReplyEffectScores:
     associations = _record_associations(record)
     response, response_confidence = calculate_response_score(record)
-    reception, reception_confidence = calculate_reception_score(record)
+    reception_categories, reception_counts, reception_confidence = classify_reception(record)
     conversation, conversation_confidence = calculate_conversation_score(record)
 
     weighted_confidences = [(response_confidence, 0.40), (conversation_confidence, 0.30)]
-    if reception is not None:
+    if reception_categories:
         weighted_confidences.append((reception_confidence, 0.30))
     active_weight = sum(weight for _, weight in weighted_confidences)
     evidence_confidence = sum(value * weight for value, weight in weighted_confidences) / active_weight
@@ -185,7 +182,8 @@ def score_reply_effect(
         confidence = 0.35 + 0.65 * evidence_confidence
     return ReplyEffectScores(
         response_score=response,
-        reception_score=reception,
+        reception_categories=reception_categories,
+        reception_counts=reception_counts,
         conversation_score=conversation,
         confidence=round(clamp(confidence), 4) if confidence is not None else None,
         response_evidence_confidence=response_confidence,
