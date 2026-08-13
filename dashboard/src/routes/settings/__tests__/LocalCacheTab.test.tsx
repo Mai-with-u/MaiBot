@@ -6,7 +6,7 @@
  * 日志文件夹浏览与清理、data 目录导航与删除、数据库统计 / VACUUM / 按表清理。
  * 仅 mock system-api、toast 与图片预览用的 backendApi，不 mock 被测组件本身。
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,17 @@ import type {
   LocalCacheLogDirectoryListResponse,
   LocalCacheStats,
 } from '@/lib/system-api'
+
+// Radix Select 在 jsdom 里会读 pointer capture；setup 未补，用普通函数避免 restoreMocks 清空
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {}
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {}
+}
 
 const toastMock = vi.fn()
 
@@ -766,6 +777,215 @@ describe('LocalCacheTab 特征化', () => {
       expect(toastMock).toHaveBeenCalledWith({
         title: '清理完成',
         description: '删除 3 个文件，释放 2.0 KB，移除 2 条记录。',
+      })
+    )
+  })
+
+  it('图片预览失败时展示 ImageOff 占位', async () => {
+    vi.mocked(backendApi.get).mockRejectedValue(new Error('preview broken'))
+    const user = userEvent.setup()
+    await renderTab()
+    const dialog = await openImageBrowser(user)
+
+    await waitFor(() => {
+      expect(dialog.querySelector('.lucide-image-off')).not.toBeNull()
+    })
+    expect(dialog.querySelector('img')).toBeNull()
+  })
+
+  it('关闭对话框时取消未完成的预览请求，成功回调不再挂载图片', async () => {
+    let resolvePreview: ((blob: Blob) => void) | undefined
+    vi.mocked(backendApi.get).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePreview = resolve
+        }) as never
+    )
+    const user = userEvent.setup()
+    await renderTab()
+
+    await user.click(screen.getByRole('button', { name: '浏览图片' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('img')).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await act(async () => {
+      resolvePreview?.(new Blob(['late']))
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('刷新图片列表：再次按当前页请求缓存', async () => {
+    const user = userEvent.setup()
+    await renderTab()
+    const dialog = await openImageBrowser(user)
+    expect(systemApi.getLocalCacheImages).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: '刷新列表' }))
+    await waitFor(() => expect(systemApi.getLocalCacheImages).toHaveBeenCalledTimes(2))
+    expect(systemApi.getLocalCacheImages).toHaveBeenLastCalledWith({
+      target: 'images',
+      page: 1,
+      page_size: 40,
+      start_date: undefined,
+      end_date: undefined,
+    })
+  })
+
+  it('获取图片列表失败：弹出破坏性 toast', async () => {
+    vi.mocked(systemApi.getLocalCacheImages).mockRejectedValue(new Error('图片接口挂了'))
+    const user = userEvent.setup()
+    await renderTab()
+
+    await user.click(screen.getByRole('button', { name: '浏览图片' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '获取图片列表失败',
+        description: '图片接口挂了',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('获取日志文件夹失败：弹出破坏性 toast', async () => {
+    vi.mocked(systemApi.getLocalCacheLogDirectories).mockRejectedValue('boom')
+    const user = userEvent.setup()
+    await renderTab()
+
+    await user.click(screen.getByRole('button', { name: '浏览文件夹' }))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '获取日志文件夹失败',
+        description: '请稍后重试',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('获取数据库统计失败：弹出破坏性 toast', async () => {
+    vi.mocked(systemApi.getLocalCacheDatabaseStats).mockRejectedValue(new Error('统计超时'))
+    render(<LocalCacheTab />)
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '获取数据库统计失败',
+        description: '统计超时',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('获取 data 目录失败：弹出破坏性 toast', async () => {
+    vi.mocked(systemApi.getLocalCacheDataEntries).mockRejectedValue(new Error('data 不可读'))
+    render(<LocalCacheTab />)
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '获取 data 目录失败',
+        description: 'data 不可读',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('目录清理失败：弹出破坏性 toast', async () => {
+    vi.mocked(systemApi.cleanupLocalCache).mockRejectedValue(new Error('磁盘只读'))
+    const user = userEvent.setup()
+    await renderTab()
+
+    await user.click(screen.getByRole('button', { name: '全部删除' }))
+    const alert = await screen.findByRole('alertdialog')
+    await user.click(within(alert).getByRole('button', { name: '确认全部删除' }))
+
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '清理失败',
+        description: '磁盘只读',
+        variant: 'destructive',
+      })
+    )
+  })
+
+  it('日志目录清理成功：展示 VACUUM 释放文案并刷新文件夹列表', async () => {
+    vi.mocked(systemApi.cleanupLocalCache).mockResolvedValue(
+      makeCleanupResult({
+        target: 'log_files',
+        vacuumed: true,
+        reclaimed_bytes: 1024,
+      })
+    )
+    const user = userEvent.setup()
+    await renderTab()
+
+    await user.click(screen.getByRole('button', { name: '浏览文件夹' }))
+    await screen.findByText('/app/logs')
+    expect(systemApi.getLocalCacheLogDirectories).toHaveBeenCalledTimes(1)
+
+    const logCard = screen.getByText('日志目录').closest('.rounded-lg') as HTMLElement
+    await user.click(within(logCard).getByRole('button', { name: '清理' }))
+    const alert = await screen.findByRole('alertdialog')
+    expect(within(alert).getByText('确认清理日志目录？')).toBeInTheDocument()
+    await user.click(within(alert).getByRole('button', { name: '确认清理' }))
+
+    await waitFor(() => expect(systemApi.cleanupLocalCache).toHaveBeenCalledWith('log_files'))
+    await waitFor(() => expect(systemApi.getLocalCacheLogDirectories).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '清理完成',
+        description: '删除 3 个文件，释放 2.0 KB，移除 2 条记录，VACUUM 释放 1.0 KB。',
+      })
+    )
+  })
+
+  it('数据库清理：修改保留天数后按新天数提交', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await renderTab()
+    await screen.findByText('messages')
+
+    await user.click(screen.getByRole('button', { name: '清理记录' }))
+    const alert = await screen.findByRole('alertdialog')
+    const comboboxes = within(alert).getAllByRole('combobox')
+
+    await user.click(comboboxes[1])
+    await user.click(await screen.findByRole('option', { name: '30 天' }))
+
+    await user.click(within(alert).getAllByRole('checkbox')[1])
+    await user.click(within(alert).getByRole('button', { name: '确认清理' }))
+
+    await waitFor(() =>
+      expect(systemApi.cleanupLocalCache).toHaveBeenCalledWith('database_logs', ['messages'], {
+        database_mode: 'older_than_days',
+        older_than_days: 30,
+        vacuum_after_cleanup: true,
+      })
+    )
+  })
+
+  it('数据库清理：切换为清空所选表后禁用保留天数并提交 all 模式', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await renderTab()
+    await screen.findByText('messages')
+
+    await user.click(screen.getByRole('button', { name: '清理记录' }))
+    const alert = await screen.findByRole('alertdialog')
+    const comboboxes = within(alert).getAllByRole('combobox')
+
+    await user.click(comboboxes[0])
+    await user.click(await screen.findByRole('option', { name: '清空所选表' }))
+
+    expect(comboboxes[1]).toBeDisabled()
+    expect(within(alert).getByText(/预计删除/)).toBeInTheDocument()
+
+    await user.click(within(alert).getAllByRole('checkbox')[1])
+    await user.click(within(alert).getByRole('button', { name: '确认清理' }))
+
+    await waitFor(() =>
+      expect(systemApi.cleanupLocalCache).toHaveBeenCalledWith('database_logs', ['messages'], {
+        database_mode: 'all',
+        older_than_days: undefined,
+        vacuum_after_cleanup: true,
       })
     )
   })

@@ -10,7 +10,8 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { VRMUtils } from '@pixiv/three-vrm'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import * as THREE from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FocusCompanionPage } from '../focus'
@@ -358,6 +359,7 @@ const MODEL_URL = '/maimai-focus/mai_vrc_0.9.vrm'
 type SessionMessage = Record<string, unknown>
 
 let sessionMessageListener: ((message: SessionMessage) => void) | null = null
+let connectionListener: ((connected: boolean) => void) | null = null
 let requestFullscreenMock: Mock
 
 /** 供加载成功用例使用的最小场景节点：只实现 focus.tsx 会触碰的属性 */
@@ -382,6 +384,118 @@ function createFakeSceneNode() {
     },
   }
   return node
+}
+
+/** 按需执行动画帧，覆盖相机跟随 / 表情 / 可见性，而不把 RAF 交给假计时器 */
+function installRafQueue() {
+  let nextId = 1
+  const callbacks = new Map<number, FrameRequestCallback>()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    const id = nextId
+    nextId += 1
+    callbacks.set(id, callback)
+    return id
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+    callbacks.delete(Number(id))
+  })
+  return {
+    flush() {
+      const pending = [...callbacks.values()]
+      callbacks.clear()
+      for (const callback of pending) {
+        callback(0)
+      }
+    },
+  }
+}
+
+function findNamedChild(root: THREE.Object3D, name: string): THREE.Object3D | undefined {
+  return root.children.find((child) => child.name === name)
+}
+
+/** 带各类材质名的场景图，用来走卡通化 / 描边 / 释放分支 */
+function createStyledModelScene() {
+  const root = new THREE.Group()
+  const addMesh = (meshName: string, material: THREE.Material | THREE.Material[], skinned = false) => {
+    const mesh = skinned
+      ? new THREE.SkinnedMesh(new THREE.BoxGeometry(), material)
+      : new THREE.Mesh(new THREE.BoxGeometry(), material)
+    mesh.name = meshName
+    root.add(mesh)
+    return mesh
+  }
+
+  addMesh(
+    'leaf',
+    new THREE.MeshStandardMaterial({
+      name: '三叶草叶',
+      map: new THREE.Texture(),
+      color: new THREE.Color(),
+    })
+  )
+  addMesh('skin', new THREE.MeshStandardMaterial({ name: '皮肤', color: new THREE.Color() }))
+  addMesh('sclera', new THREE.MeshStandardMaterial({ name: '眼白' }))
+  addMesh(
+    'hair',
+    new THREE.MeshStandardMaterial({
+      name: '头发',
+      map: new THREE.Texture(),
+      color: new THREE.Color(),
+    }),
+    true
+  )
+  addMesh('brow', new THREE.MeshStandardMaterial({ name: 'eyebrow', color: new THREE.Color() }))
+  addMesh('cloth', [
+    new THREE.MeshStandardMaterial({ name: 'jkq', color: new THREE.Color() }),
+    new THREE.MeshStandardMaterial({ name: '罩袍', color: new THREE.Color() }),
+  ])
+  addMesh('body', new THREE.MeshStandardMaterial({ name: 'body', color: new THREE.Color() }))
+  addMesh('highlight', new THREE.MeshStandardMaterial({ name: 'highlight' }))
+  addMesh('mouth', new THREE.MeshStandardMaterial({ name: '口腔' }))
+  addMesh('tongue', new THREE.MeshStandardMaterial({ name: '舌头' }))
+  addMesh('face', new THREE.MeshStandardMaterial({ name: '脸', color: new THREE.Color() }))
+  addMesh('eye-en', new THREE.MeshStandardMaterial({ name: 'LeftEye' }))
+  addMesh('clover', new THREE.MeshStandardMaterial({ name: 'clover', color: new THREE.Color() }))
+  addMesh('dark-hair', new THREE.MeshStandardMaterial({ name: '深色毛发', color: new THREE.Color() }))
+  addMesh('grass', new THREE.MeshStandardMaterial({ name: '草', color: new THREE.Color() }))
+  addMesh('leaf-en', new THREE.MeshStandardMaterial({ name: 'leaf', color: new THREE.Color() }))
+  addMesh('unnamed', new THREE.MeshStandardMaterial({ name: '', color: new THREE.Color() }))
+
+  const bone = new THREE.Object3D()
+  bone.name = 'hip-bone'
+  root.add(bone)
+  return root
+}
+
+function captureLoader() {
+  let onLoad: ((gltf: unknown) => void) | null = null
+  let onError: ((error: unknown) => void) | null = null
+  gltfLoaderMocks.load.mockImplementation(
+    (_url: unknown, load: (gltf: unknown) => void, _progress: unknown, error?: (error: unknown) => void) => {
+      onLoad = load
+      onError = error ?? null
+    }
+  )
+  return {
+    finish(gltf: unknown) {
+      act(() => {
+        onLoad?.(gltf)
+      })
+    },
+    fail(error: unknown) {
+      act(() => {
+        onError?.(error)
+      })
+    },
+  }
+}
+
+function createExpressionManager(available: string[]) {
+  return {
+    getExpression: vi.fn((name: string) => (available.includes(name) ? { name } : null)),
+    setValue: vi.fn(),
+  }
 }
 
 async function renderFocusPage() {
@@ -428,6 +542,7 @@ function emitSessionMessage(message: SessionMessage) {
 beforeEach(() => {
   window.localStorage.clear()
   sessionMessageListener = null
+  connectionListener = null
 
   settingsMocks.getSetting.mockReturnValue(true)
   chatApiMocks.getChatStreams.mockResolvedValue([])
@@ -437,7 +552,10 @@ beforeEach(() => {
       return () => {}
     }
   )
-  chatWsMocks.onConnectionChange.mockReturnValue(() => {})
+  chatWsMocks.onConnectionChange.mockImplementation((listener: (connected: boolean) => void) => {
+    connectionListener = listener
+    return () => {}
+  })
   chatWsMocks.openSession.mockResolvedValue(undefined)
   chatWsMocks.closeSession.mockResolvedValue(undefined)
   chatWsMocks.sendMessage.mockResolvedValue(undefined)
@@ -502,6 +620,22 @@ describe('FocusCompanionPage 功能开关', () => {
     })
     expect(screen.getByText('专注陪伴已隐藏')).toBeInTheDocument()
     expect(chatWsMocks.closeSession).toHaveBeenCalledWith(FOCUS_SESSION_ID)
+  })
+
+  it('其它设置项变更不会打开专注陪伴', async () => {
+    settingsMocks.getSetting.mockReturnValue(false)
+    await renderFocusPage()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('maibot-settings-change', {
+          detail: { key: 'theme', value: 'dark' },
+        })
+      )
+    })
+
+    expect(screen.getByText('专注陪伴已隐藏')).toBeInTheDocument()
+    expect(chatWsMocks.openSession).not.toHaveBeenCalled()
   })
 })
 
@@ -684,6 +818,107 @@ describe('FocusCompanionExperience 计时器', () => {
     })
     expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument()
   })
+
+  it('已有全屏元素时不再重复请求，优先使用 #main-content', async () => {
+    const main = document.createElement('main')
+    main.id = 'main-content'
+    const mainFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(main, 'requestFullscreen', {
+      configurable: true,
+      value: mainFullscreen,
+    })
+    document.body.appendChild(main)
+
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => main,
+    })
+
+    try {
+      await renderFocusPage()
+      fireEvent.click(screen.getByRole('button', { name: '开始' }))
+      expect(mainFullscreen).not.toHaveBeenCalled()
+      expect(requestFullscreenMock).not.toHaveBeenCalled()
+    } finally {
+      delete (document as { fullscreenElement?: unknown }).fullscreenElement
+      main.remove()
+    }
+  })
+
+  it('没有全屏元素时对 #main-content 请求全屏', async () => {
+    const main = document.createElement('main')
+    main.id = 'main-content'
+    const mainFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(main, 'requestFullscreen', {
+      configurable: true,
+      value: mainFullscreen,
+    })
+    document.body.appendChild(main)
+
+    try {
+      await renderFocusPage()
+      fireEvent.click(screen.getByRole('button', { name: '开始' }))
+      expect(mainFullscreen).toHaveBeenCalledTimes(1)
+      expect(requestFullscreenMock).not.toHaveBeenCalled()
+    } finally {
+      main.remove()
+    }
+  })
+
+  it('休息模式修改自定义分钟数只改按钮文案，不改当前倒计时', async () => {
+    await renderFocusPage()
+    fireEvent.click(screen.getByRole('button', { name: '5 分钟' }))
+    expect(screen.getByText('05:00')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('自定义专注分钟数'), { target: { value: '40' } })
+    expect(screen.getByRole('button', { name: '40 分钟' })).toBeInTheDocument()
+    expect(screen.getByText('05:00')).toBeInTheDocument()
+  })
+
+  it('数字框无法解析的分钟会变成 0 并被钳到 1', async () => {
+    await renderFocusPage()
+    // number input 把非数字收成空串，Number('') === 0，再钳到下限 1
+    fireEvent.change(screen.getByLabelText('自定义专注分钟数'), { target: { value: 'abc' } })
+    expect((screen.getByLabelText('自定义专注分钟数') as HTMLInputElement).value).toBe('1')
+    expect(screen.getByText('01:00')).toBeInTheDocument()
+  })
+
+  it('手动切换沉浸模式广播布局事件', async () => {
+    const immersive = trackImmersiveEvents()
+    await renderFocusPage()
+
+    fireEvent.click(screen.getByRole('button', { name: '隐藏边栏' }))
+    expect(immersive.events.at(-1)).toBe(true)
+    expect(screen.getByRole('button', { name: '退出沉浸' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '退出沉浸' }))
+    expect(immersive.events.at(-1)).toBe(false)
+    immersive.stop()
+  })
+
+  it('专注锁定拦截文档级键盘，白名单控件与表单提交除外', async () => {
+    await renderFocusPage()
+    fireEvent.change(screen.getByLabelText('和麦麦对话'), { target: { value: '先写下来' } })
+    fireEvent.click(screen.getByRole('button', { name: '开始' }))
+
+    const lockedRoot = document.querySelector('[data-focus-companion="true"]') as HTMLElement
+    const blocked = createEvent.keyDown(lockedRoot, { key: 'a', bubbles: true, cancelable: true })
+    fireEvent(lockedRoot, blocked)
+    expect(blocked.defaultPrevented).toBe(true)
+
+    const pauseButton = screen.getByRole('button', { name: '暂停' })
+    const allowed = createEvent.keyDown(pauseButton, { key: 'Enter', bubbles: true, cancelable: true })
+    fireEvent(pauseButton, allowed)
+    expect(allowed.defaultPrevented).toBe(false)
+
+    fireEvent.keyDown(screen.getByLabelText('和麦麦互动'), { key: 'Enter' })
+    expect(screen.getByText('安静推进就好。')).toBeInTheDocument()
+
+    const form = screen.getByLabelText('和麦麦对话').closest('form')
+    expect(form).not.toBeNull()
+    fireEvent.submit(form as HTMLFormElement)
+    expect(chatWsMocks.sendMessage).not.toHaveBeenCalled()
+  })
 })
 
 describe('FocusCompanionExperience 陪伴聊天', () => {
@@ -724,6 +959,28 @@ describe('FocusCompanionExperience 陪伴聊天', () => {
         { is_bot: true, content: '最新的回复' },
         { is_bot: false, content: '结尾用户消息' },
       ],
+    })
+    expect(screen.getByText('最新的回复')).toBeInTheDocument()
+
+    // session_info 只更新内部昵称，空名字与无关类型都不改台词
+    emitSessionMessage({ type: 'session_info', bot_name: '  小麦  ' })
+    emitSessionMessage({ type: 'session_info', bot_name: '   ' })
+    emitSessionMessage({ type: 'unknown_event' })
+    expect(screen.getByText('最新的回复')).toBeInTheDocument()
+
+    // history 非数组 / 无机器人 / 空白内容 / 缺 content 字段都不覆盖台词
+    emitSessionMessage({ type: 'history', messages: 'not-an-array' })
+    emitSessionMessage({ type: 'history', messages: [{ is_bot: false, content: '用户自己说的' }] })
+    emitSessionMessage({ type: 'history', messages: [{ is_bot: true, content: '   ' }] })
+    emitSessionMessage({ type: 'history', messages: [null, 12, { is_bot: true }] })
+    expect(screen.getByText('最新的回复')).toBeInTheDocument()
+
+    emitSessionMessage({ type: 'typing', is_typing: false })
+    expect(screen.queryByText('麦麦正在想...')).not.toBeInTheDocument()
+
+    act(() => {
+      connectionListener?.(true)
+      connectionListener?.(false)
     })
     expect(screen.getByText('最新的回复')).toBeInTheDocument()
   })
@@ -806,6 +1063,55 @@ describe('FocusCompanionExperience 陪伴聊天', () => {
     expect(screen.getByText('完成一段啦。')).toBeInTheDocument()
   })
 
+  it('键盘 Enter / Space 切换心情，其它键忽略', async () => {
+    await renderFocusPage()
+    const character = screen.getByLabelText('和麦麦互动')
+
+    fireEvent.keyDown(character, { key: 'Enter' })
+    expect(screen.getByText('完成一段啦。')).toBeInTheDocument()
+    fireEvent.keyDown(character, { key: ' ' })
+    expect(screen.getByText('我听见了。')).toBeInTheDocument()
+    fireEvent.keyDown(character, { key: 'Tab' })
+    expect(screen.getByText('我听见了。')).toBeInTheDocument()
+  })
+
+  it('卸载后到达的会话消息与开关会话结果不会写回界面', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let resolveOpen: (() => void) | null = null
+    let rejectOpen: ((error: Error) => void) | null = null
+    let openCount = 0
+    chatWsMocks.openSession.mockImplementation(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          openCount += 1
+          if (openCount === 1) {
+            resolveOpen = resolve
+          } else {
+            rejectOpen = reject
+          }
+        })
+    )
+
+    const first = await renderFocusPage()
+    first.unmount()
+    emitSessionMessage({ type: 'bot_message', content: '迟到的回复' })
+    act(() => {
+      connectionListener?.(true)
+    })
+    await act(async () => {
+      resolveOpen?.()
+    })
+    expect(screen.queryByText('迟到的回复')).not.toBeInTheDocument()
+
+    const second = await renderFocusPage()
+    second.unmount()
+    await act(async () => {
+      rejectOpen?.(new Error('已经卸载'))
+    })
+    expect(errorSpy).toHaveBeenCalledWith('专注陪伴会话打开失败:', expect.any(Error))
+    expect(screen.queryByText('麦麦会话暂时没有连上。')).not.toBeInTheDocument()
+  })
+
   it('聊天流数量展示在 chat 指标中', async () => {
     chatApiMocks.getChatStreams.mockResolvedValue([
       { stream_id: 'a' },
@@ -818,6 +1124,16 @@ describe('FocusCompanionExperience 陪伴聊天', () => {
     await waitFor(() => {
       expect(getMetricValue('chat')).toBe('3')
     })
+  })
+
+  it('聊天流请求失败时 chat 指标保持 0', async () => {
+    chatApiMocks.getChatStreams.mockRejectedValue(new Error('聊天流不可用'))
+    await renderFocusPage()
+
+    await waitFor(() => {
+      expect(chatApiMocks.getChatStreams).toHaveBeenCalled()
+    })
+    expect(getMetricValue('chat')).toBe('0')
   })
 })
 
@@ -902,6 +1218,87 @@ describe('FocusCompanionExperience 本地存档', () => {
     expect(getMetricValue('today')).toBe('0m')
     expect(getMetricValue('grove')).toBe('0')
   })
+
+  it('非法分钟、字符串树苗和负数秒数按默认值归一', async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    window.localStorage.setItem(
+      FOCUS_STORAGE_KEY,
+      JSON.stringify({
+        customFocusMinutes: 'not-a-number',
+        saplings: 'amber',
+        todayFocusDate: today,
+        todayFocusSeconds: -80,
+      })
+    )
+
+    await renderFocusPage()
+
+    expect(screen.getByText('25:00')).toBeInTheDocument()
+    expect(getMetricValue('grove')).toBe('0')
+    expect(getMetricValue('today')).toBe('0m')
+  })
+
+  it('橙芽树苗渲染果实造型与悬浮说明', async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    window.localStorage.setItem(
+      FOCUS_STORAGE_KEY,
+      JSON.stringify({
+        customFocusMinutes: 25,
+        saplings: ['citrus'],
+        todayFocusDate: today,
+        todayFocusSeconds: 0,
+      })
+    )
+
+    await renderFocusPage()
+
+    expect(screen.getAllByLabelText('橙芽树苗：把刚完成的专注收成一点暖橙色。').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('橙芽树苗').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('把刚完成的专注收成一点暖橙色。').length).toBeGreaterThan(0)
+  })
+
+  it('挂载后读到的日期跨天时清零今日秒数', async () => {
+    window.localStorage.setItem(
+      FOCUS_STORAGE_KEY,
+      JSON.stringify({
+        customFocusMinutes: 25,
+        saplings: [],
+        todayFocusDate: '2026-08-13',
+        todayFocusSeconds: 600,
+      })
+    )
+
+    // 存档读取里先取 today 再 getItem；用 getItem 作为“已经读过旧日”的分界，
+    // 让随后的跨日 effect 看到新的一天。jsdom 的 localStorage 方法在原型上，必须 spy 原型。
+    let storageRead = false
+    const originalGetItem = Storage.prototype.getItem
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      const value = originalGetItem.call(this, key)
+      if (String(key) === FOCUS_STORAGE_KEY) {
+        storageRead = true
+      }
+      return value
+    })
+    vi.spyOn(Date.prototype, 'toISOString').mockImplementation(() =>
+      storageRead ? '2026-08-14T12:00:00.000Z' : '2026-08-13T12:00:00.000Z'
+    )
+
+    const writes: Array<{ date: string; seconds: number }> = []
+    const originalSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (String(key) === FOCUS_STORAGE_KEY) {
+        const parsed = JSON.parse(String(value)) as { todayFocusDate: string; todayFocusSeconds: number }
+        writes.push({ date: parsed.todayFocusDate, seconds: parsed.todayFocusSeconds })
+      }
+      return originalSetItem.call(this, key, value)
+    })
+
+    await renderFocusPage()
+
+    expect(writes.some((item) => item.date === '2026-08-13' && item.seconds === 600)).toBe(true)
+    expect(writes.at(-1)).toEqual({ date: '2026-08-14', seconds: 0 })
+    expect(getMetricValue('today')).toBe('0m')
+  })
 })
 
 describe('FocusCompanionExperience 三维模型加载', () => {
@@ -965,5 +1362,327 @@ describe('FocusCompanionExperience 三维模型加载', () => {
     expect(errorSpy).toHaveBeenCalledWith('专注陪伴模型加载失败:', expect.any(Error))
     const canvas = document.querySelector('[data-focus-model-canvas="true"]') as HTMLElement | null
     expect(canvas?.dataset.focusModelLoaded).toBeUndefined()
+    expect(document.querySelector('[data-focus-scene-canvas="true"]')).not.toBeNull()
+  })
+
+  it('模型尚未返回时画布不标记 loaded，并会实例化 VRM 插件', async () => {
+    captureLoader()
+    await renderFocusPage()
+
+    const canvas = document.querySelector('[data-focus-model-canvas="true"]') as HTMLElement | null
+    expect(canvas).not.toBeNull()
+    expect(canvas?.dataset.focusModelLoaded).toBeUndefined()
+    expect(gltfLoaderMocks.register).toHaveBeenCalledWith(expect.any(Function))
+    const pluginFactory = gltfLoaderMocks.register.mock.calls[0][0] as (parser: unknown) => unknown
+    expect(pluginFactory({})).toBeInstanceOf(Object)
+  })
+
+  it('VRM 卡通化按材质名分流，并给蒙皮网格绑定描边', async () => {
+    const scene = createStyledModelScene()
+    const leafMap = (findNamedChild(scene, 'leaf') as THREE.Mesh).material as THREE.Material & { map?: unknown }
+    const sourceLeafMap = leafMap.map
+    vi.spyOn(THREE.Box3.prototype, 'getSize').mockImplementation((target: THREE.Vector3) => {
+      target.set(2, 4, 2)
+      return target
+    })
+    const bindSpy = vi.spyOn(THREE.SkinnedMesh.prototype, 'bind')
+    gltfLoaderMocks.load.mockImplementation((_url: unknown, onLoad: (gltf: unknown) => void) => {
+      onLoad({
+        animations: [],
+        scene,
+        userData: {
+          vrm: {
+            scene,
+            humanoid: { setNormalizedPose: vi.fn() },
+            expressionManager: null,
+            update: vi.fn(),
+          },
+        },
+      })
+    })
+
+    await renderFocusPage()
+
+    expect((findNamedChild(scene, 'leaf') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: '三叶草叶 toon', map: sourceLeafMap })
+    )
+    expect((findNamedChild(scene, 'skin') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: '皮肤 skin toon' })
+    )
+    expect((findNamedChild(scene, 'sclera') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: '眼白 soft face' })
+    )
+    expect((findNamedChild(scene, 'hair') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: '头发 toon' })
+    )
+    expect((findNamedChild(scene, 'highlight') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: 'highlight soft face' })
+    )
+    expect((findNamedChild(scene, 'unnamed') as THREE.Mesh).material).toEqual(
+      expect.objectContaining({ name: 'material toon' })
+    )
+
+    const clothMaterial = (findNamedChild(scene, 'cloth') as THREE.Mesh).material
+    expect(Array.isArray(clothMaterial)).toBe(true)
+    expect(clothMaterial).toEqual([
+      expect.objectContaining({ name: 'jkq toon' }),
+      expect.objectContaining({ name: '罩袍 toon' }),
+    ])
+
+    expect(findNamedChild(scene, 'skin stylized outline')).toBeUndefined()
+    expect(findNamedChild(scene, 'sclera stylized outline')).toBeUndefined()
+    expect(findNamedChild(scene, 'face stylized outline')).toBeUndefined()
+    expect(findNamedChild(scene, 'hair stylized outline')).toBeInstanceOf(THREE.SkinnedMesh)
+    expect(findNamedChild(scene, 'leaf stylized outline')).toBeInstanceOf(THREE.Mesh)
+    expect(bindSpy).toHaveBeenCalled()
+    expect(scene.scale.x).toBeCloseTo(10.65 / 4)
+    expect(scene.position.y).toBeCloseTo(5.325)
+  })
+
+  it('VRM 表情随心情切换，并稳定弹簧骨与视线目标', async () => {
+    const raf = installRafQueue()
+    const loader = captureLoader()
+    const scene = createStyledModelScene()
+    const expressions = createExpressionManager(['blink', 'blinkLeft', 'blinkRight', 'fun', 'relaxed', 'aa'])
+    const gravityDir = { set: vi.fn() }
+    const springBoneManager = {
+      joints: [{ settings: { gravityDir } }],
+      reset: vi.fn(),
+    }
+    const lookAt = { target: null as unknown }
+    const poseSpy = vi.fn()
+    const updateSpy = vi.fn()
+    vi.spyOn(THREE.Clock.prototype, 'getElapsedTime').mockReturnValue(0.09)
+
+    await renderFocusPage()
+    fireEvent.click(screen.getByLabelText('和麦麦互动'))
+    await act(async () => {})
+
+    loader.finish({
+      animations: [{}],
+      scene,
+      userData: {
+        vrm: {
+          scene,
+          humanoid: { setNormalizedPose: poseSpy },
+          expressionManager: expressions,
+          springBoneManager,
+          lookAt,
+          update: updateSpy,
+        },
+      },
+    })
+
+    expect(lookAt.target).toBeInstanceOf(THREE.Object3D)
+    expect(gravityDir.set).toHaveBeenCalledWith(0, -1, 0)
+    expect(springBoneManager.reset).toHaveBeenCalled()
+    expect(expressions.setValue).toHaveBeenCalledWith('fun', 0.68)
+    expect(expressions.setValue).toHaveBeenCalledWith('aa', 0.12)
+    expect(expressions.setValue).toHaveBeenCalledWith('blink', 0)
+
+    const canvas = document.querySelector('[data-focus-model-canvas="true"]') as HTMLElement | null
+    expect(canvas?.dataset.focusModelLoaded).toBe('true')
+
+    act(() => {
+      raf.flush()
+    })
+    expect(expressions.setValue).toHaveBeenCalledWith('blink', 1)
+    expect(expressions.setValue).toHaveBeenCalledWith('blinkLeft', 0.75)
+    expect(expressions.setValue).toHaveBeenCalledWith('blinkRight', 0.75)
+    expect(updateSpy).toHaveBeenCalledWith(0.016)
+    expect(poseSpy.mock.calls.length).toBeGreaterThan(1)
+
+    fireEvent.click(screen.getByLabelText('和麦麦互动'))
+    await act(async () => {})
+    expressions.setValue.mockClear()
+    act(() => {
+      raf.flush()
+    })
+    expect(expressions.setValue).toHaveBeenCalledWith('relaxed', 0.34)
+
+    fireEvent.click(screen.getByLabelText('和麦麦互动'))
+    await act(async () => {})
+    expressions.setValue.mockClear()
+    act(() => {
+      raf.flush()
+    })
+    expect(expressions.setValue).toHaveBeenCalledWith('relaxed', 0.16)
+  })
+
+  it('userData.vrm 缺少 scene 时按普通模型处理', async () => {
+    gltfLoaderMocks.load.mockImplementation((_url: unknown, onLoad: (gltf: unknown) => void) => {
+      onLoad({
+        animations: [],
+        scene: createFakeSceneNode(),
+        userData: { vrm: { version: 1 } },
+      })
+    })
+
+    await renderFocusPage()
+
+    expect(vi.mocked(VRMUtils.rotateVRM0)).not.toHaveBeenCalled()
+    const canvas = document.querySelector('[data-focus-model-canvas="true"]') as HTMLElement | null
+    expect(canvas?.dataset.focusModelLoaded).toBe('true')
+  })
+
+  it('卸载后才加载成功：VRM 走 deepDispose，普通模型释放几何体与数组材质', async () => {
+    const loader = captureLoader()
+    const vrmScene = createStyledModelScene()
+    const plainScene = createStyledModelScene()
+    const leaf = findNamedChild(plainScene, 'leaf') as THREE.Mesh
+    const cloth = findNamedChild(plainScene, 'cloth') as THREE.Mesh
+    const geometryDispose = vi.spyOn(leaf.geometry, 'dispose')
+    const leafDispose = vi.spyOn(leaf.material as THREE.Material, 'dispose')
+    const clothDisposes = (cloth.material as THREE.Material[]).map((material) => vi.spyOn(material, 'dispose'))
+
+    const vrmView = await renderFocusPage()
+    vrmView.unmount()
+    loader.finish({
+      animations: [],
+      scene: vrmScene,
+      userData: {
+        vrm: {
+          scene: vrmScene,
+          humanoid: { setNormalizedPose: vi.fn() },
+          update: vi.fn(),
+        },
+      },
+    })
+    expect(vi.mocked(VRMUtils.deepDispose)).toHaveBeenCalledWith(vrmScene)
+    expect(document.querySelector('[data-focus-model-canvas="true"]')).toBeNull()
+
+    vi.mocked(VRMUtils.deepDispose).mockClear()
+    const plainView = await renderFocusPage()
+    plainView.unmount()
+    loader.finish({ animations: [], scene: plainScene, userData: {} })
+    expect(vi.mocked(VRMUtils.deepDispose)).not.toHaveBeenCalled()
+    expect(geometryDispose).toHaveBeenCalled()
+    expect(leafDispose).toHaveBeenCalled()
+    clothDisposes.forEach((dispose) => expect(dispose).toHaveBeenCalled())
+  })
+
+  it('卸载后才加载失败不再记录错误', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const loader = captureLoader()
+    const view = await renderFocusPage()
+    view.unmount()
+
+    loader.fail(new Error('来迟了'))
+
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('指针移动后动画帧更新相机，页面隐藏停止渲染并在可见时恢复', async () => {
+    const raf = installRafQueue()
+    const renderSpy = vi.spyOn(THREE.WebGLRenderer.prototype, 'render')
+    const lookAtSpy = vi.spyOn(THREE.PerspectiveCamera.prototype, 'lookAt')
+    const stopSpy = vi.spyOn(THREE.Clock.prototype, 'stop')
+    const startSpy = vi.spyOn(THREE.Clock.prototype, 'start')
+    const mixerUpdate = vi.spyOn(THREE.AnimationMixer.prototype, 'update')
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 200,
+      height: 200,
+      top: 0,
+      left: 0,
+      right: 200,
+      bottom: 200,
+      x: 0,
+      y: 0,
+      toJSON() {
+        return {}
+      },
+    } as DOMRect)
+
+    gltfLoaderMocks.load.mockImplementation((_url: unknown, onLoad: (gltf: unknown) => void) => {
+      onLoad({ animations: [{}], scene: createFakeSceneNode(), userData: {} })
+    })
+
+    await renderFocusPage()
+    fireEvent.click(screen.getByLabelText('和麦麦互动'))
+    await act(async () => {})
+
+    renderSpy.mockClear()
+    lookAtSpy.mockClear()
+    fireEvent.pointerMove(window, { clientX: window.innerWidth, clientY: 0 })
+    const sceneMount = document.querySelector('[aria-hidden="true"]') as HTMLElement
+    fireEvent.pointerMove(sceneMount, { clientX: 200, clientY: 0 })
+
+    act(() => {
+      raf.flush()
+    })
+    expect(renderSpy).toHaveBeenCalled()
+    expect(lookAtSpy).toHaveBeenCalled()
+    expect(mixerUpdate).toHaveBeenCalled()
+    const cameras = renderSpy.mock.calls.map(([, camera]) => camera as { position: { x: number } })
+    expect(cameras.some((camera) => camera.position.x !== 0)).toBe(true)
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(stopSpy).toHaveBeenCalled()
+    const rendersAfterHide = renderSpy.mock.calls.length
+    act(() => {
+      raf.flush()
+    })
+    expect(renderSpy.mock.calls.length).toBe(rendersAfterHide)
+
+    delete (document as { hidden?: unknown }).hidden
+    startSpy.mockClear()
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(startSpy).toHaveBeenCalled()
+    act(() => {
+      raf.flush()
+    })
+    expect(renderSpy.mock.calls.length).toBeGreaterThan(rendersAfterHide)
+  })
+
+  it('ResizeObserver 按挂载节点尺寸调用 setSize', async () => {
+    const observers: ResizeObserverCallback[] = []
+    class CapturingResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {
+        observers.push(callback)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', CapturingResizeObserver)
+
+    const rect = {
+      width: 0,
+      height: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      x: 0,
+      y: 0,
+      toJSON() {
+        return {}
+      },
+    }
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => rect as DOMRect)
+    const setSize = vi.spyOn(THREE.WebGLRenderer.prototype, 'setSize')
+    const updateProjection = vi.spyOn(THREE.PerspectiveCamera.prototype, 'updateProjectionMatrix')
+
+    await renderFocusPage()
+    setSize.mockClear()
+    updateProjection.mockClear()
+    rect.width = 800
+    rect.height = 600
+    rect.right = 800
+    rect.bottom = 600
+
+    act(() => {
+      observers.forEach((callback) => {
+        callback([], {} as ResizeObserver)
+      })
+    })
+
+    expect(setSize).toHaveBeenCalledWith(800, 600, false)
+    expect(updateProjection).toHaveBeenCalled()
   })
 })

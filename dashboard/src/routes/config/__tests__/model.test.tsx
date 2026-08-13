@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelConfigPage } from '../model'
 import * as configApi from '@/lib/config-api'
+import * as configSearchNavigation from '@/lib/config-search-navigation'
 
 const toastMock = vi.fn()
+const routeState = vi.hoisted(() => ({ searchStr: '' }))
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  localStorage.removeItem('model-assignment-tour-entry-dismissed')
 })
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
@@ -19,7 +22,7 @@ vi.mock('@tanstack/react-router', () => ({
     select,
   }: {
     select: (state: { location: { searchStr: string } }) => string
-  }) => select({ location: { searchStr: '' } }),
+  }) => select({ location: { searchStr: routeState.searchStr } }),
 }))
 vi.mock('@/lib/restart-context', () => ({
   RestartProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -44,55 +47,43 @@ vi.mock('@/lib/config-api', () => ({
   updateModelConfig: vi.fn(),
   updateModelConfigSection: vi.fn(),
   testProviderConnection: vi.fn(),
+  testModelCapability: vi.fn(),
   fetchProviderModels: vi.fn(),
   fetchModelClientTypes: vi.fn(),
 }))
 
-// 子组件桩：暴露关键回调以驱动主文件编排逻辑（加载/embedding 警告/保存/级联）
-vi.mock('../model/components', () => ({
-  Pagination: () => <div data-testid="pagination" />,
-  ModelCardList: () => <div data-testid="model-card-list" />,
-  ModelTable: ({
-    paginatedModels,
-    onDelete,
-    onEdit,
-  }: {
-    paginatedModels: { name: string }[]
-    onDelete: (i: number) => void
-    onEdit: (model: { name: string }, index: number) => void
-  }) => (
-    <div data-testid="model-table">
-      {paginatedModels.map((m, i) => (
-        <div key={m.name}>
-          <span>{m.name}</span>
-          <button type="button" onClick={() => onEdit(m, i)}>
-            {`edit-model-${m.name}`}
-          </button>
-          <button type="button" onClick={() => onDelete(i)}>{`del-model-${m.name}`}</button>
-        </div>
-      ))}
-    </div>
-  ),
-  // 唯一的 TaskConfigCard 对应 schema 里的 embedding 字段
-  TaskConfigCard: ({
-    taskConfig,
-    onChange,
-  }: {
-    taskConfig: { model_list?: string[] }
-    onChange: (f: string, v: string[]) => void
-  }) => (
-    <div data-testid="task-config-card">
-      <span data-testid="task-models">{JSON.stringify(taskConfig.model_list ?? [])}</span>
-      <button type="button" onClick={() => onChange('model_list', ['new-embed-model'])}>
-        change-embedding
-      </button>
-    </div>
-  ),
-}))
+// 真实表格/卡片用于覆盖响应式双视图；任务卡片仍桩以便稳定触发 embedding 警告
+vi.mock('../model/components', async (importActual) => {
+  const actual = await importActual<typeof import('../model/components')>()
+  return {
+    ...actual,
+    TaskConfigCard: ({
+      taskConfig,
+      onChange,
+      hideTemperature,
+      hideMaxTokens,
+    }: {
+      taskConfig: { model_list?: string[] }
+      onChange: (f: string, v: string[]) => void
+      hideTemperature?: boolean
+      hideMaxTokens?: boolean
+    }) => (
+      <div data-testid="task-config-card">
+        <span data-testid="task-models">{JSON.stringify(taskConfig.model_list ?? [])}</span>
+        {hideTemperature ? <span>温度已隐藏</span> : null}
+        {hideMaxTokens ? <span>最大 Token 已隐藏</span> : null}
+        <button type="button" onClick={() => onChange('model_list', ['new-embed-model'])}>
+          change-embedding
+        </button>
+      </div>
+    ),
+  }
+})
 
 vi.mock('../modelProvider/ProviderForm', () => ({
   ProviderForm: () => <div data-testid="provider-form" />,
 }))
+
 function baseConfig() {
   return {
     models: [{ name: 'gpt-4', model_identifier: 'gpt-4', api_provider: 'openai' }],
@@ -123,6 +114,23 @@ function baseSchema() {
   }
 }
 
+function schemaWithTasks() {
+  return {
+    schema: {
+      nested: {
+        model_task_config: {
+          fields: [
+            { name: 'replyer', type: 'object', advanced: false, description: '回复' },
+            { name: 'embedding', type: 'object', advanced: false, description: '嵌入模型' },
+            { name: 'vlm', type: 'object', advanced: false, description: '视觉' },
+            { name: 'voice', type: 'object', advanced: true, description: '语音' },
+          ],
+        },
+      },
+    },
+  }
+}
+
 function baseVersions() {
   return {
     success: true,
@@ -141,8 +149,60 @@ function baseVersions() {
   }
 }
 
+function makeModels(count: number, provider = 'openai') {
+  return Array.from({ length: count }, (_, index) => ({
+    name: `model-${String(index).padStart(2, '0')}`,
+    model_identifier: `id-${index}`,
+    api_provider: provider,
+    price_in: 1,
+    price_out: 2,
+  }))
+}
+
+function getModelTable() {
+  return screen.getByRole('table', { name: '模型列表' })
+}
+
+function expectTableHasModel(name: string) {
+  expect(within(getModelTable()).getByRole('button', { name: `编辑模型 ${name}` })).toBeInTheDocument()
+}
+
+function expectTableNotHasModel(name: string) {
+  expect(
+    within(getModelTable()).queryByRole('button', { name: `编辑模型 ${name}` })
+  ).not.toBeInTheDocument()
+}
+
+function getModelListScroller() {
+  return document.querySelector<HTMLElement>('[data-config-field-path="models"]')
+}
+
+function setScrollMetrics(
+  element: HTMLElement,
+  metrics: { scrollHeight: number; scrollTop: number; clientHeight: number }
+) {
+  Object.defineProperty(element, 'scrollHeight', { configurable: true, value: metrics.scrollHeight })
+  Object.defineProperty(element, 'scrollTop', { configurable: true, value: metrics.scrollTop })
+  Object.defineProperty(element, 'clientHeight', { configurable: true, value: metrics.clientHeight })
+}
+
+function installPointerCaptureStub() {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = () => undefined
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = () => undefined
+  }
+}
+
 beforeEach(() => {
+  routeState.searchStr = ''
   window.history.replaceState(null, '', '/config/model')
+  localStorage.removeItem('model-assignment-tour-entry-dismissed')
+  installPointerCaptureStub()
   vi.mocked(configApi.getModelConfigCached).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfig).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(baseSchema() as never)
@@ -166,6 +226,20 @@ beforeEach(() => {
     error: null,
     http_status: 200,
   } as never)
+  vi.mocked(configApi.testModelCapability).mockResolvedValue({
+    success: true,
+    model_name: 'gpt-4',
+    visual_tested: false,
+    tool_call_ok: true,
+    response: 'ok',
+    reasoning: '',
+    tool_calls: [],
+    latency_ms: 100,
+    error: null,
+    prompt_tokens: 1,
+    completion_tokens: 1,
+    total_tokens: 2,
+  } as never)
   vi.mocked(configApi.fetchProviderModels).mockResolvedValue([])
 })
 
@@ -175,12 +249,25 @@ async function renderModelPage() {
   await screen.findByRole('tab', { name: '模型设置' })
 }
 
+async function openConfigurationTab(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('tab', { name: '模型设置' }))
+  await screen.findByRole('table', { name: '模型列表' })
+}
+
 describe('ModelConfigPage 特征化', () => {
   it('初始加载调用 getModelConfigCached + getModelConfigSchema 并渲染', async () => {
     await renderModelPage()
     expect(configApi.getModelConfigCached).toHaveBeenCalled()
     expect(configApi.getModelConfigSchema).toHaveBeenCalled()
     expect(screen.getByRole('tab', { name: '模型设置' })).toBeInTheDocument()
+  })
+
+  it('加载未完成时展示加载状态', async () => {
+    vi.mocked(configApi.getModelConfigCached).mockImplementation(
+      () => new Promise(() => undefined)
+    )
+    render(<ModelConfigPage />)
+    expect(await screen.findByRole('status', { name: '加载中' })).toBeInTheDocument()
   })
 
   it('DeepSeek Responses 模型默认缓存，并在高级设置中映射思考与联网参数', async () => {
@@ -350,8 +437,8 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     await renderModelPage()
 
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    await user.click(screen.getByText('edit-model-gpt-4'))
+    await openConfigurationTab(user)
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 gpt-4' }))
     const nameInput = await screen.findByRole('textbox', { name: '模型名称 *' })
     await user.clear(nameInput)
     await user.type(nameInput, 'renamed-gpt-4')
@@ -390,17 +477,18 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(filteredConfig as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: '模型设置' }))
-    const modelTable = await screen.findByTestId('model-table')
-    expect(within(modelTable).getByText('gpt-4')).toBeInTheDocument()
-    expect(within(modelTable).getByText('local-model')).toBeInTheDocument()
+    await openConfigurationTab(user)
+    expectTableHasModel('gpt-4')
+    expectTableHasModel('local-model')
 
     await user.click(screen.getByRole('button', { name: '筛选厂商 ollama' }))
-    expect(within(modelTable).queryByText('gpt-4')).not.toBeInTheDocument()
-    expect(within(modelTable).getByText('local-model')).toBeInTheDocument()
+    expectTableNotHasModel('gpt-4')
+    expectTableHasModel('local-model')
+    expect(screen.getByRole('heading', { name: 'ollama' })).toBeInTheDocument()
+    expect(screen.getByText('客户端类型：openai')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '全部' }))
-    expect(within(modelTable).getByText('gpt-4')).toBeInTheDocument()
+    expectTableHasModel('gpt-4')
   })
 
   it('删除被模型引用的提供商触发级联确认，确认后连带移除关联模型', async () => {
@@ -424,5 +512,366 @@ describe('ModelConfigPage 特征化', () => {
       models?: { name: string }[]
     }
     expect(savedConfig.models?.some((m) => m.name === 'gpt-4')).toBe(false)
+  })
+
+  it('同时渲染移动端卡片和桌面端表格，并用响应式 class 切换', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    const tableSurface = document.querySelector('[data-model-config-table-surface="true"]')
+    expect(tableSurface).toHaveClass('hidden', 'md:block')
+    expectTableHasModel('gpt-4')
+
+    // 卡片标题用测试状态作为 aria-label，不能按 heading name=模型名查询
+    const cardList = document.querySelector('div.space-y-2\\.5.md\\:hidden')
+    expect(cardList).toHaveClass('md:hidden')
+    expect(cardList).toHaveTextContent('gpt-4')
+    expect(within(cardList as HTMLElement).getByRole('button', { name: '编辑模型 gpt-4' })).toBeInTheDocument()
+  })
+
+  it('空厂商与空模型时展示侧栏全部入口和双视图空态', async () => {
+    const user = userEvent.setup()
+    const emptyConfig = {
+      models: [],
+      api_providers: [],
+      model_task_config: {
+        replyer: { model_list: [] },
+        embedding: { model_list: [] },
+      },
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(emptyConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(emptyConfig as never)
+    vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
+
+    await renderModelPage()
+    expect(screen.getByText('以下任务未配置模型')).toBeInTheDocument()
+    expect(screen.getByText(/replyer、embedding 还未分配模型/)).toBeInTheDocument()
+
+    await openConfigurationTab(user)
+    expect(screen.getByRole('button', { name: '全部' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /筛选厂商/ })).not.toBeInTheDocument()
+    expect(screen.getAllByText('暂无模型配置')).toHaveLength(2)
+    expect(screen.queryByRole('heading', { name: 'openai' })).not.toBeInTheDocument()
+  })
+
+  it('空厂商添加模型时校验缺失的提供商和必填项', async () => {
+    const user = userEvent.setup()
+    const emptyConfig = {
+      models: [],
+      api_providers: [],
+      model_task_config: { embedding: { model_list: [] } },
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(emptyConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(emptyConfig as never)
+
+    await renderModelPage()
+    await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('heading', { name: '添加模型' })).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '保存' }))
+
+    expect(within(dialog).getByText('请输入模型名称')).toBeInTheDocument()
+    expect(within(dialog).getByText('请选择 API 提供商')).toBeInTheDocument()
+    expect(within(dialog).getByText('请输入模型标识符')).toBeInTheDocument()
+    expect(configApi.updateModelConfig).not.toHaveBeenCalled()
+  })
+
+  it('搜索无匹配时卡片和表格都显示未找到，并给出结果计数', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    await user.type(screen.getByPlaceholderText('搜索模型名称、标识符或提供商...'), 'zzzz-missing')
+    expect(screen.getByText('找到 0 个结果')).toBeInTheDocument()
+    expect(screen.getAllByText('未找到匹配的模型')).toHaveLength(2)
+  })
+
+  it('模型列表首屏只展示 20 条，接近底部时再加载下一批', async () => {
+    const user = userEvent.setup()
+    const pagedConfig = {
+      ...baseConfig(),
+      models: makeModels(25),
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(pagedConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(pagedConfig as never)
+
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    expectTableHasModel('model-00')
+    expectTableHasModel('model-19')
+    expectTableNotHasModel('model-20')
+
+    const scroller = getModelListScroller()
+    expect(scroller).not.toBeNull()
+    setScrollMetrics(scroller!, { scrollHeight: 1000, scrollTop: 0, clientHeight: 200 })
+    fireEvent.scroll(scroller!)
+    expectTableNotHasModel('model-20')
+
+    setScrollMetrics(scroller!, { scrollHeight: 400, scrollTop: 220, clientHeight: 200 })
+    fireEvent.scroll(scroller!)
+    await waitFor(() => expectTableHasModel('model-20'))
+    expectTableHasModel('model-24')
+  })
+
+  it('搜索会重置无限滚动窗口并只展示匹配项', async () => {
+    const user = userEvent.setup()
+    const pagedConfig = {
+      ...baseConfig(),
+      models: makeModels(25),
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(pagedConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(pagedConfig as never)
+
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    const scroller = getModelListScroller()!
+    setScrollMetrics(scroller, { scrollHeight: 400, scrollTop: 220, clientHeight: 200 })
+    fireEvent.scroll(scroller)
+    await waitFor(() => expectTableHasModel('model-24'))
+
+    fireEvent.change(screen.getByPlaceholderText('搜索模型名称、标识符或提供商...'), {
+      target: { value: 'model-24' },
+    })
+    expect(screen.getByText('找到 1 个结果')).toBeInTheDocument()
+    expectTableHasModel('model-24')
+    expectTableNotHasModel('model-00')
+    expectTableNotHasModel('model-19')
+  })
+
+  it('无效模型引用可一键清理', async () => {
+    const user = userEvent.setup()
+    const invalidConfig = {
+      ...baseConfig(),
+      model_task_config: {
+        replyer: { model_list: ['ghost-model'] },
+        embedding: { model_list: ['old-embed-model'] },
+      },
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(invalidConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(invalidConfig as never)
+
+    await renderModelPage()
+    expect(screen.getByText('检测到无效的模型引用')).toBeInTheDocument()
+    expect(screen.getByText(/引用了不存在的模型: ghost-model/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '一键清理' }))
+    await waitFor(() => expect(screen.queryByText('检测到无效的模型引用')).not.toBeInTheDocument())
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '清理完成', description: '已删除所有无效的模型引用' })
+    )
+  })
+
+  it('关闭新手引导后写入本地标记且不再展示', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    expect(screen.getByText(/新手引导/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(screen.queryByText(/新手引导/)).not.toBeInTheDocument()
+    expect(localStorage.getItem('model-assignment-tour-entry-dismissed')).toBe('true')
+
+    cleanup()
+    render(<ModelConfigPage />)
+    await screen.findByRole('tab', { name: '模型设置' })
+    expect(screen.queryByText(/新手引导/)).not.toBeInTheDocument()
+  })
+
+  it('切换标签会改写地址栏，URL tab 参数会决定初始标签', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+
+    await user.click(screen.getByRole('tab', { name: '模型设置' }))
+    expect(window.location.pathname + window.location.search).toBe('/config/model?tab=configuration')
+
+    await user.click(screen.getByRole('tab', { name: '功能分配' }))
+    expect(window.location.pathname + window.location.search).toBe('/config/model')
+
+    cleanup()
+    window.history.replaceState(null, '', '/config/model?tab=configuration')
+    routeState.searchStr = '?tab=configuration'
+    render(<ModelConfigPage />)
+    await screen.findByRole('tab', { name: '模型设置' })
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+    )
+  })
+
+  it('保存并管理配置副本：空态、时间格式化、切换与删除', async () => {
+    const user = userEvent.setup()
+    const versions = {
+      ...baseVersions(),
+      versions: [
+        {
+          id: 'v1',
+          label: '夜间副本',
+          created_at: 1700000000,
+          modified_at: 1700000000,
+          size: 10,
+          active: false,
+          inner_config_version: '1.17.6',
+          valid: true,
+          error: null,
+        },
+        {
+          id: 'v2',
+          label: '无时间副本',
+          created_at: 0,
+          modified_at: 0,
+          size: 10,
+          active: false,
+          inner_config_version: '1.17.6',
+          valid: false,
+          error: '解析失败',
+        },
+      ],
+    }
+    vi.mocked(configApi.getModelConfigVersions).mockResolvedValue(versions as never)
+
+    await renderModelPage()
+    await user.click(screen.getByRole('button', { name: '保存当前配置副本' }))
+    const createDialog = await screen.findByRole('dialog', { name: '保存模型配置副本' })
+    await user.type(within(createDialog).getByLabelText('副本名称'), '备份-A')
+    await user.click(within(createDialog).getByRole('button', { name: '保存副本' }))
+    await waitFor(() => expect(configApi.createModelConfigVersion).toHaveBeenCalledWith('备份-A'))
+    expect(screen.queryByRole('dialog', { name: '保存模型配置副本' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
+    const manageDialog = await screen.findByRole('dialog', { name: '模型配置副本' })
+    expect(within(manageDialog).getByText('夜间副本')).toBeInTheDocument()
+    expect(within(manageDialog).getByText('无时间副本')).toBeInTheDocument()
+    expect(within(manageDialog).getByText('-')).toBeInTheDocument()
+    expect(within(manageDialog).getByText('无效')).toBeInTheDocument()
+    expect(within(manageDialog).getByText('解析失败')).toBeInTheDocument()
+    expect(
+      new Date(1700000000 * 1000).toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    ).toEqual(expect.any(String))
+    expect(
+      within(manageDialog).getByText(
+        new Date(1700000000 * 1000).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      )
+    ).toBeInTheDocument()
+
+    const switchButtons = within(manageDialog).getAllByRole('button', { name: '切换' })
+    expect(switchButtons.some((button) => (button as HTMLButtonElement).disabled)).toBe(true)
+    await user.click(switchButtons.find((button) => !(button as HTMLButtonElement).disabled)!)
+    await waitFor(() => expect(configApi.switchModelConfigVersion).toHaveBeenCalledWith('v1'))
+
+    const reopened = await screen.findByRole('dialog', { name: '模型配置副本' })
+    await user.click(within(reopened).getByRole('button', { name: '删除副本 夜间副本' }))
+    expect(await screen.findByText('删除模型配置副本')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(configApi.deleteModelConfigVersion).toHaveBeenCalledWith('v1'))
+  })
+
+  it('管理副本在没有任何未启用副本时展示空态', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await user.click(screen.getByRole('button', { name: '管理配置副本' }))
+    expect(await screen.findByText('暂无未启用副本')).toBeInTheDocument()
+  })
+
+  it('搜索字段参数会切到对应标签并滚动定位', async () => {
+    const scrollSpy = vi.spyOn(configSearchNavigation, 'scrollToConfigSearchField')
+    routeState.searchStr = '?field=models&tab=configuration'
+    window.history.replaceState(null, '', '/config/model?field=models&tab=configuration')
+
+    await renderModelPage()
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalledWith('models'))
+    expect(screen.getByRole('tab', { name: '模型设置' })).toHaveAttribute('data-state', 'active')
+    scrollSpy.mockRestore()
+  })
+
+  it('任务搜索字段会展开高级设置并选中对应任务', async () => {
+    const user = userEvent.setup()
+    vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
+    routeState.searchStr = '?field=model_task_config.vlm.model_list'
+    window.history.replaceState(null, '', '/config/model?field=model_task_config.vlm.model_list')
+
+    await renderModelPage()
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: '功能分配' })).toHaveAttribute('data-state', 'active')
+    )
+    expect(await screen.findByText('温度已隐藏')).toBeInTheDocument()
+
+    const voiceButton = await screen.findByRole('button', { name: /voice/ })
+    await user.click(voiceButton)
+    expect(await screen.findByText('最大 Token 已隐藏')).toBeInTheDocument()
+  })
+
+  it('全选后可批量删除当前页模型', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    const selectAll = within(getModelTable()).getAllByRole('checkbox')[0]
+    await user.click(selectAll)
+    const batchButton = await screen.findByRole('button', { name: /批量删除 \(1\)/ })
+    await user.click(batchButton)
+    expect(await screen.findByText('确认批量删除')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '批量删除' }))
+    await waitFor(() => expect(within(getModelTable()).queryByText('gpt-4')).not.toBeInTheDocument())
+    expect(screen.getAllByText('暂无模型配置')).toHaveLength(2)
+  })
+
+  it('确认删除单个模型后从列表移除', async () => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+
+    await user.click(within(getModelTable()).getByRole('button', { name: '删除模型 gpt-4' }))
+    expect(await screen.findByText('确认删除')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '删除' }))
+    await waitFor(() => expect(within(getModelTable()).queryByText('gpt-4')).not.toBeInTheDocument())
+  })
+
+  it('ResizeObserver 不可用时模型标识用 window resize 计算滚动距离', async () => {
+    const originalObserver = window.ResizeObserver
+    // 覆盖页面在无 ResizeObserver 时回退到 resize 监听的分支
+    // @ts-expect-error 测试故意删除浏览器观察者
+    delete window.ResizeObserver
+    const restoreWidth = (() => {
+      const proto = HTMLElement.prototype
+      const scrollDesc = Object.getOwnPropertyDescriptor(proto, 'scrollWidth')
+      const clientDesc = Object.getOwnPropertyDescriptor(proto, 'clientWidth')
+      Object.defineProperty(proto, 'scrollWidth', { configurable: true, get: () => 400 })
+      Object.defineProperty(proto, 'clientWidth', { configurable: true, get: () => 80 })
+      return () => {
+        if (scrollDesc) Object.defineProperty(proto, 'scrollWidth', scrollDesc)
+        else delete (proto as { scrollWidth?: number }).scrollWidth
+        if (clientDesc) Object.defineProperty(proto, 'clientWidth', clientDesc)
+        else delete (proto as { clientWidth?: number }).clientWidth
+      }
+    })()
+
+    try {
+      vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
+      await renderModelPage()
+      const marqueeText = document.querySelector('.model-identifier-marquee-text') as HTMLElement
+      expect(marqueeText).not.toBeNull()
+      fireEvent(window, new Event('resize'))
+      await waitFor(() =>
+        expect(marqueeText.style.getPropertyValue('--model-identifier-marquee-distance')).toBe(
+          '-320px'
+        )
+      )
+    } finally {
+      restoreWidth()
+      window.ResizeObserver = originalObserver
+    }
   })
 })
