@@ -64,14 +64,17 @@ export function useResolvedAvatarUrl(
     [platform, targetId, targetType, version]
   )
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>()
+  const canResolve = Boolean(avatarFetchEnabled && avatarPath)
+  if (!canResolve && avatarUrl !== undefined) {
+    setAvatarUrl(undefined)
+  }
 
   useEffect(() => {
-    let ignore = false
-    if (!avatarFetchEnabled || !avatarPath) {
-      setAvatarUrl(undefined)
+    if (!canResolve || !avatarPath) {
       return
     }
 
+    let ignore = false
     resolveApiPath(avatarPath).then((resolvedPath) => {
       if (!ignore) setAvatarUrl(resolvedPath)
     })
@@ -79,7 +82,7 @@ export function useResolvedAvatarUrl(
     return () => {
       ignore = true
     }
-  }, [avatarFetchEnabled, avatarPath])
+  }, [avatarPath, canResolve])
 
   return avatarUrl
 }

@@ -867,11 +867,12 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   )
   const scrolledSearchFieldRef = useRef('')
 
-  useEffect(() => {
-    if (!tabGroups.some((tab) => tab.id === activeTab)) {
-      setActiveTab(tabGroups[0]?.id ?? '')
+  if (!tabGroups.some((tab) => tab.id === activeTab)) {
+    const fallbackTab = tabGroups[0]?.id ?? ''
+    if (activeTab !== fallbackTab) {
+      setActiveTab(fallbackTab)
     }
-  }, [activeTab, tabGroups])
+  }
 
   useEffect(() => {
     if (!searchFieldPath) {

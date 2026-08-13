@@ -7,6 +7,12 @@ export function useMediaQuery(query: string): boolean {
     }
     return false
   })
+  const [seenQuery, setSeenQuery] = useState(query)
+
+  if (typeof window !== 'undefined' && seenQuery !== query) {
+    setSeenQuery(query)
+    setMatches(window.matchMedia(query).matches)
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -19,7 +25,6 @@ export function useMediaQuery(query: string): boolean {
       setMatches(event.matches)
     }
 
-    setMatches(mediaQuery.matches)
     mediaQuery.addEventListener('change', handleChange)
 
     return () => {

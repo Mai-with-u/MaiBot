@@ -39,11 +39,12 @@ export function AssetStoreProvider({ children }: AssetStoreProviderProps) {
 
   // Cleanup: revoke all blob URLs on unmount
   useEffect(() => {
+    const cache = urlCache.current
     return () => {
-      urlCache.current.forEach((url) => {
+      cache.forEach((url) => {
         URL.revokeObjectURL(url)
       })
-      urlCache.current.clear()
+      cache.clear()
     }
   }, [])
 

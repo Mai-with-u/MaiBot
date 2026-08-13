@@ -1498,6 +1498,8 @@ export function MaisakaMonitor() {
     return visibleEntries
   }, [timeline])
 
+  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
+  // eslint-disable-next-line react-hooks/incompatible-library
   const timelineVirtualizer = useVirtualizer({
     count: visibleTimelineEntries.length,
     getScrollElement: () => scrollViewport,

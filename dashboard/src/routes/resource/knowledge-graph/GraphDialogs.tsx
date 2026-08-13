@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { Trash2 } from 'lucide-react'
 
@@ -139,12 +139,9 @@ export function NodeDetailDialog({
 }: NodeDetailDialogProps) {
   const node = nodeDetail?.node ?? selectedNodeData
   const [includeParagraphs, setIncludeParagraphs] = useState(false)
-
-  useEffect(() => {
-    if (!open) {
-      setIncludeParagraphs(false)
-    }
-  }, [open, node?.id])
+  if (!open && includeParagraphs) {
+    setIncludeParagraphs(false)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -246,12 +243,9 @@ export function EdgeDetailDialog({
   const sourceLabel = selectedEdgeData?.source.content ?? edgeDetail?.edge.source ?? ''
   const targetLabel = selectedEdgeData?.target.content ?? edgeDetail?.edge.target ?? ''
   const [includeParagraphs, setIncludeParagraphs] = useState(false)
-
-  useEffect(() => {
-    if (!open) {
-      setIncludeParagraphs(false)
-    }
-  }, [open, edgeDetail?.edge.source, edgeDetail?.edge.target])
+  if (!open && includeParagraphs) {
+    setIncludeParagraphs(false)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -350,12 +344,9 @@ export function RelationDetailDialog({
   onDeleteRelation,
 }: RelationDetailDialogProps) {
   const [includeParagraphs, setIncludeParagraphs] = useState(false)
-
-  useEffect(() => {
-    if (!open) {
-      setIncludeParagraphs(false)
-    }
-  }, [open, relation?.hash])
+  if (!open && includeParagraphs) {
+    setIncludeParagraphs(false)
+  }
 
   if (!relation) {
     return null

@@ -430,6 +430,7 @@ function IndexPageContent() {
 
   // 初始加载各数据源
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- 挂载时拉取仪表盘各数据源 */
     fetchDashboardData()
     fetchHitokoto()
     fetchBotStatus(true)
@@ -437,6 +438,7 @@ function IndexPageContent() {
     fetchLocalCacheStats()
     fetchReviewStats()
     fetchPlatformAccountConfig()
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [
     fetchDashboardData,
     fetchHitokoto,

@@ -1471,24 +1471,21 @@ function ExpressionGroupMemberItem({
   const hasSharedMemoryTarget = isSharedMemoryGroup && Boolean(platform && itemId)
   const unmatchedSharedMemoryTarget = isSharedMemoryGroup && hasSharedMemoryTarget && !sharedMemoryChat
   const unmatchedSharedMemoryTargetKey = unmatchedSharedMemoryTarget ? expressionTargetOptionKey(member) : ''
-  const openedUnmatchedTargetKeyRef = useRef(unmatchedSharedMemoryTargetKey)
+  const [openedUnmatchedTargetKey, setOpenedUnmatchedTargetKey] = useState(unmatchedSharedMemoryTargetKey)
   const [manualEditing, setManualEditing] = useState(unmatchedSharedMemoryTarget)
   const showSharedMemoryManualFields = isSharedMemoryGroup && manualEditing
 
-  useEffect(() => {
-    if (!isSharedMemoryGroup) {
-      return
-    }
+  if (isSharedMemoryGroup) {
     if (!unmatchedSharedMemoryTargetKey) {
-      openedUnmatchedTargetKeyRef.current = ''
-      setManualEditing(false)
-      return
-    }
-    if (openedUnmatchedTargetKeyRef.current !== unmatchedSharedMemoryTargetKey) {
-      openedUnmatchedTargetKeyRef.current = unmatchedSharedMemoryTargetKey
+      if (openedUnmatchedTargetKey !== '' || manualEditing) {
+        setOpenedUnmatchedTargetKey('')
+        setManualEditing(false)
+      }
+    } else if (openedUnmatchedTargetKey !== unmatchedSharedMemoryTargetKey) {
+      setOpenedUnmatchedTargetKey(unmatchedSharedMemoryTargetKey)
       setManualEditing(true)
     }
-  }, [isSharedMemoryGroup, unmatchedSharedMemoryTargetKey])
+  }
 
   const updateScopeField = (patch: Partial<ExpressionGroupTarget>) => {
     onUpdateMember(groupIndex, memberIndex, {
@@ -3202,29 +3199,45 @@ export const ExpressionGroupsHook: FieldHookComponent = ({ fieldPath, onChange, 
   const [showAddGroupPanel, setShowAddGroupPanel] = useState(false)
   const [addingMemberGroupIndex, setAddingMemberGroupIndex] = useState<number | null>(null)
 
-  useEffect(() => {
-    if (!isSharedMemoryGroup) {
-      return
-    }
-
+  if (isSharedMemoryGroup) {
     if (globalMemorySharingEnabled) {
       const allGroupIndexes = new Set(Array.from({ length: groups.length }, (_, index) => index))
-      setCollapsedGroups(allGroupIndexes)
-      setShowAddGroupPanel(false)
-      setAddingMemberGroupIndex(null)
-      return
-    }
-
-    setCollapsedGroups((current) => {
-      const next = new Set<number>()
-      current.forEach((index) => {
-        if (index < groups.length) {
-          next.add(index)
+      let collapsedSame = collapsedGroups.size === allGroupIndexes.size
+      if (collapsedSame) {
+        for (const index of allGroupIndexes) {
+          if (!collapsedGroups.has(index)) {
+            collapsedSame = false
+            break
+          }
+        }
+      }
+      if (!collapsedSame) {
+        setCollapsedGroups(allGroupIndexes)
+      }
+      if (showAddGroupPanel) {
+        setShowAddGroupPanel(false)
+      }
+      if (addingMemberGroupIndex !== null) {
+        setAddingMemberGroupIndex(null)
+      }
+    } else {
+      let needsPrune = false
+      collapsedGroups.forEach((index) => {
+        if (index >= groups.length) {
+          needsPrune = true
         }
       })
-      return next
-    })
-  }, [globalMemorySharingEnabled, groups.length, isSharedMemoryGroup])
+      if (needsPrune) {
+        const next = new Set<number>()
+        collapsedGroups.forEach((index) => {
+          if (index < groups.length) {
+            next.add(index)
+          }
+        })
+        setCollapsedGroups(next)
+      }
+    }
+  }
 
   useEffect(() => {
     if (!isSharedMemoryGroup) {

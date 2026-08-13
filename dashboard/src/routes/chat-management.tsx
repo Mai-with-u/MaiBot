@@ -1135,10 +1135,11 @@ function PromptRuleEditor({
   const isBusy = saveMutation.isPending || deleteMutation.isPending
   const normalizedDraft = draft.trim()
   const changed = normalizedDraft !== prompt.prompt.trim()
-
-  useEffect(() => {
+  const [seenPrompt, setSeenPrompt] = useState(prompt.prompt)
+  if (seenPrompt !== prompt.prompt) {
+    setSeenPrompt(prompt.prompt)
     setDraft(prompt.prompt)
-  }, [prompt.prompt])
+  }
 
   return (
     <div className="bg-muted/20 space-y-2 rounded-md border p-3">
@@ -1282,11 +1283,10 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
       : kind === 'expression'
         ? 'expression_groups'
         : 'jargon_groups'
-  const sectionData = (
-    configQuery.data?.[sectionName] && typeof configQuery.data[sectionName] === 'object'
-      ? configQuery.data[sectionName]
-      : {}
-  ) as Record<string, unknown>
+  const sectionData = useMemo(() => {
+    const raw = configQuery.data?.[sectionName]
+    return (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  }, [configQuery.data, sectionName])
   const globalMemorySharingEnabled =
     kind === 'memory' && sectionData.global_memory_sharing_enabled === true
   const groups = useMemo(

@@ -53,13 +53,16 @@ export function Sidebar({
     }
   }, [])
 
+  if (sidebarOpen && (hoverExpanded || fixTransitionActive || collapseTransitionActive)) {
+    setHoverExpanded(false)
+    setFixTransitionActive(false)
+    setCollapseTransitionActive(false)
+  }
+
   useEffect(() => {
     if (sidebarOpen) {
       cancelHoverExpand()
       cancelCollapseTransition()
-      setHoverExpanded(false)
-      setFixTransitionActive(false)
-      setCollapseTransitionActive(false)
     }
     return () => {
       cancelHoverExpand()

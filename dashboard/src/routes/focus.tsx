@@ -1614,8 +1614,10 @@ function FocusCompanionExperience() {
       return
     }
 
+    /* eslint-disable react-hooks/set-state-in-effect -- 必须在读取本地存档之后再判断跨天 */
     setTodayFocusDate(today)
     setTodayFocusSeconds(0)
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [todayFocusDate])
 
   useEffect(() => {

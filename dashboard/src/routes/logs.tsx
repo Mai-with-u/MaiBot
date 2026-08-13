@@ -452,6 +452,8 @@ function LogTerminalPane({ toolbarContainerId, toolbarVisible }: LogTerminalPane
   const levelWidth = logColumnLayout.levelWidth + Math.round(columnWidthExtra * 0.5)
   const moduleWidth = logColumnLayout.moduleWidth + columnWidthExtra
 
+  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: filteredLogs.length,
     getScrollElement: () => parentRef.current,

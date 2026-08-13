@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { Textarea } from '@/components/ui/textarea'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
@@ -55,11 +55,12 @@ export function createJsonFieldHook(options: JsonFieldHookOptions): FieldHookCom
 
     const [editorValue, setEditorValue] = useState(() => JSON.stringify(normalizedValue, null, 2))
     const [errorMessage, setErrorMessage] = useState('')
-
-    useEffect(() => {
+    const [seenNormalizedValue, setSeenNormalizedValue] = useState(normalizedValue)
+    if (seenNormalizedValue !== normalizedValue) {
+      setSeenNormalizedValue(normalizedValue)
       setEditorValue(JSON.stringify(normalizedValue, null, 2))
       setErrorMessage('')
-    }, [normalizedValue])
+    }
 
     const label = resolveLabel(schema, fieldPath)
     const description = resolveDescription(schema)

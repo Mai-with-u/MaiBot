@@ -510,12 +510,20 @@ function PluginDetailsPanel({
   const [readme, setReadme] = useState('')
   const [readmeLoading, setReadmeLoading] = useState(true)
   const [readmeError, setReadmeError] = useState('')
+  const [loadedPluginId, setLoadedPluginId] = useState(plugin.id)
+  if (loadedPluginId !== plugin.id) {
+    setLoadedPluginId(plugin.id)
+    setComponents([])
+    setComponentsLoading(true)
+    setComponentsError('')
+    setReadme('')
+    setReadmeLoading(true)
+    setReadmeError('')
+  }
 
   useEffect(() => {
     let cancelled = false
 
-    setComponentsLoading(true)
-    setComponentsError('')
     getPluginRuntimeComponents(plugin.id)
       .then((data) => {
         if (!cancelled) {
@@ -541,9 +549,6 @@ function PluginDetailsPanel({
   useEffect(() => {
     let cancelled = false
 
-    setReadmeLoading(true)
-    setReadmeError('')
-    setReadme('')
     getLocalPluginReadme(plugin.id)
       .then((content) => {
         if (!cancelled) {

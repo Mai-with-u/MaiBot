@@ -1053,6 +1053,7 @@ describe('complexFieldHooks', () => {
       )
       expect(await screen.findByText('尚未收到适配器上报的账号。')).toBeInTheDocument()
 
+      await user.click(screen.getByRole('button', { name: '备用平台账号' }))
       fireEvent.change(screen.getByPlaceholderText('qq'), { target: { value: 'telegram' } })
       expect(onChange).toHaveBeenCalledWith('telegram')
       fireEvent.change(screen.getByPlaceholderText('2814567326'), { target: { value: '999' } })
@@ -1100,7 +1101,7 @@ describe('complexFieldHooks', () => {
 
       expect(await screen.findByText('离线')).toBeInTheDocument()
       expect(screen.getByText(/入站消息/)).toBeInTheDocument()
-      await userEvent.click(screen.getByRole('button', { name: '禁用' }))
+      await userEvent.click(screen.getByRole('button', { name: '排除身份' }))
       expect(await screen.findByText('更新失败')).toBeInTheDocument()
     })
 

@@ -301,9 +301,12 @@ function ModelConfigPageContent() {
     [filteredModels, visibleModelCount]
   )
 
-  useEffect(() => {
+  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}`
+  const [seenModelListFilterKey, setSeenModelListFilterKey] = useState(modelListFilterKey)
+  if (seenModelListFilterKey !== modelListFilterKey) {
+    setSeenModelListFilterKey(modelListFilterKey)
     setVisibleModelCount(20)
-  }, [modelProviderFilter, searchQuery])
+  }
 
   const handleModelListScroll = (event: UIEvent<HTMLElement>) => {
     const target = event.currentTarget
@@ -337,11 +340,9 @@ function ModelConfigPageContent() {
     selectedTaskMetadata && 'hideMaxTokens' in selectedTaskMetadata && selectedTaskMetadata.hideMaxTokens
   )
 
-  useEffect(() => {
-    if (selectedTaskField && selectedTaskField.name !== selectedTaskName) {
-      setSelectedTaskName(selectedTaskField.name)
-    }
-  }, [selectedTaskField, selectedTaskName])
+  if (selectedTaskField && selectedTaskField.name !== selectedTaskName) {
+    setSelectedTaskName(selectedTaskField.name)
+  }
 
   useEffect(() => {
     const searchParams = new URLSearchParams(routeSearch.startsWith('?') ? routeSearch.slice(1) : routeSearch)
@@ -370,12 +371,14 @@ function ModelConfigPageContent() {
     return () => window.cancelAnimationFrame(frameId)
   }, [routeSearch, searchFieldPath])
 
-  useEffect(() => {
-    const taskName = searchFieldPath.match(/^model_task_config\.([^.]+)/)?.[1]
-    if (taskName && taskConfigSchema?.fields.some((field) => field.name === taskName)) {
-      setSelectedTaskName(taskName)
+  const [seenSearchFieldPath, setSeenSearchFieldPath] = useState(searchFieldPath)
+  if (seenSearchFieldPath !== searchFieldPath) {
+    setSeenSearchFieldPath(searchFieldPath)
+    const searchedSchemaTaskName = searchFieldPath.match(/^model_task_config\.([^.]+)/)?.[1]
+    if (searchedSchemaTaskName && taskConfigSchema?.fields.some((field) => field.name === searchedSchemaTaskName)) {
+      setSelectedTaskName(searchedSchemaTaskName)
     }
-  }, [searchFieldPath, taskConfigSchema])
+  }
 
   useEffect(() => {
     if (

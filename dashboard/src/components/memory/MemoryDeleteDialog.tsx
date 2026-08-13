@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { AlertTriangle, RotateCcw, Search, Trash2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -22,6 +22,7 @@ import type {
 } from '@/lib/memory-api'
 
 const DELETE_PREVIEW_PAGE_SIZE = 8
+const EMPTY_PREVIEW_ITEMS: MemoryDeletePreviewItemPayload[] = []
 
 function formatMode(mode: string): string {
   switch (mode) {
@@ -97,9 +98,12 @@ export function MemoryDeleteDialog({
 }: MemoryDeleteDialogProps) {
   const [itemSearch, setItemSearch] = useState('')
   const [itemPage, setItemPage] = useState(1)
+  const previewResetKey = `${open}:${preview?.mode ?? ''}:${preview?.item_count ?? ''}`
+  const [seenPreviewResetKey, setSeenPreviewResetKey] = useState(previewResetKey)
+  const [seenItemSearch, setSeenItemSearch] = useState(itemSearch)
   const counts = preview?.counts ?? result?.counts ?? {}
   const previewSources = Array.isArray(preview?.sources) ? preview.sources : []
-  const previewItems = Array.isArray(preview?.items) ? preview.items : []
+  const previewItems = Array.isArray(preview?.items) ? preview.items : EMPTY_PREVIEW_ITEMS
   const filteredPreviewItems = useMemo(() => {
     const keyword = itemSearch.trim().toLowerCase()
     if (!keyword) {
@@ -130,20 +134,17 @@ export function MemoryDeleteDialog({
     { key: 'sources', label: '来源', value: Number(counts.sources ?? 0) },
   ].filter((item) => item.value > 0)
 
-  useEffect(() => {
+  if (seenPreviewResetKey !== previewResetKey) {
+    setSeenPreviewResetKey(previewResetKey)
+    setSeenItemSearch('')
     setItemSearch('')
     setItemPage(1)
-  }, [preview?.mode, preview?.item_count, open])
-
-  useEffect(() => {
+  } else if (seenItemSearch !== itemSearch) {
+    setSeenItemSearch(itemSearch)
     setItemPage(1)
-  }, [itemSearch])
-
-  useEffect(() => {
-    if (itemPage > itemPageCount) {
-      setItemPage(itemPageCount)
-    }
-  }, [itemPage, itemPageCount])
+  } else if (itemPage > itemPageCount) {
+    setItemPage(itemPageCount)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
