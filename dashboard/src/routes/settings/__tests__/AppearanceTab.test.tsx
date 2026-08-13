@@ -881,7 +881,7 @@ describe('AppearanceTab 样式微调 token 写入', () => {
       },
     })
     const { rerender } = render(<AppearanceTab />)
-    let region = await openStyleGroup(user, 'settings.appearance.visualGroup')
+    const region = await openStyleGroup(user, 'settings.appearance.visualGroup')
     expect(within(region).getByRole('combobox')).toHaveTextContent(
       'settings.appearance.shadowNone'
     )
@@ -1088,7 +1088,7 @@ describe('AppearanceTab 样式微调 token 写入', () => {
       },
     })
     const { rerender } = render(<AppearanceTab />)
-    let region = await openStyleGroup(user, 'settings.appearance.animationGroup')
+    const region = await openStyleGroup(user, 'settings.appearance.animationGroup')
     expect(within(region).getByRole('combobox')).toHaveTextContent(
       'settings.appearance.animationOff'
     )
