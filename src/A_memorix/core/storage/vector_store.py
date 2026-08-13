@@ -467,6 +467,10 @@ class VectorStore:
         self._write_buffer_vecs: List[np.ndarray] = []
         self._write_buffer_ids: List[int] = []
 
+        # 脏检测：变更版本号，用于跳过无变更的全量保存
+        self._revision = 0
+        self._last_saved_revision = 0
+
         self._total_added = 0
         self._total_deleted = 0
         self._bin_count = 0
@@ -1566,6 +1570,7 @@ class VectorStore:
             self._write_buffer_vecs.append(batch_vecs)
             self._write_buffer_ids.extend(processed_int_ids)
             self._known_hashes.update(processed_str_ids)
+            self._revision += 1
             self._invalidate_id_map()
 
             if len(self._write_buffer_ids) >= self.buffer_size:
@@ -2173,6 +2178,7 @@ class VectorStore:
                 raise
 
             self._deleted_ids.difference_update(restored_int_ids)
+            self._revision += 1
             return len(restored_int_ids)
 
     def is_tombstoned(self, hash_value: str) -> bool:
@@ -2351,6 +2357,8 @@ class VectorStore:
                     if self._fallback_index.ntotal > 0:
                         self._fallback_index.remove_ids(np.array([int_id], dtype=np.int64))
                     count += 1
+            if count > 0:
+                self._revision += 1
             self._total_deleted += count
 
             # 检查是否需要执行垃圾回收
@@ -2564,7 +2572,14 @@ class VectorStore:
             if compaction_journal is not None:
                 self._finalize_compaction_commit_unlocked()
 
+            # 全部落盘成功后才记录已保存版本，供脏检测使用
+            self._last_saved_revision = self._revision
             logger.debug("VectorStore saved.")
+
+    def has_pending_changes(self) -> bool:
+        """是否存在尚未落盘的向量变更（用于跳过无变更的全量保存）。"""
+        with self._lock:
+            return self._revision != self._last_saved_revision
 
     def migrate_legacy_npy(self, data_dir: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
         """
@@ -2615,6 +2630,9 @@ class VectorStore:
     ) -> None:
         with self._lock:
             self._raise_if_cleanup_checkpoint_broken_unlocked()
+            # 从磁盘加载后内存与磁盘一致，重置脏检测计数避免误判
+            self._revision = 0
+            self._last_saved_revision = 0
             if not data_dir:
                 data_dir = self.data_dir
             data_dir = Path(data_dir)
