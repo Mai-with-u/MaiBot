@@ -35,7 +35,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  Settings,
   AlertCircle,
   AlertTriangle,
   Package,
@@ -1488,6 +1487,7 @@ export function PluginConfigPage() {
 function PluginConfigPageContent() {
   const { themeConfig } = useTheme()
   const { triggerRestart, isRestarting } = useRestart()
+  const adapterManagement = isAdapterManagementPath()
 
   const {
     plugins,
@@ -1578,6 +1578,7 @@ function PluginConfigPageContent() {
     <>
       <ScrollArea className="h-full">
       <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
+        {!adapterManagement && (
         <div className="flex flex-nowrap items-center gap-2 sm:gap-3">
           <div className="relative min-w-0 flex-1 basis-0 sm:basis-72">
             <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
@@ -1624,6 +1625,7 @@ function PluginConfigPageContent() {
             <span className="hidden sm:inline">重启麦麦</span>
           </Button>
         </div>
+        )}
 
         {/* 统计信息 */}
         {isModernDashboardStyle ? (
@@ -1894,16 +1896,6 @@ function PluginConfigPageContent() {
                     </div>
                   </div>
                   <div className="flex items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-9 w-9 p-0"
-                      title="配置"
-                      aria-label="配置"
-                      onClick={() => openPluginConfig(plugin)}
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Button>
                     <div
                       className="flex h-9 w-9 items-center justify-center"
                       title={pluginDisabled ? '启动插件' : '关闭插件'}
@@ -1921,6 +1913,7 @@ function PluginConfigPageContent() {
                     <Button
                       variant="outline"
                       size="sm"
+                      data-plugin-update-button="true"
                       className="relative h-9 w-9 p-0"
                       disabled={pluginActing || !updateState.canUpdate}
                       title={updateState.title}

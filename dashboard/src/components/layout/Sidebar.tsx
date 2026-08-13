@@ -19,6 +19,7 @@ interface SidebarProps {
 }
 
 const SIDEBAR_HOVER_EXPAND_DELAY_MS = 180
+const SIDEBAR_COLLAPSE_TRANSITION_MS = 220
 
 export function Sidebar({
   sidebarOpen,
@@ -32,8 +33,11 @@ export function Sidebar({
   const menuSections = useMenuSections()
   const [hoverExpanded, setHoverExpanded] = useState(false)
   const [fixTransitionActive, setFixTransitionActive] = useState(false)
+  const [collapseTransitionActive, setCollapseTransitionActive] = useState(false)
   const hoverExpandTimerRef = useRef<number | null>(null)
-  const visuallyOpen = sidebarOpen || hoverExpanded || fixTransitionActive
+  const collapseTransitionTimerRef = useRef<number | null>(null)
+  const sidebarRevealed = sidebarOpen || hoverExpanded || fixTransitionActive
+  const visuallyOpen = sidebarRevealed || collapseTransitionActive
 
   const cancelHoverExpand = useCallback(() => {
     if (hoverExpandTimerRef.current !== null) {
@@ -42,14 +46,26 @@ export function Sidebar({
     }
   }, [])
 
+  const cancelCollapseTransition = useCallback(() => {
+    if (collapseTransitionTimerRef.current !== null) {
+      window.clearTimeout(collapseTransitionTimerRef.current)
+      collapseTransitionTimerRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     if (sidebarOpen) {
       cancelHoverExpand()
+      cancelCollapseTransition()
       setHoverExpanded(false)
       setFixTransitionActive(false)
+      setCollapseTransitionActive(false)
     }
-    return cancelHoverExpand
-  }, [cancelHoverExpand, sidebarOpen])
+    return () => {
+      cancelHoverExpand()
+      cancelCollapseTransition()
+    }
+  }, [cancelCollapseTransition, cancelHoverExpand, sidebarOpen])
 
   return (
     <aside
@@ -62,6 +78,8 @@ export function Sidebar({
       onPointerEnter={(event) => {
         if (!sidebarOpen && event.pointerType === 'mouse') {
           cancelHoverExpand()
+          cancelCollapseTransition()
+          setCollapseTransitionActive(false)
           hoverExpandTimerRef.current = window.setTimeout(() => {
             hoverExpandTimerRef.current = null
             setHoverExpanded(true)
@@ -70,24 +88,40 @@ export function Sidebar({
       }}
       onPointerLeave={() => {
         cancelHoverExpand()
+        cancelCollapseTransition()
+        if (hoverExpanded) {
+          setCollapseTransitionActive(true)
+          collapseTransitionTimerRef.current = window.setTimeout(() => {
+            collapseTransitionTimerRef.current = null
+            setCollapseTransitionActive(false)
+          }, SIDEBAR_COLLAPSE_TRANSITION_MS)
+        }
         setHoverExpanded(false)
       }}
       className={cn(
-        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 motion-reduce:transition-none lg:relative lg:z-0 lg:h-full lg:transition-[width] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)]',
+        'fixed inset-y-0 left-0 isolate z-50 flex flex-col border-r transition-transform duration-300 motion-reduce:transition-none lg:relative lg:z-0 lg:h-full lg:w-[var(--layout-sidebar-width)] lg:transition-[clip-path] lg:duration-[220ms] lg:ease-[cubic-bezier(0.22,1,0.36,1)] lg:will-change-[clip-path]',
         inheritsPageBackground ? 'bg-transparent' : 'bg-card',
-        // 移动端始终显示完整宽度；桌面端折叠后可通过悬停临时覆盖展开。
+        // 桌面端始终保持完整内容宽度，仅用裁剪展示折叠状态，避免悬浮时反复触发布局计算。
         'w-[var(--layout-sidebar-width)]',
-        visuallyOpen
-          ? 'lg:w-[var(--layout-sidebar-width)]'
-          : 'lg:w-[var(--layout-sidebar-collapsed-width)]',
+        sidebarRevealed
+          ? 'lg:[clip-path:inset(0_0_0_0)]'
+          : 'lg:[clip-path:inset(0_calc(var(--layout-sidebar-width)-var(--layout-sidebar-collapsed-width))_0_0)]',
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}
     >
       {!inheritsPageBackground && <BackgroundLayer config={sidebarBg} layerId="sidebar" />}
 
+      {!visuallyOpen && (
+        <div
+          aria-hidden="true"
+          data-dashboard-sidebar-collapsed-divider="true"
+          className="border-border pointer-events-none absolute inset-y-0 left-0 z-20 hidden w-[var(--layout-sidebar-collapsed-width)] border-r lg:block"
+        />
+      )}
+
       {/* Logo 区域 */}
       <div className="relative z-10">
-        <LogoArea sidebarOpen={visuallyOpen} />
+        <LogoArea sidebarOpen={sidebarRevealed} />
         {!sidebarOpen && hoverExpanded && (
           <button
             type="button"
@@ -142,8 +176,9 @@ export function Sidebar({
                     section.title === 'sidebar.groups.overview' && 'hidden',
                     // 移动端始终显示，桌面端根据状态切换
                     'mb-[var(--layout-sidebar-section-title-margin-bottom)]',
-                    !visuallyOpen && 'lg:invisible',
-                    !visuallyOpen &&
+                    'transition-opacity duration-[220ms] motion-reduce:transition-none',
+                    !sidebarRevealed && 'lg:opacity-0',
+                    !sidebarRevealed &&
                       'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
                   )}
                 >
@@ -156,8 +191,15 @@ export function Sidebar({
                 </div>
 
                 {/* 分割线 - 仅在桌面端折叠时显示 */}
-                {!visuallyOpen && sectionIndex > 0 && (
-                  <div className="border-border mb-2 hidden border-t lg:block" />
+                {sectionIndex > 0 && (
+                  <div
+                    aria-hidden="true"
+                    data-dashboard-sidebar-section-divider="true"
+                    className={cn(
+                      'border-border mb-2 hidden border-t transition-opacity duration-[220ms] motion-reduce:transition-none lg:block',
+                      sidebarRevealed && 'lg:opacity-0'
+                    )}
+                  />
                 )}
 
                 {/* 菜单项列表 */}
@@ -166,7 +208,7 @@ export function Sidebar({
                     <NavItem
                       key={item.path}
                       item={item}
-                      sidebarOpen={visuallyOpen}
+                      sidebarOpen={sidebarRevealed}
                       onMobileMenuClose={onMobileMenuClose}
                     />
                   ))}

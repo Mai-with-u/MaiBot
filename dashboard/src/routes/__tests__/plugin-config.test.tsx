@@ -123,6 +123,28 @@ describe('PluginConfigPage 特征化', () => {
     expect(screen.queryByText(/A_Memorix/i)).not.toBeInTheDocument()
   })
 
+  it('适配器管理页不显示插件搜索、更新、刷新和重启操作', async () => {
+    window.history.replaceState(null, '', '/adapter-management')
+    const adapterPlugin = {
+      ...makePlugin('test.adapter', 'Adapter Plugin'),
+      manifest: {
+        ...makePlugin('test.adapter', 'Adapter Plugin').manifest,
+        plugin_type: 'adapter',
+      },
+    }
+    vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([adapterPlugin] as never)
+
+    render(<PluginConfigPage />)
+
+    expect(await screen.findByText('Adapter Plugin')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('搜索插件...')).not.toBeInTheDocument()
+    expect(screen.queryByText('有更新')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '刷新' })).not.toBeInTheDocument()
+    expect(screen.queryByText('重启麦麦')).not.toBeInTheDocument()
+    expect(pluginApi.fetchPluginList).not.toHaveBeenCalled()
+    expect(pluginApi.getMaimaiVersion).not.toHaveBeenCalled()
+  })
+
   it('删除按钮使用透明底色与主题色边框和图标', async () => {
     render(<PluginConfigPage />)
 
@@ -134,6 +156,23 @@ describe('PluginConfigPage 特征化', () => {
       'shadow-none'
     )
     expect(deleteButton.querySelector('svg')).not.toHaveClass('text-primary')
+  })
+
+  it('插件卡片不显示重复的配置按钮，更新按钮保留原色并标记统一边框', async () => {
+    const { container } = render(<PluginConfigPage />)
+
+    await screen.findByText('Emoji Plugin')
+    expect(screen.queryByRole('button', { name: '配置' })).not.toBeInTheDocument()
+
+    const updateButton = container.querySelector('.lucide-arrow-up')?.closest('button')
+    const deleteButton = screen.getByRole('button', { name: '删除' })
+    expect(updateButton).toHaveAttribute('data-plugin-update-button', 'true')
+    expect(updateButton).not.toHaveClass('text-primary', 'border-current')
+    expect(deleteButton).toHaveClass(
+      'border-current',
+      'bg-transparent',
+      'shadow-none'
+    )
   })
 
   it('无插件时显示空态提示', async () => {
@@ -172,6 +211,8 @@ describe('PluginConfigPage 特征化', () => {
     expect(screen.getByRole('heading', { level: 2, name: '加载成功' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: '加载中' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: '加载失败' })).toBeInTheDocument()
+    const disabledListItem = screen.getByText('Disabled Plugin').closest('[data-plugin-list-item="true"]')
+    expect(disabledListItem).not.toHaveTextContent('已禁用')
   })
 
   it('重复插件 ID 被隔离时展示冲突目录', async () => {

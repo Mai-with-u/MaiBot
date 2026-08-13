@@ -282,13 +282,32 @@ describe('custom bot config hooks', () => {
 
     expect(await screen.findByText('bot-1')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '备用平台账号' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.queryByDisplayValue('fallback-qq')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('fallback-wx')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '添加平台' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '备用平台账号' }))
     expect(screen.getByDisplayValue('fallback-qq')).toBeInTheDocument()
     expect(screen.getByDisplayValue('fallback-wx')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加平台' })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: '禁用' }))
+    expect(screen.queryByText(/禁用只影响/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/这些配置不会写入/)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '排除身份' }))
     await waitFor(() => expect(botAccountsApi.setDiscoveredBotAccountDisabled).toHaveBeenCalledWith(1, true))
-    expect(await screen.findByText('已禁用')).toBeInTheDocument()
-    expect(screen.getByText(/仍被在线适配器使用/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '已排除账号 1' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.queryByRole('button', { name: '恢复身份' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '已排除账号 1' }))
+    expect(screen.getByRole('button', { name: '恢复身份' })).toBeInTheDocument()
   })
 
   it('uses the shared scope selector while limiting memory groups to exact chats', async () => {

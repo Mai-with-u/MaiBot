@@ -147,7 +147,7 @@ export function usePluginList() {
   }
 
   const checkPluginUpdates = async () => {
-    if (updateCheckStartedRef.current) {
+    if (adapterOnly || updateCheckStartedRef.current) {
       return
     }
     updateCheckStartedRef.current = true
@@ -334,7 +334,7 @@ export function usePluginList() {
   }
   const getPluginStatusMeta = (plugin: InstalledPlugin): PluginStatusMeta => {
     if (isPluginDisabled(plugin)) {
-      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用' }
+      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用', showsBadge: false }
     }
     if (isPluginCircuitOpen(plugin)) {
       const remainingSec = Math.ceil(plugin.circuit_status?.remaining_sec ?? 0)

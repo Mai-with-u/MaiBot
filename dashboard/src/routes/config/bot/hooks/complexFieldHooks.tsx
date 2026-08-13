@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 
-import { AlertCircle, Check, ChevronDown, ChevronUp, ExternalLink, GripVertical, Plus, Trash2 } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  EyeOff,
+  GripVertical,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -2859,6 +2870,8 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
   const [accountsLoading, setAccountsLoading] = useState(true)
   const [accountsError, setAccountsError] = useState('')
   const [mutatingAccountId, setMutatingAccountId] = useState<number | null>(null)
+  const [disabledAccountsOpen, setDisabledAccountsOpen] = useState(false)
+  const [fallbackAccountsOpen, setFallbackAccountsOpen] = useState(false)
   const primaryPlatform = typeof value === 'string' ? value : ''
   const qqAccountValue = parentValues?.qq_account
   const qqAccount =
@@ -2867,6 +2880,8 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
       : ''
   const platforms = normalizePlatformAccounts(parentValues?.platforms)
   const rows = platforms.map(parsePlatformAccount)
+  const activeDiscoveredAccounts = discoveredAccounts.filter((account) => !account.disabled)
+  const disabledDiscoveredAccounts = discoveredAccounts.filter((account) => account.disabled)
 
   const loadDiscoveredAccounts = async () => {
     setAccountsLoading(true)
@@ -2917,20 +2932,15 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2 rounded-md border p-3">
-        <div className="space-y-1">
-          <Label className="text-[15px] font-semibold leading-6">适配器已发现账号</Label>
-          <p className="text-xs text-muted-foreground">
-            由已注册适配器实际报告并持久保存。禁用只影响 Bot 自身身份判断，不会断开适配器。
-          </p>
-        </div>
+      <div className="space-y-2">
+        <Label className="text-[15px] font-semibold leading-6">适配器已发现账号</Label>
         {accountsLoading ? (
           <p className="text-sm text-muted-foreground">正在读取适配器账号…</p>
-        ) : discoveredAccounts.length === 0 ? (
+        ) : activeDiscoveredAccounts.length === 0 ? (
           <p className="text-sm text-muted-foreground">尚未收到适配器上报的账号。</p>
         ) : (
           <div className="space-y-2">
-            {discoveredAccounts.map((account) => (
+            {activeDiscoveredAccounts.map((account) => (
               <div
                 key={account.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/20 p-3"
@@ -2942,30 +2952,69 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
                     <Badge variant={account.online ? 'default' : 'outline'}>
                       {account.online ? '在线' : '离线'}
                     </Badge>
-                    {account.disabled && <Badge variant="destructive">已禁用</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     最近通过 {account.last_source === 'ready' ? '就绪状态' : '入站消息'}上报于{' '}
                     {new Date(account.last_seen_at).toLocaleString()}
                   </p>
-                  {account.disabled && account.online && (
-                    <p className="flex items-center gap-1 text-xs text-destructive">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      此账号仍被在线适配器使用，但不会参与 Bot 自身判断。
-                    </p>
-                  )}
                 </div>
-                <Button
+                <button
                   type="button"
-                  size="sm"
-                  variant={account.disabled ? 'outline' : 'destructive'}
                   disabled={mutatingAccountId === account.id}
+                  className="text-muted-foreground/45 hover:text-destructive focus-visible:ring-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                  aria-label="排除身份"
+                  title="排除身份"
                   onClick={() => void toggleDiscoveredAccount(account)}
                 >
-                  {account.disabled ? '恢复' : '禁用'}
-                </Button>
+                  <EyeOff className="h-4 w-4" />
+                </button>
               </div>
             ))}
+          </div>
+        )}
+        {disabledDiscoveredAccounts.length > 0 && (
+          <div className="border-t pt-2">
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground flex w-full items-center justify-between py-1 text-sm transition-colors"
+              aria-expanded={disabledAccountsOpen}
+              onClick={() => setDisabledAccountsOpen((open) => !open)}
+            >
+              <span>已排除账号 {disabledDiscoveredAccounts.length}</span>
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${disabledAccountsOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {disabledAccountsOpen && (
+              <div className="mt-2 space-y-2">
+                {disabledDiscoveredAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 p-3 opacity-70"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{account.platform}</span>
+                        <span className="font-mono text-sm">{account.account_id}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        最后上报于 {new Date(account.last_seen_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={mutatingAccountId === account.id}
+                      className="text-muted-foreground hover:text-primary focus-visible:ring-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                      aria-label="恢复身份"
+                      title="恢复身份"
+                      onClick={() => void toggleDiscoveredAccount(account)}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {accountsError && (
@@ -2977,51 +3026,59 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
       </div>
 
       <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0 space-y-1">
-          <Label className="text-[15px] font-semibold leading-6">备用平台账号</Label>
-          <p className="text-xs text-muted-foreground">
-            仅在对应平台没有适配器身份记录时使用；这些配置不会写入账号数据库。
-          </p>
-        </div>
-        <Button
+        <button
           type="button"
-          size="icon"
-          variant="outline"
-          className="shrink-0"
-          aria-label="添加平台"
-          title="添加平台"
-          onClick={addRow}
+          className="hover:text-primary flex min-w-0 flex-1 items-center gap-2 text-left transition-colors"
+          aria-expanded={fallbackAccountsOpen}
+          onClick={() => setFallbackAccountsOpen((open) => !open)}
         >
-          <Plus className="h-4 w-4" />
-        </Button>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 transition-transform ${fallbackAccountsOpen ? 'rotate-180' : ''}`}
+          />
+          <span className="text-[15px] font-semibold leading-6">备用平台账号</span>
+        </button>
+        {fallbackAccountsOpen && (
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="shrink-0"
+            aria-label="添加平台"
+            title="添加平台"
+            onClick={addRow}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
-      <div className="space-y-2">
-        <div className={PLATFORM_ACCOUNT_ROW_GRID_CLASS}>
-          <div className="min-w-0 space-y-1">
-            <Label className="text-xs">平台</Label>
-            <Input
-              className="min-w-0"
-              value={primaryPlatform}
-              placeholder="qq"
-              onChange={(event) => onChange?.(event.target.value)}
-            />
+      {fallbackAccountsOpen && (
+        <div className="space-y-2">
+          <div className={PLATFORM_ACCOUNT_ROW_GRID_CLASS}>
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs">平台</Label>
+              <Input
+                className="min-w-0"
+                value={primaryPlatform}
+                placeholder="qq"
+                onChange={(event) => onChange?.(event.target.value)}
+              />
+            </div>
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs">账号</Label>
+              <Input
+                className="min-w-0 font-mono"
+                value={qqAccount}
+                placeholder="2814567326"
+                onChange={(event) => onParentChange?.('qq_account', event.target.value)}
+              />
+            </div>
+            <div className="flex shrink-0 items-end justify-end">
+              <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                主
+              </span>
+            </div>
           </div>
-          <div className="min-w-0 space-y-1">
-            <Label className="text-xs">账号</Label>
-            <Input
-              className="min-w-0 font-mono"
-              value={qqAccount}
-              placeholder="2814567326"
-              onChange={(event) => onParentChange?.('qq_account', event.target.value)}
-            />
-          </div>
-          <div className="flex shrink-0 items-end justify-end">
-            <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-              主
-            </span>
-          </div>
-        </div>
 
         {rows.map((row, rowIndex) => (
           <div
@@ -3059,7 +3116,8 @@ export const BotPlatformAccountsHook: FieldHookComponent = ({
             </div>
           </div>
         ))}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
