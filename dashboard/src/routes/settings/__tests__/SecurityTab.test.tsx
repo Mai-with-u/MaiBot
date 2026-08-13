@@ -25,12 +25,13 @@ const mocks = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string, variables?: Record<string, unknown>) =>
-      variables ? `${key}:${JSON.stringify(variables)}` : key,
-  }),
-}))
+vi.mock('react-i18next', () => {
+  const t = (key: string, variables?: Record<string, unknown>) =>
+    variables ? `${key}:${JSON.stringify(variables)}` : key
+  return {
+    useTranslation: () => ({ t }),
+  }
+})
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => mocks.navigate,
@@ -244,6 +245,145 @@ describe('SecurityTab', () => {
           description: '无法重新生成',
         })
       )
+    )
+  })
+
+  it('未生成 Token 时复制按钮禁用；生成后复制成功并在超时后还原图标', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ success: true, token: 'generated-token' }),
+    })
+    clipboardWrite.mockResolvedValue(undefined)
+    render(<SecurityTab />)
+
+    const currentCopyButton = screen.getByTitle('settings.security.copyTip')
+    expect(currentCopyButton).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
+    await screen.findByText('generated-token')
+    expect(currentCopyButton).toBeEnabled()
+
+    vi.useFakeTimers()
+    fireEvent.click(currentCopyButton)
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(clipboardWrite).toHaveBeenCalledWith('generated-token')
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'settings.security.copySuccess' })
+    )
+    expect(currentCopyButton.querySelector('.lucide-check')).not.toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(currentCopyButton.querySelector('.lucide-copy')).not.toBeNull()
+
+    fireEvent.click(screen.getAllByTitle('settings.security.show')[0])
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveValue('generated-token')
+    fireEvent.click(screen.getByTitle('settings.security.hide'))
+    expect(screen.getByLabelText('settings.security.yourToken')).toHaveAttribute('type', 'password')
+  })
+
+  it('复制当前 Token 失败时给出破坏性提示', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ success: true, token: 'generated-token' }),
+    })
+    clipboardWrite.mockRejectedValue(new Error('denied'))
+    render(<SecurityTab />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
+    await screen.findByText('generated-token')
+
+    fireEvent.click(screen.getByTitle('settings.security.copyTip'))
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'settings.security.copyFailed',
+          description: 'settings.security.copyFailedDesc',
+          variant: 'destructive',
+        })
+      )
+    )
+  })
+
+  it('通过 Dialog onOpenChange(false) 关闭生成弹窗后跳转登录页', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ success: true, token: 'generated-token' }),
+    })
+    render(<SecurityTab />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
+    await screen.findByText('generated-token')
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: '模拟关闭弹窗' }))
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(screen.queryByTestId('token-dialog')).not.toBeInTheDocument()
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/auth' })
+  })
+
+  it('重新生成接口抛错时提示连接失败', async () => {
+    fetchMock.mockRejectedValue(new Error('offline'))
+    render(<SecurityTab />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'settings.security.generateFailed',
+          description: 'settings.security.generateFailedConn',
+          variant: 'destructive',
+        })
+      )
+    )
+  })
+
+  it('重新生成失败且无 message 时回退默认文案', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      json: vi.fn().mockResolvedValue({ success: false }),
+    })
+    render(<SecurityTab />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.confirmGenerate' }))
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'settings.security.generateFailed',
+          description: 'settings.security.generateFailedDesc',
+        })
+      )
+    )
+  })
+
+  it('仅空白的新 Token 通过校验时仍按输入错误拦截更新', async () => {
+    mocks.validateToken.mockReturnValue({
+      isValid: true,
+      rules: [{ id: 'length', label: '长度规则', passed: true }],
+    })
+    render(<SecurityTab />)
+
+    fireEvent.change(screen.getByLabelText('settings.security.newTokenLabel'), {
+      target: { value: '   ' },
+    })
+    expect(screen.getByRole('button', { name: 'settings.security.updateBtn' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.security.updateBtn' }))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'settings.security.inputError',
+        description: 'settings.security.inputErrorDesc',
+        variant: 'destructive',
+      })
     )
   })
 })

@@ -1,10 +1,19 @@
-import { describe, it, expect, vi } from 'vitest'
-import { screen } from '@testing-library/dom'
+import { beforeAll, describe, it, expect, vi } from 'vitest'
+import { fireEvent, screen } from '@testing-library/dom'
 import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { DynamicField } from '../DynamicField'
-import type { FieldSchema } from '@/types/config-schema'
+import type { FieldSchema, FieldType, XWidgetType } from '@/types/config-schema'
+
+function makeField(overrides: Partial<FieldSchema> & Pick<FieldSchema, 'name' | 'type'>): FieldSchema {
+  return {
+    label: overrides.label ?? overrides.name,
+    description: overrides.description ?? '',
+    required: false,
+    ...overrides,
+  }
+}
 
 describe('DynamicField', () => {
   describe('x-widget priority', () => {
@@ -617,6 +626,21 @@ describe('DynamicField', () => {
   })
 
   describe('select features', () => {
+    beforeAll(() => {
+      Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
+        configurable: true,
+        value: () => false,
+      })
+      Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+        configurable: true,
+        value: () => {},
+      })
+      Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+        configurable: true,
+        value: () => {},
+      })
+    })
+
     it('renders placeholder when no options', () => {
       const schema: FieldSchema = {
         name: 'test_select_no_options',
@@ -631,6 +655,618 @@ describe('DynamicField', () => {
       render(<DynamicField schema={schema} value="" onChange={onChange} />)
 
       expect(screen.getByText('No options available for select')).toBeInTheDocument()
+    })
+
+    it('renders option labels and option-description tooltips', async () => {
+      const schema = makeField({
+        name: 'labeled_select',
+        type: 'string',
+        label: 'Labeled Select',
+        'x-widget': 'select',
+        options: ['alpha', 'beta'],
+        'x-option-labels': { alpha: '选项甲', beta: '选项乙' },
+        'x-option-descriptions': { alpha: '甲的说明' },
+        default: 'alpha',
+      })
+      const onChange = vi.fn()
+      const user = userEvent.setup()
+
+      render(<DynamicField schema={schema} value="alpha" onChange={onChange} />)
+
+      expect(screen.getByRole('combobox')).toHaveTextContent('选项甲')
+      await user.click(screen.getByRole('combobox'))
+      const alphaOption = await screen.findByRole('option', { name: '选项甲' })
+      expect(screen.getByRole('option', { name: '选项乙' })).toBeInTheDocument()
+      expect(alphaOption).toHaveAttribute('title', '甲的说明')
+      await user.hover(alphaOption)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('甲的说明')
+    })
+  })
+
+  describe('password, talk-time and fallback widgets', () => {
+    it('renders a password input', () => {
+      render(
+        <DynamicField
+          schema={makeField({
+            name: 'api_key',
+            type: 'string',
+            label: 'API Key',
+            'x-widget': 'password',
+          })}
+          value="secret"
+          onChange={vi.fn()}
+        />,
+      )
+
+      const input = document.querySelector('input[type="password"]')
+      expect(input).toBeInTheDocument()
+      expect(input).toHaveValue('secret')
+    })
+
+    it('switches talk-time modes and disables the range input outside range mode', async () => {
+      const schema = makeField({
+        name: 'talk_time',
+        type: 'string',
+        label: '发言时间',
+        'x-widget': 'talk-time',
+        default: '',
+      })
+      let controlledValue: unknown = ''
+      const onChange = vi.fn((nextValue: unknown) => {
+        controlledValue = nextValue
+        view.rerender(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+      })
+      const user = userEvent.setup()
+      const view = render(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+
+      const rangeInput = screen.getByPlaceholderText('HH:MM-HH:MM')
+      expect(rangeInput).toBeDisabled()
+      expect(rangeInput).toHaveValue('')
+
+      await user.click(screen.getByRole('button', { name: '时间段' }))
+      expect(onChange).toHaveBeenCalledWith('00:00-23:59')
+      expect(screen.getByPlaceholderText('HH:MM-HH:MM')).not.toBeDisabled()
+
+      fireEvent.change(screen.getByPlaceholderText('HH:MM-HH:MM'), {
+        target: { value: '08:00-12:00' },
+      })
+      expect(onChange).toHaveBeenLastCalledWith('08:00-12:00')
+
+      await user.click(screen.getByRole('button', { name: '时间段' }))
+      expect(onChange).toHaveBeenLastCalledWith('08:00-12:00')
+
+      await user.click(screen.getByRole('button', { name: '*' }))
+      expect(onChange).toHaveBeenLastCalledWith('*')
+      expect(screen.getByPlaceholderText('HH:MM-HH:MM')).toBeDisabled()
+
+      await user.click(screen.getByRole('button', { name: '兜底' }))
+      expect(onChange).toHaveBeenLastCalledWith('')
+      expect(screen.getByPlaceholderText('HH:MM-HH:MM')).toBeDisabled()
+    })
+
+    it('uses the talk-time default when the value is empty', () => {
+      render(
+        <DynamicField
+          schema={makeField({
+            name: 'talk_time_default',
+            type: 'string',
+            label: '默认发言时间',
+            'x-widget': 'talk-time',
+            default: '*',
+          })}
+          value={undefined}
+          onChange={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByPlaceholderText('HH:MM-HH:MM')).toBeDisabled()
+      expect(screen.getByRole('button', { name: '*' })).toHaveClass('bg-primary')
+    })
+
+    it('falls unknown widgets back to type and shows validation placeholders', () => {
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'mystery_widget',
+            type: 'string',
+            label: '未知控件',
+            'x-widget': 'not-a-widget' as XWidgetType,
+          })}
+          value="hello"
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('hello')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'mystery_type',
+            type: 'mystery' as FieldType,
+            label: '未知类型',
+          })}
+          value=""
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Unknown field type: mystery')).toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'custom_string',
+            type: 'string',
+            label: '自定义字符串',
+            'x-widget': 'custom',
+          })}
+          value=""
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Custom field requires Hook')).toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'complex_array',
+            type: 'array',
+            label: '复杂数组',
+            items: { type: 'object' },
+          })}
+          value={[]}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Complex array requires Hook')).toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'untyped_array',
+            type: 'array',
+            label: '无 items 数组',
+          })}
+          value={[]}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Complex array requires Hook')).toBeInTheDocument()
+    })
+
+    it('renders custom primitive arrays and objects, and coerces empty object values', () => {
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'custom_tags',
+            type: 'array',
+            label: '自定义数组',
+            items: { type: 'string' },
+            'x-widget': 'custom',
+          })}
+          value={['alpha']}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('alpha')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'custom_object',
+            type: 'object',
+            label: '自定义对象',
+            'x-widget': 'custom',
+          })}
+          value={{ foo: 'bar' }}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByDisplayValue('foo')).toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'object_from_array',
+            type: 'object',
+            label: '空对象回退',
+          })}
+          value={['not-an-object']}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.queryByDisplayValue('not-an-object')).not.toBeInTheDocument()
+      expect(screen.getByText('可视化编辑')).toBeInTheDocument()
+    })
+
+    it('shows JSON validation messages in the object editor', async () => {
+      const onChange = vi.fn()
+      const user = userEvent.setup()
+      render(
+        <DynamicField
+          schema={makeField({
+            name: 'extra',
+            type: 'object',
+            label: '额外参数',
+          })}
+          value={{ foo: 1 }}
+          onChange={onChange}
+        />,
+      )
+
+      await user.click(screen.getByRole('tab', { name: 'JSON 编辑' }))
+      const jsonEditor = screen.getByPlaceholderText((content) => content.includes('"key": "value"'))
+
+      fireEvent.change(jsonEditor, { target: { value: '[1, 2]' } })
+      expect(screen.getAllByText('必须是一个 JSON 对象 {}').length).toBeGreaterThan(0)
+
+      fireEvent.change(jsonEditor, { target: { value: '{bad' } })
+      expect(screen.getAllByText('JSON 格式错误').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('token list and primitive array editors', () => {
+    it('adds, dedupes and removes tag tokens', async () => {
+      const schema = makeField({
+        name: 'tags',
+        type: 'array',
+        label: '标签',
+        items: { type: 'string' },
+        'x-widget': 'tags',
+      })
+      let controlledValue: unknown = ['keep']
+      const onChange = vi.fn((nextValue: unknown) => {
+        controlledValue = nextValue
+        view.rerender(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+      })
+      const user = userEvent.setup()
+      const view = render(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+
+      expect(screen.getByPlaceholderText('输入后按回车添加')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '添加标签' }))
+      expect(onChange).not.toHaveBeenCalled()
+
+      await user.type(screen.getByPlaceholderText('输入后按回车添加'), 'new,keep;extra')
+      await user.click(screen.getByRole('button', { name: '添加标签' }))
+      expect(onChange).toHaveBeenLastCalledWith(['keep', 'new', 'extra'])
+
+      await user.click(screen.getByRole('button', { name: '删除keep' }))
+      expect(onChange).toHaveBeenLastCalledWith(['new', 'extra'])
+    })
+
+    it('removes comma-list tokens and ignores empty drafts', async () => {
+      const schema = makeField({
+        name: 'allowed_ips',
+        type: 'string',
+        label: '白名单',
+        'x-widget': 'comma-list',
+        default: '127.0.0.1',
+      })
+      let controlledValue: unknown = undefined
+      const onChange = vi.fn((nextValue: unknown) => {
+        controlledValue = nextValue
+        view.rerender(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+      })
+      const user = userEvent.setup()
+      const view = render(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+
+      expect(screen.getByText('127.0.0.1')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '添加白名单' }))
+      expect(onChange).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole('button', { name: '删除127.0.0.1' }))
+      expect(onChange).toHaveBeenLastCalledWith('')
+    })
+
+    it('canonicalizes primitive array drafts on blur and parses item types', async () => {
+      const intSchema = makeField({
+        name: 'int_array',
+        type: 'array',
+        label: '整数数组',
+        items: { type: 'integer' },
+      })
+      let controlledValue: unknown = ['  8  ', 'xx']
+      const onChange = vi.fn((nextValue: unknown) => {
+        controlledValue = nextValue
+        view.rerender(<DynamicField schema={intSchema} value={controlledValue} onChange={onChange} />)
+      })
+      const view = render(
+        <DynamicField schema={intSchema} value={controlledValue} onChange={onChange} />,
+      )
+
+      const textbox = screen.getByRole('textbox')
+      expect(textbox).toHaveValue('  8  \nxx')
+      fireEvent.focus(textbox)
+      fireEvent.change(textbox, { target: { value: '  8  \n\n  xx  ' } })
+      expect(onChange).toHaveBeenLastCalledWith([8, 0])
+      fireEvent.blur(textbox)
+      expect(screen.getByRole('textbox')).toHaveValue('8\n0')
+
+      const numberSchema = makeField({
+        name: 'num_array',
+        type: 'array',
+        label: '数字数组',
+        items: { type: 'number' },
+        default: [1.5],
+      })
+      view.rerender(
+        <DynamicField schema={numberSchema} value={undefined} onChange={onChange} />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('1.5')
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: '2.5\nnot-a-number' } })
+      expect(onChange).toHaveBeenLastCalledWith([2.5, 0])
+
+      const boolSchema = makeField({
+        name: 'bool_array',
+        type: 'array',
+        label: '布尔数组',
+        items: { type: 'boolean' },
+      })
+      view.rerender(<DynamicField schema={boolSchema} value={[]} onChange={onChange} />)
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'true\nfalse\nyes' } })
+      expect(onChange).toHaveBeenLastCalledWith([true, false, false])
+    })
+
+    it('uses a textarea for non-string tag arrays and a text input for non-string comma-lists', () => {
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'int_tags',
+            type: 'array',
+            label: '整型标签',
+            items: { type: 'integer' },
+            'x-widget': 'tags',
+          })}
+          value={[1, 2]}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('1\n2')
+      expect(screen.queryByPlaceholderText('输入后按回车添加')).not.toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'comma_number',
+            type: 'number',
+            label: '逗号数字',
+            'x-widget': 'comma-list',
+          })}
+          value={3}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('3')
+    })
+
+    it('falls primitive arrays back to an empty list when value and default are not arrays', () => {
+      render(
+        <DynamicField
+          schema={makeField({
+            name: 'empty_array',
+            type: 'array',
+            label: '空数组',
+            items: { type: 'string' },
+            default: 'not-an-array',
+          })}
+          value="also-not-an-array"
+          onChange={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByRole('textbox')).toHaveValue('')
+    })
+  })
+
+  describe('description display, layout and numeric coercion', () => {
+    it('renders icon and inline descriptions, and hides inline text when options have descriptions', async () => {
+      const user = userEvent.setup()
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'icon_field',
+            type: 'string',
+            label: '图标字段',
+            description: '图标说明文案',
+            'x-description-display': 'icon',
+          })}
+          value=""
+          onChange={vi.fn()}
+        />,
+      )
+
+      await user.hover(screen.getByRole('button', { name: '图标字段 说明' }))
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('图标说明文案')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'inline_field',
+            type: 'string',
+            label: '行内字段',
+            description: '行内说明文案',
+            'x-description-display': 'inline',
+          })}
+          value=""
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('行内说明文案')).toBeInTheDocument()
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'inline_select',
+            type: 'string',
+            label: '行内选择',
+            description: '不该行内展示',
+            'x-widget': 'select',
+            options: ['a'],
+            'x-description-display': 'inline',
+            'x-option-descriptions': { a: '选项说明' },
+          })}
+          value="a"
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.queryByText('不该行内展示')).not.toBeInTheDocument()
+    })
+
+    it('applies inline-right widths and textarea rows', () => {
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'inline_text',
+            type: 'string',
+            label: '右对齐文本',
+            'x-layout': 'inline-right',
+          })}
+          value=""
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('右对齐文本').closest('[data-dynamic-field]')).toHaveStyle({
+        '--field-input-width': '12rem',
+      })
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'inline_number',
+            type: 'integer',
+            label: '右对齐数字',
+            'x-layout': 'inline-right',
+            'x-input-width': '12rem',
+          })}
+          value={1}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('右对齐数字').closest('[data-dynamic-field]')).toHaveStyle({
+        '--field-input-width': '7.5rem',
+      })
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'inline_custom_width',
+            type: 'integer',
+            label: '自定义宽度',
+            'x-layout': 'inline-right',
+            'x-input-width': '10rem',
+          })}
+          value={1}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('自定义宽度').closest('[data-dynamic-field]')).toHaveStyle({
+        '--field-input-width': '10rem',
+      })
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'tall_textarea',
+            type: 'string',
+            label: '多行文本',
+            'x-widget': 'textarea',
+            'x-textarea-rows': 8,
+            'x-textarea-min-height': 120,
+          })}
+          value="line"
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveAttribute('rows', '8')
+    })
+
+    it('coerces non-string text values and uses numeric defaults', () => {
+      const { rerender } = render(
+        <DynamicField
+          schema={makeField({
+            name: 'from_null',
+            type: 'string',
+            label: '空值文本',
+            default: 'fallback-text',
+          })}
+          value={null}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('fallback-text')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'from_number',
+            type: 'string',
+            label: '数字文本',
+          })}
+          value={123}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('123')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'textarea_default',
+            type: 'textarea',
+            label: '文本域默认',
+            default: 'textarea-default',
+          })}
+          value={undefined}
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('textbox')).toHaveValue('textarea-default')
+
+      rerender(
+        <DynamicField
+          schema={makeField({
+            name: 'slider_default',
+            type: 'integer',
+            label: '滑块默认',
+            'x-widget': 'slider',
+            default: 9,
+          })}
+          value="not-a-number"
+          onChange={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('slider')).toHaveAttribute('aria-valuenow', '9')
+    })
+
+    it('canonicalizes slider drafts, clamps to min/max and truncates integers', async () => {
+      const schema = makeField({
+        name: 'clamped_slider',
+        type: 'integer',
+        label: '受限滑块',
+        'x-widget': 'slider',
+        minValue: 1,
+        maxValue: 10,
+        default: 4,
+      })
+      let controlledValue: unknown = 4
+      const onChange = vi.fn((nextValue: unknown) => {
+        controlledValue = nextValue
+        view.rerender(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+      })
+      const user = userEvent.setup()
+      const view = render(<DynamicField schema={schema} value={controlledValue} onChange={onChange} />)
+      const input = screen.getByRole('spinbutton', { name: '受限滑块 数值' })
+
+      await user.clear(input)
+      await user.type(input, '99')
+      expect(onChange).toHaveBeenLastCalledWith(10)
+
+      const sliderInput = () => screen.getByRole('spinbutton', { name: '受限滑块 数值' })
+      await user.clear(sliderInput())
+      await user.type(sliderInput(), '3.8')
+      expect(onChange).toHaveBeenLastCalledWith(3)
+      await user.tab()
+      expect(sliderInput()).toHaveValue(3)
     })
   })
 })

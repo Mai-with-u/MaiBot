@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,17 +22,29 @@ const virtualizerMocks = vi.hoisted(() => ({
 vi.mock('@/lib/log-websocket', () => ({ logWebSocket: logWsMocks }))
 
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => ({
-    getTotalSize: () => count * estimateSize(),
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        key: index,
-        start: index * estimateSize(),
-      })),
-    measureElement: virtualizerMocks.measureElement,
-    scrollToIndex: virtualizerMocks.scrollToIndex,
-  }),
+  useVirtualizer: ({
+    count,
+    estimateSize,
+    getScrollElement,
+  }: {
+    count: number
+    estimateSize: () => number
+    getScrollElement?: () => Element | null
+  }) => {
+    // 覆盖 getScrollElement 调用，避免虚拟滚动桩短路该回调
+    getScrollElement?.()
+    return {
+      getTotalSize: () => count * estimateSize(),
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          key: index,
+          start: index * estimateSize(),
+        })),
+      measureElement: virtualizerMocks.measureElement,
+      scrollToIndex: virtualizerMocks.scrollToIndex,
+    }
+  },
 }))
 
 // 推理过程页较重（WS/图表），此处仅记录主文件传入的编排 props
@@ -362,6 +374,143 @@ describe('LogViewerPage 终端面板', () => {
     // 点击“大”号字体后写入 logFontSize
     await user.click(screen.getByRole('button', { name: '大' }))
     expect(window.localStorage.getItem('maibot-log-font-size')).toBe('base')
+  })
+
+  it('非标准时间戳原样展示，ERROR 与未知级别分别套红色与默认色', () => {
+    // 未知级别不在 levelPriority 中，需关掉最低级别过滤才能渲染
+    window.localStorage.setItem('maibot-log-level-filter', 'all')
+    logWsMocks.getAllLogs.mockReturnValue([
+      makeLog('raw', { timestamp: '昨天 08:00', message: '原始时间戳' }),
+      makeLog('e1', { level: 'ERROR', message: '错误消息', timestamp: '2026-07-24 08:00:02' }),
+      makeLog('t1', {
+        level: 'TRACE' as LogEntry['level'],
+        message: '未知级别',
+        timestamp: '2026-07-24 08:00:03',
+      }),
+    ])
+
+    render(<LogViewerPage />)
+
+    expect(screen.getAllByText('昨天 08:00').length).toBeGreaterThan(0)
+    const errorLevels = screen.getAllByText('[ERRO]')
+    expect(errorLevels.length).toBeGreaterThan(0)
+    expect(errorLevels[0]).toHaveClass('text-red-600')
+    const unknownLevels = screen.getAllByText('[TRAC]')
+    expect(unknownLevels[0]).toHaveClass('text-foreground')
+  })
+
+  it('行距与列宽滑块写入设置，并展示新的像素值', async () => {
+    const user = userEvent.setup()
+    render(<LogViewerPage />)
+    await user.click(screen.getByRole('button', { name: '筛选' }))
+
+    const sliders = screen.getAllByRole('slider')
+    expect(sliders).toHaveLength(2)
+    expect(screen.getByText('4px')).toBeInTheDocument()
+    expect(screen.getByText('+48')).toBeInTheDocument()
+
+    sliders[0].focus()
+    fireEvent.keyDown(sliders[0], { key: 'ArrowRight' })
+    expect(screen.getByText('6px')).toBeInTheDocument()
+    expect(window.localStorage.getItem('maibot-log-line-spacing')).toBe('6')
+
+    sliders[1].focus()
+    fireEvent.keyDown(sliders[1], { key: 'ArrowRight' })
+    expect(screen.getByText('+56')).toBeInTheDocument()
+    expect(window.localStorage.getItem('maibot-log-column-width-extra')).toBe('56')
+  })
+
+  it('日期筛选只保留窗口内日志，清除后恢复全部', async () => {
+    const user = userEvent.setup()
+    logWsMocks.getAllLogs.mockReturnValue([
+      makeLog('early', { message: '月初日志', timestamp: '2026-08-01 08:00:00' }),
+      makeLog('mid', { message: '月中日志', timestamp: '2026-08-13 12:00:00' }),
+      makeLog('late', { message: '月末日志', timestamp: '2026-08-20 18:00:00' }),
+    ])
+
+    render(<LogViewerPage />)
+    await user.click(screen.getByRole('button', { name: '筛选' }))
+    expect(screen.getByText('3 / 3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /开始日期/ }))
+    const startCalendar = await screen.findByRole('grid')
+    await user.click(within(startCalendar).getByRole('button', { name: /10/ }))
+
+    expect(screen.queryAllByText('月初日志')).toHaveLength(0)
+    expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('月末日志').length).toBeGreaterThan(0)
+    expect(screen.getByText('2 / 3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /结束日期/ }))
+    const endCalendar = await screen.findByRole('grid')
+    await user.click(within(endCalendar).getByRole('button', { name: /15/ }))
+
+    expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
+    expect(screen.queryAllByText('月末日志')).toHaveLength(0)
+    expect(screen.getByText('1 / 3')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '清除' }))
+    expect(screen.getByText('3 / 3')).toBeInTheDocument()
+    expect(screen.getAllByText('月初日志').length).toBeGreaterThan(0)
+  })
+
+  it('用户向上滚动关闭自动滚动，滚回底部再开启', async () => {
+    logWsMocks.getAllLogs.mockReturnValue([makeLog('a1'), makeLog('a2')])
+    render(<LogViewerPage />)
+
+    // 首屏日志回填会触发自动滚动，双 rAF 后才允许用户滚动改状态
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+    })
+
+    const scrollEl = screen.getAllByText('消息-a1')[0].closest('.overflow-auto') as HTMLElement
+    expect(scrollEl).not.toBeNull()
+    expect(screen.getByRole('button', { name: '滚动' })).toBeInTheDocument()
+
+    let scrollTop = 0
+    Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, get: () => 500 })
+    Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, get: () => 200 })
+    Object.defineProperty(scrollEl, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value
+      },
+    })
+
+    act(() => {
+      scrollEl.dispatchEvent(new Event('scroll'))
+    })
+    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument()
+
+    scrollTop = 270
+    act(() => {
+      scrollEl.dispatchEvent(new Event('scroll'))
+    })
+    expect(screen.getByRole('button', { name: '滚动' })).toBeInTheDocument()
+  })
+
+  it('模块别名：遗留映射、watchfiles 与插件前缀', () => {
+    logWsMocks.getAllLogs.mockReturnValue([
+      makeLog('chat', { module: 'chat', message: '所见消息' }),
+      makeLog('watch', {
+        module: 'site-packages.watchfiles.main',
+        message: '文件变化',
+      }),
+      makeLog('plugin', {
+        module: '_maibot_plugin_demo.worker',
+        message: '插件日志',
+      }),
+    ])
+
+    render(<LogViewerPage />)
+
+    const moduleFilters = screen.getByLabelText('模块显示筛选')
+    expect(within(moduleFilters).getByRole('button', { name: /隐藏 所见/ })).toBeInTheDocument()
+    expect(within(moduleFilters).getByRole('button', { name: /隐藏 文件变更监控/ })).toBeInTheDocument()
+    expect(within(moduleFilters).getByRole('button', { name: /隐藏 插件运行器/ })).toBeInTheDocument()
   })
 })
 

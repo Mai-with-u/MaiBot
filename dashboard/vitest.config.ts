@@ -45,11 +45,12 @@ export default defineConfig({
       ],
       // 防退化闸门：阈值取当前实测基线略低一档，只用于拦住覆盖率下滑，
       // 不作为质量目标。随着测试补充应逐步上调这些数字。
+      // 实测基线（2026-08-13）：lines 91.13 / statements 90.20 / functions 88.83 / branches 80.96
       thresholds: {
-        lines: 73,
-        statements: 72,
-        functions: 68,
-        branches: 58,
+        lines: 89,
+        statements: 88,
+        functions: 86,
+        branches: 78,
       },
     },
   },

@@ -6,7 +6,7 @@
  * - mock 重量级子组件（CodeEditor / 背景上传器 / 背景效果 / 组件 CSS 编辑器），
  *   通过暴露按钮驱动父组件的编排逻辑；
  * - applyThemePipeline 打桩避免污染 jsdom 文档样式，getComputedTokens 保留真实实现；
- * - Radix Select / Slider 在 jsdom 下不做直接交互，仅覆盖可稳定驱动的链路；
+ * - Radix Select / Slider 通过 combobox/option 与键盘箭头驱动，锁定 token 写入形状；
  * - FileReader 用同步桩替换，规避 jsdom 异步读文件与 location.reload 的时序问题。
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -23,8 +23,20 @@ import {
   DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
   defaultBackgroundConfig,
   defaultBackgroundEffects,
+  defaultLightTokens,
 } from '@/lib/theme/tokens'
 import type { BackgroundEffects, ThemeTokens, UserThemeConfig } from '@/lib/theme/tokens'
+
+// Radix Select / Slider 在 jsdom 里会读 pointer capture；setup 未补，用普通函数避免 restoreMocks 清空
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {}
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {}
+}
 
 const toastMock = vi.fn()
 
@@ -583,5 +595,633 @@ describe('AppearanceTab 动效设置', () => {
 
     await user.click(animationSwitch)
     expect(animationState.setEnableAnimations).toHaveBeenCalledWith(false)
+  })
+})
+
+/** 打开样式微调手风琴分组，返回展开后的 region */
+async function openStyleGroup(user: ReturnType<typeof userEvent.setup>, groupKey: string) {
+  await user.click(screen.getByRole('button', { name: groupKey }))
+  return screen.getByRole('region')
+}
+
+/** aria-label 打在 Slider 根节点上，role=slider 在内部 Thumb */
+function getLabeledSlider(label: string) {
+  const root = document.querySelector(`[aria-label="${label}"]`)
+  if (!root) {
+    throw new Error(`未找到 aria-label=${label} 的滑块`)
+  }
+  return within(root as HTMLElement).getByRole('slider')
+}
+
+describe('AppearanceTab 主题色原生选择器与导入按钮', () => {
+  it('原生 color 输入立即更新预览并防抖持久化 accentColor', async () => {
+    const { container } = render(<AppearanceTab />)
+    const colorInput = container.querySelector<HTMLInputElement>('input[type="color"]')
+    expect(colorInput).not.toBeNull()
+
+    fireEvent.change(colorInput!, { target: { value: '#00aaff' } })
+    expect(colorInput).toHaveValue('#00aaff')
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(applyThemePipeline).mock.calls.at(-1)
+      expect(lastCall?.[0].accentColor).toBe(hexToHSL('#00aaff'))
+    })
+
+    await waitFor(() =>
+      expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+        accentColor: hexToHSL('#00aaff'),
+      })
+    )
+  })
+
+  it('导入主题按钮点击隐藏文件框，成功导入后 1 秒刷新页面', () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('FileReader', MockFileReader)
+      mockFileText = '{"version":1}'
+      vi.mocked(importThemeJSON).mockReturnValue({ success: true, errors: [] })
+
+      const { container } = render(<AppearanceTab />)
+      const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')
+      expect(fileInput).not.toBeNull()
+      const inputClick = vi.spyOn(fileInput!, 'click')
+
+      fireEvent.click(screen.getByRole('button', { name: 'settings.appearance.importTheme' }))
+      expect(inputClick).toHaveBeenCalledTimes(1)
+
+      // 未选择文件时 handleImport 直接返回
+      fireEvent.change(fileInput!, { target: { files: null } })
+      expect(importThemeJSON).not.toHaveBeenCalled()
+
+      uploadThemeFile(container)
+      expect(importThemeJSON).toHaveBeenCalledWith('{"version":1}')
+      expect(toastMock).toHaveBeenCalledWith({
+        title: 'settings.appearance.importSuccess',
+        description: 'settings.appearance.importSuccessDesc',
+      })
+
+      // 导入成功后延迟整页刷新，使 ThemeProvider 重读 localStorage
+      vi.advanceTimersByTime(1000)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('AppearanceTab 样式微调 token 写入', () => {
+  it('字体排版：字号滑块按基准像素写入整组 rem token', async () => {
+    const user = userEvent.setup()
+    render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.typographyGroup')
+
+    const fontSlider = within(region).getAllByRole('slider')[0]
+    fireEvent.keyDown(fontSlider, { key: 'ArrowRight' })
+
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-size-xs': '0.7969rem',
+            'font-size-sm': '0.9297rem',
+            'font-size-base': '1.0625rem',
+            'font-size-lg': '1.1953rem',
+            'font-size-xl': '1.3281rem',
+            'font-size-2xl': '1.5938rem',
+          },
+        },
+      },
+    })
+  })
+
+  it('字体排版：字族与行高 Select 分别写入对应 token', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.typographyGroup')
+    const comboboxes = within(region).getAllByRole('combobox')
+
+    // 默认计算字体不含 ui-serif / ui-monospace，回落到 sans
+    expect(comboboxes[0]).toHaveTextContent('settings.appearance.fontFamilySans')
+
+    await user.click(comboboxes[0])
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.fontFamilySerif' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+          },
+        },
+      },
+    })
+
+    await user.click(comboboxes[0])
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.fontFamilyMono' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base':
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+          },
+        },
+      },
+    })
+
+    await user.click(comboboxes[0])
+    await user.click(
+      await screen.findByRole('option', { name: 'settings.appearance.fontFamilySystem' })
+    )
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': defaultLightTokens.typography['font-family-base'],
+          },
+        },
+      },
+    })
+
+    await user.click(comboboxes[1])
+    await user.click(
+      await screen.findByRole('option', { name: 'settings.appearance.lineHeightCompact' })
+    )
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'line-height-normal': 1.2,
+          },
+        },
+      },
+    })
+
+    await user.click(comboboxes[1])
+    await user.click(
+      await screen.findByRole('option', { name: 'settings.appearance.lineHeightLoose' })
+    )
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'line-height-normal': 1.75,
+          },
+        },
+      },
+    })
+  })
+
+  it('字体排版：覆盖值分别映射 serif / mono 选项，缺字号时回落 16px', async () => {
+    const user = userEvent.setup()
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-serif, Georgia, serif',
+            'line-height-normal': 1.75,
+          } as ThemeTokens['typography'],
+        },
+      },
+    })
+    const { rerender } = render(<AppearanceTab />)
+    let region = await openStyleGroup(user, 'settings.appearance.typographyGroup')
+    expect(within(region).getAllByRole('combobox')[0]).toHaveTextContent(
+      'settings.appearance.fontFamilySerif'
+    )
+    // 覆盖里没有 font-size-base，回落到计算默认 16px
+    expect(within(region).getByText('16px')).toBeInTheDocument()
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-monospace, Menlo, monospace',
+          } as ThemeTokens['typography'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    region = screen.getByRole('region')
+    expect(within(region).getAllByRole('combobox')[0]).toHaveTextContent(
+      'settings.appearance.fontFamilyMono'
+    )
+  })
+
+  it('视觉效果：圆角滑块、阴影 Select 与模糊开关写入 visual token', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.visualGroup')
+
+    fireEvent.keyDown(within(region).getByRole('slider'), { key: 'ArrowRight' })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          visual: { 'radius-md': '0.4375rem' },
+        },
+      },
+    })
+
+    const shadowSelect = within(region).getByRole('combobox')
+    expect(shadowSelect).toHaveTextContent('settings.appearance.shadowMd')
+
+    await user.click(shadowSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.shadowNone' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { visual: { 'shadow-md': 'none' } },
+      },
+    })
+
+    await user.click(shadowSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.shadowSm' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { visual: { 'shadow-md': defaultLightTokens.visual['shadow-sm'] } },
+      },
+    })
+
+    await user.click(shadowSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.shadowLg' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { visual: { 'shadow-md': defaultLightTokens.visual['shadow-lg'] } },
+      },
+    })
+
+    await user.click(shadowSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.shadowXl' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { visual: { 'shadow-md': defaultLightTokens.visual['shadow-xl'] } },
+      },
+    })
+
+    const blurSwitch = within(region).getByRole('switch', {
+      name: 'settings.appearance.blurLabel',
+    })
+    expect(blurSwitch).toBeChecked()
+    await user.click(blurSwitch)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { visual: { 'blur-md': '0px' } },
+      },
+    })
+  })
+
+  it('视觉效果：已有覆盖映射阴影档位，模糊为 0 时开关关闭并可恢复', async () => {
+    const user = userEvent.setup()
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          visual: {
+            'shadow-md': 'none',
+            'blur-md': '0px',
+          } as ThemeTokens['visual'],
+        },
+      },
+    })
+    const { rerender } = render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.visualGroup')
+    expect(within(region).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.shadowNone'
+    )
+    const blurSwitch = within(region).getByRole('switch', {
+      name: 'settings.appearance.blurLabel',
+    })
+    expect(blurSwitch).not.toBeChecked()
+
+    await user.click(blurSwitch)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          visual: {
+            'shadow-md': 'none',
+            'blur-md': defaultLightTokens.visual['blur-md'],
+          },
+        },
+      },
+    })
+
+    const resetButton = within(region).getByRole('button', { name: /resetDefault/ })
+    expect(resetButton).toBeEnabled()
+    await user.click(resetButton)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: { modern: {} },
+    })
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          visual: {
+            'shadow-md': defaultLightTokens.visual['shadow-sm'],
+          } as ThemeTokens['visual'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    expect(within(screen.getByRole('region')).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.shadowSm'
+    )
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          visual: {
+            'shadow-md': defaultLightTokens.visual['shadow-lg'],
+          } as ThemeTokens['visual'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    expect(within(screen.getByRole('region')).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.shadowLg'
+    )
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          visual: {
+            'shadow-md': defaultLightTokens.visual['shadow-xl'],
+          } as ThemeTokens['visual'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    expect(within(screen.getByRole('region')).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.shadowXl'
+    )
+  })
+
+  it('从非默认覆盖切回 sans / md / normal 时写入默认 token', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+          } as ThemeTokens['typography'],
+          visual: { 'shadow-md': 'none' } as ThemeTokens['visual'],
+          animation: { 'anim-duration-normal': '0ms' } as ThemeTokens['animation'],
+        },
+      },
+    })
+    animationState = { enableAnimations: false, setEnableAnimations: vi.fn() }
+    render(<AppearanceTab />)
+
+    const typography = await openStyleGroup(user, 'settings.appearance.typographyGroup')
+    await user.click(within(typography).getAllByRole('combobox')[0])
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.fontFamilySans' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base':
+              'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+          },
+          visual: { 'shadow-md': 'none' },
+          animation: { 'anim-duration-normal': '0ms' },
+        },
+      },
+    })
+
+    const visual = await openStyleGroup(user, 'settings.appearance.visualGroup')
+    await user.click(within(visual).getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.shadowMd' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+          },
+          visual: { 'shadow-md': defaultLightTokens.visual['shadow-md'] },
+          animation: { 'anim-duration-normal': '0ms' },
+        },
+      },
+    })
+
+    const animation = await openStyleGroup(user, 'settings.appearance.animationGroup')
+    await user.click(within(animation).getByRole('combobox'))
+    await user.click(
+      await screen.findByRole('option', { name: 'settings.appearance.animationNormal' })
+    )
+    expect(animationState.setEnableAnimations).toHaveBeenCalledWith(true)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          typography: {
+            'font-family-base': 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+          },
+          visual: { 'shadow-md': 'none' },
+          animation: { 'anim-duration-normal': '300ms' },
+        },
+      },
+    })
+  })
+
+  it('布局：侧栏宽度滑块写入 rem，并支持整组重置', async () => {
+    const user = userEvent.setup()
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: { layout: { 'sidebar-width': '14rem' } as ThemeTokens['layout'] },
+      },
+    })
+    render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.layoutGroup')
+    expect(within(region).getByText('14rem')).toBeInTheDocument()
+
+    fireEvent.keyDown(within(region).getByRole('slider'), { key: 'ArrowRight' })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: {
+          layout: { 'sidebar-width': '14.5rem' },
+        },
+      },
+    })
+
+    await user.click(within(region).getByRole('button', { name: /resetDefault/ }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: { modern: {} },
+    })
+  })
+
+  it('动画速度：关闭时同步停用全局动画，并写入 duration token', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.animationGroup')
+    const speedSelect = within(region).getByRole('combobox')
+    expect(speedSelect).toHaveTextContent('settings.appearance.animationNormal')
+
+    await user.click(speedSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.animationOff' }))
+    expect(animationState.setEnableAnimations).toHaveBeenCalledWith(false)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { animation: { 'anim-duration-normal': '0ms' } },
+      },
+    })
+
+    await user.click(speedSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.animationFast' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { animation: { 'anim-duration-normal': '100ms' } },
+      },
+    })
+
+    await user.click(speedSelect)
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.animationSlow' }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { animation: { 'anim-duration-normal': '500ms' } },
+      },
+    })
+  })
+
+  it('动画速度：全局动画已关时选择非 off 会重新开启，覆盖值映射档位', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    animationState = { enableAnimations: false, setEnableAnimations: vi.fn() }
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          animation: { 'anim-duration-normal': '0ms' } as ThemeTokens['animation'],
+        },
+      },
+    })
+    const { rerender } = render(<AppearanceTab />)
+    const region = await openStyleGroup(user, 'settings.appearance.animationGroup')
+    expect(within(region).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.animationOff'
+    )
+
+    await user.click(within(region).getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: 'settings.appearance.animationFast' }))
+    expect(animationState.setEnableAnimations).toHaveBeenCalledWith(true)
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        modern: { animation: { 'anim-duration-normal': '100ms' } },
+      },
+    })
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          animation: { 'anim-duration-normal': '100ms' } as ThemeTokens['animation'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    expect(within(screen.getByRole('region')).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.animationFast'
+    )
+
+    themeState = makeThemeState({
+      styleTokenOverrides: {
+        modern: {
+          animation: { 'anim-duration-normal': '500ms' } as ThemeTokens['animation'],
+        },
+      },
+    })
+    rerender(<AppearanceTab />)
+    expect(within(screen.getByRole('region')).getByRole('combobox')).toHaveTextContent(
+      'settings.appearance.animationSlow'
+    )
+
+    await user.click(within(screen.getByRole('region')).getByRole('button', { name: /resetDefault/ }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: { modern: {} },
+    })
+  })
+})
+
+describe('AppearanceTab 未来复古 token 与滑块', () => {
+  it('基准字号滑块写入缩放 rem，其它滑块回写 styleConfig', async () => {
+    themeState = makeThemeState({ dashboardStyle: 'future-retro' })
+    render(<AppearanceTab />)
+
+    fireEvent.keyDown(getLabeledSlider('settings.appearance.baseFontSize'), { key: 'ArrowRight' })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: {
+        'future-retro': {
+          typography: {
+            'font-size-xs': '0.7969rem',
+            'font-size-sm': '0.9297rem',
+            'font-size-base': '1.0625rem',
+            'font-size-lg': '1.1953rem',
+            'font-size-xl': '1.3281rem',
+            'font-size-2xl': '1.5938rem',
+          },
+        },
+      },
+    })
+
+    fireEvent.keyDown(getLabeledSlider('settings.appearance.retroPaperWarmth'), {
+      key: 'ArrowLeft',
+    })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, paperWarmth: 99 },
+      },
+    })
+
+    fireEvent.keyDown(getLabeledSlider('settings.appearance.retroTextureIntensity'), {
+      key: 'ArrowRight',
+    })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, textureIntensity: 56 },
+      },
+    })
+
+    fireEvent.keyDown(getLabeledSlider('settings.appearance.retroPanelDepth'), { key: 'ArrowLeft' })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, panelDepth: 99 },
+      },
+    })
+
+    fireEvent.keyDown(getLabeledSlider('settings.appearance.retroStrokeScale'), { key: 'ArrowLeft' })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, strokeScale: 99 },
+      },
+    })
+  })
+
+  it('纹理为 none 时禁用强度滑块；重置同时清排版覆盖并恢复默认风格', async () => {
+    const user = userEvent.setup()
+    themeState = makeThemeState({
+      dashboardStyle: 'future-retro',
+      styleTokenOverrides: {
+        'future-retro': { typography: { 'font-size-base': '1.125rem' } as ThemeTokens['typography'] },
+      },
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, textureStyle: 'none' },
+      },
+    })
+    themeState.resolvedTheme = 'dark'
+    render(<AppearanceTab />)
+
+    // Radix 禁用态写在 data-disabled 上，thumb 不是原生 disabled 控件
+    expect(getLabeledSlider('settings.appearance.retroTextureIntensity')).toHaveAttribute(
+      'data-disabled'
+    )
+
+    const noneOption = screen.getByRole('button', {
+      name: 'settings.appearance.retroTextureNone',
+    })
+    expect(noneOption).toHaveAttribute('aria-pressed', 'true')
+    const preview = noneOption.querySelector('[aria-hidden]') as HTMLElement
+    expect(preview.style.backgroundColor).toBe('rgb(17, 9, 6)')
+    expect(preview.style.backgroundImage).toBe('none')
+
+    await user.click(screen.getByRole('button', { name: /resetDefault/ }))
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleTokenOverrides: { 'future-retro': {} },
+    })
+    expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
+      styleConfig: {
+        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG },
+      },
+    })
   })
 })
