@@ -2387,29 +2387,15 @@ function TalkValueRuleEditor({
 }) {
   const [mode, setMode] = useState<TalkValueEditorMode>('timeline')
   const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const [addDraft, setAddDraft] = useState(createEmptyTalkRuleDraft)
-  const canSubmitAddRule = addDraft.platform.trim().length > 0 && addDraft.itemId.trim().length > 0
-
-  const handleAddDialogOpenChange = (open: boolean) => {
-    setAddDialogOpen(open)
-    if (!open) {
-      setAddDraft(createEmptyTalkRuleDraft())
-    }
-  }
-
-  const handleSubmitAddRule = () => {
-    if (!canSubmitAddRule) {
-      return
-    }
-
+  const handleAddRule = (scopeKind: LearningScopeKind, ruleType: ExpressionRuleType) => {
+    const target = buildLearningRulePatch(scopeKind, createEmptyTalkRuleDraft(), [])
     onAddItem({
-      platform: addDraft.platform.trim(),
-      item_id: addDraft.itemId.trim(),
-      rule_type: addDraft.ruleType,
+      ...target,
+      rule_type: ruleType,
       time: '00:00-23:59',
       value: 0.5,
     })
-    handleAddDialogOpenChange(false)
+    setAddDialogOpen(false)
   }
 
   return (
@@ -2443,48 +2429,15 @@ function TalkValueRuleEditor({
           </Button>
         </div>
       </div>
-      <Dialog open={addDialogOpen} onOpenChange={handleAddDialogOpenChange}>
-        <DialogContent className="sm:max-w-md" confirmOnEnter>
-          <DialogHeader>
-            <DialogTitle>添加发言频率规则</DialogTitle>
-            <DialogDescription>
-              先指定平台、聊天流 ID 和聊天类型，再创建该聊天区域的默认时间段轨道。
-            </DialogDescription>
-          </DialogHeader>
-          <ChatTargetFields
-            target={{
-              platform: addDraft.platform,
-              item_id: addDraft.itemId,
-              rule_type: normalizeExpressionRuleType(addDraft.ruleType),
-            }}
-            onChange={(patch) =>
-              setAddDraft((current) => ({
-                ...current,
-                ...(patch.platform === undefined ? {} : { platform: patch.platform }),
-                ...(patch.item_id === undefined ? {} : { itemId: patch.item_id }),
-                ...(patch.rule_type === undefined ? {} : { ruleType: patch.rule_type }),
-              }))
-            }
-          />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleAddDialogOpenChange(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="button"
-              data-dialog-action="confirm"
-              disabled={!canSubmitAddRule}
-              onClick={handleSubmitAddRule}
-            >
-              添加
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AddTargetScopeDialog
+        defaultScope="chat"
+        description="选择规则作用范围和聊天类型。添加后可在规则区域继续填写平台、聊天流 ID、时间段和发言频率。"
+        open={addDialogOpen}
+        onAdd={handleAddRule}
+        onOpenChange={setAddDialogOpen}
+        scopeOptions={LEARNING_SCOPE_OPTIONS}
+        title="添加发言频率规则"
+      />
       {mode === 'timeline' ? (
         <TalkValueTimelineOverview
           items={items}

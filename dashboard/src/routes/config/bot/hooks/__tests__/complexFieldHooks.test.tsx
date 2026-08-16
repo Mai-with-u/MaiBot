@@ -617,19 +617,47 @@ describe('complexFieldHooks', () => {
 
       await user.click(screen.getByRole('button', { name: '添加发言频率规则' }))
       const dialog = await screen.findByRole('dialog')
-      expect(within(dialog).getByRole('button', { name: '添加' })).toBeDisabled()
-
-      fireEvent.change(within(dialog).getByPlaceholderText('qq'), { target: { value: 'qq' } })
-      fireEvent.change(within(dialog).getByPlaceholderText('群号或用户 ID'), { target: { value: '90001' } })
-      await user.click(within(dialog).getByRole('combobox', { name: '选择聊天类型' }))
+      await user.click(within(dialog).getByRole('button', { name: /全局通配/ }))
+      await user.click(within(dialog).getByRole('combobox'))
       await user.click(await screen.findByRole('option', { name: '私聊' }))
       await user.click(within(dialog).getByRole('button', { name: '添加' }))
 
       expect(onChange).toHaveBeenLastCalledWith([
         {
-          platform: 'qq',
-          item_id: '90001',
+          platform: '*',
+          item_id: '*',
           rule_type: 'private',
+          time: '00:00-23:59',
+          value: 0.5,
+        },
+      ])
+    })
+
+    it('新增发言频率规则支持留空的默认兜底范围', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+
+      render(
+        <ChatTalkValueRulesHook
+          fieldPath="chat.reply_timing.talk_value_rules"
+          onChange={onChange}
+          parentValues={{ enable_talk_value_rules: true }}
+          schema={fieldSchema}
+          nestedSchema={talkRuleSchema}
+          value={[]}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '添加发言频率规则' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: /默认兜底/ }))
+      await user.click(within(dialog).getByRole('button', { name: '添加' }))
+
+      expect(onChange).toHaveBeenLastCalledWith([
+        {
+          platform: '',
+          item_id: '',
+          rule_type: 'group',
           time: '00:00-23:59',
           value: 0.5,
         },
