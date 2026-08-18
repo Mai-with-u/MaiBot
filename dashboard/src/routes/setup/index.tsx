@@ -513,23 +513,27 @@ function SetupPageContent() {
                 />
               </div>
               <h1 className="mb-2 text-2xl font-bold md:text-3xl">{t('setupPage.header.title')}</h1>
-              <p className="text-muted-foreground text-sm md:text-base">
-                {t('setupPage.header.description', { appName: APP_NAME })}
-              </p>
+              {t('setupPage.header.description', { appName: APP_NAME }) ? (
+                <p className="text-muted-foreground text-sm md:text-base">
+                  {t('setupPage.header.description', { appName: APP_NAME })}
+                </p>
+              ) : null}
             </div>
 
             {/* 进度条 */}
             <div className="mb-6 md:mb-8">
-              <div className="mb-2 flex items-center justify-between text-xs md:text-sm">
-                <span className="text-muted-foreground">
-                  {t('setupPage.progress.stepCounter', {
-                    current: currentStep + 1,
-                    total: steps.length,
-                  })}
-                </span>
-                <span className="text-primary font-medium">{Math.round(progress)}%</span>
+              <div className="relative">
+                <Progress value={progress} className="h-7" />
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-between px-3 text-xs font-semibold drop-shadow-sm md:text-sm">
+                  <span>
+                    {t('setupPage.progress.stepCounter', {
+                      current: currentStep + 1,
+                      total: steps.length,
+                    })}
+                  </span>
+                  <span>{Math.round(progress)}%</span>
+                </div>
               </div>
-              <Progress value={progress} className="h-2" />
             </div>
 
             {/* 步骤指示器 */}
@@ -596,19 +600,21 @@ function SetupPageContent() {
             {/* 步骤内容卡片 */}
             <Card className="mb-6 shadow-lg md:mb-8">
               <CardContent className="p-4 md:p-8">
-                <div className="min-h-[300px] md:min-h-[400px]">
+                  <div className="min-h-0">
                   <div className="mb-4 md:mb-6">
                     <h2 className="mb-2 text-xl font-semibold md:text-2xl">
                       {steps[currentStep].title}
                     </h2>
-                    <p className="text-muted-foreground text-sm md:text-base">
-                      {steps[currentStep].description}
-                    </p>
+                    {steps[currentStep].description ? (
+                      <p className="text-muted-foreground text-sm md:text-base">
+                        {steps[currentStep].description}
+                      </p>
+                    ) : null}
                   </div>
 
                   {/* 表单内容 */}
                   <ScrollArea
-                    className="h-[400px] md:h-[500px]"
+                    className="h-[clamp(220px,42vh,500px)] min-h-0"
                     viewportClassName="overscroll-auto"
                   >
                     <div className="pr-2">{renderStepForm()}</div>
