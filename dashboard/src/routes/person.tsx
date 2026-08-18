@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
@@ -830,18 +830,17 @@ function PersonEditDialog({
   onSuccess: () => void
 }) {
   const [formData, setFormData] = useState<PersonUpdateRequest>({})
+  const [seenPerson, setSeenPerson] = useState(person)
   const { toast } = useToast()
-
-  useEffect(() => {
-    if (person) {
-      setFormData({
-        person_name: person.person_name || '',
-        name_reason: person.name_reason || '',
-        nickname: person.nickname || '',
-        is_known: person.is_known,
-      })
-    }
-  }, [person])
+  if (person && person !== seenPerson) {
+    setSeenPerson(person)
+    setFormData({
+      person_name: person.person_name || '',
+      name_reason: person.name_reason || '',
+      nickname: person.nickname || '',
+      is_known: person.is_known,
+    })
+  }
 
   // 保存（失败由全局 mutation 错误 toast 呈现）
   const updateMutation = useMutation({

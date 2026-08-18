@@ -1,4 +1,4 @@
-from typing import Final, List, Literal, Optional
+from typing import Dict, Final, List, Literal, Optional
 
 import re
 
@@ -117,9 +117,9 @@ class BotConfig(ConfigBase):
         default="",
         json_schema_extra={
             "label": {
-                "zh_CN": "平台",
-                "en_US": "Platform",
-                "ja_JP": "プラットフォーム",
+                "zh_CN": "备用主平台",
+                "en_US": "Fallback primary platform",
+                "ja_JP": "予備のメインプラットフォーム",
             },
             "x-widget": "input",
             "x-layout": "inline-right",
@@ -127,15 +127,15 @@ class BotConfig(ConfigBase):
             "x-row": "bot-platform-account",
         },
     )
-    """麦麦主账号所在的平台，例如 qq。"""
+    """适配器没有上报身份时使用的备用主平台，例如 qq。"""
 
     qq_account: str = Field(
         default="",
         json_schema_extra={
             "label": {
-                "zh_CN": "QQ账号",
-                "en_US": "QQ account",
-                "ja_JP": "QQアカウント",
+                "zh_CN": "备用 QQ 账号",
+                "en_US": "Fallback QQ account",
+                "ja_JP": "予備の QQ アカウント",
             },
             "x-widget": "input",
             "x-layout": "inline-right",
@@ -143,20 +143,20 @@ class BotConfig(ConfigBase):
             "x-row": "bot-platform-account",
         },
     )
-    """麦麦主账号 ID，用来识别哪些消息是麦麦自己发的。"""
+    """适配器没有上报 QQ 身份时使用的备用账号 ID。"""
 
     platforms: list[str] = Field(
         default_factory=lambda: [],
         json_schema_extra={
             "label": {
-                "zh_CN": "其他平台",
-                "en_US": "Other platforms",
-                "ja_JP": "他のプラットフォーム",
+                "zh_CN": "其他备用平台",
+                "en_US": "Other fallback platforms",
+                "ja_JP": "その他の予備プラットフォーム",
             },
             "x-widget": "custom",
         },
     )
-    """其他平台账号，格式为 platform:账号；没有多平台时不用填。"""
+    """其他平台的备用账号，格式为 platform:账号；适配器身份存在时不参与判断。"""
 
     nickname: str = Field(
         default="麦麦",
@@ -193,7 +193,7 @@ class PersonalityConfig(ConfigBase):
     __ui_label__ = "人格"
 
     personality: str = Field(
-        default="你是一个大二女大学生，现在正在上网和群友聊天。",
+        default="是一个大二女大学生，现在正在上网和群友聊天。善于用人类的角度思考问题，聊天偏日常。",
         json_schema_extra={
             "label": {
                 "zh_CN": "人格设定",
@@ -210,8 +210,7 @@ class PersonalityConfig(ConfigBase):
 
     behavior_style: str = Field(
         default=(
-            "先观察聊天上下文和他人的反应，再决定是否参与。只在被提及、对话题感兴趣或确实能推进聊天时行动，"
-            "不需要回应每条消息；不适合参与时保持安静。"
+            "是大二女大学生，现在正在上网和群友聊天。善于用人类的角度思考问题，聊天偏日常。不会没话题硬找话题，"
         ),
         json_schema_extra={
             "label": {
@@ -228,7 +227,7 @@ class PersonalityConfig(ConfigBase):
     """Planner 使用的行动准则，例如何时参与聊天、如何观察局面以及何时保持安静。"""
 
     reply_style: str = Field(
-        default="你的风格平淡简短。可以参考贴吧，知乎和微博的回复风格。不浮夸不长篇大论，不要过分修辞和复杂句。尽量回复的简短一些，平淡一些",
+        default="你的风格平淡简短，可以参考贴吧的回复风格。不滥用比喻或者生硬句子。视情况省略主语或者进行倒装，风格较为随意。",
         json_schema_extra={
             "label": {
                 "zh_CN": "表达风格",
@@ -990,72 +989,6 @@ class AttentionDriftConfig(ConfigBase):
     """控制短句、吐槽、语气词等短反应在漂移风格中的使用方式。"""
 
 
-class ExperimentalBrowserConfig(ConfigBase):
-    """暂未开放的实验性网页浏览能力参数。"""
-
-    __ui_label__ = "网页浏览"
-
-    session_timeout_seconds: int = Field(
-        default=300,
-        ge=30,
-        le=3600,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "浏览会话超时秒数",
-                "en_US": "Browser session timeout",
-                "ja_JP": "閲覧セッションのタイムアウト",
-            },
-            "x-widget": "number",
-        },
-    )
-    """浏览器会话无操作多久后自动关闭。"""
-
-    navigation_timeout_seconds: int = Field(
-        default=30,
-        ge=5,
-        le=120,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "页面导航超时秒数",
-                "en_US": "Navigation timeout",
-                "ja_JP": "ページ遷移のタイムアウト",
-            },
-            "x-widget": "number",
-        },
-    )
-    """打开网页或等待页面跳转的最长时间。"""
-
-    max_page_text_length: int = Field(
-        default=6000,
-        ge=1000,
-        le=20000,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "单页正文最大字符数",
-                "en_US": "Maximum page text length",
-                "ja_JP": "ページ本文の最大文字数",
-            },
-            "x-widget": "number",
-        },
-    )
-    """单次页面观察最多返回多少正文字符。"""
-
-    max_actions: int = Field(
-        default=20,
-        ge=5,
-        le=40,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "单页最大动作数",
-                "en_US": "Maximum page actions",
-                "ja_JP": "ページごとの最大アクション数",
-            },
-            "x-widget": "number",
-        },
-    )
-    """每次仅向模型披露当前页面中排序靠前的少量语义动作。"""
-
-
 class ExperimentalConfig(ConfigBase):
     """实验性功能配置类"""
 
@@ -1105,9 +1038,6 @@ class ExperimentalConfig(ConfigBase):
         },
     )
     """实验性人格情绪特点；理性冷静和多愁善感会追加人格后缀，中性不追加内容。"""
-
-    browser: ExperimentalBrowserConfig = Field(default_factory=ExperimentalBrowserConfig)
-    """动作票据式网页浏览实验能力。"""
 
     attention_drift: AttentionDriftConfig = Field(default_factory=AttentionDriftConfig)
     """注意力漂移实验模式；让麦麦在群聊/私聊中表现出更活跃的联想和轻微话题漂移。"""
@@ -5826,6 +5756,16 @@ class MCPConfig(ConfigBase):
         return super().model_post_init(context)
 
 
+class CommandPermissionConfig(ConfigBase):
+    """单个命令的额外放行规则。"""
+
+    allow_users: list[str] = Field(default_factory=list)
+    """允许执行命令的用户，格式如 qq:123456789。"""
+
+    allow_chats: list[str] = Field(default_factory=list)
+    """允许执行命令的真实聊天流 ID。"""
+
+
 class PluginConfig(ConfigBase):
     """插件管理配置类"""
 
@@ -5846,6 +5786,12 @@ class PluginConfig(ConfigBase):
         },
     )
     """允许用聊天命令管理插件的用户，格式如 qq:123456789。"""
+
+    command_permissions: Dict[str, CommandPermissionConfig] = Field(
+        default_factory=dict,
+        json_schema_extra={"hidden": True},
+    )
+    """受保护命令按用户和真实聊天流配置的额外放行规则。"""
 
 
 class PluginRuntimeRenderConfig(ConfigBase):

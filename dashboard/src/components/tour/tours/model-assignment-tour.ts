@@ -15,7 +15,7 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="providers-tab-trigger"]',
-    content: '第一步，进入"模型厂商设置"。这里用于配置要连接的模型服务厂商或模型平台。',
+    content: '第一步，进入“模型设置”。左侧用于管理模型厂商，右侧用于查看和配置对应模型。',
     placement: 'bottom' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,
@@ -99,7 +99,7 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="models-tab-trigger"]',
-    content: '厂商配置完成后，切换到"添加模型"，把具体要使用的模型加入列表。',
+    content: '厂商配置完成后，在右侧模型区域把具体要使用的模型加入列表。',
     placement: 'bottom' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,

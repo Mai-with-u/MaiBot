@@ -37,7 +37,8 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
             events.append(f"{self.name}:has_data")
             return self.name == "vectors"
 
-        def load(self) -> None:
+        def load(self, **kwargs: Any) -> None:
+            del kwargs
             events.append(f"{self.name}:load")
 
         def warmup_index(self, *, force_train: bool) -> None:
@@ -116,7 +117,12 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
         def __init__(self, facade: Any, *, import_write_blocked_provider: Any) -> None:
             events.append("retrieval_tuning_manager")
 
-    monkeypatch.setattr(kernel_module, "run_startup_format_migration", lambda data_dir: events.append("migration"))
+    def fail_startup_migration(data_dir: Path) -> None:
+        del data_dir
+        events.append("migration")
+        raise RuntimeError("injected startup migration failure")
+
+    monkeypatch.setattr(kernel_module, "run_startup_format_migration", fail_startup_migration)
     monkeypatch.setattr(
         kernel_module,
         "create_embedding_api_adapter",
@@ -190,23 +196,13 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
         "_reconcile_relation_graph_projection_jobs",
         fail_startup_projection,
     )
-    with pytest.raises(OSError, match="injected startup projection failure"):
-        await kernel.initialize()
-    assert kernel._initialized is False
-    assert "projection_reconcile_failed" in events
-    assert "sparse_config" not in events
-
-    monkeypatch.setattr(
-        memory_maintenance_service.MemoryMaintenanceService,
-        "_reconcile_relation_graph_projection_jobs",
-        original_projection_reconcile,
-    )
-    events.clear()
-
     await kernel.initialize()
-
     assert kernel._initialized is True
-    assert kernel.embedding_dimension == 128
+    assert "projection_reconcile_failed" in events
+    assert kernel.graph_store is None
+    assert kernel._runtime_capabilities["graph"] is False
+    assert "sparse_config" in events
+    assert kernel.embedding_dimension == 512
     assert kernel.retriever == "runtime-retriever"
     assert kernel.threshold_filter == "runtime-threshold"
     assert kernel.sparse_index == "runtime-sparse-index"
@@ -216,6 +212,7 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
             "migration",
             "embedding_adapter",
             "metadata_connect",
+            "projection_reconcile_failed",
             "sparse_warmup",
             "vectors:load",
             "vectors:warmup:True",
@@ -228,6 +225,12 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
             "startup_deferred",
             "background_start",
         ],
+    )
+
+    monkeypatch.setattr(
+        memory_maintenance_service.MemoryMaintenanceService,
+        "_reconcile_relation_graph_projection_jobs",
+        original_projection_reconcile,
     )
 
     events.clear()
@@ -668,6 +671,7 @@ async def test_search_execution_once_preserves_request_semantics(
     assert execution_request.query_type == "time"
     assert execution_request.query == "绿茶"
     assert execution_request.top_k == 7
+    assert execution_request.candidate_top_k == 30
     assert execution_request.time_from == "2026-01-01"
     assert execution_request.time_to == "2026-01-02"
     assert execution_request.person == "person-1"

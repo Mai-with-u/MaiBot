@@ -71,6 +71,17 @@ export interface LegacyInstalledPlugin {
   path: string
 }
 
+export interface RuntimeCommand {
+  aliases: string[]
+  description: string
+  enabled: boolean
+  id: string
+  name: string
+  pattern: string
+  permission: 'public' | 'operator'
+  plugin_name: string
+}
+
 /**
  * 插件加载进度
  */

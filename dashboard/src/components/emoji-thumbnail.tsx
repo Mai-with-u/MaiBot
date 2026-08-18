@@ -84,7 +84,9 @@ export function EmojiThumbnail({
   }, [src, retryCount, maxRetries, retryInterval])
 
   useEffect(() => {
-    loadImage()
+    queueMicrotask(() => {
+      void loadImage()
+    })
   }, [loadImage])
 
   // 清理 Object URL

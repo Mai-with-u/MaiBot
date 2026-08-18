@@ -6,6 +6,7 @@
  *   const { triggerRestart, isRestarting } = useRestart()
  *   triggerRestart() // 触发重启
  */
+/* eslint-disable react-refresh/only-export-components -- Provider 与配套 hook 同文件导出 */
 
 import {
   createContext,

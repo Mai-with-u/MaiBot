@@ -8,12 +8,13 @@ import type { MenuItem } from './types'
 const allItems: MenuItem[] = menuSections.flatMap((section) => section.items)
 
 describe('menuSections 菜单结构', () => {
-  it('包含概览/机器人配置/资源/扩展监控四个分组且顺序固定', () => {
+  it('包含概览/机器人配置/资源/扩展与集成/高级工具五个分组且顺序固定', () => {
     expect(menuSections.map((section) => section.title)).toEqual([
       'sidebar.groups.overview',
       'sidebar.groups.botConfig',
       'sidebar.groups.botResources',
       'sidebar.groups.extensionsMonitor',
+      'sidebar.groups.advancedTools',
     ])
   })
 
@@ -59,40 +60,70 @@ describe('menuSections 菜单结构', () => {
     expect(modelItem?.tourId).toBe('sidebar-model-management')
   })
 
-  it('数据管理位于扩展与维护分组，并排在 MCP 设置上方', () => {
-    const extensionsSection = menuSections.find(
-      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+  it('数据管理位于高级工具分组末尾', () => {
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
     )
-    const dataTransferItem = extensionsSection?.items.find((item) => item.path === '/data-transfer')
-    const dataTransferIndex =
-      extensionsSection?.items.findIndex((item) => item.path === '/data-transfer') ?? -1
-    const mcpIndex = extensionsSection?.items.findIndex((item) => item.path === '/mcp-settings') ?? -1
+    const dataTransferItem = advancedToolsSection?.items.at(-1)
 
     expect(dataTransferItem?.label).toBe('sidebar.menu.dataTransfer')
+    expect(dataTransferItem?.path).toBe('/data-transfer')
     expect(dataTransferItem?.searchDescription).toBe('search.items.dataTransferDesc')
-    expect(dataTransferIndex).toBeGreaterThanOrEqual(0)
-    expect(dataTransferIndex).toBeLessThan(mcpIndex)
   })
 
-  it('详细统计数据位于扩展与维护分组最底部并使用站内页面', () => {
-    const extensionsSection = menuSections.find(
-      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+  it('Prompt 管理位于高级工具分组首位', () => {
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
     )
-    const statisticsItem = extensionsSection?.items.at(-1)
 
-    expect(statisticsItem).toMatchObject({
-      label: 'sidebar.menu.statistics',
-      path: '/statistics',
+    expect(advancedToolsSection?.items[0]).toMatchObject({
+      label: 'sidebar.menu.promptManagement',
+      path: '/config/prompts',
     })
-    expect(statisticsItem?.external).toBeUndefined()
   })
 
-  it('行为学习项受 behaviorLearning 特性开关控制，且是唯一带开关的项', () => {
+  it('适配器管理拥有独立入口并位于麦麦配置编辑分组', () => {
+    const botConfigSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.botConfig'
+    )
+    const adapterIndex =
+      botConfigSection?.items.findIndex((item) => item.path === '/adapter-management') ?? -1
+    const modelIndex =
+      botConfigSection?.items.findIndex((item) => item.path === '/config/model') ?? -1
+
+    expect(adapterIndex).toBeGreaterThanOrEqual(0)
+    expect(adapterIndex).toBeGreaterThan(modelIndex)
+  })
+
+  it('详细统计数据不再占用主侧边栏入口', () => {
+    const advancedToolsSection = menuSections.find(
+      (section) => section.title === 'sidebar.groups.advancedTools'
+    )
+
+    expect(advancedToolsSection?.items).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: '/statistics' })])
+    )
+    expect(advancedToolsSection?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: 'sidebar.menu.replyEffects',
+          path: '/reply-effects',
+          featureFlag: 'replyEffects',
+        }),
+      ])
+    )
+  })
+
+  it('行为学习与回复效果入口分别受特性开关控制', () => {
     const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
 
-    expect(flaggedItems).toHaveLength(1)
-    expect(flaggedItems[0].path).toBe('/resource/behavior')
-    expect(flaggedItems[0].featureFlag).toBe('behaviorLearning')
+    expect(flaggedItems).toHaveLength(2)
+    expect(flaggedItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: '/resource/behavior', featureFlag: 'behaviorLearning' }),
+        expect.objectContaining({ path: '/reply-effects', featureFlag: 'replyEffects' }),
+      ])
+    )
   })
 
   it('searchDescription 均为 search.items 命名空间的 i18n key', () => {

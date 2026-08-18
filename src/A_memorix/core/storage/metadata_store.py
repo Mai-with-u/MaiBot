@@ -789,6 +789,7 @@ class MetadataStore(
         source: Optional[str] = None,
         limit: int = 100,
         allow_created_fallback: bool = True,
+        allowed_hashes: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         查询时序命中的段落（区间相交语义）。
@@ -807,6 +808,12 @@ class MetadataStore(
 
         conditions = ["(p.is_deleted IS NULL OR p.is_deleted = 0)"]
         params: List[Any] = []
+        if allowed_hashes is not None:
+            normalized_allowed = self._normalize_hash_sequence(allowed_hashes)
+            if not normalized_allowed:
+                return []
+            conditions.append("p.hash IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(normalized_allowed, ensure_ascii=False))
 
         if source:
             conditions.append("p.source = ?")
@@ -1407,6 +1414,27 @@ class MetadataStore(
             )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def reset_vector_projection_state(self) -> Dict[str, int]:
+        """切换向量世代时重置派生状态，不修改正文、实体和关系本身。"""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            UPDATE relations
+            SET vector_state = 'none',
+                vector_updated_at = NULL,
+                vector_error = NULL,
+                vector_retry_count = 0
+            """
+        )
+        relation_count = max(0, int(cursor.rowcount))
+        cursor.execute("DELETE FROM paragraph_vector_backfill")
+        backfill_count = max(0, int(cursor.rowcount))
+        self._conn.commit()
+        return {
+            "relations_reset": relation_count,
+            "paragraph_backfill_cleared": backfill_count,
+        }
 
     def list_relations_by_vector_state(
         self,

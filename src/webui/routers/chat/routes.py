@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -78,6 +78,28 @@ class AdapterPolicyUpdateRequest(BaseModel):
 
     adapter_id: str = Field(default="")
     action: str = Field(default="")
+
+
+class AdapterPolicyDefaultsUpdateRequest(BaseModel):
+    """适配器全局默认放行策略编辑请求。"""
+
+    group: Literal["allow", "block"] = Field(default="allow")
+    private: Literal["allow", "block"] = Field(default="allow")
+
+
+class AdapterHostPolicySectionRequest(BaseModel):
+    """单类聊天的主程序适配器放行规则。"""
+
+    default_action: Literal["inherit", "allow", "block"] = Field(default="inherit")
+    allow_ids: List[str] = Field(default_factory=list)
+    deny_ids: List[str] = Field(default_factory=list)
+
+
+class AdapterHostPolicyUpdateRequest(BaseModel):
+    """按适配器插件编辑主程序放行规则的请求。"""
+
+    group: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
+    private: AdapterHostPolicySectionRequest = Field(default_factory=AdapterHostPolicySectionRequest)
 
 
 class ChatTargetResolveItem(BaseModel):
@@ -1430,6 +1452,74 @@ async def update_chat_session_adapter_policy(
 
     await _save_adapter_policy_rule(chat_session, request)
     return {"success": True, "detail": _chat_session_detail_to_response(chat_session)}
+
+
+@router.get("/adapters/policy/defaults")
+async def get_adapter_policy_defaults() -> Dict[str, object]:
+    """返回群聊和私聊的适配器全局默认动作。"""
+
+    return {"success": True, "defaults": get_adapter_policy_manager().get_default_actions()}
+
+
+@router.put("/adapters/policy/defaults")
+async def update_adapter_policy_defaults(request: AdapterPolicyDefaultsUpdateRequest) -> Dict[str, object]:
+    """更新群聊和私聊的适配器全局默认动作。"""
+
+    manager = get_adapter_policy_manager()
+    try:
+        manager.set_default_action("group", request.group)
+        manager.set_default_action("private", request.private)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "defaults": manager.get_default_actions()}
+
+
+@router.get("/adapters/plugins/{plugin_id}/policy")
+async def get_adapter_plugin_policy(plugin_id: str) -> Dict[str, object]:
+    """返回指定适配器插件在主程序侧的群聊与私聊规则。"""
+
+    normalized_plugin_id = str(plugin_id or "").strip()
+    if not normalized_plugin_id:
+        raise HTTPException(status_code=400, detail="缺少适配器插件 ID")
+
+    manager = get_adapter_policy_manager()
+    try:
+        policy = manager.get_adapter_policy(AdapterIdentity(plugin_id=normalized_plugin_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "plugin_id": normalized_plugin_id,
+        "global_defaults": manager.get_default_actions(),
+        "policy": policy,
+    }
+
+
+@router.put("/adapters/plugins/{plugin_id}/policy")
+async def update_adapter_plugin_policy(
+    plugin_id: str,
+    request: AdapterHostPolicyUpdateRequest,
+) -> Dict[str, object]:
+    """更新指定适配器插件在主程序侧的群聊与私聊规则。"""
+
+    normalized_plugin_id = str(plugin_id or "").strip()
+    if not normalized_plugin_id:
+        raise HTTPException(status_code=400, detail="缺少适配器插件 ID")
+
+    manager = get_adapter_policy_manager()
+    try:
+        manager.set_adapter_policy(
+            AdapterIdentity(plugin_id=normalized_plugin_id),
+            request.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "plugin_id": normalized_plugin_id,
+        "global_defaults": manager.get_default_actions(),
+        "policy": manager.get_adapter_policy(AdapterIdentity(plugin_id=normalized_plugin_id)),
+    }
 
 
 @router.delete("/sessions/{session_id}/prompts/{index}")

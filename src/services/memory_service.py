@@ -91,13 +91,16 @@ class PersonProfileResult:
 
 class MemoryService:
     async def _invoke(
-        self, component_name: str, args: Optional[Dict[str, Any]] = None, *, timeout_ms: int = 30000
+        self,
+        component_name: str,
+        args: Optional[Dict[str, Any]] = None,
+        *,
+        timeout_ms: Optional[int] = None,
     ) -> Any:
-        response = await a_memorix_host_service.invoke(
-            component_name,
-            args or {},
-            timeout_ms=max(1000, int(timeout_ms or 30000)),
-        )
+        if timeout_ms is None:
+            response = await a_memorix_host_service.invoke(component_name, args or {})
+        else:
+            response = await a_memorix_host_service.invoke(component_name, args or {}, timeout_ms=timeout_ms)
         if isinstance(response, dict):
             return response
         payload = getattr(response, "payload", None)
@@ -121,10 +124,13 @@ class MemoryService:
         component_name: str,
         *,
         action: str,
-        timeout_ms: int = 30000,
+        timeout_ms: Optional[int] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        payload = await self._invoke(component_name, {"action": action, **kwargs}, timeout_ms=timeout_ms)
+        if timeout_ms is None:
+            payload = await self._invoke(component_name, {"action": action, **kwargs})
+        else:
+            payload = await self._invoke(component_name, {"action": action, **kwargs}, timeout_ms=timeout_ms)
         return payload if isinstance(payload, dict) else {"success": False, "error": "invalid_payload"}
 
     @staticmethod
@@ -444,7 +450,7 @@ class MemoryService:
             logger.warning(f"调优管理调用失败: {exc}")
             return {"success": False, "error": str(exc)}
 
-    async def v5_admin(self, *, action: str, timeout_ms: int = 30000, **kwargs) -> Dict[str, Any]:
+    async def v5_admin(self, *, action: str, timeout_ms: Optional[int] = None, **kwargs) -> Dict[str, Any]:
         try:
             return await self._invoke_admin("memory_v5_admin", action=action, timeout_ms=timeout_ms, **kwargs)
         except Exception as exc:

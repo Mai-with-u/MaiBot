@@ -1,7 +1,6 @@
 import { createElement } from 'react'
 import {
   Activity,
-  BarChart3,
   Box,
   Brain,
   Database,
@@ -33,10 +32,11 @@ const JargonIcon = createStreamlineIcon('sign-hashtag-solid', Hash)
 const BehaviorIcon = createStreamlineIcon('cyborg-solid', Brain)
 const KnowledgeIcon = createStreamlineIcon('user-sticker-square-remix', Database)
 const PluginConfigIcon = createStreamlineIcon('application-add-remix', Puzzle)
+const AdapterManagementIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const PluginMarketIcon = createStreamlineIcon('store-2-solid', Store)
 const McpIcon = createStreamlineIcon('router-wifi-network-solid', Wifi)
 const DataTransferIcon: MenuIcon = (props) => createElement(HardDrive, props)
-const StatisticsIcon: MenuIcon = (props) => createElement(BarChart3, props)
+const ReplyEffectsIcon: MenuIcon = (props) => createElement(Activity, props)
 
 export const menuSections: MenuSection[] = [
   {
@@ -68,7 +68,11 @@ export const menuSections: MenuSection[] = [
         searchDescription: 'search.items.modelDesc',
         tourId: 'sidebar-model-management',
       },
-      { icon: PromptIcon, label: 'sidebar.menu.promptManagement', path: '/config/prompts' },
+      {
+        icon: AdapterManagementIcon,
+        label: 'sidebar.menu.adapterManagement',
+        path: '/adapter-management',
+      },
     ],
   },
   {
@@ -116,17 +120,24 @@ export const menuSections: MenuSection[] = [
         path: '/plugins',
         searchDescription: 'search.items.pluginsDesc',
       },
+      { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
+    ],
+  },
+  {
+    title: 'sidebar.groups.advancedTools',
+    items: [
+      { icon: PromptIcon, label: 'sidebar.menu.promptManagement', path: '/config/prompts' },
+      {
+        icon: ReplyEffectsIcon,
+        label: 'sidebar.menu.replyEffects',
+        path: '/reply-effects',
+        featureFlag: 'replyEffects',
+      },
       {
         icon: DataTransferIcon,
         label: 'sidebar.menu.dataTransfer',
         path: '/data-transfer',
         searchDescription: 'search.items.dataTransferDesc',
-      },
-      { icon: McpIcon, label: 'sidebar.menu.mcpSettings', path: '/mcp-settings' },
-      {
-        icon: StatisticsIcon,
-        label: 'sidebar.menu.statistics',
-        path: '/statistics',
       },
     ],
   },

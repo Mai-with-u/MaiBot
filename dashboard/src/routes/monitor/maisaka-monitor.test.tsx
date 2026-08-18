@@ -566,6 +566,62 @@ describe('阶段状态栏与工具条', () => {
     await waitFor(() => expect(getBackToBottomIcon()).toHaveClass('text-primary'))
   })
 
+  it('远离底部后收到新消息时保持当前阅读位置', async () => {
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { container, rerender } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    const viewport = findTimelineViewport(container, '第一条')
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 200 })
+    Object.defineProperty(viewport, 'scrollTop', { configurable: true, value: 100 })
+    fireEvent.scroll(viewport)
+    await waitFor(() => expect(getBackToBottomIcon()).not.toHaveClass('text-primary'))
+
+    virtualizerMocks.scrollToIndex.mockClear()
+    setupMonitorState({
+      timeline: [
+        ...timeline,
+        makeEntry('message.ingested', makeIngested({ content: '第三条' })),
+      ],
+    })
+    rerender(<MaisakaMonitor />)
+    await flushAutoScroll()
+
+    expect(virtualizerMocks.scrollToIndex).not.toHaveBeenCalled()
+    expect(getBackToBottomIcon()).not.toHaveClass('text-primary')
+  })
+
+  it('位于底部时收到新消息继续自动滚动', async () => {
+    const timeline = [
+      makeEntry('message.ingested', makeIngested({ content: '第一条' })),
+      makeEntry('message.ingested', makeIngested({ content: '第二条' })),
+    ]
+    setupMonitorState({ timeline })
+    const { rerender } = render(<MaisakaMonitor />)
+
+    await flushAutoScroll()
+    virtualizerMocks.scrollToIndex.mockClear()
+    setupMonitorState({
+      timeline: [
+        ...timeline,
+        makeEntry('message.ingested', makeIngested({ content: '第三条' })),
+      ],
+    })
+    rerender(<MaisakaMonitor />)
+    await flushAutoScroll()
+
+    expect(virtualizerMocks.scrollToIndex).toHaveBeenCalledWith(2, {
+      align: 'end',
+      behavior: 'auto',
+    })
+    expect(getBackToBottomIcon()).toHaveClass('text-primary')
+  })
+
   it('时间线为空时回到底部退化为视口滚动', async () => {
     const user = userEvent.setup()
     setupMonitorState()

@@ -37,3 +37,50 @@ def test_validate_public_url_blocks_private_address_when_public_check_enabled(mo
 
     with pytest.raises(ValueError, match="禁止访问非公网地址"):
         network_security.validate_public_url("https://example.com:8443/v1")
+
+
+def test_validate_public_url_blocks_rfc1918_address_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_webui_url_check_config(monkeypatch, enabled=True)
+    monkeypatch.setattr(
+        network_security,
+        "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address("192.168.1.10")},
+    )
+
+    with pytest.raises(ValueError, match="禁止访问非公网地址"):
+        network_security.validate_public_url("http://model.internal:11434/v1")
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "192.168.1.10", "10.0.0.8"])
+def test_validate_public_url_allows_configured_private_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    address: str,
+) -> None:
+    _install_webui_url_check_config(monkeypatch, enabled=True)
+    monkeypatch.setattr(
+        network_security,
+        "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address(address)},
+    )
+
+    assert network_security.validate_public_url(
+        "http://local-model:11434/v1",
+        allow_configured_private_network=True,
+    ) == "http://local-model:11434/v1"
+
+
+def test_validate_public_url_still_blocks_link_local_for_configured_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_webui_url_check_config(monkeypatch, enabled=True)
+    monkeypatch.setattr(
+        network_security,
+        "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address("169.254.169.254")},
+    )
+
+    with pytest.raises(ValueError, match="禁止访问非公网地址"):
+        network_security.validate_public_url(
+            "http://metadata.internal/latest",
+            allow_configured_private_network=True,
+        )

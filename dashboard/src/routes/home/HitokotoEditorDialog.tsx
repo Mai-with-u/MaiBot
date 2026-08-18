@@ -16,6 +16,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { generateId } from '@/lib/id'
 
 import type { CustomHitokoto, HitokotoSettings } from './hooks/useMaibotVersion'
 
@@ -27,7 +28,7 @@ interface HitokotoEditorDialogProps {
 
 function createCustomHitokoto(): CustomHitokoto {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     content: '',
     source: '',
   }

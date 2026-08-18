@@ -25,7 +25,8 @@
       "overview": "Overview",
       "botConfig": "Bot Configuration",
       "botResources": "Bot Resources",
-      "extensionsMonitor": "Extensions & Maintenance",
+      "extensionsMonitor": "Extensions & Integrations",
+      "advancedTools": "Advanced Tools",
       "system": "System"
     },
     "menu": {
@@ -46,9 +47,11 @@
       "pluginMarket": "Plugin Market",
       "configTemplate": "Config Templates",
       "pluginConfig": "Plugin Management",
+      "adapterManagement": "Adapter Management",
       "mcpSettings": "MCP Settings",
       "dataTransfer": "Data Management",
       "statistics": "Detailed Statistics",
+      "replyEffects": "Reply Effects",
       "logViewer": "Log Viewer",
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
@@ -504,6 +507,11 @@
     },
     "other": {
       "display": "Display",
+      "guidesAndNotices": "Guides and notices",
+      "guidesAndNoticesDesc": "Reset all completed guides and dismissed notices without changing other settings or application data.",
+      "resetGuidesAndNotices": "Reset all guides and notices",
+      "guidesResetDone": "Guides and notices reset",
+      "guidesResetDoneDesc": "Cleared {{count}} saved states. Reopen the relevant pages to see them again.",
       "enableAvatarFetch": "Fetch and show user avatars",
       "enableAvatarFetchDesc": "When disabled, chat and reasoning views stop requesting avatar images and use default avatars.",
       "performance": "Performance & Storage",

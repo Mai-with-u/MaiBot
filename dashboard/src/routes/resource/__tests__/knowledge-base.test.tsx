@@ -320,7 +320,14 @@ describe('KnowledgeBasePage import workflow', () => {
       },
       vector_pools_ready: true,
       vector_pools_effective_mode: 'dual',
+      memory_enabled: true,
       runtime_ready: true,
+      retrieval_ready: true,
+      degraded: false,
+      retrieval_mode: 'hybrid',
+      available_channels: ['metadata', 'sparse', 'graph', 'vector_read', 'vector_write', 'embedding'],
+      unavailable_channels: [],
+      vector_health: { state: 'healthy' },
       embedding_degraded: false,
       embedding_degraded_reason: '',
       embedding_degraded_since: null,
@@ -408,9 +415,10 @@ describe('KnowledgeBasePage import workflow', () => {
     vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({
       success: true,
       path_aliases: {
-        lpmm: 'data/lpmm',
-        plugin_data: 'data/plugins/a-dawn.a-memorix',
-        raw: 'data/raw',
+        converted: 'data/a-memorix/imports/converted',
+        lpmm: 'data/a-memorix/imports/source/lpmm',
+        maibot: 'data/a-memorix/imports/source/maibot',
+        raw: 'data/a-memorix/imports/source/raw',
       },
     })
     vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({
@@ -1094,6 +1102,44 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(screen.getByText('93.2%')).toBeInTheDocument()
   })
 
+  it('shows vector failure as degraded ready without disabling memory', async () => {
+    vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
+      success: true,
+      config: { plugin: { enabled: true } },
+      data_dir: 'data/plugins/a-dawn.a-memorix',
+      embedding_dimension: 1024,
+      auto_save: true,
+      relation_vectors_enabled: false,
+      memory_enabled: true,
+      runtime_ready: true,
+      retrieval_ready: true,
+      degraded: true,
+      retrieval_mode: 'sparse_graph',
+      available_channels: ['metadata', 'sparse', 'graph'],
+      unavailable_channels: ['vector_read', 'vector_write', 'embedding'],
+      vector_health: {
+        state: 'unavailable',
+        error_code: 'vector_unclassified_error',
+        reason: '向量文件无法读取',
+      },
+      embedding_degraded: true,
+      embedding_degraded_reason: '向量文件无法读取',
+      paragraph_vector_backfill_pending: 0,
+      paragraph_vector_backfill_running: 0,
+      paragraph_vector_backfill_failed: 0,
+      paragraph_vector_backfill_done: 0,
+    })
+
+    renderPage()
+
+    await waitForConsoleReady()
+
+    expect(screen.getByText('降级就绪')).toBeInTheDocument()
+    expect(screen.getByText('可用通道：元数据、稀疏、图谱')).toBeInTheDocument()
+    expect(screen.getByText('向量不可用')).toBeInTheDocument()
+    expect(screen.queryByText('已停用')).not.toBeInTheDocument()
+  })
+
   it('shows pending ETA while vector pool migration rate is unavailable', async () => {
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
@@ -1292,8 +1338,15 @@ describe('KnowledgeBasePage import workflow', () => {
 
     await waitForConsoleReady()
     await openImportTab()
+    const createButton = screen.getByRole('button', { name: '创建导入任务' })
+    expect(createButton).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
+    await user.click(screen.getByRole('combobox', { name: '资料类别' }))
+    await user.click(screen.getByRole('option', { name: '叙事资料' }))
+    expect(createButton).toBeEnabled()
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(fileInput).toHaveAttribute('accept', '.txt,.md,.json')
     const uploadFiles = [
       new File(['hello'], 'demo.txt', { type: 'text/plain' }),
       new File(['{"name":"mai"}'], 'demo.json', { type: 'application/json' }),
@@ -1340,12 +1393,14 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.createMemoryMaibotMigrationImport).toHaveBeenCalledTimes(1))
 
     const [uploadedFiles, uploadPayload] = vi.mocked(memoryApi.createMemoryUploadImport).mock.calls[0]
-    expect(uploadedFiles).toHaveLength(4)
-    expect(uploadedFiles.map((file) => file.name)).toEqual(['demo.txt', 'demo.json', 'demo.csv', 'demo.md'])
+    expect(uploadedFiles).toHaveLength(3)
+    expect(uploadedFiles.map((file) => file.name)).toEqual(['demo.txt', 'demo.json', 'demo.md'])
     expect(uploadPayload).toMatchObject({
       input_mode: 'text',
       llm_enabled: true,
-      strategy_override: 'auto',
+      scope_type: 'global',
+      strategy_override: 'narrative',
+      chat_log: false,
       dedupe_policy: 'content_hash',
     })
   }, 60_000)

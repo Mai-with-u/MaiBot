@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import asyncio
+import json
 import numpy as np
 import pytest
 
@@ -199,6 +200,7 @@ def _build_manager(
     embedding_manager: _DummyEmbeddingManager | None = None,
     relation_vectorization_enabled: bool = False,
     vector_pool_mode: str = "single",
+    data_dir: Path | None = None,
 ) -> tuple[ImportTaskManager, _DummyMetadataStore]:
     metadata_store = _DummyMetadataStore()
     config = {
@@ -208,6 +210,8 @@ def _build_manager(
         },
         "retrieval.vector_pools.mode": vector_pool_mode,
     }
+    if data_dir is not None:
+        config["storage.data_dir"] = str(data_dir)
     graph_store = _DummyGraphStore()
     legacy_vector_store = _DummyVectorStore()
     paragraph_vector_store = _DummyVectorStore()
@@ -259,6 +263,150 @@ def _test_manifest_path(name: str) -> Path:
     return path
 
 
+def _test_directory(name: str) -> Path:
+    path = Path("temp") / "web_import_manager_tests" / name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_import_state_uses_data_dir_imports_and_migrates_legacy_state(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    legacy_manifest = data_dir / "import_manifest.json"
+    legacy_reports = data_dir / "web_import_reports"
+    legacy_tasks = data_dir / "web_import_tmp"
+    legacy_reports.mkdir(parents=True)
+    legacy_tasks.mkdir(parents=True)
+    legacy_manifest.write_text('{"source": {"status": "completed"}}', encoding="utf-8")
+    (legacy_reports / "report.json").write_text("{}", encoding="utf-8")
+    (legacy_tasks / "stale.txt").write_text("stale", encoding="utf-8")
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+
+    manager = ImportTaskManager(plugin)
+
+    assert manager._temp_root == data_dir / "imports" / "tasks"
+    assert manager._reports_root == data_dir / "imports" / "reports"
+    assert manager._manifest_path == data_dir / "imports" / "manifest.json"
+    assert manager._load_manifest() == {"source": {"status": "completed"}}
+    assert (manager._reports_root / "report.json").is_file()
+    assert not legacy_manifest.exists()
+    assert not legacy_reports.exists()
+    assert (legacy_tasks / "stale.txt").is_file()
+
+
+def test_import_aliases_are_fixed_under_data_dir(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    external_dir = tmp_path / "external"
+    config = {
+        "storage.data_dir": str(data_dir),
+        "web.import.path_aliases": {"raw": str(external_dir), "outside": str(external_dir)},
+    }
+    plugin = SimpleNamespace(get_config=lambda key, default=None: config.get(key, default))
+
+    manager = ImportTaskManager(plugin)
+
+    assert manager.get_path_aliases() == {
+        "raw": str((data_dir / "imports" / "source" / "raw").resolve()),
+        "lpmm": str((data_dir / "imports" / "source" / "lpmm").resolve()),
+        "maibot": str((data_dir / "imports" / "source" / "maibot").resolve()),
+        "converted": str((data_dir / "imports" / "converted").resolve()),
+    }
+    assert all(Path(path).is_dir() for path in manager.get_path_aliases().values())
+    with pytest.raises(ValueError, match="未知路径别名"):
+        manager.resolve_path_alias("outside")
+
+
+def test_import_task_kinds_use_their_fixed_aliases(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+
+    with pytest.raises(ValueError, match="raw 导入目录"):
+        manager._normalize_raw_scan_params({"alias": "lpmm"})
+    with pytest.raises(ValueError, match="lpmm 导入目录"):
+        manager._normalize_lpmm_openie_params({"alias": "raw"})
+    with pytest.raises(ValueError, match="lpmm 导入目录"):
+        manager._normalize_lpmm_convert_params({"alias": "raw"})
+    with pytest.raises(ValueError, match="converted 导入目录"):
+        manager._normalize_lpmm_convert_params({"target_alias": "raw"})
+
+    legacy_target = manager._normalize_lpmm_convert_params({"target_alias": "plugin_data"})
+    assert legacy_target["target_alias"] == "converted"
+
+
+@pytest.mark.asyncio
+async def test_staged_upload_must_stay_under_import_root(tmp_path: Path, monkeypatch) -> None:
+    data_dir = tmp_path / "a-memorix"
+    manager, _ = _build_manager(data_dir=data_dir)
+    staged_file = data_dir / "imports" / "staging" / "request" / "demo.txt"
+    staged_file.parent.mkdir(parents=True)
+    staged_file.write_text("demo", encoding="utf-8")
+
+    async def skip_worker() -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_worker", skip_worker)
+    summary = await manager.create_upload_task(
+        [{"staged_path": str(staged_file), "filename": "demo.txt"}],
+        {"strategy_override": "factual"},
+    )
+
+    task = manager._tasks[summary["task_id"]]
+    assert Path(task.files[0].temp_path).is_relative_to(data_dir / "imports" / "tasks")
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("outside", encoding="utf-8")
+    with pytest.raises(ValueError, match="必须位于导入目录"):
+        await manager.create_upload_task(
+            [{"staged_path": str(outside_file), "filename": "outside.txt"}],
+            {"strategy_override": "factual"},
+        )
+
+
+def test_maibot_migration_allows_live_db_or_import_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "a-memorix"
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+    import_db = data_dir / "imports" / "source" / "maibot" / "history.db"
+
+    default_params = manager._normalize_migration_params({})
+    relative_params = manager._normalize_migration_params({"source_db": "history.db"})
+    absolute_params = manager._normalize_migration_params({"source_db": str(import_db)})
+
+    assert Path(default_params["source_db"]) == manager._default_maibot_source_db().resolve()
+    assert Path(relative_params["source_db"]) == import_db.resolve()
+    assert Path(absolute_params["source_db"]) == import_db.resolve()
+    with pytest.raises(ValueError, match="必须位于导入目录"):
+        manager._normalize_migration_params({"source_db": str(tmp_path / "outside.db")})
+
+
+@pytest.mark.asyncio
+async def test_temporal_backfill_always_targets_active_store(tmp_path: Path, monkeypatch) -> None:
+    data_dir = tmp_path / "a-memorix"
+    (data_dir / "metadata").mkdir(parents=True)
+    plugin = SimpleNamespace(
+        get_config=lambda key, default=None: str(data_dir) if key == "storage.data_dir" else default,
+    )
+    manager = ImportTaskManager(plugin)
+
+    async def skip_worker() -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_ensure_worker", skip_worker)
+    summary = await manager.create_temporal_backfill_task(
+        {"alias": "plugin_data", "relative_path": "ignored", "dry_run": True}
+    )
+
+    task = manager._tasks[summary["task_id"]]
+    assert task.files[0].source_path == str(data_dir.resolve())
+    assert "alias" not in task.params
+    assert "relative_path" not in task.params
+
+
 def test_import_params_include_configurable_chunk_windows() -> None:
     manager, _ = _build_manager()
 
@@ -281,6 +429,34 @@ def test_import_params_include_configurable_chunk_windows() -> None:
     assert customized["narrative_overlap"] == 600
     assert customized["factual_target_size"] == 1400
 
+def test_import_scope_is_explicit_and_legacy_payloads_remain_compatible() -> None:
+    manager, _ = _build_manager()
+
+    explicit_global = manager._normalize_common_import_params(
+        {"scope_type": "global"},
+        default_dedupe="content_hash",
+    )
+    explicit_chat = manager._normalize_common_import_params(
+        {"scope_type": "chat", "chat_id": "session-1"},
+        default_dedupe="content_hash",
+    )
+    legacy_chat = manager._normalize_common_import_params(
+        {"chat_id": "session-legacy"},
+        default_dedupe="content_hash",
+    )
+
+    assert manager._chat_metadata_from_params(explicit_global) == {"scope_type": "global"}
+    assert manager._chat_metadata_from_params(explicit_chat) == {
+        "scope_type": "chat",
+        "chat_id": "session-1",
+    }
+    assert legacy_chat["scope_type"] == "chat"
+
+    with pytest.raises(ValueError, match="不能同时提供 chat_id"):
+        manager._normalize_common_import_params(
+            {"scope_type": "global", "chat_id": "session-1"},
+            default_dedupe="content_hash",
+        )
 
 def test_import_strategy_uses_configurable_chunk_windows() -> None:
     manager, _ = _build_manager()
@@ -463,6 +639,30 @@ async def test_persist_processed_chunk_skips_invalid_nested_items() -> None:
     assert len(metadata_store.paragraphs) == 1
     assert set(metadata_store.entities) >= {"Alice", "地图"}
     assert metadata_store.relations == [("Alice", "持有", "地图")]
+
+
+@pytest.mark.asyncio
+async def test_persist_processed_chunk_accepts_hash_shaped_business_names() -> None:
+    manager, metadata_store = _build_manager()
+    file_record = SimpleNamespace(source_path="", source_kind="paste", name="demo.txt")
+    subject = "a" * 64
+    obj = "b" * 32
+
+    await manager._persist_processed_chunk(
+        file_record,
+        _build_chunk(
+            {
+                "entities": [subject],
+                "relations": [
+                    {"subject": subject, "predicate": "映射到", "object": obj},
+                ],
+            }
+        ),
+    )
+
+    assert len(metadata_store.paragraphs) == 1
+    assert set(metadata_store.entities) >= {subject, obj}
+    assert metadata_store.relations == [(subject, "映射到", obj)]
 
 
 @pytest.mark.asyncio
@@ -760,3 +960,115 @@ async def test_high_concurrency_persist_processed_chunks_keep_all_writes_consist
     assert failed_states == []
     assert metadata_store.paragraph_backfills == []
     assert embedding_manager.max_inflight > 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_task_records_user_origin_and_writes_report() -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_user_reports")
+    task = _build_progress_task("task-user-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+
+    summary = await manager.cancel_task(task.task_id)
+    await manager._run_task(task.task_id)
+
+    assert summary is not None
+    assert summary["status"] == "cancelled"
+    assert summary["cancel_origin"] == "user_request"
+    assert summary["cancel_requested_at"] is not None
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["status"] == "cancelled"
+    assert report["cancel_origin"] == "user_request"
+
+
+@pytest.mark.asyncio
+async def test_worker_parent_cancellation_is_reported_and_propagated(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_parent_reports")
+    manager._temp_root = _test_directory("cancel_parent_temp")
+    task = _build_progress_task("task-parent-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+    started = asyncio.Event()
+
+    async def blocked_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_run_task", blocked_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    await started.wait()
+    worker.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+
+    assert task.status == "cancelled"
+    assert task.cancel_origin == "parent_cancel"
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["cancel_origin"] == "parent_cancel"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_records_runtime_cancellation(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_runtime_reports")
+    manager._temp_root = _test_directory("cancel_runtime_temp")
+    task = _build_progress_task("task-runtime-cancel")
+    manager._tasks[task.task_id] = task
+    manager._queue.append(task.task_id)
+    started = asyncio.Event()
+
+    async def blocked_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(manager, "_run_task", blocked_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    manager._worker_task = worker
+    await started.wait()
+
+    await manager.shutdown()
+
+    assert task.status == "cancelled"
+    assert task.cancel_origin == "runtime_shutdown"
+    report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
+    assert report["cancel_origin"] == "runtime_shutdown"
+
+
+@pytest.mark.asyncio
+async def test_run_task_assigns_unhandled_file_error_to_file(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("file_error_reports")
+    task = _build_progress_task("task-file-error")
+    task.params.update({"file_concurrency": 1, "chunk_concurrency": 1})
+    manager._tasks[task.task_id] = task
+
+    async def failed_file(*args, **kwargs) -> None:
+        del args, kwargs
+        raise RuntimeError("unexpected file failure")
+
+    monkeypatch.setattr(manager, "_process_file", failed_file)
+    await manager._run_task(task.task_id)
+
+    assert task.files[0].status == "failed"
+    assert task.status == "completed_with_errors"
+    assert "unexpected file failure" in task.files[0].error
+
+
+@pytest.mark.asyncio
+async def test_late_user_cancellation_keeps_completed_result() -> None:
+    manager, _ = _build_manager()
+    task = _build_progress_task("task-late-cancel")
+    task.status = "completed"
+    manager._tasks[task.task_id] = task
+
+    summary = await manager.cancel_task(task.task_id)
+
+    assert summary is not None
+    assert summary["status"] == "completed"
+    assert summary["cancel_origin"] == ""
+    assert summary["cancel_requested_at"] is None

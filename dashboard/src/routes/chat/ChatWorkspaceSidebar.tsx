@@ -141,6 +141,7 @@ export function ChatWorkspaceSidebar({
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(userName)
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const nameInputAutofocusedRef = useRef(false)
   const userAvatarUrl = useResolvedAvatarUrl(
     userAvatarVersion ? 'webui' : undefined,
     userId,
@@ -150,6 +151,7 @@ export function ChatWorkspaceSidebar({
 
   const startEditing = () => {
     setDraftName(userName)
+    nameInputAutofocusedRef.current = false
     setEditing(true)
   }
 
@@ -246,7 +248,12 @@ export function ChatWorkspaceSidebar({
             {editing ? (
               <div className="mt-0.5 flex items-center gap-1">
                 <Input
-                  autoFocus
+                  ref={(element) => {
+                    if (element && !nameInputAutofocusedRef.current) {
+                      nameInputAutofocusedRef.current = true
+                      element.focus()
+                    }
+                  }}
                   className="h-7 text-sm"
                   placeholder={t('chat.identity.namePlaceholder')}
                   value={draftName}

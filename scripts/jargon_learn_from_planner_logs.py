@@ -27,7 +27,16 @@ from src.learners.jargon_learner import (
     jargon_learn_model,
 )
 from src.learners.jargon_miner import JargonMiner
-from src.maisaka.context.messages import AssistantMessage, ToolResultMessage
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextItemMeta,
+    ContextTextPart,
+    FunctionCallOutputItem,
+    UserMessageItem,
+    get_item_text,
+)
+from src.llm_models.request_snapshot import deserialize_persisted_context_items_snapshot
+from src.maisaka.context.messages import ModelOutputContextMessage, ToolResultMessage
 from src.maisaka.jargon_context_matcher import is_jargon_reference_text
 from src.prompt.prompt_manager import prompt_manager
 
@@ -118,9 +127,15 @@ def _extract_message_ids(text: str) -> set[str]:
 
 
 def _build_assistant_content(raw_message: Dict[str, Any], timestamp: datetime, source_kind: str) -> str:
-    assistant_message = AssistantMessage(
-        content=_message_text(raw_message).strip(),
-        timestamp=timestamp,
+    content = _message_text(raw_message).strip()
+    if not content:
+        return ""
+
+    assistant_message = ModelOutputContextMessage(
+        output_item=AssistantMessageItem(
+            meta=ContextItemMeta.create(timestamp=timestamp),
+            parts=(ContextTextPart(content),),
+        ),
         source_kind=source_kind,
     )
     return JargonLearner._render_assistant_context_text(assistant_message)
@@ -142,6 +157,7 @@ def _build_tool_result_content(raw_message: Dict[str, Any], timestamp: datetime)
         content=raw_content,
         timestamp=timestamp,
         tool_call_id=tool_call_id.strip(),
+        logical_turn_id=f"legacy_tool:{tool_call_id.strip()}",
         tool_name=tool_name.strip() if isinstance(tool_name, str) else "",
         success=True,
     )
@@ -175,6 +191,89 @@ def _build_user_source_item(text: str, timestamp: datetime) -> Optional[JargonLe
     )
 
 
+def _build_assistant_source_item(
+    item: AssistantMessageItem,
+    *,
+    source_kind: str = "planner_assistant",
+) -> Optional[JargonLearningSourceItem]:
+    """把 v5 assistant 正文 Item 转换为黑话学习素材。"""
+
+    text = get_item_text(item).strip()
+    if not text or _is_person_profile_content(text):
+        return None
+
+    content = JargonLearner._render_assistant_context_text(
+        ModelOutputContextMessage(output_item=item, source_kind=source_kind)
+    )
+    if not content:
+        return None
+
+    return JargonLearningSourceItem(
+        source_kind=source_kind,
+        speaker_kind="ASSISTANT",
+        speaker_name=global_config.bot.nickname,
+        content=content,
+        timestamp=item.meta.timestamp,
+    )
+
+
+def _build_tool_output_source_item(item: FunctionCallOutputItem) -> Optional[JargonLearningSourceItem]:
+    """把 v5 工具结果 Item 转换为黑话学习素材。"""
+
+    if item.tool_name.strip() in FILTERED_TOOL_NAMES or _is_person_profile_content(item.output):
+        return None
+
+    content = JargonLearner._render_tool_result_context_text(
+        ToolResultMessage(
+            content=item.output,
+            timestamp=item.meta.timestamp,
+            tool_call_id=item.call_id,
+            logical_turn_id=item.meta.logical_turn_id,
+            tool_name=item.tool_name,
+            success=item.success,
+        )
+    )
+    if not content:
+        return None
+
+    return JargonLearningSourceItem(
+        source_kind="planner_tool_result",
+        speaker_kind="TOOL_RESULT",
+        speaker_name=item.tool_name or "tool_result",
+        content=content,
+        timestamp=item.meta.timestamp,
+    )
+
+
+def _extract_v5_planner_sources(raw_items: Any) -> tuple[set[str], List[JargonLearningSourceItem]]:
+    """从 schema v5 request_items 提取学习素材；其他输出 Item 保持独立并按语义跳过。"""
+
+    context_items = deserialize_persisted_context_items_snapshot(raw_items)
+    message_ids: set[str] = set()
+    source_items: List[JargonLearningSourceItem] = []
+
+    for item in context_items:
+        if isinstance(item, UserMessageItem):
+            source_item = _build_user_source_item(get_item_text(item), item.meta.timestamp)
+            if source_item is not None:
+                message_ids.update(_extract_message_ids(source_item.content))
+                source_items.append(source_item)
+            continue
+
+        if isinstance(item, AssistantMessageItem):
+            source_item = _build_assistant_source_item(item)
+            if source_item is not None:
+                source_items.append(source_item)
+            continue
+
+        if isinstance(item, FunctionCallOutputItem):
+            source_item = _build_tool_output_source_item(item)
+            if source_item is not None:
+                source_items.append(source_item)
+
+    return message_ids, source_items
+
+
 def build_planner_candidate(chat_id: str, planner_path: Path, index_in_chat: int) -> Optional[PlannerCandidate]:
     """把单个 planner 日志转换为线上学习器可消费的素材。"""
 
@@ -183,6 +282,21 @@ def build_planner_candidate(chat_id: str, planner_path: Path, index_in_chat: int
     message_ids: set[str] = set()
     source_items: List[JargonLearningSourceItem] = []
 
+    raw_items = raw_data.get("request_items")
+    if raw_items is not None:
+        message_ids, source_items = _extract_v5_planner_sources(raw_items)
+        if not message_ids or not source_items:
+            return None
+        return PlannerCandidate(
+            chat_id=chat_id,
+            planner_path=planner_path,
+            planner_timestamp=timestamp,
+            index_in_chat=index_in_chat,
+            message_ids=message_ids,
+            source_items=source_items,
+        )
+
+    # v1-v4 planner 日志只在离线读取边界迁移，不进入新的运行时数据模型。
     raw_messages = raw_data.get("messages")
     if not isinstance(raw_messages, list):
         raise TypeError(f"planner messages 必须是列表: {planner_path}")

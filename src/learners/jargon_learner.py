@@ -12,7 +12,7 @@ from src.common.data_models.llm_service_data_models import LLMGenerationOptions,
 from src.common.data_models.message_component_data_model import EmojiComponent, ReplyComponent
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import AssistantMessageItem, ContextItem, ContextItemBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.jargon_context_matcher import is_jargon_reference_text
 from src.prompt.prompt_manager import prompt_manager
@@ -153,9 +153,7 @@ class JargonLearner:
             logger.debug("裁切历史中没有可用于黑话学习的上下文消息")
             return False
         if len(source_items) < self.min_messages_for_extraction:
-            logger.debug(
-                f"裁切历史可学习消息不足: 可学习={len(source_items)} 阈值={self.min_messages_for_extraction}"
-            )
+            logger.debug(f"裁切历史可学习消息不足: 可学习={len(source_items)} 阈值={self.min_messages_for_extraction}")
             return False
 
         return await self._learn_from_sources(source_items, jargon_miner=jargon_miner)
@@ -167,7 +165,7 @@ class JargonLearner:
         """从上下文消息中提取可学习素材，过滤表情包消息。"""
 
         from src.maisaka.context.messages import (
-            AssistantMessage,
+            ModelOutputContextMessage,
             ReferenceMessage,
             ReferenceMessageType,
             SessionBackedMessage,
@@ -193,7 +191,7 @@ class JargonLearner:
             ):
                 continue
 
-            if isinstance(context_message, AssistantMessage):
+            if isinstance(context_message, ModelOutputContextMessage):
                 assistant_content = JargonLearner._render_assistant_context_text(context_message)
                 if assistant_content:
                     source_items.append(
@@ -266,9 +264,12 @@ class JargonLearner:
     def _render_assistant_context_text(message: "LLMContextMessage") -> str:
         """渲染 assistant 正文，供黑话学习引用。"""
 
-        from src.maisaka.context.messages import AssistantMessage
+        from src.maisaka.context.messages import ModelOutputContextMessage
 
-        if not isinstance(message, AssistantMessage):
+        if not isinstance(message, ModelOutputContextMessage) or not isinstance(
+            message.output_item,
+            AssistantMessageItem,
+        ):
             return ""
 
         content = message.content.strip()
@@ -444,7 +445,7 @@ class JargonLearner:
 
         try:
             learning_messages = await self._build_multi_learning_messages(pending_messages, prompt)
-            generation_result = await jargon_learn_model.generate_response_with_messages(
+            generation_result = await jargon_learn_model.generate_response_with_context(
                 lambda _client: learning_messages,
                 options=LLMGenerationOptions(temperature=0.3),
                 session_id=learning_session_id,
@@ -454,7 +455,6 @@ class JargonLearner:
                 session_id=learning_session_id,
                 source_message_count=len(source_items),
                 source_type="trimmed_history",
-                output_content=generation_result.response or "",
                 generation_result=generation_result,
             )
             response = generation_result.response
@@ -565,7 +565,7 @@ class JargonLearner:
     @staticmethod
     def _build_message_open_tag_for_learning(source_id: int, attrs: str) -> str:
         learning_attrs = MESSAGE_ID_ATTR_PATTERN.sub("", attrs or "")
-        if re.search(r'\bsource_id\s*=', learning_attrs, re.IGNORECASE):
+        if re.search(r"\bsource_id\s*=", learning_attrs, re.IGNORECASE):
             return f"<message{learning_attrs}>"
         return f'<message source_id="{source_id}"{learning_attrs}>'
 
@@ -618,46 +618,42 @@ class JargonLearner:
         self,
         messages: Sequence["SessionMessage"] | Sequence[JargonLearningSourceItem],
         system_prompt: str,
-    ) -> List[Message]:
+    ) -> List[ContextItem]:
         """构造黑话学习使用的多 message 请求。"""
 
         source_items = await self._prepare_learning_source_items(messages)
         learning_messages = [
-            MessageBuilder()
+            ContextItemBuilder()
             .set_role(RoleType.System)
             .add_text_content(
                 f"{system_prompt}\n\n"
                 "注意：聊天上下文会在后续多条 user message 中给出。真实聊天消息会带有 "
                 '<message source_id="..."> 属性，source_id 是本轮学习的来源编号。'
-                "非真实聊天消息会使用 <learning-source source_id=\"...\"> 标注来源。"
+                '非真实聊天消息会使用 <learning-source source_id="..."> 标注来源。'
             )
             .build()
         ]
 
         for index, source_item in enumerate(source_items, start=1):
             learning_messages.append(
-                MessageBuilder()
+                ContextItemBuilder()
                 .set_role(RoleType.User)
                 .add_text_content(self._build_learning_source_content(index, source_item))
                 .build()
             )
 
         learning_messages.append(
-            MessageBuilder()
-            .set_role(RoleType.User)
-            .add_text_content("请根据以上聊天消息输出 JSON。")
-            .build()
+            ContextItemBuilder().set_role(RoleType.User).add_text_content("请根据以上聊天消息输出 JSON。").build()
         )
         return learning_messages
 
     def _log_learning_context_preview(
         self,
-        messages: List[Message],
+        messages: List[ContextItem],
         *,
         session_id: str,
         source_message_count: int,
         source_type: str,
-        output_content: str,
         generation_result: LLMResponseResult,
     ) -> None:
         """保存黑话抽取的可重放 LLM Prompt，并在日志中输出查看入口。"""
@@ -677,9 +673,9 @@ class JargonLearner:
                     "用途: 从聊天记录中抽取黑话候选，本记录保存完整 LLM messages，可在推理过程页面直接重放。"
                 ),
                 output_title="黑话抽取 LLM 输出",
-                output_content=output_content,
+                output_items=generation_result.output_items,
                 metadata={"model_name": generation_result.model_name},
-                provider_response=generation_result.provider_response,
+                generation_attempts=generation_result.generation_attempts,
             )
         except Exception as exc:
             logger.warning(f"{self.session_id} 黑话抽取 Prompt 保存失败: {exc}")
@@ -807,8 +803,7 @@ class JargonLearner:
 
             context_paragraph = "\n".join(
                 [
-                    f"[{start_idx + i + 1}] "
-                    f"({item.speaker_kind}/{item.source_kind}) {item.content or ''}"
+                    f"[{start_idx + i + 1}] ({item.speaker_kind}/{item.source_kind}) {item.content or ''}"
                     for i, item in enumerate(context_items)
                 ]
             )
@@ -828,7 +823,9 @@ class JargonLearner:
                     evidence_messages.append({"platform": platform, "message_id": message_id})
 
             if not evidence_messages:
-                logger.debug(f"黑话条目上下文没有真实消息证据，仅保留本轮原始上下文：content={content}, source_id={source_id}")
+                logger.debug(
+                    f"黑话条目上下文没有真实消息证据，仅保留本轮原始上下文：content={content}, source_id={source_id}"
+                )
 
             entries.append(
                 {

@@ -1,14 +1,16 @@
 import { CheckCircle2, Eye, EyeOff, KeyRound, ShieldCheck, XCircle } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { validateToken } from '@/lib/token-validator'
 import { cn } from '@/lib/utils'
+import { PROVIDER_TEMPLATES } from '../config/providerTemplates'
 
 import type {
   ApiProviderSetupConfig,
@@ -63,7 +65,7 @@ export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
             type="button"
             variant="ghost"
             size="sm"
-            className="absolute top-0 right-0 h-full px-3 hover:bg-transparent"
+            className="absolute top-1/2 right-2 h-7 w-7 -translate-y-1/2 rounded-md border-0 p-0 hover:bg-transparent"
             onClick={() => setShowToken(!showToken)}
             aria-label={toggleLabel}
             title={toggleLabel}
@@ -75,20 +77,21 @@ export function CustomTokenForm({ token, onChange }: CustomTokenFormProps) {
             )}
           </Button>
         </div>
-        <p className="text-muted-foreground text-xs">
-          {t('setupPage.forms.customToken.description')}
-        </p>
+        {t('setupPage.forms.customToken.description') ? (
+          <p className="text-muted-foreground text-xs">
+            {t('setupPage.forms.customToken.description')}
+          </p>
+        ) : null}
       </div>
 
-      <div className="space-y-2 rounded-lg bg-muted/50 p-4">
-        <p className="text-sm font-medium">{t('setupPage.forms.customToken.requirements')}</p>
-        <div className="space-y-1.5">
+      <div className="rounded-lg bg-muted/50 p-4">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
           {tokenValidation.rules.map((rule) => (
-            <div key={rule.id} className="flex items-center gap-2 text-sm">
+            <div key={rule.id} className="flex items-center gap-2 text-xs">
               {rule.passed ? (
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-green-500" />
+                <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
               ) : (
-                <XCircle className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                <XCircle className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
               )}
               <span
                 className={cn(
@@ -182,37 +185,111 @@ interface ApiProviderSetupFormProps {
 export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormProps) {
   const { t } = useTranslation()
   const [showApiKey, setShowApiKey] = useState(false)
+  const [customMode, setCustomMode] = useState(false)
+  const [selectedPreset, setSelectedPreset] = useState('deepseek')
   const apiKeyToggleLabel = showApiKey
     ? t('setupPage.forms.apiProvider.apiKey.hide')
     : t('setupPage.forms.apiProvider.apiKey.show')
+  const providerPresets = PROVIDER_TEMPLATES.filter((template) => template.id !== 'custom')
+
+  useEffect(() => {
+    if (!config.provider_name && !config.base_url) return
+    const matched = providerPresets.find(
+      (template) => template.name === config.provider_name && template.base_url === config.base_url
+    )
+    if (matched) {
+      setSelectedPreset(matched.id)
+      setCustomMode(false)
+    } else {
+      setCustomMode(true)
+    }
+  }, [config.base_url, config.provider_name])
+
+  const selectPreset = (presetId: string) => {
+    const preset = providerPresets.find((template) => template.id === presetId)
+    if (!preset) return
+    setSelectedPreset(preset.id)
+    onChange({
+      ...config,
+      provider_name: preset.name,
+      base_url: preset.base_url,
+      api_key: '',
+    })
+  }
+
+  const switchToCustom = () => {
+    onChange({ provider_name: '', base_url: '', api_key: '' })
+    setCustomMode(true)
+  }
+
+  const switchToPreset = () => {
+    selectPreset(selectedPreset)
+    setCustomMode(false)
+  }
 
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <Label htmlFor="provider_name">{t('setupPage.forms.apiProvider.providerName.label')}</Label>
-        <Input
-          id="provider_name"
-          placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
-          value={config.provider_name}
-          onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
-        />
-        <p className="text-muted-foreground text-xs">
-          {t('setupPage.forms.apiProvider.providerName.description')}
-        </p>
-      </div>
-
-      <div className="space-y-3">
-        <Label htmlFor="base_url">{t('setupPage.forms.apiProvider.baseUrl.label')}</Label>
-        <Input
-          id="base_url"
-          placeholder="https://api.example.com/v1"
-          value={config.base_url}
-          onChange={(e) => onChange({ ...config, base_url: e.target.value })}
-          className="font-mono"
-        />
-        <p className="text-muted-foreground text-xs">
-          {t('setupPage.forms.apiProvider.baseUrl.description')}
-        </p>
+        <Label>{t('setupPage.forms.apiProvider.providerName.label')}</Label>
+        <div className="relative h-11 overflow-hidden">
+          <div
+            className={`absolute inset-0 flex gap-2 transition-transform duration-500 ease-out ${
+              customMode ? '-translate-y-full' : 'translate-y-0'
+            }`}
+          >
+            <Input className="h-11 min-w-0 flex-1" readOnly value={config.provider_name} />
+            <select
+              aria-label="选择预置提供商"
+              className="h-11 w-52 rounded-md border border-input bg-background px-3 text-sm"
+              onChange={(event) => selectPreset(event.target.value)}
+              value={selectedPreset}
+            >
+              {providerPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.display_name}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-11"
+              onClick={switchToCustom}
+            >
+              自定义
+            </Button>
+          </div>
+          <div
+            className={`absolute inset-0 flex gap-2 transition-transform duration-500 ease-out ${
+              customMode ? 'translate-y-0' : 'translate-y-full'
+            }`}
+          >
+            <Input
+              id="provider_name"
+              className="h-11 min-w-0 flex-1"
+              placeholder={t('setupPage.forms.apiProvider.providerName.placeholder')}
+              value={config.provider_name}
+              onChange={(e) => onChange({ ...config, provider_name: e.target.value })}
+            />
+            <Input
+              aria-label={t('setupPage.forms.apiProvider.baseUrl.label')}
+              className="h-11 min-w-0 flex-1 font-mono"
+              placeholder="https://api.example.com/v1"
+              value={config.base_url}
+              onChange={(e) => onChange({ ...config, base_url: e.target.value })}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-11"
+              onClick={switchToPreset}
+            >
+              预置
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -230,7 +307,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
             type="button"
             variant="ghost"
             size="sm"
-            className="absolute top-0 right-0 h-full px-3 hover:bg-transparent"
+            className="absolute top-1/2 right-2 h-7 w-7 -translate-y-1/2 rounded-md border-0 p-0 hover:bg-transparent"
             onClick={() => setShowApiKey(!showApiKey)}
             aria-label={apiKeyToggleLabel}
             title={apiKeyToggleLabel}
@@ -242,9 +319,6 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
             )}
           </Button>
         </div>
-        <p className="text-muted-foreground text-xs">
-          {t('setupPage.forms.apiProvider.apiKey.description')}
-        </p>
       </div>
     </div>
   )
@@ -269,8 +343,12 @@ export function ModelSetupForm({ config, onChange }: ModelSetupFormProps) {
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-4 rounded-lg border p-4">
           <div className="space-y-3">
-            <Label htmlFor="planner_model_identifier">
+            <Label htmlFor="planner_model_identifier" className="flex items-center gap-1">
               {t('setupPage.forms.modelSetup.planner.identifier.label')}
+              <HelpTooltip
+                content={t('setupPage.forms.modelSetup.planner.identifier.description')}
+                side="right"
+              />
             </Label>
             <Input
               id="planner_model_identifier"
@@ -285,22 +363,6 @@ export function ModelSetupForm({ config, onChange }: ModelSetupFormProps) {
                 })
               }
               className="font-mono"
-            />
-            <p className="text-muted-foreground text-xs">
-              {t('setupPage.forms.modelSetup.planner.identifier.description')}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-3">
-            <Label htmlFor="planner_visual" className="text-sm font-medium">
-              {t('setupPage.forms.modelSetup.planner.visual.label')}
-            </Label>
-            <Switch
-              id="planner_visual"
-              checked={config.planner_visual}
-              onCheckedChange={(checked) =>
-                onChange({ ...config, planner_visual: checked })
-              }
             />
           </div>
 
@@ -320,8 +382,12 @@ export function ModelSetupForm({ config, onChange }: ModelSetupFormProps) {
 
         <div className="space-y-4 rounded-lg border p-4">
           <div className="space-y-3">
-            <Label htmlFor="replyer_model_identifier">
+            <Label htmlFor="replyer_model_identifier" className="flex items-center gap-1">
               {t('setupPage.forms.modelSetup.replyer.identifier.label')}
+              <HelpTooltip
+                content={t('setupPage.forms.modelSetup.replyer.identifier.description')}
+                side="right"
+              />
             </Label>
             <Input
               id="replyer_model_identifier"
@@ -336,22 +402,6 @@ export function ModelSetupForm({ config, onChange }: ModelSetupFormProps) {
                 })
               }
               className="font-mono"
-            />
-            <p className="text-muted-foreground text-xs">
-              {t('setupPage.forms.modelSetup.replyer.identifier.description')}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 p-3">
-            <Label htmlFor="replyer_visual" className="text-sm font-medium">
-              {t('setupPage.forms.modelSetup.replyer.visual.label')}
-            </Label>
-            <Switch
-              id="replyer_visual"
-              checked={config.replyer_visual}
-              onCheckedChange={(checked) =>
-                onChange({ ...config, replyer_visual: checked })
-              }
             />
           </div>
 
@@ -370,9 +420,6 @@ export function ModelSetupForm({ config, onChange }: ModelSetupFormProps) {
         </div>
       </div>
 
-      <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
-        {t('setupPage.forms.modelSetup.saveHint')}
-      </div>
     </div>
   )
 }

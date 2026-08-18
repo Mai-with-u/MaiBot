@@ -30,6 +30,11 @@ describe('CoreSettings', () => {
     expect(screen.getByLabelText('人格配置')).toHaveValue('你是一个温和的人。')
     expect(screen.getByLabelText('表达方式')).toHaveValue('说话简短自然。')
     expect(screen.getByLabelText('行为风格')).toHaveValue('先观察，再行动。')
+
+    for (const fieldName of ['人格配置', '表达方式', '行为风格']) {
+      expect(screen.getByLabelText(fieldName)).toHaveClass('min-h-40', 'resize-y')
+      expect(screen.getByLabelText(fieldName)).not.toHaveClass('resize-none')
+    }
   })
 
   it('编辑字段时保留同一配置节的其他值', () => {

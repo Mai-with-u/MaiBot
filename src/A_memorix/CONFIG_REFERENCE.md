@@ -142,7 +142,7 @@ default_sample_size = 24
 
 - 长期记忆控制台：适合修改高频项，例如 embedding、检索、Episode、人物画像、导入与调优的常用开关。
 - 原始 TOML：适合复制整份配置、批量调整参数，或修改未在可视化表单中展示的高级项。
-- raw-only 高级项仍包括：`retrieval.search.relation_intent.*`、`retrieval.search.graph_recall.*`、`retrieval.search.posterior_graph.*`、`retrieval.aggregate.*`、`memory.orphan.*`、`advanced.extraction_model`、`web.import.llm_retry.*`、`web.import.timeout.*`、`web.import.path_aliases`、`web.import.convert.*`、`web.tuning.llm_retry.*`、`web.tuning.eval_query_timeout_seconds`。
+- raw-only 高级项仍包括：`retrieval.search.relation_intent.*`、`retrieval.search.graph_recall.*`、`retrieval.search.posterior_graph.*`、`retrieval.aggregate.*`、`memory.orphan.*`、`advanced.extraction_model`、`web.import.llm_retry.*`、`web.import.timeout.*`、`web.import.convert.*`、`web.tuning.llm_retry.*`、`web.tuning.eval_query_timeout_seconds`。
 
 ## 1. 存储与嵌入
 
@@ -153,8 +153,8 @@ default_sample_size = 24
 
 补充说明：
 
-- 部分离线脚本若未显式覆盖路径，会回退到 `A_memorix.paths.default_data_dir()`（当前为 `data/plugins/a-dawn.a-memorix`）。
-- 建议在运维侧统一目录策略，避免“控制台写入目录”和“脚本处理目录”不一致。
+- 离线脚本若未显式覆盖路径，会回退到 `A_memorix.paths.default_data_dir()`，当前为 `data/a-memorix`。
+- 显式传入 `--data-dir` 时，应与运行时的 `storage.data_dir` 保持一致。
 
 ### `embedding`
 
@@ -486,7 +486,7 @@ Paragraph 不再因为年龄较大或缺少实体、关系派生物而自动回�
 - `web.import.llm_retry.min_wait_seconds` (默认 `3`)
 - `web.import.llm_retry.max_wait_seconds` (默认 `40`)
 - `web.import.llm_retry.backoff_multiplier` (默认 `3`)
-- `web.import.path_aliases` (默认内置 `raw/lpmm/plugin_data`)
+- 导入目录固定从 `storage.data_dir/imports` 派生，内置 `raw/lpmm/maibot/converted` 逻辑别名，不接受外部路径配置
 
 ### 转换阶段
 

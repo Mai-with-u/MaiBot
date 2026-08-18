@@ -230,7 +230,14 @@ export interface MemoryRuntimeConfigPayload {
   vector_pools?: MemoryVectorPoolsStatus
   vector_pools_ready?: boolean
   vector_pools_effective_mode?: string
+  memory_enabled?: boolean
   runtime_ready: boolean
+  retrieval_ready?: boolean
+  degraded?: boolean
+  retrieval_mode?: string
+  available_channels?: string[]
+  unavailable_channels?: string[]
+  vector_health?: MemoryVectorHealth
   embedding_degraded: boolean
   embedding_degraded_reason: string
   embedding_degraded_since?: number | null
@@ -239,6 +246,17 @@ export interface MemoryRuntimeConfigPayload {
   paragraph_vector_backfill_running: number
   paragraph_vector_backfill_failed: number
   paragraph_vector_backfill_done: number
+}
+
+export interface MemoryVectorHealth {
+  state: string
+  error_code?: string
+  reason?: string
+  trusted_coverage?: number
+  recovery_stage?: string
+  operation_id?: string
+  copy_progress?: Record<string, unknown>
+  updated_at?: number | null
 }
 
 export interface MemoryRuntimeSelfCheckPayload {
@@ -314,6 +332,7 @@ export interface MemoryTaskListPayload {
 }
 
 export type MemoryImportInputMode = 'text' | 'json'
+export type MemoryImportCancelOrigin = 'user_request' | 'runtime_shutdown' | 'parent_cancel'
 
 export type MemoryImportTaskKind =
   | 'upload'
@@ -342,8 +361,6 @@ export interface MemoryImportSettings {
   maibot_target_data_dir?: string
   path_aliases?: Record<string, string>
   llm_retry?: Record<string, number>
-  convert_enable_staging_switch?: boolean
-  convert_keep_backup_count?: number
 }
 
 export interface MemoryImportSettingsPayload {
@@ -501,6 +518,8 @@ export interface MemoryImportTaskPayload extends MemoryTaskPayload {
   rollback_info?: Record<string, unknown>
   retry_parent_task_id?: string
   retry_summary?: MemoryImportRetrySummary
+  cancel_requested_at?: number | null
+  cancel_origin?: MemoryImportCancelOrigin | ''
   params?: Record<string, unknown>
   files?: MemoryImportFilePayload[]
 }

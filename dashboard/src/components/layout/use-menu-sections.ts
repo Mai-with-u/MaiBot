@@ -7,6 +7,7 @@ import type { MenuSection } from './types'
 
 interface MenuFeatureFlags {
   behaviorLearning: boolean
+  replyEffects: boolean
 }
 
 function resolveMenuFeatureFlags(config: Record<string, unknown> | null): MenuFeatureFlags {
@@ -15,9 +16,15 @@ function resolveMenuFeatureFlags(config: Record<string, unknown> | null): MenuFe
     experimental && typeof experimental === 'object' && 'enable_behavior_learning' in experimental
       ? Boolean((experimental as Record<string, unknown>).enable_behavior_learning)
       : true
+  const debug = config?.debug
+  const replyEffects =
+    debug && typeof debug === 'object'
+      ? (debug as Record<string, unknown>).enable_reply_effect_tracking === true
+      : false
 
   return {
     behaviorLearning,
+    replyEffects,
   }
 }
 
@@ -27,6 +34,7 @@ function filterMenuSections(flags: MenuFeatureFlags | null): MenuSection[] {
       ...section,
       items: section.items.filter((item) => {
         if (item.featureFlag === 'behaviorLearning') return flags?.behaviorLearning === true
+        if (item.featureFlag === 'replyEffects') return flags?.replyEffects === true
         return true
       }),
     }))
@@ -48,7 +56,7 @@ export function useMenuSections(): MenuSection[] {
         })
         .catch(() => {
           if (!cancelled) {
-            setFeatureFlags({ behaviorLearning: true })
+            setFeatureFlags({ behaviorLearning: true, replyEffects: false })
           }
         })
     }

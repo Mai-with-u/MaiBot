@@ -1,5 +1,5 @@
 import type { ComponentProps, FocusEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { Input } from '@/components/ui/input'
 
@@ -60,13 +60,14 @@ export function DraftNumberInput({
 }: DraftNumberInputProps) {
   const numericValue = parseNumericValue(value, defaultValue, integer)
   const [draftValue, setDraftValue] = useState(() => String(numericValue))
-  const focusedRef = useRef(false)
-
-  useEffect(() => {
-    if (!focusedRef.current) {
+  const [seenNumericValue, setSeenNumericValue] = useState(numericValue)
+  const [focused, setFocused] = useState(false)
+  if (numericValue !== seenNumericValue) {
+    setSeenNumericValue(numericValue)
+    if (!focused) {
       setDraftValue(String(numericValue))
     }
-  }, [numericValue])
+  }
 
   const commitDraftValue = (nextDraftValue: string) => {
     setDraftValue(nextDraftValue)
@@ -80,7 +81,7 @@ export function DraftNumberInput({
   }
 
   const canonicalizeDraftValue = (event: FocusEvent<HTMLInputElement>) => {
-    focusedRef.current = false
+    setFocused(false)
 
     const nextValue = parseDraftValue(draftValue, integer)
     if (nextValue === undefined) {
@@ -97,7 +98,7 @@ export function DraftNumberInput({
   }
 
   const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
-    focusedRef.current = true
+    setFocused(true)
     onFocus?.(event)
   }
 

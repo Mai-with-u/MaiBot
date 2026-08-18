@@ -95,10 +95,11 @@ function CoreSettingCard({
         id={`core-setting-${field}`}
         aria-describedby={descriptionId}
         data-core-setting-field={field}
+        autoResize={false}
         value={value}
         onChange={(event) => onChange(field, event.target.value)}
         placeholder={placeholder}
-        className="bg-muted/20 focus-visible:bg-background h-28 min-h-28 flex-1 resize-none rounded-xl border px-3 py-2.5 text-sm leading-6 shadow-inner focus-visible:ring-2 xl:h-32 xl:min-h-32"
+        className="bg-muted/20 focus-visible:bg-background h-40 min-h-40 flex-1 resize-y rounded-xl border px-3 py-2.5 text-sm leading-6 shadow-inner focus-visible:ring-2 xl:h-48 xl:min-h-48"
       />
     </article>
   )
@@ -126,16 +127,10 @@ export function CoreSettings({
     <section
       aria-label="麦麦核心设置"
       data-config-bot-core-settings="true"
-      className="from-primary/[0.055] via-background to-muted/25 relative overflow-hidden rounded-[1.75rem] border bg-gradient-to-br px-4 py-5 sm:px-6 sm:py-6"
+      className="bg-card relative overflow-hidden rounded-[1.75rem] border px-4 py-5 sm:px-6 sm:py-6"
     >
-      <div className="bg-primary/10 pointer-events-none absolute -top-24 -right-20 h-60 w-60 rounded-full blur-3xl" />
-      <div className="bg-muted pointer-events-none absolute -bottom-36 -left-24 h-72 w-72 rounded-full opacity-60 blur-3xl" />
-
       <header className="relative flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="border-primary/20 bg-primary/10 text-primary inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[0.68rem] font-bold tracking-[0.14em] uppercase">
-            核心设置
-          </span>
           <h2 className="truncate text-2xl font-black tracking-[-0.04em] sm:text-3xl">{botName}</h2>
         </div>
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm">

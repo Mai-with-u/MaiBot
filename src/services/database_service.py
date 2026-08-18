@@ -201,20 +201,3 @@ async def store_tool_info(
         logger.error(f"[DatabaseService] 存储工具信息时发生错误: {e}")
         traceback.print_exc()
         return None
-
-
-async def store_action_info(
-    chat_stream: "BotChatSession",
-    thinking_id: str = "",
-    action_data: Optional[dict[str, Any]] = None,
-    action_name: str = "",
-    action_reasoning: str = "",
-) -> Optional[dict[str, Any]]:
-    """兼容旧接口，内部转发到 ``store_tool_info``。"""
-    return await store_tool_info(
-        chat_stream=chat_stream,
-        tool_id=thinking_id,
-        tool_data=action_data,
-        tool_name=action_name,
-        tool_reasoning=action_reasoning,
-    )

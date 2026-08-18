@@ -15,13 +15,19 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(1, str(PROJECT_ROOT))
 
 from src.config.config import config_manager
-from src.llm_models.model_client.base_client import AudioTranscriptionRequest, ResponseRequest, client_registry
-from src.llm_models.model_client.base_client import EmbeddingRequest
+from src.llm_models.model_client.base_client import (
+    AudioTranscriptionRequest,
+    EmbeddingRequest,
+    ResponseRequest,
+    client_registry,
+)
+from src.llm_models.payload_content.context_item import get_item_text
 from src.llm_models.request_snapshot import (
-    deserialize_messages_snapshot,
+    deserialize_context_items_snapshot,
     deserialize_model_info_snapshot,
+    deserialize_persisted_context_items_snapshot,
     deserialize_response_format_snapshot,
-    deserialize_structured_messages_snapshot,
+    deserialize_structured_context_items_snapshot,
     deserialize_tool_options_snapshot,
     read_structured_audio_base64,
 )
@@ -46,7 +52,7 @@ def _build_response_request(snapshot: dict[str, Any]) -> ResponseRequest:
     return ResponseRequest(
         extra_params=dict(snapshot.get("extra_params") or {}),
         max_tokens=snapshot.get("max_tokens"),
-        message_list=deserialize_messages_snapshot(snapshot.get("message_list") or []),
+        context_items=deserialize_context_items_snapshot(snapshot.get("context_items") or []),
         model_info=deserialize_model_info_snapshot(snapshot.get("model_info") or {}),
         response_format=deserialize_response_format_snapshot(snapshot.get("response_format")),
         temperature=snapshot.get("temperature"),
@@ -77,10 +83,15 @@ def _build_unified_response_request(snapshot: dict[str, Any]) -> ResponseRequest
     """从推理过程统一格式构建响应请求。"""
 
     request_parameters = dict(snapshot.get("request_parameters") or {})
+    raw_request_items = snapshot.get("request_items")
+    if isinstance(raw_request_items, list):
+        context_items = deserialize_persisted_context_items_snapshot(raw_request_items)
+    else:
+        context_items = deserialize_structured_context_items_snapshot(snapshot.get("messages") or [])
     return ResponseRequest(
         extra_params=dict(request_parameters.get("extra_params") or {}),
         max_tokens=request_parameters.get("max_tokens"),
-        message_list=deserialize_structured_messages_snapshot(snapshot.get("messages") or []),
+        context_items=context_items,
         model_info=deserialize_model_info_snapshot(snapshot.get("model_info") or {}),
         response_format=deserialize_response_format_snapshot(request_parameters.get("response_format")),
         temperature=request_parameters.get("temperature"),
@@ -92,9 +103,14 @@ def _build_unified_embedding_request(snapshot: dict[str, Any]) -> EmbeddingReque
     """从推理过程统一格式构建嵌入请求。"""
 
     request_parameters = dict(snapshot.get("request_parameters") or {})
-    messages = snapshot.get("messages") or []
-    first_message = messages[0] if isinstance(messages, list) and messages else {}
-    embedding_input = str(first_message.get("content") or "") if isinstance(first_message, dict) else ""
+    raw_request_items = snapshot.get("request_items")
+    if isinstance(raw_request_items, list):
+        request_items = deserialize_persisted_context_items_snapshot(raw_request_items)
+        embedding_input = get_item_text(request_items[0]) if request_items else ""
+    else:
+        messages = snapshot.get("messages") or []
+        first_message = messages[0] if isinstance(messages, list) and messages else {}
+        embedding_input = str(first_message.get("content") or "") if isinstance(first_message, dict) else ""
     return EmbeddingRequest(
         embedding_input=embedding_input,
         extra_params=dict(request_parameters.get("extra_params") or {}),
@@ -107,7 +123,7 @@ def _build_unified_audio_request(snapshot: dict[str, Any]) -> AudioTranscription
 
     request_parameters = dict(snapshot.get("request_parameters") or {})
     return AudioTranscriptionRequest(
-        audio_base64=read_structured_audio_base64(snapshot.get("messages") or []),
+        audio_base64=read_structured_audio_base64(snapshot.get("request_items") or snapshot.get("messages") or []),
         extra_params=dict(request_parameters.get("extra_params") or {}),
         max_tokens=request_parameters.get("max_tokens"),
         model_info=deserialize_model_info_snapshot(snapshot.get("model_info") or {}),

@@ -7,6 +7,7 @@ import {
   clearReasoningPromptStage,
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
+  getReasoningPromptImageUrl,
   listReasoningPromptFiles,
   listReasoningPromptStages,
   replayReasoningPrompt,
@@ -203,6 +204,21 @@ describe('getReasoningPromptHtmlUrl', () => {
   })
 })
 
+describe('getReasoningPromptImageUrl', () => {
+  it('图片路径编码进受限图片端点并交由 resolveApiPath 解析', async () => {
+    resolveApiPathMock.mockResolvedValue(
+      'http://backend:8000/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
+    )
+
+    await expect(getReasoningPromptImageUrl('data/prompt_imgs/a.png')).resolves.toBe(
+      'http://backend:8000/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
+    )
+    expect(resolveApiPathMock).toHaveBeenCalledWith(
+      '/api/webui/reasoning-process/image?path=data%2Fprompt_imgs%2Fa.png'
+    )
+  })
+})
+
 describe('replayReasoningPrompt', () => {
   /** 构造一份最小可用的重放请求体 */
   function makeReplayRequest(): ReasoningReplayRequest {
@@ -210,7 +226,18 @@ describe('replayReasoningPrompt', () => {
       source_path: '/data/planner/a.json',
       stage: 'planner',
       model_name: 'demo-model',
-      messages: [{ role: 'user', content: '你好' }],
+      item_schema_version: 1,
+      request_items: [
+        {
+          item_type: 'UserMessageItem',
+          meta: {
+            item_id: 'user-1',
+            logical_turn_id: null,
+            timestamp: '2026-08-05T00:00:00',
+          },
+          parts: [{ type: 'text', text: '你好' }],
+        },
+      ],
       temperature: 0.7,
       max_tokens: 1024,
     }
@@ -220,8 +247,7 @@ describe('replayReasoningPrompt', () => {
     const payload = makeReplayRequest()
     const response = {
       success: true,
-      response: '回复内容',
-      reasoning: '推理内容',
+      output_items: [],
       model_name: 'demo-model',
       prompt_tokens: 10,
       completion_tokens: 5,

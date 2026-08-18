@@ -5,16 +5,13 @@ import {
   Bot,
   CheckCircle2,
   Globe,
-  Key,
   ShieldCheck,
   SkipForward,
-  Sparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   AlertDialog,
@@ -142,12 +139,6 @@ function SetupPageContent() {
       icon: Bot,
     },
     {
-      id: 'api-provider',
-      title: t('setupPage.steps.apiProvider.title'),
-      description: t('setupPage.steps.apiProvider.description'),
-      icon: Key,
-    },
-    {
       id: 'model-setup',
       title: t('setupPage.steps.modelSetup.title'),
       description: t('setupPage.steps.modelSetup.description'),
@@ -166,7 +157,6 @@ function SetupPageContent() {
       ]
     : setupSteps
 
-  const progress = ((currentStep + 1) / steps.length) * 100
   const currentStepId = steps[currentStep]?.id
 
   // 加载现有配置
@@ -213,10 +203,8 @@ function SetupPageContent() {
           await saveBotBasicConfig(botBasic)
           await savePersonalityConfig(personality)
           break
-        case 'api-provider': // API 提供商
+        case 'model-setup': // API 提供商与基础模型
           await saveApiProviderSetupConfig(apiProviderSetup)
-          break
-        case 'model-setup': // 基础模型
           await saveModelSetupConfig(modelSetup, apiProviderSetup.provider_name)
           break
       }
@@ -332,19 +320,8 @@ function SetupPageContent() {
         return
       }
     }
-    if (currentStepId === 'api-provider') {
-      const error = validateApiProviderSetup(apiProviderSetup)
-      if (error) {
-        toast({
-          title: t('setupPage.toast.validationFailedTitle'),
-          description: error,
-          variant: 'destructive',
-        })
-        return
-      }
-    }
     if (currentStepId === 'model-setup') {
-      const error = validateModelSetup(modelSetup)
+      const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
       if (error) {
         toast({
           title: t('setupPage.toast.validationFailedTitle'),
@@ -375,7 +352,7 @@ function SetupPageContent() {
     setIsCompleting(true)
 
     try {
-      const error = validateModelSetup(modelSetup)
+      const error = validateApiProviderSetup(apiProviderSetup) ?? validateModelSetup(modelSetup)
       if (error) {
         toast({
           title: t('setupPage.toast.validationFailedTitle'),
@@ -443,19 +420,24 @@ function SetupPageContent() {
             </div>
           </div>
         )
-      case 'api-provider':
-        return <ApiProviderSetupForm config={apiProviderSetup} onChange={setApiProviderSetup} />
       case 'model-setup':
-        return <ModelSetupForm config={modelSetup} onChange={setModelSetup} />
+        return (
+          <div className="space-y-8">
+            <ApiProviderSetupForm config={apiProviderSetup} onChange={setApiProviderSetup} />
+            <div className="border-t pt-6">
+              <ModelSetupForm config={modelSetup} onChange={setModelSetup} />
+            </div>
+          </div>
+        )
       default:
         return null
     }
   }
 
   return (
-    <div className="from-primary/5 via-background to-secondary/5 relative flex h-full min-h-screen flex-col items-center justify-center overflow-y-auto overflow-x-hidden bg-gradient-to-br p-4 md:p-6">
+    <div className="from-primary/5 via-background to-secondary/5 relative flex h-full min-h-screen flex-col items-center justify-center overflow-y-auto overflow-x-hidden bg-gradient-to-br p-3 md:p-4">
       {/* 语言切换 */}
-      <div className="absolute top-4 right-4 z-20">
+      <div className="absolute top-3 right-3 z-20">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-2">
@@ -504,43 +486,24 @@ function SetupPageContent() {
           {/* 主要内容 */}
           <div className="relative z-10 w-full max-w-4xl">
             {/* 头部 */}
-            <div className="mb-6 text-center md:mb-8">
-              <div className="bg-primary/10 mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl md:h-16 md:w-16">
-                <Sparkles
-                  className="text-primary h-6 w-6 md:h-8 md:w-8"
-                  strokeWidth={2}
-                  fill="none"
-                />
-              </div>
-              <h1 className="mb-2 text-2xl font-bold md:text-3xl">{t('setupPage.header.title')}</h1>
-              <p className="text-muted-foreground text-sm md:text-base">
-                {t('setupPage.header.description', { appName: APP_NAME })}
-              </p>
-            </div>
-
-            {/* 进度条 */}
-            <div className="mb-6 md:mb-8">
-              <div className="mb-2 flex items-center justify-between text-xs md:text-sm">
-                <span className="text-muted-foreground">
-                  {t('setupPage.progress.stepCounter', {
-                    current: currentStep + 1,
-                    total: steps.length,
-                  })}
-                </span>
-                <span className="text-primary font-medium">{Math.round(progress)}%</span>
-              </div>
-              <Progress value={progress} className="h-2" />
+            <div className="mb-4 text-center md:mb-5">
+              <h1 className="mb-1 text-2xl font-bold md:text-3xl">{t('setupPage.header.title')}</h1>
+              {t('setupPage.header.description', { appName: APP_NAME }) ? (
+                <p className="text-muted-foreground text-sm md:text-base">
+                  {t('setupPage.header.description', { appName: APP_NAME })}
+                </p>
+              ) : null}
             </div>
 
             {/* 步骤指示器 */}
-            <div className="mb-6 flex justify-between md:mb-8">
+            <div className="mb-4 flex justify-between md:mb-5">
               {steps.map((step, index) => {
                 const Icon = step.icon
                 return (
                   <div
                     key={step.id}
                     className={cn(
-                      'flex flex-1 flex-col items-center gap-1 md:gap-2',
+                      'flex flex-1 flex-col items-center gap-1',
                       index < steps.length - 1 && 'relative'
                     )}
                   >
@@ -548,7 +511,7 @@ function SetupPageContent() {
                     {index < steps.length - 1 && (
                       <div
                         className={cn(
-                          'absolute top-3 left-1/2 h-0.5 w-full md:top-4',
+                          'absolute top-2.5 left-1/2 h-0.5 w-full md:top-3.5',
                           index < currentStep ? 'bg-primary' : 'bg-border'
                         )}
                       />
@@ -557,7 +520,7 @@ function SetupPageContent() {
                     {/* 步骤圆圈 */}
                     <div
                       className={cn(
-                        'relative z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 transition-all md:h-8 md:w-8',
+                        'relative z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all md:h-7 md:w-7',
                         index === currentStep
                           ? 'border-primary bg-primary text-primary-foreground'
                           : index < currentStep
@@ -567,12 +530,12 @@ function SetupPageContent() {
                     >
                       {index < currentStep ? (
                         <CheckCircle2
-                          className="h-3 w-3 md:h-4 md:w-4"
+                          className="h-2.5 w-2.5 md:h-3.5 md:w-3.5"
                           strokeWidth={2.5}
                           fill="none"
                         />
                       ) : (
-                        <Icon className="h-3 w-3 md:h-4 md:w-4" />
+                        <Icon className="h-2.5 w-2.5 md:h-3.5 md:w-3.5" />
                       )}
                     </div>
 
@@ -594,21 +557,23 @@ function SetupPageContent() {
             </div>
 
             {/* 步骤内容卡片 */}
-            <Card className="mb-6 shadow-lg md:mb-8">
+            <Card className="mb-4 shadow-lg md:mb-5">
               <CardContent className="p-4 md:p-8">
-                <div className="min-h-[300px] md:min-h-[400px]">
+                  <div className="min-h-0">
                   <div className="mb-4 md:mb-6">
                     <h2 className="mb-2 text-xl font-semibold md:text-2xl">
                       {steps[currentStep].title}
                     </h2>
-                    <p className="text-muted-foreground text-sm md:text-base">
-                      {steps[currentStep].description}
-                    </p>
+                    {steps[currentStep].description ? (
+                      <p className="text-muted-foreground text-sm md:text-base">
+                        {steps[currentStep].description}
+                      </p>
+                    ) : null}
                   </div>
 
                   {/* 表单内容 */}
                   <ScrollArea
-                    className="h-[400px] md:h-[500px]"
+                    className="h-[clamp(220px,42vh,500px)] min-h-0"
                     viewportClassName="overscroll-auto"
                   >
                     <div className="pr-2">{renderStepForm()}</div>
@@ -618,7 +583,7 @@ function SetupPageContent() {
             </Card>
 
             {/* 操作按钮 */}
-            <div className="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-0">
+            <div className="flex flex-col items-center justify-between gap-2 sm:flex-row sm:gap-0">
               <Button
                 variant="outline"
                 onClick={handlePrevious}
@@ -697,10 +662,6 @@ function SetupPageContent() {
             </div>
           </div>
 
-          {/* 页脚提示 */}
-          <div className="text-muted-foreground relative z-10 mt-6 text-center text-xs md:mt-8">
-            <p>{t('setupPage.footer')}</p>
-          </div>
         </>
       )}
     </div>

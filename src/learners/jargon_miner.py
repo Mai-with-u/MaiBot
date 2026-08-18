@@ -10,13 +10,13 @@ import json
 import re
 
 from src.common.data_models.jargon_data_model import MaiJargon
-from src.common.data_models.llm_service_data_models import LLMGenerationOptions
+from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Jargon, JargonCreatedBy, Messages
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
 from src.config.config import global_config
-from src.llm_models.payload_content.message import MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
@@ -100,7 +100,10 @@ def register_jargon_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         "is_jargon": {"type": "boolean", "description": "当前推断是否判定为黑话。"},
                         "meaning": {"type": "string", "description": "当前推断出的黑话含义。"},
                         "is_complete": {"type": "boolean", "description": "当前是否已完成全部推断流程。"},
-                        "last_inference_count": {"type": "integer", "description": "本次推断完成后应写回的 last_inference_count。"},
+                        "last_inference_count": {
+                            "type": "integer",
+                            "description": "本次推断完成后应写回的 last_inference_count。",
+                        },
                     },
                     required=[
                         "session_id",
@@ -348,7 +351,9 @@ class JargonMiner:
             return []
         return parsed if isinstance(parsed, list) else []
 
-    def _cleanup_jargon_evidence_messages(self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str]) -> None:
+    def _cleanup_jargon_evidence_messages(
+        self, jargon_obj: MaiJargon, cleaned_evidence_messages: Optional[str]
+    ) -> None:
         """写回清理后的证据消息引用。"""
 
         if not jargon_obj.item_id:
@@ -368,15 +373,13 @@ class JargonMiner:
         jargon_content: str,
         stage_name: str,
         prompt: str,
-        output_content: str,
-        model_name: str,
-        provider_response: dict[str, Any] | None,
+        generation_result: LLMResponseResult,
     ) -> None:
         """保存黑话含义推断阶段的可重放 LLM Prompt。"""
 
         try:
             preview_access = PromptCLIVisualizer.build_prompt_preview_access(
-                [MessageBuilder().set_role(RoleType.User).add_text_content(prompt).build()],
+                [ContextItemBuilder().set_role(RoleType.User).add_text_content(prompt).build()],
                 category="jargon_learning_update",
                 chat_id=self.session_id,
                 request_kind="jargon_learning_update",
@@ -388,9 +391,9 @@ class JargonMiner:
                     "用途: 基于数据库消息证据推断或更新黑话含义，本记录保存单次 LLM prompt，可在推理过程页面直接重放。"
                 ),
                 output_title=f"黑话含义推断输出 - {stage_name}",
-                output_content=output_content,
-                metadata={"model_name": model_name},
-                provider_response=provider_response,
+                output_items=generation_result.output_items,
+                metadata={"model_name": generation_result.model_name},
+                generation_attempts=generation_result.generation_attempts,
             )
         except Exception as exc:
             logger.warning(f"jargon {jargon_content} 推断 Prompt 保存失败: stage={stage_name}, error={exc}")
@@ -456,9 +459,7 @@ class JargonMiner:
             jargon_content=content,
             stage_name="with_context",
             prompt=prompt1,
-            output_content=llm_response_1,
-            model_name=str(getattr(generation_result_1, "model_name", "") or ""),
-            provider_response=generation_result_1.provider_response,
+            generation_result=generation_result_1,
         )
         if not llm_response_1:
             logger.warning(f"jargon {content} 推断1失败：无响应")
@@ -496,9 +497,7 @@ class JargonMiner:
             jargon_content=content,
             stage_name="content_only",
             prompt=prompt2,
-            output_content=llm_response_2,
-            model_name=str(getattr(generation_result_2, "model_name", "") or ""),
-            provider_response=generation_result_2.provider_response,
+            generation_result=generation_result_2,
         )
         if not llm_response_2:
             logger.warning(f"jargon {content} 推断2失败：无响应")
@@ -524,9 +523,7 @@ class JargonMiner:
             jargon_content=content,
             stage_name="compare",
             prompt=prompt3,
-            output_content=llm_response_3,
-            model_name=str(getattr(generation_result_3, "model_name", "") or ""),
-            provider_response=generation_result_3.provider_response,
+            generation_result=generation_result_3,
         )
         if not llm_response_3:
             logger.warning(f"jargon {content} 比较失败：无响应")
@@ -759,10 +756,7 @@ class JargonMiner:
         """合并证据消息引用组并保持顺序去重。"""
 
         merged_groups = cls._normalize_evidence_message_groups(current_groups)
-        seen_groups = {
-            tuple((ref["platform"], ref["message_id"]) for ref in group)
-            for group in merged_groups
-        }
+        seen_groups = {tuple((ref["platform"], ref["message_id"]) for ref in group) for group in merged_groups}
         for group in cls._normalize_evidence_message_groups(new_groups):
             group_key = tuple((ref["platform"], ref["message_id"]) for ref in group)
             if group_key in seen_groups:
@@ -793,7 +787,9 @@ class JargonMiner:
         )
         merged_evidence_groups = self._merge_evidence_message_groups(existing_evidence_groups, evidence_message_groups)
         db_jargon.evidence_messages = (
-            json.dumps(merged_evidence_groups, ensure_ascii=False) if merged_evidence_groups else db_jargon.evidence_messages
+            json.dumps(merged_evidence_groups, ensure_ascii=False)
+            if merged_evidence_groups
+            else db_jargon.evidence_messages
         )
         session_id_dict: Dict[str, int] = json.loads(db_jargon.session_id_dict)
         session_id_dict[self.session_id] = session_id_dict.get(self.session_id, 0) + 1

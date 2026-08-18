@@ -24,7 +24,8 @@ import {
 import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
-import { getPluginConfigRoutePath } from '../utils'
+import { getPluginType } from '../../plugins/types'
+import { getPluginConfigRoutePath, isAdapterManagementPath } from '../utils'
 
 type PluginStatusIcon = 'loading' | 'warning' | 'circuit'
 
@@ -110,6 +111,7 @@ function comparePluginVersions(currentVersion: string, latestVersion: string): n
 
 export function usePluginList() {
   const { toast } = useToast()
+  const adapterOnly = isAdapterManagementPath()
   // 深链接初始目标（仅首次渲染读取一次）
   const [initialTarget] = useState(getInitialPluginConfigTarget)
 
@@ -134,11 +136,7 @@ export function usePluginList() {
     if (tabId) {
       params.set('tab', tabId)
     }
-    window.history.replaceState(
-      null,
-      '',
-      `${getPluginConfigRoutePath()}?${params.toString()}`
-    )
+    window.history.replaceState(null, '', `${getPluginConfigRoutePath()}?${params.toString()}`)
   }
 
   const closePluginConfig = () => {
@@ -149,7 +147,7 @@ export function usePluginList() {
   }
 
   const checkPluginUpdates = async () => {
-    if (updateCheckStartedRef.current) {
+    if (adapterOnly || updateCheckStartedRef.current) {
       return
     }
     updateCheckStartedRef.current = true
@@ -185,7 +183,10 @@ export function usePluginList() {
   const loadPlugins = async () => {
     setLoading(true)
     try {
-      const installed = await getInstalledPlugins()
+      const allInstalled = await getInstalledPlugins()
+      const installed = adapterOnly
+        ? allInstalled.filter((plugin) => getPluginType(plugin) === 'adapter')
+        : allInstalled
       setPlugins(installed)
       if (!selectedPlugin && initialTarget.pluginId) {
         const targetPlugin = installed.find((plugin) => plugin.id === initialTarget.pluginId)
@@ -333,7 +334,7 @@ export function usePluginList() {
   }
   const getPluginStatusMeta = (plugin: InstalledPlugin): PluginStatusMeta => {
     if (isPluginDisabled(plugin)) {
-      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用' }
+      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用', showsBadge: false }
     }
     if (isPluginCircuitOpen(plugin)) {
       const remainingSec = Math.ceil(plugin.circuit_status?.remaining_sec ?? 0)

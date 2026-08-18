@@ -7,7 +7,7 @@ from sqlmodel import col, select
 
 import hashlib
 
-from src.chat.utils.utils import get_all_bot_accounts
+from src.services.bot_account_service import get_all_bot_account_pairs
 from src.common.database.database import get_db_session
 from src.common.database.database_model import OnlineTime
 from src.config.config import config_manager
@@ -116,7 +116,7 @@ def _sum_merged_interval_seconds(intervals: list[tuple[datetime, datetime]]) -> 
 
 
 def _collect_message_stats(period_start: datetime, period_end: datetime) -> dict[str, Any]:
-    bot_accounts = {platform.lower(): str(account) for platform, account in get_all_bot_accounts().items()}
+    bot_accounts = get_all_bot_account_pairs()
     stats = {
         "by_direction": {
             "received": _empty_direction_stats(),
@@ -146,8 +146,7 @@ def _collect_message_stats(period_start: datetime, period_end: datetime) -> dict
         group_id = str(row[2] or "").strip()
         reply_frequency = row[3]
 
-        bot_account = bot_accounts.get(platform, "")
-        direction = "bot_sent" if bot_account and user_id == bot_account else "received"
+        direction = "bot_sent" if (platform, user_id) in bot_accounts else "received"
         chat_type = "group" if group_id else "private"
         bucket = _get_frequency_bucket(reply_frequency)
         _add_message_stat(stats["by_direction"][direction], platform, chat_type, bucket)

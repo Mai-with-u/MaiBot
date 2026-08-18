@@ -343,14 +343,16 @@ export function ExpressionReviewer({
       }
     },
     [
-      quickExpressions,
-      quickCurrentIndex,
-      isAnimatingRef,
+      cardApi,
       getAllowedDirections,
-      quickFilterType,
-      toast,
+      isAnimatingRef,
+      loadQuickList,
       loadStats,
       onReviewed,
+      quickCurrentIndex,
+      quickExpressions,
+      quickFilterType,
+      toast,
     ]
   )
 

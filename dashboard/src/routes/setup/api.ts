@@ -145,25 +145,11 @@ async function loadModelConfig(): Promise<ModelConfig> {
   return data.config || {}
 }
 
-// 读取 API 提供商配置
+// API 提供商在向导中始终从内置预设开始，避免回显历史自定义服务商配置。
 export async function loadApiProviderSetupConfig(): Promise<ApiProviderSetupConfig> {
-  const modelConfig = await loadModelConfig()
-  const models = modelConfig.models || []
-  const taskConfig = modelConfig.model_task_config || {}
-  const plannerName = taskConfig.planner?.model_list?.[0] || ''
-  const replyerName = taskConfig.replyer?.model_list?.[0] || ''
-  const plannerModel = models.find((model) => model.name === plannerName)
-  const replyerModel = models.find((model) => model.name === replyerName)
-  const providerName =
-    plannerModel?.api_provider ||
-    replyerModel?.api_provider ||
-    modelConfig.api_providers?.[0]?.name ||
-    ''
-  const provider = modelConfig.api_providers?.find((item) => item.name === providerName)
-
   return {
-    provider_name: providerName || DEFAULT_API_PROVIDER_TEMPLATE?.name || '',
-    base_url: provider?.base_url || DEFAULT_API_PROVIDER_TEMPLATE?.base_url || '',
+    provider_name: DEFAULT_API_PROVIDER_TEMPLATE?.name || '',
+    base_url: DEFAULT_API_PROVIDER_TEMPLATE?.base_url || '',
     api_key: '',
   }
 }

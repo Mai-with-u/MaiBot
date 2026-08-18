@@ -9,12 +9,9 @@ from .base import KernelServiceBase
 
 class MemoryDualVectorMigrationService(KernelServiceBase):
     def _should_start_dual_vector_auto_migration(self) -> bool:
-        return (
-            self._dual_vector_pools_config_enabled()
-            and not self._dual_vector_pools_enabled()
-            and not self._dual_vector_auto_migration_attempted
-            and not self._background_stopping
-        )
+        # 历史数据不得因启动自动迁移而重新调用 embedding。双池全量重建只保留
+        # 在用户显式执行 rebuild_all_vectors 时触发；故障恢复走无重嵌入复制任务。
+        return False
 
     def _normalize_dual_vector_auto_migration_progress(
         self,

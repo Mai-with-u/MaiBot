@@ -170,6 +170,14 @@ describe('LogoArea 与 Sidebar', () => {
     const aside = container.querySelector('[data-dashboard-sidebar="true"]')
     expect(aside).toHaveAttribute('data-dashboard-sidebar-mode', 'hover')
     expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'false')
+    expect(aside).toHaveClass(
+      'lg:w-[var(--layout-sidebar-width)]',
+      'lg:transition-[clip-path]',
+      'lg:[clip-path:inset(0_calc(var(--layout-sidebar-width)-var(--layout-sidebar-collapsed-width))_0_0)]'
+    )
+    expect(
+      container.querySelector('[data-dashboard-sidebar-collapsed-divider="true"]')
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'header.switchSidebarToFixed' })
     ).not.toBeInTheDocument()
@@ -178,6 +186,10 @@ describe('LogoArea 与 Sidebar', () => {
     act(() => vi.advanceTimersByTime(SIDEBAR_HOVER_EXPAND_DELAY_MS))
     expect(aside).toHaveAttribute('data-dashboard-sidebar-hover-expanded', 'true')
     expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'true')
+    expect(aside).toHaveClass('lg:[clip-path:inset(0_0_0_0)]')
+    expect(
+      container.querySelector('[data-dashboard-sidebar-collapsed-divider="true"]')
+    ).not.toBeInTheDocument()
     const hoverNavigation = screen.getByRole('navigation')
     const hoverNavigationClassName = hoverNavigation.className
     expect(hoverNavigation).toHaveClass(
@@ -187,7 +199,7 @@ describe('LogoArea 与 Sidebar', () => {
     expect(screen.getByText('sidebar.groups.resources').parentElement).not.toHaveClass(
       'lg:mb-[var(--layout-sidebar-section-title-margin-bottom-collapsed)]'
     )
-    expect(container.querySelector('.border-t')).not.toBeInTheDocument()
+    expect(container.querySelector('.border-t')).toHaveClass('lg:opacity-0')
     expect(screen.getByRole('button', { name: '首页' })).toHaveAttribute(
       'data-sidebar-open',
       'true'
@@ -225,5 +237,36 @@ describe('LogoArea 与 Sidebar', () => {
     expect(
       screen.queryByRole('button', { name: 'header.switchSidebarToFixed' })
     ).not.toBeInTheDocument()
+  })
+
+  it('悬浮侧栏收起动画结束后再切换折叠内容与分割线', () => {
+    vi.useFakeTimers()
+    const { container } = render(
+      <Sidebar
+        sidebarOpen={false}
+        mobileMenuOpen={false}
+        onMobileMenuClose={vi.fn()}
+        onSidebarFix={vi.fn()}
+      />
+    )
+    const aside = container.querySelector('[data-dashboard-sidebar="true"]') as HTMLElement
+
+    fireEvent.pointerEnter(aside, { pointerType: 'mouse' })
+    act(() => vi.advanceTimersByTime(SIDEBAR_HOVER_EXPAND_DELAY_MS))
+    fireEvent.pointerLeave(aside)
+
+    expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'true')
+    expect(aside).toHaveClass(
+      'lg:[clip-path:inset(0_calc(var(--layout-sidebar-width)-var(--layout-sidebar-collapsed-width))_0_0)]'
+    )
+    expect(
+      container.querySelector('[data-dashboard-sidebar-collapsed-divider="true"]')
+    ).not.toBeInTheDocument()
+
+    act(() => vi.advanceTimersByTime(220))
+    expect(aside).toHaveAttribute('data-dashboard-sidebar-visually-open', 'false')
+    expect(
+      container.querySelector('[data-dashboard-sidebar-collapsed-divider="true"]')
+    ).toBeInTheDocument()
   })
 })

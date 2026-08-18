@@ -30,6 +30,8 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             self._ensure_background_task("person_profile_refresh_queue", self._person_profile_refresh_queue_loop)
             self._ensure_background_task("feedback_correction", self._feedback_correction_loop)
             self._ensure_background_task("feedback_correction_reconcile", self._feedback_correction_reconcile_loop)
+            if self._legacy_vector_view is not None:
+                self._ensure_background_task("legacy_vector_copy", self._legacy_vector_copy_loop)
             if self._should_start_dual_vector_auto_migration():
                 self._ensure_background_task("dual_vector_auto_migration", self._dual_vector_auto_migration_loop)
 
@@ -263,6 +265,20 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 logger.warning(f"向量索引训练任务取消收尾异常: {exc}")
             raise
 
+    async def _run_legacy_vector_io_in_thread(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        worker = asyncio.create_task(
+            asyncio.to_thread(operation, *args, **kwargs),
+            name="A_Memorix.legacy_vector_copy.worker",
+        )
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            try:
+                await worker
+            except Exception as exc:
+                logger.warning(f"可信旧向量复制任务取消收尾异常: {exc}")
+            raise
+
     async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
         threshold_value = self._cfg("embedding.runtime_train_threshold", 256)
         runtime_threshold = max(1, int(256 if threshold_value is None else threshold_value))
@@ -343,9 +359,13 @@ class MemoryBackgroundTaskService(KernelServiceBase):
                 if self._background_stopping:
                     break
                 startup_deferred = self._is_startup_self_check_deferred()
-                if not self._embedding_fallback_enabled() and not startup_deferred:
+                vector_fingerprint_pending = (
+                    str(self._vector_health.get("error_code", "") or "")
+                    == "embedding_fingerprint_unavailable"
+                )
+                if not self._embedding_fallback_enabled() and not startup_deferred and not vector_fingerprint_pending:
                     continue
-                if not self._is_embedding_degraded() and not startup_deferred:
+                if not self._is_embedding_degraded() and not startup_deferred and not vector_fingerprint_pending:
                     continue
                 try:
                     await self._recover_embedding_once()
@@ -375,6 +395,24 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             raise
         except Exception as exc:
             logger.warning(f"paragraph_vector_backfill loop 异常: {exc}")
+
+    async def _legacy_vector_copy_loop(self) -> None:
+        """持续复制可信旧向量；该任务从不调用 embedding。"""
+        try:
+            while not self._background_stopping and self._legacy_vector_view is not None:
+                async with self._vector_rebuild_lock:
+                    result = await self._run_legacy_vector_io_in_thread(
+                        self._copy_legacy_vectors_once,
+                        batch_size=256,
+                    )
+                    if bool(result.get("done", False)):
+                        await self._run_legacy_vector_io_in_thread(self._cleanup_vector_quarantine)
+                        break
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(f"可信旧向量后台复制失败，将在下次启动续做: {exc}")
 
     async def _person_profile_refresh_loop(self) -> None:
         try:

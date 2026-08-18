@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import asyncio
 import re
@@ -96,6 +96,20 @@ class RetrievalResult:
             "metadata": self.metadata,
         }
 
+
+@dataclass(frozen=True)
+class RetrievalScope:
+    """一次检索已解析出的可见资源集合。"""
+
+    key: str
+    paragraph_ids: FrozenSet[str] = field(default_factory=frozenset)
+    relation_ids: FrozenSet[str] = field(default_factory=frozenset)
+    entity_ids: FrozenSet[str] = field(default_factory=frozenset)
+    episode_ids: FrozenSet[str] = field(default_factory=frozenset)
+
+    @property
+    def empty(self) -> bool:
+        return not self.paragraph_ids and not self.relation_ids and not self.episode_ids
 
 @dataclass
 class DualPathRetrieverConfig:
@@ -315,14 +329,15 @@ class DualPathRetriever:
 
     def __init__(
         self,
-        vector_store: VectorStore,
-        graph_store: GraphStore,
+        vector_store: Optional[VectorStore],
+        graph_store: Optional[GraphStore],
         metadata_store: MetadataStore,
-        embedding_manager: EmbeddingAPIAdapter,
+        embedding_manager: Optional[EmbeddingAPIAdapter],
         sparse_index: Optional[SparseBM25Index] = None,
         config: Optional[DualPathRetrieverConfig] = None,
         paragraph_vector_store: Optional[VectorStore] = None,
         graph_vector_store: Optional[VectorStore] = None,
+        legacy_vector_store: Optional[Any] = None,
     ):
         """
         初始化双路检索器
@@ -337,6 +352,7 @@ class DualPathRetriever:
         self.vector_store = vector_store
         self.paragraph_vector_store = paragraph_vector_store or vector_store
         self.graph_vector_store = graph_vector_store or vector_store
+        self.legacy_vector_store = legacy_vector_store
         self.graph_store = graph_store
         self.metadata_store = metadata_store
         self.embedding_manager = embedding_manager
@@ -345,15 +361,20 @@ class DualPathRetriever:
 
         # PageRank计算器
         ppr_config = PageRankConfig(alpha=self.config.ppr_alpha)
-        self._ppr = PersonalizedPageRank(
-            graph_store=graph_store,
-            config=ppr_config,
+        self._ppr = (
+            PersonalizedPageRank(graph_store=graph_store, config=ppr_config)
+            if graph_store is not None
+            else None
         )
         self._ppr_semaphore = asyncio.Semaphore(self.config.ppr_concurrency_limit)
-        self._graph_relation_recall = GraphRelationRecallService(
-            graph_store=graph_store,
-            metadata_store=metadata_store,
-            config=self.config.graph_recall,
+        self._graph_relation_recall = (
+            GraphRelationRecallService(
+                graph_store=graph_store,
+                metadata_store=metadata_store,
+                config=self.config.graph_recall,
+            )
+            if graph_store is not None
+            else None
         )
 
         logger.debug(
@@ -384,7 +405,12 @@ class DualPathRetriever:
 
     def _is_sparse_only_runtime(self) -> bool:
         mode = str(getattr(self.config.sparse, "mode", "auto") or "auto").strip().lower()
-        return bool(self._runtime_sparse_only or mode == "fallback_only")
+        return bool(
+            self._runtime_sparse_only
+            or mode == "fallback_only"
+            or self.vector_store is None
+            or self.embedding_manager is None
+        )
 
     async def retrieve(
         self,
@@ -393,6 +419,7 @@ class DualPathRetriever:
         strategy: Optional[RetrievalStrategy] = None,
         temporal: Optional[TemporalQueryOptions] = None,
         enable_ppr: Optional[bool] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         执行检索（异步方法）
@@ -408,6 +435,8 @@ class DualPathRetriever:
             检索结果列表
         """
         top_k = top_k or self.config.top_k_final
+        if scope is not None and scope.empty:
+            return []
         strategy = strategy or self.config.retrieval_strategy
         request_enable_ppr = self.config.enable_ppr if enable_ppr is None else bool(enable_ppr)
         relation_intent_ctx = self._build_relation_intent_context(query=query, top_k=top_k)
@@ -420,19 +449,20 @@ class DualPathRetriever:
         )
 
         if temporal and not (query or "").strip():
-            return self._retrieve_temporal_only(temporal, top_k)
+            return self._retrieve_temporal_only(temporal, top_k, scope=scope)
 
         # 根据策略执行检索
         if strategy == RetrievalStrategy.PARA_ONLY:
-            results = await self._retrieve_paragraphs_only(query, top_k, temporal=temporal)
+            results = await self._retrieve_paragraphs_only(query, top_k, temporal=temporal, scope=scope)
         elif strategy == RetrievalStrategy.REL_ONLY:
-            results = await self._retrieve_relations_only(query, top_k, temporal=temporal)
+            results = await self._retrieve_relations_only(query, top_k, temporal=temporal, scope=scope)
         else:  # 双路检索（DUAL_PATH）
             results = await self._retrieve_dual_path(
                 query,
                 top_k,
                 temporal=temporal,
                 relation_intent=relation_intent_ctx,
+                scope=scope,
                 enable_ppr=request_enable_ppr,
             )
 
@@ -615,6 +645,22 @@ class DualPathRetriever:
             metadata=coerce_metadata_dict(item.metadata),
         )
 
+    @staticmethod
+    def _search_vector_store(
+        store: Any,
+        query_emb: np.ndarray,
+        *,
+        k: int,
+        allowed_ids: Optional[FrozenSet[str]] = None,
+    ) -> Tuple[List[str], List[float]]:
+        if allowed_ids is None:
+            return store.search(query_emb, k=k)
+        return store.search(
+            query_emb,
+            k=k,
+            allowed_ids=allowed_ids,
+        )
+
     def _extract_graph_seed_entities(self, query: str, limit: int = 2) -> List[str]:
         entities = self._extract_entities(query)
         if not entities:
@@ -629,6 +675,7 @@ class DualPathRetriever:
         self,
         query: str,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         service = getattr(self, "_graph_relation_recall", None)
         if service is None or not bool(getattr(self.config.graph_recall, "enabled", True)):
@@ -638,7 +685,13 @@ class DualPathRetriever:
         if not seed_entities:
             return []
 
-        payloads = service.recall(seed_entities=seed_entities)
+        if scope:
+            payloads = service.recall(
+                seed_entities=seed_entities,
+                allowed_relation_ids=scope.relation_ids,
+            )
+        else:
+            payloads = service.recall(seed_entities=seed_entities)
         results: List[RetrievalResult] = []
         for payload in payloads:
             meta = payload.to_payload()
@@ -670,12 +723,15 @@ class DualPathRetriever:
         *,
         source: str,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """按向量/稀疏召回顺序批量回表构造段落结果。"""
         paragraph_map = self.metadata_store.get_paragraphs_by_hashes(hash_values)
         results: List[RetrievalResult] = []
         seen = set()
         for hash_value, score in zip(hash_values, scores, strict=False):
+            if scope and hash_value not in scope.paragraph_ids:
+                continue
             if hash_value in seen:
                 continue
             paragraph = paragraph_map.get(hash_value)
@@ -709,6 +765,7 @@ class DualPathRetriever:
         source: str,
         temporal: Optional[TemporalQueryOptions] = None,
         extra_metadata_by_hash: Optional[Dict[str, Dict[str, Any]]] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """按向量/稀疏召回顺序批量回表构造关系结果。"""
         relation_map = self.metadata_store.get_relations_by_hashes(hash_values, include_inactive=False)
@@ -725,6 +782,8 @@ class DualPathRetriever:
             if relation is None:
                 continue
 
+            if scope and hash_value not in scope.relation_ids:
+                continue
             relation_time_meta = None
             if temporal:
                 relation_time_meta = supporting_time_meta.get(hash_value)
@@ -806,6 +865,7 @@ class DualPathRetriever:
         query: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """BM25 段落召回。"""
         if not self.sparse_index or not self.config.sparse.enabled:
@@ -813,7 +873,14 @@ class DualPathRetriever:
 
         candidate_k = max(top_k, self.config.sparse.candidate_k)
         candidate_k = self._cap_temporal_scan_k(candidate_k, temporal)
-        sparse_rows = self.sparse_index.search(query=query, k=candidate_k)
+        if scope:
+            sparse_rows = self.sparse_index.search(
+                query=query,
+                k=candidate_k,
+                allowed_ids=scope.paragraph_ids,
+            )
+        else:
+            sparse_rows = self.sparse_index.search(query=query, k=candidate_k)
         sparse_rows = self._filter_sparse_paragraph_rows(sparse_rows)
         hash_values = [str(row.get("hash", "") or "") for row in sparse_rows]
         scores = [float(row.get("score", 0.0)) for row in sparse_rows]
@@ -823,6 +890,7 @@ class DualPathRetriever:
             scores,
             source="sparse_bm25",
             temporal=temporal,
+            scope=scope,
         )
         for item in results:
             item.metadata["bm25_score"] = bm25_scores.get(item.hash_value, 0.0)
@@ -880,6 +948,7 @@ class DualPathRetriever:
         query: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """关系 BM25 召回。"""
         if not self.sparse_index or not self.config.sparse.enabled:
@@ -889,7 +958,14 @@ class DualPathRetriever:
 
         candidate_k = max(top_k, self.config.sparse.relation_candidate_k)
         candidate_k = self._cap_temporal_scan_k(candidate_k, temporal)
-        rows = self.sparse_index.search_relations(query=query, k=candidate_k)
+        if scope:
+            rows = self.sparse_index.search_relations(
+                query=query,
+                k=candidate_k,
+                allowed_ids=scope.relation_ids,
+            )
+        else:
+            rows = self.sparse_index.search_relations(query=query, k=candidate_k)
         hash_values = [str(row.get("hash", "") or "") for row in rows]
         scores = [float(row.get("score", 0.0)) for row in rows]
         bm25_scores = {str(row.get("hash", "") or ""): float(row.get("bm25_score", 0.0)) for row in rows}
@@ -898,6 +974,7 @@ class DualPathRetriever:
             scores,
             source="sparse_relation_bm25",
             temporal=temporal,
+            scope=scope,
         )
         for item in results:
             item.metadata["bm25_score"] = bm25_scores.get(item.hash_value, 0.0)
@@ -1006,6 +1083,7 @@ class DualPathRetriever:
         query: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         仅检索段落（异步方法）
@@ -1018,7 +1096,7 @@ class DualPathRetriever:
             检索结果列表
         """
         if self._is_sparse_only_runtime():
-            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal)
+            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal, scope=scope)
             return sparse_results[:top_k]
 
         query_emb = None
@@ -1037,20 +1115,23 @@ class DualPathRetriever:
         if embedding_ok:
             multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
             candidate_k = self._cap_temporal_scan_k(top_k * 2 * multiplier, temporal)
-            para_ids, para_scores = self.vector_store.search(
+            para_ids, para_scores = self._search_vector_store(
+                self.vector_store,
                 query_emb,  # type: ignore[arg-type]
                 k=candidate_k,
+                allowed_ids=scope.paragraph_ids if scope else None,
             )
             vector_results = self._build_paragraph_results_from_ids(
                 list(para_ids),
                 [float(score) for score in para_scores],
                 source="paragraph_search",
                 temporal=temporal,
+                scope=scope,
             )
 
         sparse_results: List[RetrievalResult] = []
         if self._should_use_sparse(embedding_ok, vector_results):
-            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal)
+            sparse_results = self._search_paragraphs_sparse(query, top_k, temporal=temporal, scope=scope)
 
         if self.config.fusion.method == "weighted_rrf" and (vector_results and sparse_results):
             results = self._fuse_ranked_lists_weighted_rrf(vector_results, sparse_results)
@@ -1067,6 +1148,7 @@ class DualPathRetriever:
         query: str,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         仅检索关系 (通过实体枢纽 Entity-Pivot)
@@ -1084,8 +1166,8 @@ class DualPathRetriever:
             检索结果列表
         """
         if self._is_sparse_only_runtime():
-            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal)
-            graph_results = self._search_relations_graph(query=query, temporal=temporal)
+            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal, scope=scope)
+            graph_results = self._search_relations_graph(query=query, temporal=temporal, scope=scope)
             if graph_results:
                 merged = self._merge_relation_results_graph_enhanced(
                     [],
@@ -1111,9 +1193,11 @@ class DualPathRetriever:
             # 1. 检索向量 (混合了段落和实体，所以扩大检索范围以召回足够多实体)
             multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
             candidate_k = self._cap_temporal_scan_k(top_k * 3 * multiplier, temporal)
-            ids, scores = self.vector_store.search(
+            ids, scores = self._search_vector_store(
+                self.vector_store,
                 query_emb,  # type: ignore[arg-type]
                 k=candidate_k,
+                allowed_ids=scope.entity_ids if scope else None,
             )
 
             seen_relations = set()
@@ -1131,6 +1215,8 @@ class DualPathRetriever:
                 related_rels.extend(self.metadata_store.get_relations(object=entity_name, include_inactive=False))
 
                 for rel in related_rels:
+                    if scope and rel["hash"] not in scope.relation_ids:
+                        continue
                     if rel["hash"] in seen_relations:
                         continue
                     seen_relations.add(rel["hash"])
@@ -1145,13 +1231,14 @@ class DualPathRetriever:
                 extra_metadata_by_hash={
                     hash_value: {"pivot_entity": pivot} for hash_value, pivot in relation_pivots.items()
                 },
+                scope=scope,
             )
 
         sparse_results: List[RetrievalResult] = []
         if self._should_use_sparse_relations(embedding_ok, vector_results):
-            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal)
+            sparse_results = self._search_relations_sparse(query=query, top_k=top_k, temporal=temporal, scope=scope)
 
-        graph_results = self._search_relations_graph(query=query, temporal=temporal)
+        graph_results = self._search_relations_graph(query=query, temporal=temporal, scope=scope)
         if graph_results:
             results = self._merge_relation_results_graph_enhanced(
                 vector_results,
@@ -1172,6 +1259,7 @@ class DualPathRetriever:
         temporal: Optional[TemporalQueryOptions] = None,
         relation_intent: Optional[Dict[str, Any]] = None,
         enable_ppr: bool = True,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         双路检索（段落+关系）（异步方法）
@@ -1190,6 +1278,7 @@ class DualPathRetriever:
                 temporal=temporal,
                 relation_intent=relation_intent,
                 enable_ppr=enable_ppr,
+                scope=scope,
             )
 
         query_emb = None
@@ -1221,6 +1310,7 @@ class DualPathRetriever:
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
+                scope=scope,
             )
             sparse_rel_results = self._search_relations_sparse(
                 query=query,
@@ -1230,10 +1320,11 @@ class DualPathRetriever:
                     relation_top_k,
                 ),
                 temporal=temporal,
+                scope=scope,
             )
             graph_rel_results: List[RetrievalResult] = []
             if bool(relation_intent.get("enabled", False)):
-                graph_rel_results = self._search_relations_graph(query=query, temporal=temporal)
+                graph_rel_results = self._search_relations_graph(query=query, temporal=temporal, scope=scope)
             if graph_rel_results:
                 rel_results = self._merge_relation_results_graph_enhanced(
                     [],
@@ -1264,6 +1355,7 @@ class DualPathRetriever:
                 top_k=top_k,
                 temporal=temporal,
                 relation_intent=relation_intent,
+                scope=scope,
             )
             fused_results = self._apply_relation_intent_pair_rerank(
                 fused_results,
@@ -1291,12 +1383,14 @@ class DualPathRetriever:
                     query_emb,
                     temporal=temporal,
                     relation_top_k=relation_top_k,
+                    scope=scope,
                 )  # type: ignore[arg-type]
             else:
                 para_results, rel_results = self._sequential_retrieve(
                     query_emb,
                     temporal=temporal,
                     relation_top_k=relation_top_k,
+                    scope=scope,
                 )  # type: ignore[arg-type]
         else:
             logger.warning("embedding 不可用，跳过向量段落/关系召回")
@@ -1307,6 +1401,7 @@ class DualPathRetriever:
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
+                scope=scope,
             )
         sparse_rel_results: List[RetrievalResult] = []
         if self._should_use_sparse_relations(
@@ -1322,11 +1417,12 @@ class DualPathRetriever:
                     relation_top_k,
                 ),
                 temporal=temporal,
+                scope=scope,
             )
 
         graph_rel_results: List[RetrievalResult] = []
         if bool(relation_intent.get("enabled", False)):
-            graph_rel_results = self._search_relations_graph(query=query, temporal=temporal)
+            graph_rel_results = self._search_relations_graph(query=query, temporal=temporal, scope=scope)
 
         if self.config.fusion.method == "weighted_rrf" and para_results and sparse_para_results:
             para_results = self._fuse_ranked_lists_weighted_rrf(para_results, sparse_para_results)
@@ -1373,6 +1469,7 @@ class DualPathRetriever:
             top_k=top_k,
             temporal=temporal,
             relation_intent=relation_intent,
+            scope=scope,
         )
 
         fused_results = self._apply_relation_intent_pair_rerank(
@@ -1389,6 +1486,7 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         temporal: Optional[TemporalQueryOptions] = None,
         relation_top_k: Optional[int] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
         """
         并行检索段落和关系（异步方法）
@@ -1405,6 +1503,7 @@ class DualPathRetriever:
                 query_emb,
                 temporal,
                 relation_top_k,
+                scope,
             )
         except Exception as e:
             logger.error(f"并行检索失败: {e}")
@@ -1415,6 +1514,7 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         temporal: Optional[TemporalQueryOptions] = None,
         relation_top_k: Optional[int] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
         """
         顺序检索段落和关系
@@ -1429,6 +1529,7 @@ class DualPathRetriever:
             query_emb,
             temporal,
             relation_top_k,
+            scope,
         )
 
     def _mixed_candidate_budget(
@@ -1819,10 +1920,23 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         top_k: int,
         temporal: Optional[TemporalQueryOptions],
+        scope: Optional[RetrievalScope] = None,
     ) -> Dict[str, Dict[str, Any]]:
         cfg = self.config.vector_pools
         graph_store = self.graph_vector_store
-        graph_ids, graph_scores = await asyncio.to_thread(graph_store.search, query_emb, k=top_k)
+        allowed_graph_ids = None
+        if scope:
+            allowed_graph_ids = frozenset(
+                [f"relation:{hash_value}" for hash_value in scope.relation_ids]
+                + [f"entity:{hash_value}" for hash_value in scope.entity_ids]
+            )
+        graph_ids, graph_scores = await asyncio.to_thread(
+            self._search_vector_store,
+            graph_store,
+            query_emb,
+            k=top_k,
+            allowed_ids=allowed_graph_ids,
+        )
         parsed_items: List[Tuple[str, str, float]] = []
         relation_hashes: List[str] = []
         entity_hashes: List[str] = []
@@ -1891,6 +2005,8 @@ class DualPathRetriever:
                 paragraph_hash = str(paragraph.get("hash", "") or "").strip()
                 if not paragraph_hash:
                     continue
+                if scope and paragraph_hash not in scope.paragraph_ids:
+                    continue
                 if temporal and not self._is_temporal_match(paragraph, temporal):
                     continue
                 grounding_factor = self._graph_evidence_grounding_factor(evidence, paragraph)
@@ -1918,6 +2034,100 @@ class DualPathRetriever:
             payload["evidence"].append((evidence, float(evidence_score)))
         return evidence_by_paragraph
 
+    async def _merge_legacy_vector_candidates(
+        self,
+        *,
+        query_emb: np.ndarray,
+        candidates: Dict[str, RetrievalResult],
+        top_k: int,
+        temporal: Optional[TemporalQueryOptions],
+        scope: Optional[RetrievalScope] = None,
+    ) -> None:
+        """合并只读旧向量结果；新世代已命中的段落保持优先。"""
+        legacy_store = self.legacy_vector_store
+        if legacy_store is None:
+            return
+        legacy_ids, legacy_scores = await asyncio.to_thread(
+            self._search_vector_store,
+            legacy_store,
+            query_emb,
+            k=max(1, int(top_k)),
+            allowed_ids=(
+                scope.paragraph_ids | scope.relation_ids | scope.entity_ids
+                if scope
+                else None
+            ),
+        )
+        if not legacy_ids:
+            return
+
+        paragraph_map = self.metadata_store.get_paragraphs_by_hashes(legacy_ids)
+        relation_map = self.metadata_store.get_relations_by_hashes(
+            legacy_ids,
+            include_inactive=False,
+        )
+        entity_map = self.metadata_store.get_entities_by_hashes(legacy_ids)
+        relation_paragraphs = self.metadata_store.get_paragraphs_by_relation_hashes(
+            list(relation_map)
+        )
+        entity_paragraphs = self.metadata_store.get_paragraphs_by_entity_hashes(
+            list(entity_map)
+        )
+        for hash_value, raw_score in zip(legacy_ids, legacy_scores, strict=False):
+            score = float(raw_score)
+            paragraph = paragraph_map.get(hash_value)
+            if paragraph is not None:
+                paragraph_hash = str(paragraph.get("hash", "") or "")
+                if scope and paragraph_hash not in scope.paragraph_ids:
+                    continue
+                if paragraph_hash in candidates:
+                    continue
+                if temporal and not self._is_temporal_match(paragraph, temporal):
+                    continue
+                self._add_candidate_score(
+                    candidates,
+                    paragraph,
+                    score_key="semantic",
+                    score=score,
+                    source="legacy_vector_view",
+                    temporal=temporal,
+                )
+                continue
+
+            if hash_value in relation_map:
+                support = relation_paragraphs.get(hash_value, [])
+                evidence_type = "relation"
+            elif hash_value in entity_map:
+                support = entity_paragraphs.get(hash_value, [])
+                evidence_type = "entity"
+            else:
+                continue
+            for support_paragraph in support:
+                paragraph_hash = str(support_paragraph.get("hash", "") or "")
+                if not paragraph_hash or paragraph_hash in candidates:
+                    continue
+                if scope and paragraph_hash not in scope.paragraph_ids:
+                    continue
+                if temporal and not self._is_temporal_match(support_paragraph, temporal):
+                    continue
+                candidate = self._ensure_paragraph_candidate(
+                    candidates,
+                    support_paragraph,
+                    temporal=temporal,
+                )
+                self._mark_candidate_source(candidate, "legacy_vector_view")
+                self._append_graph_evidence(
+                    candidate,
+                    evidence={
+                        "type": evidence_type,
+                        "hash": hash_value,
+                        "source": "legacy_vector_view",
+                        "raw_score": score,
+                        "normalized_score": max(0.0, min(1.0, score)),
+                    },
+                    score=max(0.0, min(1.0, score)),
+                )
+
     async def _retrieve_dual_vector_pools(
         self,
         query: str,
@@ -1925,6 +2135,7 @@ class DualPathRetriever:
         temporal: Optional[TemporalQueryOptions] = None,
         relation_intent: Optional[Dict[str, Any]] = None,
         enable_ppr: bool = True,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         relation_intent = relation_intent or {}
         semantic_weight, sparse_weight, graph_weight, graph_top_k = self._dual_pool_weights(relation_intent)
@@ -1946,9 +2157,11 @@ class DualPathRetriever:
                 temporal,
             )
             para_ids, para_scores = await asyncio.to_thread(
-                self.paragraph_vector_store.search,
+                self._search_vector_store,
+                self.paragraph_vector_store,
                 query_emb,
                 k=paragraph_top_k,
+                allowed_ids=scope.paragraph_ids if scope else None,
             )
             paragraph_map = self.metadata_store.get_paragraphs_by_hashes(para_ids)
             for hash_value, score in zip(para_ids, para_scores, strict=False):
@@ -1970,6 +2183,7 @@ class DualPathRetriever:
                 query_emb=query_emb,
                 top_k=self._expand_temporal_candidate_k(graph_top_k, temporal),
                 temporal=temporal,
+                scope=scope,
             )
             for payload in graph_evidence.values():
                 paragraph = payload.get("paragraph")
@@ -1985,6 +2199,14 @@ class DualPathRetriever:
                     )
                 score_meta = self._candidate_score_meta(candidate)
                 score_meta["graph_evidence"] = self._aggregate_graph_evidence_score(candidate)
+
+            await self._merge_legacy_vector_candidates(
+                query_emb=query_emb,
+                candidates=candidates,
+                top_k=max(paragraph_top_k, graph_top_k),
+                temporal=temporal,
+                scope=scope,
+            )
         else:
             logger.warning("embedding 不可用，跳过双向量池向量召回")
 
@@ -1994,6 +2216,7 @@ class DualPathRetriever:
                 query=query,
                 top_k=max(top_k * 2, self.config.sparse.candidate_k),
                 temporal=temporal,
+                scope=scope,
             )
         for sparse_item in sparse_para_results:
             paragraph = {
@@ -2109,6 +2332,7 @@ class DualPathRetriever:
             top_k=top_k,
             temporal=temporal,
             relation_intent=relation_intent,
+            scope=scope,
         )
 
         return results[:top_k]
@@ -2118,12 +2342,18 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         temporal: Optional[TemporalQueryOptions] = None,
         relation_top_k: Optional[int] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
         para_top_k = self.config.top_k_paragraphs
         rel_top_k = relation_top_k if relation_top_k is not None else self.config.top_k_relations
         candidate_k = self._mixed_candidate_budget(para_top_k, rel_top_k, temporal)
         candidate_k = self._cap_temporal_scan_k(candidate_k, temporal)
-        ids, scores = self.vector_store.search(query_emb, k=candidate_k)
+        ids, scores = self._search_vector_store(
+            self.vector_store,
+            query_emb,
+            k=candidate_k,
+            allowed_ids=scope.paragraph_ids | scope.relation_ids if scope else None,
+        )
 
         para_candidates: List[RetrievalResult] = []
         rel_candidates: List[RetrievalResult] = []
@@ -2137,6 +2367,8 @@ class DualPathRetriever:
 
         for hash_value, score in zip(ids, scores, strict=False):
             paragraph = paragraph_map.get(hash_value)
+            if scope and hash_value not in scope.paragraph_ids:
+                paragraph = None
             if paragraph is not None and hash_value not in seen_para:
                 if temporal and not self._is_temporal_match(paragraph, temporal):
                     continue
@@ -2160,6 +2392,8 @@ class DualPathRetriever:
                 continue
 
             relation = relation_map.get(hash_value)
+            if scope and hash_value not in scope.relation_ids:
+                relation = None
             if relation is None or hash_value in seen_rel:
                 continue
             item_time_meta = None
@@ -2191,8 +2425,8 @@ class DualPathRetriever:
 
         # 双重方案里，向量主干优先解决“召回不够”，因此主检索走共享候选池，
         # 但再补一层按类型回填，避免 paragraph / relation 任一侧被饿死。
-        para_backfill = self._search_paragraphs(query_emb, para_top_k, temporal)
-        rel_backfill = self._search_relations(query_emb, rel_top_k, temporal)
+        para_backfill = self._search_paragraphs(query_emb, para_top_k, temporal, scope=scope)
+        rel_backfill = self._search_relations(query_emb, rel_top_k, temporal, scope=scope)
         para_results = self._merge_backfilled_results(
             primary_results=para_results,
             backfill_results=para_backfill,
@@ -2210,6 +2444,7 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         搜索段落
@@ -2223,13 +2458,19 @@ class DualPathRetriever:
         """
         multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
         candidate_k = self._cap_temporal_scan_k(top_k * multiplier, temporal)
-        para_ids, para_scores = self.vector_store.search(query_emb, k=candidate_k)
+        para_ids, para_scores = self._search_vector_store(
+            self.vector_store,
+            query_emb,
+            k=candidate_k,
+            allowed_ids=scope.paragraph_ids if scope else None,
+        )
 
         return self._build_paragraph_results_from_ids(
             list(para_ids),
             [float(score) for score in para_scores],
             source="paragraph_search",
             temporal=temporal,
+            scope=scope,
         )
 
     def _search_relations(
@@ -2237,6 +2478,7 @@ class DualPathRetriever:
         query_emb: np.ndarray,
         top_k: int,
         temporal: Optional[TemporalQueryOptions] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """
         搜索关系
@@ -2250,13 +2492,19 @@ class DualPathRetriever:
         """
         multiplier = max(1, temporal.candidate_multiplier) if temporal else 1
         candidate_k = self._cap_temporal_scan_k(top_k * multiplier, temporal)
-        rel_ids, rel_scores = self.vector_store.search(query_emb, k=candidate_k)
+        rel_ids, rel_scores = self._search_vector_store(
+            self.vector_store,
+            query_emb,
+            k=candidate_k,
+            allowed_ids=scope.relation_ids if scope else None,
+        )
 
         return self._build_relation_results_from_ids(
             list(rel_ids),
             [float(score) for score in rel_scores],
             source="relation_search",
             temporal=temporal,
+            scope=scope,
         )
 
     def _fuse_results(
@@ -2441,6 +2689,9 @@ class DualPathRetriever:
         Returns:
             重排序后的结果
         """
+        if self.graph_store is None or self._ppr is None:
+            return results
+
         # 从查询中提取实体
         entities = self._extract_entities(query)
 
@@ -2531,6 +2782,8 @@ class DualPathRetriever:
             return scores
 
     def _compute_ppr_scores(self, entities: Dict[str, float]) -> Dict[str, float]:
+        if self._ppr is None:
+            return {}
         if self._should_use_local_ppr():
             scores = self._compute_local_ppr_scores(entities)
             if scores:
@@ -2539,7 +2792,8 @@ class DualPathRetriever:
 
     def _should_use_local_ppr(self) -> bool:
         return bool(
-            self.config.ppr_local_enabled
+            self.graph_store is not None
+            and self.config.ppr_local_enabled
             and self.graph_store.num_nodes >= self.config.ppr_local_min_graph_nodes
         )
 
@@ -2677,6 +2931,7 @@ class DualPathRetriever:
         self,
         temporal: TemporalQueryOptions,
         top_k: int,
+        scope: Optional[RetrievalScope] = None,
     ) -> List[RetrievalResult]:
         """无语义 query 时，直接走时序索引查询。"""
         limit = self._cap_temporal_scan_k(
@@ -2690,6 +2945,7 @@ class DualPathRetriever:
             source=temporal.source,
             limit=limit,
             allow_created_fallback=temporal.allow_created_fallback,
+            allowed_hashes=scope.paragraph_ids if scope else None,
         )
         results: List[RetrievalResult] = []
         for para in paragraphs:
@@ -2926,6 +3182,9 @@ class DualPathRetriever:
         Returns:
             实体字典 {实体名: 权重}
         """
+        if self.graph_store is None:
+            return {}
+
         # 获取所有实体
         all_entities = self.graph_store.get_nodes()
         if not all_entities:
@@ -2997,8 +3256,8 @@ class DualPathRetriever:
                 "size": int(vector_size),
             },
             "graph_store": {
-                "num_nodes": self.graph_store.num_nodes,
-                "num_edges": self.graph_store.num_edges,
+                "num_nodes": self.graph_store.num_nodes if self.graph_store is not None else 0,
+                "num_edges": self.graph_store.num_edges if self.graph_store is not None else 0,
             },
             "metadata_store": self.metadata_store.get_statistics(),
             "sparse": self.sparse_index.stats() if self.sparse_index else None,

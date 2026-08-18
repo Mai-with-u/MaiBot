@@ -9,6 +9,7 @@ import {
   Info,
   RefreshCw,
   Save,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   X,
@@ -76,6 +77,7 @@ import {
   useAutoSave,
 } from './bot/hooks'
 import { CoreSettings } from './bot/CoreSettings'
+import { CommandPermissions } from './bot/CommandPermissions'
 
 type ConfigSectionData = Record<string, unknown>
 // ==================== 常量定义 ====================
@@ -177,7 +179,7 @@ function BotConfigPageContent() {
   const [saving, setSaving] = useState(false)
   const [autoSaving, setAutoSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [editMode, setEditMode] = useState<'core' | 'detail' | 'source'>('core')
+  const [editMode, setEditMode] = useState<'core' | 'detail' | 'commands' | 'source'>('core')
   const [sourceCode, setSourceCode] = useState<string>('')
   const [hasTomlError, setHasTomlError] = useState(false)
   const [tomlErrorMessage, setTomlErrorMessage] = useState<string>('')
@@ -481,7 +483,7 @@ function BotConfigPageContent() {
   }
 
   // 处理模式切换
-  const handleModeChange = async (mode: 'core' | 'detail' | 'source') => {
+  const handleModeChange = async (mode: 'core' | 'detail' | 'commands' | 'source') => {
     if (hasUnsavedChanges) {
       toast({
         variant: 'destructive',
@@ -630,10 +632,10 @@ function BotConfigPageContent() {
             <div className="flex w-full min-w-0 flex-wrap gap-2 sm:w-auto sm:flex-shrink-0 sm:justify-end">
               <Tabs
                 value={editMode}
-                onValueChange={(v) => handleModeChange(v as 'core' | 'detail' | 'source')}
-                className="w-full min-w-0 sm:w-[22rem]"
+                onValueChange={(v) => handleModeChange(v as 'core' | 'detail' | 'commands' | 'source')}
+                className="w-full min-w-0 sm:w-[30rem]"
               >
-                <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-3">
+                <TabsList data-config-bot-mode-tabs="true" className="grid h-9 w-full grid-cols-4">
                   <TabsTrigger value="core" className="px-2 text-sm">
                     <Sparkles className="mr-1 h-4 w-4" />
                     核心设置
@@ -641,6 +643,10 @@ function BotConfigPageContent() {
                   <TabsTrigger value="detail" className="px-2 text-sm">
                     <SlidersHorizontal className="mr-1 h-4 w-4" />
                     详细设置
+                  </TabsTrigger>
+                  <TabsTrigger value="commands" className="px-2 text-sm">
+                    <ShieldCheck className="mr-1 h-4 w-4" />
+                    命令管理
                   </TabsTrigger>
                   <TabsTrigger value="source" className="px-2 text-sm">
                     <Code2 className="mr-1 h-4 w-4" />
@@ -779,6 +785,16 @@ function BotConfigPageContent() {
           />
         )}
 
+        {editMode === 'commands' && (
+          <CommandPermissions
+            pluginSection={sectionValues.plugin ?? null}
+            onChange={(value) => {
+              setSectionValue('plugin', value)
+              setHasUnsavedChanges(true)
+            }}
+          />
+        )}
+
         {/* 重启遮罩层 */}
         <RestartOverlay />
       </div>
@@ -851,11 +867,12 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
   )
   const scrolledSearchFieldRef = useRef('')
 
-  useEffect(() => {
-    if (!tabGroups.some((tab) => tab.id === activeTab)) {
-      setActiveTab(tabGroups[0]?.id ?? '')
+  if (!tabGroups.some((tab) => tab.id === activeTab)) {
+    const fallbackTab = tabGroups[0]?.id ?? ''
+    if (activeTab !== fallbackTab) {
+      setActiveTab(fallbackTab)
     }
-  }, [activeTab, tabGroups])
+  }
 
   useEffect(() => {
     if (!searchFieldPath) {

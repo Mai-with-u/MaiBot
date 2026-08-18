@@ -16,6 +16,8 @@ _DEFAULT_POLICY_PATH = _PROJECT_ROOT / "config" / "adapter_policy.toml"
 _SUPPORTED_CHAT_TYPES = {"group", "private"}
 _SUPPORTED_LIST_TYPES = {"whitelist", "blacklist"}
 _SUPPORTED_OVERRIDE_ACTIONS = {"allow", "block", "inherit"}
+_SUPPORTED_DEFAULT_ACTIONS = {"allow", "block"}
+_IMPLICIT_DEFAULT_ACTION = "allow"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,12 +104,129 @@ class AdapterPolicyManager:
                 return policy_result
 
         return AdapterPolicyResult(
-            allowed=True,
+            allowed=_IMPLICIT_DEFAULT_ACTION == "allow",
             configured=False,
             chat_type=normalized_chat_type,
             target_id=normalized_target_id,
-            reason="no_host_policy",
+            source="implicit_default",
+            reason=f"default_{_IMPLICIT_DEFAULT_ACTION}",
         )
+
+    def get_default_actions(self) -> Dict[str, str]:
+        """返回群聊和私聊当前生效的全局默认动作。"""
+
+        policy_data = self._load_policy_data()
+        defaults = policy_data.get("defaults")
+        actions: Dict[str, str] = {}
+        for chat_type in sorted(_SUPPORTED_CHAT_TYPES):
+            action = _IMPLICIT_DEFAULT_ACTION
+            if isinstance(defaults, Mapping):
+                typed_policy = self._resolve_typed_policy(defaults, chat_type)
+                if typed_policy is not None:
+                    configured_action = str(typed_policy.get("default_action") or "").strip().lower()
+                    if configured_action in _SUPPORTED_DEFAULT_ACTIONS:
+                        action = configured_action
+            actions[chat_type] = action
+        return actions
+
+    def get_adapter_policy(self, identity: AdapterIdentity) -> Dict[str, Dict[str, Any]]:
+        """返回一个精确适配器身份可由 WebUI 编辑的主程序规则。"""
+
+        policy_match = self._identity_to_policy_match(identity)
+        if not policy_match:
+            raise ValueError("适配器身份不能为空")
+
+        policy_data = self._load_policy_data()
+        exact_policy: Optional[Mapping[str, Any]] = None
+        adapters = policy_data.get("adapters")
+        if isinstance(adapters, list):
+            for item in adapters:
+                if isinstance(item, Mapping) and self._policy_identity_match(item) == policy_match:
+                    exact_policy = item
+                    break
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for chat_type in sorted(_SUPPORTED_CHAT_TYPES):
+            typed_policy = self._resolve_typed_policy(exact_policy, chat_type) if exact_policy is not None else None
+            default_action = "inherit"
+            allow_ids: List[str] = []
+            deny_ids: List[str] = []
+            if typed_policy is not None:
+                configured_action = str(typed_policy.get("default_action") or "").strip().lower()
+                if configured_action in _SUPPORTED_DEFAULT_ACTIONS:
+                    default_action = configured_action
+                allow_ids = self._normalize_id_list(typed_policy.get("allow_ids"))
+                deny_ids = self._normalize_id_list(typed_policy.get("deny_ids"))
+            result[chat_type] = {
+                "default_action": default_action,
+                "allow_ids": allow_ids,
+                "deny_ids": deny_ids,
+            }
+        return result
+
+    def set_adapter_policy(
+        self,
+        identity: AdapterIdentity,
+        policies: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        """原子更新一个精确适配器身份的群聊与私聊规则。"""
+
+        if not self._identity_to_policy_match(identity):
+            raise ValueError("适配器身份不能为空")
+
+        normalized_policies: Dict[str, Dict[str, Any]] = {}
+        for chat_type in sorted(_SUPPORTED_CHAT_TYPES):
+            raw_policy = policies.get(chat_type)
+            if not isinstance(raw_policy, Mapping):
+                raise ValueError(f"缺少 {chat_type} 放行规则")
+            default_action = str(raw_policy.get("default_action") or "inherit").strip().lower()
+            if default_action not in _SUPPORTED_OVERRIDE_ACTIONS:
+                raise ValueError("default_action 必须是 allow、block 或 inherit")
+            allow_ids = self._normalize_id_list(raw_policy.get("allow_ids"))
+            deny_ids = self._normalize_id_list(raw_policy.get("deny_ids"))
+            conflicting_ids = sorted(set(allow_ids).intersection(deny_ids))
+            if conflicting_ids:
+                raise ValueError(f"同一 ID 不能同时放行和拒绝: {', '.join(conflicting_ids)}")
+            normalized_policies[chat_type] = {
+                "default_action": default_action,
+                "allow_ids": allow_ids,
+                "deny_ids": deny_ids,
+            }
+
+        policy_doc = self._load_policy_doc()
+        adapters = self._ensure_adapter_tables(policy_doc)
+        adapter_policy = self._find_or_create_exact_adapter_policy(adapters, identity)
+        for chat_type, normalized_policy in normalized_policies.items():
+            chat_policy = self._ensure_chat_policy_table(adapter_policy, chat_type)
+            default_action = normalized_policy["default_action"]
+            if default_action == "inherit":
+                if "default_action" in chat_policy:
+                    del chat_policy["default_action"]
+            else:
+                chat_policy["default_action"] = default_action
+            self._set_or_remove_id_list(chat_policy, "allow_ids", normalized_policy["allow_ids"])
+            self._set_or_remove_id_list(chat_policy, "deny_ids", normalized_policy["deny_ids"])
+            self._prune_empty_ui_policy(adapter_policy, chat_type)
+
+        self._prune_empty_adapter_policy(adapters, adapter_policy)
+        self._write_policy_doc(policy_doc)
+
+    def set_default_action(self, chat_type: str, action: str) -> None:
+        """设置某类聊天在没有命中具体规则时的全局默认动作。"""
+
+        normalized_chat_type = self._normalize_chat_type(chat_type)
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in _SUPPORTED_DEFAULT_ACTIONS:
+            raise ValueError("action 必须是 allow 或 block")
+
+        policy_doc = self._load_policy_doc()
+        defaults = policy_doc.get("defaults")
+        if not isinstance(defaults, Table):
+            defaults = tomlkit.table()
+            policy_doc["defaults"] = defaults
+        chat_policy = self._ensure_chat_policy_table(defaults, normalized_chat_type)
+        chat_policy["default_action"] = normalized_action
+        self._write_policy_doc(policy_doc)
 
     def set_chat_override(
         self,
@@ -149,8 +268,7 @@ class AdapterPolicyManager:
         self._prune_empty_ui_policy(adapter_policy, normalized_chat_type)
         self._prune_empty_adapter_policy(adapters, adapter_policy)
         self._policy_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._policy_path.open("w", encoding="utf-8") as policy_file:
-            policy_file.write(tomlkit.dumps(policy_doc))
+        self._write_policy_doc(policy_doc)
 
     def _evaluate_policy(
         self,
@@ -196,7 +314,18 @@ class AdapterPolicyManager:
             )
 
         if "list_type" not in policy and "ids" not in policy:
-            return None
+            default_action = str(policy.get("default_action") or "").strip().lower()
+            if default_action not in _SUPPORTED_DEFAULT_ACTIONS:
+                return None
+            return AdapterPolicyResult(
+                allowed=default_action == "allow",
+                configured=True,
+                chat_type=chat_type,
+                target_id=target_id,
+                list_type="default",
+                source=source,
+                reason=f"default_{default_action}",
+            )
 
         list_type = str(policy.get("list_type") or "whitelist").strip().lower()
         if list_type not in _SUPPORTED_LIST_TYPES:
@@ -332,7 +461,18 @@ class AdapterPolicyManager:
     @staticmethod
     def _normalize_chat_type(chat_type: str) -> str:
         normalized_chat_type = str(chat_type or "").strip().lower()
-        return normalized_chat_type if normalized_chat_type in _SUPPORTED_CHAT_TYPES else "private"
+        if normalized_chat_type not in _SUPPORTED_CHAT_TYPES:
+            raise ValueError(f"不支持的聊天类型: {chat_type}")
+        return normalized_chat_type
+
+    def _write_policy_doc(self, policy_doc: Any) -> None:
+        """原子写入策略文档，避免进程中断留下半份配置。"""
+
+        self._policy_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self._policy_path.with_suffix(f"{self._policy_path.suffix}.tmp")
+        with temporary_path.open("w", encoding="utf-8") as policy_file:
+            policy_file.write(tomlkit.dumps(policy_doc))
+        temporary_path.replace(self._policy_path)
 
     @staticmethod
     def _normalize_id_list(value: Any) -> List[str]:
@@ -364,6 +504,18 @@ class AdapterPolicyManager:
         }
         return {key: str(value).strip() for key, value in policy_match.items() if str(value).strip()}
 
+    def _policy_identity_match(self, policy: Mapping[str, Any]) -> Dict[str, str]:
+        return self._identity_to_policy_match(
+            AdapterIdentity(
+                adapter_id=str(policy.get("adapter_id") or ""),
+                plugin_id=str(policy.get("plugin_id") or ""),
+                gateway_name=str(policy.get("gateway_name") or ""),
+                platform=str(policy.get("platform") or ""),
+                account_id=str(policy.get("account_id") or "") or None,
+                scope=str(policy.get("scope") or "") or None,
+            )
+        )
+
     def _ensure_adapter_tables(self, policy_doc: Any) -> AoT:
         adapters = policy_doc.get("adapters")
         if isinstance(adapters, AoT):
@@ -385,16 +537,7 @@ class AdapterPolicyManager:
         for item in adapters:
             if not isinstance(item, Table):
                 continue
-            item_match = self._identity_to_policy_match(
-                AdapterIdentity(
-                    adapter_id=str(item.get("adapter_id") or ""),
-                    plugin_id=str(item.get("plugin_id") or ""),
-                    gateway_name=str(item.get("gateway_name") or ""),
-                    platform=str(item.get("platform") or ""),
-                    account_id=str(item.get("account_id") or "") or None,
-                    scope=str(item.get("scope") or "") or None,
-                )
-            )
+            item_match = self._policy_identity_match(item)
             if item_match == policy_match:
                 return item
 
@@ -426,7 +569,9 @@ class AdapterPolicyManager:
         chat_policy = adapter_policy.get(chat_type)
         if not isinstance(chat_policy, Table):
             return
-        if any(key in chat_policy for key in ("allow_ids", "deny_ids", "list_type", "ids", "disabled")):
+        if any(
+            key in chat_policy for key in ("allow_ids", "deny_ids", "list_type", "ids", "disabled", "default_action")
+        ):
             return
         del adapter_policy[chat_type]
 

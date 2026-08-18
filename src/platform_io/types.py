@@ -52,7 +52,7 @@ class RouteKey:
         Raises:
             ValueError: 当 ``platform`` 规范化后为空时抛出。
         """
-        platform = str(self.platform).strip()
+        platform = str(self.platform).strip().lower()
         account_id = str(self.account_id).strip() if self.account_id is not None else None
         scope = str(self.scope).strip() if self.scope is not None else None
 
@@ -127,7 +127,7 @@ class DriverDescriptor:
             ValueError: 当 ``driver_id`` 或 ``platform`` 规范化后为空时抛出。
         """
         driver_id = str(self.driver_id).strip()
-        platform = str(self.platform).strip()
+        platform = str(self.platform).strip().lower()
         plugin_id = str(self.plugin_id).strip() if self.plugin_id is not None else None
 
         if not driver_id:

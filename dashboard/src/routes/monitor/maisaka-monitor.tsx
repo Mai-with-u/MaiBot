@@ -1412,6 +1412,7 @@ export function MaisakaMonitor() {
   const [autoScroll, setAutoScroll] = useState(true)
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previousSelectedSessionRef = useRef<string | null | undefined>(undefined)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('maisaka-monitor-sidebar-collapsed')
     return saved !== 'false'
@@ -1497,6 +1498,8 @@ export function MaisakaMonitor() {
     return visibleEntries
   }, [timeline])
 
+  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
+  // eslint-disable-next-line react-hooks/incompatible-library
   const timelineVirtualizer = useVirtualizer({
     count: visibleTimelineEntries.length,
     getScrollElement: () => scrollViewport,
@@ -1574,6 +1577,11 @@ export function MaisakaMonitor() {
   }, [visibleTimelineEntries.length, autoScroll, scrollToBottom])
 
   useEffect(() => {
+    if (previousSelectedSessionRef.current === selectedSession) {
+      return
+    }
+    previousSelectedSessionRef.current = selectedSession
+    setAutoScroll(true)
     requestAnimationFrame(() => scrollToBottom('auto'))
   }, [selectedSession, scrollToBottom])
 

@@ -123,6 +123,9 @@ class ActionInfo(ComponentInfo):
 class CommandInfo(ComponentInfo):
     """供命令处理链使用的命令信息快照。"""
 
+    permission: str = "public"
+    """命令权限级别；public 为公开，operator 为受保护。"""
+
     component_type: ComponentType = field(init=False, default=ComponentType.COMMAND)
     """组件类型。"""
 

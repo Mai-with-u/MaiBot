@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { ChevronDown, ChevronUp, CircleAlert, Plus, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -341,11 +341,9 @@ export function createListItemEditorHook(
       ? (options.expandLabel ?? '灞曞紑')
       : (options.collapseLabel ?? '鎶樺彔')
 
-    useEffect(() => {
-      if (!shouldCollapse) {
-        setManuallyExpanded(false)
-      }
-    }, [shouldCollapse])
+    if (!shouldCollapse && manuallyExpanded) {
+      setManuallyExpanded(false)
+    }
 
     const addButton = (
       <Button

@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { type CSSProperties, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
@@ -16,15 +16,12 @@ import {
   FileText,
   Loader2,
   Play,
-  Plus,
   RefreshCw,
   Search,
   Timer,
   Trash2,
-  X,
 } from 'lucide-react'
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,161 +41,63 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { resolveApiPath } from '@/lib/api-base'
 import { useAvatarFetchEnabled } from '@/lib/avatar-url'
-import { formatChatAccountLabel } from '@/lib/chat-display'
-import { getModelConfig } from '@/lib/config-api'
 import {
   getReasoningPromptFile,
   getReasoningPromptHtmlUrl,
   listReasoningPromptFiles,
   listReasoningPromptStages,
-  replayReasoningPrompt,
   clearReasoningPromptStage,
   type ReasoningPromptFile,
-  type ReasoningPromptMessageAvatar,
-  type ReasoningReplayResponse,
   type ReasoningPromptSessionInfo,
   type ReasoningPromptStageInfo,
 } from '@/lib/reasoning-process-api'
 import { cn } from '@/lib/utils'
+import {
+  isRecord,
+  parseStructuredPrompt,
+  type StructuredPromptPayload,
+} from './reasoning-process/schema'
+import {
+  ContextItemTimeline,
+  NaturalLanguageText,
+  ToolDefinitionsCollapsible,
+  buildStructuredPromptCopyText,
+  extractBotSelfNames,
+  extractReasoningHeaderMeta,
+  formatStageName,
+  formatPromptPreviewText,
+  getReasoningRecordTitle,
+  getSessionDisplayName,
+  getSessionSubtitle,
+  parseMessageTagAttributes,
+  type ReasoningPromptMessageAvatarMap,
+} from './reasoning-process/context-items'
+import { GenerationAttemptTimeline } from './reasoning-process/generation-attempts'
+import {
+  ReasoningReplayPanel,
+  ReplayItemEditorColumn,
+  createBlankReplayItem,
+  createEditableReplayItems,
+  type EditableReplayItem,
+} from './reasoning-process/replay-editor'
 
 const PAGE_SIZE = 50
-const REPLAY_COUNT_MAX = 20
 const AUTO_SESSION = 'auto'
 const ALL_GROUP_SESSIONS = '__all_group_chats__'
 const CORE_STAGE_NAMES = ['planner', 'replyer']
 const LLM_ERROR_STAGE_NAMES = ['llm_error']
 const REMOVED_STAGE_NAMES = ['timing_gate']
-const NATURAL_LANGUAGE_TEXT_STYLE: CSSProperties = {
-  fontFamily:
-    "'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif",
-}
-const STAGE_LABELS: Record<string, string> = {
-  behavior_consolidator: '行为整合',
-  behavior_feedback: '行为反馈',
-  behavior_learner: '行为学习',
-  behavior_scenario_analyzer: '行为场景分析',
-  behavior_selector: '行为选择',
-  emotion: '表情包发送',
-  expression_learner: '表达学习',
-  expression_selection: '表达选择',
-  expression_selector: '表达选择',
-  jargon_learner: '黑话抽取',
-  jargon_learning_update: '黑话含义推断',
-  llm_error: 'LLM 请求异常',
-  planner: '规划器',
-  reply_effect_judge: '回复效果评估',
-  replyer: '回复器',
-  timing_gate: '时机判断',
-}
 
 type StageCategoryRow = {
   key: string
   label: string
   items: ReasoningPromptStageInfo[]
   collapsedByDefault?: boolean
-}
-
-type StructuredPromptMessage = {
-  index?: number
-  role?: string
-  content?: unknown
-  tool_call_id?: string
-  tool_calls?: unknown[]
-}
-
-type LlmErrorAttempt = {
-  attempt?: number
-  model_attempt?: number
-  status?: string
-  timestamp?: string
-  model_name?: string
-  provider_name?: string
-  client_type?: string
-  operation?: string
-  retry_interval?: number
-  error?: {
-    type?: string
-    status_code?: number | null
-    message?: string
-    response_body?: unknown
-  }
-}
-
-type StructuredPromptOutput = {
-  title?: string
-  content?: unknown
-  tool_calls?: unknown[]
-}
-
-type ProviderResponsePayload = Record<string, unknown> & {
-  output?: unknown[]
-}
-
-type StructuredPromptLlmCall = {
-  inference_stage: string
-  request?: {
-    kind?: string
-    operation?: string
-    request_type?: string
-    selection_reason?: string
-    task_name?: string
-  }
-  metadata?: {
-    client_type?: string
-    created_at?: string
-    model_name?: string
-    duration_ms?: number
-    provider_name?: string
-    request_id?: string
-    session_id?: string | null
-    status?: string
-    updated_at?: string
-  }
-  messages?: StructuredPromptMessage[]
-  output?: StructuredPromptOutput | null
-  provider_response?: ProviderResponsePayload
-}
-
-type StructuredPromptPayload = {
-  schema_version?: number
-  request?: {
-    kind?: string
-    operation?: string
-    request_type?: string
-    selection_reason?: string
-    task_name?: string
-  }
-  metadata?: {
-    client_type?: string
-    created_at?: string
-    model_name?: string
-    duration_ms?: number
-    provider_name?: string
-    request_id?: string
-    session_id?: string | null
-    status?: string
-    updated_at?: string
-  }
-  messages?: StructuredPromptMessage[]
-  output?: StructuredPromptOutput | null
-  tool_definitions?: unknown[]
-  jargon_learning_calls?: StructuredPromptLlmCall[]
-  attempts?: LlmErrorAttempt[]
-  request_parameters?: Record<string, unknown>
-  provider_request?: Record<string, unknown>
-  provider_response?: ProviderResponsePayload
 }
 
 function getInitialSearchParams(): URLSearchParams {
@@ -208,7 +107,12 @@ function getInitialSearchParams(): URLSearchParams {
 
 function getSafeInternalReturnTo(value: string | null): string {
   const normalized = value?.trim() ?? ''
-  if (!normalized || !normalized.startsWith('/') || normalized.startsWith('//') || typeof window === 'undefined') {
+  if (
+    !normalized ||
+    !normalized.startsWith('/') ||
+    normalized.startsWith('//') ||
+    typeof window === 'undefined'
+  ) {
     return ''
   }
 
@@ -221,48 +125,6 @@ function getSafeInternalReturnTo(value: string | null): string {
   }
 }
 
-type ParsedMessageTagBlock = {
-  type: 'message'
-  attrs: Record<string, string>
-  body: string
-}
-
-type ParsedTextBlock = {
-  type: 'text'
-  text: string
-}
-
-type ParsedNaturalTextBlock = ParsedMessageTagBlock | ParsedTextBlock
-
-type ToolParameterView = {
-  name: string
-  type: string
-  description: string
-  required: boolean
-  enumValues: string[]
-  defaultValue: string
-}
-
-type ToolDefinitionView = {
-  name: string
-  type: string
-  description: string
-  parameters: ToolParameterView[]
-  raw: unknown
-}
-
-type ReasoningPromptMessageAvatarMap = Record<string, ReasoningPromptMessageAvatar>
-
-type ReasoningHeaderMeta = {
-  sessionId: string
-  callId: string
-  remainingText: string
-}
-
-function formatStageName(stage: string): string {
-  return STAGE_LABELS[stage] ?? stage
-}
-
 function isLearnerStage(stage: string): boolean {
   return stage.includes('learner') || stage.includes('learning')
 }
@@ -270,17 +132,19 @@ function isLearnerStage(stage: string): boolean {
 function buildStageCategoryRows(stageCards: ReasoningPromptStageInfo[]): StageCategoryRow[] {
   const stageInfoByName = new Map(stageCards.map((item) => [item.name, item]))
   const usedStageNames = new Set<string>()
-  const takeNamedStages = (stageNames: string[]) => stageNames.flatMap((stageName) => {
-    const item = stageInfoByName.get(stageName)
-    if (!item) return []
-    usedStageNames.add(stageName)
-    return [item]
-  })
-  const takeMatchingStages = (predicate: (stage: string) => boolean) => stageCards.filter((item) => {
-    if (usedStageNames.has(item.name) || !predicate(item.name)) return false
-    usedStageNames.add(item.name)
-    return true
-  })
+  const takeNamedStages = (stageNames: string[]) =>
+    stageNames.flatMap((stageName) => {
+      const item = stageInfoByName.get(stageName)
+      if (!item) return []
+      usedStageNames.add(stageName)
+      return [item]
+    })
+  const takeMatchingStages = (predicate: (stage: string) => boolean) =>
+    stageCards.filter((item) => {
+      if (usedStageNames.has(item.name) || !predicate(item.name)) return false
+      usedStageNames.add(item.name)
+      return true
+    })
 
   const coreStages = takeNamedStages(CORE_STAGE_NAMES)
   const learnerStages = takeMatchingStages(isLearnerStage)
@@ -320,6 +184,22 @@ function formatDurationMs(durationMs: number | null): string {
   return `${(durationMs / 1000).toFixed(2)} s`
 }
 
+function formatTokenUsage(
+  promptTokens: number | null | undefined,
+  completionTokens: number | null | undefined,
+  totalTokens: number | null | undefined
+): string {
+  if (promptTokens === null || promptTokens === undefined) return ''
+  const parts = [`输入 ${promptTokens.toLocaleString('zh-CN')}`]
+  if (completionTokens !== null && completionTokens !== undefined) {
+    parts.push(`输出 ${completionTokens.toLocaleString('zh-CN')}`)
+  }
+  if (totalTokens !== null && totalTokens !== undefined) {
+    parts.push(`总计 ${totalTokens.toLocaleString('zh-CN')}`)
+  }
+  return `${parts.join(' / ')} Token`
+}
+
 function formatLlmRequestStatus(status?: string): string {
   const labels: Record<string, string> = {
     failed: '本次失败',
@@ -349,7 +229,7 @@ function formatSnapshotTime(value?: string): string {
 }
 
 function LlmErrorDetails({ prompt }: { prompt: StructuredPromptPayload }) {
-  const attempts = prompt.attempts ?? []
+  const attempts = prompt.generation_attempts
   const status = prompt.metadata?.status
   const succeeded = status === 'succeeded_after_retry'
   const summaryItems = [
@@ -384,94 +264,13 @@ function LlmErrorDetails({ prompt }: { prompt: StructuredPromptPayload }) {
           {summaryItems.map(([label, value]) => (
             <div key={label} className="min-w-0">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="mt-0.5 break-all font-medium">{value}</dd>
+              <dd className="mt-0.5 font-medium break-all">{value}</dd>
             </div>
           ))}
         </dl>
       )}
 
-      <div className="space-y-2">
-        {attempts.map((attempt, index) => {
-          const errorBody = attempt.error?.response_body
-          return (
-            <article
-              key={`${attempt.attempt ?? index}-${attempt.model_name ?? 'unknown'}`}
-              className="rounded-md border bg-muted/20 p-2.5"
-            >
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-sm font-semibold">尝试 #{attempt.attempt ?? index + 1}</span>
-                <Badge variant="outline" className={getLlmRequestStatusStyle(attempt.status)}>
-                  {formatLlmRequestStatus(attempt.status)}
-                </Badge>
-                {attempt.model_attempt && (
-                  <span className="text-muted-foreground text-xs">模型内第 {attempt.model_attempt} 次</span>
-                )}
-                {attempt.retry_interval !== undefined && (
-                  <span className="text-muted-foreground text-xs">
-                    {attempt.retry_interval} 秒后重试
-                  </span>
-                )}
-                <time className="text-muted-foreground ml-auto text-xs">
-                  {formatSnapshotTime(attempt.timestamp)}
-                </time>
-              </div>
-              <div className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                {attempt.model_name && <span>模型：{attempt.model_name}</span>}
-                {attempt.provider_name && <span>服务商：{attempt.provider_name}</span>}
-                {attempt.client_type && <span>客户端：{attempt.client_type}</span>}
-                {attempt.operation && <span>操作：{attempt.operation}</span>}
-              </div>
-              {attempt.error && (
-                <div className="mt-2 space-y-1 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {attempt.error.type && <code className="text-xs">{attempt.error.type}</code>}
-                    {attempt.error.status_code !== null &&
-                      attempt.error.status_code !== undefined && (
-                        <Badge variant="outline">HTTP {attempt.error.status_code}</Badge>
-                      )}
-                  </div>
-                  {attempt.error.message && (
-                    <p className="text-destructive break-words">{attempt.error.message}</p>
-                  )}
-                  {errorBody !== undefined && (
-                    <details className="text-muted-foreground">
-                      <summary className="cursor-pointer text-xs">查看上游响应</summary>
-                      <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded p-2 text-xs whitespace-pre-wrap">
-                        {typeof errorBody === 'string'
-                          ? errorBody
-                          : JSON.stringify(errorBody, null, 2)}
-                      </pre>
-                    </details>
-                  )}
-                </div>
-              )}
-            </article>
-          )
-        })}
-      </div>
-
-      {(prompt.request_parameters || prompt.provider_request) && (
-        <div className="space-y-1.5">
-          {prompt.request_parameters && (
-            <details className="rounded-md border">
-              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">请求参数</summary>
-              <pre className="max-h-64 overflow-auto border-t p-2.5 text-xs whitespace-pre-wrap">
-                {JSON.stringify(prompt.request_parameters, null, 2)}
-              </pre>
-            </details>
-          )}
-          {prompt.provider_request && (
-            <details className="rounded-md border">
-              <summary className="cursor-pointer px-2.5 py-2 text-xs font-medium">
-                Provider 请求参数
-              </summary>
-              <pre className="max-h-64 overflow-auto border-t p-2.5 text-xs whitespace-pre-wrap">
-                {JSON.stringify(prompt.provider_request, null, 2)}
-              </pre>
-            </details>
-          )}
-        </div>
-      )}
+      <GenerationAttemptTimeline attempts={attempts} referenceRequestItems={prompt.request_items} />
     </section>
   )
 }
@@ -485,105 +284,11 @@ function getReasoningMetadataText(item: ReasoningPromptFile): string {
   if (durationText) {
     parts.push(`耗时：${durationText}`)
   }
+  const tokenText = formatTokenUsage(item.prompt_tokens, item.completion_tokens, item.total_tokens)
+  if (tokenText) {
+    parts.push(tokenText)
+  }
   return parts.join(' · ')
-}
-
-function getStructuredPromptMessageRoleStyle(role?: string, isBotSelf = false): {
-  label: string
-  containerClassName: string
-  badgeClassName: string
-} {
-  const normalizedRole = String(role || '').trim().toLowerCase()
-  if (isBotSelf) {
-    return {
-      label: role || 'user',
-      containerClassName: 'border-orange-300/70 bg-orange-50/75 dark:border-orange-700/60 dark:bg-orange-950/25',
-      badgeClassName:
-        'border-orange-400/70 bg-orange-100/85 text-orange-900 dark:border-orange-700 dark:bg-orange-950 dark:text-orange-100',
-    }
-  }
-  if (normalizedRole === 'system') {
-    return {
-      label: 'system',
-      containerClassName: 'border-cyan-300/70 bg-cyan-50/70 dark:border-cyan-700/60 dark:bg-cyan-950/25',
-      badgeClassName: 'border-cyan-400/70 bg-cyan-100/80 text-cyan-900 dark:border-cyan-700 dark:bg-cyan-950 dark:text-cyan-100',
-    }
-  }
-  if (normalizedRole === 'user') {
-    return {
-      label: 'user',
-      containerClassName: 'border-emerald-300/70 bg-emerald-50/70 dark:border-emerald-700/60 dark:bg-emerald-950/25',
-      badgeClassName:
-        'border-emerald-400/70 bg-emerald-100/80 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100',
-    }
-  }
-  if (normalizedRole === 'assistant') {
-    return {
-      label: 'assistant',
-      containerClassName: 'border-amber-300/70 bg-amber-50/70 dark:border-amber-700/60 dark:bg-amber-950/25',
-      badgeClassName:
-        'border-amber-400/70 bg-amber-100/80 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
-    }
-  }
-  if (normalizedRole === 'tool') {
-    return {
-      label: 'tool',
-      containerClassName: 'border-violet-300/70 bg-violet-50/70 dark:border-violet-700/60 dark:bg-violet-950/25',
-      badgeClassName:
-        'border-violet-400/70 bg-violet-100/80 text-violet-900 dark:border-violet-700 dark:bg-violet-950 dark:text-violet-100',
-    }
-  }
-
-  return {
-    label: role || '未知角色',
-    containerClassName: 'bg-muted/30',
-    badgeClassName: 'bg-background/80',
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function stringifyStructuredValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value === null || value === undefined) return ''
-  return JSON.stringify(value, null, 2)
-}
-
-function stringifyPromptContent(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value === null || value === undefined) return ''
-  if (!Array.isArray(value)) return stringifyStructuredValue(value)
-
-  return value
-    .map((item) => {
-      if (typeof item === 'string') return item
-      if (isRecord(item) && item.type === 'text' && typeof item.text === 'string') return item.text
-      if (isRecord(item)) {
-        const partType = String(item.type || '').trim().toLowerCase()
-        if (['image', 'image_url', 'input_image'].includes(partType)) {
-          const imageFormat = String(item.image_format || item.format || 'unknown').trim() || 'unknown'
-          const sizeText = typeof item.size_bytes === 'number' ? ` ${item.size_bytes} B` : ''
-          return `[图片 image/${imageFormat}${sizeText}]`
-        }
-      }
-      return stringifyStructuredValue(item)
-    })
-    .filter(Boolean)
-    .join('\n')
-    .trim()
-}
-
-function parseStructuredPrompt(content: string): StructuredPromptPayload | null {
-  if (!content.trim()) return null
-  try {
-    const payload = JSON.parse(content) as unknown
-    if (payload && typeof payload === 'object') return payload as StructuredPromptPayload
-  } catch {
-    return null
-  }
-  return null
 }
 
 function formatAnonymousUserName(index: number): string {
@@ -596,7 +301,11 @@ function formatAnonymousUserName(index: number): string {
   return `用户${suffix}`
 }
 
-function getAnonymousUserName(rawName: unknown, nameMap: Map<string, string>, preferredName?: string): string {
+function getAnonymousUserName(
+  rawName: unknown,
+  nameMap: Map<string, string>,
+  preferredName?: string
+): string {
   const nameKey = String(rawName ?? '')
   const existingName = nameMap.get(nameKey)
   if (existingName) return existingName
@@ -628,10 +337,16 @@ function collectNicknameCandidates(value: unknown, nameMap: Map<string, string>)
   }
   if (!isRecord(value)) return
 
-  const userName = typeof value.user === 'string' ? getAnonymousUserName(value.user, nameMap) : undefined
+  const userName =
+    typeof value.user === 'string' ? getAnonymousUserName(value.user, nameMap) : undefined
   for (const [key, item] of Object.entries(value)) {
     if (typeof item === 'string') {
-      if (key === 'user_name' || key === 'display_name' || key === 'session_display_name' || key === 'user') {
+      if (
+        key === 'user_name' ||
+        key === 'display_name' ||
+        key === 'session_display_name' ||
+        key === 'user'
+      ) {
         getAnonymousUserName(item, nameMap)
       } else if (key === 'group_card') {
         getAnonymousUserName(item, nameMap, userName)
@@ -649,7 +364,11 @@ function eraseNicknamesFromText(text: string, nameMap: Map<string, string>): str
   return Array.from(nameMap.entries())
     .filter(([name]) => name.length > 0)
     .sort(([left], [right]) => right.length - left.length)
-    .reduce((current, [name, anonymousName]) => current.replace(new RegExp(escapeRegExp(name), 'g'), anonymousName), text)
+    .reduce(
+      (current, [name, anonymousName]) =>
+        current.replace(new RegExp(escapeRegExp(name), 'g'), anonymousName),
+      text
+    )
 }
 
 function eraseNicknames(value: unknown, nameMap = new Map<string, string>()): unknown {
@@ -673,11 +392,13 @@ function eraseReasoningNicknames(value: unknown): unknown {
 }
 
 function sanitizeDownloadFilename(value: string): string {
-  return value
-    .trim()
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 120) || 'reasoning-process'
+  return (
+    value
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 120) || 'reasoning-process'
+  )
 }
 
 function downloadJsonFile(filename: string, data: unknown): void {
@@ -694,7 +415,10 @@ function downloadJsonFile(filename: string, data: unknown): void {
   URL.revokeObjectURL(url)
 }
 
-function extractJargonInferenceStage(payload: StructuredPromptPayload, fallbackIndex: number): string {
+function extractJargonInferenceStage(
+  payload: StructuredPromptPayload,
+  fallbackIndex: number
+): string {
   const selectionReason = payload.request?.selection_reason ?? ''
   const stageLine = selectionReason
     .split('\n')
@@ -714,1427 +438,25 @@ function combineJargonLearningUpdatePayloads(
     inference_stage: extractJargonInferenceStage(payload, payloadIndex),
     request: payload.request,
     metadata: payload.metadata,
-    messages: payload.messages ?? [],
-    output: payload.output ?? null,
-    provider_response: payload.provider_response,
+    request_items: payload.request_items,
+    output_items: payload.output_items,
+    generation_attempts: payload.generation_attempts,
   }))
 
   return {
-    schema_version: 3,
+    schema_version: 6,
     request: {
       kind: 'jargon_learning_update',
       selection_reason: `词条: ${displayTitle || '未知黑话'}\n包含 ${payloads.length} 次黑话含义推断调用。`,
     },
     metadata: payloads[0]?.metadata ?? {},
-    messages: [],
-    output: null,
+    presentation: { output_title: '黑话含义推断结果' },
+    request_items: [],
+    output_items: [],
+    generation_attempts: [],
     tool_definitions: [],
     jargon_learning_calls: jargonLearningCalls,
   }
-}
-
-function buildStructuredPromptCopyText(payload: StructuredPromptPayload | null): string {
-  if (!payload) return ''
-
-  const sections: string[] = []
-  const metadataLines: string[] = []
-  if (payload.request?.kind) metadataLines.push(`请求类型：${payload.request.kind}`)
-  if (payload.request?.selection_reason) metadataLines.push(`选择原因：${payload.request.selection_reason}`)
-  if (payload.metadata?.model_name) metadataLines.push(`模型：${payload.metadata.model_name}`)
-  if (typeof payload.metadata?.duration_ms === 'number') metadataLines.push(`耗时：${payload.metadata.duration_ms} ms`)
-  if (metadataLines.length > 0) sections.push(`[元信息]\n${metadataLines.join('\n')}`)
-
-  if (payload.provider_response) {
-    sections.push(`[Provider 原生响应]\n${stringifyStructuredValue(payload.provider_response)}`)
-  }
-
-  if (payload.output) {
-    const outputText = stringifyPromptContent(payload.output.content)
-    const toolCallsText = payload.output.tool_calls?.length
-      ? `\n\n[工具调用]\n${stringifyStructuredValue(payload.output.tool_calls)}`
-      : ''
-    if (outputText || toolCallsText) {
-      sections.push(`[${payload.output.title || '输出结果'}]\n${outputText}${toolCallsText}`)
-    }
-  }
-
-  const messageSections = (payload.messages ?? []).map((message, index) => {
-    const role = message.role || 'unknown'
-    const content = stringifyPromptContent(message.content)
-    const toolCallId = message.tool_call_id ? `\ntool_call_id: ${message.tool_call_id}` : ''
-    const toolCalls = message.tool_calls?.length
-      ? `\ntool_calls:\n${stringifyStructuredValue(message.tool_calls)}`
-      : ''
-    return `#${message.index ?? index + 1} ${role}${toolCallId}${toolCalls}\n${content}`
-  })
-  if (messageSections.length > 0) sections.push(`[Prompt 消息]\n${messageSections.join('\n\n')}`)
-
-  if (payload.tool_definitions?.length) {
-    sections.push(`[工具定义]\n${stringifyStructuredValue(payload.tool_definitions)}`)
-  }
-
-  return sections.join(`\n\n${'='.repeat(80)}\n\n`)
-}
-
-type ToolCallDisplayItem = {
-  id: string
-  name: string
-  arguments: unknown
-  source: string
-  sourceLabel: string
-}
-
-function normalizeToolCallForDisplay(toolCall: unknown): ToolCallDisplayItem {
-  const toolRecord = isRecord(toolCall) ? toolCall : {}
-  const functionRecord = isRecord(toolRecord.function) ? toolRecord.function : {}
-  const extraContent = isRecord(toolRecord.extra_content) ? toolRecord.extra_content : {}
-  const rawSource = String(toolRecord.source || toolRecord.tool_call_source || extraContent.tool_call_source || '').trim()
-  const normalizedSource = rawSource.toLowerCase()
-  const sourceLabel = normalizedSource === 'reasoning'
-    ? '推理中调用'
-    : normalizedSource === 'response'
-      ? '正文调用'
-      : String(toolRecord.source_label || toolRecord.tool_call_source_label || '').trim()
-  return {
-    id: String(toolRecord.id || toolRecord.call_id || ''),
-    name: String(functionRecord.name || toolRecord.name || toolRecord.func_name || 'unknown'),
-    arguments: functionRecord.arguments ?? toolRecord.arguments ?? toolRecord.args ?? {},
-    source: normalizedSource,
-    sourceLabel,
-  }
-}
-
-function getToolCallSourceClassName(source: string): string {
-  if (source === 'reasoning') {
-    return 'border-teal-500/45 bg-teal-500/10 text-teal-700 dark:text-teal-300'
-  }
-  if (source === 'response') {
-    return 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-  }
-  if (source === 'provider') {
-    return 'border-sky-500/45 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-  }
-  return 'border-muted-foreground/30 bg-muted/40 text-muted-foreground'
-}
-
-function formatSchemaType(schema: Record<string, unknown>): string {
-  const rawType = schema.type
-  if (Array.isArray(rawType)) return rawType.map(String).join(' | ')
-  if (typeof rawType === 'string') return rawType
-  if (isRecord(schema.items)) return `${formatSchemaType(schema.items)}[]`
-  if (schema.enum) return 'enum'
-  return 'unknown'
-}
-
-function formatSchemaValue(value: unknown): string {
-  if (value === undefined) return ''
-  if (typeof value === 'string') return value
-  return JSON.stringify(value)
-}
-
-function toStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.map((item) => String(item))
-}
-
-function normalizeToolDefinition(toolDefinition: unknown): ToolDefinitionView {
-  const toolRecord = isRecord(toolDefinition) ? toolDefinition : {}
-  const functionRecord = isRecord(toolRecord.function) ? toolRecord.function : toolRecord
-  const parametersRecord = isRecord(functionRecord.parameters) ? functionRecord.parameters : {}
-  const propertiesRecord = isRecord(parametersRecord.properties) ? parametersRecord.properties : {}
-  const requiredNames = new Set(toStringList(parametersRecord.required))
-
-  const parameters = Object.entries(propertiesRecord).map(([name, rawSchema]) => {
-    const schema = isRecord(rawSchema) ? rawSchema : {}
-    return {
-      name,
-      type: formatSchemaType(schema),
-      description: typeof schema.description === 'string' ? schema.description : '',
-      required: requiredNames.has(name),
-      enumValues: toStringList(schema.enum),
-      defaultValue: formatSchemaValue(schema.default),
-    }
-  })
-
-  return {
-    name: typeof functionRecord.name === 'string' ? functionRecord.name : '未命名工具',
-    type: typeof toolRecord.type === 'string' ? toolRecord.type : 'function',
-    description: typeof functionRecord.description === 'string' ? functionRecord.description : '',
-    parameters,
-    raw: toolDefinition,
-  }
-}
-
-function normalizeDisplayName(name: string): string {
-  return name.trim().toLowerCase()
-}
-
-function extractBotSelfNames(prompt: StructuredPromptPayload | null): Set<string> {
-  const names = new Set<string>(['麦麦'])
-
-  for (const message of prompt?.messages ?? []) {
-    if (String(message.role || '').toLowerCase() !== 'system') continue
-    const content = stringifyPromptContent(message.content)
-    const focusMatch = content.match(/你需要关注\s+(.+?)\s+与用户/)
-    const nameMatch = content.match(/你的名字是([^，。,.\n]+)/)
-    const aliasMatch = content.match(/也有人叫你([^。\n]+)/)
-
-    for (const match of [focusMatch, nameMatch]) {
-      const name = match?.[1]?.trim()
-      if (name) names.add(name)
-    }
-
-    if (aliasMatch?.[1]) {
-      aliasMatch[1]
-        .split(/[、,，]/)
-        .map((alias) => alias.trim())
-        .filter(Boolean)
-        .forEach((alias) => names.add(alias))
-    }
-  }
-
-  return new Set(Array.from(names).map(normalizeDisplayName).filter(Boolean))
-}
-
-function getFirstMessageTagAttrs(text: string): Record<string, string> {
-  const match = text.match(/<message\b([^>]*)>/i)
-  return match ? parseMessageTagAttributes(match[1] ?? '') : {}
-}
-
-function isBotSelfStructuredMessage(message: StructuredPromptMessage, botSelfNames: Set<string>): boolean {
-  if (String(message.role || '').toLowerCase() !== 'user') return false
-
-  const text = stringifyPromptContent(message.content)
-  const user = getFirstMessageTagAttrs(text).user
-  return Boolean(user && botSelfNames.has(normalizeDisplayName(user)))
-}
-
-function formatSessionType(chatType: string): string {
-  if (chatType === 'group') return '群聊'
-  if (chatType === 'private') return '私聊'
-  return '未知类型'
-}
-
-function getSessionDisplayName(
-  sessionName: string,
-  sessionInfo?: ReasoningPromptSessionInfo,
-  fallbackName?: string | null
-): string {
-  return sessionInfo?.display_name || fallbackName || sessionName
-}
-
-function getSessionSubtitle(sessionInfo?: ReasoningPromptSessionInfo): string {
-  if (!sessionInfo) return ''
-
-  const parts = []
-  if (sessionInfo.platform) {
-    parts.push(`${sessionInfo.platform} · ${formatSessionType(sessionInfo.chat_type)}`)
-  }
-  if (sessionInfo.account_id) {
-    parts.push(formatChatAccountLabel(sessionInfo.account_id))
-  }
-  if (sessionInfo.resolved_session_id) {
-    parts.push(`会话 ${sessionInfo.resolved_session_id.slice(0, 8)}`)
-  } else {
-    parts.push('未解析到真实会话')
-  }
-  return parts.join(' · ')
-}
-
-function extractReasoningHeaderMeta(text?: string): ReasoningHeaderMeta {
-  const meta: ReasoningHeaderMeta = {
-    sessionId: '',
-    callId: '',
-    remainingText: '',
-  }
-  if (!text) return meta
-
-  const remainingLines: string[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const normalizedLine = line.trim()
-    const sessionMatch = normalizedLine.match(/^会话\s*ID[：:]\s*(.+)$/i)
-    if (sessionMatch) {
-      meta.sessionId = sessionMatch[1].trim()
-      continue
-    }
-
-    const callMatch = normalizedLine.match(/^调用\s*ID[：:]\s*(.+)$/i)
-    if (callMatch) {
-      meta.callId = callMatch[1].trim()
-      continue
-    }
-
-    remainingLines.push(line)
-  }
-
-  meta.remainingText = remainingLines.join('\n').trim()
-  return meta
-}
-
-function getReasoningRecordTitle(
-  item: ReasoningPromptFile,
-  sessionInfo?: ReasoningPromptSessionInfo
-): string {
-  const platform = item.platform || sessionInfo?.platform || ''
-  const chatType = item.chat_type || sessionInfo?.chat_type || ''
-  const targetId = item.target_id || sessionInfo?.target_id || ''
-  const parts = [
-    formatStageName(item.stage),
-    getSessionDisplayName(item.session_id, sessionInfo, item.session_display_name),
-    item.display_title || item.stem,
-  ]
-
-  if (platform && chatType && targetId) {
-    parts.push(platform, formatSessionType(chatType), targetId)
-  }
-
-  return parts.join('/')
-}
-
-function formatPromptPreviewText(previewText: string): string {
-  return previewText.replace(/^动作[：:]\s*/, '')
-}
-
-function buildAvatarFallbackText(displayName: string, userId: string): string {
-  const normalizedName = displayName.trim()
-  if (normalizedName) return normalizedName.slice(0, 1).toUpperCase()
-  const normalizedUserId = userId.trim()
-  return normalizedUserId ? normalizedUserId.slice(-2) : '用'
-}
-
-function decodeSimpleHtmlEntity(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-}
-
-function parseMessageTagAttributes(rawAttributes: string): Record<string, string> {
-  const attrs: Record<string, string> = {}
-  const attributePattern = /([A-Za-z_][\w:-]*)\s*=\s*"([^"]*)"/g
-  for (const match of rawAttributes.matchAll(attributePattern)) {
-    attrs[match[1]] = decodeSimpleHtmlEntity(match[2])
-  }
-  return attrs
-}
-
-function parseNaturalTextBlocks(text: string): ParsedNaturalTextBlock[] {
-  const messageTagPattern = /<message\b([^>]*)>/gi
-  const matches = Array.from(text.matchAll(messageTagPattern))
-  if (matches.length === 0) {
-    return [{ type: 'text', text }]
-  }
-
-  const blocks: ParsedNaturalTextBlock[] = []
-  let cursor = 0
-  matches.forEach((match, index) => {
-    const start = match.index ?? 0
-    if (start > cursor) {
-      blocks.push({ type: 'text', text: text.slice(cursor, start) })
-    }
-
-    const bodyStart = start + match[0].length
-    const nextStart = matches[index + 1]?.index ?? text.length
-    const body = text.slice(bodyStart, nextStart).replace(/<\/message>\s*$/i, '').trim()
-    blocks.push({
-      type: 'message',
-      attrs: parseMessageTagAttributes(match[1] ?? ''),
-      body,
-    })
-    cursor = nextStart
-  })
-
-  if (cursor < text.length) {
-    blocks.push({ type: 'text', text: text.slice(cursor) })
-  }
-
-  return blocks.filter((block) => (block.type === 'message' ? block.body || Object.keys(block.attrs).length > 0 : block.text.trim()))
-}
-
-function renderMessageTagMeta(attrs: Record<string, string>, avatarMap: ReasoningPromptMessageAvatarMap) {
-  const user = attrs.user || ''
-  const time = attrs.time || ''
-  const msgId = attrs.msg_id || ''
-  const chatId = attrs.chat_id || ''
-  const avatar = msgId ? avatarMap[msgId] : undefined
-  const avatarLabel = avatar?.display_name || user || avatar?.user_id || '用户'
-
-  return (
-    <div className="text-muted-foreground mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      {avatar && (
-        <Avatar className="h-6 w-6 shrink-0 border bg-background">
-          {avatar.avatar_url && <AvatarImage src={avatar.avatar_url} alt={`${avatarLabel} 的头像`} />}
-          <AvatarFallback className="text-[10px]">
-            {buildAvatarFallbackText(avatarLabel, avatar.user_id)}
-          </AvatarFallback>
-        </Avatar>
-      )}
-      {user && (
-        <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
-          {user}
-        </Badge>
-      )}
-      {time && <span>{time}</span>}
-      {msgId && (
-        <span className="max-w-full truncate" title={msgId}>
-          msg {msgId}
-        </span>
-      )}
-      {chatId && (
-        <span className="max-w-full truncate" title={chatId}>
-          chat {chatId}
-        </span>
-      )}
-    </div>
-  )
-}
-
-function NaturalLanguageText({
-  text,
-  avatarMap = {},
-}: {
-  text: string
-  avatarMap?: ReasoningPromptMessageAvatarMap
-}) {
-  const blocks = parseNaturalTextBlocks(text)
-  const baseClassName = 'text-foreground text-sm leading-6 whitespace-pre-wrap'
-  if (blocks.length === 1 && blocks[0].type === 'text') {
-    return (
-      <pre className={baseClassName} style={NATURAL_LANGUAGE_TEXT_STYLE}>
-        {blocks[0].text}
-      </pre>
-    )
-  }
-
-  return (
-    <div className="space-y-2" style={NATURAL_LANGUAGE_TEXT_STYLE}>
-      {blocks.map((block, index) => {
-        if (block.type === 'text') {
-          return (
-            <pre key={`text-${index}`} className={baseClassName}>
-              {block.text.trim()}
-            </pre>
-          )
-        }
-
-        return (
-          <div key={`message-${index}`} className="border-primary/60 pl-2 border-l-2">
-            {renderMessageTagMeta(block.attrs, avatarMap)}
-            <pre className={baseClassName}>{block.body || '空消息'}</pre>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function ToolCallsCollapsible({ toolCalls }: { toolCalls: unknown[] }) {
-  const displayToolCalls = toolCalls.map(normalizeToolCallForDisplay)
-
-  return (
-    <Collapsible className="bg-background/60 mt-2 rounded-md border sm:mt-3">
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors sm:px-3 [&[data-state=open]>svg]:rotate-180"
-        >
-          <span className="font-medium">工具调用 · {toolCalls.length} 个</span>
-          <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="border-t">
-        <div className="space-y-2 p-2.5 sm:p-3">
-          {displayToolCalls.map((toolCall, index) => (
-            <div key={`${toolCall.id || toolCall.name}-${index}`} className="rounded-md border bg-background/70 p-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono">
-                  {toolCall.name}
-                </Badge>
-                {toolCall.sourceLabel && (
-                  <Badge
-                    variant="outline"
-                    className={cn('px-1.5 py-0 text-[11px]', getToolCallSourceClassName(toolCall.source))}
-                  >
-                    {toolCall.sourceLabel}
-                  </Badge>
-                )}
-                {toolCall.id && (
-                  <span className="text-muted-foreground font-mono text-[11px]">
-                    {toolCall.id}
-                  </span>
-                )}
-              </div>
-              <pre className="mt-2 rounded-md border bg-muted/20 p-2 font-mono text-xs leading-5 whitespace-pre-wrap">
-                {stringifyStructuredValue(toolCall.arguments)}
-              </pre>
-            </div>
-          ))}
-          <Collapsible className="rounded-md border">
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors [&[data-state=open]>svg]:rotate-180"
-              >
-                <span>完整工具调用 JSON</span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="border-t">
-              <pre className="p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-                {JSON.stringify(toolCalls, null, 2)}
-              </pre>
-            </CollapsibleContent>
-          </Collapsible>
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-function getProviderItemTypeLabel(itemType: string): string {
-  const labels: Record<string, string> = {
-    reasoning: '推理',
-    message: '消息输出',
-    web_search_call: '联网搜索',
-    function_call: 'Function 调用',
-    function_call_output: 'Function 结果',
-    file_search_call: '文件搜索',
-    code_interpreter_call: '代码解释器',
-    image_generation_call: '图像生成',
-    mcp_call: 'MCP 调用',
-    mcp_list_tools: 'MCP 工具列表',
-    computer_call: '计算机操作',
-    shell_call: 'Shell 调用',
-    apply_patch_call: '补丁调用',
-    custom_tool_call: '自定义工具调用',
-  }
-  return labels[itemType] || itemType || '未知 Item'
-}
-
-function extractProviderTextParts(value: unknown): string[] {
-  if (typeof value === 'string') return value.trim() ? [value] : []
-  if (!Array.isArray(value)) {
-    if (!isRecord(value)) return []
-    const textParts: string[] = []
-    for (const key of ['text', 'refusal']) {
-      const text = value[key]
-      if (typeof text === 'string' && text.trim()) textParts.push(text)
-    }
-    for (const key of ['content', 'summary']) {
-      textParts.push(...extractProviderTextParts(value[key]))
-    }
-    return textParts
-  }
-  return value.flatMap(extractProviderTextParts)
-}
-
-function parseProviderArguments(value: unknown): unknown {
-  if (typeof value !== 'string') return value
-  const normalizedValue = value.trim()
-  if (!normalizedValue) return ''
-  try {
-    return JSON.parse(normalizedValue) as unknown
-  } catch {
-    return value
-  }
-}
-
-function getProviderItemReadableText(item: Record<string, unknown>, itemType: string): string {
-  if (itemType === 'reasoning') {
-    return [...extractProviderTextParts(item.summary), ...extractProviderTextParts(item.content)]
-      .join('\n\n')
-      .trim()
-  }
-  if (itemType === 'message') {
-    return extractProviderTextParts(item.content).join('\n\n').trim()
-  }
-  return ''
-}
-
-function getProviderItemPayload(item: Record<string, unknown>, itemType: string): unknown {
-  if (itemType === 'function_call' || itemType === 'custom_tool_call') {
-    return {
-      ...(item.name ? { name: item.name } : {}),
-      arguments: parseProviderArguments(item.arguments),
-    }
-  }
-  if (item.action !== undefined) return item.action
-  if (itemType !== 'message' && itemType !== 'reasoning' && item.output !== undefined) {
-    return item.output
-  }
-  return null
-}
-
-function ProviderResponseTimeline({ response }: { response: ProviderResponsePayload }) {
-  const outputItems = Array.isArray(response.output) ? response.output : []
-  const usage = isRecord(response.usage) ? response.usage : null
-  const inputTokens = usage && typeof usage.input_tokens === 'number' ? usage.input_tokens : null
-  const outputTokens = usage && typeof usage.output_tokens === 'number' ? usage.output_tokens : null
-  const totalTokens = usage && typeof usage.total_tokens === 'number' ? usage.total_tokens : null
-
-  return (
-    <section className="space-y-2 rounded-md border border-sky-500/30 bg-sky-500/[0.03] p-2.5 sm:p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Code2 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
-        <span className="text-sm font-semibold">Responses 原生输出</span>
-        <Badge variant="secondary">{outputItems.length} Items</Badge>
-        {response.status !== undefined && (
-          <Badge variant="outline">{String(response.status)}</Badge>
-        )}
-        {response.model !== undefined && (
-          <span className="text-muted-foreground text-xs">{String(response.model)}</span>
-        )}
-        {response.id !== undefined && (
-          <span className="text-muted-foreground ml-auto font-mono text-[11px]">
-            {String(response.id)}
-          </span>
-        )}
-      </div>
-
-      {(inputTokens !== null || outputTokens !== null || totalTokens !== null) && (
-        <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
-          {inputTokens !== null && <span>输入 {inputTokens}</span>}
-          {outputTokens !== null && <span>输出 {outputTokens}</span>}
-          {totalTokens !== null && <span>总计 {totalTokens}</span>}
-        </div>
-      )}
-
-      {outputItems.length > 0 ? (
-        <div className="space-y-2">
-          {outputItems.map((rawItem, index) => {
-            const item = isRecord(rawItem) ? rawItem : { value: rawItem }
-            const itemType = String(item.type || '').trim()
-            const readableText = getProviderItemReadableText(item, itemType)
-            const itemPayload = getProviderItemPayload(item, itemType)
-            const itemId = String(item.id || item.call_id || '').trim()
-            const itemStatus = String(item.status || '').trim()
-
-            return (
-              <article
-                key={`${itemId || itemType || 'item'}-${index}`}
-                className="bg-background/75 space-y-2 rounded-md border p-2.5 sm:p-3"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">#{index + 1}</Badge>
-                  <Badge variant="secondary" className="font-mono">
-                    {getProviderItemTypeLabel(itemType)}
-                  </Badge>
-                  {itemType && <span className="text-muted-foreground font-mono text-[11px]">{itemType}</span>}
-                  {itemStatus && <Badge variant="outline">{itemStatus}</Badge>}
-                  {itemId && (
-                    <span className="text-muted-foreground ml-auto font-mono text-[11px]">
-                      {itemId}
-                    </span>
-                  )}
-                </div>
-
-                {readableText && (
-                  <pre className="bg-muted/20 max-h-96 overflow-auto rounded-md border p-2.5 text-sm leading-6 whitespace-pre-wrap">
-                    {readableText}
-                  </pre>
-                )}
-
-                {itemPayload !== null && itemPayload !== undefined && (
-                  <pre className="bg-muted/20 max-h-80 overflow-auto rounded-md border p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-                    {stringifyStructuredValue(itemPayload)}
-                  </pre>
-                )}
-
-                <Collapsible className="rounded-md border">
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors [&[data-state=open]>svg]:rotate-180"
-                    >
-                      <span>完整 Item JSON</span>
-                      <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
-                    </button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="border-t">
-                    <pre className="max-h-96 overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-                      {JSON.stringify(rawItem, null, 2)}
-                    </pre>
-                  </CollapsibleContent>
-                </Collapsible>
-              </article>
-            )
-          })}
-        </div>
-      ) : (
-        <p className="text-muted-foreground text-xs">Provider 响应未包含 output Items。</p>
-      )}
-
-      <Collapsible className="rounded-md border">
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors [&[data-state=open]>svg]:rotate-180"
-          >
-            <span className="font-medium">完整 Responses JSON</span>
-            <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="border-t">
-          <pre className="max-h-[36rem] overflow-auto p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-            {JSON.stringify(response, null, 2)}
-          </pre>
-        </CollapsibleContent>
-      </Collapsible>
-    </section>
-  )
-}
-
-function ToolDefinitionsCollapsible({ toolDefinitions }: { toolDefinitions: unknown[] }) {
-  const tools = toolDefinitions.map(normalizeToolDefinition)
-
-  return (
-    <Collapsible className="rounded-md border">
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-sm transition-colors sm:px-3 [&[data-state=open]>svg]:rotate-180"
-        >
-          <span className="font-medium">工具定义 · {tools.length} 个</span>
-          <ChevronDown className="h-4 w-4 shrink-0 transition-transform" />
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="border-t">
-        <div className="space-y-2 p-2 sm:p-3">
-          {tools.map((tool, index) => (
-            <div key={`${tool.name}-${index}`} className="bg-background/60 rounded-md border p-2.5 sm:p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="font-mono">
-                  {tool.name}
-                </Badge>
-                <span className="text-muted-foreground text-xs">{tool.type}</span>
-              </div>
-              {tool.description && (
-                <p className="text-foreground mt-2 text-sm leading-6">{tool.description}</p>
-              )}
-
-              {tool.parameters.length > 0 ? (
-                <div className="mt-3 space-y-2">
-                  <div className="text-muted-foreground text-xs font-medium">参数</div>
-                  <div className="space-y-1.5">
-                    {tool.parameters.map((parameter) => (
-                      <div key={parameter.name} className="rounded-md border px-2.5 py-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-semibold">{parameter.name}</span>
-                          <Badge variant="outline" className="px-1.5 py-0 font-mono text-[11px]">
-                            {parameter.type}
-                          </Badge>
-                          {parameter.required && (
-                            <Badge
-                              variant="outline"
-                              className="border-destructive/50 px-1.5 py-0 text-[11px] text-destructive"
-                            >
-                              必填
-                            </Badge>
-                          )}
-                        </div>
-                        {parameter.description && (
-                          <p className="text-muted-foreground mt-1 text-xs leading-5">
-                            {parameter.description}
-                          </p>
-                        )}
-                        {(parameter.enumValues.length > 0 || parameter.defaultValue) && (
-                          <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                            {parameter.enumValues.length > 0 && (
-                              <span>可选值：{parameter.enumValues.join('、')}</span>
-                            )}
-                            {parameter.defaultValue && <span>默认：{parameter.defaultValue}</span>}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-muted-foreground mt-3 text-xs">无参数</div>
-              )}
-
-              <Collapsible className="mt-3 rounded-md border">
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    className="hover:bg-muted/50 flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition-colors [&[data-state=open]>svg]:rotate-180"
-                  >
-                    <span>原始定义</span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform" />
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="border-t">
-                  <pre className="p-2.5 font-mono text-xs leading-5 whitespace-pre-wrap">
-                    {JSON.stringify(tool.raw, null, 2)}
-                  </pre>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          ))}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-type EditableReplayMessage = {
-  id: string
-  role: string
-  contentText: string
-  originalContent: unknown
-  tool_call_id?: string
-  tool_calls?: unknown[]
-}
-
-type ReplayRunResult = {
-  id: string
-  index: number
-  result: ReasoningReplayResponse | null
-  error: string | null
-}
-
-type ReplayModelOption = {
-  name: string
-}
-
-function unwrapModelConfigPayload(payload: unknown): Record<string, unknown> {
-  if (!payload || typeof payload !== 'object') {
-    return {}
-  }
-
-  const record = payload as Record<string, unknown>
-  const config = record.config
-  return config && typeof config === 'object' ? (config as Record<string, unknown>) : record
-}
-
-function normalizeReplayModelOptions(payload: unknown): ReplayModelOption[] {
-  const config = unwrapModelConfigPayload(payload)
-  const rawModels = config.models
-  if (!Array.isArray(rawModels)) {
-    return []
-  }
-
-  return rawModels
-    .map((item) => {
-      if (!item || typeof item !== 'object') {
-        return null
-      }
-
-      const record = item as Record<string, unknown>
-      const name = String(record.name ?? '').trim()
-      if (!name) {
-        return null
-      }
-
-      return {
-        name,
-      }
-    })
-    .filter((item): item is ReplayModelOption => item !== null)
-}
-
-function hasReplayableImageReference(value: Record<string, unknown>): boolean {
-  if (typeof value.image_base64 === 'string' && value.image_base64.trim()) {
-    return true
-  }
-
-  const rawImageUrl = isRecord(value.image_url) ? value.image_url.url : value.image_url
-  if (typeof rawImageUrl === 'string' && rawImageUrl.startsWith('data:image/')) {
-    return true
-  }
-
-  const imageReference = isRecord(value.image_reference) ? value.image_reference : {}
-  return Boolean(
-    (typeof value.image_path === 'string' && value.image_path.trim()) ||
-      (typeof value.image_uri === 'string' && value.image_uri.trim()) ||
-      (typeof imageReference.image_path === 'string' && imageReference.image_path.trim()) ||
-      (typeof imageReference.image_uri === 'string' && imageReference.image_uri.trim())
-  )
-}
-
-function hasUnreplayableImagePart(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some(hasUnreplayableImagePart)
-  }
-  if (!isRecord(value)) {
-    return false
-  }
-
-  const partType = String(value.type || '').trim().toLowerCase()
-  if (['image', 'image_url', 'input_image'].includes(partType)) {
-    return !hasReplayableImageReference(value)
-  }
-
-  return Object.values(value).some(hasUnreplayableImagePart)
-}
-
-function createEditableReplayMessages(prompt: StructuredPromptPayload | null): EditableReplayMessage[] {
-  return (prompt?.messages ?? []).map((message, index) => {
-    const shouldUseTextFallback = hasUnreplayableImagePart(message.content)
-    const originalContent = shouldUseTextFallback ? stringifyPromptContent(message.content) : message.content ?? ''
-    return {
-      id: `${message.index ?? index + 1}-${message.role ?? 'unknown'}-${index}`,
-      role: String(message.role || 'user'),
-      contentText: typeof originalContent === 'string' ? originalContent : stringifyPromptContent(originalContent),
-      originalContent,
-      tool_call_id: message.tool_call_id,
-      tool_calls: message.tool_calls,
-    }
-  })
-}
-
-function createBlankReplayMessage(): EditableReplayMessage {
-  return {
-    id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    role: 'user',
-    contentText: '',
-    originalContent: '',
-  }
-}
-
-function parseReplayMessageContent(contentText: string, originalContent: unknown): unknown {
-  if (typeof originalContent === 'string' || originalContent === null || originalContent === undefined) {
-    return contentText
-  }
-
-  const trimmedContent = contentText.trim()
-  if (!trimmedContent) {
-    return ''
-  }
-
-  try {
-    return JSON.parse(trimmedContent) as unknown
-  } catch {
-    return contentText
-  }
-}
-
-function formatReplayTokenSummary(result: ReasoningReplayResponse): string {
-  const parts = [
-    `输入 ${result.prompt_tokens}`,
-    `输出 ${result.completion_tokens}`,
-    `总计 ${result.total_tokens}`,
-  ]
-  if (result.prompt_cache_hit_tokens > 0 || result.prompt_cache_miss_tokens > 0) {
-    parts.push(`缓存命中 ${result.prompt_cache_hit_tokens}`)
-  }
-  if (result.duration_ms > 0) {
-    parts.push(`耗时 ${formatDurationMs(result.duration_ms)}`)
-  }
-  return parts.join(' · ')
-}
-
-function formatEmptyReplayResponseHint(result: ReasoningReplayResponse): string {
-  const hasReasoning = result.reasoning.trim().length > 0
-  const hasToolCalls = Boolean(result.tool_calls && result.tool_calls.length > 0)
-  if (hasReasoning && hasToolCalls) {
-    return '模型未返回正文，已返回推理内容和工具调用。'
-  }
-  if (hasReasoning) {
-    return '模型未返回正文，已返回推理内容。'
-  }
-  if (hasToolCalls) {
-    return '模型未返回正文，已返回工具调用。'
-  }
-  return '模型未返回正文。'
-}
-
-function ReplayMessageEditorColumn({
-  selectedTitle,
-  messages,
-  updateMessage,
-  addMessage,
-  deleteMessage,
-  onClose,
-}: {
-  selectedTitle: string
-  messages: EditableReplayMessage[]
-  updateMessage: (id: string, patch: Partial<EditableReplayMessage>) => void
-  addMessage: () => void
-  deleteMessage: (id: string) => void
-  onClose: () => void
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium">编辑重放消息</span>
-            <Badge variant="secondary">{messages.length} 条</Badge>
-          </div>
-          <div className="text-muted-foreground mt-1 truncate text-xs">{selectedTitle}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5"
-            onClick={addMessage}
-          >
-            <Plus className="h-4 w-4" />
-            添加消息
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 w-8 p-0"
-            onClick={onClose}
-            title="退出重放编辑"
-            aria-label="退出重放编辑"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="divide-y">
-          {messages.length === 0 ? (
-            <div className="text-muted-foreground px-3 py-10 text-center text-sm">
-              这条记录没有可重放的结构化 messages。
-            </div>
-          ) : (
-            messages.map((message, index) => (
-              <section key={message.id} className="p-3 sm:p-4">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">#{index + 1}</Badge>
-                  <Select
-                    value={message.role}
-                    onValueChange={(value) => updateMessage(message.id, { role: value })}
-                  >
-                    <SelectTrigger className="h-8 w-[130px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="system">system</SelectItem>
-                      <SelectItem value="user">user</SelectItem>
-                      <SelectItem value="assistant">assistant</SelectItem>
-                      <SelectItem value="tool">tool</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {message.tool_call_id && (
-                    <span className="text-muted-foreground text-xs">
-                      tool_call_id: {message.tool_call_id}
-                    </span>
-                  )}
-                  {message.tool_calls && message.tool_calls.length > 0 && (
-                    <Badge variant="secondary">工具调用 {message.tool_calls.length}</Badge>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="ml-auto h-8 w-8 p-0"
-                    onClick={() => deleteMessage(message.id)}
-                    title="删除消息"
-                    aria-label={`删除第 ${index + 1} 条消息`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-                <Textarea
-                  value={message.contentText}
-                  onChange={(event) => updateMessage(message.id, { contentText: event.target.value })}
-                  minHeight={120}
-                  maxHeight={420}
-                  className="font-mono text-xs leading-5"
-                />
-              </section>
-            ))
-          )}
-        </div>
-      </ScrollArea>
-    </div>
-  )
-}
-
-function ReplayResultItem({ item }: { item: ReplayRunResult }) {
-  const result = item.result
-
-  if (!result) {
-    return (
-      <div className="space-y-2 rounded-md border p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="destructive">#{item.index} 失败</Badge>
-        </div>
-        <div className="border-destructive/30 bg-destructive/10 rounded-md border px-3 py-2 text-sm text-destructive">
-          {item.error || '请求重放接口失败'}
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-3 rounded-md border p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={result.success ? 'default' : 'destructive'}>
-          #{item.index} {result.success ? '完成' : '失败'}
-        </Badge>
-        <span className="text-muted-foreground text-xs">{result.model_name}</span>
-      </div>
-      <div className="text-muted-foreground text-xs leading-5">
-        {formatReplayTokenSummary(result)}
-      </div>
-      {result.error && (
-        <div className="border-destructive/30 bg-destructive/10 rounded-md border px-3 py-2 text-sm text-destructive">
-          {result.error}
-        </div>
-      )}
-      {result.response.trim() ? (
-        <pre className="bg-muted/30 max-h-56 min-h-24 overflow-auto rounded-md border p-3 text-sm leading-6 whitespace-pre-wrap">
-          {result.response}
-        </pre>
-      ) : (
-        <div className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-sm">
-          {formatEmptyReplayResponseHint(result)}
-        </div>
-      )}
-      {result.reasoning.trim() && (
-        <Collapsible className="rounded-md border" defaultOpen={!result.response.trim()}>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium"
-            >
-              推理内容
-              <ChevronDown className="h-4 w-4" />
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="border-t">
-            <pre className="max-h-56 overflow-auto p-3 text-sm leading-6 whitespace-pre-wrap">
-              {result.reasoning.trim()}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
-      {result.tool_calls && result.tool_calls.length > 0 && (
-        <ToolCallsCollapsible toolCalls={result.tool_calls} />
-      )}
-    </div>
-  )
-}
-
-function ReasoningReplayPanel({
-  open,
-  onClose,
-  selected,
-  selectedTitle,
-  structuredPrompt,
-  messages,
-}: {
-  open: boolean
-  onClose: () => void
-  selected: ReasoningPromptFile | null
-  selectedTitle: string
-  structuredPrompt: StructuredPromptPayload | null
-  messages: EditableReplayMessage[]
-}) {
-  const { toast } = useToast()
-  const [modelName, setModelName] = useState('')
-  const [modelOptions, setModelOptions] = useState<ReplayModelOption[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [modelLoadError, setModelLoadError] = useState<string | null>(null)
-  const [temperature, setTemperature] = useState('')
-  const [maxTokens, setMaxTokens] = useState('')
-  const [replayCount, setReplayCount] = useState('1')
-  const [replayResults, setReplayResults] = useState<ReplayRunResult[]>([])
-  const [submitting, setSubmitting] = useState(false)
-  const [runningReplayIndex, setRunningReplayIndex] = useState(0)
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    const snapshotModelName = structuredPrompt?.metadata?.model_name || selected?.model_name || ''
-    setModelName(snapshotModelName)
-    setTemperature('')
-    setMaxTokens('')
-    setReplayCount('1')
-    setReplayResults([])
-    setRunningReplayIndex(0)
-  }, [open, selected, structuredPrompt])
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    let cancelled = false
-    const snapshotModelName = (structuredPrompt?.metadata?.model_name || selected?.model_name || '').trim()
-    setLoadingModels(true)
-    setModelLoadError(null)
-
-    getModelConfig()
-      .then((payload) => {
-        if (cancelled) {
-          return
-        }
-
-        const nextModelOptions = normalizeReplayModelOptions(payload)
-        setModelOptions(nextModelOptions)
-        if (nextModelOptions.length === 0) {
-          setModelName('')
-          return
-        }
-
-        const modelNames = new Set(nextModelOptions.map((model) => model.name))
-        setModelName(modelNames.has(snapshotModelName) ? snapshotModelName : nextModelOptions[0].name)
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return
-        }
-
-        const message = error instanceof Error ? error.message : '读取模型配置失败'
-        setModelOptions([])
-        setModelName('')
-        setModelLoadError(message)
-        toast({
-          title: '加载模型列表失败',
-          description: message,
-          variant: 'destructive',
-        })
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingModels(false)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [open, selected?.model_name, structuredPrompt?.metadata?.model_name, toast])
-
-  const handleReplay = async () => {
-    const normalizedModelName = modelName.trim()
-    if (!normalizedModelName) {
-      toast({
-        title: '缺少模型名称',
-        description: '请选择 model_config.toml 中已配置的模型名称。',
-        variant: 'destructive',
-      })
-      return
-    }
-    const normalizedReplayCount = Number(replayCount.trim())
-    if (!Number.isInteger(normalizedReplayCount) || normalizedReplayCount < 1 || normalizedReplayCount > REPLAY_COUNT_MAX) {
-      toast({
-        title: '重放次数无效',
-        description: `请输入 1-${REPLAY_COUNT_MAX} 之间的整数。`,
-        variant: 'destructive',
-      })
-      return
-    }
-    if (messages.length === 0) {
-      toast({
-        title: '没有可重放的消息',
-        description: '这条记录没有结构化 messages。',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setSubmitting(true)
-    setReplayResults([])
-    setRunningReplayIndex(0)
-    let successCount = 0
-    const requestMessages = messages.map((message) => ({
-      role: message.role,
-      content: parseReplayMessageContent(message.contentText, message.originalContent),
-      ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
-      ...(message.tool_calls && message.tool_calls.length > 0 ? { tool_calls: message.tool_calls } : {}),
-    }))
-    const toolDefinitions = (structuredPrompt?.tool_definitions ?? []).filter(isRecord)
-
-    try {
-      for (let index = 1; index <= normalizedReplayCount; index += 1) {
-        setRunningReplayIndex(index)
-        try {
-          const replayResult = await replayReasoningPrompt({
-            source_path: selected?.json_path ?? null,
-            stage: selected?.stage ?? structuredPrompt?.request?.kind ?? '',
-            model_name: normalizedModelName,
-            messages: requestMessages,
-            tool_definitions: toolDefinitions,
-            temperature: temperature.trim() ? Number(temperature) : null,
-            max_tokens: maxTokens.trim() ? Number(maxTokens) : null,
-          })
-          if (replayResult.success) {
-            successCount += 1
-          }
-          setReplayResults((current) => [
-            ...current,
-            { id: `${Date.now()}-${index}`, index, result: replayResult, error: null },
-          ])
-        } catch (err) {
-          setReplayResults((current) => [
-            ...current,
-            {
-              id: `${Date.now()}-${index}`,
-              index,
-              result: null,
-              error: err instanceof Error ? err.message : '请求重放接口失败',
-            },
-          ])
-        }
-      }
-      toast({
-        title: '批量重放完成',
-        description: `成功 ${successCount}/${normalizedReplayCount} 次。`,
-        variant: successCount === normalizedReplayCount ? 'default' : 'destructive',
-      })
-    } finally {
-      setRunningReplayIndex(0)
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <aside
-      className={cn(
-        'bg-background min-h-0 flex-col overflow-hidden rounded-md border shadow-sm',
-        open ? 'flex' : 'hidden'
-      )}
-      aria-hidden={!open}
-    >
-      <div className="flex min-h-14 items-center justify-between gap-3 border-b px-3 py-2 sm:px-4">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold">重放推理请求</div>
-          <div className="text-muted-foreground truncate text-xs">{selectedTitle}</div>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 w-8 p-0"
-          onClick={onClose}
-          disabled={submitting}
-          title="关闭重放边栏"
-          aria-label="关闭重放边栏"
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="divide-y">
-          <section className="p-3 sm:p-4">
-            <div className="grid gap-3">
-              <div className="grid gap-2">
-                <Label htmlFor="reasoning-replay-model">模型名称</Label>
-                <Select
-                  value={modelName}
-                  onValueChange={setModelName}
-                  disabled={loadingModels || submitting || modelOptions.length === 0}
-                >
-                  <SelectTrigger id="reasoning-replay-model">
-                    <SelectValue
-                      placeholder={
-                        loadingModels
-                          ? '加载模型中...'
-                          : modelLoadError
-                            ? '模型列表加载失败'
-                            : '选择模型'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {modelOptions.map((model) => (
-                      <SelectItem key={model.name} value={model.name}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {!loadingModels && modelOptions.length === 0 ? (
-                  <div className="text-destructive text-xs">
-                    {modelLoadError || 'model_config.toml 中没有可选模型。'}
-                  </div>
-                ) : null}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2">
-                  <Label htmlFor="reasoning-replay-temperature">温度</Label>
-                  <Input
-                    id="reasoning-replay-temperature"
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={temperature}
-                    onChange={(event) => setTemperature(event.target.value)}
-                    placeholder="默认"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="reasoning-replay-max-tokens">最大 Token</Label>
-                  <Input
-                    id="reasoning-replay-max-tokens"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={maxTokens}
-                    onChange={(event) => setMaxTokens(event.target.value)}
-                    placeholder="默认"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-end gap-3">
-                <Button
-                  className="h-9 w-full gap-1.5"
-                  onClick={handleReplay}
-                  disabled={submitting || loadingModels || modelOptions.length === 0 || messages.length === 0}
-                >
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                  {submitting && runningReplayIndex > 0
-                    ? `执行中 ${runningReplayIndex}/${replayCount.trim() || '?'}`
-                    : '执行重放'}
-                </Button>
-                <div className="grid gap-2">
-                  <Label htmlFor="reasoning-replay-count">次数</Label>
-                  <Input
-                    id="reasoning-replay-count"
-                    type="number"
-                    min={1}
-                    max={REPLAY_COUNT_MAX}
-                    step={1}
-                    value={replayCount}
-                    onChange={(event) => setReplayCount(event.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-3 p-3 sm:p-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">重放结果</div>
-              {submitting && (
-                <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  第 {runningReplayIndex || 1} 次
-                </span>
-              )}
-            </div>
-            {replayResults.length === 0 && !submitting ? (
-              <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-sm">
-                执行重放后，模型回复、推理内容和工具调用会显示在这里。
-              </div>
-            ) : null}
-            {replayResults.length > 0 && (
-              <div className="space-y-3">
-                {replayResults.map((item) => (
-                  <ReplayResultItem key={item.id} item={item} />
-                ))}
-              </div>
-            )}
-          </section>
-
-        </div>
-      </ScrollArea>
-    </aside>
-  )
 }
 
 interface ReasoningProcessPageProps {
@@ -2189,13 +511,15 @@ export function ReasoningProcessPage({
     () => new Set(['llm-errors', 'removed'])
   )
   const [error, setError] = useState<string | null>(null)
-  const [browsingStage, setBrowsingStage] = useState(
-    () => Boolean(initialSearchParams.get('stage') || initialSearchParams.get('session') || initialTargetStem)
+  const [browsingStage, setBrowsingStage] = useState(() =>
+    Boolean(
+      initialSearchParams.get('stage') || initialSearchParams.get('session') || initialTargetStem
+    )
   )
   const [toolbarRoot, setToolbarRoot] = useState<HTMLElement | null>(null)
   const [topbarActionsRoot, setTopbarActionsRoot] = useState<HTMLElement | null>(null)
   const [replayPanelOpen, setReplayPanelOpen] = useState(false)
-  const [replayMessages, setReplayMessages] = useState<EditableReplayMessage[]>([])
+  const [replayItems, setReplayItems] = useState<EditableReplayItem[]>([])
   const [eraseNicknameOnExport, setEraseNicknameOnExport] = useState(true)
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -2209,15 +533,15 @@ export function ReasoningProcessPage({
   }, [sessionInfos])
   const structuredPrompt = useMemo(() => parseStructuredPrompt(jsonContent), [jsonContent])
   const avatarFetchEnabled = useAvatarFetchEnabled()
-  const hasToolbarContent = Boolean(returnTo)
+  const hasToolbarContent = browsingStage || Boolean(returnTo)
 
   useEffect(() => {
     if (!replayPanelOpen) {
-      setReplayMessages([])
+      setReplayItems([])
       return
     }
 
-    setReplayMessages(createEditableReplayMessages(structuredPrompt))
+    setReplayItems(createEditableReplayItems(structuredPrompt))
   }, [replayPanelOpen, selected?.session_id, selected?.stage, selected?.stem, structuredPrompt])
 
   useEffect(() => {
@@ -2290,8 +614,12 @@ export function ReasoningProcessPage({
         })
         if (ignore) return
         const targetItem = targetStem
-          ? data.items.find((item) => item.stage === stage && item.session_id === data.selected_session && item.stem === targetStem)
-            ?? data.items.find((item) => item.stem === targetStem)
+          ? (data.items.find(
+              (item) =>
+                item.stage === stage &&
+                item.session_id === data.selected_session &&
+                item.stem === targetStem
+            ) ?? data.items.find((item) => item.stem === targetStem))
           : undefined
         setItems(data.items)
         setStages(data.stages)
@@ -2375,18 +703,25 @@ export function ReasoningProcessPage({
       setMessageAvatarMap({})
       setContentLoading(true)
       try {
-        const loadedJsonFiles = await Promise.all(jsonPaths.map((path) => getReasoningPromptFile(path)))
+        const loadedJsonFiles = await Promise.all(
+          jsonPaths.map((path) => getReasoningPromptFile(path))
+        )
         const data = loadedJsonFiles[0]
         const avatarEntries = avatarFetchEnabled
           ? await Promise.all(
               loadedJsonFiles.flatMap((file) =>
-                Object.entries(file.message_avatars ?? {}).map(async ([messageId, avatar]) => [
-                  messageId,
-                  {
-                    ...avatar,
-                    avatar_url: avatar.avatar_url ? await resolveApiPath(avatar.avatar_url) : null,
-                  },
-                ] as const)
+                Object.entries(file.message_avatars ?? {}).map(
+                  async ([messageId, avatar]) =>
+                    [
+                      messageId,
+                      {
+                        ...avatar,
+                        avatar_url: avatar.avatar_url
+                          ? await resolveApiPath(avatar.avatar_url)
+                          : null,
+                      },
+                    ] as const
+                )
               )
             )
           : []
@@ -2412,7 +747,9 @@ export function ReasoningProcessPage({
         if (!ignore) {
           setJsonContent('')
           setMessageAvatarMap({})
-          setTextContent((current) => current || (err instanceof Error ? err.message : '读取结构化内容失败'))
+          setTextContent(
+            (current) => current || (err instanceof Error ? err.message : '读取结构化内容失败')
+          )
         }
       } finally {
         if (!ignore) setContentLoading(false)
@@ -2499,7 +836,8 @@ export function ReasoningProcessPage({
   }
 
   async function handleCopyPrompt() {
-    const copyContent = textContent || buildStructuredPromptCopyText(structuredPrompt) || jsonContent
+    const copyContent =
+      textContent || buildStructuredPromptCopyText(structuredPrompt) || jsonContent
     if (!copyContent || contentLoading) {
       toast({
         title: '暂无可复制内容',
@@ -2535,8 +873,10 @@ export function ReasoningProcessPage({
     }
 
     try {
-      const parsedContent = JSON.parse(jsonContent) as unknown
-      const exportContent = eraseNicknameOnExport ? eraseReasoningNicknames(parsedContent) : parsedContent
+      const parsedContent = structuredPrompt ?? (JSON.parse(jsonContent) as unknown)
+      const exportContent = eraseNicknameOnExport
+        ? eraseReasoningNicknames(parsedContent)
+        : parsedContent
       const filenameParts = [
         'reasoning',
         selected?.stage,
@@ -2548,7 +888,9 @@ export function ReasoningProcessPage({
       downloadJsonFile(filename, exportContent)
       toast({
         title: '已导出推理过程',
-        description: eraseNicknameOnExport ? '已将昵称抹去为用户A、用户B等占位名' : '已保留原始昵称',
+        description: eraseNicknameOnExport
+          ? '已将昵称抹去为用户A、用户B等占位名'
+          : '已保留原始昵称',
       })
     } catch (err) {
       toast({
@@ -2559,28 +901,39 @@ export function ReasoningProcessPage({
     }
   }
 
-  const updateReplayMessage = (id: string, patch: Partial<EditableReplayMessage>) => {
-    setReplayMessages((current) =>
-      current.map((message) => (message.id === id ? { ...message, ...patch } : message))
+  const updateReplayItem = (id: string, patch: Partial<EditableReplayItem>) => {
+    setReplayItems((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item))
     )
   }
 
-  const addReplayMessage = () => {
-    setReplayMessages((current) => [...current, createBlankReplayMessage()])
+  const addReplayItem = () => {
+    setReplayItems((current) => [...current, createBlankReplayItem()])
   }
 
-  const deleteReplayMessage = (id: string) => {
-    setReplayMessages((current) => current.filter((message) => message.id !== id))
+  const deleteReplayItem = (id: string) => {
+    setReplayItems((current) => current.filter((item) => item.id !== id))
   }
 
   const selectedSessionInfo = selected ? sessionInfoByName.get(selected.session_id) : undefined
-  const selectedTitle = selected ? getReasoningRecordTitle(selected, selectedSessionInfo) : '未选择记录'
+  const selectedTitle = selected
+    ? getReasoningRecordTitle(selected, selectedSessionInfo)
+    : '未选择记录'
   const botSelfNames = useMemo(() => extractBotSelfNames(structuredPrompt), [structuredPrompt])
-  const previewTabMode = selected?.json_path ? 'structured' : selected?.text_path ? 'text' : selected?.html_path ? 'html' : null
+  const previewTabMode = selected?.json_path
+    ? 'structured'
+    : selected?.text_path
+      ? 'text'
+      : selected?.html_path
+        ? 'html'
+        : null
   const headerMeta = useMemo(
     () => extractReasoningHeaderMeta(structuredPrompt?.request?.selection_reason),
     [structuredPrompt]
   )
+  const selectedTokenText = selected
+    ? formatTokenUsage(selected.prompt_tokens, selected.completion_tokens, selected.total_tokens)
+    : ''
   const renderRefreshButton = (variant: 'default' | 'topbar' | 'toolbar' = 'default') => (
     <Button
       variant="outline"
@@ -2599,18 +952,19 @@ export function ReasoningProcessPage({
       <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
     </Button>
   )
-  const renderReturnButton = () => returnTo ? (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-9 shrink-0 gap-1.5 sm:h-10"
-      onClick={() => navigate({ to: returnTo })}
-      title="返回麦麦观察"
-    >
-      <ArrowLeft className="h-4 w-4" />
-      返回观察
-    </Button>
-  ) : null
+  const renderReturnButton = () =>
+    returnTo ? (
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 shrink-0 gap-1.5 sm:h-10"
+        onClick={() => navigate({ to: returnTo })}
+        title="返回麦麦观察"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        返回观察
+      </Button>
+    ) : null
   const renderTypeButton = (compact = false) => (
     <Button
       variant="outline"
@@ -2665,9 +1019,7 @@ export function ReasoningProcessPage({
                 <div className="min-w-0">
                   <div className="truncate">{sessionDisplayName}</div>
                   {sessionSubtitle && (
-                    <div className="text-muted-foreground truncate text-xs">
-                      {sessionSubtitle}
-                    </div>
+                    <div className="text-muted-foreground truncate text-xs">{sessionSubtitle}</div>
                   )}
                 </div>
               </SelectItem>
@@ -2684,29 +1036,29 @@ export function ReasoningProcessPage({
 
     return (
       <>
-      <div className={cn('relative', inToolbar ? 'w-full sm:w-[140px]' : undefined)}>
-        <Input
-          value={actionFilter}
-          onChange={(event) => resetToFirstPage(() => setActionFilter(event.target.value))}
-          className={controlClassName}
-          placeholder="动作过滤"
-        />
-      </div>
+        <div className={cn('relative', inToolbar ? 'w-full sm:w-[140px]' : undefined)}>
+          <Input
+            value={actionFilter}
+            onChange={(event) => resetToFirstPage(() => setActionFilter(event.target.value))}
+            className={controlClassName}
+            placeholder="动作过滤"
+          />
+        </div>
 
-      <div
-        className={cn(
-          'relative',
-          inToolbar ? 'min-w-0 flex-[1_1_220px] sm:min-w-[260px] sm:max-w-[520px]' : undefined
-        )}
-      >
-        <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-        <Input
-          value={search}
-          onChange={(event) => resetToFirstPage(() => setSearch(event.target.value))}
-          className={cn(controlClassName, 'pl-9')}
-          placeholder="搜索会话、文件名、模型或记录摘要"
-        />
-      </div>
+        <div
+          className={cn(
+            'relative',
+            inToolbar ? 'min-w-0 flex-[1_1_220px] sm:max-w-[520px] sm:min-w-[260px]' : undefined
+          )}
+        >
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+          <Input
+            value={search}
+            onChange={(event) => resetToFirstPage(() => setSearch(event.target.value))}
+            className={cn(controlClassName, 'pl-9')}
+            placeholder="搜索会话、文件名、模型或记录摘要"
+          />
+        </div>
       </>
     )
   }
@@ -2723,51 +1075,58 @@ export function ReasoningProcessPage({
       {!embedded && renderRefreshButton('default')}
     </div>
   )
-  const toolbarPortal = embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
+  const toolbarPortal =
+    embedded && toolbarVisible && toolbarRoot ? createPortal(toolbarContent, toolbarRoot) : null
   const topbarActionsPortal =
-    embedded && toolbarVisible && topbarActionsRoot
-      ? createPortal(browsingStage ? renderTypeButton(true) : renderRefreshButton('topbar'), topbarActionsRoot)
+    embedded && toolbarVisible && !browsingStage && topbarActionsRoot
+      ? createPortal(renderRefreshButton('topbar'), topbarActionsRoot)
       : null
   const showBrowsingControlsInline = browsingStage && (!embedded || !toolbarVisible || !toolbarRoot)
   const renderStageCard = (item: ReasoningPromptStageInfo) => (
     <div
       key={item.name}
       className={cn(
-        'group relative flex min-h-20 flex-col rounded-md border bg-background text-left shadow-sm',
+        'group bg-background relative flex min-h-20 flex-col rounded-md border text-left shadow-sm',
         'transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out',
-        'hover:-translate-y-0.5 hover:border-primary/80 hover:bg-primary/5 hover:shadow-md',
-        'focus-within:-translate-y-0.5 focus-within:border-primary/80 focus-within:bg-primary/5 focus-within:shadow-md'
+        'hover:border-primary/80 hover:bg-primary/5 hover:-translate-y-0.5 hover:shadow-md',
+        'focus-within:border-primary/80 focus-within:bg-primary/5 focus-within:-translate-y-0.5 focus-within:shadow-md'
       )}
     >
       <button
         type="button"
         onClick={() => enterStage(item.name)}
-        className="flex min-h-20 flex-1 cursor-pointer flex-col justify-between rounded-md p-3 pr-10 text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none"
+        className="focus-visible:ring-ring flex min-h-20 flex-1 cursor-pointer flex-col justify-between rounded-md p-3 pr-10 text-left focus-visible:ring-2 focus-visible:outline-none"
       >
         <div className="space-y-1.5">
-          <div className="text-primary text-sm font-extrabold tracking-normal uppercase transition-colors group-hover:text-primary sm:text-base">
+          <div className="text-primary group-hover:text-primary text-sm font-extrabold tracking-normal uppercase transition-colors sm:text-base">
             {item.name}
           </div>
-          <div className="text-foreground text-sm font-semibold transition-colors group-hover:text-primary">
+          <div className="text-foreground group-hover:text-primary text-sm font-semibold transition-colors">
             {formatStageName(item.name)}
           </div>
         </div>
-        <div className="text-muted-foreground mt-2 text-xs transition-colors group-hover:text-foreground/80">
+        <div className="text-muted-foreground group-hover:text-foreground/80 mt-2 text-xs transition-colors">
           {item.session_count} 个会话
-          {item.latest_modified_at > 0 ? ` · 最新 ${formatTime(null, item.latest_modified_at)}` : ''}
+          {item.latest_modified_at > 0
+            ? ` · 最新 ${formatTime(null, item.latest_modified_at)}`
+            : ''}
         </div>
       </button>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="absolute right-2 bottom-2 h-7 w-7 p-0 opacity-70 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+        className="hover:bg-destructive/10 hover:text-destructive absolute right-2 bottom-2 h-7 w-7 p-0 opacity-70 group-hover:opacity-100"
         title={`清空${formatStageName(item.name)}`}
         aria-label={`清空${formatStageName(item.name)}`}
         disabled={clearingStage === item.name}
         onClick={() => setPendingClearStage(item)}
       >
-        {clearingStage === item.name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+        {clearingStage === item.name ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Trash2 className="h-3.5 w-3.5" />
+        )}
       </Button>
     </div>
   )
@@ -2788,7 +1147,10 @@ export function ReasoningProcessPage({
 
     if (!row.collapsedByDefault) {
       return (
-        <section key={row.key} className="grid gap-2 sm:grid-cols-[72px_minmax(0,1fr)] sm:items-start">
+        <section
+          key={row.key}
+          className="grid gap-2 sm:grid-cols-[72px_minmax(0,1fr)] sm:items-start"
+        >
           <div className="text-muted-foreground px-1 pt-1 text-xs font-medium sm:pt-3">
             {row.label}
           </div>
@@ -2807,7 +1169,9 @@ export function ReasoningProcessPage({
               type="button"
               className="text-muted-foreground hover:text-foreground flex items-center gap-1 px-1 pt-1 text-left text-xs font-medium transition-colors sm:pt-3"
             >
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', collapsed && '-rotate-90')} />
+              <ChevronDown
+                className={cn('h-3.5 w-3.5 transition-transform', collapsed && '-rotate-90')}
+              />
               {row.label}
               <span className="text-muted-foreground/80">({row.items.length})</span>
             </button>
@@ -2823,10 +1187,17 @@ export function ReasoningProcessPage({
   }
 
   const pendingClearStageLabel = pendingClearStage ? formatStageName(pendingClearStage.name) : ''
-  const pendingClearStageDeleting = pendingClearStage ? clearingStage === pendingClearStage.name : false
+  const pendingClearStageDeleting = pendingClearStage
+    ? clearingStage === pendingClearStage.name
+    : false
 
   return (
-    <div className={cn('flex h-full min-h-0 flex-col gap-2 overflow-hidden sm:gap-3', embedded ? 'p-0' : 'p-2 lg:p-4')}>
+    <div
+      className={cn(
+        'flex h-full min-h-0 flex-col gap-2 overflow-hidden sm:gap-3',
+        embedded ? 'p-0' : 'p-2 lg:p-4'
+      )}
+    >
       {toolbarPortal}
       {topbarActionsPortal}
 
@@ -2843,7 +1214,9 @@ export function ReasoningProcessPage({
             <AlertDialogTitle>清空推理过程记录</AlertDialogTitle>
             <AlertDialogDescription>
               将清空「{pendingClearStageLabel}」下的全部推理过程日志。
-              {pendingClearStage?.session_count ? ` 当前包含 ${pendingClearStage.session_count} 个会话。` : ''}
+              {pendingClearStage?.session_count
+                ? ` 当前包含 ${pendingClearStage.session_count} 个会话。`
+                : ''}
               此操作不可撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -2868,7 +1241,9 @@ export function ReasoningProcessPage({
         <div className="flex flex-shrink-0 items-start justify-between gap-3">
           <div>
             <h1 className="text-foreground text-xl font-semibold tracking-normal">推理过程</h1>
-            <p className="text-muted-foreground text-sm">浏览 logs/maisaka_prompt 下的 prompt 记录</p>
+            <p className="text-muted-foreground text-sm">
+              浏览 logs/maisaka_prompt 下的 prompt 记录
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {renderReturnButton()}
@@ -2878,7 +1253,7 @@ export function ReasoningProcessPage({
       )}
 
       {showBrowsingControlsInline && (
-        <div className="grid flex-shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 [&>div:last-child]:col-span-2 sm:grid-cols-[auto_minmax(220px,320px)_1fr] sm:[&>div:last-child]:col-span-1">
+        <div className="grid flex-shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 sm:grid-cols-[auto_minmax(220px,320px)_1fr] [&>div:last-child]:col-span-2 sm:[&>div:last-child]:col-span-1">
           {renderBrowsingControls()}
         </div>
       )}
@@ -2911,9 +1286,7 @@ export function ReasoningProcessPage({
               : 'lg:grid-cols-[280px_minmax(0,1fr)]'
           )}
         >
-          <div
-            className="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border transition-[height,min-height,opacity,transform,border-width] duration-300 ease-out lg:h-auto lg:min-h-0 lg:transition-[opacity,transform,border-width]"
-          >
+          <div className="bg-background flex h-[32vh] min-h-[180px] flex-col overflow-hidden rounded-md border transition-[height,min-height,opacity,transform,border-width] duration-300 ease-out lg:h-auto lg:min-h-0 lg:transition-[opacity,transform,border-width]">
             <div className="text-muted-foreground flex h-8 flex-shrink-0 items-center justify-between border-b px-2.5 text-xs">
               <span>{total} 条记录</span>
               <span>
@@ -2923,9 +1296,8 @@ export function ReasoningProcessPage({
             {embedded && browsingStage && (
               <div className="flex flex-shrink-0 flex-col gap-2 border-b p-2">
                 <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    {renderSessionSelect('sidebarRow')}
-                  </div>
+                  {renderTypeButton(true)}
+                  <div className="min-w-0 flex-1">{renderSessionSelect('sidebarRow')}</div>
                   {renderRefreshButton('toolbar')}
                 </div>
                 {renderBrowsingFilters('sidebar')}
@@ -2941,7 +1313,8 @@ export function ReasoningProcessPage({
                   const durationText = formatDurationMs(item.duration_ms)
                   const metadataText = getReasoningMetadataText(item)
                   const rawPreviewText =
-                    item.display_title || (item.stage === 'replyer' ? item.output_preview : item.action_preview)
+                    item.display_title ||
+                    (item.stage === 'replyer' ? item.output_preview : item.action_preview)
                   const previewText = rawPreviewText ? formatPromptPreviewText(rawPreviewText) : ''
                   return (
                     <button
@@ -2999,6 +1372,15 @@ export function ReasoningProcessPage({
                               {durationText}
                             </span>
                           )}
+                          {item.prompt_tokens !== null && (
+                            <span className="inline-flex items-center gap-1">
+                              {formatTokenUsage(
+                                item.prompt_tokens,
+                                item.completion_tokens,
+                                item.total_tokens
+                              )}
+                            </span>
+                          )}
                           <span className="shrink-0">{formatSize(item.size)}</span>
                         </div>
                       )}
@@ -3034,12 +1416,12 @@ export function ReasoningProcessPage({
 
           <div className="bg-background flex min-h-0 flex-col overflow-hidden rounded-md border">
             {replayPanelOpen ? (
-              <ReplayMessageEditorColumn
+              <ReplayItemEditorColumn
                 selectedTitle={selectedTitle}
-                messages={replayMessages}
-                updateMessage={updateReplayMessage}
-                addMessage={addReplayMessage}
-                deleteMessage={deleteReplayMessage}
+                items={replayItems}
+                updateItem={updateReplayItem}
+                addItem={addReplayItem}
+                deleteItem={deleteReplayItem}
                 onClose={() => setReplayPanelOpen(false)}
               />
             ) : (
@@ -3048,355 +1430,288 @@ export function ReasoningProcessPage({
                 onValueChange={(value) => setActivePreview(value as 'structured' | 'text' | 'html')}
                 className="flex min-h-0 flex-1 flex-col"
               >
-              <div className="relative min-h-0 flex-1 overflow-hidden">
-                <ScrollArea className="h-full transition-transform duration-300 ease-out">
-                  <div className="min-h-full">
-                    <div className="flex min-h-12 flex-col gap-2 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium">
-                          {selectedTitle}
-                        </div>
-                        {(headerMeta.sessionId || headerMeta.callId) && (
-                          <div className="text-muted-foreground mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4">
-                            {headerMeta.sessionId && (
-                              <span className="min-w-0 truncate">会话ID: {headerMeta.sessionId}</span>
-                            )}
-                            {headerMeta.callId && (
-                              <span className="min-w-0 truncate">调用ID: {headerMeta.callId}</span>
-                            )}
-                          </div>
-                        )}
-                        {!selected && (
-                          <div className="text-muted-foreground truncate text-xs">
-                            从左侧列表选择一条记录
-                          </div>
-                        )}
-                      </div>
-                      {selected && (
-                        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
-                          <TabsList className="h-8 rounded-md">
-                            {previewTabMode === 'structured' && (
-                              <TabsTrigger value="structured" className="h-6 gap-1 px-2 text-xs">
-                                <FileJson className="h-3.5 w-3.5" />
-                                结构化
-                              </TabsTrigger>
-                            )}
-                            {previewTabMode === 'text' && (
-                              <TabsTrigger value="text" className="h-6 gap-1 px-2 text-xs">
-                                <FileText className="h-3.5 w-3.5" />
-                                文本
-                              </TabsTrigger>
-                            )}
-                            {selected.html_path && (
-                              <TabsTrigger value="html" className="h-6 gap-1 px-2 text-xs">
-                                <Code2 className="h-3.5 w-3.5" />
-                                HTML
-                              </TabsTrigger>
-                            )}
-                          </TabsList>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5"
-                            onClick={handleCopyPrompt}
-                            disabled={
-                              contentLoading ||
-                              !(textContent || buildStructuredPromptCopyText(structuredPrompt) || jsonContent)
-                            }
-                            title="复制完整 Prompt"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                            复制
-                          </Button>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                disabled={contentLoading || !jsonContent.trim()}
-                                title="导出当前 JSON"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                                导出
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent align="end" className="w-72">
-                              <div className="space-y-3">
-                                <div>
-                                  <div className="text-sm font-semibold">导出推理过程</div>
-                                  <div className="text-muted-foreground mt-1 text-xs leading-5">
-                                    下载当前记录的 JSON。
-                                  </div>
-                                </div>
-                                <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-                                  <Label
-                                    htmlFor="reasoning-export-erase-nickname"
-                                    className="cursor-pointer text-sm font-medium"
-                                  >
-                                    抹去昵称
-                                  </Label>
-                                  <Switch
-                                    id="reasoning-export-erase-nickname"
-                                    checked={eraseNicknameOnExport}
-                                    onCheckedChange={setEraseNicknameOnExport}
-                                  />
-                                </div>
-                                <Button
-                                  className="h-8 w-full gap-1.5"
-                                  size="sm"
-                                  onClick={handleDownloadReasoningJson}
-                                  disabled={contentLoading || !jsonContent.trim()}
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                  下载 JSON
-                                </Button>
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5"
-                            onClick={() => setReplayPanelOpen(true)}
-                            disabled={contentLoading || (structuredPrompt?.messages?.length ?? 0) === 0}
-                            title="编辑消息并重放本次请求"
-                          >
-                            <Play className="h-3.5 w-3.5" />
-                            重放
-                          </Button>
-                          {selected.text_path && (
-                            <span className="inline-flex items-center gap-1">
-                              <FileText className="h-3.5 w-3.5" />
-                              txt
-                            </span>
-                          )}
-                          {selected.json_path && (
-                            <span className="inline-flex items-center gap-1">
-                              <FileJson className="h-3.5 w-3.5" />
-                              json
-                            </span>
-                          )}
-                          {selected.html_path && (
-                            <span className="inline-flex items-center gap-1">
-                              <FileCode2 className="h-3.5 w-3.5" />
-                              html
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                  <TabsContent value="structured" className="m-0">
-                    {contentLoading ? (
-                      <div className="flex min-h-[360px] items-center justify-center p-4">
-                        <ThinkingIllustration />
-                      </div>
-                    ) : structuredPrompt ? (
-                      <div className="space-y-2 p-2 sm:space-y-3 sm:p-3">
-                        {selected?.stage === 'llm_error' && (
-                          <LlmErrorDetails prompt={structuredPrompt} />
-                        )}
-
-                        {headerMeta.remainingText && (
-                          <div className="rounded-md border p-2.5 sm:p-3">
-                            <NaturalLanguageText
-                              text={headerMeta.remainingText}
-                              avatarMap={messageAvatarMap}
-                            />
-                          </div>
-                        )}
-
-                        {structuredPrompt.jargon_learning_calls &&
-                          structuredPrompt.jargon_learning_calls.length > 0 && (
-                            <div className="space-y-3">
-                              {structuredPrompt.jargon_learning_calls.map((llmCall, callIndex) => (
-                                <div
-                                  key={`${llmCall.inference_stage}-${callIndex}`}
-                                  className="space-y-2 rounded-md border p-2.5 sm:p-3"
-                                >
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <Badge variant="secondary">
-                                      #{callIndex + 1} {llmCall.inference_stage}
-                                    </Badge>
-                                    {llmCall.metadata?.model_name && (
-                                      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-                                        <Cpu className="h-3.5 w-3.5" />
-                                        {llmCall.metadata.model_name}
-                                      </span>
-                                    )}
-                                    {typeof llmCall.metadata?.duration_ms === 'number' && (
-                                      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-                                        <Timer className="h-3.5 w-3.5" />
-                                        {formatDurationMs(llmCall.metadata.duration_ms)}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div className="space-y-2">
-                                    {(llmCall.messages ?? []).map((message, messageIndex) => {
-                                      const isBotSelfMessage = isBotSelfStructuredMessage(message, botSelfNames)
-                                      const roleStyle = getStructuredPromptMessageRoleStyle(
-                                        message.role,
-                                        isBotSelfMessage
-                                      )
-                                      return (
-                                        <div
-                                          key={`${message.index ?? messageIndex}-${message.role ?? 'unknown'}`}
-                                          className={cn(
-                                            'relative rounded-md border px-2.5 pt-9 pb-2.5 sm:px-3 sm:pt-10 sm:pb-3',
-                                            roleStyle.containerClassName
-                                          )}
-                                        >
-                                          <div className="absolute top-1.5 left-1.5 flex flex-wrap items-center gap-1.5 sm:top-2 sm:left-2">
-                                            <span className="text-muted-foreground px-1 text-[11px] font-semibold">
-                                              输入 #{message.index ?? messageIndex + 1}
-                                            </span>
-                                            <span className="text-muted-foreground px-1 text-[11px] font-semibold">
-                                              {roleStyle.label}
-                                            </span>
-                                            {message.tool_call_id && (
-                                              <span className="text-muted-foreground text-xs">
-                                                tool_call_id: {message.tool_call_id}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <NaturalLanguageText
-                                            text={stringifyPromptContent(message.content) || '空内容'}
-                                            avatarMap={messageAvatarMap}
-                                          />
-                                          {message.tool_calls && message.tool_calls.length > 0 && (
-                                            <ToolCallsCollapsible toolCalls={message.tool_calls} />
-                                          )}
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-
-                                  {llmCall.provider_response && (
-                                    <ProviderResponseTimeline response={llmCall.provider_response} />
-                                  )}
-
-                                  {llmCall.output && (
-                                    <div className="rounded-md border p-2.5 sm:p-3">
-                                      <Badge variant="outline" className="mb-2">
-                                        {llmCall.output.title || '输出结果'}
-                                      </Badge>
-                                      <NaturalLanguageText
-                                        text={stringifyPromptContent(llmCall.output.content) || '空输出'}
-                                        avatarMap={messageAvatarMap}
-                                      />
-                                      {llmCall.output.tool_calls &&
-                                        llmCall.output.tool_calls.length > 0 && (
-                                          <ToolCallsCollapsible toolCalls={llmCall.output.tool_calls} />
-                                        )}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                  <ScrollArea className="h-full transition-transform duration-300 ease-out">
+                    <div className="min-h-full">
+                      <div className="flex min-h-12 flex-col gap-2 border-b px-3 py-2 sm:min-h-14 sm:px-4 sm:py-3 xl:flex-row xl:items-center xl:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{selectedTitle}</div>
+                          {(headerMeta.sessionId || headerMeta.callId || selectedTokenText) && (
+                            <div className="text-muted-foreground mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4">
+                              {headerMeta.sessionId && (
+                                <span className="min-w-0 truncate">
+                                  会话ID: {headerMeta.sessionId}
+                                </span>
+                              )}
+                              {headerMeta.callId && (
+                                <span className="min-w-0 truncate">
+                                  调用ID: {headerMeta.callId}
+                                </span>
+                              )}
+                              {selectedTokenText && <span>{selectedTokenText}</span>}
                             </div>
                           )}
-
-                        {structuredPrompt.provider_response && (
-                          <ProviderResponseTimeline response={structuredPrompt.provider_response} />
-                        )}
-
-                        {structuredPrompt.output && (
-                          <div className="rounded-md border p-2.5 sm:p-3">
-                            <Badge variant="secondary" className="mb-2">
-                              {structuredPrompt.output.title || '输出结果'}
-                            </Badge>
-                            <NaturalLanguageText
-                              text={stringifyPromptContent(structuredPrompt.output.content) || '空输出'}
-                              avatarMap={messageAvatarMap}
-                            />
-                            {structuredPrompt.output.tool_calls &&
-                              structuredPrompt.output.tool_calls.length > 0 && (
-                                <ToolCallsCollapsible toolCalls={structuredPrompt.output.tool_calls} />
+                          {!selected && (
+                            <div className="text-muted-foreground truncate text-xs">
+                              从左侧列表选择一条记录
+                            </div>
+                          )}
+                        </div>
+                        {selected && (
+                          <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
+                            <TabsList className="h-8 rounded-md">
+                              {previewTabMode === 'structured' && (
+                                <TabsTrigger value="structured" className="h-6 gap-1 px-2 text-xs">
+                                  <FileJson className="h-3.5 w-3.5" />
+                                  结构化
+                                </TabsTrigger>
                               )}
+                              {previewTabMode === 'text' && (
+                                <TabsTrigger value="text" className="h-6 gap-1 px-2 text-xs">
+                                  <FileText className="h-3.5 w-3.5" />
+                                  文本
+                                </TabsTrigger>
+                              )}
+                              {selected.html_path && (
+                                <TabsTrigger value="html" className="h-6 gap-1 px-2 text-xs">
+                                  <Code2 className="h-3.5 w-3.5" />
+                                  HTML
+                                </TabsTrigger>
+                              )}
+                            </TabsList>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1.5"
+                              onClick={handleCopyPrompt}
+                              disabled={
+                                contentLoading ||
+                                !(
+                                  textContent ||
+                                  buildStructuredPromptCopyText(structuredPrompt) ||
+                                  jsonContent
+                                )
+                              }
+                              title="复制完整 Prompt"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                              复制
+                            </Button>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1.5"
+                                  disabled={contentLoading || !jsonContent.trim()}
+                                  title="导出当前 JSON"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                  导出
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent align="end" className="w-72">
+                                <div className="space-y-3">
+                                  <div>
+                                    <div className="text-sm font-semibold">导出推理过程</div>
+                                    <div className="text-muted-foreground mt-1 text-xs leading-5">
+                                      下载当前记录的 JSON。
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                                    <Label
+                                      htmlFor="reasoning-export-erase-nickname"
+                                      className="cursor-pointer text-sm font-medium"
+                                    >
+                                      抹去昵称
+                                    </Label>
+                                    <Switch
+                                      id="reasoning-export-erase-nickname"
+                                      checked={eraseNicknameOnExport}
+                                      onCheckedChange={setEraseNicknameOnExport}
+                                    />
+                                  </div>
+                                  <Button
+                                    className="h-8 w-full gap-1.5"
+                                    size="sm"
+                                    onClick={handleDownloadReasoningJson}
+                                    disabled={contentLoading || !jsonContent.trim()}
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                    下载 JSON
+                                  </Button>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1.5"
+                              onClick={() => setReplayPanelOpen(true)}
+                              disabled={
+                                contentLoading ||
+                                (structuredPrompt?.request_items.length ?? 0) === 0
+                              }
+                              title="编辑 Items 并重放本次请求"
+                            >
+                              <Play className="h-3.5 w-3.5" />
+                              重放
+                            </Button>
+                            {selected.text_path && (
+                              <span className="inline-flex items-center gap-1">
+                                <FileText className="h-3.5 w-3.5" />
+                                txt
+                              </span>
+                            )}
+                            {selected.json_path && (
+                              <span className="inline-flex items-center gap-1">
+                                <FileJson className="h-3.5 w-3.5" />
+                                json
+                              </span>
+                            )}
+                            {selected.html_path && (
+                              <span className="inline-flex items-center gap-1">
+                                <FileCode2 className="h-3.5 w-3.5" />
+                                html
+                              </span>
+                            )}
                           </div>
                         )}
+                      </div>
 
-                        <div className="space-y-2">
-                          {(structuredPrompt.messages ?? []).map((message, index) => {
-                            const isBotSelfMessage = isBotSelfStructuredMessage(message, botSelfNames)
-                            const roleStyle = getStructuredPromptMessageRoleStyle(
-                              message.role,
-                              isBotSelfMessage
-                            )
-                            return (
-                              <div
-                                key={`${message.index ?? index}-${message.role ?? 'unknown'}`}
-                                className={cn('relative rounded-md border px-2.5 pt-9 pb-2.5 sm:px-3 sm:pt-10 sm:pb-3', roleStyle.containerClassName)}
-                              >
-                                <div className="absolute top-1.5 left-1.5 flex flex-wrap items-center gap-1.5 sm:top-2 sm:left-2">
-                                  <span className="text-muted-foreground px-1 text-[11px] font-semibold">
-                                    #{message.index ?? index + 1}
-                                  </span>
-                                  <span className="text-muted-foreground px-1 text-[11px] font-semibold">
-                                    {roleStyle.label}
-                                  </span>
-                                  {message.tool_call_id && (
-                                    <span className="text-muted-foreground text-xs">
-                                      tool_call_id: {message.tool_call_id}
-                                    </span>
-                                  )}
-                                </div>
+                      <TabsContent value="structured" className="m-0">
+                        {contentLoading ? (
+                          <div className="flex min-h-[360px] items-center justify-center p-4">
+                            <ThinkingIllustration />
+                          </div>
+                        ) : structuredPrompt ? (
+                          <div className="space-y-2 p-2 sm:space-y-3 sm:p-3">
+                            {selected?.stage === 'llm_error' && (
+                              <LlmErrorDetails prompt={structuredPrompt} />
+                            )}
+
+                            {headerMeta.remainingText && (
+                              <div className="rounded-md border p-2.5 sm:p-3">
                                 <NaturalLanguageText
-                                  text={stringifyPromptContent(message.content) || '空内容'}
+                                  text={headerMeta.remainingText}
                                   avatarMap={messageAvatarMap}
                                 />
-                                {message.tool_calls && message.tool_calls.length > 0 && (
-                                  <ToolCallsCollapsible toolCalls={message.tool_calls} />
-                                )}
                               </div>
-                            )
-                          })}
-                        </div>
+                            )}
 
-                        {structuredPrompt.tool_definitions &&
-                          structuredPrompt.tool_definitions.length > 0 && (
-                            <ToolDefinitionsCollapsible
-                              toolDefinitions={structuredPrompt.tool_definitions}
+                            {structuredPrompt.jargon_learning_calls &&
+                              structuredPrompt.jargon_learning_calls.length > 0 && (
+                                <div className="space-y-3">
+                                  {structuredPrompt.jargon_learning_calls.map(
+                                    (llmCall, callIndex) => (
+                                      <div
+                                        key={`${llmCall.inference_stage}-${callIndex}`}
+                                        className="space-y-2 rounded-md border p-2.5 sm:p-3"
+                                      >
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <Badge variant="secondary">
+                                            #{callIndex + 1} {llmCall.inference_stage}
+                                          </Badge>
+                                          {llmCall.metadata?.model_name && (
+                                            <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                                              <Cpu className="h-3.5 w-3.5" />
+                                              {llmCall.metadata.model_name}
+                                            </span>
+                                          )}
+                                          {typeof llmCall.metadata?.duration_ms === 'number' && (
+                                            <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                                              <Timer className="h-3.5 w-3.5" />
+                                              {formatDurationMs(llmCall.metadata.duration_ms)}
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <ContextItemTimeline
+                                          title="请求 Items"
+                                          items={llmCall.request_items}
+                                          avatarMap={messageAvatarMap}
+                                          botSelfNames={botSelfNames}
+                                        />
+
+                                        <GenerationAttemptTimeline
+                                          attempts={llmCall.generation_attempts}
+                                          referenceRequestItems={llmCall.request_items}
+                                        />
+
+                                        <ContextItemTimeline
+                                          title="输出 Items"
+                                          items={llmCall.output_items}
+                                          avatarMap={messageAvatarMap}
+                                          botSelfNames={botSelfNames}
+                                        />
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+
+                            <ContextItemTimeline
+                              title="请求 Items"
+                              items={structuredPrompt.request_items}
+                              avatarMap={messageAvatarMap}
+                              botSelfNames={botSelfNames}
                             />
-                          )}
-                      </div>
-                    ) : (
-                      <div className="text-muted-foreground flex min-h-[360px] items-center justify-center text-sm">
-                        没有结构化内容
-                      </div>
-                    )}
-                  </TabsContent>
 
-                  <TabsContent value="text" className="m-0">
-                    {contentLoading ? (
-                      <div className="flex min-h-[360px] items-center justify-center p-4">
-                        <ThinkingIllustration />
-                      </div>
-                    ) : (
-                      <pre className="text-foreground min-h-[280px] p-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap sm:min-h-[360px] sm:p-4">
-                        {textContent || '没有文本内容'}
-                      </pre>
-                    )}
-                  </TabsContent>
+                            <GenerationAttemptTimeline
+                              attempts={structuredPrompt.generation_attempts}
+                              referenceRequestItems={structuredPrompt.request_items}
+                            />
 
-                  <TabsContent value="html" className="m-0">
-                    {selected?.html_path && htmlPreviewUrl ? (
-                      <iframe
-                        title="推理过程 HTML 预览"
-                        src={htmlPreviewUrl}
-                        sandbox=""
-                        className="h-[58vh] min-h-[320px] w-full border-0 bg-white sm:h-[70vh] sm:min-h-[420px]"
-                      />
-                    ) : (
-                      <div className="text-muted-foreground flex min-h-[360px] items-center justify-center text-sm">
-                        没有 HTML 预览
-                      </div>
-                    )}
-                  </TabsContent>
-                  </div>
-                </ScrollArea>
-              </div>
+                            <ContextItemTimeline
+                              title={structuredPrompt.presentation?.output_title || '输出 Items'}
+                              items={structuredPrompt.output_items}
+                              avatarMap={messageAvatarMap}
+                              botSelfNames={botSelfNames}
+                            />
+
+                            {structuredPrompt.tool_definitions &&
+                              structuredPrompt.tool_definitions.length > 0 && (
+                                <ToolDefinitionsCollapsible
+                                  toolDefinitions={structuredPrompt.tool_definitions}
+                                />
+                              )}
+                          </div>
+                        ) : (
+                          <div className="text-muted-foreground flex min-h-[360px] items-center justify-center text-sm">
+                            没有结构化内容
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="text" className="m-0">
+                        {contentLoading ? (
+                          <div className="flex min-h-[360px] items-center justify-center p-4">
+                            <ThinkingIllustration />
+                          </div>
+                        ) : (
+                          <pre className="text-foreground min-h-[280px] p-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap sm:min-h-[360px] sm:p-4">
+                            {textContent || '没有文本内容'}
+                          </pre>
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="html" className="m-0">
+                        {selected?.html_path && htmlPreviewUrl ? (
+                          <iframe
+                            title="推理过程 HTML 预览"
+                            src={htmlPreviewUrl}
+                            sandbox=""
+                            className="h-[58vh] min-h-[320px] w-full border-0 bg-white sm:h-[70vh] sm:min-h-[420px]"
+                          />
+                        ) : (
+                          <div className="text-muted-foreground flex min-h-[360px] items-center justify-center text-sm">
+                            没有 HTML 预览
+                          </div>
+                        )}
+                      </TabsContent>
+                    </div>
+                  </ScrollArea>
+                </div>
               </Tabs>
             )}
           </div>
@@ -3406,7 +1721,7 @@ export function ReasoningProcessPage({
             selected={selected}
             selectedTitle={selectedTitle}
             structuredPrompt={structuredPrompt}
-            messages={replayMessages}
+            items={replayItems}
           />
         </div>
       )}

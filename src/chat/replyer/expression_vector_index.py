@@ -8,8 +8,10 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import asyncio
 import json
+import os
 import re
 import time
+import uuid
 
 import numpy as np
 
@@ -24,6 +26,9 @@ VECTOR_ITEM_WEIGHT = 0.7
 VECTOR_CLUSTER_WEIGHT = 0.1
 VECTOR_LEXICAL_WEIGHT = 0.2
 VECTOR_DIVERSITY_LAMBDA = 0.85
+FULL_RECLUSTER_CHANGE_RATIO = 0.05
+CLUSTER_STATE_BOOTSTRAPPING = "BOOTSTRAPPING"
+CLUSTER_STATE_STABLE = "STABLE"
 EMBEDDING_PROFILE_CACHE_SECONDS = 600.0
 EMBEDDING_PROFILE_VERSION = 2
 EMBEDDING_PROFILE_MIN_COSINE_SIMILARITY = 0.999
@@ -34,6 +39,11 @@ HISTORY_BACKFILL_MIN_INTERVAL_SECONDS = 10.0
 HISTORY_BACKFILL_MAX_INTERVAL_SECONDS = 600.0
 HISTORY_BACKFILL_INTERVAL_SPEED_RATIO = 1.0
 HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS = 300.0
+HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS = 60.0
+EMBEDDING_ITEM_FAILURE_RETRY_INTERVAL_SECONDS = 60.0
+EMBEDDING_ITEM_FAILURE_ISOLATION_ATTEMPTS = 3
+EMBEDDING_ITEM_FAILURE_ISOLATION_INTERVAL_SECONDS = 24 * 60 * 60.0
+EMBEDDING_ITEM_FAILURE_ERROR_MAX_LENGTH = 500
 EMBEDDING_PROFILE_PROBE_TEXTS = [
     "MaiBot 表达检索 embedding profile probe v1：技术问题排查、报错截图、配置异常",
     "MaiBot 表达检索 embedding profile probe v1：轻松吐槽、接梗、日常群聊",
@@ -93,6 +103,49 @@ class ExpressionVectorIndexUpsertItem:
     session_id: str | None
     checked: bool
     modified_by: str
+
+
+@dataclass(frozen=True)
+class ExpressionVectorIndexUpdateResult:
+    """一次表达向量索引更新的维护结果。"""
+
+    batch_count: int
+    total_count: int
+    changed_count: int
+    changes_since_recluster: int
+    reclustered: bool
+    recluster_reason: str
+    requested_count: int
+    failed_count: int
+    isolated_count: int
+    failed_expression_ids: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ExpressionHistoryBackfillSelection:
+    """一次历史回填扫描结果。
+
+    延迟项会在短冷却后重试；隔离项会在更长冷却后低频重试，
+    两者都不阻塞其他表达的回填和聚类。
+    """
+
+    items: List[ExpressionVectorIndexUpsertItem]
+    deferred_count: int
+    isolated_count: int
+
+
+@dataclass
+class _MutableExpressionIndexState:
+    """持有一次写锁内索引更新所需的可变状态。"""
+
+    existing_payload: bool
+    payload: dict[str, Any]
+    vectors_path: Path
+    raw_expressions: List[dict[str, Any]]
+    vector_by_expression_id: Dict[int, np.ndarray]
+    previous_profile_cluster_centers: Dict[str, np.ndarray]
+    prior_changes_since_recluster: int
+    prior_changed_expression_ids: set[int]
 
 
 def normalize_text(value: Any) -> str:
@@ -379,13 +432,61 @@ def _resolve_vectors_path(index_path: Path, payload: dict[str, Any]) -> Path:
     return vectors_path.resolve()
 
 
+def _resolve_embedding_failures_path(index_path: Path) -> Path:
+    """返回主索引尚未生成时使用的局部失败记录路径。"""
+
+    return index_path.with_name(f"{index_path.stem}.embedding-failures.json")
+
+
+def _remove_embedding_failures_file(index_path: Path) -> None:
+    """主索引已接管失败记录后，清理独立记录文件。"""
+
+    failures_path = _resolve_embedding_failures_path(index_path)
+    try:
+        failures_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning(
+            f"表达向量嵌入失败独立记录清理失败，下次会继续合并: "
+            f"path={failures_path} error={exc}"
+        )
+
+
 def _atomic_write_text(path: Path, content: str) -> None:
-    """用同目录临时文件原子替换文本文件。"""
+    """用同目录唯一临时文件完整落盘后原子替换文本文件。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f"{path.stem}.tmp{path.suffix}")
-    temporary_path.write_text(content, encoding="utf-8")
-    temporary_path.replace(path)
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("x", encoding="utf-8", newline="\n") as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _load_index_payload(index_path: Path) -> dict[str, Any] | None:
+    """读取生成索引；损坏内容会被明确记录，并交由数据库重建。"""
+
+    if not index_path.exists():
+        return None
+    try:
+        raw_content = index_path.read_text(encoding="utf-8")
+        payload = json.loads(raw_content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.error(
+            "表达向量索引 JSON 已损坏，将忽略该生成文件并从数据库重建: "
+            f"path={index_path} size={index_path.stat().st_size} error={exc}"
+        )
+        return None
+    if not isinstance(payload, dict):
+        logger.error(
+            "表达向量索引 JSON 根节点不是对象，将忽略该生成文件并从数据库重建: "
+            f"path={index_path} type={type(payload).__name__}"
+        )
+        return None
+    return payload
 
 
 class ExpressionVectorIndex:
@@ -400,14 +501,15 @@ class ExpressionVectorIndex:
         self._profile_drift_confirmations = 0
         self._history_backfill_task: asyncio.Task[None] | None = None
         self._history_backfill_last_empty_at = 0.0
+        self._history_backfill_last_failure_at = 0.0
 
     @staticmethod
     def _load_persisted_embedding_profile(index_path: Path) -> ExpressionEmbeddingProfile | None:
         """从现有索引读取当前向量空间的持久化探针基准。"""
 
-        if not index_path.exists():
+        payload = _load_index_payload(index_path)
+        if payload is None:
             return None
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
         raw_profile = payload.get("embedding_profile")
         if raw_profile is None:
             return None
@@ -559,7 +661,9 @@ class ExpressionVectorIndex:
         if self._snapshot is not None and self._snapshot.path == index_path and self._snapshot.mtime == mtime:
             return self._snapshot
 
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = _load_index_payload(index_path)
+        if payload is None:
+            return None
         payload_version = int(payload.get("version") or 0)
         if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
             raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
@@ -770,7 +874,9 @@ class ExpressionVectorIndex:
         if not index_path.exists():
             return {}
 
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = _load_index_payload(index_path)
+        if payload is None:
+            return {}
         payload_version = int(payload.get("version") or 0)
         if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
             raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
@@ -784,6 +890,56 @@ class ExpressionVectorIndex:
                 continue
             indexed_by_id[expression_id] = raw_expression
         return indexed_by_id
+
+    @staticmethod
+    def _load_embedding_failure_records(payload: dict[str, Any] | None) -> Dict[int, dict[str, Any]]:
+        """读取按表达 ID 存储的嵌入失败记录。"""
+
+        if payload is None:
+            return {}
+        records: Dict[int, dict[str, Any]] = {}
+        for raw_record in payload.get("embedding_failures") or []:
+            if not isinstance(raw_record, dict):
+                continue
+            expression_id = int(raw_record.get("expression_id") or 0)
+            if expression_id <= 0:
+                continue
+            records[expression_id] = dict(raw_record)
+        return records
+
+    @classmethod
+    def _load_combined_embedding_failure_records(
+        cls,
+        *,
+        index_path: Path,
+        payload: dict[str, Any] | None,
+    ) -> Dict[int, dict[str, Any]]:
+        """合并主索引与建立主索引前的独立失败记录。"""
+
+        records = cls._load_embedding_failure_records(payload)
+        standalone_payload = _load_index_payload(_resolve_embedding_failures_path(index_path))
+        records.update(cls._load_embedding_failure_records(standalone_payload))
+        return records
+
+    @staticmethod
+    def _matches_embedding_failure_record(
+        record: dict[str, Any] | None,
+        *,
+        expression_id: int,
+        situation: str,
+        style: str,
+        profile: ExpressionEmbeddingProfile,
+    ) -> bool:
+        """判断失败记录是否仍对当前内容和向量空间有效。"""
+
+        if record is None:
+            return False
+        return (
+            int(record.get("expression_id") or 0) == expression_id
+            and normalize_text(record.get("fingerprint"))
+            == expression_fingerprint(expression_id, situation, style)
+            and normalize_text(record.get("embedding_profile_marker")) == profile.marker
+        )
 
     @staticmethod
     def _needs_history_backfill(
@@ -811,7 +967,7 @@ class ExpressionVectorIndex:
         index_path: Path,
         profile: ExpressionEmbeddingProfile,
         batch_size: int,
-    ) -> List[ExpressionVectorIndexUpsertItem]:
+    ) -> ExpressionHistoryBackfillSelection:
         """从数据库读取一批缺失或过期的历史表达。"""
 
         from sqlmodel import select
@@ -819,8 +975,26 @@ class ExpressionVectorIndex:
         from src.common.database.database import get_db_session
         from src.common.database.database_model import Expression, ModifiedBy
 
-        indexed_by_id = self._load_raw_index_expressions(index_path)
+        payload = _load_index_payload(index_path)
+        indexed_by_id: Dict[int, dict[str, Any]] = {}
+        if payload is not None:
+            payload_version = int(payload.get("version") or 0)
+            if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
+                raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
+            for raw_expression in payload.get("expressions") or []:
+                if not isinstance(raw_expression, dict):
+                    continue
+                expression_id = int(raw_expression.get("id") or 0)
+                if expression_id > 0:
+                    indexed_by_id[expression_id] = raw_expression
+        failure_records = self._load_combined_embedding_failure_records(
+            index_path=index_path,
+            payload=payload,
+        )
         items: List[ExpressionVectorIndexUpsertItem] = []
+        deferred_count = 0
+        isolated_count = 0
+        now_timestamp = time.time()
         with get_db_session(auto_commit=False) as session:
             statement = (
                 select(
@@ -853,6 +1027,23 @@ class ExpressionVectorIndex:
             ):
                 continue
 
+            failure_record = failure_records.get(int(expression_id))
+            if self._matches_embedding_failure_record(
+                failure_record,
+                expression_id=int(expression_id),
+                situation=normalized_situation,
+                style=normalized_style,
+                profile=profile,
+            ):
+                retry_after = float(failure_record.get("retry_after_timestamp") or 0.0)
+                if retry_after > now_timestamp:
+                    attempts = max(0, int(failure_record.get("attempts") or 0))
+                    if attempts >= EMBEDDING_ITEM_FAILURE_ISOLATION_ATTEMPTS:
+                        isolated_count += 1
+                    else:
+                        deferred_count += 1
+                    continue
+
             modified_by_text = modified_by.value if isinstance(modified_by, ModifiedBy) else normalize_text(modified_by)
             items.append(
                 ExpressionVectorIndexUpsertItem(
@@ -867,7 +1058,11 @@ class ExpressionVectorIndex:
             )
             if len(items) >= batch_size:
                 break
-        return items
+        return ExpressionHistoryBackfillSelection(
+            items=items,
+            deferred_count=deferred_count,
+            isolated_count=isolated_count,
+        )
 
     @staticmethod
     def _load_current_expression_fingerprints() -> Dict[int, str]:
@@ -921,10 +1116,23 @@ class ExpressionVectorIndex:
     def _select_nearest_cluster(vector: np.ndarray, cluster_centers: np.ndarray) -> int:
         """根据当前聚类中心给新增/更新表达分配最近簇。"""
 
+        labels = ExpressionVectorIndex._select_nearest_clusters(
+            vector.reshape(1, -1),
+            cluster_centers,
+        )
+        return int(labels[0])
+
+    @staticmethod
+    def _select_nearest_clusters(
+        vectors: np.ndarray,
+        cluster_centers: np.ndarray,
+    ) -> np.ndarray:
+        """批量将新增/更新向量分配到最近的现有簇。"""
+
         if cluster_centers.size == 0:
-            return 0
+            return np.zeros(vectors.shape[0], dtype=np.int32)
         normalized_centers = l2_normalize(cluster_centers)
-        return int(np.argmax(normalized_centers @ vector))
+        return np.argmax(vectors @ normalized_centers.T, axis=1).astype(np.int32)
 
     @staticmethod
     def _choose_cluster_count(sample_count: int, previous_cluster_count: int) -> int:
@@ -969,6 +1177,7 @@ class ExpressionVectorIndex:
         normalized_vectors: np.ndarray,
         *,
         cluster_count: int,
+        initial_centers: np.ndarray | None = None,
         seed: int = 20260621,
         max_iter: int = 100,
     ) -> np.ndarray:
@@ -982,23 +1191,45 @@ class ExpressionVectorIndex:
         if cluster_count <= 1 or sample_count <= 1:
             return np.zeros(sample_count, dtype=np.int32)
 
-        rng = np.random.default_rng(seed)
-        centroid_indices = [int(rng.integers(0, sample_count))]
-        while len(centroid_indices) < cluster_count:
-            selected = normalized_vectors[centroid_indices]
-            similarity = normalized_vectors @ selected.T
-            distance = 1.0 - np.max(similarity, axis=1)
-            distance = np.maximum(distance, 0.0)
-            distance[centroid_indices] = 0.0
-            total_distance = float(distance.sum())
-            if total_distance <= 0:
-                remaining_indices = [index for index in range(sample_count) if index not in centroid_indices]
-                centroid_indices.append(remaining_indices[0])
-                continue
-            probabilities = distance / total_distance
-            centroid_indices.append(int(rng.choice(sample_count, p=probabilities)))
+        if initial_centers is not None:
+            if initial_centers.shape != (cluster_count, normalized_vectors.shape[1]):
+                raise ValueError(
+                    "表达向量索引初始聚类中心维度异常: "
+                    f"centers={initial_centers.shape}, expected={(cluster_count, normalized_vectors.shape[1])}"
+                )
+            centroids = l2_normalize(initial_centers.astype(np.float32)).astype(np.float32)
+        else:
+            # k-means++ 只增量更新每个样本到最近已选中心的距离，避免第 k 个中心
+            # 再次计算前 k-1 个中心，初始化复杂度由 O(N*K²*D) 降为 O(N*K*D)。
+            rng = np.random.default_rng(seed)
+            centroid_indices = [int(rng.integers(0, sample_count))]
+            closest_distances = 1.0 - normalized_vectors @ normalized_vectors[centroid_indices[0]]
+            closest_distances = np.maximum(closest_distances, 0.0)
+            closest_distances[centroid_indices[0]] = 0.0
+            while len(centroid_indices) < cluster_count:
+                total_distance = float(closest_distances.sum())
+                if total_distance <= 0:
+                    selected_indices = set(centroid_indices)
+                    next_index = next(
+                        index for index in range(sample_count) if index not in selected_indices
+                    )
+                else:
+                    probabilities = closest_distances / total_distance
+                    next_index = int(rng.choice(sample_count, p=probabilities))
+                    if next_index in centroid_indices:
+                        selected_indices = set(centroid_indices)
+                        next_index = next(
+                            index for index in range(sample_count) if index not in selected_indices
+                        )
+                centroid_indices.append(next_index)
+                next_distances = 1.0 - normalized_vectors @ normalized_vectors[next_index]
+                closest_distances = np.minimum(
+                    closest_distances,
+                    np.maximum(next_distances, 0.0),
+                )
+                closest_distances[centroid_indices] = 0.0
 
-        centroids = normalized_vectors[centroid_indices].copy()
+            centroids = normalized_vectors[centroid_indices].copy()
         labels = np.full(sample_count, -1, dtype=np.int32)
         for _ in range(max_iter):
             similarities = normalized_vectors @ centroids.T
@@ -1122,6 +1353,7 @@ class ExpressionVectorIndex:
         raw_expressions: List[dict[str, Any]],
         vector_by_expression_id: Dict[int, np.ndarray],
         previous_profile_cluster_centers: Dict[str, np.ndarray],
+        reuse_previous_centers: bool = True,
     ) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[dict[str, Any]]]:
         """按 embedding profile 分组重建向量矩阵、聚类中心和 profile 元数据。"""
 
@@ -1151,7 +1383,18 @@ class ExpressionVectorIndex:
                 sample_count=vectors.shape[0],
                 previous_cluster_count=previous_cluster_count,
             )
-            labels = self._run_kmeans(vectors, cluster_count=cluster_count)
+            initial_centers = None
+            if (
+                reuse_previous_centers
+                and previous_centers is not None
+                and previous_centers.shape == (cluster_count, vectors.shape[1])
+            ):
+                initial_centers = previous_centers
+            labels = self._run_kmeans(
+                vectors,
+                cluster_count=cluster_count,
+                initial_centers=initial_centers,
+            )
             cluster_centers = self._build_cluster_centers_from_labels(vectors, labels, cluster_count)
 
             for local_index, expression_index in enumerate(expression_indices):
@@ -1180,6 +1423,340 @@ class ExpressionVectorIndex:
         return profile_vectors, profile_cluster_centers, profile_metadata
 
     @staticmethod
+    def _compact_cluster_labels(labels: np.ndarray) -> np.ndarray:
+        """移除已无成员的簇，并将标签压缩为连续编号。"""
+
+        if labels.ndim != 1 or labels.size == 0:
+            raise ValueError(f"表达向量索引聚类标签维度异常: {labels.shape}")
+        if np.any(labels < 0):
+            raise ValueError("表达向量索引聚类标签包含负数")
+        _, compacted_labels = np.unique(labels, return_inverse=True)
+        return compacted_labels.astype(np.int32)
+
+    def _update_profile_arrays_incrementally(
+        self,
+        *,
+        raw_expressions: List[dict[str, Any]],
+        vector_by_expression_id: Dict[int, np.ndarray],
+        previous_profile_cluster_centers: Dict[str, np.ndarray],
+        changed_expression_ids: set[int],
+    ) -> tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[dict[str, Any]]]:
+        """保留已有标签，仅将变化表达分配到最近的现有簇。"""
+
+        grouped_expression_indices: Dict[str, List[int]] = {}
+        for expression_index, raw_expression in enumerate(raw_expressions):
+            profile_marker = (
+                normalize_text(raw_expression.get("embedding_profile_marker"))
+                or LEGACY_EMBEDDING_PROFILE_MARKER
+            )
+            raw_expression["embedding_profile_marker"] = profile_marker
+            grouped_expression_indices.setdefault(profile_marker, []).append(expression_index)
+
+        profile_vectors: Dict[str, np.ndarray] = {}
+        profile_cluster_centers: Dict[str, np.ndarray] = {}
+        profile_metadata: List[dict[str, Any]] = []
+        for profile_index, profile_marker in enumerate(sorted(grouped_expression_indices)):
+            expression_indices = grouped_expression_indices[profile_marker]
+            vectors = np.vstack(
+                [
+                    vector_by_expression_id[int(raw_expressions[expression_index].get("id") or 0)]
+                    for expression_index in expression_indices
+                ]
+            ).astype(np.float32)
+            vectors = l2_normalize(vectors).astype(np.float32)
+            previous_centers = previous_profile_cluster_centers.get(profile_marker)
+            if (
+                previous_centers is None
+                or previous_centers.ndim != 2
+                or previous_centers.shape[0] == 0
+                or previous_centers.shape[1] != vectors.shape[1]
+            ):
+                raise ValueError(
+                    "表达向量索引缺少可用于增量更新的聚类中心: "
+                    f"marker={profile_marker[:12]} vectors={vectors.shape} "
+                    f"centers={None if previous_centers is None else previous_centers.shape}"
+                )
+
+            labels = np.array(
+                [
+                    int(raw_expressions[expression_index].get("cluster_id") or 0)
+                    for expression_index in expression_indices
+                ],
+                dtype=np.int32,
+            )
+            changed_local_indices = [
+                local_index
+                for local_index, expression_index in enumerate(expression_indices)
+                if int(raw_expressions[expression_index].get("id") or 0) in changed_expression_ids
+                or labels[local_index] < 0
+                or labels[local_index] >= previous_centers.shape[0]
+            ]
+            if changed_local_indices:
+                changed_vectors = vectors[changed_local_indices]
+                labels[changed_local_indices] = self._select_nearest_clusters(
+                    changed_vectors,
+                    previous_centers,
+                )
+
+            labels = self._compact_cluster_labels(labels)
+            cluster_count = int(labels.max()) + 1
+            cluster_centers = self._build_cluster_centers_from_labels(
+                vectors,
+                labels,
+                cluster_count,
+            )
+            for local_index, expression_index in enumerate(expression_indices):
+                raw_expressions[expression_index]["vector_index"] = local_index
+                raw_expressions[expression_index]["cluster_id"] = int(labels[local_index])
+
+            vectors_key = f"vectors_{profile_index}"
+            cluster_centers_key = f"cluster_centers_{profile_index}"
+            profile_vectors[profile_marker] = vectors
+            profile_cluster_centers[profile_marker] = cluster_centers
+            first_expression = raw_expressions[expression_indices[0]]
+            profile_metadata.append(
+                {
+                    "marker": profile_marker,
+                    "profile_version": EMBEDDING_PROFILE_VERSION,
+                    "embedding_model": normalize_text(first_expression.get("embedding_model")),
+                    "embedding_dimension": int(
+                        first_expression.get("embedding_dimension") or vectors.shape[1]
+                    ),
+                    "expression_count": len(expression_indices),
+                    "cluster_count": int(cluster_centers.shape[0]),
+                    "vectors_key": vectors_key,
+                    "cluster_centers_key": cluster_centers_key,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+
+        return profile_vectors, profile_cluster_centers, profile_metadata
+
+    @staticmethod
+    def _can_update_profiles_incrementally(
+        *,
+        raw_expressions: Sequence[dict[str, Any]],
+        vector_by_expression_id: Dict[int, np.ndarray],
+        previous_profile_cluster_centers: Dict[str, np.ndarray],
+    ) -> bool:
+        """判断当前各向量空间是否都有可复用的聚类中心。"""
+
+        profile_dimensions: Dict[str, int] = {}
+        for raw_expression in raw_expressions:
+            expression_id = int(raw_expression.get("id") or 0)
+            vector = vector_by_expression_id.get(expression_id)
+            if vector is None or vector.ndim != 1 or vector.size == 0:
+                return False
+            profile_marker = (
+                normalize_text(raw_expression.get("embedding_profile_marker"))
+                or LEGACY_EMBEDDING_PROFILE_MARKER
+            )
+            existing_dimension = profile_dimensions.get(profile_marker)
+            if existing_dimension is not None and existing_dimension != vector.shape[0]:
+                return False
+            profile_dimensions[profile_marker] = vector.shape[0]
+
+        for profile_marker, dimension in profile_dimensions.items():
+            centers = previous_profile_cluster_centers.get(profile_marker)
+            if (
+                centers is None
+                or centers.ndim != 2
+                or centers.shape[0] == 0
+                or centers.shape[1] != dimension
+            ):
+                return False
+        return bool(profile_dimensions)
+
+    @staticmethod
+    def _resolve_cluster_state(
+        payload: dict[str, Any],
+        *,
+        profile_marker: str,
+    ) -> str:
+        """解析当前 profile 的索引成熟度。
+
+        旧索引没有成熟度字段，需要经过一次明确的追平确认才进入稳定态。
+        已写入状态但结构非法时直接报错，不猜测或降级。
+        """
+
+        raw_maintenance = payload.get("cluster_maintenance")
+        if not isinstance(raw_maintenance, dict):
+            return CLUSTER_STATE_BOOTSTRAPPING
+        raw_state = normalize_text(raw_maintenance.get("state"))
+        if not raw_state:
+            return CLUSTER_STATE_BOOTSTRAPPING
+        if raw_state not in {CLUSTER_STATE_BOOTSTRAPPING, CLUSTER_STATE_STABLE}:
+            raise ValueError(f"表达向量索引聚类状态非法: {raw_state!r}")
+        state_profile_marker = normalize_text(raw_maintenance.get("profile_marker"))
+        if not state_profile_marker:
+            raise ValueError("表达向量索引聚类状态缺少 profile_marker")
+        if state_profile_marker != profile_marker:
+            return CLUSTER_STATE_BOOTSTRAPPING
+        return raw_state
+
+    async def _load_mutable_index_state(
+        self,
+        *,
+        index_path: Path,
+        current_fingerprints: Dict[int, str],
+    ) -> _MutableExpressionIndexState:
+        """在写锁内加载索引元数据、向量和聚类中心。"""
+
+        vectors_path = index_path.with_suffix(".npz")
+        raw_expressions: List[dict[str, Any]] = []
+        vector_by_expression_id: Dict[int, np.ndarray] = {}
+        previous_profile_cluster_centers: Dict[str, np.ndarray] = {}
+        prior_changes_since_recluster = 0
+        prior_changed_expression_ids: set[int] = set()
+        existing_payload = await asyncio.to_thread(_load_index_payload, index_path)
+
+        if existing_payload is None:
+            from src.common.database.database import DATABASE_URL
+
+            payload = {
+                "version": VECTOR_INDEX_VERSION,
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "database_url": DATABASE_URL,
+                "args": {"source": "incremental_learning"},
+            }
+            return _MutableExpressionIndexState(
+                existing_payload=False,
+                payload=payload,
+                vectors_path=vectors_path,
+                raw_expressions=raw_expressions,
+                vector_by_expression_id=vector_by_expression_id,
+                previous_profile_cluster_centers=previous_profile_cluster_centers,
+                prior_changes_since_recluster=prior_changes_since_recluster,
+                prior_changed_expression_ids=prior_changed_expression_ids,
+            )
+
+        payload = dict(existing_payload)
+        payload_version = int(payload.get("version") or 0)
+        if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
+            raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
+        raw_cluster_maintenance = payload.get("cluster_maintenance")
+        if isinstance(raw_cluster_maintenance, dict):
+            prior_changes_since_recluster = max(
+                0,
+                int(raw_cluster_maintenance.get("changes_since_recluster") or 0),
+            )
+            raw_changed_expression_ids = raw_cluster_maintenance.get("changed_expression_ids")
+            if isinstance(raw_changed_expression_ids, list):
+                prior_changed_expression_ids = {
+                    int(expression_id)
+                    for expression_id in raw_changed_expression_ids
+                    if isinstance(expression_id, int) and expression_id > 0
+                }
+
+        vectors_path = _resolve_vectors_path(index_path, payload)
+        raw_expressions = [
+            dict(raw_expression)
+            for raw_expression in payload.get("expressions") or []
+            if isinstance(raw_expression, dict)
+        ]
+        raw_profiles = payload.get("embedding_profiles")
+        if isinstance(raw_profiles, list) and raw_profiles:
+            profile_vectors: Dict[str, np.ndarray] = {}
+            for raw_profile in raw_profiles:
+                if not isinstance(raw_profile, dict):
+                    continue
+                marker = normalize_text(raw_profile.get("marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+                vectors_key = normalize_text(raw_profile.get("vectors_key"))
+                cluster_centers_key = normalize_text(raw_profile.get("cluster_centers_key"))
+                if not vectors_key or not cluster_centers_key:
+                    continue
+                profile_vectors[marker] = l2_normalize(
+                    await asyncio.to_thread(_load_npz_array, vectors_path, vectors_key)
+                )
+                previous_profile_cluster_centers[marker] = l2_normalize(
+                    await asyncio.to_thread(_load_npz_array, vectors_path, cluster_centers_key)
+                )
+
+            for raw_expression in raw_expressions:
+                expression_id = int(raw_expression.get("id") or 0)
+                if not self._is_current_index_expression(raw_expression, current_fingerprints):
+                    continue
+                marker = (
+                    normalize_text(raw_expression.get("embedding_profile_marker"))
+                    or LEGACY_EMBEDDING_PROFILE_MARKER
+                )
+                vector_index = int(raw_expression.get("vector_index") or 0)
+                vectors = profile_vectors.get(marker)
+                if expression_id <= 0 or vectors is None:
+                    continue
+                if vector_index < 0 or vector_index >= vectors.shape[0]:
+                    raise ValueError(
+                        f"表达向量索引 vector_index 越界: id={expression_id}, "
+                        f"marker={marker[:12]}, vector_index={vector_index}"
+                    )
+                raw_expression["embedding_profile_marker"] = marker
+                vector_by_expression_id[expression_id] = vectors[vector_index].astype(np.float32)
+        else:
+            legacy_marker = (
+                normalize_text(payload.get("embedding_profile_marker"))
+                or LEGACY_EMBEDDING_PROFILE_MARKER
+            )
+            vectors = l2_normalize(await asyncio.to_thread(_load_npz_array, vectors_path, "vectors"))
+            previous_profile_cluster_centers[legacy_marker] = l2_normalize(
+                await asyncio.to_thread(_load_npz_array, vectors_path, "cluster_centers")
+            )
+            if vectors.shape[0] != len(raw_expressions):
+                raise ValueError(
+                    f"表达向量索引数量不一致: "
+                    f"vectors={vectors.shape[0]}, expressions={len(raw_expressions)}"
+                )
+            for expression_index, raw_expression in enumerate(raw_expressions):
+                expression_id = int(raw_expression.get("id") or 0)
+                if not self._is_current_index_expression(raw_expression, current_fingerprints):
+                    continue
+                raw_expression["embedding_profile_marker"] = legacy_marker
+                raw_expression["embedding_model"] = normalize_text(
+                    raw_expression.get("embedding_model") or payload.get("embedding_model")
+                )
+                raw_expression["embedding_dimension"] = int(
+                    raw_expression.get("embedding_dimension") or vectors.shape[1]
+                )
+                raw_expression["vector_index"] = expression_index
+                vector_by_expression_id[expression_id] = vectors[expression_index].astype(np.float32)
+
+        return _MutableExpressionIndexState(
+            existing_payload=True,
+            payload=payload,
+            vectors_path=vectors_path,
+            raw_expressions=raw_expressions,
+            vector_by_expression_id=vector_by_expression_id,
+            previous_profile_cluster_centers=previous_profile_cluster_centers,
+            prior_changes_since_recluster=prior_changes_since_recluster,
+            prior_changed_expression_ids=prior_changed_expression_ids,
+        )
+
+    @staticmethod
+    def _resolve_recluster_reason(
+        *,
+        force_recluster: bool,
+        cluster_state: str,
+        can_update_incrementally: bool,
+        changes_since_recluster: int,
+        total_count: int,
+    ) -> str:
+        """解析是否需要全量重聚类，并返回可诊断原因。"""
+
+        if force_recluster:
+            return "forced"
+        if not can_update_incrementally:
+            if cluster_state == CLUSTER_STATE_STABLE:
+                raise ValueError("稳定表达向量索引缺少可用聚类中心")
+            return "bootstrap"
+        if cluster_state == CLUSTER_STATE_BOOTSTRAPPING or total_count <= 0:
+            return ""
+        if cluster_state != CLUSTER_STATE_STABLE:
+            raise ValueError(f"表达向量索引聚类状态非法: {cluster_state!r}")
+        change_ratio = changes_since_recluster / total_count
+        if change_ratio >= FULL_RECLUSTER_CHANGE_RATIO:
+            return "change_ratio"
+        return ""
+
+    @staticmethod
     def _write_index_files(
         *,
         index_path: Path,
@@ -1187,12 +1764,18 @@ class ExpressionVectorIndex:
         payload: dict[str, Any],
         profile_vectors: Dict[str, np.ndarray],
         profile_cluster_centers: Dict[str, np.ndarray],
-    ) -> None:
-        """写回索引 JSON 与 NPZ。"""
+    ) -> Path:
+        """先提交版本化 NPZ，再原子切换 JSON 清单。"""
 
         index_path.parent.mkdir(parents=True, exist_ok=True)
         vectors_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_vectors_path = vectors_path.with_name(f"{vectors_path.stem}.tmp{vectors_path.suffix}")
+        generation = uuid.uuid4().hex
+        next_vectors_path = index_path.with_name(
+            f"{index_path.stem}.vectors-{generation}.npz"
+        )
+        temporary_vectors_path = index_path.with_name(
+            f".{next_vectors_path.name}.tmp"
+        )
         arrays: dict[str, np.ndarray] = {}
         for raw_profile in payload.get("embedding_profiles") or []:
             if not isinstance(raw_profile, dict):
@@ -1206,17 +1789,200 @@ class ExpressionVectorIndex:
             arrays[cluster_centers_key] = profile_cluster_centers[marker].astype(np.float32)
         if not arrays:
             raise ValueError("表达向量索引没有可写入的 embedding profile 数组")
-        np.savez_compressed(temporary_vectors_path, **arrays)
-        temporary_vectors_path.replace(vectors_path)
-        _atomic_write_text(index_path, json.dumps(payload, ensure_ascii=False, indent=2))
+        committed = False
+        try:
+            with temporary_vectors_path.open("xb") as temporary_vectors_file:
+                # 1024 维 embedding 本身几乎不可压缩，旧实现仅节省少量空间，
+                # 却会在每次在线同步时额外占满 CPU；这里改用无压缩 NPZ。
+                np.savez(temporary_vectors_file, **arrays)
+                temporary_vectors_file.flush()
+                os.fsync(temporary_vectors_file.fileno())
+            temporary_vectors_path.replace(next_vectors_path)
+            payload["vectors_file"] = next_vectors_path.name
+            _atomic_write_text(index_path, json.dumps(payload, ensure_ascii=False, indent=2))
+            committed = True
+        finally:
+            temporary_vectors_path.unlink(missing_ok=True)
+            if not committed:
+                next_vectors_path.unlink(missing_ok=True)
 
-    async def upsert_expressions_and_recluster(
+        # JSON 已经指向新一代文件后，旧文件才不再参与当前索引。
+        if vectors_path != next_vectors_path and vectors_path.parent == index_path.parent:
+            canonical_vectors_name = f"{index_path.stem}.npz"
+            generation_prefix = f"{index_path.stem}.vectors-"
+            if (
+                vectors_path.name == canonical_vectors_name
+                or vectors_path.name.startswith(generation_prefix)
+            ):
+                try:
+                    vectors_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning(
+                        f"表达向量索引旧向量代清理失败，旧文件可安全保留: "
+                        f"path={vectors_path} error={exc}"
+                    )
+        return next_vectors_path
+
+    async def _embed_expression_items(
+        self,
+        *,
+        items: Sequence[ExpressionVectorIndexUpsertItem],
+        profile: ExpressionEmbeddingProfile,
+        session_id: str,
+    ) -> tuple[
+        List[ExpressionVectorIndexUpsertItem],
+        np.ndarray,
+        List[tuple[ExpressionVectorIndexUpsertItem, Exception]],
+    ]:
+        """并发计算表达向量，将局部失败与成功项分开。"""
+
+        from src.services.embedding_service import EmbeddingServiceClient
+
+        embedding_client = EmbeddingServiceClient(
+            task_name="embedding",
+            request_type="expression.selection.index_batch",
+            session_id=session_id,
+        )
+        embedding_results = await embedding_client.embed_texts(
+            [
+                expression_embedding_text(expression.situation, expression.style)
+                for expression in items
+            ],
+            max_concurrent=min(3, len(items)),
+            session_id=session_id,
+            return_exceptions=True,
+        )
+        if len(embedding_results) != len(items):
+            raise ValueError(
+                f"表达向量批量结果数量异常: results={len(embedding_results)}, expressions={len(items)}"
+            )
+
+        successful_items: List[ExpressionVectorIndexUpsertItem] = []
+        successful_vectors: List[np.ndarray] = []
+        failures: List[tuple[ExpressionVectorIndexUpsertItem, Exception]] = []
+        for expression, embedding_result in zip(items, embedding_results, strict=True):
+            if isinstance(embedding_result, BaseException):
+                if not isinstance(embedding_result, Exception):
+                    raise embedding_result
+                failures.append((expression, embedding_result))
+                continue
+            try:
+                self._validate_embedding_result_profile(
+                    embedding_result,
+                    profile,
+                    usage=f"表达向量索引写入 id={expression.id}",
+                )
+                vector = np.asarray(embedding_result.embedding, dtype=np.float32).reshape(1, -1)
+                vector = l2_normalize(vector)[0].astype(np.float32)
+            except Exception as exc:
+                failures.append((expression, exc))
+                continue
+            successful_items.append(expression)
+            successful_vectors.append(vector)
+
+        if failures and not successful_items:
+            # 整批失败时，用已知正常的固定探针区分“这些条目坏了”
+            # 和“整个 Provider 坏了”。探针也失败则让系统性错误正常上抛，
+            # 避免把鉴权、限流或网络故障误标成永久坏数据。
+            probe_result = await embedding_client.embed_text(
+                EMBEDDING_PROFILE_PROBE_TEXTS[0],
+                session_id=session_id,
+            )
+            self._validate_embedding_result_profile(
+                probe_result,
+                profile,
+                usage="表达向量局部失败确认探针",
+            )
+            l2_normalize(np.asarray(probe_result.embedding, dtype=np.float32).reshape(1, -1))
+
+        if successful_vectors:
+            vectors = np.vstack(successful_vectors).astype(np.float32)
+        else:
+            vectors = np.empty((0, profile.dimension), dtype=np.float32)
+        return successful_items, vectors, failures
+
+    @staticmethod
+    def _merge_embedding_failure_records(
+        *,
+        payload: dict[str, Any],
+        profile: ExpressionEmbeddingProfile,
+        current_fingerprints: Dict[int, str],
+        successful_expression_ids: set[int],
+        failures: Sequence[tuple[ExpressionVectorIndexUpsertItem, Exception]],
+    ) -> tuple[List[dict[str, Any]], int]:
+        """合并局部失败记录，并为反复失败项设置长冷却隔离。"""
+
+        records = ExpressionVectorIndex._load_embedding_failure_records(payload)
+        for expression_id, record in list(records.items()):
+            expected_fingerprint = current_fingerprints.get(expression_id)
+            if (
+                not expected_fingerprint
+                or normalize_text(record.get("fingerprint")) != expected_fingerprint
+                or normalize_text(record.get("embedding_profile_marker")) != profile.marker
+            ):
+                records.pop(expression_id, None)
+        for expression_id in successful_expression_ids:
+            records.pop(expression_id, None)
+
+        now_timestamp = time.time()
+        now_text = datetime.now().isoformat(timespec="seconds")
+        isolated_count = 0
+        for expression, error in failures:
+            fingerprint = expression_fingerprint(
+                expression.id,
+                expression.situation,
+                expression.style,
+            )
+            previous = records.get(expression.id)
+            if (
+                previous is None
+                or normalize_text(previous.get("fingerprint")) != fingerprint
+                or normalize_text(previous.get("embedding_profile_marker")) != profile.marker
+            ):
+                attempts = 1
+                first_failed_at = now_text
+            else:
+                attempts = max(0, int(previous.get("attempts") or 0)) + 1
+                first_failed_at = normalize_text(previous.get("first_failed_at")) or now_text
+
+            isolated = attempts >= EMBEDDING_ITEM_FAILURE_ISOLATION_ATTEMPTS
+            retry_interval = (
+                EMBEDDING_ITEM_FAILURE_ISOLATION_INTERVAL_SECONDS
+                if isolated
+                else EMBEDDING_ITEM_FAILURE_RETRY_INTERVAL_SECONDS
+            )
+            error_text = normalize_text(str(error))[:EMBEDDING_ITEM_FAILURE_ERROR_MAX_LENGTH]
+            records[expression.id] = {
+                "expression_id": expression.id,
+                "fingerprint": fingerprint,
+                "embedding_profile_marker": profile.marker,
+                "attempts": attempts,
+                "first_failed_at": first_failed_at,
+                "last_failed_at": now_text,
+                "retry_after_timestamp": now_timestamp + retry_interval,
+                "isolated": isolated,
+                "last_error_type": type(error).__name__,
+                "last_error": error_text,
+            }
+            if isolated:
+                isolated_count += 1
+
+        merged_records = [records[expression_id] for expression_id in sorted(records)]
+        payload["embedding_failures"] = merged_records
+        return merged_records, isolated_count
+
+    async def upsert_expressions(
         self,
         *,
         index_path: str,
         expressions: Sequence[ExpressionVectorIndexUpsertItem],
-    ) -> None:
-        """批量写入学习到的表达向量，并在批次结束后重聚类。"""
+        force_recluster: bool = False,
+    ) -> ExpressionVectorIndexUpdateResult | None:
+        """统一写入新增、回填或恢复的表达向量。
+
+        初始构建期间仅维护可用的临时聚类；索引进入稳定态后，累计变化达到
+        ``FULL_RECLUSTER_CHANGE_RATIO`` 才执行全量重聚类。
+        """
 
         normalized_items: List[ExpressionVectorIndexUpsertItem] = []
         item_positions: Dict[int, int] = {}
@@ -1245,7 +2011,7 @@ class ExpressionVectorIndex:
                 normalized_items.append(normalized_item)
 
         if not normalized_items:
-            return
+            return None
 
         resolved_index_path = resolve_project_path(index_path)
         embedding_session_id = normalize_text(normalized_items[0].session_id)
@@ -1253,126 +2019,140 @@ class ExpressionVectorIndex:
             index_path=str(resolved_index_path),
             session_id=embedding_session_id,
         )
-
-        from src.services.embedding_service import EmbeddingServiceClient
-
-        embedding_client = EmbeddingServiceClient(
-            task_name="embedding",
-            request_type="expression.selection.index_batch",
+        requested_count = len(normalized_items)
+        normalized_items, next_vectors, embedding_failures = await self._embed_expression_items(
+            items=normalized_items,
+            profile=current_profile,
             session_id=embedding_session_id,
         )
-        embedding_results = await embedding_client.embed_texts(
-            [
-                expression_embedding_text(expression.situation, expression.style)
-                for expression in normalized_items
-            ],
-            max_concurrent=min(3, len(normalized_items)),
-            session_id=embedding_session_id,
-        )
-        next_vectors = np.array([result.embedding for result in embedding_results], dtype=np.float32)
-        if next_vectors.ndim != 2 or next_vectors.shape[0] != len(normalized_items):
-            raise ValueError(
-                f"表达向量批量结果维度异常: vectors={next_vectors.shape}, expressions={len(normalized_items)}"
-            )
-        for embedding_result in embedding_results:
-            self._validate_embedding_result_profile(
-                embedding_result,
-                current_profile,
-                usage="表达向量索引批量写入",
-            )
-        next_vectors = l2_normalize(next_vectors).astype(np.float32)
 
         async with self._update_lock:
-            current_fingerprints = self._load_current_expression_fingerprints()
-            vectors_path = resolved_index_path.with_suffix(".npz")
-            raw_expressions: List[dict[str, Any]] = []
-            vector_by_expression_id: Dict[int, np.ndarray] = {}
-            previous_profile_cluster_centers: Dict[str, np.ndarray] = {}
-            payload: dict[str, Any]
+            current_fingerprints = await asyncio.to_thread(
+                self._load_current_expression_fingerprints
+            )
+            current_items: List[ExpressionVectorIndexUpsertItem] = []
+            current_vectors: List[np.ndarray] = []
+            stale_result_ids: List[int] = []
+            for item_index, expression in enumerate(normalized_items):
+                current_fingerprint = current_fingerprints.get(expression.id)
+                result_fingerprint = expression_fingerprint(
+                    expression.id,
+                    expression.situation,
+                    expression.style,
+                )
+                if current_fingerprint != result_fingerprint:
+                    stale_result_ids.append(expression.id)
+                    continue
+                current_items.append(expression)
+                current_vectors.append(next_vectors[item_index])
+            normalized_items = current_items
+            next_vectors = (
+                np.vstack(current_vectors).astype(np.float32)
+                if current_vectors
+                else np.empty((0, current_profile.dimension), dtype=np.float32)
+            )
+            current_failures: List[tuple[ExpressionVectorIndexUpsertItem, Exception]] = []
+            for expression, error in embedding_failures:
+                if current_fingerprints.get(expression.id) != expression_fingerprint(
+                    expression.id,
+                    expression.situation,
+                    expression.style,
+                ):
+                    stale_result_ids.append(expression.id)
+                    continue
+                current_failures.append((expression, error))
+            embedding_failures = current_failures
+            if stale_result_ids:
+                logger.info(
+                    f"表达向量结果在等待写锁期间已过期，已跳过: ids={stale_result_ids}"
+                )
+            index_state = await self._load_mutable_index_state(
+                index_path=resolved_index_path,
+                current_fingerprints=current_fingerprints,
+            )
+            payload = index_state.payload
+            vectors_path = index_state.vectors_path
+            raw_expressions = index_state.raw_expressions
+            vector_by_expression_id = index_state.vector_by_expression_id
+            previous_profile_cluster_centers = index_state.previous_profile_cluster_centers
+            prior_changes_since_recluster = index_state.prior_changes_since_recluster
+            prior_changed_expression_ids = index_state.prior_changed_expression_ids
+            cluster_state = self._resolve_cluster_state(
+                payload,
+                profile_marker=current_profile.marker,
+            )
 
-            if resolved_index_path.exists():
-                payload = json.loads(resolved_index_path.read_text(encoding="utf-8"))
-                payload_version = int(payload.get("version") or 0)
-                if payload_version < 1 or payload_version > VECTOR_INDEX_VERSION:
-                    raise ValueError(f"表达向量索引版本不匹配: {payload.get('version')!r}")
+            combined_failure_records = self._load_combined_embedding_failure_records(
+                index_path=resolved_index_path,
+                payload=payload,
+            )
+            payload["embedding_failures"] = [
+                combined_failure_records[expression_id]
+                for expression_id in sorted(combined_failure_records)
+            ]
 
-                vectors_path = _resolve_vectors_path(resolved_index_path, payload)
-                raw_expressions = [
-                    dict(raw_expression)
-                    for raw_expression in payload.get("expressions") or []
-                    if isinstance(raw_expression, dict)
-                ]
+            _, isolated_count = self._merge_embedding_failure_records(
+                payload=payload,
+                profile=current_profile,
+                current_fingerprints=current_fingerprints,
+                successful_expression_ids={expression.id for expression in normalized_items},
+                failures=embedding_failures,
+            )
+            failed_expression_ids = tuple(
+                expression.id for expression, _ in embedding_failures
+            )
+            if embedding_failures:
+                logger.warning(
+                    f"表达向量索引存在局部嵌入失败: requested={requested_count} "
+                    f"succeeded={len(normalized_items)} failed={len(embedding_failures)} "
+                    f"isolated={isolated_count} ids={list(failed_expression_ids)}"
+                )
 
-                raw_profiles = payload.get("embedding_profiles")
-                if isinstance(raw_profiles, list) and raw_profiles:
-                    profile_vectors: Dict[str, np.ndarray] = {}
-                    for raw_profile in raw_profiles:
-                        if not isinstance(raw_profile, dict):
-                            continue
-                        marker = normalize_text(raw_profile.get("marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
-                        vectors_key = normalize_text(raw_profile.get("vectors_key"))
-                        cluster_centers_key = normalize_text(raw_profile.get("cluster_centers_key"))
-                        if not vectors_key or not cluster_centers_key:
-                            continue
-                        profile_vectors[marker] = l2_normalize(_load_npz_array(vectors_path, vectors_key))
-                        previous_profile_cluster_centers[marker] = l2_normalize(
-                            _load_npz_array(vectors_path, cluster_centers_key)
-                        )
-
-                    for raw_expression in raw_expressions:
-                        expression_id = int(raw_expression.get("id") or 0)
-                        if not self._is_current_index_expression(raw_expression, current_fingerprints):
-                            continue
-                        marker = (
-                            normalize_text(raw_expression.get("embedding_profile_marker"))
-                            or LEGACY_EMBEDDING_PROFILE_MARKER
-                        )
-                        vector_index = int(raw_expression.get("vector_index") or 0)
-                        vectors = profile_vectors.get(marker)
-                        if expression_id <= 0 or vectors is None:
-                            continue
-                        if vector_index < 0 or vector_index >= vectors.shape[0]:
-                            raise ValueError(
-                                f"表达向量索引 vector_index 越界: id={expression_id}, "
-                                f"marker={marker[:12]}, vector_index={vector_index}"
-                            )
-                        raw_expression["embedding_profile_marker"] = marker
-                        vector_by_expression_id[expression_id] = vectors[vector_index].astype(np.float32)
-                else:
-                    legacy_marker = (
-                        normalize_text(payload.get("embedding_profile_marker")) or LEGACY_EMBEDDING_PROFILE_MARKER
+            # 没有新向量且不需要最终聚类时，只原子更新失败记录。
+            # 向量文件没有变化，不必为一批全失败请求重写整个 NPZ。
+            if not normalized_items and not force_recluster:
+                if index_state.existing_payload:
+                    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                    await asyncio.to_thread(
+                        _atomic_write_text,
+                        resolved_index_path,
+                        json.dumps(payload, ensure_ascii=False, indent=2),
                     )
-                    vectors = l2_normalize(_load_npz_array(vectors_path, "vectors"))
-                    previous_profile_cluster_centers[legacy_marker] = l2_normalize(
-                        _load_npz_array(vectors_path, "cluster_centers")
+                    await asyncio.to_thread(
+                        _remove_embedding_failures_file,
+                        resolved_index_path,
                     )
-                    if vectors.shape[0] != len(raw_expressions):
-                        raise ValueError(
-                            f"表达向量索引数量不一致: vectors={vectors.shape[0]}, expressions={len(raw_expressions)}"
-                        )
-                    for expression_index, raw_expression in enumerate(raw_expressions):
-                        expression_id = int(raw_expression.get("id") or 0)
-                        if not self._is_current_index_expression(raw_expression, current_fingerprints):
-                            continue
-                        raw_expression["embedding_profile_marker"] = legacy_marker
-                        raw_expression["embedding_model"] = normalize_text(
-                            raw_expression.get("embedding_model") or payload.get("embedding_model")
-                        )
-                        raw_expression["embedding_dimension"] = int(
-                            raw_expression.get("embedding_dimension") or vectors.shape[1]
-                        )
-                        raw_expression["vector_index"] = expression_index
-                        vector_by_expression_id[expression_id] = vectors[expression_index].astype(np.float32)
-            else:
-                from src.common.database.database import DATABASE_URL
+                    self._snapshot = None
+                elif embedding_failures:
+                    standalone_payload = {
+                        "version": 1,
+                        "updated_at": datetime.now().isoformat(timespec="seconds"),
+                        "embedding_failures": payload["embedding_failures"],
+                    }
+                    await asyncio.to_thread(
+                        _atomic_write_text,
+                        _resolve_embedding_failures_path(resolved_index_path),
+                        json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                    )
+                return ExpressionVectorIndexUpdateResult(
+                    batch_count=0,
+                    total_count=len(raw_expressions),
+                    changed_count=0,
+                    changes_since_recluster=prior_changes_since_recluster,
+                    reclustered=False,
+                    recluster_reason="",
+                    requested_count=requested_count,
+                    failed_count=len(embedding_failures),
+                    isolated_count=isolated_count,
+                    failed_expression_ids=failed_expression_ids,
+                )
 
-                payload = {
-                    "version": VECTOR_INDEX_VERSION,
-                    "generated_at": datetime.now().isoformat(timespec="seconds"),
-                    "database_url": DATABASE_URL,
-                    "args": {"source": "incremental_learning"},
-                }
-
+            stale_expression_ids = {
+                int(raw_expression.get("id") or 0)
+                for raw_expression in raw_expressions
+                if int(raw_expression.get("id") or 0) > 0
+                and not self._is_current_index_expression(raw_expression, current_fingerprints)
+            }
             raw_expressions = [
                 raw_expression
                 for raw_expression in raw_expressions
@@ -1386,6 +2166,45 @@ class ExpressionVectorIndex:
                 expression_id: vector
                 for expression_id, vector in vector_by_expression_id.items()
                 if expression_id in expression_positions
+            }
+            if not normalized_items and not raw_expressions:
+                if index_state.existing_payload:
+                    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                    await asyncio.to_thread(
+                        _atomic_write_text,
+                        resolved_index_path,
+                        json.dumps(payload, ensure_ascii=False, indent=2),
+                    )
+                    await asyncio.to_thread(
+                        _remove_embedding_failures_file,
+                        resolved_index_path,
+                    )
+                    self._snapshot = None
+                elif embedding_failures:
+                    standalone_payload = {
+                        "version": 1,
+                        "updated_at": datetime.now().isoformat(timespec="seconds"),
+                        "embedding_failures": payload["embedding_failures"],
+                    }
+                    await asyncio.to_thread(
+                        _atomic_write_text,
+                        _resolve_embedding_failures_path(resolved_index_path),
+                        json.dumps(standalone_payload, ensure_ascii=False, indent=2),
+                    )
+                return ExpressionVectorIndexUpdateResult(
+                    batch_count=0,
+                    total_count=0,
+                    changed_count=0,
+                    changes_since_recluster=prior_changes_since_recluster,
+                    reclustered=False,
+                    recluster_reason="",
+                    requested_count=requested_count,
+                    failed_count=len(embedding_failures),
+                    isolated_count=isolated_count,
+                    failed_expression_ids=failed_expression_ids,
+                )
+            changed_expression_ids = stale_expression_ids | {
+                expression.id for expression in normalized_items
             }
             for item_index, expression in enumerate(normalized_items):
                 next_expression = self._build_index_expression_item(
@@ -1410,11 +2229,44 @@ class ExpressionVectorIndex:
                 expression_positions[expression.id] = len(raw_expressions)
                 raw_expressions.append(next_expression)
 
-            profile_vectors, profile_cluster_centers, profile_metadata = self._rebuild_profile_arrays(
+            all_changed_expression_ids = (
+                prior_changed_expression_ids | changed_expression_ids
+            )
+            changes_since_recluster = (
+                prior_changes_since_recluster
+                + len(changed_expression_ids - prior_changed_expression_ids)
+            )
+            can_update_incrementally = self._can_update_profiles_incrementally(
                 raw_expressions=raw_expressions,
                 vector_by_expression_id=vector_by_expression_id,
                 previous_profile_cluster_centers=previous_profile_cluster_centers,
             )
+            recluster_reason = self._resolve_recluster_reason(
+                force_recluster=force_recluster,
+                cluster_state=cluster_state,
+                can_update_incrementally=can_update_incrementally,
+                changes_since_recluster=changes_since_recluster,
+                total_count=len(raw_expressions),
+            )
+            reclustered = bool(recluster_reason)
+            if reclustered:
+                profile_vectors, profile_cluster_centers, profile_metadata = await asyncio.to_thread(
+                    self._rebuild_profile_arrays,
+                    raw_expressions=raw_expressions,
+                    vector_by_expression_id=vector_by_expression_id,
+                    previous_profile_cluster_centers=previous_profile_cluster_centers,
+                    reuse_previous_centers=True,
+                )
+                changes_since_recluster = 0
+                all_changed_expression_ids = set()
+            else:
+                profile_vectors, profile_cluster_centers, profile_metadata = await asyncio.to_thread(
+                    self._update_profile_arrays_incrementally,
+                    raw_expressions=raw_expressions,
+                    vector_by_expression_id=vector_by_expression_id,
+                    previous_profile_cluster_centers=previous_profile_cluster_centers,
+                    changed_expression_ids=changed_expression_ids,
+                )
 
             now_text = datetime.now().isoformat(timespec="seconds")
             payload["version"] = VECTOR_INDEX_VERSION
@@ -1428,22 +2280,187 @@ class ExpressionVectorIndex:
             payload["embedding_profiles"] = profile_metadata
             payload["sample_count"] = len(raw_expressions)
             payload["clusters"] = self._build_cluster_summaries(raw_expressions)
-            payload["vectors_file"] = vectors_path.name
             payload["expressions"] = raw_expressions
+            previous_cluster_maintenance = payload.get("cluster_maintenance")
+            previous_last_recluster_at = ""
+            previous_last_recluster_sample_count = 0
+            previous_stabilized_at = ""
+            if isinstance(previous_cluster_maintenance, dict):
+                previous_last_recluster_at = normalize_text(
+                    previous_cluster_maintenance.get("last_recluster_at")
+                )
+                previous_last_recluster_sample_count = int(
+                    previous_cluster_maintenance.get("last_recluster_sample_count") or 0
+                )
+                previous_stabilized_at = normalize_text(
+                    previous_cluster_maintenance.get("stabilized_at")
+                )
+            cluster_maintenance = {
+                "state": cluster_state,
+                "profile_marker": current_profile.marker,
+                "changes_since_recluster": changes_since_recluster,
+                "changed_expression_ids": sorted(all_changed_expression_ids),
+                "change_ratio_threshold": FULL_RECLUSTER_CHANGE_RATIO,
+                "last_recluster_at": now_text if reclustered else previous_last_recluster_at,
+                "last_recluster_sample_count": (
+                    len(raw_expressions)
+                    if reclustered
+                    else previous_last_recluster_sample_count
+                ),
+            }
+            if cluster_state == CLUSTER_STATE_STABLE:
+                cluster_maintenance["stabilized_at"] = previous_stabilized_at or now_text
+            payload["cluster_maintenance"] = cluster_maintenance
 
-            self._write_index_files(
+            await asyncio.to_thread(
+                self._write_index_files,
                 index_path=resolved_index_path,
                 vectors_path=vectors_path,
                 payload=payload,
                 profile_vectors=profile_vectors,
                 profile_cluster_centers=profile_cluster_centers,
             )
+            await asyncio.to_thread(
+                _remove_embedding_failures_file,
+                resolved_index_path,
+            )
             self._snapshot = None
+            update_result = ExpressionVectorIndexUpdateResult(
+                batch_count=len(normalized_items),
+                total_count=len(raw_expressions),
+                changed_count=len(changed_expression_ids),
+                changes_since_recluster=changes_since_recluster,
+                reclustered=reclustered,
+                recluster_reason=recluster_reason,
+                requested_count=requested_count,
+                failed_count=len(embedding_failures),
+                isolated_count=isolated_count,
+                failed_expression_ids=failed_expression_ids,
+            )
             logger.info(
-                f"表达向量索引批量同步并重聚类完成: path={resolved_index_path} "
-                f"batch_count={len(normalized_items)} total_count={len(raw_expressions)} "
+                f"表达向量索引批量同步完成: path={resolved_index_path} "
+                f"requested={requested_count} succeeded={len(normalized_items)} "
+                f"failed={len(embedding_failures)} total_count={len(raw_expressions)} "
+                f"changed_count={len(changed_expression_ids)} "
+                f"changes_since_recluster={changes_since_recluster} "
+                f"reclustered={reclustered} reason={recluster_reason or 'not_due'} "
                 f"profile={current_profile.marker[:12]}"
             )
+            return update_result
+
+    async def _finalize_bootstrap_if_ready(
+        self,
+        *,
+        index_path: Path,
+        profile: ExpressionEmbeddingProfile,
+    ) -> bool:
+        """在写锁内确认当前可计算项已追平，并将索引切换为稳定态。
+
+        Returns:
+            bool: 当前没有需要立即回填的表达时返回 True；若锁内复查发现了
+                新的待回填项，则返回 False，由回填循环继续处理。
+        """
+
+        async with self._update_lock:
+            selection = await asyncio.to_thread(
+                self._load_history_backfill_items,
+                index_path=index_path,
+                profile=profile,
+                batch_size=1,
+            )
+            if selection.items:
+                return False
+
+            current_fingerprints = await asyncio.to_thread(
+                self._load_current_expression_fingerprints
+            )
+            index_state = await self._load_mutable_index_state(
+                index_path=index_path,
+                current_fingerprints=current_fingerprints,
+            )
+            if not index_state.existing_payload:
+                return True
+
+            cluster_state = self._resolve_cluster_state(
+                index_state.payload,
+                profile_marker=profile.marker,
+            )
+            if cluster_state == CLUSTER_STATE_STABLE:
+                return True
+
+            raw_expressions = [
+                raw_expression
+                for raw_expression in index_state.raw_expressions
+                if self._is_current_index_expression(raw_expression, current_fingerprints)
+            ]
+            expression_ids = {
+                int(raw_expression.get("id") or 0)
+                for raw_expression in raw_expressions
+            }
+            vector_by_expression_id = {
+                expression_id: vector
+                for expression_id, vector in index_state.vector_by_expression_id.items()
+                if expression_id in expression_ids
+            }
+            current_profile_expression_ids = {
+                int(raw_expression.get("id") or 0)
+                for raw_expression in raw_expressions
+                if normalize_text(raw_expression.get("embedding_profile_marker")) == profile.marker
+            }
+            missing_vector_ids = current_profile_expression_ids - vector_by_expression_id.keys()
+            if missing_vector_ids:
+                raise ValueError(
+                    f"表达向量索引稳定化时缺少向量: ids={sorted(missing_vector_ids)}"
+                )
+            if not current_profile_expression_ids:
+                return True
+
+            profile_vectors, profile_cluster_centers, profile_metadata = await asyncio.to_thread(
+                self._rebuild_profile_arrays,
+                raw_expressions=raw_expressions,
+                vector_by_expression_id=vector_by_expression_id,
+                previous_profile_cluster_centers=index_state.previous_profile_cluster_centers,
+                reuse_previous_centers=False,
+            )
+            now_text = datetime.now().isoformat(timespec="seconds")
+            payload = index_state.payload
+            payload["version"] = VECTOR_INDEX_VERSION
+            payload.setdefault("generated_at", now_text)
+            payload["updated_at"] = now_text
+            payload["embedding_model"] = profile.model_name
+            payload["embedding_profile_marker"] = profile.marker
+            payload["embedding_profile_version"] = EMBEDDING_PROFILE_VERSION
+            payload["embedding_dimension"] = int(profile.dimension)
+            payload["embedding_profile"] = _serialize_embedding_profile(profile)
+            payload["embedding_profiles"] = profile_metadata
+            payload["sample_count"] = len(raw_expressions)
+            payload["clusters"] = self._build_cluster_summaries(raw_expressions)
+            payload["expressions"] = raw_expressions
+            payload["cluster_maintenance"] = {
+                "state": CLUSTER_STATE_STABLE,
+                "profile_marker": profile.marker,
+                "changes_since_recluster": 0,
+                "changed_expression_ids": [],
+                "change_ratio_threshold": FULL_RECLUSTER_CHANGE_RATIO,
+                "last_recluster_at": now_text,
+                "last_recluster_sample_count": len(raw_expressions),
+                "stabilized_at": now_text,
+            }
+            await asyncio.to_thread(
+                self._write_index_files,
+                index_path=index_path,
+                vectors_path=index_state.vectors_path,
+                payload=payload,
+                profile_vectors=profile_vectors,
+                profile_cluster_centers=profile_cluster_centers,
+            )
+            await asyncio.to_thread(_remove_embedding_failures_file, index_path)
+            self._snapshot = None
+            logger.info(
+                f"表达向量索引首次追平，已切换为稳定聚类: index={index_path} "
+                f"profile={profile.marker[:12]} count={len(raw_expressions)}"
+            )
+            return True
 
     def ensure_history_backfill_task(
         self,
@@ -1457,6 +2474,8 @@ class ExpressionVectorIndex:
 
         now = time.monotonic()
         if now - self._history_backfill_last_empty_at < HISTORY_BACKFILL_EMPTY_SCAN_INTERVAL_SECONDS:
+            return
+        if now - self._history_backfill_last_failure_at < HISTORY_BACKFILL_FAILURE_RETRY_INTERVAL_SECONDS:
             return
 
         try:
@@ -1488,7 +2507,10 @@ class ExpressionVectorIndex:
         try:
             task.result()
         except Exception:
+            self._history_backfill_last_failure_at = time.monotonic()
             logger.exception("表达向量历史补建任务异常退出")
+            return
+        self._history_backfill_last_failure_at = 0.0
 
     @staticmethod
     def _calculate_history_backfill_interval(
@@ -1524,23 +2546,31 @@ class ExpressionVectorIndex:
 
             batch_started_at = time.monotonic()
             current_profile = await self.get_current_embedding_profile(index_path=str(resolved_index_path))
-            items = await asyncio.to_thread(
+            selection = await asyncio.to_thread(
                 self._load_history_backfill_items,
                 index_path=resolved_index_path,
                 profile=current_profile,
                 batch_size=effective_batch_size,
             )
-            if not items:
+            pending_items = selection.items
+            if not pending_items:
+                finalized = await self._finalize_bootstrap_if_ready(
+                    index_path=resolved_index_path,
+                    profile=current_profile,
+                )
+                if not finalized:
+                    continue
                 self._history_backfill_last_empty_at = time.monotonic()
                 logger.info(
-                    f"表达向量历史补建已完成: index={resolved_index_path} "
-                    f"profile={current_profile.marker[:12]}"
+                    f"表达向量历史补建已完成当前可用项: index={resolved_index_path} "
+                    f"profile={current_profile.marker[:12]} deferred={selection.deferred_count} "
+                    f"isolated={selection.isolated_count}"
                 )
                 return
 
-            await self.upsert_expressions_and_recluster(
+            update_result = await self.upsert_expressions(
                 index_path=str(resolved_index_path),
-                expressions=items,
+                expressions=pending_items,
             )
             elapsed_seconds = time.monotonic() - batch_started_at
             interval_seconds = self._calculate_history_backfill_interval(
@@ -1550,16 +2580,12 @@ class ExpressionVectorIndex:
                 interval_speed_ratio=HISTORY_BACKFILL_INTERVAL_SPEED_RATIO,
             )
             logger.info(
-                f"表达向量历史补建批次完成: batch_count={len(items)} "
+                f"表达向量历史补建批次完成: batch_count={len(pending_items)} "
+                f"success_count={update_result.batch_count if update_result else 0} "
+                f"failed_count={update_result.failed_count if update_result else 0} "
+                f"reclustered={bool(update_result and update_result.reclustered)} "
                 f"耗时={elapsed_seconds:.2f}s 下批间隔={interval_seconds:.2f}s"
             )
-            if len(items) < effective_batch_size:
-                self._history_backfill_last_empty_at = time.monotonic()
-                logger.info(
-                    f"表达向量历史补建已追平: index={resolved_index_path} "
-                    f"profile={current_profile.marker[:12]}"
-                )
-                return
             if interval_seconds > 0:
                 await asyncio.sleep(interval_seconds)
 
@@ -1580,7 +2606,11 @@ class ExpressionVectorIndex:
             logger.info("表达向量召回已跳过：query 为空")
             return []
 
-        snapshot = self._load_snapshot(resolve_project_path(index_path))
+        async with self._update_lock:
+            snapshot = await asyncio.to_thread(
+                self._load_snapshot,
+                resolve_project_path(index_path),
+            )
         if snapshot is None:
             return []
 

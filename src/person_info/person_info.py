@@ -559,9 +559,7 @@ async def store_person_memory_from_answer(
             logger.warning(f"用户 {clean_person_name or person_id} (person_id: {person_id}) 尚未认识，跳过写回")
             return
 
-        participant_name = str(getattr(person, "person_name", "") or getattr(person, "nickname", "") or "").strip()
-        if not participant_name:
-            participant_name = clean_person_name or person_id
+        participant_name = str(person.person_name or person.nickname or clean_person_name or "").strip()
 
         payload_fingerprint = hashlib.md5(f"{person_id}|{clean_chat_id}|{clean_content}".encode()).hexdigest()
         external_id = f"person_fact:{person_id}:{payload_fingerprint}"
@@ -572,7 +570,7 @@ async def store_person_memory_from_answer(
             text=clean_content,
             chat_id=clean_chat_id,
             person_ids=[person_id],
-            participants=[participant_name],
+            participants=[participant_name] if participant_name else [],
             tags=["person_fact"],
             metadata={
                 "person_id": person_id,

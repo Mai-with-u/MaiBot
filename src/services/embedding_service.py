@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Coroutine, List, TypeVar
+from typing import Any, Coroutine, List, Literal, TypeVar, overload
 
 import asyncio
 
@@ -65,30 +65,58 @@ class EmbeddingServiceClient:
             api_provider=raw_result.api_provider,
         )
 
+    @overload
     async def embed_texts(
         self,
         embedding_inputs: List[str],
         max_concurrent: int | None = None,
         *,
         session_id: str = "",
-    ) -> List[EmbeddingResult]:
+        return_exceptions: Literal[False] = False,
+    ) -> List[EmbeddingResult]: ...
+
+    @overload
+    async def embed_texts(
+        self,
+        embedding_inputs: List[str],
+        max_concurrent: int | None = None,
+        *,
+        session_id: str = "",
+        return_exceptions: Literal[True],
+    ) -> List[EmbeddingResult | BaseException]: ...
+
+    async def embed_texts(
+        self,
+        embedding_inputs: List[str],
+        max_concurrent: int | None = None,
+        *,
+        session_id: str = "",
+        return_exceptions: bool = False,
+    ) -> List[EmbeddingResult | BaseException]:
         """批量生成文本嵌入向量。
 
         Args:
             embedding_inputs: 待编码的文本列表。
             max_concurrent: 最大并发数；未提供时按串行执行。
+            return_exceptions: 是否按输入位置返回单条异常，供允许局部失败的上层使用。
 
         Returns:
-            List[EmbeddingResult]: 与输入顺序一致的嵌入结果列表。
+            List[EmbeddingResult | BaseException]: 与输入顺序一致的嵌入结果；
+                仅当 ``return_exceptions=True`` 时包含异常。
         """
         if not embedding_inputs:
             return []
 
         safe_max_concurrent = max(1, int(max_concurrent or 1))
         if safe_max_concurrent == 1:
-            results: List[EmbeddingResult] = []
+            results: List[EmbeddingResult | BaseException] = []
             for embedding_input in embedding_inputs:
-                results.append(await self.embed_text(embedding_input, session_id=session_id))
+                try:
+                    results.append(await self.embed_text(embedding_input, session_id=session_id))
+                except Exception as exc:
+                    if not return_exceptions:
+                        raise
+                    results.append(exc)
             return results
 
         semaphore = asyncio.Semaphore(safe_max_concurrent)
@@ -107,9 +135,25 @@ class EmbeddingServiceClient:
                 result = await self.embed_text(embedding_input, session_id=session_id)
                 return index, result
 
-        ordered_results = await asyncio.gather(
-            *[_embed_one(index, embedding_input) for index, embedding_input in enumerate(embedding_inputs)]
+        gathered_results = await asyncio.gather(
+            *[_embed_one(index, embedding_input) for index, embedding_input in enumerate(embedding_inputs)],
+            return_exceptions=return_exceptions,
         )
+        if return_exceptions:
+            results: List[EmbeddingResult | BaseException] = []
+            for expected_index, gathered_result in enumerate(gathered_results):
+                if isinstance(gathered_result, BaseException):
+                    results.append(gathered_result)
+                    continue
+                result_index, result = gathered_result
+                if result_index != expected_index:
+                    raise RuntimeError(
+                        f"Embedding 批量结果顺序异常: expected={expected_index}, actual={result_index}"
+                    )
+                results.append(result)
+            return results
+
+        ordered_results = list(gathered_results)
         ordered_results.sort(key=lambda item: item[0])
         return [result for _, result in ordered_results]
 

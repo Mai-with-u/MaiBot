@@ -33,6 +33,25 @@ class _FakeKernel:
         self.admin_calls.append((f"runtime:{action}", kwargs))
         return {"success": True, "component": "memory_runtime_admin", "action": action}
 
+    def _runtime_capability_status(self) -> dict[str, Any]:
+        return {
+            "memory_enabled": True,
+            "runtime_ready": True,
+            "retrieval_ready": True,
+            "degraded": False,
+            "retrieval_mode": "hybrid",
+            "available_channels": [
+                "metadata",
+                "sparse",
+                "graph",
+                "vector_read",
+                "vector_write",
+                "embedding",
+            ],
+            "unavailable_channels": [],
+            "vector_health": {"state": "healthy"},
+        }
+
 
 class _ReplayKernel:
     def __init__(self) -> None:
@@ -221,6 +240,24 @@ async def test_host_service_unknown_component_keeps_runtime_error(monkeypatch: p
         await service.invoke("unknown_component", {"action": "get"})
 
     assert fake_kernel.admin_calls == []
+
+
+@pytest.mark.asyncio
+async def test_host_service_does_not_apply_default_invoke_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _ready_service(_FakeKernel())
+
+    async def fake_invoke(component_name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"component_name": component_name, "args": args}
+
+    def fail_timeout(_delay: float) -> None:
+        raise AssertionError("普通 A_Memorix 调用不应进入通用超时上下文")
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+    monkeypatch.setattr(asyncio, "timeout", fail_timeout)
+
+    result = await service.invoke("memory_stats", {})
+
+    assert result == {"component_name": "memory_stats", "args": {}}
 
 
 @pytest.mark.asyncio

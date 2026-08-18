@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Collection, Dict, List, Optional, Sequence
 
+import json
 import re
 import sqlite3
 import time
@@ -87,6 +88,7 @@ class SparseSearchBackend(ABC):
         match_query: str,
         limit: int,
         max_doc_len: int,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         """检索段落。"""
@@ -99,6 +101,7 @@ class SparseSearchBackend(ABC):
         limit: int,
         max_doc_len: int,
         include_inactive: bool,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         """检索关系。"""
@@ -143,6 +146,7 @@ class SQLiteFTS5SparseBackend(SparseSearchBackend):
         match_query: str,
         limit: int,
         max_doc_len: int,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         return self.metadata_store.fts_search_bm25(
@@ -150,6 +154,7 @@ class SQLiteFTS5SparseBackend(SparseSearchBackend):
             limit=limit,
             max_doc_len=max_doc_len,
             conn=conn,
+            allowed_hashes=allowed_ids,
         )
 
     def search_relations(
@@ -159,6 +164,7 @@ class SQLiteFTS5SparseBackend(SparseSearchBackend):
         limit: int,
         max_doc_len: int,
         include_inactive: bool,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
         return self.metadata_store.fts_search_relations_bm25(
@@ -167,6 +173,7 @@ class SQLiteFTS5SparseBackend(SparseSearchBackend):
             max_doc_len=max_doc_len,
             include_inactive=include_inactive,
             conn=conn,
+            allowed_hashes=allowed_ids,
         )
 
     def stats(self, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
@@ -192,9 +199,10 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         match_query: str,
         limit: int,
         max_doc_len: int,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
-        del match_query, limit, max_doc_len, conn
+        del match_query, limit, max_doc_len, allowed_ids, conn
         raise NotImplementedError(f"sparse.backend={self.name} 尚未接入段落倒排索引实现")
 
     def search_relations(
@@ -204,9 +212,10 @@ class ExperimentalExternalInvertedIndexBackend(SparseSearchBackend):
         limit: int,
         max_doc_len: int,
         include_inactive: bool,
+        allowed_ids: Optional[Collection[str]],
         conn: sqlite3.Connection,
     ) -> List[Dict[str, Any]]:
-        del match_query, limit, max_doc_len, include_inactive, conn
+        del match_query, limit, max_doc_len, include_inactive, allowed_ids, conn
         raise NotImplementedError(f"sparse.backend={self.name} 尚未接入关系倒排索引实现")
 
 
@@ -443,6 +452,7 @@ class SparseBM25Index:
         self,
         tokens: List[str],
         limit: int,
+        allowed_ids: Optional[Collection[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         当 FTS5 因分词不一致召回为空时，退化为子串匹配召回。
@@ -475,6 +485,7 @@ class SparseBM25Index:
                         limit=limit,
                         max_doc_len=self.config.max_doc_len,
                         conn=self._conn,
+                        allowed_hashes=allowed_ids,
                     )
                     if rows:
                         return rows
@@ -486,6 +497,13 @@ class SparseBM25Index:
 
         conditions = " OR ".join(["p.content LIKE ?"] * len(uniq_tokens))
         params: List[Any] = [f"%{tok}%" for tok in uniq_tokens]
+        scope_clause = ""
+        if allowed_ids is not None:
+            allowed = list(dict.fromkeys(str(value) for value in allowed_ids if str(value)))
+            if not allowed:
+                return []
+            scope_clause = "AND p.hash IN (SELECT value FROM json_each(?))"
+            params.append(json.dumps(allowed, ensure_ascii=False))
         scan_limit = max(int(limit) * 8, 200)
         params.append(scan_limit)
 
@@ -494,6 +512,7 @@ class SparseBM25Index:
             FROM paragraphs p
             WHERE (p.is_deleted IS NULL OR p.is_deleted = 0)
               AND ({conditions})
+              {scope_clause}
             LIMIT ?
         """
         rows = self.metadata_store.query(sql, tuple(params))
@@ -524,7 +543,12 @@ class SparseBM25Index:
         scored.sort(key=lambda x: x["fallback_score"], reverse=True)
         return scored[:limit]
 
-    def search(self, query: str, k: int = 20) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        k: int = 20,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """执行 BM25 检索。"""
         if not self.config.enabled:
             return []
@@ -541,6 +565,9 @@ class SparseBM25Index:
             return []
 
         limit = max(1, int(k))
+        allowed = None if allowed_ids is None else {str(value) for value in allowed_ids if str(value)}
+        if allowed_ids is not None and not allowed:
+            return []
         rows: List[Dict[str, Any]] = []
         if self.config.enable_tokenized_shadow_index:
             rows = self.metadata_store.fts_search_tokenized_paragraphs_bm25(
@@ -548,16 +575,22 @@ class SparseBM25Index:
                 limit=limit,
                 max_doc_len=self.config.max_doc_len,
                 conn=self._conn,
+                allowed_hashes=allowed,
             )
         if not rows:
             rows = self._backend.search_paragraphs(
                 match_query=match_query,
                 limit=limit,
                 max_doc_len=self.config.max_doc_len,
+                allowed_ids=allowed,
                 conn=self._conn,
             )
         if not rows:
-            rows = self._fallback_substring_search(tokens=match_tokens, limit=limit)
+            rows = self._fallback_substring_search(
+                tokens=match_tokens,
+                limit=limit,
+                allowed_ids=allowed,
+            )
 
         results: List[Dict[str, Any]] = []
         token_count = max(1, len(match_tokens))
@@ -580,7 +613,12 @@ class SparseBM25Index:
             )
         return results
 
-    def search_relations(self, query: str, k: int = 20) -> List[Dict[str, Any]]:
+    def search_relations(
+        self,
+        query: str,
+        k: int = 20,
+        allowed_ids: Optional[Collection[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """执行关系稀疏检索（FTS5 + BM25）。"""
         if not self.config.enabled or not self.config.enable_relation_sparse_fallback:
             return []
@@ -595,11 +633,16 @@ class SparseBM25Index:
         if not match_query:
             return []
 
+        limit = max(1, int(k))
+        allowed = None if allowed_ids is None else {str(value) for value in allowed_ids if str(value)}
+        if allowed_ids is not None and not allowed:
+            return []
         rows = self._backend.search_relations(
             match_query=match_query,
-            limit=max(1, int(k)),
+            limit=limit,
             max_doc_len=self.config.relation_max_doc_len,
             include_inactive=False,
+            allowed_ids=allowed,
             conn=self._conn,
         )
         out: List[Dict[str, Any]] = []

@@ -19,8 +19,6 @@ logger = get_logger("A_Memorix.SDKMemoryKernel")
 
 class MemoryVectorRuntimeService(KernelServiceBase):
     def _vector_rebuild_status(self) -> Dict[str, Any]:
-        if self.vector_store is not None and not self._vector_rebuild_lock.locked():
-            self._stamp_missing_embedding_fingerprint_if_dimension_matches(self.vector_store)
         stored_dimension = self._stored_vector_dimension()
         if self._vector_persist_blocked_until_rebuild and self._vector_rebuild_source_dimension is not None:
             stored_dimension = int(self._vector_rebuild_source_dimension)
@@ -995,6 +993,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             backfill_counts = self._paragraph_vector_backfill_counts()
             rebuild_status = self._vector_rebuild_status()
             vector_pools_status = self._vector_pools_status()
+            capability_status = self._runtime_capability_status()
             return {
                 "success": True,
                 "config": self.config,
@@ -1011,7 +1010,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
                 "vector_pools": vector_pools_status,
                 "vector_pools_ready": bool(vector_pools_status.get("ready", False)),
                 "vector_pools_effective_mode": str(vector_pools_status.get("effective_mode", "single")),
-                "runtime_ready": self.is_runtime_ready(),
+                **capability_status,
                 "embedding_degraded": bool(degraded.get("active", False)),
                 "embedding_degraded_reason": str(degraded.get("reason", "") or ""),
                 "embedding_degraded_since": degraded.get("since"),

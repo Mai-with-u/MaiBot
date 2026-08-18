@@ -39,7 +39,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const { toast } = useToast()
 
   const [editMode, setEditMode] = useState<'visual' | 'source'>('visual')
-  const [pluginPageTab, setPluginPageTab] = useState<'settings' | 'details'>('settings')
+  const [pluginPageTab, setPluginPageTab] = useState<'settings' | 'host-policy' | 'details'>('settings')
   const [schema, setSchema] = useState<PluginConfigSchema | null>(null)
   const [activeConfigTab, setActiveConfigTab] = useState<string | undefined>(initialTab)
   // 可编辑草稿 + 加载基线
