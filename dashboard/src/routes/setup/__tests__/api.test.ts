@@ -160,57 +160,13 @@ describe('loadPersonalityConfig', () => {
 })
 
 describe('loadApiProviderSetupConfig', () => {
-  it('按 planner 模型解析提供商并且不回显 api_key', async () => {
-    getMock.mockResolvedValue({
-      config: {
-        models: [
-          { model_identifier: 'deepseek-v4', name: 'planner-model', api_provider: 'SiliconFlow' },
-        ],
-        api_providers: [
-          { name: 'SiliconFlow', base_url: 'https://sf.example', api_key: 'sk-secret' },
-        ],
-        model_task_config: {
-          planner: { model_list: ['planner-model'] },
-        },
-      },
-    })
-
-    await expect(loadApiProviderSetupConfig()).resolves.toEqual({
-      provider_name: 'SiliconFlow',
-      base_url: 'https://sf.example',
-      api_key: '',
-    })
-    expect(getMock).toHaveBeenCalledWith('/api/webui/config/model', {
-      errorMessage: '读取模型配置失败',
-    })
-  })
-
-  it('模型未指定提供商时回退到 replyer 模型的提供商，找不到地址时用 DeepSeek 模板', async () => {
-    getMock.mockResolvedValue({
-      config: {
-        models: [{ model_identifier: 'glm-5', name: 'replyer-model', api_provider: 'Zhipu' }],
-        api_providers: [],
-        model_task_config: {
-          replyer: { model_list: ['replyer-model'] },
-        },
-      },
-    })
-
-    await expect(loadApiProviderSetupConfig()).resolves.toEqual({
-      provider_name: 'Zhipu',
-      base_url: 'https://api.deepseek.com',
-      api_key: '',
-    })
-  })
-
-  it('模型配置为空时整体回退到 DeepSeek 模板', async () => {
-    getMock.mockResolvedValue({ config: {} })
-
+  it('始终返回默认预设服务商配置', async () => {
     await expect(loadApiProviderSetupConfig()).resolves.toEqual({
       provider_name: 'DeepSeek',
       base_url: 'https://api.deepseek.com',
       api_key: '',
     })
+    expect(getMock).not.toHaveBeenCalled()
   })
 })
 

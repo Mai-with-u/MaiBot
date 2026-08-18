@@ -209,7 +209,22 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
     const preset = providerPresets.find((template) => template.id === presetId)
     if (!preset) return
     setSelectedPreset(preset.id)
-    onChange({ ...config, provider_name: preset.name, base_url: preset.base_url })
+    onChange({
+      ...config,
+      provider_name: preset.name,
+      base_url: preset.base_url,
+      api_key: '',
+    })
+  }
+
+  const switchToCustom = () => {
+    onChange({ provider_name: '', base_url: '', api_key: '' })
+    setCustomMode(true)
+  }
+
+  const switchToPreset = () => {
+    selectPreset(selectedPreset)
+    setCustomMode(false)
   }
 
   return (
@@ -240,7 +255,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               size="sm"
               variant="outline"
               className="h-11"
-              onClick={() => setCustomMode(true)}
+              onClick={switchToCustom}
             >
               自定义
             </Button>
@@ -269,7 +284,7 @@ export function ApiProviderSetupForm({ config, onChange }: ApiProviderSetupFormP
               size="sm"
               variant="outline"
               className="h-11"
-              onClick={() => setCustomMode(false)}
+              onClick={switchToPreset}
             >
               预置
             </Button>

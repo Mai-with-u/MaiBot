@@ -213,7 +213,7 @@ describe('ReplyEffectsPage', () => {
     expect(screen.queryByRole('heading', { name: '回复效果评估' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '刷新数据' })).toBeInTheDocument()
     expect(screen.getAllByText('回应度').length).toBeGreaterThan(0)
-    expect(screen.getByText('反馈倾向')).toBeInTheDocument()
+    expect(screen.getAllByText('反馈倾向').length).toBeGreaterThan(0)
     expect(screen.getByText('聊天推动度')).toBeInTheDocument()
     expect(screen.getAllByText('80.0').length).toBeGreaterThan(0)
     expect(screen.getAllByText('60.0').length).toBeGreaterThan(0)

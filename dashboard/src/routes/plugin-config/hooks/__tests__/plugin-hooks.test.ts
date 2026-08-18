@@ -635,6 +635,7 @@ describe('usePluginList', () => {
     expect(result.current.getPluginStatusMeta(disabled)).toEqual({
       dotClassName: 'bg-muted-foreground/45',
       label: '已禁用',
+      showsBadge: false,
     })
     expect(result.current.getPluginStatusMeta(circuitOpen)).toEqual({
       dotClassName: 'bg-orange-500',

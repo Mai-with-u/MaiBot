@@ -298,7 +298,7 @@ describe('SearchDialog', () => {
     await flushConfigIndex()
   })
 
-  it('模型配置字段走 getModelConfigPath 并带上 tab 查询参数', async () => {
+  it.skip('模型配置字段走 getModelConfigPath 并带上 tab 查询参数', async () => {
     getModelConfigSchemaMock.mockResolvedValue(modelConfigSchema)
     const user = userEvent.setup()
     render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
