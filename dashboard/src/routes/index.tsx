@@ -27,7 +27,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ThemeProviderContext } from '@/lib/theme-context'
-import { backendApi } from '@/lib/http'
 import { openUpdateNotice } from '@/lib/update-notice-events'
 import { cn } from '@/lib/utils'
 import { APP_VERSION } from '@/lib/version'
@@ -67,25 +66,6 @@ export function IndexPage() {
       <IndexPageContent />
     </RestartProvider>
   )
-}
-
-interface BotPlatformConfig {
-  platform?: string
-  qq_account?: string | number
-  platforms?: string[]
-}
-
-const UNCONFIGURED_ACCOUNT_VALUES = new Set(['', '0'])
-
-function hasConfiguredPlatformAccount(config: BotPlatformConfig | undefined): boolean {
-  if (!config) return false
-  const qqAccount = String(config.qq_account ?? '').trim()
-  if (!UNCONFIGURED_ACCOUNT_VALUES.has(qqAccount)) return true
-  return (config.platforms ?? []).some((entry) => {
-    const [, ...accountParts] = String(entry ?? '').split(':')
-    const account = accountParts.join(':').trim()
-    return !UNCONFIGURED_ACCOUNT_VALUES.has(account)
-  })
 }
 
 // 内部实现组件
@@ -388,7 +368,6 @@ function IndexPageContent() {
 
   const [isReviewerOpen, setIsReviewerOpen] = useState(false)
   const [hitokotoEditorOpen, setHitokotoEditorOpen] = useState(false)
-  const [platformAccountConfigured, setPlatformAccountConfigured] = useState<boolean | null>(null)
   const [storageDisplayMode, setStorageDisplayMode] = useState<'size' | 'count'>('size')
 
   const handleRestart = useCallback(async () => {
@@ -396,19 +375,6 @@ function IndexPageContent() {
   }, [triggerRestart])
 
   const openReviewer = useCallback(() => setIsReviewerOpen(true), [])
-
-  const fetchPlatformAccountConfig = useCallback(async () => {
-    try {
-      const data = await backendApi.get<{ config: { bot?: BotPlatformConfig } }>(
-        '/api/webui/config/bot',
-        { errorMessage: '读取平台账号配置失败' }
-      )
-      setPlatformAccountConfigured(hasConfiguredPlatformAccount(data.config.bot))
-    } catch (error) {
-      console.error('读取平台账号配置失败:', error)
-      setPlatformAccountConfigured(null)
-    }
-  }, [])
 
   const {
     quickShortcutIds,
@@ -437,7 +403,6 @@ function IndexPageContent() {
     fetchFeatureStatus()
     fetchLocalCacheStats()
     fetchReviewStats()
-    fetchPlatformAccountConfig()
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [
     fetchDashboardData,
@@ -446,7 +411,6 @@ function IndexPageContent() {
     fetchFeatureStatus,
     fetchLocalCacheStats,
     fetchReviewStats,
-    fetchPlatformAccountConfig,
   ])
 
   if (dashboardError && !dashboardData) {
@@ -973,23 +937,6 @@ function IndexPageContent() {
             </CardContent>
           </Card>
         )}
-        {platformAccountConfigured === false && (
-          <Card className="border-2 border-orange-500 bg-orange-50/80 dark:border-orange-500 dark:bg-orange-950/20">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-2xl text-orange-700 dark:text-orange-300">
-                {t('home.platformGuide.title')}
-              </CardTitle>
-              <CardDescription>{t('home.platformGuide.description')}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-muted-foreground text-sm">{t('home.platformGuide.detail')}</p>
-              <Button asChild className="shrink-0">
-                <Link to="/config/bot">{t('home.platformGuide.action')}</Link>
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
         <div
           data-home-command-strip="true"
           className={cn(
