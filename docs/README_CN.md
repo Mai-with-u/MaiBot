@@ -69,9 +69,9 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 ## 安装
 
-**最新版本: v1.1.4**
+**最新版本: v1.2.0**
 
-- **发布**：[Release](https://github.com/MaiM-with-u/MaiBot/releases/) 页面展示了最新发布的正式版。
+- **发布**：[Release](https://github.com/Mai-with-u/MaiBot/releases/) 页面展示了最新发布的正式版。
 
 - **[部署教程](https://docs.mai-mai.org/manual/deployment/)**
 

@@ -69,9 +69,9 @@ MaiSaka is more than just a bot, and more than a "helpful assistant" that comple
 
 ## Installation
 
-**Latest Version: v1.1.4**
+**Latest Version: v1.2.0**
 
-- **Download**: Visit the [Release](https://github.com/MaiM-with-u/MaiBot/releases/) page to get the latest version.
+- **Download**: Visit the [Release](https://github.com/Mai-with-u/MaiBot/releases/) page to get the latest version.
 
 - **[Deployment Guide](https://docs.mai-mai.org/manual/deployment/)**
 
