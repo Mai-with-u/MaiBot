@@ -81,6 +81,7 @@ export const DEFAULT_MODEL_INFO = {
   max_tokens: null,
   visual: false,
   force_stream_mode: false,
+  prefill: true,
   extra_params: {},
 } as const
 

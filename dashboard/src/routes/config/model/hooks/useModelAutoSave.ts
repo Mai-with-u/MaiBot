@@ -140,6 +140,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
       cache_price_in: model.cache_price_in ?? 0,
       visual: model.visual ?? false,
       force_stream_mode: model.force_stream_mode ?? false,
+      prefill: model.prefill ?? true,
       extra_params: model.extra_params ?? {},
     }
     // 只有在有值时才添加可选字段。

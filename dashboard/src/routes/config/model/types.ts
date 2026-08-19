@@ -17,6 +17,7 @@ export interface ModelInfo {
   max_tokens?: number | null // 模型级别最大token数，覆盖任务配置中的max_tokens
   visual?: boolean
   force_stream_mode?: boolean
+  prefill?: boolean
   extra_params?: Record<string, unknown>
 }
 
