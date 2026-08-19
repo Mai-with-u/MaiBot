@@ -77,6 +77,14 @@ _LEGACY_CUSTOM_PROMPT_VERSION_ID = "legacy-current"
 _MODEL_CONFIG_VERSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
+async def _reload_model_config_after_save() -> None:
+    """将刚保存的模型配置同步到运行时。"""
+
+    if await config_manager.reload_config(changed_scopes=["model"]):
+        return
+    raise HTTPException(status_code=500, detail="模型配置已保存，但运行时热重载失败，请检查日志")
+
+
 class PromptFileInfo(BaseModel):
     """Prompt 文件信息。"""
 
@@ -2114,6 +2122,7 @@ async def update_model_config(config_data: ConfigBody):
         # 保存配置文件（自动保留注释和格式）
         config_path = os.path.join(CONFIG_DIR, "model_config.toml")
         save_toml_with_format(config_data, config_path)
+        await _reload_model_config_after_save()
 
         logger.info("模型配置已更新")
         return {"success": True, "message": "配置已保存"}
@@ -2316,6 +2325,7 @@ async def update_model_config_section(section_name: str, section_data: SectionBo
 
         # 保存配置（格式化数组为多行，保留注释）
         save_toml_with_format(config_data, config_path)
+        await _reload_model_config_after_save()
 
         logger.info(f"配置节 '{section_name}' 已更新（保留注释）")
         return {"success": True, "message": f"配置节 '{section_name}' 已保存"}

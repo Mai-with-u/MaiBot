@@ -16,7 +16,7 @@ async def test_handle_file_changes_throttles_reload():
 
     called = 0
 
-    async def reload_stub(changed_scopes=None) -> bool:
+    async def reload_stub(changed_scopes=None, **kwargs) -> bool:
         nonlocal called
         called += 1
         return True
@@ -36,7 +36,7 @@ async def test_handle_file_changes_timeout_logged(caplog):
     manager._hot_reload_min_interval_s = 0.0
     manager._hot_reload_timeout_s = 0.01
 
-    async def reload_stub(changed_scopes=None) -> bool:
+    async def reload_stub(changed_scopes=None, **kwargs) -> bool:
         await asyncio.sleep(0.05)
         return True
 
@@ -55,7 +55,7 @@ async def test_handle_file_changes_empty_skips_reload():
 
     called = 0
 
-    async def reload_stub(changed_scopes=None) -> bool:
+    async def reload_stub(changed_scopes=None, **kwargs) -> bool:
         nonlocal called
         called += 1
         return True
@@ -65,6 +65,38 @@ async def test_handle_file_changes_empty_skips_reload():
     await manager._handle_file_changes([])
 
     assert called == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_file_changes_skips_already_loaded_content(monkeypatch: pytest.MonkeyPatch):
+    manager = ConfigManager()
+    manager._hot_reload_min_interval_s = 0.0
+    manager._config_file_fingerprints["model"] = "same-content"
+    monkeypatch.setattr(manager, "_get_config_file_fingerprint", lambda path: "same-content")
+
+    called = 0
+
+    async def reload_stub(changed_scopes=None, **kwargs) -> bool:
+        nonlocal called
+        called += 1
+        return True
+
+    manager.reload_config = reload_stub  # type: ignore[method-assign]
+    changes = [FileChange(change_type=Change.modified, path=Path("/tmp/model_config.toml"))]
+
+    await manager._handle_file_changes(changes)
+
+    assert called == 0
+    assert manager._last_hot_reload_monotonic == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_file_reload_rechecks_loaded_content_inside_lock(monkeypatch: pytest.MonkeyPatch):
+    manager = ConfigManager()
+    monkeypatch.setattr(manager, "_config_files_match_loaded_fingerprints", lambda scopes: True)
+
+    assert await manager.reload_config(changed_scopes=["model"], skip_if_unchanged=True) is True
+    assert manager.reload_revision == 0
 
 
 class _FakeWatcher:
