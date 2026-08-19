@@ -8,7 +8,25 @@ import re
 from typing import Any
 
 import tomlkit
-from tomlkit.items import AoT, Array, Table
+from tomlkit.items import AoT, Array, InlineTable, Table
+
+
+def _create_inline_table(data: dict[str, Any]) -> InlineTable:
+    """将嵌套字典转换为 TOML inline table，避免向其中插入普通 Table。"""
+    inline_table = tomlkit.inline_table()
+    for key, value in data.items():
+        if isinstance(value, dict):
+            inline_table[key] = _create_inline_table(value)
+        else:
+            inline_table[key] = tomlkit.item(value)
+    return inline_table
+
+
+def _create_toml_item(value: Any, parent: Any) -> Any:
+    """按父节点类型创建 TOML 值。"""
+    if isinstance(parent, InlineTable) and isinstance(value, dict):
+        return _create_inline_table(value)
+    return tomlkit.item(value)
 
 
 def _format_toml_value(obj: Any, threshold: int, depth: int = 0) -> Any:
@@ -66,12 +84,12 @@ def _update_toml_doc(target: Any, source: Any) -> None:
                 _update_toml_doc(target_value, value)
             else:
                 try:
-                    target[key] = tomlkit.item(value)
+                    target[key] = _create_toml_item(value, target)
                 except (TypeError, ValueError):
                     target[key] = value
         else:
             try:
-                target[key] = tomlkit.item(value)
+                target[key] = _create_toml_item(value, target)
             except (TypeError, ValueError):
                 target[key] = value
 
@@ -101,5 +119,6 @@ def save_toml_with_format(
     formatted = _format_toml_value(data, multiline_threshold) if multiline_threshold >= 0 else data
     output = tomlkit.dumps(formatted)
     output = re.sub(r"\n{3,}", "\n\n", output)
+    tomlkit.loads(output)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(output)
