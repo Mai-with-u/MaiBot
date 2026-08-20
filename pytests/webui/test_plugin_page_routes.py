@@ -158,3 +158,21 @@ def test_asset_route_returns_javascript(page_app: FastAPI) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/javascript")
     assert b"function mount" in response.content
+
+
+def test_page_list_uses_loaded_runtime_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin_path = _write_plugin(tmp_path, "example.runtime")
+
+    class FakeRuntimeManager:
+        def get_loaded_plugin_paths(self) -> list[tuple[str, Path]]:
+            return [("example.runtime", plugin_path)]
+
+    monkeypatch.setattr(pages_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+    app = FastAPI()
+    app.include_router(pages_module.router, prefix="/api/webui/plugins")
+    app.dependency_overrides[require_auth] = lambda: "test-token"
+
+    response = TestClient(app).get("/api/webui/plugins/pages")
+
+    assert response.status_code == 200
+    assert [page["plugin_id"] for page in response.json()["pages"]] == ["example.runtime"]

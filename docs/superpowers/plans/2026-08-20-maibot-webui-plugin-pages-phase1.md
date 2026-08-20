@@ -23,6 +23,7 @@
 ## 文件结构
 
 - Modify: `src/plugin_runtime/runner/manifest_validator.py` — 新增页面 Manifest 的严格 Pydantic 类型和字段校验。
+- Modify: `src/plugin_runtime/integration.py` — 暴露成功加载插件的只读目录清单。
 - Create: `src/webui/services/plugin_page_registry.py` — 页面声明发现、路径安全检查、Host URL 生成和缓存无关的纯注册函数。
 - Create: `src/webui/routers/plugin/pages.py` — 页面清单和资源 FastAPI Router。
 - Modify: `src/webui/routers/plugin/__init__.py` — 注册 `pages_router`，不改现有子路由。
@@ -282,11 +283,11 @@ git commit -m "feat: expose authenticated plugin WebUI pages"
 - The production Router obtains plugin paths and loaded IDs from the existing runtime manager, while tests continue to inject a registry.
 - Runtime discovery failures are logged and omit only the invalid page; existing plugin management routes remain available.
 
-- [ ] **Step 1: Write the runtime integration regression test**
+- [x] **Step 1: Write the runtime integration regression test**
 
 Patch `get_plugin_runtime_manager()` with a small object exposing current plugin directories and load statuses. Assert that `/api/webui/plugins/pages` includes only status `success` plugins and does not scan unrelated directories.
 
-- [ ] **Step 2: Run the regression test and verify it fails**
+- [x] **Step 2: Run the regression test and verify it fails**
 
 ```bash
 uv run python -m pytest pytests/webui/test_plugin_page_routes.py::test_page_list_uses_loaded_runtime_plugins -q
@@ -294,20 +295,21 @@ uv run python -m pytest pytests/webui/test_plugin_page_routes.py::test_page_list
 
 Expected: the endpoint currently has no runtime-backed registry and returns an empty page list or raises an import error.
 
-- [ ] **Step 3: Wire the existing runtime manager without importing plugin code**
+- [x] **Step 3: Wire the existing runtime manager without importing plugin code**
 
 Use the manager's existing plugin directory/status accessors. Do not call `create_plugin`, import `plugin.py`, or duplicate Runner startup. Refresh the registry per request for MVP; add a versioned cache only after measuring the cost.
 
-- [ ] **Step 4: Run the complete Phase 1 verification set**
+- [x] **Step 4: Run the complete Phase 1 verification set**
 
 ```bash
 uv run python -m pytest pytests/plugin_runtime/test_manifest_webui_pages.py pytests/plugin_runtime/test_manifest_validator_logging.py pytests/plugin_runtime/test_manifest_version_compatibility.py pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
 git diff --check HEAD~4..HEAD
 ```
 
-Expected: pytest exits with code 0, all selected tests pass, and Git reports no whitespace errors.
+Expected: the Phase 1 focused set exits with code 0 and Git reports no whitespace errors. The two
+pre-existing install fixture failures documented under Task 3 remain outside this change.
 
-- [ ] **Step 5: Commit Phase 1 integration**
+- [x] **Step 5: Commit Phase 1 integration**
 
 ```bash
 git add src pytests

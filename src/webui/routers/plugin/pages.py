@@ -6,9 +6,10 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from src.plugin_runtime.integration import get_plugin_runtime_manager
 from src.webui.dependencies import require_auth
 from src.webui.routers.plugin.support import validate_plugin_id
-from src.webui.services.plugin_page_registry import PluginPageRecord
+from src.webui.services.plugin_page_registry import PluginPageRecord, discover_plugin_pages
 
 router = APIRouter(tags=["插件页面"])
 
@@ -26,11 +27,13 @@ _ALLOWED_ASSET_MEDIA_TYPES = {
 
 
 def discover_runtime_plugin_pages() -> List[PluginPageRecord]:
-    """返回当前运行时插件页面。
-
-    Phase 1 先保留 Host 侧发现接口；运行时目录和加载状态接线在 Task 4 完成。
-    """
-    return []
+    """根据 Runner 当前成功加载的插件目录发现页面。"""
+    loaded_plugin_paths = get_plugin_runtime_manager().get_loaded_plugin_paths()
+    loaded_plugin_ids = {plugin_id for plugin_id, _plugin_path in loaded_plugin_paths}
+    return discover_plugin_pages(
+        (plugin_path for _plugin_id, plugin_path in loaded_plugin_paths),
+        loaded_plugin_ids,
+    )
 
 
 def _get_page_records() -> List[PluginPageRecord]:

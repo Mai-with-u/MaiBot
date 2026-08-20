@@ -860,6 +860,17 @@ class PluginRuntimeManager(
             statuses[plugin_id] = "offline"
         return statuses
 
+    def get_loaded_plugin_paths(self) -> List[Tuple[str, Path]]:
+        """返回当前成功加载插件的 ID 与目录路径。"""
+        loaded_plugin_ids = {
+            plugin_id for plugin_id, status in self.get_plugin_load_statuses().items() if status == "success"
+        }
+        return [
+            (plugin_id, plugin_path)
+            for plugin_id, plugin_path in self._iter_discovered_plugin_paths(self._iter_plugin_dirs())
+            if plugin_id in loaded_plugin_ids
+        ]
+
     def get_plugin_load_failure_reasons(self) -> Dict[str, str]:
         """汇总所有 Supervisor 上报的插件加载失败原因。"""
 
