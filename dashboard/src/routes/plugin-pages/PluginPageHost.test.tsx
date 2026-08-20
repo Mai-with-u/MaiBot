@@ -90,4 +90,19 @@ describe('PluginPageHost', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('入口损坏')
     })
   })
+
+  it('拒绝非 Host 同源插件资源入口', async () => {
+    vi.mocked(fetchPluginPages).mockResolvedValue({
+      success: true,
+      pages: [{ ...page, entry: 'https://evil.example/plugin.js' }],
+      warnings: [],
+    })
+
+    render(<PluginPageHost />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('插件页面入口必须使用 Host 同源资源')
+    })
+    expect(loadPluginPageModule).not.toHaveBeenCalled()
+  })
 })

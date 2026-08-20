@@ -50,9 +50,7 @@ function deriveAssetsBase(entry: string): string {
   return entryUrl.pathname.slice(0, entryUrl.pathname.lastIndexOf('/') + 1)
 }
 
-function disposePluginPage(cleanupRef: { current: (() => void) | null }): void {
-  const cleanup = cleanupRef.current
-  cleanupRef.current = null
+function runPluginCleanup(cleanup: (() => void) | null): void {
   if (!cleanup) {
     return
   }
@@ -62,6 +60,29 @@ function disposePluginPage(cleanupRef: { current: (() => void) | null }): void {
   } catch (error) {
     // 插件清理失败不能阻塞宿主路由卸载，但必须保留诊断信息。
     console.error('插件 WebUI 页面清理失败:', error)
+  }
+}
+
+function disposePluginPage(cleanupRef: { current: (() => void) | null }): void {
+  const cleanup = cleanupRef.current
+  cleanupRef.current = null
+  runPluginCleanup(cleanup)
+}
+
+function validatePluginEntry(entry: string): void {
+  let entryUrl: URL
+  try {
+    entryUrl = new URL(entry, window.location.href)
+  } catch (error) {
+    throw new Error('插件页面入口不是合法 URL', { cause: error })
+  }
+
+  if (
+    entryUrl.origin !== window.location.origin ||
+    !entryUrl.pathname.startsWith('/api/webui/plugins/') ||
+    !entryUrl.pathname.includes('/assets/')
+  ) {
+    throw new Error('插件页面入口必须使用 Host 同源资源')
   }
 }
 
@@ -122,6 +143,7 @@ export function PluginPageHost() {
       try {
         const response = await fetchPluginPages(abortController.signal)
         const page = findPluginPage(response.pages, pluginId, pageId)
+        validatePluginEntry(page.entry)
         const module = await loadPluginPageModule(page.entry)
         if (cancelled) {
           return
@@ -138,9 +160,7 @@ export function PluginPageHost() {
 
         const cleanup = (mount as PluginPageMount)(container, createPluginPageContext(page))
         if (cancelled) {
-          if (typeof cleanup === 'function') {
-            cleanup()
-          }
+          runPluginCleanup(typeof cleanup === 'function' ? cleanup : null)
           return
         }
         cleanupRef.current = typeof cleanup === 'function' ? cleanup : null
