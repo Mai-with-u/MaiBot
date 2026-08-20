@@ -141,7 +141,7 @@ git commit -m "feat: validate plugin WebUI page manifests"
 - Produces `discover_plugin_pages(plugin_paths: Iterable[Path], loaded_plugin_ids: Collection[str]) -> List[PluginPageRecord]`.
 - Produces `get_plugin_page(plugin_id: str, page_id: str) -> PluginPageRecord` only after the Router wires a registry instance.
 
-- [ ] **Step 1: Write failing discovery tests**
+- [x] **Step 1: Write failing discovery tests**
 
 Use `tmp_path` to create two plugin directories with valid `_manifest.json` files and `webui/dist/index.js`. Assert that discovery:
 
@@ -156,7 +156,7 @@ assert pages[0].entry_url.endswith(
 
 Also test that unloaded plugin IDs are omitted, missing entry files raise a clear `ValueError`, and a symlinked entry is rejected.
 
-- [ ] **Step 2: Run the tests and verify they fail**
+- [x] **Step 2: Run the tests and verify they fail**
 
 Run:
 
@@ -166,7 +166,7 @@ uv run python -m pytest pytests/webui/test_plugin_page_routes.py -q
 
 Expected: import failure for the not-yet-created registry module or missing `discover_plugin_pages` symbol.
 
-- [ ] **Step 3: Implement discovery and Host URL generation**
+- [x] **Step 3: Implement discovery and Host URL generation**
 
 Implement the registry as a pure, dependency-injected function so tests do not start the full plugin runtime. Reuse `load_manifest_json`, `resolve_plugin_file_path`, and `validate_plugin_id` from `src.webui.routers.plugin.support` where possible. For each candidate:
 
@@ -179,7 +179,7 @@ Implement the registry as a pure, dependency-injected function so tests do not s
 
 Add a short Chinese comment before the entry-path resolution block explaining that Manifest validation and filesystem resolution are deliberately both performed because the first protects the contract and the second protects the actual filesystem.
 
-- [ ] **Step 4: Run discovery tests and the existing plugin support tests**
+- [x] **Step 4: Run discovery tests and the existing plugin support tests**
 
 ```bash
 uv run python -m pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_plugin_management_routes.py -q
@@ -187,7 +187,7 @@ uv run python -m pytest pytests/webui/test_plugin_page_routes.py pytests/webui/t
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the registry**
+- [x] **Step 5: Commit the registry**
 
 ```bash
 git add src/webui/services/plugin_page_registry.py pytests/webui/test_plugin_page_routes.py
@@ -207,7 +207,7 @@ git commit -m "feat: add plugin WebUI page registry"
 - Adds `GET /{plugin_id}/assets/{asset_path:path}` under the same prefix.
 - Does not add arbitrary plugin FastAPI registration.
 
-- [ ] **Step 1: Write failing route tests**
+- [x] **Step 1: Write failing route tests**
 
 Create a small FastAPI app with the pages Router and override `require_auth`. Test:
 
@@ -238,7 +238,7 @@ def test_asset_route_returns_javascript(authenticated_client):
     assert response.headers["content-type"].startswith("application/javascript")
 ```
 
-- [ ] **Step 2: Run the route tests and verify the expected failure**
+- [x] **Step 2: Run the route tests and verify the expected failure**
 
 ```bash
 uv run python -m pytest pytests/webui/test_plugin_page_routes.py -q
@@ -246,21 +246,25 @@ uv run python -m pytest pytests/webui/test_plugin_page_routes.py -q
 
 Expected: route import or 404 failures because the Router is not registered.
 
-- [ ] **Step 3: Implement the Router**
+- [x] **Step 3: Implement the Router**
 
 Use `APIRouter(tags=["插件页面"])` and `Depends(require_auth)` on each endpoint. The list endpoint serializes only public `PluginPageRecord` fields. The asset endpoint validates the plugin ID, looks up the page registry, restricts `asset_path` to the plugin `webui/dist` root, rejects symlinks, determines MIME type from a fixed allowlist, and returns `FileResponse`.
 
 Do not add a catch-all route to `app.py`; the existing SPA catch-all must continue to return 404 for `/api/...` paths. Include the new Router in `src/webui/routers/plugin/__init__.py` alongside existing plugin routers.
 
-- [ ] **Step 4: Run route and application regression tests**
+- [x] **Step 4: Run route and application regression tests**
 
 ```bash
 uv run python -m pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
 ```
 
-Expected: all tests pass and existing plugin management endpoints remain unchanged.
+Expected: page and application tests pass. The current repository has two pre-existing failures in
+`test_install_plugin_preserves_manifest_declared_id` and
+`test_install_plugin_backfills_missing_manifest_id`; these tests use incomplete legacy manifests while
+the existing install endpoint requires the complete install contract. This Phase 1 change does not touch
+the install endpoint or its fixtures.
 
-- [ ] **Step 5: Commit the routes**
+- [x] **Step 5: Commit the routes**
 
 ```bash
 git add src/webui/routers/plugin/pages.py src/webui/routers/plugin/__init__.py pytests/webui/test_plugin_page_routes.py
