@@ -1136,6 +1136,22 @@ def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
         items: List[Dict[str, Any]] = []
         total_deleted = 0
 
+        removed_adapter_policy_count = get_adapter_policy_manager().remove_chat_overrides(
+            chat_type=_get_chat_type(chat_session),
+            target_id=_get_chat_target_id(chat_session),
+            platform=str(chat_session.platform or "").strip(),
+            account_id=str(chat_session.account_id or "").strip() or None,
+            scope=str(chat_session.scope or "").strip() or None,
+        )
+        if removed_adapter_policy_count:
+            items.append(
+                {
+                    "key": "adapter_policy_overrides",
+                    "label": "适配器显式放行规则",
+                    "count": removed_adapter_policy_count,
+                }
+            )
+
         jargon_result = _delete_or_unlink_jargons(session, session_id)
         if jargon_result["deleted"] or jargon_result["unlinked"]:
             items.append(
