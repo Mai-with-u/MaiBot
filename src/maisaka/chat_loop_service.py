@@ -22,9 +22,11 @@ from src.llm_models.payload_content.context_item import (
     CONTEXT_ITEM_SCHEMA_VERSION,
     ContextItem,
     ContextItemBuilder,
+    FunctionCallItem,
     FunctionCallOutputItem,
     ProviderActivityItem,
     RoleType,
+    UserMessageItem,
     bind_output_items_to_turn,
     get_response_reasoning,
     get_response_text,
@@ -44,7 +46,7 @@ from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistr
 from src.services.llm_service import LLMServiceClient
 
 from src.maisaka.builtin_tool import get_builtin_tools
-from src.maisaka.context.history import normalize_tool_call_result_pairs
+from src.maisaka.context.history import collect_tool_turn_anchor_indices, normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
     LLMContextMessage,
     ModelOutputContextMessage,
@@ -972,13 +974,25 @@ class MaisakaChatLoopService:
         normalized_final_user_message = str(final_user_message or "").strip()
         if normalized_final_user_message:
             items.append(
-                ContextItemBuilder()
-                .set_role(RoleType.User)
-                .add_text_content(normalized_final_user_message)
-                .build()
+                ContextItemBuilder().set_role(RoleType.User).add_text_content(normalized_final_user_message).build()
             )
 
+        self._validate_function_call_context_anchors(items)
         return items
+
+    @staticmethod
+    def _validate_function_call_context_anchors(items: Sequence[ContextItem]) -> None:
+        """禁止请求历史从缺少 user/function output 锚点的工具调用开始。"""
+
+        has_function_call_anchor = False
+        for item in items:
+            if isinstance(item, (UserMessageItem, FunctionCallOutputItem)):
+                has_function_call_anchor = True
+                continue
+            if isinstance(item, FunctionCallItem) and not has_function_call_anchor:
+                raise ValueError(
+                    f"请求上下文中的 function call 缺少前置 user/function output 锚点: call_id={item.tool_call.call_id}"
+                )
 
     async def chat_loop_step(
         self,
@@ -1016,9 +1030,7 @@ class MaisakaChatLoopService:
             include_day_boundary_time_messages=request_kind == "planner",
             injected_user_messages=injected_user_messages,
             tail_user_messages=tail_user_messages,
-            final_user_message=(
-                self._build_planner_final_user_reminder() if request_kind == "planner" else None
-            ),
+            final_user_message=(self._build_planner_final_user_reminder() if request_kind == "planner" else None),
             system_prompt=system_prompt,
         )
         if enable_visual_message:
@@ -1302,6 +1314,13 @@ class MaisakaChatLoopService:
             if (logical_turn_id := MaisakaChatLoopService._get_history_logical_turn_id(message)) in tool_turn_ids
         }
         selected_ids = {id(message) for message in selected_history}
+        anchor_index_by_turn_id = collect_tool_turn_anchor_indices(list(full_history), selected_turn_ids)
+
+        # logical_turn_id 只绑定模型输出和工具结果；窗口命中工具轮次时，还必须补回
+        # 该轮次之前最近的真实 user 上下文，避免请求从 function call 开始。
+        for anchor_index in anchor_index_by_turn_id.values():
+            selected_ids.add(id(full_history[anchor_index]))
+
         return [
             message
             for message in full_history
