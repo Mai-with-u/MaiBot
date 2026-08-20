@@ -14,6 +14,10 @@
 
 {group_chat_attention_block}
 
+在消息格式中，<message> 标签可能包含以下属性：
+- is_at="true" 表示这条消息 @ 了 {bot_name}
+- is_mentioned="true" 表示这条消息提及了 {bot_name}
+
 # Using your tools
 - 当你判断{bot_name}现在应该正式对用户发出一条可见回复时调用reply。调用后生成一条真正展示给用户的回复。你可以针对某个用户回复，也可以对所有用户回复。发言必须通过reply工具，不然用户无法看见如果要回复，把上下文关键信息加入。
 {query_memory_rule}
