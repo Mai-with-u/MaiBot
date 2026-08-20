@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Puzzle } from 'lucide-react'
 
 import { BOT_CONFIG_UPDATED_EVENT, getBotConfigCached } from '@/lib/config-api'
+import { fetchPluginPages } from '@/lib/plugin-api/pages'
+import type { PluginPageSummary } from '@/lib/plugin-api/types'
 
 import { menuSections } from './constants'
-import type { MenuSection } from './types'
+import type { MenuIcon, MenuSection } from './types'
 
 interface MenuFeatureFlags {
   behaviorLearning: boolean
@@ -41,11 +44,43 @@ function filterMenuSections(flags: MenuFeatureFlags | null): MenuSection[] {
     .filter((section) => section.items.length > 0)
 }
 
+/** 将 Host 页面清单追加到固定的扩展与集成分组，且不修改静态菜单源数据。 */
+export function appendPluginPages(
+  sections: MenuSection[],
+  pages: PluginPageSummary[]
+): MenuSection[] {
+  if (pages.length === 0) {
+    return sections
+  }
+
+  const pluginPageIcon: MenuIcon = Puzzle
+  const pluginItems = [...pages]
+    .sort((left, right) => {
+      if (left.order !== right.order) return left.order - right.order
+      if (left.plugin_id !== right.plugin_id) return left.plugin_id.localeCompare(right.plugin_id)
+      return left.page_id.localeCompare(right.page_id)
+    })
+    .map((page) => ({
+      icon: pluginPageIcon,
+      label: page.title,
+      labelMode: 'text' as const,
+      path: page.route,
+    }))
+
+  return sections.map((section) =>
+    section.title === 'sidebar.groups.extensionsMonitor'
+      ? { ...section, items: [...section.items, ...pluginItems] }
+      : section
+  )
+}
+
 export function useMenuSections(): MenuSection[] {
   const [featureFlags, setFeatureFlags] = useState<MenuFeatureFlags | null>(null)
+  const [pluginPages, setPluginPages] = useState<PluginPageSummary[]>([])
 
   useEffect(() => {
     let cancelled = false
+    const abortController = new AbortController()
 
     const refreshFeatureFlags = () => {
       getBotConfigCached()
@@ -62,13 +97,31 @@ export function useMenuSections(): MenuSection[] {
     }
 
     refreshFeatureFlags()
+    fetchPluginPages(abortController.signal)
+      .then((response) => {
+        if (!cancelled) {
+          setPluginPages(response.pages)
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled || (error instanceof Error && error.name === 'AbortError')) {
+          return
+        }
+        // 页面清单失败不能影响静态插件管理、市场和 MCP 入口。
+        console.error('加载插件 WebUI 页面失败:', error)
+        setPluginPages([])
+      })
     window.addEventListener(BOT_CONFIG_UPDATED_EVENT, refreshFeatureFlags)
 
     return () => {
       cancelled = true
+      abortController.abort()
       window.removeEventListener(BOT_CONFIG_UPDATED_EVENT, refreshFeatureFlags)
     }
   }, [])
 
-  return useMemo(() => filterMenuSections(featureFlags), [featureFlags])
+  return useMemo(
+    () => appendPluginPages(filterMenuSections(featureFlags), pluginPages),
+    [featureFlags, pluginPages]
+  )
 }

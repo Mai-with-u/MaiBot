@@ -35,9 +35,12 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }))
 
+const translationMock = vi.hoisted(() => ({
+  t: vi.fn((key: string) => (key === 'plugin.title' ? '翻译后的标题' : key)),
+}))
+
 vi.mock('react-i18next', () => ({
-  // t 直接回显 key，组件文案断言使用 i18n key 本身
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => translationMock,
 }))
 
 /** 测试用图标桩：透传 className 以便断言激活态样式 */
@@ -73,6 +76,21 @@ function renderNavItem(overrides?: {
 }
 
 describe('NavItem', () => {
+  it('labelMode 为 text 时显示插件声明的原文而不走 i18n', () => {
+    matchRouteMock.mockReturnValue(false)
+    renderNavItem({
+      item: {
+        icon: TestIcon,
+        label: 'plugin.title',
+        labelMode: 'text',
+        path: '/plugin-pages/example.first/hello',
+      },
+    })
+
+    expect(screen.getByRole('link', { name: 'plugin.title' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '翻译后的标题' })).not.toBeInTheDocument()
+  })
+
   it('渲染指向 item.path 的链接并显示翻译后的标签', () => {
     matchRouteMock.mockReturnValue(false)
     renderNavItem()
