@@ -86,6 +86,22 @@ function validatePluginEntry(entry: string): void {
   }
 }
 
+function validatePluginApiBase(apiBase: string): void {
+  let apiUrl: URL
+  try {
+    apiUrl = new URL(apiBase, window.location.href)
+  } catch (error) {
+    throw new Error('插件页面 API 基址不是合法 URL', { cause: error })
+  }
+
+  if (
+    apiUrl.origin !== window.location.origin ||
+    !apiUrl.pathname.startsWith('/api/webui/plugins/')
+  ) {
+    throw new Error('插件页面 API 必须使用 Host 同源资源')
+  }
+}
+
 function findPluginPage(
   pages: PluginPageSummary[],
   pluginId: string,
@@ -144,6 +160,7 @@ export function PluginPageHost() {
         const response = await fetchPluginPages(abortController.signal)
         const page = findPluginPage(response.pages, pluginId, pageId)
         validatePluginEntry(page.entry)
+        validatePluginApiBase(page.api_base)
         const module = await loadPluginPageModule(page.entry)
         if (cancelled) {
           return

@@ -105,4 +105,20 @@ describe('PluginPageHost', () => {
     })
     expect(loadPluginPageModule).not.toHaveBeenCalled()
   })
+
+  it('拒绝非 Host 同源插件 API 基址', async () => {
+    vi.mocked(fetchPluginPages).mockResolvedValue({
+      success: true,
+      pages: [{ ...page, api_base: 'https://evil.example/api' }],
+      warnings: [],
+    })
+    vi.mocked(loadPluginPageModule).mockResolvedValue({ mount: vi.fn() })
+
+    render(<PluginPageHost />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('插件页面 API 必须使用 Host 同源资源')
+    })
+    expect(loadPluginPageModule).not.toHaveBeenCalled()
+  })
 })
