@@ -592,6 +592,10 @@ describe('usePluginList', () => {
       load_status: 'loading',
       manifest: { name: 'Loading' },
     })
+    const offlinePlugin = makePlugin('p.offline', {
+      load_status: 'offline',
+      manifest: { name: 'Offline' },
+    })
     const failed = makePlugin('p.failed', {
       load_status: 'failed',
       load_error: 'boom',
@@ -610,6 +614,7 @@ describe('usePluginList', () => {
       circuitOpenIdle,
       halfOpen,
       loadingPlugin,
+      offlinePlugin,
       failed,
       success,
       loadedFlag,
@@ -621,6 +626,7 @@ describe('usePluginList', () => {
     expect(result.current.getPluginStatusBarClassName(circuitOpen)).toBe('bg-orange-500')
     expect(result.current.getPluginStatusBarClassName(halfOpen)).toBe('bg-yellow-500')
     expect(result.current.getPluginStatusBarClassName(loadingPlugin)).toBe('bg-sky-500')
+    expect(result.current.getPluginStatusBarClassName(offlinePlugin)).toBe('bg-slate-500')
     expect(result.current.getPluginStatusBarClassName(failed)).toBe('bg-red-500')
     expect(result.current.getPluginStatusBarClassName(success)).toBe('bg-emerald-500')
 
@@ -629,6 +635,7 @@ describe('usePluginList', () => {
     expect(result.current.getPluginStatusLabel(circuitOpenIdle)).toBe('熔断中')
     expect(result.current.getPluginStatusLabel(halfOpen)).toBe('半开测试')
     expect(result.current.getPluginStatusLabel(loadingPlugin)).toBe('加载中')
+    expect(result.current.getPluginStatusLabel(offlinePlugin)).toBe('已离线')
     expect(result.current.getPluginStatusLabel(failed)).toBe('启动失败')
     expect(result.current.getPluginStatusLabel(success)).toBe('已启用')
 
@@ -655,6 +662,12 @@ describe('usePluginList', () => {
       badgeClassName: 'border-sky-600 text-sky-600',
       icon: 'loading',
     })
+    expect(result.current.getPluginStatusMeta(offlinePlugin)).toEqual({
+      dotClassName: 'bg-slate-500',
+      label: '已离线',
+      badgeClassName: 'border-slate-500 text-slate-600',
+      icon: 'warning',
+    })
     expect(result.current.getPluginStatusMeta(success)).toEqual({
       dotClassName: 'bg-emerald-500',
       label: '加载成功',
@@ -675,13 +688,15 @@ describe('usePluginList', () => {
     expect(result.current.visiblePluginGroups.map((group) => group.key)).toEqual([
       'success',
       'loading',
+      'offline',
       'failed',
       'disabled',
     ])
     expect(result.current.showsCircuitSummary).toBe(true)
     expect(result.current.circuitOpenCount).toBe(2)
     expect(result.current.modernLoadSummaryLabel).toContain('熔断中 2 个')
-    expect(result.current.futureRetroPluginSummaryLabel).toContain('已安装 9 个插件')
+    expect(result.current.modernLoadSummaryLabel).toContain('已离线 1 个')
+    expect(result.current.futureRetroPluginSummaryLabel).toContain('已安装 10 个插件')
     expect(result.current.loadSuccessCount).toBe(2)
     expect(result.current.disabledCount).toBe(2)
   })
