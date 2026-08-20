@@ -40,7 +40,7 @@
 - `ManifestWebUiPage` fields are `id`, `title`, `route`, `entry`, `component`, `icon`, `order`, `permissions`, and `api`.
 - `ManifestWebUiExtensions` has only `webui_pages` and uses `extra="forbid"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a complete valid Manifest fixture and test these behaviors:
 
@@ -90,17 +90,17 @@ def test_manifest_rejects_duplicate_page_ids():
 
 The fixture must include the existing required Manifest v2 fields instead of weakening production validation.
 
-- [ ] **Step 2: Run the tests and verify the expected failure**
+- [x] **Step 2: Run the tests and verify the expected failure**
 
 Run:
 
 ```bash
-uv run pytest pytests/plugin_runtime/test_manifest_webui_pages.py -q
+uv run python -m pytest pytests/plugin_runtime/test_manifest_webui_pages.py -q
 ```
 
 Expected: collection succeeds, then the new model/field assertions fail because `PluginManifest` has no `extensions` field and unsafe declarations are not yet validated.
 
-- [ ] **Step 3: Implement the minimal models and validators**
+- [x] **Step 3: Implement the minimal models and validators**
 
 Add strict models next to the existing display/manifest models. Use `ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)` consistently. Add validators that:
 
@@ -113,17 +113,17 @@ Add strict models next to the existing display/manifest models. Use `ConfigDict(
 
 Add `extensions: Optional[ManifestWebUiExtensions] = None` to `PluginManifest`. Keep existing comments and type annotations intact; add a short comment only before the path/route validation block because it combines URL and filesystem constraints.
 
-- [ ] **Step 4: Run the focused tests and existing Manifest tests**
+- [x] **Step 4: Run the focused tests and existing Manifest tests**
 
 Run:
 
 ```bash
-uv run pytest pytests/plugin_runtime/test_manifest_webui_pages.py pytests/plugin_runtime/test_manifest_validator_logging.py pytests/plugin_runtime/test_manifest_version_compatibility.py -q
+uv run python -m pytest pytests/plugin_runtime/test_manifest_webui_pages.py pytests/plugin_runtime/test_manifest_validator_logging.py pytests/plugin_runtime/test_manifest_version_compatibility.py -q
 ```
 
 Expected: all focused tests pass with no warnings introduced by the new optional field.
 
-- [ ] **Step 5: Commit the Manifest contract**
+- [x] **Step 5: Commit the Manifest contract**
 
 ```bash
 git add src/plugin_runtime/runner/manifest_validator.py pytests/plugin_runtime/test_manifest_webui_pages.py
@@ -161,7 +161,7 @@ Also test that unloaded plugin IDs are omitted, missing entry files raise a clea
 Run:
 
 ```bash
-uv run pytest pytests/webui/test_plugin_page_routes.py -q
+uv run python -m pytest pytests/webui/test_plugin_page_routes.py -q
 ```
 
 Expected: import failure for the not-yet-created registry module or missing `discover_plugin_pages` symbol.
@@ -182,7 +182,7 @@ Add a short Chinese comment before the entry-path resolution block explaining th
 - [ ] **Step 4: Run discovery tests and the existing plugin support tests**
 
 ```bash
-uv run pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_plugin_management_routes.py -q
+uv run python -m pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_plugin_management_routes.py -q
 ```
 
 Expected: all tests pass.
@@ -241,7 +241,7 @@ def test_asset_route_returns_javascript(authenticated_client):
 - [ ] **Step 2: Run the route tests and verify the expected failure**
 
 ```bash
-uv run pytest pytests/webui/test_plugin_page_routes.py -q
+uv run python -m pytest pytests/webui/test_plugin_page_routes.py -q
 ```
 
 Expected: route import or 404 failures because the Router is not registered.
@@ -255,7 +255,7 @@ Do not add a catch-all route to `app.py`; the existing SPA catch-all must contin
 - [ ] **Step 4: Run route and application regression tests**
 
 ```bash
-uv run pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
+uv run python -m pytest pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
 ```
 
 Expected: all tests pass and existing plugin management endpoints remain unchanged.
@@ -285,7 +285,7 @@ Patch `get_plugin_runtime_manager()` with a small object exposing current plugin
 - [ ] **Step 2: Run the regression test and verify it fails**
 
 ```bash
-uv run pytest pytests/webui/test_plugin_page_routes.py::test_page_list_uses_loaded_runtime_plugins -q
+uv run python -m pytest pytests/webui/test_plugin_page_routes.py::test_page_list_uses_loaded_runtime_plugins -q
 ```
 
 Expected: the endpoint currently has no runtime-backed registry and returns an empty page list or raises an import error.
@@ -297,7 +297,7 @@ Use the manager's existing plugin directory/status accessors. Do not call `creat
 - [ ] **Step 4: Run the complete Phase 1 verification set**
 
 ```bash
-uv run pytest pytests/plugin_runtime/test_manifest_webui_pages.py pytests/plugin_runtime/test_manifest_validator_logging.py pytests/plugin_runtime/test_manifest_version_compatibility.py pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
+uv run python -m pytest pytests/plugin_runtime/test_manifest_webui_pages.py pytests/plugin_runtime/test_manifest_validator_logging.py pytests/plugin_runtime/test_manifest_version_compatibility.py pytests/webui/test_plugin_page_routes.py pytests/webui/test_app.py pytests/webui/test_plugin_management_routes.py -q
 git diff --check HEAD~4..HEAD
 ```
 
