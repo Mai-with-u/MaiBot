@@ -516,7 +516,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
                 include_message_id=not message.is_notify and bool(message.message_id),
                 include_chat_id=include_chat_id,
-                is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
+                is_self_message=source_kind == "guided_reply",
             )
             history_message = SessionBackedMessage.from_session_message(
                 message,

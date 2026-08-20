@@ -894,20 +894,6 @@ class ChatConfig(ConfigBase):
     )
     """最多保留多少条聊天回想；设为 0 表示不保留。"""
 
-    self_message_special_mark: bool = Field(
-        default=True,
-        json_schema_extra={
-            "label": {
-                "zh_CN": "自身消息特殊标注",
-                "en_US": "Special mark for self messages",
-                "ja_JP": "自分のメッセージ特別マーク",
-            },
-            "x-widget": "switch",
-            "x-row": "self-message-mark",
-        },
-    )
-    """加强标记麦麦自己的消息，减少把自己当成别人的情况。"""
-
     reply_timing: ChatReplyTimingConfig = Field(default_factory=ChatReplyTimingConfig)
     """什么时候回复、回复频率与等待退避配置。"""
 
