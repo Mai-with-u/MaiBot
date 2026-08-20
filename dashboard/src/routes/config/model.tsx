@@ -1756,23 +1756,6 @@ function ModelConfigPageContent() {
                     }
                   />
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label htmlFor="model_prefill" className="cursor-pointer">支持预填充（Prefill）</Label>
-                    <p className="text-xs text-muted-foreground">
-                      关闭后会将请求末条 assistant 消息转换为 user，以兼容不支持预填充的模型
-                    </p>
-                  </div>
-                  <Switch
-                    id="model_prefill"
-                    checked={editingModel?.prefill ?? true}
-                    onCheckedChange={(checked) =>
-                      setEditingModel((prev) =>
-                        prev ? { ...prev, prefill: checked } : null
-                      )
-                    }
-                  />
-                </div>
               </div>
             )}
 

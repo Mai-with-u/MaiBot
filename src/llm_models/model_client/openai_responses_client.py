@@ -236,9 +236,6 @@ def _convert_context_items(
 
         # reasoning、Provider 原生活动和未知 Item 在 scope 不匹配时没有可移植投影。
 
-    if not request.model_info.prefill and input_items and input_items[-1].get("role") == "assistant":
-        input_items[-1]["role"] = "user"
-
     return input_items
 
 

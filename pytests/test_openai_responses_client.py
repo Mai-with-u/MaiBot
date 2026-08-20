@@ -43,7 +43,6 @@ def _build_provider() -> APIProvider:
 def _build_model(
     *,
     force_stream_mode: bool = False,
-    prefill: bool = True,
     extra_params: dict[str, Any] | None = None,
 ) -> ModelInfo:
     return ModelInfo(
@@ -51,7 +50,6 @@ def _build_model(
         model_identifier="gpt-test",
         api_provider="responses-test",
         force_stream_mode=force_stream_mode,
-        prefill=prefill,
         extra_params=extra_params or {},
     )
 
@@ -60,7 +58,6 @@ def _build_request(
     items: list[ContextItem],
     *,
     force_stream_mode: bool = False,
-    prefill: bool = True,
     extra_params: dict[str, Any] | None = None,
     tool_options: list[ToolOption] | None = None,
     response_format: RespFormat | None = None,
@@ -68,7 +65,6 @@ def _build_request(
     return ResponseRequest(
         model_info=_build_model(
             force_stream_mode=force_stream_mode,
-            prefill=prefill,
             extra_params=extra_params,
         ),
         context_items=items,
@@ -95,26 +91,6 @@ def test_refusal_item_has_portable_chat_responses_and_gemini_projection() -> Non
         "https://api.example.com/v1",
     ) == [{"role": "assistant", "content": "无法回答这个问题"}]
     assert [part.text for part in _build_non_tool_parts(refusal)] == ["无法回答这个问题"]
-
-
-def test_convert_items_converts_only_final_assistant_when_prefill_disabled() -> None:
-    first_assistant = ContextItemBuilder().set_role(RoleType.Assistant).add_text_content("历史回复").build()
-    user_message = ContextItemBuilder().add_text_content("新的消息").build()
-    final_assistant = ContextItemBuilder().set_role(RoleType.Assistant).add_text_content("输出引导").build()
-    request = _build_request([first_assistant, user_message, final_assistant], prefill=False)
-
-    converted = _convert_context_items(
-        request.context_items,
-        request,
-        "responses-test",
-        "https://api.example.com/v1",
-    )
-
-    assert converted == [
-        {"role": "assistant", "content": "历史回复"},
-        {"role": "user", "content": [{"type": "input_text", "text": "新的消息"}]},
-        {"role": "user", "content": "输出引导"},
-    ]
 
 
 def test_parse_response_preserves_output_items_and_usage() -> None:
