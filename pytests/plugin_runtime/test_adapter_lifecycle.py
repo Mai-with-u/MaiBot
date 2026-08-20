@@ -19,6 +19,9 @@ class _FakeSupervisor:
             if plugin_id.startswith("adapter.")
         )
 
+    def get_plugin_load_statuses(self) -> dict[str, str]:
+        return {plugin_id: "success" for plugin_id in self.loaded_plugin_ids}
+
     async def unload_plugins(
         self,
         plugin_ids: List[str],
@@ -38,6 +41,7 @@ def _build_runtime_manager(supervisor: _FakeSupervisor) -> PluginRuntimeManager:
     manager = object.__new__(PluginRuntimeManager)
     manager._started = True
     manager._adapter_transition_lock = asyncio.Lock()
+    manager._blocked_plugin_reasons = {}
     manager._offline_adapter_plugin_ids = set()
     manager._builtin_supervisor = supervisor
     manager._third_party_supervisor = None
@@ -64,6 +68,7 @@ def test_adapter_plugins_can_be_taken_offline_and_restored_exactly() -> None:
     assert offline_result.success is True
     assert offline_result.changed_plugin_ids == ["adapter.qq"]
     assert supervisor.loaded_plugin_ids == {"extension.demo"}
+    assert manager.get_plugin_load_statuses()["adapter.qq"] == "offline"
 
     repeated_result = asyncio.run(manager.take_adapters_offline())
 

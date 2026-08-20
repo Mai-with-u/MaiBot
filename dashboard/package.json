@@ -1,7 +1,7 @@
 {
   "name": "maibot-dashboard",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.7.1",
   "type": "module",
   "main": "./out/main/index.cjs",
   "scripts": {
@@ -98,6 +98,7 @@
     "@codemirror/lang-javascript": "^6.2.4",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.12.4",
     "@codemirror/legacy-modes": "^6.5.2",
     "@codemirror/lint": "^6.9.2",
     "@codemirror/theme-one-dark": "^6.1.3",

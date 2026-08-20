@@ -288,7 +288,13 @@ class MCPConnection:
             merged_headers.update(headers)
         return httpx.AsyncClient(
             headers=merged_headers,
-            timeout=timeout or httpx.Timeout(self.config.http_timeout_seconds),
+            timeout=timeout
+            or httpx.Timeout(
+                connect=self.config.http_timeout_seconds,
+                read=self.config.read_timeout_seconds,
+                write=self.config.http_timeout_seconds,
+                pool=self.config.http_timeout_seconds,
+            ),
         )
 
     async def _create_client_session(self, read_stream: Any, write_stream: Any) -> Any:

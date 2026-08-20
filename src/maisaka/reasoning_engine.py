@@ -1223,7 +1223,7 @@ class MaisakaReasoningEngine:
         planner_prefix = build_planner_user_prefix_from_session_message(
             message,
             include_chat_id=include_chat_id,
-            is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
+            is_self_message=source_kind == "guided_reply",
         )
         if contains_complex_message(source_sequence):
             return ComplexSessionMessage.from_session_message(

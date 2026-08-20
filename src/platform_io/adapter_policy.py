@@ -270,6 +270,63 @@ class AdapterPolicyManager:
         self._policy_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_policy_doc(policy_doc)
 
+    def remove_chat_overrides(
+        self,
+        *,
+        chat_type: str,
+        target_id: str,
+        platform: str,
+        account_id: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> int:
+        """删除指定聊天目标在匹配适配器策略中的显式覆盖规则。"""
+
+        normalized_chat_type = self._normalize_chat_type(chat_type)
+        normalized_target_id = str(target_id or "").strip()
+        normalized_platform = str(platform or "").strip()
+        normalized_account_id = str(account_id or "").strip()
+        normalized_scope = str(scope or "").strip()
+        if not normalized_target_id:
+            raise ValueError("target_id 不能为空")
+        if not normalized_platform:
+            raise ValueError("platform 不能为空")
+
+        policy_doc = self._load_policy_doc()
+        adapters = policy_doc.get("adapters")
+        if not isinstance(adapters, AoT):
+            return 0
+
+        removed_count = 0
+        for adapter_policy in list(adapters):
+            if not isinstance(adapter_policy, Table):
+                continue
+            if not self._policy_matches_chat_scope(
+                adapter_policy,
+                platform=normalized_platform,
+                account_id=normalized_account_id,
+                scope=normalized_scope,
+            ):
+                continue
+
+            chat_policy = adapter_policy.get(normalized_chat_type)
+            if not isinstance(chat_policy, Table):
+                continue
+
+            for key in ("allow_ids", "deny_ids"):
+                ids = self._normalize_id_list(chat_policy.get(key))
+                next_ids = [item for item in ids if item != normalized_target_id]
+                if len(next_ids) == len(ids):
+                    continue
+                removed_count += 1
+                self._set_or_remove_id_list(chat_policy, key, next_ids)
+
+            self._prune_empty_ui_policy(adapter_policy, normalized_chat_type)
+            self._prune_empty_adapter_policy(adapters, adapter_policy)
+
+        if removed_count:
+            self._write_policy_doc(policy_doc)
+        return removed_count
+
     def _evaluate_policy(
         self,
         policy: Mapping[str, Any],
@@ -515,6 +572,27 @@ class AdapterPolicyManager:
                 scope=str(policy.get("scope") or "") or None,
             )
         )
+
+    @staticmethod
+    def _policy_matches_chat_scope(
+        policy: Mapping[str, Any],
+        *,
+        platform: str,
+        account_id: str,
+        scope: str,
+    ) -> bool:
+        """判断适配器策略是否可能作用于指定聊天路由。"""
+
+        policy_platform = str(policy.get("platform") or "").strip()
+        policy_account_id = str(policy.get("account_id") or "").strip()
+        policy_scope = str(policy.get("scope") or "").strip()
+        if policy_platform and policy_platform != platform:
+            return False
+        if policy_account_id and account_id and policy_account_id != account_id:
+            return False
+        if policy_scope and scope and policy_scope != scope:
+            return False
+        return True
 
     def _ensure_adapter_tables(self, policy_doc: Any) -> AoT:
         adapters = policy_doc.get("adapters")

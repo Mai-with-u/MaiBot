@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import hashlib
 import inspect
 from datetime import datetime
 from pathlib import Path
@@ -66,8 +67,8 @@ MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute(
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.14.36"
-MODEL_CONFIG_VERSION: str = "1.17.6"
+CONFIG_VERSION: str = "8.14.37"
+MODEL_CONFIG_VERSION: str = "1.17.8"
 
 logger = get_logger("config")
 
@@ -254,6 +255,7 @@ class ConfigManager:
         self._hot_reload_min_interval_s: float = 1.0
         self._hot_reload_timeout_s: float = 20.0
         self._last_hot_reload_monotonic: float = 0.0
+        self._config_file_fingerprints: dict[str, str] = {}
         self.reload_revision: int = 0
 
     def initialize(self):
@@ -268,6 +270,7 @@ class ConfigManager:
         )
         if global_updated or model_updated:
             logger.info("配置已自动升级，将继续使用更新后的配置启动")
+        self._update_config_file_fingerprints(("bot", "model"))
         self._warn_if_vlm_not_configured(self.model_config)
         logger.info(t("config.loaded"))
 
@@ -364,6 +367,41 @@ class ConfigManager:
                 changed_scopes.append("model")
         return tuple(changed_scopes)
 
+    def _get_config_file_path(self, scope: str) -> Path:
+        """返回指定配置范围对应的文件路径。"""
+
+        if scope == "bot":
+            return self.bot_config_path
+        if scope == "model":
+            return self.model_config_path
+        raise ValueError(f"未知配置范围: {scope}")
+
+    @staticmethod
+    def _get_config_file_fingerprint(path: Path) -> str:
+        """计算配置文件内容指纹，用于过滤已同步到运行时的重复文件事件。"""
+
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _update_config_file_fingerprints(self, scopes: Sequence[str]) -> None:
+        """记录已成功加载到运行时的配置文件内容指纹。"""
+
+        for scope in scopes:
+            self._config_file_fingerprints[scope] = self._get_config_file_fingerprint(
+                self._get_config_file_path(scope)
+            )
+
+    def _config_files_match_loaded_fingerprints(self, scopes: Sequence[str]) -> bool:
+        """判断指定配置文件是否与当前运行时已加载内容一致。"""
+
+        for scope in scopes:
+            loaded_fingerprint = self._config_file_fingerprints.get(scope)
+            if loaded_fingerprint is None:
+                return False
+            current_fingerprint = self._get_config_file_fingerprint(self._get_config_file_path(scope))
+            if current_fingerprint != loaded_fingerprint:
+                return False
+        return True
+
     @staticmethod
     def _callback_accepts_scopes(callback: ConfigReloadCallback) -> bool:
         """判断回调是否接收配置变更范围参数。
@@ -412,11 +450,17 @@ class ConfigManager:
         if asyncio.iscoroutine(result):
             await result
 
-    async def reload_config(self, changed_scopes: Sequence[str] | None = None) -> bool:
+    async def reload_config(
+        self,
+        changed_scopes: Sequence[str] | None = None,
+        *,
+        skip_if_unchanged: bool = False,
+    ) -> bool:
         """重新加载主配置和模型配置。
 
         Args:
             changed_scopes: 本次触发热重载的配置范围。
+            skip_if_unchanged: 配置文件内容与已加载内容一致时，跳过重复重载。
 
         Returns:
             bool: 是否重载成功。
@@ -428,6 +472,9 @@ class ConfigManager:
             return True
 
         async with self._reload_lock:
+            if skip_if_unchanged and self._config_files_match_loaded_fingerprints(normalized_scopes):
+                logger.debug("配置文件内容未变化，跳过重复热重载")
+                return True
             try:
                 global_config_new = self.global_config
                 model_config_new = self.model_config
@@ -455,6 +502,7 @@ class ConfigManager:
 
             self.global_config = global_config_new
             self.model_config = model_config_new
+            self._update_config_file_fingerprints(normalized_scopes)
             self.reload_revision += 1
             logger.info(t("config.hot_reload_completed"))
 
@@ -513,6 +561,12 @@ class ConfigManager:
 
         if not changes:
             return
+        changed_scopes = self._resolve_changed_scopes(changes)
+        if not changed_scopes:
+            return
+        if self._config_files_match_loaded_fingerprints(changed_scopes):
+            logger.debug("配置文件内容未变化，跳过重复热重载")
+            return
         now_monotonic = asyncio.get_running_loop().time()
         if now_monotonic - self._last_hot_reload_monotonic < self._hot_reload_min_interval_s:
             logger.debug(t("config.reload_skipped_too_frequent"))
@@ -520,9 +574,8 @@ class ConfigManager:
         self._last_hot_reload_monotonic = now_monotonic
         logger.info(t("config.file_change_detected"))
         try:
-            changed_scopes = self._resolve_changed_scopes(changes)
             await asyncio.wait_for(
-                self.reload_config(changed_scopes=changed_scopes),
+                self.reload_config(changed_scopes=changed_scopes, skip_if_unchanged=True),
                 timeout=self._hot_reload_timeout_s,
             )
         except asyncio.TimeoutError:

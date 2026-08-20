@@ -40,7 +40,11 @@ def _build_provider() -> APIProvider:
     )
 
 
-def _build_model(*, force_stream_mode: bool = False, extra_params: dict[str, Any] | None = None) -> ModelInfo:
+def _build_model(
+    *,
+    force_stream_mode: bool = False,
+    extra_params: dict[str, Any] | None = None,
+) -> ModelInfo:
     return ModelInfo(
         name="responses-model",
         model_identifier="gpt-test",
@@ -59,7 +63,10 @@ def _build_request(
     response_format: RespFormat | None = None,
 ) -> ResponseRequest:
     return ResponseRequest(
-        model_info=_build_model(force_stream_mode=force_stream_mode, extra_params=extra_params),
+        model_info=_build_model(
+            force_stream_mode=force_stream_mode,
+            extra_params=extra_params,
+        ),
         context_items=items,
         tool_options=tool_options,
         max_tokens=256,
