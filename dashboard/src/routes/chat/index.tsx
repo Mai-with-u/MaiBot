@@ -328,11 +328,17 @@ export function ChatPage() {
                 matchesMonitorTarget(nextTab, status)
               )
               if (!currentStatus) {
-                return nextTab
+                return {
+                  ...nextTab,
+                  isTyping: false,
+                  runtimeStatus: null,
+                }
               }
+              const runtimeStatus = buildRuntimeStatusFromStage(currentStatus)
               return {
                 ...nextTab,
-                runtimeStatus: buildRuntimeStatusFromStage(currentStatus),
+                isTyping: runtimeStatus?.kind === 'typing',
+                runtimeStatus,
               }
             })
           )
@@ -625,13 +631,14 @@ export function ChatPage() {
           )
           setTabs((prev) =>
             prev.map((tab) => {
+              // 阶段快照描述的是服务端“此刻”的完整状态。刷新后此前回放的
+              // llm.error 可能已过期，未命中快照时必须清空，不能保留旧状态。
               const status = event.data.entries.find((entry) => matchesMonitorTarget(tab, entry))
-              if (!status) {
-                return tab
-              }
+              const runtimeStatus = status ? buildRuntimeStatusFromStage(status) : null
               return {
                 ...tab,
-                runtimeStatus: buildRuntimeStatusFromStage(status),
+                isTyping: runtimeStatus?.kind === 'typing',
+                runtimeStatus,
               }
             })
           )
@@ -646,9 +653,6 @@ export function ChatPage() {
                 return tab
               }
               const nextStatus = buildRuntimeStatusFromStage(event.data)
-              if (!nextStatus && tab.runtimeStatus?.kind === 'error') {
-                return tab
-              }
               return {
                 ...tab,
                 runtimeStatus: nextStatus,
