@@ -2531,7 +2531,7 @@ class ExpressionVectorIndex:
         while True:
             from src.config.config import global_config
 
-            if global_config.expression.expression_selection_mode not in {"vector", "vector_intent"}:
+            if global_config.expression.expression_selection_mode != "vector_intent":
                 logger.info("表达向量历史补建已停止：当前表达选择模式不是向量模式")
                 return
 

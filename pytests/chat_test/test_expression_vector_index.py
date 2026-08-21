@@ -600,7 +600,7 @@ async def test_history_backfill_uses_uniform_upserts_then_finalizes_after_empty_
     monkeypatch.setattr(
         global_config.expression,
         "expression_selection_mode",
-        "vector",
+        "vector_intent",
     )
     monkeypatch.setattr(vector_index, "get_current_embedding_profile", fake_get_current_embedding_profile)
     monkeypatch.setattr(vector_index, "_load_history_backfill_items", fake_load_history_backfill_items)
@@ -661,7 +661,7 @@ async def test_history_backfill_continues_when_locked_recheck_finds_new_item(
     async def fake_finalize_bootstrap_if_ready(**_kwargs):
         return next(finalize_results)
 
-    monkeypatch.setattr(global_config.expression, "expression_selection_mode", "vector")
+    monkeypatch.setattr(global_config.expression, "expression_selection_mode", "vector_intent")
     monkeypatch.setattr(vector_index, "get_current_embedding_profile", fake_get_current_embedding_profile)
     monkeypatch.setattr(vector_index, "_load_history_backfill_items", fake_load_history_backfill_items)
     monkeypatch.setattr(vector_index, "upsert_expressions", fake_upsert_expressions)

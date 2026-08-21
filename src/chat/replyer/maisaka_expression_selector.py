@@ -230,17 +230,11 @@ class MaisakaExpressionSelector:
     def _build_expression_query_text(
         reply_reason: str,
         reply_tool_args: Optional[dict[str, Any]],
-        *,
-        use_expression_intent: bool,
     ) -> str:
         """构建表达检索与精排共用的匹配依据文本。"""
 
         query_parts: List[str] = []
-        expression_intent_block = (
-            MaisakaExpressionSelector._format_expression_intent(reply_tool_args)
-            if use_expression_intent
-            else ""
-        )
+        expression_intent_block = MaisakaExpressionSelector._format_expression_intent(reply_tool_args)
         if expression_intent_block:
             query_parts.append(expression_intent_block)
 
@@ -260,15 +254,11 @@ class MaisakaExpressionSelector:
 
     @staticmethod
     def _use_vector_candidate_pool() -> bool:
-        return global_config.expression.expression_selection_mode in {"vector", "vector_intent"}
+        return global_config.expression.expression_selection_mode == "vector_intent"
 
     @staticmethod
     def _has_embedding_model_configured() -> bool:
         return any(model_name.strip() for model_name in model_config.model_task_config.embedding.model_list)
-
-    @staticmethod
-    def _use_expression_intent() -> bool:
-        return global_config.expression.expression_selection_mode == "vector_intent"
 
     def _build_selector_prompt(
         self,
@@ -497,7 +487,6 @@ class MaisakaExpressionSelector:
             expression_query_text = self._build_expression_query_text(
                 reply_reason,
                 reply_tool_args,
-                use_expression_intent=self._use_expression_intent(),
             )
             try:
                 vector_candidates = await expression_vector_index.select_candidates(
