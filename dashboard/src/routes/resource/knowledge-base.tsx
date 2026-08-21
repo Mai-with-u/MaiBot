@@ -667,8 +667,22 @@ export function KnowledgeBasePage() {
         return
       }
 
+      if (action === 'delete' && record.type !== 'fact') {
+        void memoryDelete.openDeletePreview(
+          {
+            mode: record.type,
+            selector: { hashes: [record.id] },
+            reason: 'knowledge_base_record_delete',
+            requested_by: 'knowledge_base',
+          },
+          {
+            title: `删除${record.type === 'paragraph' ? '段落' : record.type === 'entity' ? '实体' : '关系'}`,
+            description: record.title,
+          }
+        )
+      }
     },
-    [memoryCorrection, switchMemoryTab, toast]
+    [memoryCorrection, memoryDelete, switchMemoryTab, toast]
   )
 
   const handleTimelineJump = useCallback(
