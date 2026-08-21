@@ -299,6 +299,16 @@ const pluginMirrorsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/plugin-mirrors'), 'PluginMirrorsPage'),
 })
 
+// 插件 WebUI 页面宿主路由：页面入口仍由 Host 清单决定，不能修改静态路由树。
+const pluginPageHostRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/plugin-pages/$pluginId/$pageId',
+  component: lazyRouteComponent(
+    () => import('./routes/plugin-pages/PluginPageHost'),
+    'PluginPageHost'
+  ),
+})
+
 // 设置页路由
 const mcpSettingsRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -390,6 +400,7 @@ const routeTree = rootRoute.addChildren([
     pluginConfigRoute,
     adapterManagementRoute,
     pluginMirrorsRoute,
+    pluginPageHostRoute,
     mcpSettingsRoute,
     dataTransferRoute,
     logsRoute,

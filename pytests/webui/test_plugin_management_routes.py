@@ -336,6 +336,194 @@ def test_install_plugin_cleans_config_only_residue(client: TestClient, monkeypat
     assert not (residue_path / "config.toml").exists()
 
 
+def test_install_plugin_loads_runtime_before_returning(client: TestClient, monkeypatch):
+    load_calls: List[Tuple[str, str]] = []
+
+    class FakeRuntimeManager:
+        async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool:
+            load_calls.append((plugin_id, reason))
+            return True
+
+    class FakeGitMirrorService:
+        async def clone_repository(self, **kwargs):
+            target_path = kwargs["target_path"]
+            target_path.mkdir(parents=True, exist_ok=True)
+            (target_path / "_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_version": 2,
+                        "id": "market.runtime",
+                        "name": "Runtime Plugin",
+                        "version": "1.0.0",
+                        "author": {"name": "market"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"success": True}
+
+    from src.plugin_runtime import integration as integration_module
+
+    monkeypatch.setattr(management_module, "get_git_mirror_service", lambda: FakeGitMirrorService())
+    monkeypatch.setattr(integration_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+
+    response = client.post(
+        "/api/webui/plugins/install",
+        json={
+            "plugin_id": "market.runtime",
+            "repository_url": "https://github.com/market/runtime",
+            "branch": "main",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["runtime_loaded"] is True
+    assert load_calls == [("market.runtime", "install")]
+
+
+def test_install_plugin_keeps_files_when_runtime_load_fails(client: TestClient, monkeypatch):
+    class FakeRuntimeManager:
+        async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool:
+            assert plugin_id == "market.runtime-failed"
+            assert reason == "install"
+            return False
+
+    class FakeGitMirrorService:
+        async def clone_repository(self, **kwargs):
+            target_path = kwargs["target_path"]
+            target_path.mkdir(parents=True, exist_ok=True)
+            (target_path / "_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_version": 2,
+                        "id": "market.runtime-failed",
+                        "name": "Runtime Failure Plugin",
+                        "version": "1.0.0",
+                        "author": {"name": "market"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"success": True}
+
+    from src.plugin_runtime import integration as integration_module
+
+    monkeypatch.setattr(management_module, "get_git_mirror_service", lambda: FakeGitMirrorService())
+    monkeypatch.setattr(integration_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+
+    response = client.post(
+        "/api/webui/plugins/install",
+        json={
+            "plugin_id": "market.runtime-failed",
+            "repository_url": "https://github.com/market/runtime-failed",
+            "branch": "main",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runtime_loaded"] is False
+    assert payload["runtime_warning"]
+    plugin_path = support_module.resolve_installed_plugin_path("market.runtime-failed")
+    assert plugin_path is not None
+    assert (plugin_path / "_manifest.json").exists()
+
+
+def test_update_non_git_plugin_loads_runtime_after_reinstall(client: TestClient, monkeypatch):
+    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    assert plugin_path is not None
+    load_calls: List[Tuple[str, str]] = []
+
+    class FakeRuntimeManager:
+        async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool:
+            load_calls.append((plugin_id, reason))
+            return True
+
+    class FakeGitMirrorService:
+        async def clone_repository(self, **kwargs):
+            target_path = kwargs["target_path"]
+            target_path.mkdir(parents=True, exist_ok=True)
+            (target_path / "_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_version": 2,
+                        "id": "test.demo",
+                        "name": "Updated Demo Plugin",
+                        "version": "1.1.0",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"success": True}
+
+    from src.plugin_runtime import integration as integration_module
+
+    monkeypatch.setattr(management_module, "get_git_mirror_service", lambda: FakeGitMirrorService())
+    monkeypatch.setattr(integration_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+
+    response = client.post(
+        "/api/webui/plugins/update",
+        json={
+            "plugin_id": "test.demo",
+            "repository_url": "https://github.com/test/demo",
+            "branch": "main",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["runtime_loaded"] is True
+    assert load_calls == [("test.demo", "update")]
+    assert plugin_path.exists()
+
+
+def test_update_git_plugin_loads_runtime_after_pull(client: TestClient, monkeypatch):
+    plugin_path = support_module.resolve_installed_plugin_path("test.demo")
+    assert plugin_path is not None
+    (plugin_path / ".git").mkdir()
+    load_calls: List[Tuple[str, str]] = []
+
+    class FakeRuntimeManager:
+        async def load_plugin_globally(self, plugin_id: str, reason: str = "manual") -> bool:
+            load_calls.append((plugin_id, reason))
+            return True
+
+    class FakeGitMirrorService:
+        async def pull_repository(self, **kwargs):
+            assert kwargs["repository_path"] == plugin_path
+            (plugin_path / "_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_version": 2,
+                        "id": "test.demo",
+                        "name": "Pulled Demo Plugin",
+                        "version": "1.2.0",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {"success": True}
+
+    from src.plugin_runtime import integration as integration_module
+
+    monkeypatch.setattr(management_module, "get_git_mirror_service", lambda: FakeGitMirrorService())
+    monkeypatch.setattr(integration_module, "get_plugin_runtime_manager", lambda: FakeRuntimeManager())
+
+    response = client.post(
+        "/api/webui/plugins/update",
+        json={
+            "plugin_id": "test.demo",
+            "repository_url": "https://github.com/test/demo",
+            "branch": "main",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runtime_loaded"] is True
+    assert payload["update_mode"] == "git_pull"
+    assert load_calls == [("test.demo", "update")]
+
+
 def test_clone_repository_reports_plugin_and_mirror_progress(tmp_path, monkeypatch):
     events = []
 

@@ -15,6 +15,8 @@ export type MenuIcon = ComponentType<{
 export interface MenuItem {
   icon: MenuIcon
   label: string
+  /** 动态插件页面标题是纯文本，不应当作为 i18n key 解析。 */
+  labelMode?: 'i18n' | 'text'
   path: string
   external?: boolean
   searchDescription?: string
