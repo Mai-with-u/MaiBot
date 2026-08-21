@@ -413,13 +413,15 @@ class MetadataProfileMixin:
         person_id: str,
         reason: str = "",
         source_query_tool_id: str = "",
+        conn: Any = None,
     ) -> Optional[Dict[str, Any]]:
         token = str(person_id or "").strip()
         if not token:
             return None
 
         now = datetime.now().timestamp()
-        cursor = self._conn.cursor()
+        connection = self._resolve_conn(conn)
+        cursor = connection.cursor()
         cursor.execute(
             """
             INSERT INTO person_profile_refresh_queue (
@@ -442,7 +444,8 @@ class MetadataProfileMixin:
                 now,
             ),
         )
-        self._conn.commit()
+        if conn is None:
+            connection.commit()
         return self.get_person_profile_refresh_request(token)
 
     def fetch_person_profile_refresh_batch(
