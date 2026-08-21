@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Loader2, RefreshCw, RotateCcw, Save, Search, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Loader2, Plus, RefreshCw, RotateCcw, Save, Search, Trash2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -50,6 +50,21 @@ function formatMemoryTime(timestamp?: number | null): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function parseAliasText(value: string): string[] {
+  const aliases: string[] = []
+  const seen = new Set<string>()
+  for (const item of value.split(/[\n,，]/)) {
+    const alias = item.trim()
+    const key = alias.toLocaleLowerCase()
+    if (!alias || seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    aliases.push(alias)
+  }
+  return aliases
 }
 
 function parsePositiveInt(value: string, fallback: number): number {
@@ -483,10 +498,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
       })
       return
     }
-    const aliases = aliasText
-      .split(/[\n,，]/)
-      .map((item) => item.trim())
-      .filter(Boolean)
+    const aliases = parseAliasText(aliasText)
     if (aliases.length === 0) {
       toast({
         title: '别名不能为空',
@@ -526,12 +538,21 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
     }
   }, [activePersonId, aliasText, loadProfileEvidence, loadProfiles, toast])
 
+  const addSuggestedAlias = useCallback((alias: string) => {
+    const aliases = parseAliasText(aliasText)
+    const key = alias.trim().toLocaleLowerCase()
+    if (!key || aliases.some((item) => item.toLocaleLowerCase() === key)) {
+      return
+    }
+    setAliasText([...aliases, alias.trim()].join('\n'))
+  }, [aliasText])
+
   const restoreDerivedAliases = useCallback(async () => {
     const personId = activePersonId.trim()
     if (!personId || !profileAliases?.has_override) {
       return
     }
-    if (!window.confirm(`确认恢复 ${personId} 的自动推导别名？`)) {
+    if (!window.confirm(`确认恢复 ${personId} 的可信自动别名？`)) {
       return
     }
     setAliasSaving(true)
@@ -543,14 +564,14 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
       setProfileAliases(payload)
       setAliasText((payload.effective_aliases ?? []).join('\n'))
       toast({
-        title: '已恢复自动推导别名',
+        title: '已恢复可信自动别名',
         description: payload.refresh_queued ? '人物画像已进入刷新队列。' : undefined,
       })
       await loadProfileEvidence(personId, { forceRefresh: true })
       await loadProfiles()
     } catch (error) {
       toast({
-        title: '恢复自动别名失败',
+        title: '恢复可信自动别名失败',
         description: error instanceof Error ? error.message : String(error),
         variant: 'destructive',
       })
@@ -894,7 +915,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
         <Card>
           <CardHeader>
             <CardTitle>别名维护</CardTitle>
-            <CardDescription>保存后会用当前列表替换自动推导别名，并据此重新检索证据、刷新画像。</CardDescription>
+            <CardDescription>可信身份字段会自动生效；共同出现实体必须人工确认后才能加入别名。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {!activePersonId.trim() ? (
@@ -904,17 +925,45 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
             ) : null}
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant={profileAliases?.has_override ? 'secondary' : 'outline'}>
-                {profileAliases?.has_override ? '人工别名生效中' : '使用自动推导别名'}
+                {profileAliases?.has_override ? '人工别名生效中' : '可信自动别名生效中'}
               </Badge>
               {aliasLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             </div>
             {(profileAliases?.derived_aliases ?? []).length > 0 ? (
               <div className="space-y-2">
-                <Label>自动推导候选</Label>
+                <Label>可信自动别名</Label>
                 <div className="flex flex-wrap gap-1.5">
                   {(profileAliases?.derived_aliases ?? []).map((alias) => (
                     <Badge key={alias} variant="outline">{alias}</Badge>
                   ))}
+                </div>
+              </div>
+            ) : null}
+            {(profileAliases?.suggested_aliases ?? []).length > 0 ? (
+              <div className="space-y-2">
+                <div>
+                  <Label>待确认候选</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">来自共同出现实体，不会自动参与检索。</p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(profileAliases?.suggested_aliases ?? []).map((alias) => {
+                    const included = parseAliasText(aliasText).some(
+                      (item) => item.toLocaleLowerCase() === alias.toLocaleLowerCase(),
+                    )
+                    return (
+                      <Button
+                        key={alias}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addSuggestedAlias(alias)}
+                        disabled={included || aliasLoading || aliasSaving}
+                      >
+                        {included ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}
+                        {included ? '已加入' : '加入'} {alias}
+                      </Button>
+                    )
+                  })}
                 </div>
               </div>
             ) : null}
@@ -940,7 +989,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
                 disabled={!profileAliases?.has_override || aliasSaving}
               >
                 <RotateCcw className="mr-2 h-4 w-4" />
-                恢复自动别名
+                恢复可信自动别名
               </Button>
             </div>
           </CardContent>

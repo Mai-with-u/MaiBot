@@ -75,6 +75,16 @@ class FakeMetadataStore:
         return {}
 
     @staticmethod
+    def get_paragraphs_by_entity(entity_name: str):
+        del entity_name
+        return []
+
+    @staticmethod
+    def get_paragraph_entities(paragraph_hash: str):
+        del paragraph_hash
+        return []
+
+    @staticmethod
     def get_relation_status_batch(relation_hashes):
         del relation_hashes
         return {}
@@ -153,6 +163,57 @@ def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
     assert details["effective_aliases"] == ["新别名", "正式称呼"]
     assert details["has_override"] is True
     assert service.get_person_aliases("person-1") == (["新别名", "正式称呼"], "正式称呼", ["记忆特征"])
+
+
+def test_person_profile_cooccurring_entities_are_suggestions_not_effective_aliases() -> None:
+    metadata_store = FakeMetadataStore()
+    metadata_store.get_paragraphs_by_entity = lambda entity_name: [{"hash": "paragraph-1"}]
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: [
+        {"name": "测试用户"},
+        {"name": "产品经理"},
+        {"name": "向量索引"},
+    ]
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["测试用户"]
+    assert details["suggested_aliases"] == ["产品经理", "向量索引"]
+    assert details["effective_aliases"] == ["测试用户"]
+
+
+def test_person_profile_without_master_record_uses_person_id_as_trusted_alias(monkeypatch) -> None:
+    class EmptyPersonSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            del exc_type, exc_value, traceback
+
+        def exec(self, statement):
+            del statement
+            return self
+
+        @staticmethod
+        def first():
+            return None
+
+    metadata_store = FakeMetadataStore()
+    metadata_store.get_paragraphs_by_entity = lambda entity_name: [{"hash": "paragraph-1"}]
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: [
+        {"name": "person-1"},
+        {"name": "产品经理"},
+    ]
+    monkeypatch.setattr(profile_service_module, "get_db_session", lambda **kwargs: EmptyPersonSession())
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["person-1"]
+    assert details["suggested_aliases"] == ["产品经理"]
+    assert details["effective_aliases"] == ["person-1"]
+    assert details["primary_name"] == "person-1"
 
 
 @pytest.mark.asyncio

@@ -84,6 +84,7 @@ beforeEach(() => {
     person_id: personId,
     primary_name: personId === 'p1' ? '张三' : '李四',
     derived_aliases: personId === 'p1' ? ['张三', '小张'] : ['李四'],
+    suggested_aliases: personId === 'p1' ? ['产品经理'] : [],
     manual_aliases: personId === 'p1' ? ['张三', '阿三'] : [],
     effective_aliases: personId === 'p1' ? ['张三', '阿三'] : ['李四'],
     has_override: personId === 'p1',
@@ -501,6 +502,7 @@ describe('MemoryProfileManager 别名维护', () => {
     const aliasInput = await screen.findByLabelText('当前有效别名')
     expect(aliasInput).toHaveValue('张三\n阿三')
     expect(screen.getByText('人工别名生效中')).toBeInTheDocument()
+    expect(screen.getByText('可信自动别名')).toBeInTheDocument()
     expect(screen.getByText('小张')).toBeInTheDocument()
 
     fireEvent.change(aliasInput, { target: { value: '张三\n三哥，老张' } })
@@ -523,15 +525,27 @@ describe('MemoryProfileManager 别名维护', () => {
     })
   })
 
-  it('恢复自动别名会删除人工覆盖', async () => {
+  it('共同出现候选不会自动生效，确认后才加入编辑列表', async () => {
+    await renderManager()
+
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    expect((aliasInput as HTMLTextAreaElement).value).not.toContain('产品经理')
+
+    fireEvent.click(screen.getByRole('button', { name: '加入 产品经理' }))
+
+    expect(aliasInput).toHaveValue('张三\n阿三\n产品经理')
+    expect(screen.getByRole('button', { name: '已加入 产品经理' })).toBeDisabled()
+  })
+
+  it('恢复可信自动别名会删除人工覆盖', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await renderManager()
 
-    fireEvent.click(await screen.findByRole('button', { name: /恢复自动别名/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
 
     await waitFor(() => {
       expect(memoryApi.deleteMemoryProfileAliases).toHaveBeenCalledWith('p1')
     })
-    expect(window.confirm).toHaveBeenCalledWith('确认恢复 p1 的自动推导别名？')
+    expect(window.confirm).toHaveBeenCalledWith('确认恢复 p1 的可信自动别名？')
   })
 })

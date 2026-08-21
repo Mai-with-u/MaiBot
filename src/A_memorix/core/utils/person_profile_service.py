@@ -340,20 +340,24 @@ class PersonProfileService:
             traits.append(text)
         return traits[:10]
 
-    def _recover_aliases_from_memory(self, person_id: str) -> Tuple[List[str], str]:
-        """当人物主档案缺失时，从已有记忆证据里回捞可用别名。"""
+    def _collect_alias_suggestions_from_memory(self, person_id: str, trusted_aliases: List[str]) -> List[str]:
+        """收集与人物同段出现的实体，仅作为待人工确认的别名候选。"""
         if not person_id:
-            return [], ""
+            return []
 
-        aliases: List[str] = []
-        primary_name = ""
-        seen = set()
+        suggestions: List[str] = []
+        excluded = {
+            str(item or "").strip().lower()
+            for item in [person_id, *trusted_aliases]
+            if str(item or "").strip()
+        }
+        seen = set(excluded)
 
         try:
             paragraphs = self.metadata_store.get_paragraphs_by_entity(person_id)
         except Exception as e:
-            logger.warning(f"从记忆证据回捞人物别名失败: person_id={person_id}, err={e}")
-            return [], ""
+            logger.warning(f"从记忆证据收集人物别名候选失败: person_id={person_id}, err={e}")
+            return []
 
         for paragraph in paragraphs[:20]:
             paragraph_hash = str(paragraph.get("hash", "") or "").strip()
@@ -371,24 +375,21 @@ class PersonProfileService:
                 if key in seen:
                     continue
                 seen.add(key)
-                aliases.append(name)
-                if not primary_name:
-                    primary_name = name
-        return aliases, primary_name
+                suggestions.append(name)
+        return suggestions
 
     def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
-        """从人物主档案与记忆证据推导别名集合。"""
+        """只从人物主档案中的可信身份字段推导自动别名。"""
         aliases: List[str] = []
         primary_name = ""
         memory_traits: List[str] = []
         if not person_id:
             return aliases, primary_name, memory_traits
-        recovered_aliases, recovered_primary_name = self._recover_aliases_from_memory(person_id)
         try:
             with get_db_session(auto_commit=False) as session:
                 record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
-                    return recovered_aliases, recovered_primary_name or person_id, memory_traits
+                    return [person_id], person_id, memory_traits
             person_name = str(record.person_name or "").strip()
             nickname = str(record.user_nickname or "").strip()
             group_nicks = self._parse_group_nicks(record.group_cardname)
@@ -397,21 +398,25 @@ class PersonProfileService:
             primary_name = (
                 person_name
                 or nickname
-                or recovered_primary_name
+                or next((item for item in group_nicks if item), "")
                 or str(record.user_id or "").strip()
                 or person_id
             )
 
-            candidates = [person_name, nickname] + group_nicks + recovered_aliases
+            candidates = [person_name, nickname] + group_nicks
             seen = set()
             for item in candidates:
                 norm = str(item or "").strip()
-                if not norm or norm in seen:
+                key = norm.lower()
+                if not norm or key in seen:
                     continue
-                seen.add(norm)
+                seen.add(key)
                 aliases.append(norm)
         except Exception as e:
             logger.warning(f"解析人物别名失败: person_id={person_id}, err={e}")
+        if not aliases:
+            aliases = [primary_name or person_id]
+            primary_name = primary_name or person_id
         return aliases, primary_name, memory_traits
 
     def get_person_alias_details(self, person_id: str) -> Dict[str, Any]:
@@ -422,6 +427,7 @@ class PersonProfileService:
                 "person_id": "",
                 "primary_name": "",
                 "derived_aliases": [],
+                "suggested_aliases": [],
                 "manual_aliases": [],
                 "effective_aliases": [],
                 "has_override": False,
@@ -431,10 +437,12 @@ class PersonProfileService:
         derived_aliases, primary_name, memory_traits = self._get_derived_person_aliases(token)
         override = self.metadata_store.get_person_profile_alias_override(token)
         manual_aliases = list(override.get("aliases", [])) if override else []
+        suggested_aliases = self._collect_alias_suggestions_from_memory(token, derived_aliases + manual_aliases)
         return {
             "person_id": token,
             "primary_name": primary_name,
             "derived_aliases": derived_aliases,
+            "suggested_aliases": suggested_aliases,
             "manual_aliases": manual_aliases,
             "effective_aliases": manual_aliases if override else derived_aliases,
             "has_override": override is not None,

@@ -1359,6 +1359,7 @@ export interface MemoryProfileAliasesPayload extends Record<string, unknown> {
   person_id?: string
   primary_name?: string
   derived_aliases?: string[]
+  suggested_aliases?: string[]
   manual_aliases?: string[]
   effective_aliases?: string[]
   has_override?: boolean
