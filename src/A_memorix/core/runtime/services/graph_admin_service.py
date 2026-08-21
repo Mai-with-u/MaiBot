@@ -342,8 +342,15 @@ class MemoryGraphAdminService(KernelServiceBase):
         like_keyword = f"%{normalized_query}%"
         entity_rows = self.metadata_store.query(
             """
-            SELECT hash, name, appearance_count, created_at
-            FROM entities
+            SELECT e.hash, e.name, e.appearance_count, e.created_at,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
             WHERE (is_deleted IS NULL OR is_deleted = 0)
               AND (
                 LOWER(COALESCE(name, '')) LIKE ?
@@ -393,6 +400,7 @@ class MemoryGraphAdminService(KernelServiceBase):
                     "entity_name": name or hash_value,
                     "entity_hash": hash_value,
                     "appearance_count": int(row.get("appearance_count", 0) or 0),
+                    "active_evidence_count": int(row.get("active_evidence_count", 0) or 0),
                     "_rank": rank,
                 }
             )
@@ -875,12 +883,19 @@ class MemoryGraphAdminService(KernelServiceBase):
         entity_row = None
         entity_matches = self.metadata_store.query(
             """
-            SELECT *
-            FROM entities
-            WHERE (LOWER(TRIM(name)) = LOWER(TRIM(?))
-               OR hash = ?)
-              AND (is_deleted IS NULL OR is_deleted = 0)
-            ORDER BY appearance_count DESC, created_at ASC
+            SELECT e.*,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
+            WHERE (LOWER(TRIM(e.name)) = LOWER(TRIM(?))
+               OR e.hash = ?)
+              AND (e.is_deleted IS NULL OR e.is_deleted = 0)
+            ORDER BY e.appearance_count DESC, e.created_at ASC
             LIMIT 1
             """,
             (resolved_name, resolved_name),
@@ -935,6 +950,9 @@ class MemoryGraphAdminService(KernelServiceBase):
                 "content": resolved_name,
                 "hash": str(entity_row.get("hash", "") or "") if isinstance(entity_row, dict) else "",
                 "appearance_count": int(entity_row.get("appearance_count", 0) or 0)
+                if isinstance(entity_row, dict)
+                else 0,
+                "active_evidence_count": int(entity_row.get("active_evidence_count", 0) or 0)
                 if isinstance(entity_row, dict)
                 else 0,
             },

@@ -190,3 +190,34 @@ async def test_create_node_is_idempotent_and_does_not_increment_appearance_count
         assert entity["appearance_count"] == 1
     finally:
         metadata_store.close()
+
+
+@pytest.mark.asyncio
+async def test_node_detail_derives_active_evidence_without_rewriting_appearance_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel, metadata_store, graph_store = _runtime(tmp_path)
+    monkeypatch.setattr(kernel, "initialize", _disable_initialize)
+    try:
+        live_paragraph = metadata_store.add_paragraph("Alice 喜欢观星", source="source-live")
+        deleted_paragraph = metadata_store.add_paragraph("Alice 喜欢咖啡", source="source-deleted")
+        entity_hash = metadata_store.add_entity("Alice", source_paragraph=live_paragraph)
+        metadata_store.add_entity("Alice", source_paragraph=deleted_paragraph)
+        graph_store.add_nodes(["Alice"])
+        metadata_store.mark_as_deleted(
+            [deleted_paragraph],
+            "paragraph",
+            reason="pytest_source_delete",
+        )
+
+        detail = await kernel.memory_graph_admin(action="node_detail", node_id="Alice")
+        entity = metadata_store.get_entity(entity_hash)
+
+        assert detail["success"] is True
+        assert detail["node"]["active_evidence_count"] == 1
+        assert detail["node"]["appearance_count"] == 2
+        assert entity is not None
+        assert entity["appearance_count"] == 2
+    finally:
+        metadata_store.close()

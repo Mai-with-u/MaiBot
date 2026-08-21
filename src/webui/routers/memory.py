@@ -875,11 +875,12 @@ def _memory_record_payload(record_type: str, row: dict[str, Any]) -> dict[str, A
         name = str(row.get("name") or row.get("hash") or "").strip()
         is_deleted = bool(int(row.get("is_deleted") or 0))
         appearance_count = int(row.get("appearance_count") or 0)
+        active_evidence_count = int(row.get("active_evidence_count") or 0)
         return {
             "type": record_type,
             "id": str(row.get("hash") or "").strip(),
             "title": name,
-            "summary": f"在 {appearance_count} 处记忆中出现",
+            "summary": f"由 {active_evidence_count} 条有效段落支撑",
             "source": "",
             "status": "deleted" if is_deleted else "active",
             "created_at": _safe_float(row.get("created_at")),
@@ -887,6 +888,7 @@ def _memory_record_payload(record_type: str, row: dict[str, Any]) -> dict[str, A
             "metadata": {
                 "name": name,
                 "appearance_count": appearance_count,
+                "active_evidence_count": active_evidence_count,
                 "vector_indexed": row.get("vector_index") is not None,
                 "raw": _decode_metadata_payload(row.get("metadata")),
             },
@@ -978,12 +980,19 @@ def _memory_records_search(
     if "entity" in selected_types:
         rows_by_type["entity"] = _query_memory_records(
             """
-            SELECT hash, name, appearance_count, vector_index, created_at, metadata, is_deleted
-            FROM entities
-            WHERE (? = 1 OR COALESCE(is_deleted, 0) = 0)
-              AND (? = '' OR LOWER(COALESCE(name, '')) LIKE ? ESCAPE '\\'
-                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\')
-            ORDER BY appearance_count DESC, created_at DESC
+            SELECT e.hash, e.name, e.appearance_count, e.vector_index, e.created_at, e.metadata, e.is_deleted,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
+            WHERE (? = 1 OR COALESCE(e.is_deleted, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(e.name, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(e.hash, '')) LIKE ? ESCAPE '\\')
+            ORDER BY e.appearance_count DESC, e.created_at DESC
             LIMIT ?
             """,
             (int(include_inactive), keyword, pattern, pattern, limit),
@@ -1050,7 +1059,19 @@ def _memory_record_detail_row(record_type: str, record_id: str) -> dict[str, Any
         rows = _query_memory_records("SELECT * FROM paragraphs WHERE hash = ? LIMIT 1", (token,))
     elif record_type == "entity":
         rows = _query_memory_records(
-            "SELECT * FROM entities WHERE hash = ? OR LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1",
+            """
+            SELECT e.*,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
+            WHERE e.hash = ? OR LOWER(TRIM(e.name)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
             (token, token),
         )
     elif record_type == "relation":
@@ -1134,7 +1155,14 @@ def _memory_record_context(record_type: str, record_id: str, limit: int) -> dict
         paragraphs = [_memory_record_payload("paragraph", item) for item in paragraph_rows]
         entity_rows = _query_memory_records(
             f"""
-            SELECT DISTINCT e.*
+            SELECT DISTINCT e.*,
+                   (
+                       SELECT COUNT(DISTINCT pe2.paragraph_hash)
+                       FROM paragraph_entities pe2
+                       JOIN paragraphs p2 ON p2.hash = pe2.paragraph_hash
+                       WHERE pe2.entity_hash = e.hash
+                         AND COALESCE(p2.is_deleted, 0) = 0
+                   ) AS active_evidence_count
             FROM paragraph_entities pe
             JOIN entities e ON e.hash = pe.entity_hash
             WHERE pe.paragraph_hash IN ({placeholders})

@@ -54,6 +54,7 @@ export interface MemoryGraphSearchItem {
   entity_name?: string
   entity_hash?: string
   appearance_count?: number
+  active_evidence_count?: number
   subject?: string
   predicate?: string
   object?: string
@@ -155,6 +156,7 @@ export interface MemoryGraphNodeDetailPayload {
     content: string
     hash?: string
     appearance_count?: number
+    active_evidence_count?: number
   }
   relations: MemoryGraphRelationDetailPayload[]
   paragraphs: MemoryGraphParagraphDetailPayload[]

@@ -156,8 +156,11 @@ export function NodeDetailDialog({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{node.type === 'entity' ? '实体' : node.type}</Badge>
+                    {'active_evidence_count' in (nodeDetail?.node ?? {}) && (
+                      <Badge variant="secondary">有效证据 {nodeDetail?.node.active_evidence_count ?? 0}</Badge>
+                    )}
                     {'appearance_count' in (nodeDetail?.node ?? {}) && (
-                      <Badge variant="outline">出现次数 {nodeDetail?.node.appearance_count ?? 0}</Badge>
+                      <Badge variant="outline">累计出现 {nodeDetail?.node.appearance_count ?? 0}</Badge>
                     )}
                   </div>
                   <h3 className="mt-2 text-lg font-semibold">{node.content}</h3>

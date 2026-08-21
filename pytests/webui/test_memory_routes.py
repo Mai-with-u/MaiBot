@@ -311,6 +311,22 @@ def test_webui_memory_records_searches_authoritative_metadata(
         assert {item["type"] for item in payload["items"]} == {"paragraph", "entity", "relation", "fact"}
         assert ids["paragraph"] in {item["id"] for item in payload["items"]}
         assert payload["counts"] == {"paragraph": 1, "entity": 1, "relation": 1, "fact": 1}
+        before_delete = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "小明", "types": "entity"},
+        ).json()
+        entity_item = before_delete["items"][0]
+        assert entity_item["metadata"]["active_evidence_count"] == 1
+        cumulative_count = entity_item["metadata"]["appearance_count"]
+
+        store.mark_as_deleted([ids["paragraph"]], "paragraph", reason="test_source_delete")
+        after_delete = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "小明", "types": "entity"},
+        ).json()
+        assert after_delete["items"][0]["metadata"]["active_evidence_count"] == 0
+        assert after_delete["items"][0]["metadata"]["appearance_count"] == cumulative_count
+        assert after_delete["items"][0]["summary"] == "由 0 条有效段落支撑"
 
         store.query("UPDATE fact_claims SET status = 'retracted' WHERE claim_id = ?", (ids["fact"],))
         store.get_connection().commit()
