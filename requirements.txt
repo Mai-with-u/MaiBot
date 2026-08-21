@@ -10,7 +10,7 @@ httpx[socks]
 jieba>=0.42.1
 json-repair>=0.47.6
 maim-message==0.6.8
-maibot-dashboard>=1.7.1.dev20260820404
+maibot-dashboard==1.7.1
 maibot-plugin-sdk>=2.8.0
 mcp
 msgpack>=1.1.2
