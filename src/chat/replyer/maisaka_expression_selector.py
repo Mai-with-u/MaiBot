@@ -25,6 +25,7 @@ from src.maisaka.context.messages import LLMContextMessage
 logger = get_logger("maisaka_expression_selector")
 
 SubAgentRunner = Callable[[str], Awaitable[str]]
+MAX_SELECTED_EXPRESSIONS = 5
 
 
 @dataclass
@@ -282,7 +283,7 @@ class MaisakaExpressionSelector:
         return (
             "你是 Maisaka 的表达方式选择子代理。\n"
             "你只负责根据下方真实聊天上下文，为这一次可见回复挑选最合适的表达方式。\n"
-            "请只从下面候选中选择 0 到 5 条最适合当前语境的表达方式。\n"
+            f"请只从下面候选中选择 0 到 {MAX_SELECTED_EXPRESSIONS} 条最适合当前语境的表达方式。\n"
             "优先考虑自然、贴合上下文、不生硬、不模板化。\n"
             "如果没有明显合适的，就返回空数组。\n"
             '严格只输出 JSON，对象格式为 {"selected_ids":[123,456]}。\n\n'
@@ -314,7 +315,7 @@ class MaisakaExpressionSelector:
             if candidate_id not in candidate_map or candidate_id in selected_ids:
                 continue
             selected_ids.append(candidate_id)
-            if len(selected_ids) >= 3:
+            if len(selected_ids) >= MAX_SELECTED_EXPRESSIONS:
                 break
         return selected_ids
 
