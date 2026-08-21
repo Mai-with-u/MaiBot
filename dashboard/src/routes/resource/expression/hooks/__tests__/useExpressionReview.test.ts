@@ -65,9 +65,7 @@ describe('useExpressionReview 单条切换', () => {
   it('已人工通过时取消通过，提示已拒绝', async () => {
     const { result, onChanged } = setupHook()
 
-    await result.current.toggleReviewStatus(
-      makeExpression({ checked: true, modified_by: 'user' })
-    )
+    await result.current.toggleReviewStatus(makeExpression({ checked: true, modified_by: 'user' }))
 
     expect(updateExpressionReviewStatus).toHaveBeenCalledWith(1, false)
     expect(toastMock).toHaveBeenCalledWith({
@@ -137,7 +135,7 @@ describe('useExpressionReview 批量切换', () => {
     expect(updateExpressionReviewStatus).toHaveBeenCalledWith(2, true)
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(toastMock).toHaveBeenCalledWith({
-      title: '批量设为通过完成',
+      title: '批量精选完成',
       description: '已更新 2 个表达方式',
       variant: undefined,
     })
@@ -150,7 +148,7 @@ describe('useExpressionReview 批量切换', () => {
 
     expect(updateExpressionReviewStatus).toHaveBeenCalledWith(3, false)
     expect(toastMock).toHaveBeenCalledWith({
-      title: '批量设为不通过完成',
+      title: '取消精选完成',
       description: '已更新 1 个表达方式',
       variant: undefined,
     })
@@ -167,7 +165,7 @@ describe('useExpressionReview 批量切换', () => {
 
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(toastMock).toHaveBeenCalledWith({
-      title: '批量设为通过完成',
+      title: '批量精选完成',
       description: '成功 2 个，失败 1 个',
       variant: 'destructive',
     })
@@ -181,7 +179,7 @@ describe('useExpressionReview 批量切换', () => {
 
     expect(onChanged).not.toHaveBeenCalled()
     expect(toastMock).toHaveBeenCalledWith({
-      title: '批量设为不通过完成',
+      title: '取消精选完成',
       description: '成功 0 个，失败 2 个',
       variant: 'destructive',
     })

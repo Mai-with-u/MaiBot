@@ -50,7 +50,6 @@ interface ExprListProps {
   reviewFilter?: string
   onDelete: (expression: Expression) => void
   onEdit: (expression: Expression) => void
-  onViewDetail: (expression: Expression) => void
   onToggleReviewStatus: (expression: Expression) => void
   onToggleSelect: (id: number) => void
   onJumpToPage: (page: string) => void
@@ -67,7 +66,6 @@ vi.mock('../ExpressionList', () => ({
     reviewFilter,
     onDelete,
     onEdit,
-    onViewDetail,
     onToggleReviewStatus,
     onToggleSelect,
     onJumpToPage,
@@ -96,12 +94,14 @@ vi.mock('../ExpressionList', () => ({
       {expressions.map((expression) => (
         <div key={expression.id}>
           <span>{expression.situation}</span>
-          <button type="button" onClick={() => onDelete(expression)}>{`del-${expression.id}`}</button>
-          <button type="button" onClick={() => onEdit(expression)}>{`edit-${expression.id}`}</button>
           <button
             type="button"
-            onClick={() => onViewDetail(expression)}
-          >{`view-${expression.id}`}</button>
+            onClick={() => onDelete(expression)}
+          >{`del-${expression.id}`}</button>
+          <button
+            type="button"
+            onClick={() => onEdit(expression)}
+          >{`edit-${expression.id}`}</button>
           <button
             type="button"
             onClick={() => onToggleReviewStatus(expression)}
@@ -151,25 +151,28 @@ vi.mock('../ExpressionClusterBrowser', () => ({
 }))
 
 vi.mock('../ExpressionDialogs', () => ({
-  ExpressionDetailDialog: ({
-    open,
-    expression,
-  }: {
-    open: boolean
-    expression: Expression | null
-  }) =>
-    open && expression ? <div data-testid="detail-dialog">{expression.situation}</div> : null,
   ExpressionCreateDialog: ({ open, onSuccess }: { open: boolean; onSuccess: () => void }) =>
     open ? (
       <button type="button" onClick={onSuccess}>
         create-success
       </button>
     ) : null,
-  ExpressionEditDialog: ({ open, onSuccess }: { open: boolean; onSuccess: () => void }) =>
-    open ? (
-      <button type="button" onClick={onSuccess}>
-        edit-success
-      </button>
+  ExpressionEditDialog: ({
+    open,
+    expression,
+    onSuccess,
+  }: {
+    open: boolean
+    expression: Expression | null
+    onSuccess: () => void
+  }) =>
+    open && expression ? (
+      <div data-testid="edit-dialog">
+        {expression.situation}
+        <button type="button" onClick={onSuccess}>
+          edit-success
+        </button>
+      </div>
     ) : null,
   LegacyExpressionImportDialog: ({ open, onSuccess }: { open: boolean; onSuccess: () => void }) =>
     open ? (
@@ -413,7 +416,6 @@ beforeEach(() => {
 
 async function renderPage() {
   render(<ExpressionManagementPage />, { wrapper: makeWrapper() })
-  await screen.findByRole('tab', { name: '表达' })
   await screen.findByTestId('list-count')
 }
 
@@ -441,9 +443,11 @@ describe('ExpressionManagementPage 特征化', () => {
   it('切到精选显示审核器，切回显示列表', async () => {
     const user = userEvent.setup()
     await renderPage()
-    await user.click(screen.getByRole('tab', { name: /精选/ }))
+    await waitForSelectedChat()
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: /精选/ }))
     expect(await screen.findByTestId('expression-reviewer')).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: '表达' }))
+    await user.click(screen.getByRole('button', { name: '返回表达' }))
     expect(await screen.findByTestId('expression-list')).toBeInTheDocument()
   })
 
@@ -476,7 +480,7 @@ describe('ExpressionManagementPage 特征化', () => {
 })
 
 describe('ExpressionManagementPage 视图切换', () => {
-  it('未审核数超过 99 时精选页签显示 99+', async () => {
+  it('未审核数超过 99 时精选菜单项显示 99+', async () => {
     vi.mocked(expressionApi.getReviewStats).mockResolvedValue({
       total: 200,
       unchecked: 120,
@@ -484,11 +488,14 @@ describe('ExpressionManagementPage 视图切换', () => {
       ai_checked: 0,
       user_checked: 80,
     })
+    const user = userEvent.setup()
     await renderPage()
+    await waitForSelectedChat()
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
     expect(await screen.findByText('99+')).toBeInTheDocument()
   })
 
-  it('精选可进入 AI 审核记录，聚类可打开表达，切回表达会重新拉取列表与统计', async () => {
+  it('精选可进入 AI 审核记录，聚类可打开表达，返回表达会重新拉取列表与统计', async () => {
     const user = userEvent.setup()
     await renderPage()
     await waitForSelectedChat()
@@ -497,7 +504,8 @@ describe('ExpressionManagementPage 视图切换', () => {
     const statsCallsAfterLoad = vi.mocked(expressionApi.getExpressionStats).mock.calls.length
     const reviewCallsAfterLoad = vi.mocked(expressionApi.getReviewStats).mock.calls.length
 
-    await user.click(screen.getByRole('tab', { name: /精选/ }))
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: /精选/ }))
     expect(await screen.findByTestId('expression-reviewer')).toBeInTheDocument()
     await waitFor(() =>
       expect(vi.mocked(expressionApi.getReviewStats).mock.calls.length).toBeGreaterThan(
@@ -514,16 +522,19 @@ describe('ExpressionManagementPage 视图切换', () => {
       )
     )
 
-    await user.click(screen.getByRole('tab', { name: /精选/ }))
+    await user.click(screen.getByRole('button', { name: '返回表达' }))
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: /精选/ }))
     await user.click(screen.getByText('reviewer-on-reviewed'))
 
-    await user.click(screen.getByRole('tab', { name: '聚类' }))
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '聚类' }))
     expect(await screen.findByTestId('expression-clusters')).toBeInTheDocument()
     await user.click(screen.getByText('open-cluster-expr'))
     await waitFor(() => expect(expressionApi.getExpressionDetail).toHaveBeenCalledWith(42))
-    expect(await screen.findByTestId('detail-dialog')).toHaveTextContent('详情情境')
+    expect(await screen.findByTestId('edit-dialog')).toHaveTextContent('详情情境')
 
-    await user.click(screen.getByRole('tab', { name: '表达' }))
+    await user.click(screen.getByRole('button', { name: '返回表达' }))
     expect(await screen.findByTestId('expression-list')).toBeInTheDocument()
     await waitFor(() => {
       expect(vi.mocked(expressionApi.getExpressionList).mock.calls.length).toBeGreaterThan(
@@ -536,40 +547,7 @@ describe('ExpressionManagementPage 视图切换', () => {
   })
 })
 
-describe('ExpressionManagementPage 详情与对话框回调', () => {
-  it('查看详情成功打开对话框，失败分别展示 Error 与兜底文案', async () => {
-    const user = userEvent.setup()
-    await renderPage()
-
-    await user.click(await screen.findByText('view-1'))
-    await waitFor(() => expect(expressionApi.getExpressionDetail).toHaveBeenCalledWith(1))
-    expect(await screen.findByTestId('detail-dialog')).toHaveTextContent('详情情境')
-
-    vi.mocked(expressionApi.getExpressionDetail).mockRejectedValueOnce(new Error('记录不存在'))
-    await user.click(screen.getByText('view-1'))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '加载详情失败',
-          description: '记录不存在',
-          variant: 'destructive',
-        })
-      )
-    )
-
-    vi.mocked(expressionApi.getExpressionDetail).mockRejectedValueOnce('bad')
-    await user.click(screen.getByText('view-1'))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '加载详情失败',
-          description: '无法加载表达方式详情',
-          variant: 'destructive',
-        })
-      )
-    )
-  })
-
+describe('ExpressionManagementPage 对话框回调', () => {
   it('创建/编辑成功关闭对话框并刷新；旧版导入成功也会刷新', async () => {
     const user = userEvent.setup()
     await renderPage()
@@ -585,7 +563,8 @@ describe('ExpressionManagementPage 详情与对话框回调', () => {
     await user.click(await screen.findByText('edit-success'))
     await waitFor(() => expect(screen.queryByText('edit-success')).not.toBeInTheDocument())
 
-    await user.click(screen.getByRole('button', { name: /从旧版本导入/ }))
+    await user.click(screen.getByRole('button', { name: '更多操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '从旧版本导入' }))
     await user.click(await screen.findByText('legacy-import-success'))
 
     await waitFor(() =>
@@ -767,30 +746,26 @@ describe('ExpressionManagementPage 审核与选择', () => {
     )
   })
 
-  it('批量通过/不通过调用审核接口，取消选择后隐藏工具栏', async () => {
+  it('批量精选/取消精选调用审核接口，取消选择后隐藏工具栏', async () => {
     const user = userEvent.setup()
     await renderPage()
     await user.click(await screen.findByText('select-1'))
     await user.click(screen.getByText('select-2'))
     expect(screen.getByText('已选择 2 个表达方式')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /批量通过/ }))
+    await user.click(screen.getByRole('button', { name: /批量精选/ }))
     await waitFor(() => {
       expect(expressionApi.updateExpressionReviewStatus).toHaveBeenCalledWith(1, true)
       expect(expressionApi.updateExpressionReviewStatus).toHaveBeenCalledWith(2, true)
     })
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '批量设为通过完成' })
-    )
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '批量精选完成' }))
 
-    await user.click(screen.getByRole('button', { name: /批量不通过/ }))
+    await user.click(screen.getByRole('button', { name: /取消精选/ }))
     await waitFor(() => {
       expect(expressionApi.updateExpressionReviewStatus).toHaveBeenCalledWith(1, false)
       expect(expressionApi.updateExpressionReviewStatus).toHaveBeenCalledWith(2, false)
     })
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '批量设为不通过完成' })
-    )
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '取消精选完成' }))
 
     await user.click(screen.getByRole('button', { name: '取消选择' }))
     expect(screen.queryByText('已选择 2 个表达方式')).not.toBeInTheDocument()
@@ -897,9 +872,7 @@ describe('ExpressionManagementPage 导入导出清除与分页', () => {
     await waitFor(() =>
       expect(expressionApi.importExpressions).toHaveBeenCalledWith({
         chat_id: 'chat-1',
-        expressions: [
-          expect.objectContaining({ situation: '打招呼', style: '轻松' }),
-        ],
+        expressions: [expect.objectContaining({ situation: '打招呼', style: '轻松' })],
       })
     )
 

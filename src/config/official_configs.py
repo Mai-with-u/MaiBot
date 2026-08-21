@@ -3950,15 +3950,15 @@ class ExpressionConfig(ConfigBase):
         default=True,
         json_schema_extra={
             "label": {
-                "zh_CN": "仅用人工检查表达",
-                "en_US": "Use human-reviewed expressions only",
-                "ja_JP": "人間が確認した表現のみ使用",
+                "zh_CN": "使用精选表达",
+                "en_US": "Use curated expressions",
+                "ja_JP": "厳選した表現を使用",
             },
             "x-widget": "switch",
             "x-row": "expression-learning-switches",
         },
     )
-    """只使用人工确认过的表达方式，更稳但学习效果会慢一些。"""
+    """仅使用人工精选的表达。"""
 
     expression_self_reflect: bool = Field(
         default=True,
