@@ -1,21 +1,30 @@
 from datetime import datetime
 
+import pytest
+
+from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     ContextItemMeta,
     ContextTextPart,
     ContextToolCall,
     FunctionCallItem,
+    FunctionCallOutputItem,
     ReasoningItem,
     ReasoningRepresentation,
+    SystemMessageItem,
+    UserMessageItem,
 )
 from src.maisaka.context.history import (
     drop_unanswered_tool_calls,
     normalize_tool_call_result_pairs,
     normalize_tool_result_order,
 )
-from src.maisaka.context.messages import ModelOutputContextMessage, ToolResultMessage
-from src.maisaka.context.post_processor import _build_trimmed_assistant_tool_user_message
+from src.maisaka.context.messages import ModelOutputContextMessage, SessionBackedMessage, ToolResultMessage
+from src.maisaka.context.post_processor import (
+    _build_trimmed_assistant_tool_user_message,
+    _trim_history_to_context_target,
+)
 from src.maisaka.chat_loop_service import MaisakaChatLoopService
 
 
@@ -53,15 +62,21 @@ def _result(call_id: str, logical_turn_id: str = "turn-1") -> ToolResultMessage:
     )
 
 
+def _user(content: str) -> SessionBackedMessage:
+    return SessionBackedMessage(
+        raw_message=MessageSequence([TextComponent(content)]),
+        visible_text=content,
+        timestamp=datetime.now(),
+    )
+
+
 def test_normalize_tool_result_order_keeps_parallel_calls_together() -> None:
     first_call = _call("call-item-1", "call-1")
     second_call = _call("call-item-2", "call-2")
     first_result = _result("call-1")
     second_result = _result("call-2")
 
-    normalized, moved_count = normalize_tool_result_order(
-        [first_call, second_call, second_result, first_result]
-    )
+    normalized, moved_count = normalize_tool_result_order([first_call, second_call, second_result, first_result])
 
     assert normalized == [first_call, second_call, first_result, second_result]
     assert moved_count == 2
@@ -85,9 +100,7 @@ def test_drop_unanswered_parallel_call_removes_entire_tool_turn() -> None:
     )
     result = _result("call-1")
 
-    filtered, removed_count = drop_unanswered_tool_calls(
-        [reasoning, answered_call, unanswered_call, assistant, result]
-    )
+    filtered, removed_count = drop_unanswered_tool_calls([reasoning, answered_call, unanswered_call, assistant, result])
 
     assert removed_count == 1
     assert filtered == []
@@ -142,6 +155,120 @@ def test_context_selection_keeps_complete_tool_turn_beyond_window() -> None:
 
     assert selected == history
     assert "tool_turn_overflow" in selection_reason
+
+
+def test_context_selection_restores_user_anchor_before_tool_turn() -> None:
+    trigger = _user("触发工具调用")
+    call = _call("call-item", "call-1")
+    result = _result("call-1")
+    trailing = _user("最新消息")
+    history = [trigger, call, result, trailing]
+
+    selected, _ = MaisakaChatLoopService.select_llm_context_messages(
+        history,
+        request_kind="planner",
+        max_context_size=1,
+        enable_visual_message=False,
+    )
+    request_items = MaisakaChatLoopService(chat_system_prompt="system")._build_request_messages(
+        selected,
+        enable_visual_message=False,
+    )
+
+    assert selected == history
+    assert [type(item) for item in request_items[:5]] == [
+        SystemMessageItem,
+        UserMessageItem,
+        FunctionCallItem,
+        FunctionCallOutputItem,
+        UserMessageItem,
+    ]
+
+
+def test_context_selection_restores_one_user_anchor_for_parallel_calls() -> None:
+    trigger = _user("触发并行工具调用")
+    first_call = _call("call-item-1", "call-1")
+    second_call = _call("call-item-2", "call-2")
+    first_result = _result("call-1")
+    second_result = _result("call-2")
+    trailing = _user("最新消息")
+    history = [trigger, first_call, second_call, first_result, second_result, trailing]
+
+    selected, _ = MaisakaChatLoopService.select_llm_context_messages(
+        history,
+        request_kind="planner",
+        max_context_size=1,
+        enable_visual_message=False,
+    )
+    request_items = MaisakaChatLoopService(chat_system_prompt="system")._build_request_messages(
+        selected,
+        enable_visual_message=False,
+    )
+
+    assert selected == history
+    assert [type(item) for item in request_items[:7]] == [
+        SystemMessageItem,
+        UserMessageItem,
+        FunctionCallItem,
+        FunctionCallItem,
+        FunctionCallOutputItem,
+        FunctionCallOutputItem,
+        UserMessageItem,
+    ]
+
+
+@pytest.mark.parametrize("max_context_size", [1, 2, 3, 4])
+def test_context_selection_keeps_tool_turn_anchors_across_window_boundaries(
+    max_context_size: int,
+) -> None:
+    history = [
+        _user("第一轮触发消息"),
+        _call("call-item-1", "call-1", "turn-1"),
+        _result("call-1", "turn-1"),
+        _user("第二轮触发消息"),
+        _call("call-item-2", "call-2", "turn-2"),
+        _result("call-2", "turn-2"),
+        _user("最新消息"),
+    ]
+
+    selected, _ = MaisakaChatLoopService.select_llm_context_messages(
+        history,
+        request_kind="planner",
+        max_context_size=max_context_size,
+        enable_visual_message=False,
+    )
+    request_items = MaisakaChatLoopService(chat_system_prompt="system")._build_request_messages(
+        selected,
+        enable_visual_message=False,
+    )
+
+    assert isinstance(request_items[1], UserMessageItem)
+    assert sum(isinstance(item, FunctionCallItem) for item in request_items) == sum(
+        isinstance(item, FunctionCallOutputItem) for item in request_items
+    )
+
+
+def test_history_trimming_removes_user_anchor_and_tool_turn_atomically() -> None:
+    trigger = _user("触发工具调用")
+    call = _call("call-item", "call-1")
+    result = _result("call-1")
+    trailing = _user("最新消息")
+    history = [trigger, call, result, trailing]
+
+    removed = _trim_history_to_context_target(history, target_context_count=2)
+
+    assert removed == [trigger, call, result]
+    assert history == [trailing]
+
+
+def test_request_rejects_function_call_history_without_user_anchor() -> None:
+    service = MaisakaChatLoopService(chat_system_prompt="system")
+
+    with pytest.raises(ValueError, match="function call 缺少前置 user/function output 锚点"):
+        service._build_request_messages(
+            [_call("call-item", "call-1"), _result("call-1")],
+            enable_visual_message=False,
+        )
 
 
 def test_history_protocol_removes_both_turns_when_call_and_output_turns_mismatch() -> None:
