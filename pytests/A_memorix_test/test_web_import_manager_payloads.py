@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from src.A_memorix.core.strategies.base import ChunkContext, KnowledgeType, ProcessedChunk, SourceInfo
+from src.A_memorix.core.strategies.chat_log import ChatLogStrategy
 from src.A_memorix.core.strategies.factual import FactualStrategy
 from src.A_memorix.core.strategies.narrative import NarrativeStrategy
 from src.A_memorix.core.storage.knowledge_types import ImportStrategy
@@ -499,6 +500,46 @@ def test_narrative_split_progresses_with_high_overlap_and_newline_backoff() -> N
     assert len(set(offsets)) == len(offsets)
 
 
+def test_chat_log_split_keeps_message_boundaries_and_multiline_content() -> None:
+    manager, _ = _build_manager()
+    strategy = manager._determine_strategy(
+        "chat.txt",
+        "",
+        "narrative",
+        chat_log=True,
+        import_params={
+            "chat_log": True,
+            "narrative_window_size": 200,
+            "narrative_overlap": 50,
+        },
+    )
+    assert isinstance(strategy, ChatLogStrategy)
+
+    messages = [
+        f"[2026-08-21 10:{index:02d}] 用户{index}：第{index}条消息" + "内容" * 25
+        for index in range(6)
+    ]
+    messages[2] += "\n这是同一条消息的第二行"
+    chunks = strategy.split("\n".join(messages))
+
+    assert len(chunks) > 1
+    assert all(chunk.chunk.text.startswith("[2026-08-21") for chunk in chunks)
+    assert all("这是同一条消息的第二行" not in chunk.chunk.text or "用户2" in chunk.chunk.text for chunk in chunks)
+    assert [chunk.source.offset_start for chunk in chunks] == sorted(
+        chunk.source.offset_start for chunk in chunks
+    )
+    assert strategy.split_warning == ""
+
+
+def test_chat_log_split_warns_when_message_headers_are_not_recognized() -> None:
+    strategy = ChatLogStrategy("chat.txt", window_size=200, overlap=50)
+
+    chunks = strategy.split("用户甲说了一段没有时间消息头的聊天内容。" * 30)
+
+    assert chunks
+    assert "未识别" in strategy.split_warning
+
+
 def test_manifest_hit_requires_existing_live_source() -> None:
     manager, metadata_store = _build_manager()
     manager._manifest_path = _test_manifest_path("manifest_hit.json")
@@ -678,6 +719,31 @@ async def test_persist_processed_chunk_writes_chat_id_metadata() -> None:
 
     assert metadata_store.paragraphs[0]["metadata"] == {"chat_id": "session-1"}
     assert metadata_store.paragraphs[0]["source"] == "web_import:demo.txt"
+
+
+@pytest.mark.asyncio
+async def test_persist_processed_chunk_keeps_events_in_metadata_instead_of_entities() -> None:
+    manager, metadata_store = _build_manager()
+    file_record = SimpleNamespace(source_path="", source_kind="paste", name="chat.txt")
+
+    await manager._persist_processed_chunk(
+        file_record,
+        _build_chunk(
+            {
+                "events": ["用户甲发送了一张图片"],
+                "entities": ["用户甲"],
+                "relations": [{"subject": "用户甲", "predicate": "认识", "object": "用户乙"}],
+            }
+        ),
+        metadata={"chat_id": "session-1"},
+    )
+
+    assert metadata_store.paragraphs[0]["metadata"] == {
+        "chat_id": "session-1",
+        "extracted_events": ["用户甲发送了一张图片"],
+    }
+    assert set(metadata_store.entities) == {"用户甲", "用户乙"}
+    assert "用户甲发送了一张图片" not in metadata_store.entities
 
 
 @pytest.mark.asyncio

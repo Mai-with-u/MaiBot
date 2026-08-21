@@ -39,6 +39,7 @@ from ..storage import (
 from ..storage.knowledge_types import ImportStrategy
 from ..storage.type_detection import looks_like_quote_text
 from ..strategies.base import KnowledgeType as StrategyKnowledgeType, ProcessedChunk
+from ..strategies.chat_log import ChatLogStrategy
 from ..strategies.factual import FactualStrategy
 from ..strategies.narrative import NarrativeStrategy
 from ..strategies.quote import QuoteStrategy
@@ -3128,6 +3129,15 @@ class ImportTaskManager:
         await self._ensure_embedding_runtime_ready()
 
         chunks = strategy.split(content)
+        if isinstance(strategy, ChatLogStrategy):
+            if strategy.split_warning:
+                await self._append_file_warning(task_id, file_record.file_id, strategy.split_warning)
+            if strategy.oversized_message_count:
+                await self._append_file_warning(
+                    task_id,
+                    file_record.file_id,
+                    f"有 {strategy.oversized_message_count} 条消息超过切块窗口，已保留为完整消息",
+                )
         selected_chunks = list(chunks)
         if file_record.retry_mode == "chunk":
             retry_index_set = set()
@@ -3668,11 +3678,15 @@ class ImportTaskManager:
             return
         data = _coerce_import_data_dict(processed.data, context="分块抽取结果")
         source = self._source_label(file_record)
+        paragraph_metadata = dict(metadata or {})
+        extracted_events = _normalize_import_entity_list(data.get("events"))
+        if extracted_events:
+            paragraph_metadata["extracted_events"] = extracted_events
         para_hash = await self._add_paragraph_metadata(
             file_record=file_record,
             content=content,
             source=source,
-            metadata=metadata,
+            metadata=paragraph_metadata,
             knowledge_type=_storage_type_from_strategy(processed.type),
             time_meta=time_meta,
         )
@@ -3704,7 +3718,7 @@ class ImportTaskManager:
             relations.append((s, p, o))
             entities.extend([s, o])
 
-        for k in ("entities", "events", "verbatim_entities"):
+        for k in ("entities", "verbatim_entities"):
             entities.extend(_normalize_import_entity_list(data.get(k)))
 
         uniq_entities = list({x.strip().lower(): x.strip() for x in entities if str(x).strip()}.values())
@@ -4080,6 +4094,12 @@ JSON schema:
             return FactualStrategy(filename, target_size=_coerce_int(params.get("factual_target_size"), 1200))
         if strategy == ImportStrategy.QUOTE:
             return QuoteStrategy(filename)
+        if bool(params.get("chat_log")):
+            return ChatLogStrategy(
+                filename,
+                window_size=_coerce_int(params.get("narrative_window_size"), 1600),
+                overlap=_coerce_int(params.get("narrative_overlap"), 400),
+            )
         return NarrativeStrategy(
             filename,
             window_size=_coerce_int(params.get("narrative_window_size"), 1600),
@@ -4105,6 +4125,8 @@ JSON schema:
     async def _set_file_strategy(self, task_id: str, file_id: str, strategy: Any) -> None:
         if isinstance(strategy, str):
             strategy_type = strategy
+        elif isinstance(strategy, ChatLogStrategy):
+            strategy_type = "chat_log"
         elif isinstance(strategy, NarrativeStrategy):
             strategy_type = "narrative"
         elif isinstance(strategy, FactualStrategy):
