@@ -577,35 +577,41 @@ class PluginLoader:
         try:
             with self._temporary_sys_path_entry(src_root):
                 with self._temporary_sys_path_entry(plugin_parent_dir):
-                    spec.loader.exec_module(module)
+                    # 兼容插件内部的顶层本地导入（例如 ``from config import ...``）。
+                    # 插件目录只在加载与工厂创建期间置于首位，避免长期污染 Runner 的全局导入路径。
+                    with self._temporary_sys_path_entry(plugin_dir):
+                        # 顶层导入名（如 ``config``）会被 Python 缓存到 sys.modules；
+                        # 加载多个插件时，必须先隔离同名缓存，避免后一个插件复用前一个插件的本地模块。
+                        with self._temporary_plugin_local_modules(plugin_dir):
+                            spec.loader.exec_module(module)
 
-                    # 优先使用新版 create_plugin 工厂函数
-                    create_plugin = getattr(module, "create_plugin", None)
-                    if create_plugin is not None:
-                        instance = create_plugin()
-                        self._validate_sdk_plugin_contract(plugin_id, instance)
-                        logger.debug(f"插件 {plugin_id} v{manifest.version} 加载成功")
-                        return PluginMeta(
-                            plugin_id=plugin_id,
-                            plugin_dir=str(plugin_dir),
-                            module_name=module_name,
-                            plugin_instance=instance,
-                            manifest=manifest,
-                        )
+                            # 优先使用新版 create_plugin 工厂函数
+                            create_plugin = getattr(module, "create_plugin", None)
+                            if create_plugin is not None:
+                                instance = create_plugin()
+                                self._validate_sdk_plugin_contract(plugin_id, instance)
+                                logger.debug(f"插件 {plugin_id} v{manifest.version} 加载成功")
+                                return PluginMeta(
+                                    plugin_id=plugin_id,
+                                    plugin_dir=str(plugin_dir),
+                                    module_name=module_name,
+                                    plugin_instance=instance,
+                                    manifest=manifest,
+                                )
 
-                    # 回退：检测旧版 @register_plugin 标记的 BasePlugin 子类
-                    instance = self._try_load_legacy_plugin(module, plugin_id)
-                    if instance is not None:
-                        logger.info(
-                            f"插件 {plugin_id} v{manifest.version} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
-                        )
-                        return PluginMeta(
-                            plugin_id=plugin_id,
-                            plugin_dir=str(plugin_dir),
-                            module_name=module_name,
-                            plugin_instance=instance,
-                            manifest=manifest,
-                        )
+                            # 回退：检测旧版 @register_plugin 标记的 BasePlugin 子类
+                            instance = self._try_load_legacy_plugin(module, plugin_id)
+                            if instance is not None:
+                                logger.info(
+                                    f"插件 {plugin_id} v{manifest.version} 通过旧版兼容层加载成功（请尽快迁移到 maibot_sdk）"
+                                )
+                                return PluginMeta(
+                                    plugin_id=plugin_id,
+                                    plugin_dir=str(plugin_dir),
+                                    module_name=module_name,
+                                    plugin_instance=instance,
+                                    manifest=manifest,
+                                )
         except Exception:
             sys.modules.pop(module_name, None)
             raise
@@ -658,6 +664,33 @@ class PluginLoader:
             if inserted:
                 with contextlib.suppress(ValueError):
                     sys.path.remove(normalized_path)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _temporary_plugin_local_modules(plugin_dir: Path) -> Iterator[None]:
+        """隔离插件目录中的顶层模块缓存，防止多个插件的同名模块相互污染。"""
+
+        local_module_names: Set[str] = set()
+        for child in plugin_dir.iterdir():
+            if child.is_file() and child.suffix == ".py":
+                local_module_names.add(child.stem)
+            elif child.is_dir() and (child / "__init__.py").is_file():
+                local_module_names.add(child.name)
+
+        cached_modules = {
+            module_name: sys.modules[module_name]
+            for module_name in local_module_names
+            if module_name in sys.modules
+        }
+        for module_name in local_module_names:
+            sys.modules.pop(module_name, None)
+
+        try:
+            yield
+        finally:
+            for module_name in local_module_names:
+                sys.modules.pop(module_name, None)
+            sys.modules.update(cached_modules)
 
     # ──── 旧版插件兼容 ────────────────────────────────────────
 

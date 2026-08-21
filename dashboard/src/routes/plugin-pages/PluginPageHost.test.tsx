@@ -80,6 +80,38 @@ describe('PluginPageHost', () => {
     expect(cleanup).toHaveBeenCalledOnce()
   })
 
+  it('context.request 解包 Host API 成功响应中的 data', async () => {
+    const mount = vi.fn()
+    vi.mocked(loadPluginPageModule).mockResolvedValue({ mount })
+    vi.mocked(backendApi.post).mockResolvedValue({
+      success: true,
+      data: { message: '来自插件 API' },
+      request_id: 'request-123',
+    })
+
+    render(<PluginPageHost />)
+
+    await waitFor(() => {
+      expect(mount).toHaveBeenCalledOnce()
+    })
+    const context = mount.mock.calls[0]?.[1] as {
+      request<T>(
+        operation: string,
+        options?: { debug?: boolean }
+      ): Promise<T | { data: T; request_id: string }>
+    }
+    const result = await context.request<{ message: string }>('greet', { debug: true })
+
+    expect(result).toEqual({
+      data: { message: '来自插件 API' },
+      request_id: 'request-123',
+    })
+    expect(backendApi.post).toHaveBeenCalledWith(
+      `${page.api_base}/greet`,
+      expect.objectContaining({ query: { debug: true } })
+    )
+  })
+
   it('入口加载失败时显示可诊断错误而不是空白页面', async () => {
     vi.mocked(loadPluginPageModule).mockRejectedValue(new Error('入口损坏'))
 

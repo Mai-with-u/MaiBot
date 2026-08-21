@@ -31,6 +31,23 @@
     "emoji.get_random",
     "config.get"
   ],
+  "extensions": {
+    "webui_pages": [
+      {
+        "id": "hello",
+        "title": "Hello World 页面",
+        "route": "hello",
+        "entry": "webui/dist/index.js",
+        "component": "mount",
+        "icon": "puzzle",
+        "order": 120,
+        "permissions": ["webui.page:view"],
+        "api": {
+          "greet": "webui.hello.greet"
+        }
+      }
+    ]
+  },
   "i18n": {
     "default_locale": "zh-CN",
     "locales_path": "_locales",

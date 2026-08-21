@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BOT_CONFIG_UPDATED_EVENT, getBotConfigCached } from '@/lib/config-api'
 import { fetchPluginPages } from '@/lib/plugin-api/pages'
+import { PLUGIN_PAGES_UPDATED_EVENT } from '@/lib/plugin-api/plugin-pages-events'
 
 import type { MenuSection } from './types'
-import { useMenuSections } from './use-menu-sections'
+import { appendPluginPages, resolvePluginPageIcon, useMenuSections } from './use-menu-sections'
 
 // mock 配置 API：避免测试中发起真实请求，同时保持事件名常量与源码一致
 vi.mock('@/lib/config-api', () => ({
@@ -31,6 +32,86 @@ function flattenPaths(sections: MenuSection[]): string[] {
 }
 
 describe('useMenuSections', () => {
+  it('使用受控 Lucide 图标清单解析插件页面图标，未知值回退 Puzzle', () => {
+    expect(resolvePluginPageIcon('bar-chart-3')).not.toBe(resolvePluginPageIcon('unknown'))
+    expect(resolvePluginPageIcon(null)).toBe(resolvePluginPageIcon('puzzle'))
+  })
+
+  it('追加页面时使用 Manifest icon', () => {
+    const sections = appendPluginPages(
+      [
+        {
+          title: 'sidebar.groups.extensionsMonitor',
+          items: [],
+        },
+      ],
+      [
+        {
+          plugin_id: 'example.first',
+          page_id: 'hello',
+          title: '插件你好',
+          route: '/plugin-pages/example.first/hello',
+          entry: '/api/webui/plugins/example.first/assets/webui/dist/index.js',
+          component: 'mount',
+          icon: 'bar-chart-3',
+          order: 0,
+          permissions: [],
+          api_base: '/api/webui/plugins/example.first/pages/hello/api',
+        },
+      ]
+    )
+
+    expect(sections[0].items[0].icon).toBe(resolvePluginPageIcon('bar-chart-3'))
+  })
+
+  it('收到插件生命周期事件后重新拉取页面清单', async () => {
+    mockFetchPluginPages
+      .mockResolvedValueOnce({ success: true, pages: [], warnings: [] })
+      .mockResolvedValueOnce({
+        success: true,
+        pages: [
+          {
+            plugin_id: 'example.first',
+            page_id: 'hello',
+            title: '插件你好',
+            route: '/plugin-pages/example.first/hello',
+            entry: '/api/webui/plugins/example.first/assets/webui/dist/index.js',
+            component: 'mount',
+            icon: null,
+            order: 0,
+            permissions: [],
+            api_base: '/api/webui/plugins/example.first/pages/hello/api',
+          },
+        ],
+        warnings: [],
+      })
+
+    const { result } = renderHook(() => useMenuSections())
+    await waitFor(() => expect(mockFetchPluginPages).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    await waitFor(() => {
+      expect(mockFetchPluginPages).toHaveBeenCalledTimes(2)
+      expect(flattenPaths(result.current)).toContain('/plugin-pages/example.first/hello')
+    })
+  })
+
+  it('菜单卸载后不再响应插件生命周期事件', async () => {
+    const { unmount } = renderHook(() => useMenuSections())
+
+    await waitFor(() => expect(mockFetchPluginPages).toHaveBeenCalledTimes(1))
+    unmount()
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    expect(mockFetchPluginPages).toHaveBeenCalledTimes(1)
+  })
+
   it('把插件页面追加到扩展与集成分组并保留 Host 路由', async () => {
     mockFetchPluginPages.mockResolvedValue({
       success: true,

@@ -14,6 +14,7 @@ import {
   updatePluginConfigRaw,
 } from './config'
 import type { PluginConfigSchema, PluginRuntimeComponent } from './types'
+import { PLUGIN_PAGES_UPDATED_EVENT } from './plugin-pages-events'
 
 vi.mock('@/lib/http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/http')>()
@@ -185,6 +186,18 @@ describe('updatePluginConfig', () => {
 
     await expect(updatePluginConfig('demo', {})).rejects.toMatchObject({ status: 500 })
   })
+
+  it('业务失败时不通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: false, enabled: true, message: '切换失败' })
+
+    await togglePlugin('demo')
+
+    expect(dispatchSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
 })
 
 describe('updatePluginConfigRaw', () => {
@@ -213,6 +226,18 @@ describe('resetPluginConfig', () => {
 })
 
 describe('togglePlugin', () => {
+  it('启停成功后通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: true, enabled: false, message: '已停用' })
+
+    await togglePlugin('demo')
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
   it('POST 到 toggle 接口并返回切换后的启用状态', async () => {
     const response = { success: true, enabled: false, message: '已停用' }
     postMock.mockResolvedValue(response)

@@ -87,6 +87,20 @@ def test_page_api_invokes_manifest_allowlisted_component(page_api_app: Tuple[Fas
     assert runtime.calls[0]["component_name"] == "webui.hello.get_status"
 
 
+def test_page_api_debug_mode_returns_request_id(page_api_app: Tuple[FastAPI, _FakeRuntime]) -> None:
+    """debug=true 时页面 API 应返回可用于查日志的 request_id。"""
+
+    app, _runtime = page_api_app
+
+    response = TestClient(app).post(
+        "/api/webui/plugins/example.first/pages/hello/api/get_status?debug=true",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request_id"]
+
+
 def test_page_api_rejects_operation_missing_from_manifest(page_api_app: Tuple[FastAPI, _FakeRuntime]) -> None:
     app, _runtime = page_api_app
 

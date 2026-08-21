@@ -7,7 +7,6 @@ from urllib.parse import quote
 
 from src.common.logger import get_logger
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator, ManifestWebUiPage, PluginManifest
-from src.webui.routers.plugin.support import load_manifest_json
 
 logger = get_logger("webui.plugin_page_registry")
 
@@ -111,6 +110,9 @@ def discover_plugin_pages(
 
     Manifest 校验保护声明契约，文件系统解析保护实际资源边界；两层校验都必须保留。
     """
+    # 延迟导入插件路由支持函数，避免页面注册表与插件路由包初始化互相导入。
+    from src.webui.routers.plugin.support import load_manifest_json
+
     loaded_ids = {str(plugin_id).strip() for plugin_id in loaded_plugin_ids if str(plugin_id).strip()}
     validator = ManifestValidator(
         validate_python_package_dependencies=False,

@@ -399,6 +399,30 @@ async def _release_plugin_runtime_before_delete(plugin_id: str, plugin_path: Pat
         return False
 
 
+async def _sync_plugin_runtime(plugin_id: str, reason: str) -> bool:
+    """在插件文件变更后立即同步 Runner，返回插件是否成功加载。"""
+
+    try:
+        from src.common.runtime_loop import run_on_main_loop
+        from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+        return await run_on_main_loop(
+            get_plugin_runtime_manager().load_plugin_globally(plugin_id, reason=reason)
+        )
+    except Exception as exc:
+        logger.warning(f"插件 {plugin_id} {reason} 后运行时加载失败: {exc}")
+        return False
+
+
+def _add_runtime_sync_result(result: Dict[str, Any], runtime_loaded: bool) -> Dict[str, Any]:
+    """向插件管理响应补充运行时同步结果，不改变已有业务字段。"""
+
+    result["runtime_loaded"] = runtime_loaded
+    if not runtime_loaded:
+        result["runtime_warning"] = "插件文件已更新，但运行时加载失败，请查看插件状态或稍后重试"
+    return result
+
+
 @router.post("/install")
 @_exclusive_plugin_operation("install")
 async def install_plugin(request: InstallPluginRequest, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
@@ -521,7 +545,8 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
             operation="install",
             plugin_id=plugin_id,
         )
-        return {
+        runtime_loaded = await _sync_plugin_runtime(plugin_id, reason="install")
+        response = {
             "success": True,
             "message": "插件安装成功",
             "plugin_id": plugin_id,
@@ -529,6 +554,7 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
             "version": manifest["version"],
             "path": str(target_path),
         }
+        return _add_runtime_sync_result(response, runtime_loaded)
     except HTTPException:
         raise
     except Exception as e:
@@ -662,6 +688,8 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
 
         if not (plugin_path / ".git").is_dir():
             result = await _update_non_git_plugin(plugin_id, plugin_path, manifest, request)
+            runtime_loaded = await _sync_plugin_runtime(plugin_id, reason="update")
+            _add_runtime_sync_result(result, runtime_loaded)
             await update_progress(
                 stage="success",
                 progress=100,
@@ -712,6 +740,7 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
             new_manifest = _validate_updated_manifest(plugin_path, old_manifest_id)
             new_version = str(new_manifest.get("version", "unknown"))
             new_name = str(new_manifest.get("name", plugin_id))
+            runtime_loaded = await _sync_plugin_runtime(plugin_id, reason="update")
             logger.info(f"成功更新插件: {plugin_id} {old_version} → {new_version}")
             await update_progress(
                 stage="success",
@@ -720,7 +749,7 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
                 operation="update",
                 plugin_id=plugin_id,
             )
-            return {
+            response = {
                 "success": True,
                 "message": "插件更新成功",
                 "plugin_id": plugin_id,
@@ -729,6 +758,7 @@ async def update_plugin(request: UpdatePluginRequest, maibot_session: Optional[s
                 "new_version": new_version,
                 "update_mode": "git_pull",
             }
+            return _add_runtime_sync_result(response, runtime_loaded)
         except HTTPException as e:
             await update_progress(
                 stage="error",

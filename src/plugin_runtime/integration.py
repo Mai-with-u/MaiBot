@@ -866,11 +866,20 @@ class PluginRuntimeManager(
         loaded_plugin_ids = {
             plugin_id for plugin_id, status in self.get_plugin_load_statuses().items() if status == "success"
         }
-        return [
-            (plugin_id, plugin_path)
-            for plugin_id, plugin_path in self._iter_discovered_plugin_paths(self._iter_plugin_dirs())
-            if plugin_id in loaded_plugin_ids
-        ]
+        loaded_plugin_paths: List[Tuple[str, Path]] = []
+        seen_plugin_paths: Set[Tuple[str, Path]] = set()
+        for plugin_id, plugin_path in self._iter_discovered_plugin_paths(self._iter_plugin_dirs()):
+            if plugin_id not in loaded_plugin_ids:
+                continue
+
+            # 同一个第三方插件目录可能同时被多个 Supervisor 管理，只保留一条记录。
+            plugin_key = (plugin_id, plugin_path.resolve())
+            if plugin_key in seen_plugin_paths:
+                continue
+            seen_plugin_paths.add(plugin_key)
+            loaded_plugin_paths.append((plugin_id, plugin_path))
+
+        return loaded_plugin_paths
 
     def get_plugin_load_failure_reasons(self) -> Dict[str, str]:
         """汇总所有 Supervisor 上报的插件加载失败原因。"""

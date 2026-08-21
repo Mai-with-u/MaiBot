@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError, backendApi } from '@/lib/http'
 
 import { installPlugin, uninstallPlugin, updatePlugin } from './install-flow'
+import { PLUGIN_PAGES_UPDATED_EVENT } from './plugin-pages-events'
 
 vi.mock('@/lib/http', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/http')>()
@@ -22,6 +23,18 @@ vi.mock('@/lib/http', async (importOriginal) => {
 const postMock = vi.mocked(backendApi.post)
 
 describe('installPlugin', () => {
+  it('安装成功后通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: true, message: '安装成功' })
+
+    await installPlugin('demo', 'https://github.com/user/demo.git')
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
   it('未指定分支时默认使用 main 分支提交安装请求', async () => {
     const response = { success: true, message: '安装成功' }
     postMock.mockResolvedValue(response)
@@ -62,6 +75,30 @@ describe('installPlugin', () => {
 })
 
 describe('uninstallPlugin', () => {
+  it('卸载成功后通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: true, message: '卸载成功' })
+
+    await uninstallPlugin('demo')
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
+  it('业务失败时不通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: false, message: '安装失败' })
+
+    await installPlugin('demo', 'https://github.com/user/demo.git')
+
+    expect(dispatchSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
   it('把插件 ID 作为请求体提交到卸载接口', async () => {
     const response = { success: true, message: '卸载成功' }
     postMock.mockResolvedValue(response)
@@ -81,6 +118,35 @@ describe('uninstallPlugin', () => {
 })
 
 describe('updatePlugin', () => {
+  it('更新成功后通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({
+      success: true,
+      message: '更新成功',
+      old_version: '1.0.0',
+      new_version: '1.1.0',
+    })
+
+    await updatePlugin('demo', 'https://github.com/user/demo.git')
+
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
+  it('业务失败时不通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({ success: false, message: '卸载失败' })
+
+    await uninstallPlugin('demo')
+
+    expect(dispatchSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
+  })
+
   it('提交更新请求并返回新旧版本信息', async () => {
     const response = {
       success: true,
@@ -128,5 +194,22 @@ describe('updatePlugin', () => {
     await expect(updatePlugin('demo', 'https://github.com/user/demo.git')).rejects.toMatchObject({
       status: 502,
     })
+  })
+
+  it('业务失败时不通知插件页面清单刷新', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    postMock.mockResolvedValue({
+      success: false,
+      message: '更新失败',
+      old_version: '1.0.0',
+      new_version: '1.0.0',
+    })
+
+    await updatePlugin('demo', 'https://github.com/user/demo.git')
+
+    expect(dispatchSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: PLUGIN_PAGES_UPDATED_EVENT })
+    )
+    dispatchSpy.mockRestore()
   })
 })

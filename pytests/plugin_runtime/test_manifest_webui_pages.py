@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from typing import Any, Dict
 
 import pytest
@@ -99,3 +102,20 @@ def test_manifest_rejects_unknown_webui_page_field() -> None:
 
     assert validator.parse_manifest(manifest) is None
     assert any("unknown_field" in error or "额外" in error for error in validator.errors)
+
+
+def test_hello_world_plugin_contains_webui_page_template() -> None:
+    plugin_dir = Path(__file__).parents[2] / "plugins" / "hello_world_plugin"
+    manifest = json.loads((plugin_dir / "_manifest.json").read_text(encoding="utf-8"))
+    validator = ManifestValidator(validate_python_package_dependencies=False)
+
+    parsed_manifest = validator.parse_manifest(manifest)
+
+    assert parsed_manifest is not None
+    assert parsed_manifest.extensions is not None
+    page = parsed_manifest.extensions.webui_pages[0]
+    assert page.id == "hello"
+    assert page.entry == "webui/dist/index.js"
+    assert page.component == "mount"
+    assert (plugin_dir / page.entry).is_file()
+    assert "export function mount" in (plugin_dir / page.entry).read_text(encoding="utf-8")

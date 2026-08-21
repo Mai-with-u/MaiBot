@@ -6,6 +6,15 @@
  */
 import { backendApi } from '@/lib/http'
 
+import { notifyPluginPagesUpdated } from './plugin-pages-events'
+
+interface PluginLifecycleResult {
+  success: boolean
+  message: string
+  runtime_loaded?: boolean
+  runtime_warning?: string
+}
+
 type UpdatePluginResult = {
   success: boolean
   message: string
@@ -13,6 +22,8 @@ type UpdatePluginResult = {
   new_version: string
   update_mode?: 'git_pull' | 'reinstall_from_backup'
   backup_path?: string
+  runtime_loaded?: boolean
+  runtime_warning?: string
 }
 
 /**
@@ -22,8 +33,8 @@ export async function installPlugin(
   pluginId: string,
   repositoryUrl: string,
   branch: string = 'main'
-): Promise<{ success: boolean; message: string }> {
-  return backendApi.post<{ success: boolean; message: string }>('/api/webui/plugins/install', {
+): Promise<PluginLifecycleResult> {
+  const response = await backendApi.post<PluginLifecycleResult>('/api/webui/plugins/install', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
@@ -31,6 +42,10 @@ export async function installPlugin(
     },
     errorMessage: '安装插件失败',
   })
+  if (response.success) {
+    notifyPluginPagesUpdated()
+  }
+  return response
 }
 
 /**
@@ -38,13 +53,17 @@ export async function installPlugin(
  */
 export async function uninstallPlugin(
   pluginId: string
-): Promise<{ success: boolean; message: string }> {
-  return backendApi.post<{ success: boolean; message: string }>('/api/webui/plugins/uninstall', {
+): Promise<PluginLifecycleResult> {
+  const response = await backendApi.post<PluginLifecycleResult>('/api/webui/plugins/uninstall', {
     body: {
       plugin_id: pluginId,
     },
     errorMessage: '卸载插件失败',
   })
+  if (response.success) {
+    notifyPluginPagesUpdated()
+  }
+  return response
 }
 
 /**
@@ -55,7 +74,7 @@ export async function updatePlugin(
   repositoryUrl: string,
   branch: string = 'main'
 ): Promise<UpdatePluginResult> {
-  return backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
+  const response = await backendApi.post<UpdatePluginResult>('/api/webui/plugins/update', {
     body: {
       plugin_id: pluginId,
       repository_url: repositoryUrl,
@@ -63,4 +82,8 @@ export async function updatePlugin(
     },
     errorMessage: '更新插件失败',
   })
+  if (response.success) {
+    notifyPluginPagesUpdated()
+  }
+  return response
 }

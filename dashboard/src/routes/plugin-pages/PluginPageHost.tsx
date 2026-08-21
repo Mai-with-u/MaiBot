@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from '@tanstack/react-router'
 
-import { backendApi } from '@/lib/http'
+import { backendApi, requireSuccess } from '@/lib/http'
 import { fetchPluginPages } from '@/lib/plugin-api/pages'
 import type { PluginPageSummary } from '@/lib/plugin-api/types'
 import { APP_VERSION } from '@/lib/version'
@@ -12,6 +12,13 @@ export interface PluginPageRequestOptions {
   method?: 'POST'
   body?: unknown
   signal?: AbortSignal
+  /** 开启 Host 链路诊断时，响应会附带 request_id。 */
+  debug?: boolean
+}
+
+export interface PluginPageDebugResponse<T> {
+  data: T
+  request_id: string
 }
 
 export interface PluginPageContext {
@@ -20,7 +27,10 @@ export interface PluginPageContext {
   hostVersion: string
   apiBase: string
   assetsBase: string
-  request<T>(operation: string, options?: PluginPageRequestOptions): Promise<T>
+  request<T>(
+    operation: string,
+    options?: PluginPageRequestOptions
+  ): Promise<T | PluginPageDebugResponse<T>>
 }
 
 type PluginPageMount = (
@@ -33,6 +43,13 @@ type PluginPagePhase = 'loading' | 'ready' | 'error'
 interface PluginRouteParams {
   pluginId: string
   pageId: string
+}
+
+interface PluginPageApiResponse<T> {
+  success: boolean
+  data: T
+  message?: string
+  request_id?: string
 }
 
 function getErrorMessage(error: unknown): string {
@@ -132,10 +149,22 @@ function createPluginPageContext(page: PluginPageSummary): PluginPageContext {
       }
 
       const operationPath = encodeURIComponent(operation)
-      return backendApi.post<T>(`${page.api_base}/${operationPath}`, {
-        body: options.body,
-        signal: options.signal,
-      })
+      const response = await backendApi.post<PluginPageApiResponse<T>>(
+        `${page.api_base}/${operationPath}`,
+        {
+          body: options.body,
+          signal: options.signal,
+          query: options.debug ? { debug: true } : undefined,
+        }
+      )
+      const envelope = requireSuccess(response, '插件页面 API 请求失败')
+      if (options.debug) {
+        if (!envelope.request_id) {
+          throw new Error('插件页面 API 调试响应缺少 request_id')
+        }
+        return { data: envelope.data, request_id: envelope.request_id }
+      }
+      return envelope.data
     },
   }
 }

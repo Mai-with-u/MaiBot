@@ -2,11 +2,12 @@
 
 from pathlib import Path
 from typing import Any, Dict, List
+from uuid import uuid4
 
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
 from src.common.logger import get_logger
@@ -174,8 +175,10 @@ async def invoke_plugin_page_api(
     page_id: str,
     operation: str,
     request: Request,
+    debug: bool = Query(default=False, description="返回可用于查询链路日志的 request_id"),
 ) -> Dict[str, Any]:
     """代理页面声明的插件 API，并把 Runner 错误转换为稳定的 HTTP 响应。"""
+    request_id = uuid4().hex
     if not _OPERATION_PATTERN.fullmatch(operation):
         raise HTTPException(status_code=404, detail="插件页面 API 操作不存在")
 
@@ -209,13 +212,24 @@ async def invoke_plugin_page_api(
     except RPCError as exc:
         if exc.code == ErrorCode.E_TIMEOUT:
             raise HTTPException(status_code=504, detail="插件页面 API 调用超时") from exc
-        logger.exception("插件页面 API RPC 调用失败: %s", exc)
+        logger.exception("插件页面 API RPC 调用失败 [request_id=%s]: %s", request_id, exc)
         raise HTTPException(status_code=502, detail="插件页面 API 调用失败") from exc
     except Exception as exc:
-        logger.exception("插件页面 API 处理失败: %s", exc)
+        logger.exception("插件页面 API 处理失败 [request_id=%s]: %s", request_id, exc)
         raise HTTPException(status_code=502, detail="插件页面 API 调用失败") from exc
 
-    return {"success": True, "data": result}
+    response: Dict[str, Any] = {"success": True, "data": result}
+    if debug:
+        response["request_id"] = request_id
+    logger.debug(
+        "插件页面 API 调用完成 [request_id=%s] plugin=%s page=%s operation=%s debug=%s",
+        request_id,
+        page.plugin_id,
+        page.page_id,
+        operation,
+        debug,
+    )
+    return response
 
 
 @router.get("/{plugin_id}/assets/{asset_path:path}", dependencies=[Depends(require_auth)])

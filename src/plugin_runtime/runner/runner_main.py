@@ -72,6 +72,7 @@ from src.plugin_runtime.protocol.envelope import (
 from src.plugin_runtime.protocol.errors import ErrorCode
 from src.plugin_runtime.runner.log_handler import RunnerIPCLogHandler
 from src.plugin_runtime.runner.plugin_paths import PluginPaths, build_plugin_paths
+from src.plugin_runtime.runner.manifest_validator import PluginManifest
 from src.plugin_runtime.runner.plugin_loader import PluginCandidate, PluginLoader, PluginMeta
 from src.plugin_runtime.runner.rpc_client import RPCClient
 
@@ -1363,6 +1364,8 @@ class PluginRunner:
                         metadata=component_metadata,
                     )
                 )
+
+        self._warn_webui_api_whitelist_gaps(meta.manifest, components)
         if hasattr(instance, "get_config_reload_subscriptions"):
             config_reload_subscriptions = list(instance.get_config_reload_subscriptions())
         if hasattr(instance, "get_llm_providers"):
@@ -1429,6 +1432,37 @@ class PluginRunner:
             return False
 
     @staticmethod
+    def _warn_webui_api_whitelist_gaps(manifest: PluginManifest, components: List[ComponentDeclaration]) -> None:
+        """检查 WebUI 页面 API 白名单是否覆盖真实的 API 组件。
+
+        Manifest 只能约束声明格式，组件是否真实存在要等插件实例完成装饰器收集后才能确认。
+        这里选择告警而不是拒绝加载，以保持现有插件的兼容性；页面调用不存在的 API 仍由 Host
+        在请求时返回明确的 404。
+
+        Args:
+            manifest: 当前插件的已解析 Manifest。
+            components: Runner 从插件实例收集到的组件声明。
+        """
+
+        extensions = manifest.extensions
+        if extensions is None or not extensions.webui_pages:
+            return
+
+        registered_api_names = {
+            component.name
+            for component in components
+            if component.component_type.strip().upper() == "API" and component.name.strip()
+        }
+        for page in extensions.webui_pages:
+            for operation, component_name in page.api.items():
+                if component_name in registered_api_names:
+                    continue
+                logger.warning(
+                    f"插件 {manifest.id} WebUI 页面 {page.id} 的 API 白名单未闭合: "
+                    f"operation={operation}, api={component_name} 未找到对应的 @API 组件"
+                )
+
+    @staticmethod
     def _get_plugin_default_config(instance: object) -> Dict[str, Any]:
         """获取插件默认配置。
 
@@ -1443,6 +1477,9 @@ class PluginRunner:
             return {}
         try:
             default_config = cast(_ConfigAwarePlugin, instance).get_default_config()
+        except PluginConfigVersionError:
+            # 配置契约错误必须在 Runner 当前边界直接暴露，不能回退为空配置。
+            raise
         except Exception as exc:
             logger.warning(f"读取插件默认配置失败: {exc}")
             return {}
