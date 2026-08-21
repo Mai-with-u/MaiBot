@@ -105,6 +105,7 @@ def test_fuzzy_modify_admin_uses_correction_action_set() -> None:
         ("memory_episode_admin", "status"),
         ("memory_episode_admin", "process_sources"),
         ("memory_profile_admin", "query"),
+        ("memory_profile_admin", "set_aliases"),
         ("memory_feedback_admin", "list"),
         ("memory_runtime_admin", "get_config"),
         ("memory_import_admin", "settings"),

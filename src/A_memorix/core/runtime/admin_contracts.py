@@ -118,6 +118,9 @@ _PROFILE_ACTIONS = {
     "status",
     "process_pending",
     "list",
+    "get_aliases",
+    "set_aliases",
+    "delete_aliases",
     "set_override",
     "delete_override",
 }

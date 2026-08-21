@@ -89,6 +89,12 @@ class ProfileOverrideRequest(BaseModel):
     source: str = "webui"
 
 
+class ProfileAliasesRequest(BaseModel):
+    aliases: list[str] = Field(..., min_length=1, max_length=100)
+    updated_by: str = ""
+    source: str = "webui"
+
+
 class ProfileEvidenceCorrectRequest(BaseModel):
     evidence_type: str = Field(..., min_length=1)
     hash: str = Field(..., min_length=1)
@@ -1977,6 +1983,24 @@ async def _profile_delete_override(person_id: str) -> dict:
     return await memory_service.profile_admin(action="delete_override", person_id=person_id)
 
 
+async def _profile_get_aliases(person_id: str) -> dict:
+    return await memory_service.profile_admin(action="get_aliases", person_id=person_id)
+
+
+async def _profile_set_aliases(person_id: str, payload: ProfileAliasesRequest) -> dict:
+    return await memory_service.profile_admin(
+        action="set_aliases",
+        person_id=person_id,
+        aliases=payload.aliases,
+        updated_by=payload.updated_by,
+        source=payload.source,
+    )
+
+
+async def _profile_delete_aliases(person_id: str) -> dict:
+    return await memory_service.profile_admin(action="delete_aliases", person_id=person_id)
+
+
 async def _profile_evidence(person_id: str, limit: int, force_refresh: bool) -> dict:
     return await memory_service.profile_admin(
         action="evidence",
@@ -2648,6 +2672,21 @@ async def set_memory_profile_override(payload: ProfileOverrideRequest):
 @router.delete("/profiles/override/{person_id}")
 async def delete_memory_profile_override(person_id: str):
     return await _profile_delete_override(person_id)
+
+
+@router.get("/profiles/{person_id}/aliases")
+async def get_memory_profile_aliases(person_id: str):
+    return await _profile_get_aliases(person_id)
+
+
+@router.put("/profiles/{person_id}/aliases")
+async def set_memory_profile_aliases(person_id: str, payload: ProfileAliasesRequest):
+    return await _profile_set_aliases(person_id, payload)
+
+
+@router.delete("/profiles/{person_id}/aliases")
+async def delete_memory_profile_aliases(person_id: str):
+    return await _profile_delete_aliases(person_id)
 
 
 @router.get("/profiles/{person_id}/evidence")

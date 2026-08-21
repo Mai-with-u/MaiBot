@@ -1232,6 +1232,20 @@ export interface MemoryProfileOverridePayload extends Record<string, unknown> {
   error?: string
 }
 
+export interface MemoryProfileAliasesPayload extends Record<string, unknown> {
+  success: boolean
+  person_id?: string
+  primary_name?: string
+  derived_aliases?: string[]
+  manual_aliases?: string[]
+  effective_aliases?: string[]
+  has_override?: boolean
+  override?: Record<string, unknown> | null
+  refresh_queued?: boolean
+  deleted?: boolean
+  error?: string
+}
+
 export interface MemoryMaintenanceItemPayload extends Record<string, unknown> {
   hash?: string
   relation_hash?: string
@@ -1619,6 +1633,44 @@ export async function deleteMemoryProfileOverride(
 ): Promise<MemoryProfileOverridePayload> {
   return requestJson<MemoryProfileOverridePayload>(
     `/profiles/override/${encodeURIComponent(personId)}`,
+    {
+      method: 'DELETE',
+    }
+  )
+}
+
+export async function getMemoryProfileAliases(
+  personId: string
+): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(personId)}/aliases`
+  )
+}
+
+export async function setMemoryProfileAliases(payload: {
+  person_id: string
+  aliases: string[]
+  updated_by?: string
+  source?: string
+}): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(payload.person_id)}/aliases`,
+    {
+      method: 'PUT',
+      body: {
+        aliases: payload.aliases,
+        updated_by: payload.updated_by,
+        source: payload.source,
+      },
+    }
+  )
+}
+
+export async function deleteMemoryProfileAliases(
+  personId: string
+): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(personId)}/aliases`,
     {
       method: 'DELETE',
     }

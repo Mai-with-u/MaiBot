@@ -21,6 +21,7 @@ class FakeMetadataStore:
                 "status": "active",
             }
         ]
+        self.alias_override = None
 
     def get_latest_person_profile_snapshot(self, person_id: str):
         return next(
@@ -88,6 +89,10 @@ class FakeMetadataStore:
         del person_id
         return None
 
+    def get_person_profile_alias_override(self, person_id: str):
+        assert person_id == "person-1"
+        return self.alias_override
+
     def upsert_person_profile_snapshot(self, **kwargs):
         snapshot = {
             "snapshot_id": len(self.snapshots) + 1,
@@ -130,6 +135,24 @@ class FakeRetriever:
                 metadata={"source_type": "chat_summary", "person_id": "person-1"},
             )
         ]
+
+
+def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
+    metadata_store = FakeMetadataStore()
+    metadata_store.alias_override = {
+        "person_id": "person-1",
+        "aliases": ["新别名", "正式称呼"],
+    }
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["旧昵称"], "正式称呼", ["记忆特征"])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["旧昵称"]
+    assert details["manual_aliases"] == ["新别名", "正式称呼"]
+    assert details["effective_aliases"] == ["新别名", "正式称呼"]
+    assert details["has_override"] is True
+    assert service.get_person_aliases("person-1") == (["新别名", "正式称呼"], "正式称呼", ["记忆特征"])
 
 
 @pytest.mark.asyncio

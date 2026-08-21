@@ -376,8 +376,8 @@ class PersonProfileService:
                     primary_name = name
         return aliases, primary_name
 
-    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
-        """获取人物别名集合、主展示名、记忆特征。"""
+    def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
+        """从人物主档案与记忆证据推导别名集合。"""
         aliases: List[str] = []
         primary_name = ""
         memory_traits: List[str] = []
@@ -389,16 +389,16 @@ class PersonProfileService:
                 record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
                     return recovered_aliases, recovered_primary_name or person_id, memory_traits
-            person_name = str(getattr(record, "person_name", "") or "").strip()
-            nickname = str(getattr(record, "user_nickname", "") or "").strip()
-            group_nicks = self._parse_group_nicks(getattr(record, "group_cardname", None))
-            memory_traits = self._parse_memory_traits(getattr(record, "memory_points", None))
+            person_name = str(record.person_name or "").strip()
+            nickname = str(record.user_nickname or "").strip()
+            group_nicks = self._parse_group_nicks(record.group_cardname)
+            memory_traits = self._parse_memory_traits(record.memory_points)
 
             primary_name = (
                 person_name
                 or nickname
                 or recovered_primary_name
-                or str(getattr(record, "user_id", "") or "").strip()
+                or str(record.user_id or "").strip()
                 or person_id
             )
 
@@ -413,6 +413,43 @@ class PersonProfileService:
         except Exception as e:
             logger.warning(f"解析人物别名失败: person_id={person_id}, err={e}")
         return aliases, primary_name, memory_traits
+
+    def get_person_alias_details(self, person_id: str) -> Dict[str, Any]:
+        """返回自动别名、人工覆盖和当前实际使用的别名。"""
+        token = str(person_id or "").strip()
+        if not token:
+            return {
+                "person_id": "",
+                "primary_name": "",
+                "derived_aliases": [],
+                "manual_aliases": [],
+                "effective_aliases": [],
+                "has_override": False,
+                "memory_traits": [],
+            }
+
+        derived_aliases, primary_name, memory_traits = self._get_derived_person_aliases(token)
+        override = self.metadata_store.get_person_profile_alias_override(token)
+        manual_aliases = list(override.get("aliases", [])) if override else []
+        return {
+            "person_id": token,
+            "primary_name": primary_name,
+            "derived_aliases": derived_aliases,
+            "manual_aliases": manual_aliases,
+            "effective_aliases": manual_aliases if override else derived_aliases,
+            "has_override": override is not None,
+            "memory_traits": memory_traits,
+            "override": override,
+        }
+
+    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
+        """获取画像实际使用的别名集合、主展示名和记忆特征。"""
+        details = self.get_person_alias_details(person_id)
+        return (
+            list(details["effective_aliases"]),
+            str(details["primary_name"]),
+            list(details["memory_traits"]),
+        )
 
     def _collect_relation_evidence(
         self,

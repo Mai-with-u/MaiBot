@@ -278,6 +278,62 @@ class MemoryProfileAdminService(KernelServiceBase):
                 )
             return {"success": True, "items": items, "count": len(items)}
 
+        if act == "get_aliases":
+            person_id = str(kwargs.get("person_id", "") or "").strip()
+            if not person_id:
+                return {"success": False, "error": "person_id 不能为空"}
+            return {"success": True, **self.person_profile_service.get_person_alias_details(person_id)}
+
+        if act == "set_aliases":
+            person_id = str(kwargs.get("person_id", "") or "").strip()
+            aliases = kwargs.get("aliases")
+            if not isinstance(aliases, list):
+                return {"success": False, "error": "aliases 必须是字符串列表"}
+            try:
+                with self.metadata_store.transaction(immediate=True) as conn:
+                    override = self.metadata_store.set_person_profile_alias_override(
+                        person_id=person_id,
+                        aliases=aliases,
+                        updated_by=str(kwargs.get("updated_by", "") or ""),
+                        source=str(kwargs.get("source", "") or "memory_profile_admin"),
+                        conn=conn,
+                    )
+                    refresh_request = None
+                    if bool(self._cfg("person_profile.enabled", True)):
+                        refresh_request = self.metadata_store.enqueue_person_profile_refresh(
+                            person_id=person_id,
+                            reason="person_aliases_updated",
+                            conn=conn,
+                        )
+            except ValueError as error:
+                return {"success": False, "error": str(error)}
+            return {
+                "success": True,
+                "override": override,
+                "refresh_queued": refresh_request is not None,
+                **self.person_profile_service.get_person_alias_details(person_id),
+            }
+
+        if act == "delete_aliases":
+            person_id = str(kwargs.get("person_id", "") or "").strip()
+            if not person_id:
+                return {"success": False, "error": "person_id 不能为空"}
+            with self.metadata_store.transaction(immediate=True) as conn:
+                deleted = self.metadata_store.delete_person_profile_alias_override(person_id, conn=conn)
+                refresh_request = None
+                if bool(self._cfg("person_profile.enabled", True)):
+                    refresh_request = self.metadata_store.enqueue_person_profile_refresh(
+                        person_id=person_id,
+                        reason="person_aliases_override_deleted",
+                        conn=conn,
+                    )
+            return {
+                "success": True,
+                "deleted": deleted,
+                "refresh_queued": refresh_request is not None,
+                **self.person_profile_service.get_person_alias_details(person_id),
+            }
+
         if act == "set_override":
             person_id = str(kwargs.get("person_id", "") or "").strip()
             override = self.metadata_store.set_person_profile_override(

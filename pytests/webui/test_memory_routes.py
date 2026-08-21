@@ -438,6 +438,44 @@ def test_webui_memory_profile_evidence_route(client: TestClient, monkeypatch):
     assert response.json()["evidence"][0]["hash"] == "p-1"
 
 
+def test_webui_memory_profile_alias_routes(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_profile_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {
+            "success": True,
+            "person_id": kwargs["person_id"],
+            "effective_aliases": kwargs.get("aliases", ["自动别名"]),
+        }
+
+    monkeypatch.setattr(memory_router_module.memory_service, "profile_admin", fake_profile_admin)
+
+    get_response = client.get("/api/webui/memory/profiles/person-1/aliases")
+    put_response = client.put(
+        "/api/webui/memory/profiles/person-1/aliases",
+        json={"aliases": ["新别名", "正式称呼"], "updated_by": "tester", "source": "webui"},
+    )
+    delete_response = client.delete("/api/webui/memory/profiles/person-1/aliases")
+
+    assert get_response.status_code == 200
+    assert put_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert calls == [
+        ("get_aliases", {"person_id": "person-1"}),
+        (
+            "set_aliases",
+            {
+                "person_id": "person-1",
+                "aliases": ["新别名", "正式称呼"],
+                "updated_by": "tester",
+                "source": "webui",
+            },
+        ),
+        ("delete_aliases", {"person_id": "person-1"}),
+    ]
+
+
 def test_webui_memory_profile_evidence_correct_route(client: TestClient, monkeypatch):
     async def fake_profile_admin(*, action: str, **kwargs):
         assert action == "correct_evidence"

@@ -14,6 +14,7 @@ import {
   createMemoryTemporalBackfillImport,
   createMemoryTuningTask,
   createMemoryUploadImport,
+  deleteMemoryProfileAliases,
   deleteMemoryProfileOverride,
   executeMemoryCorrection,
   executeMemoryDelete,
@@ -42,6 +43,7 @@ import {
   getMemoryImportTask,
   getMemoryImportTaskChunks,
   getMemoryImportTasks,
+  getMemoryProfileAliases,
   getMemoryProfileEvidence,
   getMemoryProfiles,
   getMemoryRecycleBin,
@@ -67,6 +69,7 @@ import {
   rollbackMemoryCorrectionPlan,
   rollbackMemoryFeedbackCorrection,
   searchMemoryProfiles,
+  setMemoryProfileAliases,
   setMemoryProfileOverride,
   updateMemoryConfig,
   updateMemoryConfigRaw,
@@ -575,6 +578,34 @@ describe('人物画像', () => {
 
     await deleteMemoryProfileOverride('p/1')
     expect(requestMock).toHaveBeenCalledWith('DELETE', `${BASE}/profiles/override/p%2F1`, {
+      body: undefined,
+    })
+  })
+
+  it('人物别名接口按 person_id 编码路径并提交完整集合', async () => {
+    requestMock.mockResolvedValue({ success: true })
+
+    await getMemoryProfileAliases('p/1')
+    expect(requestMock).toHaveBeenLastCalledWith('GET', `${BASE}/profiles/p%2F1/aliases`, {
+      body: undefined,
+    })
+
+    await setMemoryProfileAliases({
+      person_id: 'p/1',
+      aliases: ['张三', '小张'],
+      updated_by: 'webui',
+      source: 'webui',
+    })
+    expect(requestMock).toHaveBeenLastCalledWith('PUT', `${BASE}/profiles/p%2F1/aliases`, {
+      body: {
+        aliases: ['张三', '小张'],
+        updated_by: 'webui',
+        source: 'webui',
+      },
+    })
+
+    await deleteMemoryProfileAliases('p/1')
+    expect(requestMock).toHaveBeenLastCalledWith('DELETE', `${BASE}/profiles/p%2F1/aliases`, {
       body: undefined,
     })
   })

@@ -16,11 +16,14 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 // 组件消费的人物画像 API 全部打桩，避免真实请求
 vi.mock('@/lib/memory-api', () => ({
   correctMemoryProfileEvidence: vi.fn(),
+  deleteMemoryProfileAliases: vi.fn(),
   deleteMemoryProfileOverride: vi.fn(),
+  getMemoryProfileAliases: vi.fn(),
   getMemoryProfileEvidence: vi.fn(),
   getMemoryProfiles: vi.fn(),
   queryMemoryProfile: vi.fn(),
   searchMemoryProfiles: vi.fn(),
+  setMemoryProfileAliases: vi.fn(),
   setMemoryProfileOverride: vi.fn(),
 }))
 
@@ -76,6 +79,15 @@ beforeEach(() => {
   vi.mocked(memoryApi.getMemoryProfileEvidence).mockImplementation(async ({ personId }) =>
     makeEvidencePayload(personId),
   )
+  vi.mocked(memoryApi.getMemoryProfileAliases).mockImplementation(async (personId) => ({
+    success: true,
+    person_id: personId,
+    primary_name: personId === 'p1' ? '张三' : '李四',
+    derived_aliases: personId === 'p1' ? ['张三', '小张'] : ['李四'],
+    manual_aliases: personId === 'p1' ? ['张三', '阿三'] : [],
+    effective_aliases: personId === 'p1' ? ['张三', '阿三'] : ['李四'],
+    has_override: personId === 'p1',
+  }))
   vi.mocked(memoryApi.searchMemoryProfiles).mockResolvedValue({
     success: true,
     items: [makeProfile({ person_id: 'p9', person_name: '王五', profile_text: '王五的画像', has_manual_override: false, manual_override: null })],
@@ -87,6 +99,21 @@ beforeEach(() => {
   })
   vi.mocked(memoryApi.setMemoryProfileOverride).mockResolvedValue({ success: true })
   vi.mocked(memoryApi.deleteMemoryProfileOverride).mockResolvedValue({ success: true, deleted: true })
+  vi.mocked(memoryApi.setMemoryProfileAliases).mockResolvedValue({
+    success: true,
+    person_id: 'p1',
+    effective_aliases: ['张三', '三哥'],
+    has_override: true,
+    refresh_queued: true,
+  })
+  vi.mocked(memoryApi.deleteMemoryProfileAliases).mockResolvedValue({
+    success: true,
+    person_id: 'p1',
+    effective_aliases: ['张三', '小张'],
+    has_override: false,
+    deleted: true,
+    refresh_queued: true,
+  })
   vi.mocked(memoryApi.correctMemoryProfileEvidence).mockResolvedValue({
     success: true,
     operation_id: 'op-1',
@@ -131,7 +158,7 @@ describe('MemoryProfileManager 画像库加载', () => {
     expect(await screen.findByText('张三')).toBeInTheDocument()
     expect(screen.getByText('李四')).toBeInTheDocument()
     // 有画像覆写的行展示徽章（限定在张三所在表格行内查询）
-    const row = screen.getByText('张三').closest('tr')
+    const row = screen.getAllByText('张三').map((item) => item.closest('tr')).find(Boolean)
     expect(row).not.toBeNull()
     expect(within(row as HTMLTableRowElement).getByText('画像覆写')).toBeInTheDocument()
     // 自动选中 p1 后按默认证据数量 12 拉取证据
@@ -464,5 +491,47 @@ describe('MemoryProfileManager 画像覆写', () => {
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith({ title: '人物画像覆写已删除' })
     })
+  })
+})
+
+describe('MemoryProfileManager 别名维护', () => {
+  it('加载有效别名，保存完整集合并触发画像刷新', async () => {
+    await renderManager()
+
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    expect(aliasInput).toHaveValue('张三\n阿三')
+    expect(screen.getByText('人工别名生效中')).toBeInTheDocument()
+    expect(screen.getByText('小张')).toBeInTheDocument()
+
+    fireEvent.change(aliasInput, { target: { value: '张三\n三哥，老张' } })
+    fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.setMemoryProfileAliases).toHaveBeenCalledWith({
+        person_id: 'p1',
+        aliases: ['张三', '三哥', '老张'],
+        updated_by: 'knowledge_base',
+        source: 'webui',
+      })
+    })
+    await waitFor(() => {
+      expect(memoryApi.getMemoryProfileEvidence).toHaveBeenLastCalledWith({
+        personId: 'p1',
+        limit: 12,
+        forceRefresh: true,
+      })
+    })
+  })
+
+  it('恢复自动别名会删除人工覆盖', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderManager()
+
+    fireEvent.click(await screen.findByRole('button', { name: /恢复自动别名/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.deleteMemoryProfileAliases).toHaveBeenCalledWith('p1')
+    })
+    expect(window.confirm).toHaveBeenCalledWith('确认恢复 p1 的自动推导别名？')
   })
 })

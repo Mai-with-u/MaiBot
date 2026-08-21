@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Loader2, RefreshCw, Save, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, Loader2, RefreshCw, RotateCcw, Save, Search, Trash2 } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -16,12 +16,16 @@ import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { useToast } from '@/hooks/use-toast'
 import {
   correctMemoryProfileEvidence,
+  deleteMemoryProfileAliases,
   deleteMemoryProfileOverride,
+  getMemoryProfileAliases,
   getMemoryProfileEvidence,
   getMemoryProfiles,
   queryMemoryProfile,
   searchMemoryProfiles,
+  setMemoryProfileAliases,
   setMemoryProfileOverride,
+  type MemoryProfileAliasesPayload,
   type MemoryProfileEvidenceItemPayload,
   type MemoryProfileEvidencePayload,
   type MemoryProfileItemPayload,
@@ -126,12 +130,16 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
   const [showAdvancedPersonId, setShowAdvancedPersonId] = useState(false)
   const [showRawProfilePayload, setShowRawProfilePayload] = useState(false)
   const [overrideText, setOverrideText] = useState('')
+  const [aliasText, setAliasText] = useState('')
+  const [profileAliases, setProfileAliases] = useState<MemoryProfileAliasesPayload | null>(null)
   const [queryResult, setQueryResult] = useState<MemoryProfileQueryPayload | null>(null)
   const [profileEvidence, setProfileEvidence] = useState<MemoryProfileEvidencePayload | null>(null)
   const [showAutoProfile, setShowAutoProfile] = useState(false)
   const [loading, setLoading] = useState(false)
   const [querying, setQuerying] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [aliasLoading, setAliasLoading] = useState(false)
+  const [aliasSaving, setAliasSaving] = useState(false)
   const [evidenceLoading, setEvidenceLoading] = useState(false)
   const [correctingEvidenceKey, setCorrectingEvidenceKey] = useState('')
   const initialLoadedRef = useRef(false)
@@ -215,12 +223,51 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
     }
   }, [queryLimit, toast])
 
+  const loadProfileAliases = useCallback(async (personId: string) => {
+    const cleanPersonId = personId.trim()
+    if (!cleanPersonId) {
+      setProfileAliases(null)
+      setAliasText('')
+      return null
+    }
+    setAliasLoading(true)
+    try {
+      const payload = await getMemoryProfileAliases(cleanPersonId)
+      if (!payload.success) {
+        throw new Error(String(payload.error ?? '人物别名查询失败'))
+      }
+      setProfileAliases(payload)
+      setAliasText((payload.effective_aliases ?? []).join('\n'))
+      return payload
+    } catch (error) {
+      setProfileAliases(null)
+      setAliasText('')
+      toast({
+        title: '加载人物别名失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+      return null
+    } finally {
+      setAliasLoading(false)
+    }
+  }, [toast])
+
   useEffect(() => {
     if (!selectedPersonId || profileEvidencePersonId === selectedPersonId || queryResult) {
       return
     }
     void loadProfileEvidence(selectedPersonId)
   }, [loadProfileEvidence, profileEvidencePersonId, queryResult, selectedPersonId])
+
+  useEffect(() => {
+    if (!activePersonId.trim()) {
+      setProfileAliases(null)
+      setAliasText('')
+      return
+    }
+    void loadProfileAliases(activePersonId)
+  }, [activePersonId, loadProfileAliases])
 
   const submitQuery = useCallback(async () => {
     const directPersonId = showAdvancedPersonId ? queryPersonId.trim() : ''
@@ -425,6 +472,92 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
       setSaving(false)
     }
   }, [loadProfileEvidence, loadProfiles, queryPersonId, selectedPersonId, toast])
+
+  const saveAliases = useCallback(async () => {
+    const personId = activePersonId.trim()
+    if (!personId) {
+      toast({
+        title: '缺少人物 ID',
+        description: '请选择或输入一个 person_id 后再保存别名。',
+        variant: 'destructive',
+      })
+      return
+    }
+    const aliases = aliasText
+      .split(/[\n,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (aliases.length === 0) {
+      toast({
+        title: '别名不能为空',
+        description: '至少保留一个用于画像检索的人物名称。',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setAliasSaving(true)
+    try {
+      const payload = await setMemoryProfileAliases({
+        person_id: personId,
+        aliases,
+        updated_by: 'knowledge_base',
+        source: 'webui',
+      })
+      if (!payload.success) {
+        throw new Error(String(payload.error ?? '人物别名保存失败'))
+      }
+      setProfileAliases(payload)
+      setAliasText((payload.effective_aliases ?? aliases).join('\n'))
+      toast({
+        title: '人物别名已保存',
+        description: payload.refresh_queued ? '人物画像已进入刷新队列。' : undefined,
+      })
+      await loadProfileEvidence(personId, { forceRefresh: true })
+      await loadProfiles()
+    } catch (error) {
+      toast({
+        title: '保存人物别名失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    } finally {
+      setAliasSaving(false)
+    }
+  }, [activePersonId, aliasText, loadProfileEvidence, loadProfiles, toast])
+
+  const restoreDerivedAliases = useCallback(async () => {
+    const personId = activePersonId.trim()
+    if (!personId || !profileAliases?.has_override) {
+      return
+    }
+    if (!window.confirm(`确认恢复 ${personId} 的自动推导别名？`)) {
+      return
+    }
+    setAliasSaving(true)
+    try {
+      const payload = await deleteMemoryProfileAliases(personId)
+      if (!payload.success) {
+        throw new Error(String(payload.error ?? '恢复自动别名失败'))
+      }
+      setProfileAliases(payload)
+      setAliasText((payload.effective_aliases ?? []).join('\n'))
+      toast({
+        title: '已恢复自动推导别名',
+        description: payload.refresh_queued ? '人物画像已进入刷新队列。' : undefined,
+      })
+      await loadProfileEvidence(personId, { forceRefresh: true })
+      await loadProfiles()
+    } catch (error) {
+      toast({
+        title: '恢复自动别名失败',
+        description: error instanceof Error ? error.message : String(error),
+        variant: 'destructive',
+      })
+    } finally {
+      setAliasSaving(false)
+    }
+  }, [activePersonId, loadProfileEvidence, loadProfiles, profileAliases?.has_override, toast])
 
   const correctEvidence = useCallback(async (item: MemoryProfileEvidenceItemPayload) => {
     const personId = activePersonId.trim()
@@ -755,6 +888,61 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
                 选择一个人物或执行查询后查看详情。
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>别名维护</CardTitle>
+            <CardDescription>保存后会用当前列表替换自动推导别名，并据此重新检索证据、刷新画像。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!activePersonId.trim() ? (
+              <Alert>
+                <AlertDescription>请选择或输入 person_id 后再维护别名。</AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant={profileAliases?.has_override ? 'secondary' : 'outline'}>
+                {profileAliases?.has_override ? '人工别名生效中' : '使用自动推导别名'}
+              </Badge>
+              {aliasLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            </div>
+            {(profileAliases?.derived_aliases ?? []).length > 0 ? (
+              <div className="space-y-2">
+                <Label>自动推导候选</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(profileAliases?.derived_aliases ?? []).map((alias) => (
+                    <Badge key={alias} variant="outline">{alias}</Badge>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="profile-aliases">当前有效别名</Label>
+              <Textarea
+                id="profile-aliases"
+                value={aliasText}
+                onChange={(event) => setAliasText(event.target.value)}
+                className="min-h-[120px]"
+                placeholder="每行填写一个别名"
+                disabled={!activePersonId.trim() || aliasLoading}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void saveAliases()} disabled={!activePersonId.trim() || aliasLoading || aliasSaving}>
+                {aliasSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                保存别名
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void restoreDerivedAliases()}
+                disabled={!profileAliases?.has_override || aliasSaving}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                恢复自动别名
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
