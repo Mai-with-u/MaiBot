@@ -1,14 +1,19 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Check, Download, Plus, Search, Trash2, Upload, X } from 'lucide-react'
+import { Check, ChevronDown, Download, Plus, Search, Trash2, Upload, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { AccentPanel } from '@/components/ui/accent-panel'
 import { Button } from '@/components/ui/button'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs } from '@/components/ui/tabs'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
@@ -309,87 +314,107 @@ export function JargonManagementPage() {
     }))
   }
 
+  const summaryOptions: Array<{
+    value: JargonSummaryTab
+    label: string
+    count: number
+    className: string
+  }> = [
+    { value: 'total', label: '总数量', count: stats.total, className: 'text-foreground' },
+    {
+      value: 'confirmed_jargon',
+      label: '已确认黑话',
+      count: stats.confirmed_jargon,
+      className: 'text-green-600',
+    },
+    {
+      value: 'confirmed_not_jargon',
+      label: '无黑话',
+      count: stats.confirmed_not_jargon,
+      className: 'text-gray-500',
+    },
+    {
+      value: 'manual_jargon',
+      label: '手动黑话',
+      count: stats.manual_jargon,
+      className: 'text-amber-600',
+    },
+    {
+      value: 'global_count',
+      label: '全局黑话',
+      count: stats.global_count,
+      className: 'text-blue-600',
+    },
+    {
+      value: 'complete_count',
+      label: '推断完成',
+      count: stats.complete_count,
+      className: 'text-purple-600',
+    },
+  ]
+  const activeSummary =
+    summaryOptions.find((option) => option.value === summaryFilter) ?? summaryOptions[0]
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden p-4 pb-6 sm:p-6">
       <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
         <div className="flex min-h-full flex-col gap-3 pr-3 sm:pr-4 lg:h-full lg:min-h-0">
-          {/* 统计标签 */}
-          <AccentPanel showRetroStripes={false} className="bg-muted rounded-lg border">
-            <Tabs value={summaryFilter} onValueChange={handleSummaryChange}>
-              <DashboardTabBar variant="grid" className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-                {[
-                  {
-                    value: 'total',
-                    label: '总数量',
-                    count: stats.total,
-                    className: 'text-foreground',
-                  },
-                  {
-                    value: 'confirmed_jargon',
-                    label: '已确认黑话',
-                    count: stats.confirmed_jargon,
-                    className: 'text-green-600',
-                  },
-                  {
-                    value: 'confirmed_not_jargon',
-                    label: '无黑话',
-                    count: stats.confirmed_not_jargon,
-                    className: 'text-gray-500',
-                  },
-                  {
-                    value: 'manual_jargon',
-                    label: '手动黑话',
-                    count: stats.manual_jargon,
-                    className: 'text-amber-600',
-                  },
-                  {
-                    value: 'global_count',
-                    label: '全局黑话',
-                    count: stats.global_count,
-                    className: 'text-blue-600',
-                  },
-                  {
-                    value: 'complete_count',
-                    label: '推断完成',
-                    count: stats.complete_count,
-                    className: 'text-purple-600',
-                  },
-                ].map((item) => (
-                  <DashboardTabTrigger
-                    key={item.value}
-                    value={item.value}
-                    className="h-8 gap-1.5 px-2 text-xs"
-                    aria-label={`${item.label} ${item.count}`}
-                  >
-                    <span>{item.label}</span>
-                    <span className={`leading-none font-semibold ${item.className}`}>
-                      {item.count}
-                    </span>
-                  </DashboardTabTrigger>
-                ))}
-              </DashboardTabBar>
-            </Tabs>
-          </AccentPanel>
-
           {/* 搜索和筛选 */}
           <AccentPanel className="bg-card border" showRetroStripeDivider={false}>
             <div className="p-2.5">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
                 <div className="space-y-1">
                   <Label htmlFor="search" className="text-xs">
                     搜索
                   </Label>
                   <div className="relative">
                     <Search className="text-muted-foreground absolute top-2 left-2.5 h-4 w-4" />
-                    <Input
+                    <input
                       id="search"
+                      aria-label="搜索黑话"
                       placeholder="搜索黑话内容..."
                       value={list.searchInput}
                       onChange={(e) => list.setSearchInput(e.target.value)}
-                      className="h-8 pl-9"
+                      className="border-input focus-visible:ring-ring text-foreground placeholder:text-muted-foreground h-8 w-full border bg-transparent pr-3 pl-9 text-sm focus-visible:ring-1 focus-visible:outline-none"
                     />
                   </div>
                 </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="h-8 min-w-44 justify-between gap-3 px-3 text-xs"
+                      aria-label={`黑话分类：${activeSummary.label} ${activeSummary.count}`}
+                    >
+                      <span>{activeSummary.label}</span>
+                      <span className="ml-auto flex items-center gap-2">
+                        <span className={`font-semibold ${activeSummary.className}`}>
+                          {activeSummary.count}
+                        </span>
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-52">
+                    <DropdownMenuRadioGroup
+                      value={summaryFilter}
+                      onValueChange={handleSummaryChange}
+                    >
+                      {summaryOptions.map((option) => (
+                        <DropdownMenuRadioItem
+                          key={option.value}
+                          value={option.value}
+                          aria-label={`${option.label} ${option.count}`}
+                        >
+                          <span>{option.label}</span>
+                          <span className={`ml-auto pl-4 font-semibold ${option.className}`}>
+                            {option.count}
+                          </span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <div className="flex gap-2">
                   <Button
                     onClick={() => setIsCreateDialogOpen(true)}

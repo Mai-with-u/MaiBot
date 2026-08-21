@@ -2137,7 +2137,6 @@
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-alert='true'],
-:root[data-dashboard-style='future-retro'] [data-dashboard-table-wrapper='true'],
 :root[data-dashboard-style='future-retro'] [data-dashboard-toast='true'],
 :root[data-dashboard-style='future-retro'] [data-dashboard-radio-item='true'] {
   border-color: var(--retro-line) !important;
@@ -2147,12 +2146,27 @@
   color: var(--retro-ink) !important;
 }
 
-:root[data-dashboard-style='future-retro'] [data-dashboard-table-wrapper='true'] {
-  background: transparent !important;
-}
-
 :root[data-dashboard-style='future-retro'] [data-dashboard-table='true'] {
   color: var(--retro-ink) !important;
+}
+
+/* 表达与黑话列表的数据浏览区直接透出纸张底纹，不使用通用表格的凹陷底色。 */
+:root[data-dashboard-style='future-retro']
+  :is([data-expression-table-viewport='true'], [data-jargon-table-viewport='true'])
+  :is(
+    [data-dashboard-table-wrapper='true'],
+    [data-dashboard-table='true'],
+    [data-dashboard-table-header='true'],
+    [data-dashboard-table-body='true'],
+    [data-dashboard-table-row='true'],
+    [data-dashboard-table-cell='true']
+  ) {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 :root[data-dashboard-style='future-retro']

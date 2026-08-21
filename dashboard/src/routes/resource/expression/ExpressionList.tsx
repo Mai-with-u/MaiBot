@@ -141,7 +141,10 @@ export function ExpressionList({
   return (
     <div className={cn('flex min-h-0 flex-col border-2 bg-transparent', className)}>
       {/* 桌面端表格视图 */}
-      <div className="hidden min-h-0 flex-1 overflow-auto md:block">
+      <div
+        data-expression-table-viewport="true"
+        className="hidden min-h-0 flex-1 overflow-auto md:block"
+      >
         <Table aria-label="表达方式列表">
           <TableHeader>
             <TableRow>

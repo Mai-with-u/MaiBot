@@ -141,7 +141,10 @@ export function JargonList({
       contentClassName="flex h-full !min-h-0 flex-1 flex-col"
     >
       {/* 桁面端表格视图 */}
-      <div className="hidden min-h-0 flex-1 overflow-auto md:block">
+      <div
+        data-jargon-table-viewport="true"
+        className="hidden min-h-0 flex-1 overflow-auto md:block"
+      >
         <Table aria-label="黑话列表">
           <TableHeader>
             <TableRow>

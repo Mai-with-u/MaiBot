@@ -1673,6 +1673,66 @@ async def activate_prompt_version(language: str, filename: str, version_id: str)
     )
 
 
+@router.delete("/prompts/{language}/{filename}/versions/{version_id}", response_model=PromptFileResponse)
+async def delete_prompt_version(language: str, filename: str, version_id: str):
+    """删除指定 Prompt 自定义版本；删除当前启用版本时恢复默认 Prompt。"""
+
+    prompt_path = _safe_prompt_path(language, filename)
+    custom_prompt_path = _safe_custom_prompt_path(language, filename)
+    if not prompt_path.exists() or not prompt_path.is_file():
+        raise HTTPException(status_code=404, detail="Prompt 文件不存在")
+
+    normalized_version_id = _safe_prompt_version_id(version_id)
+    manifest = _read_prompt_version_manifest(language, filename)
+    active_version_id = _get_active_prompt_version_id(language, filename)
+
+    if normalized_version_id == _LEGACY_CUSTOM_PROMPT_VERSION_ID:
+        if not custom_prompt_path.exists():
+            raise HTTPException(status_code=404, detail="Prompt 自定义版本不存在")
+        custom_prompt_path.unlink()
+        if active_version_id == normalized_version_id:
+            manifest["active_version_id"] = None
+            _write_prompt_version_manifest(language, filename, manifest)
+            clear_prompt_cache()
+    else:
+        version_path = _prompt_version_file_path(language, filename, normalized_version_id)
+        version_exists = any(
+            raw_version.get("id") == normalized_version_id for raw_version in manifest["versions"]
+        )
+        if not version_exists or not version_path.exists() or not version_path.is_file():
+            raise HTTPException(status_code=404, detail="Prompt 自定义版本不存在")
+
+        version_path.unlink()
+        manifest["versions"] = [
+            raw_version
+            for raw_version in manifest["versions"]
+            if raw_version.get("id") != normalized_version_id
+        ]
+        if active_version_id == normalized_version_id:
+            manifest["active_version_id"] = None
+            if custom_prompt_path.exists():
+                custom_prompt_path.unlink()
+            clear_prompt_cache()
+        _write_prompt_version_manifest(language, filename, manifest)
+
+    if custom_prompt_path.exists():
+        content = custom_prompt_path.read_text(encoding="utf-8")
+        customized = True
+    else:
+        content = prompt_path.read_text(encoding="utf-8")
+        customized = False
+    validation = _build_prompt_validation(prompt_path.read_text(encoding="utf-8"), content)
+    return PromptFileResponse(
+        language=language,
+        filename=filename,
+        content=content,
+        customized=customized,
+        active_version_id=_get_active_prompt_version_id(language, filename),
+        versions=_list_prompt_versions(language, filename),
+        validation=validation,
+    )
+
+
 @router.put("/prompts/{language}/{filename}", response_model=PromptFileResponse)
 async def update_prompt_file(language: str, filename: str, request: PromptUpdateRequest):
     """更新指定语言下的 Prompt 文件内容。"""
