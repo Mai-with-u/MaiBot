@@ -36,31 +36,41 @@ def _upload_staging_root() -> Path:
 
 class NodeRequest(BaseModel):
     name: str = Field(..., min_length=1)
+    reason: str = ""
+    updated_by: str = "webui"
 
 
 class NodeRenameRequest(BaseModel):
     old_name: str = Field(..., min_length=1)
     new_name: str = Field(..., min_length=1)
+    reason: str = ""
+    updated_by: str = "webui"
 
 
 class EdgeCreateRequest(BaseModel):
     subject: str = Field(..., min_length=1)
     predicate: str = Field(..., min_length=1)
     object: str = Field(..., min_length=1)
-    confidence: float = Field(1.0, ge=0.0)
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
+    reason: str = ""
+    updated_by: str = "webui"
 
 
 class EdgeDeleteRequest(BaseModel):
     hash: str = ""
     subject: str = ""
     object: str = ""
+    reason: str = ""
+    updated_by: str = "webui"
 
 
 class EdgeWeightRequest(BaseModel):
     hash: str = ""
     subject: str = ""
     object: str = ""
-    weight: float = Field(..., ge=0.0)
+    weight: float = Field(..., ge=0.0, le=1.0)
+    reason: str = ""
+    updated_by: str = "webui"
 
 
 class SourceDeleteRequest(BaseModel):
@@ -2221,15 +2231,31 @@ async def _graph_get_paragraph_detail(paragraph_hash: str, evidence_node_limit: 
 
 
 async def _graph_create_node(payload: NodeRequest) -> dict:
-    return await memory_service.graph_admin(action="create_node", name=payload.name)
+    return await memory_service.graph_admin(
+        action="create_node",
+        name=payload.name,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
+    )
 
 
 async def _graph_delete_node(payload: NodeRequest) -> dict:
-    return await memory_service.graph_admin(action="delete_node", name=payload.name)
+    return await memory_service.graph_admin(
+        action="delete_node",
+        name=payload.name,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
+    )
 
 
 async def _graph_rename_node(payload: NodeRenameRequest) -> dict:
-    return await memory_service.graph_admin(action="rename_node", old_name=payload.old_name, new_name=payload.new_name)
+    return await memory_service.graph_admin(
+        action="rename_node",
+        old_name=payload.old_name,
+        new_name=payload.new_name,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
+    )
 
 
 async def _graph_create_edge(payload: EdgeCreateRequest) -> dict:
@@ -2239,6 +2265,8 @@ async def _graph_create_edge(payload: EdgeCreateRequest) -> dict:
         predicate=payload.predicate,
         object=payload.object,
         confidence=payload.confidence,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
     )
 
 
@@ -2248,6 +2276,8 @@ async def _graph_delete_edge(payload: EdgeDeleteRequest) -> dict:
         hash=payload.hash,
         subject=payload.subject,
         object=payload.object,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
     )
 
 
@@ -2258,6 +2288,8 @@ async def _graph_update_edge_weight(payload: EdgeWeightRequest) -> dict:
         subject=payload.subject,
         object=payload.object,
         weight=payload.weight,
+        reason=payload.reason,
+        updated_by=payload.updated_by,
     )
 
 

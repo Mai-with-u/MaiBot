@@ -69,7 +69,24 @@ class MemoryMaintenanceService(KernelServiceBase):
             return self._reconcile_relation_graph_projection_jobs_locked(
                 reset_leases=reset_leases,
                 batch_size=batch_size,
+                force_full_rebuild_initial=False,
             )
+
+    def _publish_authoritative_graph_projection(self) -> Dict[str, int]:
+        """处理待投影关系，并从 metadata 发布一份完整图快照。"""
+
+        assert self.graph_store is not None
+        with self._relation_graph_projection_lock:
+            result = self._reconcile_relation_graph_projection_jobs_locked(
+                reset_leases=False,
+                batch_size=None,
+                force_full_rebuild_initial=True,
+            )
+        return {
+            **result,
+            "node_count": int(self.graph_store.num_nodes),
+            "edge_count": int(self.graph_store.num_edges),
+        }
 
     @staticmethod
     def _projection_authority_key(item: Dict[str, Any]) -> tuple[str, int, str]:
@@ -150,6 +167,7 @@ class MemoryMaintenanceService(KernelServiceBase):
         *,
         reset_leases: bool,
         batch_size: int | None,
+        force_full_rebuild_initial: bool = False,
     ) -> Dict[str, int]:
         """在 SDK 实例写锁内聚合任务，只发布一次稳定整图快照。"""
 
@@ -164,7 +182,7 @@ class MemoryMaintenanceService(KernelServiceBase):
         claimed_count = 0
         completed_count = 0
         saved_batches = 0
-        force_full_rebuild = bool(reset_leases)
+        force_full_rebuild = bool(reset_leases or force_full_rebuild_initial)
         for reconcile_round in range(MAX_PROJECTION_RECONCILE_ROUNDS):
             claimed = self._claim_all_relation_graph_projection_jobs(batch_size=limit)
             if not claimed:

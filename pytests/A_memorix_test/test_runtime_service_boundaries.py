@@ -130,6 +130,15 @@ def test_graph_admin_rename_rehashes_relations_and_invalidates_vectors(tmp_path:
         assert [item["hash"] for item in paragraph_relations] == [new_relation_hash]
         assert old_entity_hash in deleted_vector_ids
         assert old_relation_hash in deleted_vector_ids
+        assert result["projection"]["status"] == "completed"
+        assert result["vector_projection"]["status"] == "invalidated"
+        assert metadata_store.count_claimable_relation_graph_projection_jobs() == 0
+        operation = metadata_store.query(
+            "SELECT action, resolved_hashes_json FROM memory_v5_operations WHERE operation_id = ?",
+            (result["operation"]["operation_id"],),
+        )[0]
+        assert operation["action"] == "graph_rename_node"
+        assert new_relation_hash in operation["resolved_hashes_json"]
     finally:
         metadata_store.close()
 

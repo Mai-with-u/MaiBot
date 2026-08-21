@@ -398,6 +398,46 @@ def test_webui_memory_graph_route(client: TestClient, monkeypatch):
     assert response.json()["edges"][0]["evidence_count"] == 2
 
 
+def test_webui_memory_graph_mutation_routes_forward_audit_fields(client: TestClient, monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_graph_admin(*, action: str, **kwargs):
+        calls.append({"action": action, **kwargs})
+        return {"success": True}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "graph_admin", fake_graph_admin)
+
+    response = client.post(
+        "/api/webui/memory/graph/edge",
+        json={
+            "subject": "Alice",
+            "predicate": "喜欢",
+            "object": "Bob",
+            "confidence": 0.8,
+            "reason": "人工维护",
+            "updated_by": "operator-1",
+        },
+    )
+    invalid = client.post(
+        "/api/webui/memory/graph/edge/weight",
+        json={"hash": "relation-1", "weight": 1.1},
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "action": "create_edge",
+            "subject": "Alice",
+            "predicate": "喜欢",
+            "object": "Bob",
+            "confidence": 0.8,
+            "reason": "人工维护",
+            "updated_by": "operator-1",
+        }
+    ]
+    assert invalid.status_code == 422
+
+
 def test_webui_memory_graph_search_route(client: TestClient, monkeypatch):
     async def fake_graph_admin(*, action: str, **kwargs):
         assert action == "search"
