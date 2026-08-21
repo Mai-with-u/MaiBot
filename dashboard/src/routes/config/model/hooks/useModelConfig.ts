@@ -454,6 +454,7 @@ export function useModelConfig() {
         base_url: provider.base_url,
         api_key: provider.api_key,
         client_type: provider.client_type,
+        default_headers: provider.default_headers,
         max_retry: provider.max_retry ?? 2,
         timeout: provider.timeout ?? 30,
         retry_interval: provider.retry_interval ?? 10,

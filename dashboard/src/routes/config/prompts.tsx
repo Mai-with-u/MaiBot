@@ -7,10 +7,21 @@ import {
   Save,
   Search,
   SlidersHorizontal,
+  Trash2,
 } from 'lucide-react'
 
 import { CodeEditor } from '@/components/CodeEditor'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,6 +46,7 @@ import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { useToast } from '@/hooks/use-toast'
 import {
   activatePromptVersion,
+  deletePromptVersion,
   getDefaultPromptFile,
   getPromptCatalog,
   getPromptFile,
@@ -247,6 +259,8 @@ export function PromptManagementPage() {
   const [loadingFile, setLoadingFile] = useState(false)
   const [saving, setSaving] = useState(false)
   const [applyingVersion, setApplyingVersion] = useState(false)
+  const [deletingVersion, setDeletingVersion] = useState(false)
+  const [deleteVersionDialogOpen, setDeleteVersionDialogOpen] = useState(false)
   const [loadingDefaultPrompt, setLoadingDefaultPrompt] = useState(false)
   const [defaultPromptOpen, setDefaultPromptOpen] = useState(false)
   const [defaultPromptContent, setDefaultPromptContent] = useState('')
@@ -290,6 +304,8 @@ export function PromptManagementPage() {
     ? selectedVersionId === activeVersionId
     : !isCustomized
   const canApplySelectedVersion = !selectedVersionIsApplied && !hasUnsavedChanges
+  const canDeleteSelectedVersion =
+    selectedCustomVersion && !hasUnsavedChanges && !loadingFile && !saving && !applyingVersion
   const selectedVersionStorageKey =
     language && filename ? `maibot.promptManagement.selectedVersion.${language}/${filename}` : ''
   const diffState = useMemo(
@@ -525,6 +541,35 @@ export function PromptManagementPage() {
       })
     } finally {
       setApplyingVersion(false)
+    }
+  }
+
+  const handleDeleteSelectedVersion = async () => {
+    if (!language || !filename || !selectedCustomVersion) return
+
+    try {
+      setDeletingVersion(true)
+      const deletedVersion = versions.find((version) => version.id === selectedVersionId)
+      const result = await deletePromptVersion(language, filename, selectedVersionId)
+      const nextSelectedVersionId = result.active_version_id ?? DEFAULT_VERSION_ID
+      applyPromptContent(result, nextSelectedVersionId)
+      if (selectedVersionStorageKey) {
+        localStorage.setItem(selectedVersionStorageKey, nextSelectedVersionId)
+      }
+      setDeleteVersionDialogOpen(false)
+      toast({
+        title: 'Prompt 版本已删除',
+        description: `${deletedVersion?.label ?? selectedVersionId} · ${language}/${filename}`,
+      })
+      void loadCatalog()
+    } catch (error) {
+      toast({
+        title: '删除 Prompt 版本失败',
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    } finally {
+      setDeletingVersion(false)
     }
   }
 
@@ -776,6 +821,18 @@ export function PromptManagementPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => setDeleteVersionDialogOpen(true)}
+                  disabled={!canDeleteSelectedVersion || deletingVersion}
+                  className="h-8 shrink-0 px-2 text-xs text-destructive hover:text-destructive sm:h-9 sm:px-3 sm:text-sm"
+                  title="删除版本"
+                  aria-label="删除版本"
+                >
+                  <Trash2 className={cn('mr-1 h-3.5 w-3.5 sm:mr-2 sm:h-4 sm:w-4', deletingVersion && 'animate-pulse')} />
+                  {deletingVersion ? '移除中' : '移除版本'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={handleShowDefault}
                   disabled={loadingDefaultPrompt || loadingFile || !filename}
                   className="h-8 flex-1 px-2 text-xs sm:h-9 sm:flex-none sm:px-3 sm:text-sm"
@@ -876,6 +933,29 @@ export function PromptManagementPage() {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={deleteVersionDialogOpen} onOpenChange={setDeleteVersionDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除 Prompt 版本</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedVersionIsApplied
+                ? '删除当前启用的版本后，将恢复使用默认 Prompt。此操作无法撤销。'
+                : '删除后无法恢复该自定义 Prompt 版本。'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingVersion}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleDeleteSelectedVersion()}
+              disabled={deletingVersion}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingVersion ? '删除中' : '确认删除'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={defaultPromptOpen} onOpenChange={setDefaultPromptOpen}>
         <DialogContent className="h-[calc(100dvh-2rem)] max-w-[min(96vw,1100px)]">

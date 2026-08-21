@@ -77,7 +77,7 @@ export function useExpressionReview({
         }
 
         toast({
-          title: approved ? '批量设为通过完成' : '批量设为不通过完成',
+          title: approved ? '批量精选完成' : '取消精选完成',
           description:
             failedCount > 0
               ? `成功 ${updatedCount} 个，失败 ${failedCount} 个`

@@ -99,7 +99,7 @@ describe('ExpressionReviewLogPanel', () => {
     await waitFor(() => {
       expect(getExpressionReviewLogs).toHaveBeenCalledWith({
         limit: 100,
-        passed: undefined,
+        passed: false,
         chat_id: undefined,
       })
     })
@@ -109,9 +109,8 @@ describe('ExpressionReviewLogPanel', () => {
     expect(await screen.findAllByText('暂无 AI 审核记录')).toHaveLength(2)
   })
 
-  it('渲染通过/未通过徽标与救回徽标', async () => {
+  it('渲染未通过与救回徽标', async () => {
     mockLogs([
-      makeEntry({ id: 'log-pass', passed: true, situation: '通过的情境', reason: '表达自然' }),
       makeEntry({
         id: 'log-rescued',
         situation: '被救回的情境',
@@ -121,12 +120,11 @@ describe('ExpressionReviewLogPanel', () => {
     ])
     render(<ExpressionReviewLogPanel />)
     const table = getDesktopTable()
-    expect(await within(table).findByText('通过的情境')).toBeInTheDocument()
-    expect(within(table).getByText('通过')).toBeInTheDocument()
+    expect(await within(table).findByText('被救回的情境')).toBeInTheDocument()
     expect(within(table).getByText('未通过')).toBeInTheDocument()
     expect(within(table).getByText('已救回 #42')).toBeInTheDocument()
     // 头部展示条数
-    expect(screen.getByText('最近 2 条表达方式学习写入前审核情况')).toBeInTheDocument()
+    expect(screen.getByText('最近 1 条未通过的表达方式学习审核记录')).toBeInTheDocument()
     // 理由列展示 reason
     expect(within(table).getByText('内容重复')).toBeInTheDocument()
   })
@@ -189,24 +187,10 @@ describe('ExpressionReviewLogPanel', () => {
     expect(onRescued).not.toHaveBeenCalled()
   })
 
-  it('结果筛选切到未通过时按 passed=false 重新拉取', async () => {
-    const user = userEvent.setup()
-    mockLogs([makeEntry()])
+  it('仅保留聊天流筛选，结果固定为未通过', async () => {
     render(<ExpressionReviewLogPanel />)
-    await screen.findAllByText('被夸奖时')
-
-    // 第二个 combobox 是结果筛选（第一个是聊天流筛选）
-    const selects = screen.getAllByRole('combobox')
-    await user.click(selects[1])
-    await user.click(await screen.findByRole('option', { name: '未通过' }))
-
-    await waitFor(() => {
-      expect(getExpressionReviewLogs).toHaveBeenCalledWith({
-        limit: 100,
-        passed: false,
-        chat_id: undefined,
-      })
-    })
+    await screen.findAllByText('暂无 AI 审核记录')
+    expect(screen.getAllByRole('combobox')).toHaveLength(1)
   })
 
   it('加载失败时弹加载失败提示', async () => {

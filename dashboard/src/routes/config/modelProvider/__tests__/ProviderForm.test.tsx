@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,6 +22,7 @@ const makeProvider = (overrides: Partial<APIProvider> = {}): APIProvider => ({
   base_url: 'https://api.deepseek.com',
   api_key: 'sk-test',
   client_type: 'openai',
+  default_headers: {},
   max_retry: 2,
   timeout: 30,
   retry_interval: 10,
@@ -342,6 +343,27 @@ describe('ProviderForm 客户端类型选项', () => {
 })
 
 describe('ProviderForm 保存流程', () => {
+  it('高级配置展开后可编辑默认请求 Headers，并在保存时保留', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
+
+    expect(screen.queryByText('默认请求 Headers')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '高级配置' }))
+    expect(screen.getByText('默认请求 Headers')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'JSON 编辑' }))
+    const editor = screen.getByRole('textbox', { name: '' })
+    fireEvent.change(editor, { target: { value: '{"X-Test":"custom"}' } })
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ default_headers: { 'X-Test': 'custom' } }),
+        0
+      )
+    )
+  })
+
   it('校验通过后以本地编辑值与索引调用 onSave，等待期间按钮显示「保存中...」', async () => {
     const user = userEvent.setup()
     let resolveSave: (() => void) | undefined
@@ -370,6 +392,7 @@ describe('ProviderForm 保存流程', () => {
     const user = userEvent.setup()
     const { onSave } = renderForm({ editingProvider: makeProvider(), editingIndex: 0 })
 
+    await user.click(screen.getByRole('button', { name: '高级配置' }))
     const retryInput = screen.getByLabelText('最大重试')
     await user.clear(retryInput)
     await user.type(retryInput, '5')

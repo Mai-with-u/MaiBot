@@ -1,4 +1,4 @@
-import { CheckCircle2, RefreshCw, RotateCcw, XCircle } from 'lucide-react'
+import { RefreshCw, RotateCcw, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -21,11 +21,14 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
-import { approveExpressionReviewLog, getExpressionChatTargets, getExpressionReviewLogs } from '@/lib/expression-api'
+import {
+  approveExpressionReviewLog,
+  getExpressionChatTargets,
+  getExpressionReviewLogs,
+} from '@/lib/expression-api'
 
 import type { ChatInfo, ExpressionReviewLogEntry } from '@/types/expression'
 
-type ReviewLogFilter = 'all' | 'failed' | 'passed'
 const ALL_CHATS_VALUE = '__all__'
 
 interface ExpressionReviewLogPanelProps {
@@ -42,15 +45,7 @@ function formatTime(timestamp: number | null): string {
   })
 }
 
-function ReviewStatusBadge({ entry }: { entry: ExpressionReviewLogEntry }) {
-  if (entry.passed) {
-    return (
-      <Badge className="gap-1 whitespace-nowrap bg-green-600 hover:bg-green-600">
-        <CheckCircle2 className="h-3 w-3" />
-        通过
-      </Badge>
-    )
-  }
+function ReviewStatusBadge() {
   return (
     <Badge variant="destructive" className="gap-1 whitespace-nowrap">
       <XCircle className="h-3 w-3" />
@@ -72,7 +67,6 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
   const [entries, setEntries] = useState<ExpressionReviewLogEntry[]>([])
   const [chatList, setChatList] = useState<ChatInfo[]>([])
   const [chatFilter, setChatFilter] = useState(ALL_CHATS_VALUE)
-  const [filter, setFilter] = useState<ReviewLogFilter>('all')
   const [loading, setLoading] = useState(false)
   const [processingId, setProcessingId] = useState<string | null>(null)
   const { toast } = useToast()
@@ -82,7 +76,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
       setLoading(true)
       const result = await getExpressionReviewLogs({
         limit: 100,
-        passed: filter === 'all' ? undefined : filter === 'passed',
+        passed: false,
         chat_id: chatFilter === ALL_CHATS_VALUE ? undefined : chatFilter,
       })
       setEntries(result.data)
@@ -95,7 +89,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
     } finally {
       setLoading(false)
     }
-  }, [chatFilter, filter, toast])
+  }, [chatFilter, toast])
 
   const loadChatList = useCallback(async () => {
     try {
@@ -129,26 +123,29 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
     }
   }, [])
 
-  const handleApprove = useCallback(async (entry: ExpressionReviewLogEntry) => {
-    try {
-      setProcessingId(entry.id)
-      const result = await approveExpressionReviewLog(entry.id)
-      toast({
-        title: '已人工通过',
-        description: result.message,
-      })
-      await loadLogs()
-      onRescued?.()
-    } catch (error) {
-      toast({
-        title: '恢复失败',
-        description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
-      })
-    } finally {
-      setProcessingId(null)
-    }
-  }, [loadLogs, onRescued, toast])
+  const handleApprove = useCallback(
+    async (entry: ExpressionReviewLogEntry) => {
+      try {
+        setProcessingId(entry.id)
+        const result = await approveExpressionReviewLog(entry.id)
+        toast({
+          title: '已人工通过',
+          description: result.message,
+        })
+        await loadLogs()
+        onRescued?.()
+      } catch (error) {
+        toast({
+          title: '恢复失败',
+          description: error instanceof Error ? error.message : '未知错误',
+          variant: 'destructive',
+        })
+      } finally {
+        setProcessingId(null)
+      }
+    },
+    [loadLogs, onRescued, toast]
+  )
 
   useEffect(() => {
     loadLogs()
@@ -159,11 +156,13 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
   }, [loadChatList])
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
-      <div className="shrink-0 flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="bg-card flex h-full min-h-0 flex-col overflow-hidden rounded-lg border">
+      <div className="flex shrink-0 flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">AI 审核记录</h2>
-          <p className="text-sm text-muted-foreground">最近 {entries.length} 条表达方式学习写入前审核情况</p>
+          <p className="text-muted-foreground text-sm">
+            最近 {entries.length} 条未通过的表达方式学习审核记录
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={chatFilter} onValueChange={setChatFilter}>
@@ -179,16 +178,6 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
               ))}
             </SelectContent>
           </Select>
-          <Select value={filter} onValueChange={(value) => setFilter(value as ReviewLogFilter)}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部</SelectItem>
-              <SelectItem value="failed">未通过</SelectItem>
-              <SelectItem value="passed">通过</SelectItem>
-            </SelectContent>
-          </Select>
           <Button variant="outline" size="icon" onClick={loadLogs} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
@@ -197,7 +186,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
 
       <div className="hidden min-h-0 flex-1 overflow-auto md:block">
         <Table aria-label="表达方式 AI 审核记录">
-          <TableHeader className="sticky top-0 z-10 bg-card">
+          <TableHeader className="bg-card sticky top-0 z-10">
             <TableRow>
               <TableHead className="w-32">时间</TableHead>
               <TableHead className="w-24">结果</TableHead>
@@ -210,25 +199,25 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
                   <ThinkingIllustration size="sm" className="mx-auto" />
                 </TableCell>
               </TableRow>
             ) : entries.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center">
                   暂无 AI 审核记录
                 </TableCell>
               </TableRow>
             ) : (
               entries.map((entry) => (
                 <TableRow key={entry.id}>
-                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                     {formatTime(entry.created_at)}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1.5">
-                      <ReviewStatusBadge entry={entry} />
+                      <ReviewStatusBadge />
                       <RescueBadge entry={entry} />
                     </div>
                   </TableCell>
@@ -237,7 +226,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
                       <div className="truncate font-medium" title={entry.situation}>
                         {entry.situation}
                       </div>
-                      <div className="truncate text-sm text-muted-foreground" title={entry.style}>
+                      <div className="text-muted-foreground truncate text-sm" title={entry.style}>
                         {entry.style}
                       </div>
                     </div>
@@ -247,7 +236,10 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
                       {entry.reason || entry.error || '-'}
                     </div>
                   </TableCell>
-                  <TableCell className="max-w-[12rem] truncate" title={entry.chat_name || entry.session_id}>
+                  <TableCell
+                    className="max-w-[12rem] truncate"
+                    title={entry.chat_name || entry.session_id}
+                  >
                     {entry.chat_name || entry.session_id}
                   </TableCell>
                   <TableCell className="text-right">
@@ -270,34 +262,34 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 md:hidden">
         {loading ? (
-          <div className="py-8 text-center text-muted-foreground">
+          <div className="text-muted-foreground py-8 text-center">
             <ThinkingIllustration size="sm" className="mx-auto" />
           </div>
         ) : entries.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">暂无 AI 审核记录</div>
+          <div className="text-muted-foreground py-8 text-center">暂无 AI 审核记录</div>
         ) : (
           entries.map((entry) => (
-            <div key={entry.id} className="space-y-3 rounded-lg border bg-card p-4">
+            <div key={entry.id} className="bg-card space-y-3 rounded-lg border p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">{formatTime(entry.created_at)}</div>
+                <div className="text-muted-foreground text-xs">{formatTime(entry.created_at)}</div>
                 <div className="flex flex-wrap justify-end gap-1.5">
-                  <ReviewStatusBadge entry={entry} />
+                  <ReviewStatusBadge />
                   <RescueBadge entry={entry} />
                 </div>
               </div>
               <div>
-                <div className="mb-1 text-xs text-muted-foreground">情景</div>
-                <div className="break-all text-sm font-medium">{entry.situation}</div>
+                <div className="text-muted-foreground mb-1 text-xs">情景</div>
+                <div className="text-sm font-medium break-all">{entry.situation}</div>
               </div>
               <div>
-                <div className="mb-1 text-xs text-muted-foreground">风格</div>
-                <div className="break-all text-sm">{entry.style}</div>
+                <div className="text-muted-foreground mb-1 text-xs">风格</div>
+                <div className="text-sm break-all">{entry.style}</div>
               </div>
               <div>
-                <div className="mb-1 text-xs text-muted-foreground">理由</div>
-                <div className="break-all text-sm">{entry.reason || entry.error || '-'}</div>
+                <div className="text-muted-foreground mb-1 text-xs">理由</div>
+                <div className="text-sm break-all">{entry.reason || entry.error || '-'}</div>
               </div>
-              <div className="border-t pt-3 text-xs text-muted-foreground">
+              <div className="text-muted-foreground border-t pt-3 text-xs">
                 <span className="truncate" title={entry.chat_name || entry.session_id}>
                   {entry.chat_name || entry.session_id}
                 </span>

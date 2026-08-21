@@ -299,32 +299,15 @@ def _normalize_image_part_for_openai(part: ContextImagePart) -> Tuple[str, str] 
                 return image_format, part.image_base64
 
             if image_format == "gif":
-                frame_count = getattr(image, "n_frames", 1)
-                frames: List[PILImage.Image] = []
-                durations: List[int] = []
-
-                for frame_index in range(frame_count):
-                    image.seek(frame_index)
-                    frame = image.copy()
-                    if frame.mode not in {"RGB", "RGBA"}:
-                        frame = frame.convert("RGBA")
-                    frames.append(frame)
-                    durations.append(int(image.info.get("duration", 100) or 100))
-
+                # 部分 OpenAI 兼容视觉接口会拒绝动画 GIF 或动画 WebP，因此只传递首帧。
+                image.seek(0)
+                first_frame = image.copy()
+                if first_frame.mode not in {"RGB", "RGBA"}:
+                    first_frame = first_frame.convert("RGBA")
                 output_buffer = io.BytesIO()
-                save_kwargs: Dict[str, Any] = {
-                    "format": "WEBP",
-                    "save_all": True,
-                    "append_images": frames[1:],
-                    "duration": durations,
-                    "loop": int(image.info.get("loop", 0) or 0),
-                }
-                if frame_count > 1:
-                    save_kwargs["lossless"] = True
-
-                frames[0].save(output_buffer, **save_kwargs)
+                first_frame.save(output_buffer, format="PNG")
                 converted_base64 = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
-                return "webp", converted_base64
+                return "png", converted_base64
 
             image.seek(0)
             normalized_image = image.copy()
