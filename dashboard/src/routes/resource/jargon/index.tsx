@@ -8,14 +8,6 @@ import { Button } from '@/components/ui/button'
 import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Tabs } from '@/components/ui/tabs'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
@@ -318,9 +310,9 @@ export function JargonManagementPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col p-3 sm:p-4">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 pr-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden p-4 pb-6 sm:p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+        <div className="flex min-h-full flex-col gap-3 pr-3 sm:pr-4 lg:h-full lg:min-h-0">
           {/* 统计标签 */}
           <AccentPanel showRetroStripes={false} className="bg-muted rounded-lg border">
             <Tabs value={summaryFilter} onValueChange={handleSummaryChange}>
@@ -382,7 +374,7 @@ export function JargonManagementPage() {
           {/* 搜索和筛选 */}
           <AccentPanel className="bg-card border" showRetroStripeDivider={false}>
             <div className="p-2.5">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <div className="space-y-1">
                   <Label htmlFor="search" className="text-xs">
                     搜索
@@ -397,25 +389,6 @@ export function JargonManagementPage() {
                       className="h-8 pl-9"
                     />
                   </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="page-size" className="text-xs">
-                    每页显示
-                  </Label>
-                  <Select
-                    value={pageSize.toString()}
-                    onValueChange={(value) => list.setPageSize(parseInt(value))}
-                  >
-                    <SelectTrigger id="page-size" className="h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="20">20</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -479,7 +452,7 @@ export function JargonManagementPage() {
 
           {/* 黑话列表 */}
           <div
-            className={`grid grid-cols-1 gap-3 transition-[grid-template-columns] duration-200 lg:h-[calc(100vh-15.5rem)] lg:min-h-[34rem] lg:items-stretch ${
+            className={`grid min-h-0 grid-cols-1 gap-3 transition-[grid-template-columns] duration-200 lg:flex-1 lg:items-stretch ${
               scopePanelCollapsed
                 ? 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
                 : 'lg:grid-cols-[9.5rem_minmax(0,1fr)]'
@@ -534,12 +507,13 @@ export function JargonManagementPage() {
                   onToggleSelectAll={list.toggleAll}
                   onPageChange={list.goToPage}
                   onJumpToPage={handleJumpToPage}
+                  onPageSizeChange={list.setPageSize}
                 />
               )}
             </div>
           </div>
         </div>
-      </ScrollArea>
+      </div>
 
       {/* 详情对话框 */}
       <JargonDetailDialog
