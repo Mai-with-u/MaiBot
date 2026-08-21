@@ -403,6 +403,7 @@ class ImportTaskManager:
         self._task_order: deque[str] = deque()
         self._queue: deque[str] = deque()
         self._active_task_id: Optional[str] = None
+        self._active_run_task: Optional[asyncio.Task] = None
 
         self._worker_task: Optional[asyncio.Task] = None
         self._stopping = False
@@ -1826,6 +1827,7 @@ class ImportTaskManager:
             }
 
     async def cancel_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        run_task: Optional[asyncio.Task] = None
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -1842,7 +1844,14 @@ class ImportTaskManager:
                 task.status = "cancel_requested"
                 task.current_step = "cancel_requested"
                 task.updated_at = _now()
-            return task.to_summary()
+                if self._active_task_id == task_id:
+                    run_task = self._active_run_task
+            summary = task.to_summary()
+
+        # 释放状态锁后再取消，避免任务终态收敛与取消接口互相等待。
+        if run_task is not None and not run_task.done():
+            run_task.cancel()
+        return summary
 
     def _build_retry_plan(self, task: ImportTaskRecord) -> Dict[str, Any]:
         chunk_retry_candidates: List[Tuple[ImportFileRecord, List[int]]] = []
@@ -2143,6 +2152,7 @@ class ImportTaskManager:
                 break
 
             task_id: Optional[str] = None
+            run_task: Optional[asyncio.Task] = None
             async with self._lock:
                 while self._queue:
                     candidate = self._queue.popleft()
@@ -2153,6 +2163,8 @@ class ImportTaskManager:
                         continue
                     task_id = candidate
                     self._active_task_id = candidate
+                    run_task = asyncio.create_task(self._run_task(candidate))
+                    self._active_run_task = run_task
                     break
 
             if not task_id:
@@ -2160,10 +2172,16 @@ class ImportTaskManager:
                 continue
 
             try:
-                await self._run_task(task_id)
+                if run_task is None:
+                    continue
+                await run_task
             except asyncio.CancelledError:
-                origin = "runtime_shutdown" if self._stopping else "parent_cancel"
-                reason = "服务关闭" if self._stopping else "上层任务已取消"
+                async with self._lock:
+                    task = self._tasks.get(task_id)
+                    requested_origin = task.cancel_origin if task else ""
+                user_cancelled = requested_origin == "user_request" and not self._stopping
+                origin = "user_request" if user_cancelled else ("runtime_shutdown" if self._stopping else "parent_cancel")
+                reason = "任务已取消" if user_cancelled else ("服务关闭" if self._stopping else "上层任务已取消")
                 finalize_task = asyncio.create_task(
                     self._finalize_cancelled_task(task_id, origin=origin, reason=reason)
                 )
@@ -2173,7 +2191,8 @@ class ImportTaskManager:
                     logger.warning(f"写入任务取消终态超时 task={task_id} origin={origin}")
                 except asyncio.CancelledError:
                     logger.warning(f"写入任务取消终态再次被中断 task={task_id} origin={origin}")
-                raise
+                if not user_cancelled:
+                    raise
             except Exception as e:
                 logger.error(f"导入任务执行失败 task={task_id}: {e}\n{traceback.format_exc()}")
                 async with self._lock:
@@ -2190,6 +2209,8 @@ class ImportTaskManager:
                 async with self._lock:
                     if self._active_task_id == task_id:
                         self._active_task_id = None
+                    if self._active_run_task is run_task:
+                        self._active_run_task = None
                 if should_cleanup:
                     await self._cleanup_task_temp_files(task_id)
 

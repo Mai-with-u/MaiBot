@@ -1012,6 +1012,45 @@ async def test_worker_parent_cancellation_is_reported_and_propagated(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_cancel_running_task_interrupts_active_run_and_keeps_worker_alive(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_running_reports")
+    manager._temp_root = _test_directory("cancel_running_temp")
+    first_task = _build_progress_task("task-running-cancel")
+    second_task = _build_progress_task("task-after-cancel")
+    manager._tasks[first_task.task_id] = first_task
+    manager._tasks[second_task.task_id] = second_task
+    manager._queue.extend([first_task.task_id, second_task.task_id])
+    first_started = asyncio.Event()
+    second_completed = asyncio.Event()
+
+    async def controlled_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        if task_id == first_task.task_id:
+            first_started.set()
+            await asyncio.Future()
+        manager._tasks[task_id].status = "completed"
+        second_completed.set()
+
+    monkeypatch.setattr(manager, "_run_task", controlled_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    manager._worker_task = worker
+    await first_started.wait()
+
+    summary = await manager.cancel_task(first_task.task_id)
+    await asyncio.wait_for(second_completed.wait(), timeout=1)
+
+    assert summary is not None
+    assert summary["status"] == "cancel_requested"
+    assert first_task.status == "cancelled"
+    assert first_task.cancel_origin == "user_request"
+    assert second_task.status == "completed"
+    assert not worker.done()
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_records_runtime_cancellation(monkeypatch) -> None:
     manager, _ = _build_manager()
     manager._reports_root = _test_directory("cancel_runtime_reports")
