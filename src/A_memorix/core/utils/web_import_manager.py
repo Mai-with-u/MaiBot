@@ -3382,7 +3382,16 @@ class ImportTaskManager:
             paragraphs = data.get("paragraphs", [])
             for p in paragraphs:
                 if isinstance(p, dict) and any(
-                    key in p for key in ("entities", "relations", "time_meta", "source", "type", "knowledge_type")
+                    key in p
+                    for key in (
+                        "entities",
+                        "relations",
+                        "time_meta",
+                        "source",
+                        "type",
+                        "knowledge_type",
+                        "person_ids",
+                    )
                 ):
                     return "script_json"
             return "web_json"
@@ -3451,6 +3460,7 @@ class ImportTaskManager:
                     "knowledge_type": paragraph["knowledge_type"],
                     "chunk_type": paragraph["knowledge_type"],
                     "source": paragraph["source"],
+                    "person_ids": paragraph["person_ids"],
                     "entities": paragraph["entities"],
                     "relations": paragraph["relations"],
                     "preview": paragraph["content"][:120],
@@ -3563,14 +3573,27 @@ class ImportTaskManager:
                     ).value
                     source = str(unit.get("source") or f"web_import:{file_record.name}")
                     if not skip_write:
+                        person_ids = [
+                            str(person_id or "").strip()
+                            for person_id in unit.get("person_ids", [])
+                            if str(person_id or "").strip()
+                        ]
+                        unit_metadata = dict(paragraph_metadata or {})
+                        if person_ids:
+                            unit_metadata["person_ids"] = person_ids
                         para_hash = await self._add_paragraph_metadata(
                             file_record=file_record,
                             content=content,
                             source=source,
-                            metadata=paragraph_metadata,
+                            metadata=unit_metadata,
                             knowledge_type=k_type,
                             time_meta=unit.get("time_meta"),
                         )
+                        if person_ids:
+                            self.plugin.record_person_evidence_written(
+                                person_ids,
+                                reason="web_import_json",
+                            )
                         vector_result = await self._write_paragraph_vector_or_enqueue(
                             paragraph_hash=para_hash,
                             content=content,

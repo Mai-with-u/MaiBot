@@ -217,6 +217,11 @@ def _build_manager(
     legacy_vector_store = _DummyVectorStore()
     paragraph_vector_store = _DummyVectorStore()
     graph_vector_store = _DummyVectorStore()
+    profile_refreshes: list[tuple[list[str], str]] = []
+
+    def record_person_evidence_written(person_ids: list[str], *, reason: str) -> None:
+        profile_refreshes.append((list(person_ids), reason))
+
     plugin = SimpleNamespace(
         metadata_store=metadata_store,
         graph_store=graph_store,
@@ -228,6 +233,8 @@ def _build_manager(
         get_config=lambda key, default=None: config.get(key, default),
         _is_embedding_degraded=lambda: False,
         _allow_metadata_only_write=lambda: True,
+        profile_refreshes=profile_refreshes,
+        record_person_evidence_written=record_person_evidence_written,
     )
     manager = ImportTaskManager(plugin)
     return manager, metadata_store
@@ -538,6 +545,60 @@ def test_chat_log_split_warns_when_message_headers_are_not_recognized() -> None:
 
     assert chunks
     assert "未识别" in strategy.split_warning
+
+
+@pytest.mark.asyncio
+async def test_json_paragraph_person_ids_are_stored_and_refresh_profiles() -> None:
+    manager, metadata_store = _build_manager()
+    task = _build_progress_task("task-person-ids", total_chunks=0)
+    task.files[0].input_mode = "json"
+    manager._tasks[task.task_id] = task
+    units, warnings = manager._build_json_units(
+        {
+            "paragraphs": [
+                {
+                    "content": "用户甲喜欢观星",
+                    "person_ids": ["person-a", "person-a", "person-b"],
+                }
+            ]
+        },
+        task.files[0].file_id,
+        task.files[0].name,
+        "script_json",
+    )
+    await manager._register_json_units(task.task_id, task.files[0].file_id, units)
+
+    await manager._process_json_unit(
+        task.task_id,
+        task.files[0],
+        units[0],
+        asyncio.Semaphore(1),
+        paragraph_metadata={"scope_type": "global"},
+    )
+
+    assert warnings == []
+    assert units[0]["person_ids"] == ["person-a", "person-b"]
+    assert metadata_store.paragraphs[0]["metadata"] == {
+        "scope_type": "global",
+        "person_ids": ["person-a", "person-b"],
+    }
+    assert manager.plugin.profile_refreshes == [
+        (["person-a", "person-b"], "web_import_json")
+    ]
+
+
+def test_json_paragraph_rejects_non_array_person_ids() -> None:
+    manager, _ = _build_manager()
+
+    units, warnings = manager._build_json_units(
+        {"paragraphs": [{"content": "用户甲喜欢观星", "person_ids": "person-a"}]},
+        "file-1",
+        "demo.json",
+        "script_json",
+    )
+
+    assert units == []
+    assert any("paragraph_person_ids_invalid" in warning for warning in warnings)
 
 
 def test_manifest_hit_requires_existing_live_source() -> None:

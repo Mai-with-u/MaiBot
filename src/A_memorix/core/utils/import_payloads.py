@@ -103,6 +103,26 @@ def _normalize_relations(raw_relations: Any) -> List[Dict[str, str]]:
     return out
 
 
+def _normalize_person_ids(raw_person_ids: Any) -> List[str]:
+    if raw_person_ids is None:
+        return []
+    if not isinstance(raw_person_ids, list):
+        raise ImportPayloadValidationError(
+            "段落 person_ids 必须为字符串数组",
+            code="paragraph_person_ids_invalid",
+            field="person_ids",
+        )
+    out: List[str] = []
+    seen = set()
+    for item in raw_person_ids:
+        person_id = str(item or "").strip()
+        if not person_id or person_id in seen:
+            continue
+        seen.add(person_id)
+        out.append(person_id)
+    return out
+
+
 def normalize_paragraph_import_item(
     item: Any,
     *,
@@ -131,6 +151,7 @@ def normalize_paragraph_import_item(
             "knowledge_type": knowledge_type.value,
             "source": str(default_source or "").strip(),
             "time_meta": None,
+            "person_ids": [],
             "entities": [],
             "relations": [],
         }
@@ -183,6 +204,7 @@ def normalize_paragraph_import_item(
         "knowledge_type": knowledge_type.value,
         "source": source,
         "time_meta": normalized_time_meta if normalized_time_meta else None,
+        "person_ids": _normalize_person_ids(item.get("person_ids")),
         "entities": _normalize_entities(item.get("entities")),
         "relations": _normalize_relations(item.get("relations")),
     }
