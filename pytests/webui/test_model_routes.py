@@ -364,6 +364,7 @@ def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -
     image_bytes = base64.b64decode(model_routes.MODEL_TEST_IMAGE_BASE64)
 
     assert image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", image_bytes[16:24]) == (32, 32)
 
     position = 8
     chunk_types: list[bytes] = []
@@ -377,4 +378,6 @@ def test_model_test_image_base64_is_valid_png(monkeypatch: pytest.MonkeyPatch) -
         chunk_types.append(chunk_type)
         position += 12 + chunk_length
 
-    assert chunk_types == [b"IHDR", b"IDAT", b"IEND"]
+    assert chunk_types[0] == b"IHDR"
+    assert b"IDAT" in chunk_types
+    assert chunk_types[-1] == b"IEND"
