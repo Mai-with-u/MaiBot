@@ -1,10 +1,9 @@
 import { useState } from 'react'
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpDown, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,7 +33,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Tabs } from '@/components/ui/tabs'
 
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
@@ -77,7 +75,7 @@ export function EmojiManagementPage() {
   const list = useDataList<Emoji, EmojiFilters, number>({
     domain: 'emoji',
     getId: (emoji) => emoji.id,
-    initialFilters: { status: 'adopted', format: 'all', sortBy: 'usage_count', sortOrder: 'desc' },
+    initialFilters: { status: 'adopted', format: 'all', sortBy: 'register_time', sortOrder: 'desc' },
     searchDebounceMs: 300,
     queryFn: async ({ page, pageSize, search, filters }) => {
       const result = await getEmojiList({
@@ -219,59 +217,19 @@ export function EmojiManagementPage() {
 
   // 获取格式选项
   const formatOptions = stats?.formats ? Object.keys(stats.formats) : []
+  const statusOptions = stats
+    ? [
+        { value: 'known' as const, label: '认识', count: stats.known },
+        { value: 'unknown' as const, label: '不认识', count: stats.unknown },
+        { value: 'adopted' as const, label: '据为己用', count: stats.adopted },
+        { value: 'discarded' as const, label: '丢弃', count: stats.discarded },
+      ]
+    : []
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col p-4 sm:p-6">
       <ScrollArea className="flex-1">
         <div className="space-y-4 pr-4 sm:space-y-6">
-          {/* 状态切换 */}
-          {stats && (
-            <Tabs
-              value={list.filters.status === 'all' ? 'adopted' : list.filters.status}
-              onValueChange={(value) => list.setFilter('status', value as EmojiStatus)}
-            >
-              <DashboardTabBar
-                data-emoji-status-tabs="true"
-                variant="grid"
-                className="grid-cols-2 sm:grid-cols-4"
-              >
-                {[
-                  {
-                    value: 'known' as const,
-                    label: '认识',
-                    count: stats.known,
-                    className: 'text-sky-600',
-                  },
-                  {
-                    value: 'unknown' as const,
-                    label: '不认识',
-                    count: stats.unknown,
-                    className: 'text-gray-600',
-                  },
-                  {
-                    value: 'adopted' as const,
-                    label: '据为己用',
-                    count: stats.adopted,
-                    className: 'text-green-600',
-                  },
-                  {
-                    value: 'discarded' as const,
-                    label: '丢弃',
-                    count: stats.discarded,
-                    className: 'text-red-600',
-                  },
-                ].map((item) => (
-                  <DashboardTabTrigger key={item.value} value={item.value} className="h-10 gap-2">
-                    <span>{item.label}</span>
-                    <span className={`leading-none font-semibold ${item.className}`}>
-                      {item.count}
-                    </span>
-                  </DashboardTabTrigger>
-                ))}
-              </DashboardTabBar>
-            </Tabs>
-          )}
-
           {/* 筛选和排序 */}
           <Card>
             <CardHeader className="space-y-3">
@@ -304,28 +262,31 @@ export function EmojiManagementPage() {
 
                 <div className="space-y-2">
                   <Label>排序方式</Label>
-                  <Select
-                    value={`${list.filters.sortBy}-${list.filters.sortOrder}`}
-                    onValueChange={(value) => {
-                      const [newSortBy, newSortOrder] = value.split('-')
-                      list.setFilter('sortBy', newSortBy)
-                      list.setFilter('sortOrder', newSortOrder as 'desc' | 'asc')
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="usage_count-desc">使用次数 (多→少)</SelectItem>
-                      <SelectItem value="usage_count-asc">使用次数 (少→多)</SelectItem>
-                      <SelectItem value="register_time-desc">注册时间 (新→旧)</SelectItem>
-                      <SelectItem value="register_time-asc">注册时间 (旧→新)</SelectItem>
-                      <SelectItem value="record_time-desc">记录时间 (新→旧)</SelectItem>
-                      <SelectItem value="record_time-asc">记录时间 (旧→新)</SelectItem>
-                      <SelectItem value="last_used_time-desc">最后使用 (新→旧)</SelectItem>
-                      <SelectItem value="last_used_time-asc">最后使用 (旧→新)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex gap-2">
+                    <Select value={list.filters.sortBy} onValueChange={(value) => list.setFilter('sortBy', value)}>
+                      <SelectTrigger aria-label="排序字段">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="usage_count">使用次数</SelectItem>
+                        <SelectItem value="register_time">注册时间</SelectItem>
+                        <SelectItem value="record_time">记录时间</SelectItem>
+                        <SelectItem value="last_used_time">最后使用</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={list.filters.sortOrder === 'desc' ? '切换为正序' : '切换为倒序'}
+                      title={list.filters.sortOrder === 'desc' ? '当前倒序，点击切换为正序' : '当前正序，点击切换为倒序'}
+                      onClick={() =>
+                        list.setFilter('sortOrder', list.filters.sortOrder === 'desc' ? 'asc' : 'desc')
+                      }
+                    >
+                      <ArrowUpDown className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -348,6 +309,29 @@ export function EmojiManagementPage() {
                   </Select>
                 </div>
               </div>
+
+              {stats && (
+                <div className="border-t pt-4">
+                  <div className="max-w-xs space-y-2">
+                    <Label>表情包状态</Label>
+                    <Select
+                      value={list.filters.status === 'all' ? 'adopted' : list.filters.status}
+                      onValueChange={(value) => list.setFilter('status', value as EmojiStatus)}
+                    >
+                      <SelectTrigger aria-label="表情包状态">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {statusOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label} ({option.count})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
 
               <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-3">

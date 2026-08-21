@@ -226,7 +226,7 @@ async def get_emoji_list(
     is_banned: Optional[bool] = Query(None, description="是否被禁用筛选"),
     status: Optional[str] = Query(None, description="表情包状态筛选"),
     format: Optional[str] = Query(None, description="图片格式筛选"),
-    sort_by: Optional[str] = Query("query_count", description="排序字段"),
+    sort_by: Optional[str] = Query("register_time", description="排序字段"),
     sort_order: Optional[str] = Query("desc", description="排序方向"),
     maibot_session: Optional[str] = Cookie(None),
 ) -> EmojiListResponse:
@@ -272,7 +272,7 @@ async def get_emoji_list(
             "record_time": col(Images.record_time),
             "last_used_time": col(Images.last_used_time),
         }
-        sort_field = sort_field_map.get(sort_by or "query_count", col(Images.query_count))
+        sort_field = sort_field_map.get(sort_by or "register_time", col(Images.register_time))
         statement = statement.order_by(sort_field.asc() if sort_order == "asc" else sort_field.desc())
 
         offset = (page - 1) * page_size
