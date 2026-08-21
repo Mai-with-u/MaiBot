@@ -104,6 +104,43 @@ class ProfileEvidenceCorrectRequest(BaseModel):
     limit: int = Field(12, ge=1, le=100)
 
 
+class FactCreateRequest(BaseModel):
+    scope_type: str = "person"
+    scope_id: str = Field(..., min_length=1)
+    fact_key: str = Field(..., min_length=1)
+    value_text: str = Field(..., min_length=1)
+    polarity: str = "positive"
+    cardinality: str = "set"
+    stability: str = "stable"
+    profile_section: str = "stable_facts"
+    authority: str = "manual"
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
+    valid_from: Optional[float] = None
+    valid_to: Optional[float] = None
+    reason: str = "webui_fact_create"
+    updated_by: str = "webui"
+
+
+class FactUpdateRequest(BaseModel):
+    fact_key: Optional[str] = None
+    value_text: Optional[str] = None
+    polarity: Optional[str] = None
+    cardinality: Optional[str] = None
+    stability: Optional[str] = None
+    profile_section: Optional[str] = None
+    authority: Optional[str] = None
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    valid_from: Optional[float] = None
+    valid_to: Optional[float] = None
+    reason: str = "webui_fact_update"
+    updated_by: str = "webui"
+
+
+class FactStatusRequest(BaseModel):
+    reason: str = ""
+    requested_by: str = "webui"
+
+
 class ImportChatTarget(BaseModel):
     """记忆导入可选择的聊天流。"""
 
@@ -758,6 +795,506 @@ def _query_memory_rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str,
         return list(metadata_store.query(sql, params))
     except Exception:
         return []
+
+
+_MEMORY_RECORD_TYPES = {"paragraph", "entity", "relation", "fact"}
+
+
+def _require_memory_metadata_store() -> Any:
+    metadata_store = _get_memory_metadata_store()
+    if metadata_store is None:
+        raise HTTPException(status_code=503, detail="长期记忆 metadata 数据库尚未就绪")
+    return metadata_store
+
+
+def _query_memory_records(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    """执行 WebUI 权威记忆查询；查询错误需要完整暴露，不能伪装成空结果。"""
+
+    metadata_store = _require_memory_metadata_store()
+    try:
+        return [dict(row) for row in metadata_store.query(sql, params)]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"查询长期记忆 metadata 失败: {exc}") from exc
+
+
+def _memory_record_types(raw_types: str) -> list[str]:
+    requested = [item.strip().lower() for item in str(raw_types or "").split(",") if item.strip()]
+    if not requested:
+        return ["paragraph", "entity", "relation", "fact"]
+    unknown = sorted(set(requested) - _MEMORY_RECORD_TYPES)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"不支持的记忆类型: {', '.join(unknown)}")
+    return list(dict.fromkeys(requested))
+
+
+def _memory_like_pattern(query: str) -> str:
+    escaped = str(query or "").strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _memory_record_timestamp(row: dict[str, Any]) -> float:
+    for key in ("updated_at", "last_confirmed_at", "created_at"):
+        value = _safe_float(row.get(key))
+        if value is not None:
+            return value
+    return 0.0
+
+
+def _memory_record_payload(record_type: str, row: dict[str, Any]) -> dict[str, Any]:
+    if record_type == "paragraph":
+        content = str(row.get("content") or "").strip()
+        source = str(row.get("source") or "").strip()
+        is_deleted = bool(int(row.get("is_deleted") or 0))
+        return {
+            "type": record_type,
+            "id": str(row.get("hash") or "").strip(),
+            "title": _trim_memory_text(content, 88) or source or "未命名段落",
+            "summary": _trim_memory_text(content, 240),
+            "source": source,
+            "status": "deleted" if is_deleted else "active",
+            "created_at": _safe_float(row.get("created_at")),
+            "updated_at": _safe_float(row.get("updated_at")),
+            "metadata": {
+                "knowledge_type": str(row.get("knowledge_type") or "mixed"),
+                "word_count": int(row.get("word_count") or 0),
+                "vector_indexed": row.get("vector_index") is not None,
+                "raw": _decode_metadata_payload(row.get("metadata")),
+            },
+        }
+    if record_type == "entity":
+        name = str(row.get("name") or row.get("hash") or "").strip()
+        is_deleted = bool(int(row.get("is_deleted") or 0))
+        appearance_count = int(row.get("appearance_count") or 0)
+        return {
+            "type": record_type,
+            "id": str(row.get("hash") or "").strip(),
+            "title": name,
+            "summary": f"在 {appearance_count} 处记忆中出现",
+            "source": "",
+            "status": "deleted" if is_deleted else "active",
+            "created_at": _safe_float(row.get("created_at")),
+            "updated_at": None,
+            "metadata": {
+                "name": name,
+                "appearance_count": appearance_count,
+                "vector_indexed": row.get("vector_index") is not None,
+                "raw": _decode_metadata_payload(row.get("metadata")),
+            },
+        }
+    if record_type == "relation":
+        subject = str(row.get("subject") or "").strip()
+        predicate = str(row.get("predicate") or "").strip()
+        obj = str(row.get("object") or "").strip()
+        is_inactive = bool(int(row.get("is_inactive") or 0))
+        return {
+            "type": record_type,
+            "id": str(row.get("hash") or "").strip(),
+            "title": _format_memory_relation(subject, predicate, obj),
+            "summary": f"置信度 {float(row.get('confidence') or 0.0):.2f}",
+            "source": str(row.get("source_paragraph") or "").strip(),
+            "status": "inactive" if is_inactive else "active",
+            "created_at": _safe_float(row.get("created_at")),
+            "updated_at": _safe_float(row.get("last_reinforced")),
+            "metadata": {
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "confidence": float(row.get("confidence") or 0.0),
+                "vector_state": str(row.get("vector_state") or "none"),
+                "is_pinned": bool(int(row.get("is_pinned") or 0)),
+                "protected_until": _safe_float(row.get("protected_until")),
+                "raw": _decode_metadata_payload(row.get("metadata")),
+            },
+        }
+
+    fact_key = str(row.get("fact_key") or "").strip()
+    value_text = str(row.get("value_text") or "").strip()
+    scope_type = str(row.get("scope_type") or "").strip()
+    scope_id = str(row.get("scope_id") or "").strip()
+    return {
+        "type": "fact",
+        "id": str(row.get("claim_id") or "").strip(),
+        "title": f"{fact_key}: {value_text}" if fact_key else value_text,
+        "summary": f"{scope_type} · {scope_id}".strip(" ·"),
+        "source": scope_id,
+        "status": str(row.get("status") or "active"),
+        "created_at": _safe_float(row.get("created_at")),
+        "updated_at": _safe_float(row.get("updated_at")),
+        "metadata": {
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+            "fact_key": fact_key,
+            "value_text": value_text,
+            "polarity": str(row.get("polarity") or ""),
+            "cardinality": str(row.get("cardinality") or ""),
+            "stability": str(row.get("stability") or ""),
+            "profile_section": str(row.get("profile_section") or ""),
+            "authority": str(row.get("authority") or ""),
+            "confidence": float(row.get("confidence") or 0.0),
+            "conflict_group": str(row.get("conflict_group") or ""),
+            "valid_from": _safe_float(row.get("valid_from")),
+            "valid_to": _safe_float(row.get("valid_to")),
+        },
+    }
+
+
+def _memory_records_search(
+    query: str,
+    *,
+    record_types: str,
+    limit: int,
+    include_inactive: bool,
+) -> dict[str, Any]:
+    selected_types = _memory_record_types(record_types)
+    keyword = str(query or "").strip()
+    pattern = _memory_like_pattern(keyword)
+    rows_by_type: dict[str, list[dict[str, Any]]] = {}
+
+    if "paragraph" in selected_types:
+        rows_by_type["paragraph"] = _query_memory_records(
+            """
+            SELECT hash, content, source, knowledge_type, word_count, vector_index,
+                   created_at, updated_at, metadata, is_deleted
+            FROM paragraphs
+            WHERE (? = 1 OR COALESCE(is_deleted, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(content, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(source, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(updated_at, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, limit),
+        )
+    if "entity" in selected_types:
+        rows_by_type["entity"] = _query_memory_records(
+            """
+            SELECT hash, name, appearance_count, vector_index, created_at, metadata, is_deleted
+            FROM entities
+            WHERE (? = 1 OR COALESCE(is_deleted, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(name, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\')
+            ORDER BY appearance_count DESC, created_at DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, limit),
+        )
+    if "relation" in selected_types:
+        rows_by_type["relation"] = _query_memory_records(
+            """
+            SELECT hash, subject, predicate, object, confidence, source_paragraph,
+                   vector_state, created_at, last_reinforced, is_inactive,
+                   is_pinned, protected_until, metadata
+            FROM relations
+            WHERE (? = 1 OR COALESCE(is_inactive, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(subject, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(predicate, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(object, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(last_reinforced, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, pattern, limit),
+        )
+    if "fact" in selected_types:
+        rows_by_type["fact"] = _query_memory_records(
+            """
+            SELECT *
+            FROM fact_claims
+            WHERE (? = 1 OR LOWER(COALESCE(status, 'active')) = 'active')
+              AND (? = '' OR LOWER(COALESCE(fact_key, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(value_text, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(scope_id, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(claim_id, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(updated_at, last_confirmed_at, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, pattern, limit),
+        )
+
+    items = [
+        _memory_record_payload(record_type, row)
+        for record_type, rows in rows_by_type.items()
+        for row in rows
+    ]
+    items.sort(key=_memory_record_timestamp, reverse=True)
+    items = items[:limit]
+    result_counts = {
+        record_type: sum(1 for item in items if item["type"] == record_type)
+        for record_type in selected_types
+    }
+    return {
+        "success": True,
+        "query": keyword,
+        "types": selected_types,
+        "include_inactive": include_inactive,
+        "limit": limit,
+        "count": len(items),
+        "counts": result_counts,
+        "items": items,
+    }
+
+
+def _memory_record_detail_row(record_type: str, record_id: str) -> dict[str, Any]:
+    token = str(record_id or "").strip()
+    if record_type == "paragraph":
+        rows = _query_memory_records("SELECT * FROM paragraphs WHERE hash = ? LIMIT 1", (token,))
+    elif record_type == "entity":
+        rows = _query_memory_records(
+            "SELECT * FROM entities WHERE hash = ? OR LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1",
+            (token, token),
+        )
+    elif record_type == "relation":
+        rows = _query_memory_records("SELECT * FROM relations WHERE hash = ? LIMIT 1", (token,))
+    else:
+        rows = _query_memory_records("SELECT * FROM fact_claims WHERE claim_id = ? LIMIT 1", (token,))
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"未找到 {record_type} 记忆记录: {token}")
+    return rows[0]
+
+
+def _memory_placeholders(values: list[str]) -> str:
+    return ",".join("?" for _ in values)
+
+
+def _memory_related_paragraph_hashes(record_type: str, record: dict[str, Any], limit: int) -> list[str]:
+    if record_type == "paragraph":
+        return [str(record.get("hash") or "").strip()]
+    if record_type == "entity":
+        rows = _query_memory_records(
+            """
+            SELECT DISTINCT p.hash
+            FROM paragraph_entities pe
+            JOIN paragraphs p ON p.hash = pe.paragraph_hash
+            WHERE pe.entity_hash = ? AND COALESCE(p.is_deleted, 0) = 0
+            ORDER BY COALESCE(p.updated_at, p.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (str(record.get("hash") or ""), limit),
+        )
+        return [str(row.get("hash") or "") for row in rows if str(row.get("hash") or "").strip()]
+    if record_type == "relation":
+        rows = _query_memory_records(
+            """
+            SELECT DISTINCT p.hash
+            FROM paragraph_relations pr
+            JOIN paragraphs p ON p.hash = pr.paragraph_hash
+            WHERE pr.relation_hash = ? AND COALESCE(p.is_deleted, 0) = 0
+            ORDER BY COALESCE(p.updated_at, p.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (str(record.get("hash") or ""), limit),
+        )
+        return [str(row.get("hash") or "") for row in rows if str(row.get("hash") or "").strip()]
+
+    evidence_rows = _query_memory_records(
+        "SELECT evidence_id FROM fact_evidence WHERE claim_id = ? ORDER BY observed_at DESC LIMIT ?",
+        (str(record.get("claim_id") or ""), limit),
+    )
+    evidence_ids = [str(row.get("evidence_id") or "").strip() for row in evidence_rows]
+    evidence_ids = [item for item in evidence_ids if item]
+    if not evidence_ids:
+        return []
+    placeholders = _memory_placeholders(evidence_ids)
+    rows = _query_memory_records(
+        f"SELECT hash FROM paragraphs WHERE hash IN ({placeholders}) AND COALESCE(is_deleted, 0) = 0",
+        tuple(evidence_ids),
+    )
+    return [str(row.get("hash") or "") for row in rows if str(row.get("hash") or "").strip()]
+
+
+def _memory_record_context(record_type: str, record_id: str, limit: int) -> dict[str, Any]:
+    normalized_type = str(record_type or "").strip().lower()
+    if normalized_type not in _MEMORY_RECORD_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的记忆类型: {record_type}")
+    row = _memory_record_detail_row(normalized_type, record_id)
+    record = _memory_record_payload(normalized_type, row)
+    paragraph_hashes = _memory_related_paragraph_hashes(normalized_type, row, limit)
+
+    paragraphs: list[dict[str, Any]] = []
+    entities: list[dict[str, Any]] = []
+    relations: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
+    episodes: list[dict[str, Any]] = []
+    if paragraph_hashes:
+        placeholders = _memory_placeholders(paragraph_hashes)
+        paragraph_rows = _query_memory_records(
+            f"SELECT * FROM paragraphs WHERE hash IN ({placeholders}) ORDER BY COALESCE(updated_at, created_at, 0) DESC LIMIT ?",
+            (*paragraph_hashes, limit),
+        )
+        paragraphs = [_memory_record_payload("paragraph", item) for item in paragraph_rows]
+        entity_rows = _query_memory_records(
+            f"""
+            SELECT DISTINCT e.*
+            FROM paragraph_entities pe
+            JOIN entities e ON e.hash = pe.entity_hash
+            WHERE pe.paragraph_hash IN ({placeholders})
+            ORDER BY e.appearance_count DESC
+            LIMIT ?
+            """,
+            (*paragraph_hashes, limit),
+        )
+        entities = [_memory_record_payload("entity", item) for item in entity_rows]
+        relation_rows = _query_memory_records(
+            f"""
+            SELECT DISTINCT r.*
+            FROM paragraph_relations pr
+            JOIN relations r ON r.hash = pr.relation_hash
+            WHERE pr.paragraph_hash IN ({placeholders})
+            ORDER BY COALESCE(r.last_reinforced, r.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (*paragraph_hashes, limit),
+        )
+        relations = [_memory_record_payload("relation", item) for item in relation_rows]
+        fact_rows = _query_memory_records(
+            f"""
+            SELECT DISTINCT fc.*
+            FROM fact_evidence fe
+            JOIN fact_claims fc ON fc.claim_id = fe.claim_id
+            WHERE fe.evidence_id IN ({placeholders})
+            ORDER BY COALESCE(fc.updated_at, fc.last_confirmed_at, fc.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (*paragraph_hashes, limit),
+        )
+        facts = [_memory_record_payload("fact", item) for item in fact_rows]
+        episode_rows = _query_memory_records(
+            f"""
+            SELECT DISTINCT e.episode_id, e.title, e.summary, e.source, e.paragraph_count,
+                            e.event_time_start, e.event_time_end, e.updated_at
+            FROM episode_paragraphs ep
+            JOIN episodes e ON e.episode_id = ep.episode_id
+            WHERE ep.paragraph_hash IN ({placeholders})
+            ORDER BY e.updated_at DESC
+            LIMIT ?
+            """,
+            (*paragraph_hashes, limit),
+        )
+        episodes = [
+            {
+                "id": str(item.get("episode_id") or ""),
+                "title": str(item.get("title") or ""),
+                "summary": _trim_memory_text(item.get("summary"), 200),
+                "source": str(item.get("source") or ""),
+                "paragraph_count": int(item.get("paragraph_count") or 0),
+                "event_time_start": _safe_float(item.get("event_time_start")),
+                "event_time_end": _safe_float(item.get("event_time_end")),
+                "updated_at": _safe_float(item.get("updated_at")),
+            }
+            for item in episode_rows
+        ]
+
+    if normalized_type == "entity" and not any(item["id"] == record["id"] for item in entities):
+        entities.insert(0, record)
+    if normalized_type == "relation" and not any(item["id"] == record["id"] for item in relations):
+        relations.insert(0, record)
+    if normalized_type == "fact" and not any(item["id"] == record["id"] for item in facts):
+        facts.insert(0, record)
+
+    fact_ids = [item["id"] for item in facts]
+    fact_evidence: list[dict[str, Any]] = []
+    fact_transitions: list[dict[str, Any]] = []
+    if normalized_type == "fact":
+        fact_evidence = _query_memory_records(
+            """
+            SELECT evidence_type, evidence_id, stance, weight, observed_at, metadata_json
+            FROM fact_evidence WHERE claim_id = ? ORDER BY observed_at DESC LIMIT ?
+            """,
+            (record["id"], limit),
+        )
+        for item in fact_evidence:
+            item["metadata"] = _decode_json_payload(item.pop("metadata_json", ""), {})
+        fact_transitions = _query_memory_records(
+            """
+            SELECT transition_id, old_claim_id, new_claim_id, transition_type, reason,
+                   evidence_type, evidence_id, created_at
+            FROM fact_transitions
+            WHERE old_claim_id = ? OR new_claim_id = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (record["id"], record["id"], limit),
+        )
+
+    profile_rows = _query_memory_records(
+        """
+        SELECT s.person_id, s.profile_version, s.profile_text, s.evidence_ids_json,
+               s.fact_claim_ids_json, s.updated_at, s.source_note
+        FROM person_profile_snapshots s
+        JOIN (
+            SELECT person_id, MAX(profile_version) AS max_version
+            FROM person_profile_snapshots GROUP BY person_id
+        ) latest ON latest.person_id = s.person_id AND latest.max_version = s.profile_version
+        ORDER BY s.updated_at DESC
+        LIMIT 200
+        """
+    )
+    paragraph_set = set(paragraph_hashes)
+    fact_set = set(fact_ids)
+    profiles = []
+    for item in profile_rows:
+        evidence_ids = {str(value) for value in _decode_json_payload(item.get("evidence_ids_json"), [])}
+        claim_ids = {str(value) for value in _decode_json_payload(item.get("fact_claim_ids_json"), [])}
+        if not (paragraph_set & evidence_ids or fact_set & claim_ids):
+            continue
+        profiles.append(
+            {
+                "person_id": str(item.get("person_id") or ""),
+                "profile_version": int(item.get("profile_version") or 0),
+                "profile_text": _trim_memory_text(item.get("profile_text"), 200),
+                "updated_at": _safe_float(item.get("updated_at")),
+                "source_note": str(item.get("source_note") or ""),
+            }
+        )
+        if len(profiles) >= limit:
+            break
+
+    relation_ids = [item["id"] for item in relations if item["id"]]
+    graph_jobs: list[dict[str, Any]] = []
+    if relation_ids:
+        placeholders = _memory_placeholders(relation_ids)
+        graph_jobs = _query_memory_records(
+            f"""
+            SELECT relation_hash, desired_active, status, attempt_count, last_error, updated_at
+            FROM relation_graph_projection_jobs
+            WHERE relation_hash IN ({placeholders})
+            ORDER BY updated_at DESC
+            """,
+            tuple(relation_ids),
+        )
+
+    fact_status = str(record.get("status", "") or "").strip().lower()
+    fact_actions = (
+        ["restore_fact", "profile"]
+        if fact_status in {"retracted", "superseded"}
+        else ["edit_fact", "retract_fact", "profile"]
+    )
+    available_actions = {
+        "paragraph": ["graph", "correct", "delete"],
+        "entity": ["graph", "delete"],
+        "relation": ["graph", "correct", "reinforce", "freeze", "protect", "delete"],
+        "fact": fact_actions,
+    }[normalized_type]
+    related = {
+        "paragraphs": paragraphs,
+        "entities": entities,
+        "relations": relations,
+        "facts": facts,
+        "episodes": episodes,
+        "profiles": profiles,
+    }
+    return {
+        "success": True,
+        "record": record,
+        "related": related,
+        "counts": {key: len(value) for key, value in related.items()},
+        "fact_evidence": fact_evidence,
+        "fact_transitions": fact_transitions,
+        "projection": {
+            "graph_jobs": graph_jobs,
+            "graph_pending_count": len(graph_jobs),
+        },
+        "available_actions": available_actions,
+    }
 
 
 def _timeline_query_limit(limit: int, multiplier: int, minimum: int) -> Optional[int]:
@@ -2212,6 +2749,30 @@ async def _delete_purge(payload: DeletePurgeRequest) -> dict:
     )
 
 
+async def _fact_create(payload: FactCreateRequest) -> dict:
+    return await memory_service.fact_admin(action="create", **payload.model_dump())
+
+
+async def _fact_update(claim_id: str, payload: FactUpdateRequest) -> dict:
+    update_fields = payload.model_dump(exclude_unset=True)
+    update_fields.setdefault("reason", payload.reason)
+    update_fields.setdefault("updated_by", payload.updated_by)
+    return await memory_service.fact_admin(
+        action="update",
+        claim_id=claim_id,
+        **update_fields,
+    )
+
+
+async def _fact_change_status(action: str, claim_id: str, payload: FactStatusRequest) -> dict:
+    return await memory_service.fact_admin(
+        action=action,
+        claim_id=claim_id,
+        reason=payload.reason,
+        requested_by=payload.requested_by,
+    )
+
+
 async def _memory_correction_preview(payload: MemoryCorrectionPreviewRequest) -> dict:
     resolved_chat_id = _resolve_memory_correction_chat_id(payload.chat_id)
     return await memory_service.memory_correction_admin(
@@ -2446,6 +3007,72 @@ async def _stage_upload_files(files: list[UploadFile]) -> tuple[Path, list[dict[
             }
         )
     return staging_dir, staged_files
+
+
+@router.get("/records/search")
+async def search_memory_records(
+    query: str = Query(""),
+    types: str = Query(""),
+    limit: int = Query(50, ge=1, le=200),
+    include_inactive: bool = Query(False),
+):
+    return _memory_records_search(
+        query,
+        record_types=types,
+        limit=limit,
+        include_inactive=include_inactive,
+    )
+
+
+@router.get("/facts")
+async def list_memory_facts(
+    scope_type: str = Query("person"),
+    scope_id: str = Query(..., min_length=1),
+    statuses: str = Query("active"),
+    limit: int = Query(200, ge=1, le=500),
+):
+    normalized_statuses = [item.strip() for item in statuses.split(",") if item.strip()]
+    return await memory_service.fact_admin(
+        action="list",
+        scope_type=scope_type,
+        scope_id=scope_id,
+        statuses=normalized_statuses,
+        limit=limit,
+    )
+
+
+@router.post("/facts")
+async def create_memory_fact(payload: FactCreateRequest):
+    return await _fact_create(payload)
+
+
+@router.get("/facts/{claim_id}")
+async def get_memory_fact(claim_id: str):
+    return await memory_service.fact_admin(action="get", claim_id=claim_id)
+
+
+@router.patch("/facts/{claim_id}")
+async def update_memory_fact(claim_id: str, payload: FactUpdateRequest):
+    return await _fact_update(claim_id, payload)
+
+
+@router.post("/facts/{claim_id}/retract")
+async def retract_memory_fact(claim_id: str, payload: FactStatusRequest):
+    return await _fact_change_status("retract", claim_id, payload)
+
+
+@router.post("/facts/{claim_id}/restore")
+async def restore_memory_fact(claim_id: str, payload: FactStatusRequest):
+    return await _fact_change_status("restore", claim_id, payload)
+
+
+@router.get("/records/{record_type}/{record_id}")
+async def get_memory_record_context(
+    record_type: str,
+    record_id: str,
+    limit: int = Query(50, ge=1, le=200),
+):
+    return _memory_record_context(record_type, record_id, limit)
 
 
 @router.get("/graph")

@@ -6,6 +6,7 @@ import {
   applyBestMemoryTuningProfile,
   cancelMemoryImportTask,
   correctMemoryProfileEvidence,
+  createMemoryFact,
   createMemoryLpmmConvertImport,
   createMemoryLpmmOpenieImport,
   createMemoryMaibotMigrationImport,
@@ -19,6 +20,7 @@ import {
   executeMemoryCorrection,
   executeMemoryDelete,
   freezeMemory,
+  getMemoryRecordContext,
   getMemoryConfig,
   getMemoryConfigRaw,
   getMemoryConfigSchema,
@@ -64,15 +66,19 @@ import {
   reinforceMemory,
   resolveMemoryImportPath,
   restoreMaintainedMemory,
+  restoreMemoryFact,
   restoreMemoryDelete,
   retryMemoryImportTask,
+  retractMemoryFact,
   rollbackMemoryCorrectionPlan,
   rollbackMemoryFeedbackCorrection,
+  searchMemoryRecords,
   searchMemoryProfiles,
   setMemoryProfileAliases,
   setMemoryProfileOverride,
   updateMemoryConfig,
   updateMemoryConfigRaw,
+  updateMemoryFact,
 } from '../memory-api'
 
 vi.mock('@/lib/http', async (importOriginal) => {
@@ -113,6 +119,90 @@ function parseRequestCall(index: number = 0): {
 
 beforeEach(() => {
   requestMock.mockReset()
+})
+
+describe('权威记忆查询', () => {
+  it('searchMemoryRecords 透传类型、状态和上限', async () => {
+    requestMock.mockResolvedValue({ success: true, items: [] })
+
+    await searchMemoryRecords({
+      query: '小明 咖啡',
+      types: ['paragraph', 'fact'],
+      limit: 24,
+      includeInactive: true,
+    })
+
+    const call = parseRequestCall()
+    expect(call.method).toBe('GET')
+    expect(call.pathname).toBe(`${BASE}/records/search`)
+    expect(Object.fromEntries(call.search.entries())).toEqual({
+      query: '小明 咖啡',
+      types: 'paragraph,fact',
+      limit: '24',
+      include_inactive: 'true',
+    })
+  })
+
+  it('getMemoryRecordContext 编码记录 ID 并携带关联上限', async () => {
+    requestMock.mockResolvedValue({ success: true })
+
+    await getMemoryRecordContext('paragraph', 'hash/01', 36)
+
+    expect(requestMock).toHaveBeenCalledWith(
+      'GET',
+      `${BASE}/records/paragraph/hash%2F01?limit=36`,
+      { body: undefined }
+    )
+  })
+
+  it('createMemoryFact 写入结构化事实', async () => {
+    requestMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-1' } })
+    const payload = {
+      scope_type: 'person' as const,
+      scope_id: 'person-1',
+      fact_key: 'favorite_drink',
+      value_text: '咖啡',
+    }
+
+    await createMemoryFact(payload)
+
+    expect(requestMock).toHaveBeenCalledWith('POST', `${BASE}/facts`, { body: payload })
+  })
+
+  it('updateMemoryFact 不允许通过 PATCH 改写事实归属', async () => {
+    requestMock.mockResolvedValue({ success: true, claim: { claim_id: 'fact-2' } })
+
+    await updateMemoryFact('fact/1', {
+      scope_type: 'person',
+      scope_id: 'person-1',
+      fact_key: 'favorite_drink',
+      value_text: '绿茶',
+      valid_to: null,
+    })
+
+    const call = parseRequestCall()
+    expect(call.method).toBe('PATCH')
+    expect(call.pathname).toBe(`${BASE}/facts/fact%2F1`)
+    expect(call.body).toEqual(
+      expect.objectContaining({ fact_key: 'favorite_drink', value_text: '绿茶', valid_to: null })
+    )
+    expect(call.body).not.toHaveProperty('scope_type')
+    expect(call.body).not.toHaveProperty('scope_id')
+  })
+
+  it('retractMemoryFact 与 restoreMemoryFact 使用独立状态接口', async () => {
+    requestMock.mockResolvedValue({ success: true })
+
+    await retractMemoryFact('fact-1', '信息失效')
+    await restoreMemoryFact('fact-1', '信息重新有效')
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, 'POST', `${BASE}/facts/fact-1/retract`, {
+      body: { reason: '信息失效', requested_by: 'knowledge_base' },
+    })
+    expect(requestMock).toHaveBeenNthCalledWith(2, 'POST', `${BASE}/facts/fact-1/restore`, {
+      body: { reason: '信息重新有效', requested_by: 'knowledge_base' },
+    })
+  })
 })
 
 describe('图谱查询', () => {

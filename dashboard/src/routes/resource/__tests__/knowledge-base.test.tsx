@@ -130,6 +130,8 @@ vi.mock('@/lib/memory-api', () => ({
   getMemoryGraphNodeDetail: vi.fn(),
   getMemoryGraphEdgeDetail: vi.fn(),
   getMemoryGraphParagraphDetail: vi.fn(),
+  searchMemoryRecords: vi.fn(),
+  getMemoryRecordContext: vi.fn(),
   previewMemoryDelete: vi.fn(),
   executeMemoryDelete: vi.fn(),
   restoreMemoryDelete: vi.fn(),
@@ -394,6 +396,16 @@ describe('KnowledgeBasePage import workflow', () => {
         edges: [],
         focus_entities: ['Alpha'],
       },
+    })
+    vi.mocked(memoryApi.searchMemoryRecords).mockResolvedValue({
+      success: true,
+      query: '',
+      types: ['paragraph', 'entity', 'relation', 'fact'],
+      include_inactive: false,
+      limit: 80,
+      count: 0,
+      counts: {},
+      items: [],
     })
 
     vi.mocked(memoryApi.getMemoryImportGuide).mockResolvedValue({

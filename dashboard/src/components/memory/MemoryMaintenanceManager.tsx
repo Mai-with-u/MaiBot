@@ -29,7 +29,7 @@ import {
 } from '@/lib/memory-api'
 import { cn } from '@/lib/utils'
 
-type MaintenanceAction = 'reinforce' | 'freeze' | 'protect' | 'restore'
+export type MemoryMaintenanceAction = 'reinforce' | 'freeze' | 'protect' | 'restore'
 
 function formatMemoryTime(timestamp?: number | null): string {
   if (!timestamp) {
@@ -79,7 +79,7 @@ function getRelationText(item: MemoryMaintenanceItemPayload): string {
   return [item.subject, item.predicate, item.object].map((value) => String(value ?? '').trim()).filter(Boolean).join(' ')
 }
 
-function getActionLabel(action: MaintenanceAction): string {
+function getActionLabel(action: MemoryMaintenanceAction): string {
   switch (action) {
     case 'reinforce':
       return '强化'
@@ -96,12 +96,18 @@ function getActionLabel(action: MaintenanceAction): string {
 
 export interface MemoryMaintenanceManagerProps {
   initialTarget?: string
+  initialAction?: MemoryMaintenanceAction
+  onChanged?: () => Promise<void> | void
 }
 
-export function MemoryMaintenanceManager({ initialTarget = '' }: MemoryMaintenanceManagerProps) {
+export function MemoryMaintenanceManager({
+  initialTarget = '',
+  initialAction = 'reinforce',
+  onChanged,
+}: MemoryMaintenanceManagerProps) {
   const { toast } = useToast()
   const [target, setTarget] = useState('')
-  const [action, setAction] = useState<MaintenanceAction>('reinforce')
+  const [action, setAction] = useState<MemoryMaintenanceAction>(initialAction)
   const [protectHours, setProtectHours] = useState('')
   const [recycleLimit, setRecycleLimit] = useState('50')
   const [items, setItems] = useState<MemoryMaintenanceItemPayload[]>([])
@@ -162,7 +168,11 @@ export function MemoryMaintenanceManager({ initialTarget = '' }: MemoryMaintenan
     setItemSearch(cleanTarget)
   }, [initialTarget])
 
-  const runAction = useCallback(async (nextAction: MaintenanceAction, nextTarget: string) => {
+  useEffect(() => {
+    setAction(initialAction)
+  }, [initialAction])
+
+  const runAction = useCallback(async (nextAction: MemoryMaintenanceAction, nextTarget: string) => {
     const cleanTarget = nextTarget.trim()
     if (!cleanTarget) {
       toast({
@@ -196,6 +206,7 @@ export function MemoryMaintenanceManager({ initialTarget = '' }: MemoryMaintenan
         description: String(payload.detail ?? payload.error ?? ''),
         variant: payload.success ? 'default' : 'destructive',
       })
+      await onChanged?.()
       await loadRecycleBin()
     } catch (error) {
       toast({
@@ -206,7 +217,7 @@ export function MemoryMaintenanceManager({ initialTarget = '' }: MemoryMaintenan
     } finally {
       setActionLoading(false)
     }
-  }, [loadRecycleBin, protectHours, toast])
+  }, [loadRecycleBin, onChanged, protectHours, toast])
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
@@ -231,7 +242,7 @@ export function MemoryMaintenanceManager({ initialTarget = '' }: MemoryMaintenan
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
               <Label>动作</Label>
-              <Select value={action} onValueChange={(value) => setAction(value as MaintenanceAction)}>
+              <Select value={action} onValueChange={(value) => setAction(value as MemoryMaintenanceAction)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

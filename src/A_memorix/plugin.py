@@ -280,6 +280,10 @@ class AMemorixPlugin(MaiBotPlugin):
     async def handle_memory_profile_admin(self, action: str, **kwargs):
         return await self._dispatch_admin_tool("memory_profile_admin", action=action, **kwargs)
 
+    @Tool("memory_fact_admin", description="结构化事实账本管理接口", parameters=_ADMIN_TOOL_PARAMS)
+    async def handle_memory_fact_admin(self, action: str, **kwargs):
+        return await self._dispatch_admin_tool("memory_fact_admin", action=action, **kwargs)
+
     @Tool("memory_runtime_admin", description="长期记忆运行时管理接口", parameters=_ADMIN_TOOL_PARAMS)
     async def handle_memory_runtime_admin(self, action: str, **kwargs):
         return await self._dispatch_admin_tool("memory_runtime_admin", action=action, **kwargs)
