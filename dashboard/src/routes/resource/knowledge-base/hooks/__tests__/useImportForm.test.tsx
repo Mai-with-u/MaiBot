@@ -188,4 +188,73 @@ describe('useImportForm', () => {
       expect(result.current.importContentCategoryMissing).toBe(false)
     })
   })
+
+  describe('resolveImportPath', () => {
+    beforeEach(() => {
+      vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({ success: true, settings: {} } as never)
+    })
+
+    it('别名为空时不发解析请求', async () => {
+      const { result } = renderForm()
+      act(() => result.current.setPathResolveAlias('   '))
+      await act(async () => {
+        await result.current.resolveImportPath()
+      })
+      expect(memoryApi.resolveMemoryImportPath).not.toHaveBeenCalled()
+    })
+
+    it('成功时把解析结果格式化进输出框，空相对路径显示 (空)', async () => {
+      vi.mocked(memoryApi.resolveMemoryImportPath).mockResolvedValue({
+        alias: 'raw',
+        relative_path: '',
+        resolved_path: '/data/raw',
+        exists: true,
+        is_file: false,
+        is_dir: true,
+      } as never)
+      const { result } = renderForm()
+
+      act(() => {
+        result.current.setPathResolveAlias('raw')
+        result.current.setPathResolveRelativePath('')
+        result.current.setPathResolveMustExist(false)
+      })
+      await act(async () => {
+        await result.current.resolveImportPath()
+      })
+
+      expect(memoryApi.resolveMemoryImportPath).toHaveBeenCalledWith({
+        alias: 'raw',
+        relative_path: '',
+        must_exist: false,
+      })
+      expect(result.current.pathResolveOutput).toBe(
+        [
+          '路径别名: raw',
+          '相对路径: (空)',
+          '解析结果: /data/raw',
+          '是否存在: true',
+          '是否文件: false',
+          '是否目录: true',
+        ].join('\n'),
+      )
+      expect(result.current.resolvingPath).toBe(false)
+    })
+
+    it('解析失败写入输出框；非 Error 使用兜底文案', async () => {
+      vi.mocked(memoryApi.resolveMemoryImportPath).mockRejectedValueOnce(new Error('别名不存在'))
+      const { result } = renderForm()
+
+      await act(async () => {
+        await result.current.resolveImportPath()
+      })
+      expect(result.current.pathResolveOutput).toBe('解析失败：别名不存在')
+
+      vi.mocked(memoryApi.resolveMemoryImportPath).mockRejectedValueOnce('bad')
+      await act(async () => {
+        await result.current.resolveImportPath()
+      })
+      expect(result.current.pathResolveOutput).toBe('解析失败：路径解析失败')
+    })
+  })
 })

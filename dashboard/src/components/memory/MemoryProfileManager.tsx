@@ -473,7 +473,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
   }, [activePersonId, loadProfileEvidence, loadProfiles, queryLimit, toast])
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -567,7 +567,11 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
             </div>
           </div>
 
-          <ScrollArea className="h-[520px]">
+          <ScrollArea
+            aria-label="人物画像列表"
+            className="max-h-[clamp(32.5rem,70vh,52rem)]"
+            viewportClassName="max-h-[clamp(32.5rem,70vh,52rem)]"
+          >
             <Table>
               <TableHeader className="sticky top-0 bg-background">
                 <TableRow>

@@ -114,7 +114,24 @@ vi.mock('@/components/search-dialog', () => ({
 }))
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: ReactNode
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <div data-dropdown-open={open === undefined ? 'uncontrolled' : String(Boolean(open))}>
+      {onOpenChange ? (
+        <button type="button" onClick={() => onOpenChange(!open)}>
+          打开语言菜单
+        </button>
+      ) : null}
+      {children}
+    </div>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuItem: ({
@@ -144,7 +161,16 @@ vi.mock('@/components/ui/tabs', async () => {
   return {
     Tabs: ({ children }: { children: ReactNode }) => <div>{children}</div>,
     TabsList,
-    TabsTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TabsTrigger: ({
+      asChild,
+      children,
+      value,
+      ...props
+    }: HTMLAttributes<HTMLDivElement> & { asChild?: boolean; value?: string }) => (
+      <div data-workspace-tab={value} {...props}>
+        {children}
+      </div>
+    ),
   }
 })
 
@@ -208,9 +234,11 @@ describe('Header', () => {
   })
 
   afterEach(() => {
+    document.querySelectorAll('[data-log-viewer-switcher="true"]').forEach((node) => node.remove())
     cleanup()
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   it('触发顶栏主要操作、工作区切换、语言和主题变更', async () => {
@@ -301,4 +329,322 @@ describe('Header', () => {
     render(<Header {...makeProps({ searchOpen: true })} />)
     await waitFor(() => expect(screen.getByText('搜索对话框已打开')).toBeInTheDocument())
   })
+
+  it('忽略无关设置事件，并在关闭专注陪伴后隐藏入口', () => {
+    render(<Header {...makeProps()} />)
+    expect(screen.getAllByRole('link', { name: 'sidebar.menu.focusCompanion' }).length).toBeGreaterThan(0)
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('maibot-settings-change', {
+          detail: { key: 'theme', value: 'dark' },
+        })
+      )
+    })
+    expect(screen.getAllByRole('link', { name: 'sidebar.menu.focusCompanion' }).length).toBeGreaterThan(0)
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('maibot-settings-change'))
+    })
+    expect(screen.getAllByRole('link', { name: 'sidebar.menu.focusCompanion' }).length).toBeGreaterThan(0)
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('maibot-settings-change', {
+          detail: { key: 'enableFocusCompanion', value: false },
+        })
+      )
+    })
+    expect(screen.queryAllByRole('link', { name: 'sidebar.menu.focusCompanion' })).toHaveLength(0)
+  })
+
+  it('当前页为设置且搜索打开时高亮对应顶栏按钮', () => {
+    mocks.pathname = '/settings'
+    const { rerender } = render(<Header {...makeProps({ searchOpen: false })} />)
+
+    expect(document.querySelector('[data-header-action-highlighted="true"]')).toHaveAttribute(
+      'aria-label',
+      'sidebar.menu.settings'
+    )
+
+    rerender(<Header {...makeProps({ searchOpen: true })} />)
+    expect(document.querySelector('[data-header-action-highlighted="true"]')).toHaveAttribute(
+      'aria-label',
+      'header.searchPlaceholder'
+    )
+  })
+
+  it('语言菜单打开时高亮语言按钮，并支持日韩切换', () => {
+    render(<Header {...makeProps()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '打开语言菜单' }))
+    expect(document.querySelector('[data-header-action-highlighted="true"]')).toHaveAttribute(
+      'aria-label',
+      'header.switchLanguage'
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: '日本語' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: '한국어' })[0])
+    expect(mocks.changeLanguage).toHaveBeenCalledWith('ja')
+    expect(mocks.changeLanguage).toHaveBeenCalledWith('ko')
+  })
+
+  it('亮色主题走夜间切换，移动端更多菜单也能改主题并登出', () => {
+    const props = makeProps({ actualTheme: 'light' })
+    render(<Header {...props} />)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToDark' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: 'header.switchToDark' })[1])
+    fireEvent.click(screen.getByRole('button', { name: 'header.logoutLabel' }))
+
+    expect(mocks.toggleTheme).toHaveBeenCalledTimes(2)
+    expect(mocks.toggleTheme).toHaveBeenNthCalledWith(1, 'dark', props.onThemeChange, expect.anything())
+    expect(mocks.logout).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'header.moreActions' })).toBeInTheDocument()
+  })
+
+  it('非设置工作区隐藏移动菜单与侧栏切换，日志槽位可见', () => {
+    const props = makeProps({ workspaceMode: 'logs', sidebarOpen: true })
+    render(<Header {...props} />)
+
+    expect(screen.getByRole('button', { name: 'a11y.closeMenu' })).toHaveClass('hidden')
+    expect(screen.getByRole('button', { name: 'header.switchSidebarToHover' })).toHaveClass(
+      'lg:hidden'
+    )
+    expect(document.getElementById('log-viewer-topbar-tabs')).toHaveClass('sm:flex')
+  })
+
+  it('折叠顶栏且侧栏固定时仍可切回悬浮，并保留顶栏背景层', () => {
+    const props = makeProps({ topbarCollapsed: true, sidebarOpen: true })
+    render(<Header {...props} />)
+
+    expect(screen.getByTestId('background-header')).toBeInTheDocument()
+    const strip = document.querySelector('[data-dashboard-header-strip="true"]')
+    expect(strip).toBeInTheDocument()
+    fireEvent.click(
+      strip?.querySelector('[data-dashboard-sidebar-mode-switch="true"]') as HTMLButtonElement
+    )
+    expect(props.onSidebarToggle).toHaveBeenCalledOnce()
+  })
+
+  it('搜索已打开时再次点击会关闭，Electron 无后端名时回退未连接文案', async () => {
+    mocks.electron = true
+    mocks.getActiveBackend.mockResolvedValue(null)
+    const props = makeProps({ searchOpen: true })
+    render(<Header {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'header.searchPlaceholder' }))
+    expect(props.onSearchOpenChange).toHaveBeenCalledWith(false)
+    expect(await screen.findByText('header.notConnected')).toBeInTheDocument()
+  })
+
+  it('当前工作区标签的普通点击不导航，修饰键点击也不拦截切换', () => {
+    const props = makeProps({ workspaceMode: 'settings' })
+    render(<Header {...props} />)
+
+    fireEvent.click(screen.getByRole('link', { name: 'workspace.settings' }))
+    fireEvent.click(screen.getByRole('link', { name: 'workspace.chat' }), { metaKey: true })
+    fireEvent.click(screen.getByRole('link', { name: 'workspace.logs' }), { button: 1 })
+    expect(props.onWorkspaceNavigate).not.toHaveBeenCalled()
+  })
+
+  it('悬停工作区会抢占设置高亮，离开延迟后恢复，锁定后不再跟随悬停', () => {
+    vi.useFakeTimers()
+    mocks.pathname = '/settings'
+    const props = makeProps({ workspaceMode: 'settings' })
+    const { rerender, unmount } = render(<Header {...props} />)
+
+    const chatLink = screen.getByRole('link', { name: 'workspace.chat' })
+    const logsLink = screen.getByRole('link', { name: 'workspace.logs' })
+    const settingsLink = screen.getByRole('link', { name: 'sidebar.menu.settings' })
+    const tabs = document.querySelector('[data-dashboard-workspace-tabs="true"]') as HTMLElement
+
+    expect(settingsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+
+    fireEvent.pointerEnter(chatLink)
+    expect(chatLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+    expect(settingsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).not.toBeInTheDocument()
+
+    fireEvent.pointerLeave(tabs)
+    act(() => {
+      vi.advanceTimersByTime(599)
+    })
+    expect(chatLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(settingsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+
+    fireEvent.pointerEnter(chatLink)
+    fireEvent.click(chatLink)
+    expect(props.onWorkspaceNavigate).toHaveBeenCalledWith('/chat')
+    fireEvent.pointerEnter(logsLink)
+    expect(chatLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+    expect(logsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).not.toBeInTheDocument()
+
+    fireEvent.pointerLeave(tabs)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(chatLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+
+    rerender(<Header {...makeProps({ workspaceMode: 'chat' })} />)
+    fireEvent.pointerEnter(logsLink)
+    expect(logsLink.querySelector('[data-layout-id="topbar-selection-pill"]')).toBeInTheDocument()
+
+    fireEvent.pointerEnter(settingsLink)
+    fireEvent.pointerLeave(settingsLink)
+    unmount()
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+  })
+
+  it('顶栏操作悬停会清掉工作区高亮，离开后延迟消失', () => {
+    vi.useFakeTimers()
+    const props = makeProps()
+    render(<Header {...props} />)
+
+    const chatLink = screen.getByRole('link', { name: 'workspace.chat' })
+    const searchButton = screen.getByRole('button', { name: 'header.searchPlaceholder' })
+
+    fireEvent.pointerEnter(chatLink)
+    fireEvent.pointerEnter(searchButton)
+    expect(searchButton).toHaveAttribute('data-header-action-highlighted', 'true')
+    expect(chatLink.querySelector('[data-layout-id="topbar-selection-pill"]')).not.toBeInTheDocument()
+
+    fireEvent.pointerLeave(searchButton)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(searchButton).toHaveAttribute('data-header-action-highlighted', 'false')
+  })
+
+  it('日志工作区根据切换器间距压缩标签，并在间隙足够后恢复', () => {
+    vi.useFakeTimers()
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      return window.setTimeout(() => callback(0), 0)
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      window.clearTimeout(id)
+    })
+
+    const switcher = document.createElement('div')
+    switcher.setAttribute('data-log-viewer-switcher', 'true')
+    switcher.dataset.logViewerSwitcherCompact = 'true'
+    document.body.appendChild(switcher)
+
+    const { rerender, unmount } = render(<Header {...makeProps({ workspaceMode: 'logs' })} />)
+    const tabs = document.querySelector('[data-dashboard-workspace-tabs="true"]') as HTMLElement
+    const measure = document.querySelector(
+      '[data-dashboard-workspace-tabs-measure="true"]'
+    ) as HTMLElement
+    const chatTab = document.querySelector('[data-workspace-tab="chat"]') as HTMLElement
+
+    const applyRects = (tabsRight: number, measureWidth: number, switcherRight: number) => {
+      vi.spyOn(tabs, 'getBoundingClientRect').mockReturnValue(
+        makeDomRect({ right: tabsRight })
+      )
+      vi.spyOn(measure, 'getBoundingClientRect').mockReturnValue(
+        makeDomRect({ width: measureWidth })
+      )
+      vi.spyOn(switcher, 'getBoundingClientRect').mockReturnValue(
+        makeDomRect({ right: switcherRight })
+      )
+    }
+
+    applyRects(400, 300, 200)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2')
+    expect(screen.getByRole('link', { name: 'workspace.chat' }).querySelector('span.hidden')).not.toHaveClass(
+      'sm:inline'
+    )
+
+    // 压缩态阈值放宽到 96px，50px 间隙仍保持压缩
+    applyRects(400, 150, 200)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2')
+
+    applyRects(400, 80, 200)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2.5')
+    expect(screen.getByRole('link', { name: 'workspace.chat' }).querySelector('span.hidden')).toHaveClass(
+      'sm:inline'
+    )
+
+    switcher.style.display = 'none'
+    applyRects(400, 300, 200)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2.5')
+
+    switcher.style.display = ''
+    switcher.dataset.logViewerSwitcherCompact = 'false'
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2.5')
+
+    rerender(<Header {...makeProps({ workspaceMode: 'settings' })} />)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(chatTab).toHaveClass('px-2.5')
+
+    unmount()
+    switcher.remove()
+  })
+
+  it('日志工作区缺少切换器时不压缩，并在卸载时断开尺寸观察', () => {
+    vi.useFakeTimers()
+    const observers: Array<{ observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> =
+      []
+    const OriginalResizeObserver = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class ResizeObserver {
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+      constructor() {
+        observers.push(this)
+      }
+    } as unknown as typeof ResizeObserver
+
+    const { unmount } = render(<Header {...makeProps({ workspaceMode: 'logs' })} />)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(document.querySelector('[data-workspace-tab="chat"]')).toHaveClass('px-2.5')
+    expect(observers[0]?.observe).toHaveBeenCalled()
+
+    unmount()
+    expect(observers[0]?.disconnect).toHaveBeenCalled()
+    globalThis.ResizeObserver = OriginalResizeObserver
+  })
 })
+
+function makeDomRect(overrides: Partial<DOMRect>): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+    right: 0,
+    toJSON: () => ({}),
+    ...overrides,
+  } as DOMRect
+}

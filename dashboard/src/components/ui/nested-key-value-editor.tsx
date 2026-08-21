@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -308,7 +308,7 @@ export function NestedKeyValueEditor({
   placeholder = "添加参数...",
 }: NestedKeyValueEditorProps) {
   const [nodes, setNodes] = useState<TreeNode[]>(() => recordToTree(value || {}))
-  const lastEmittedValueRef = useRef<string | null>(null)
+  const [seenIncomingJson, setSeenIncomingJson] = useState(() => JSON.stringify(value || {}))
   const duplicateKeyPaths = useMemo(() => findDuplicateKeyPaths(nodes), [nodes])
 
   useEffect(() => {
@@ -319,13 +319,11 @@ export function NestedKeyValueEditor({
     )
   }, [duplicateKeyPaths, onValidationChange])
 
-  useEffect(() => {
-    const nextValueJson = JSON.stringify(value || {})
-    if (lastEmittedValueRef.current === nextValueJson) {
-      return
-    }
+  const incomingValueJson = JSON.stringify(value || {})
+  if (seenIncomingJson !== incomingValueJson) {
+    setSeenIncomingJson(incomingValueJson)
     setNodes(recordToTree(value || {}))
-  }, [value])
+  }
 
   // 同步到父组件
   const syncToParent = useCallback(
@@ -334,7 +332,8 @@ export function NestedKeyValueEditor({
       if (findDuplicateKeyPaths(newNodes).length > 0) return
 
       const nextValue = treeToRecord(newNodes)
-      lastEmittedValueRef.current = JSON.stringify(nextValue)
+      const nextValueJson = JSON.stringify(nextValue)
+      setSeenIncomingJson(nextValueJson)
       onChange(nextValue)
     },
     [onChange]

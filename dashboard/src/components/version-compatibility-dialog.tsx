@@ -52,12 +52,18 @@ export function VersionCompatibilityDialog() {
     return () => controller.abort()
   }, [])
 
+  const timerKey = compatibility && !dismissed ? `${compatibility.status}:${compatibility.main_program_version}` : ''
+  const [seenTimerKey, setSeenTimerKey] = useState(timerKey)
+  if (timerKey && seenTimerKey !== timerKey) {
+    setSeenTimerKey(timerKey)
+    setRemainingSeconds(CONFIRM_DELAY_SECONDS)
+  }
+
   useEffect(() => {
     if (!compatibility || dismissed) {
       return
     }
 
-    setRemainingSeconds(CONFIRM_DELAY_SECONDS)
     const timer = window.setInterval(() => {
       setRemainingSeconds((current) => {
         if (current <= 1) {

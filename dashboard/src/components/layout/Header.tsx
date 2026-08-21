@@ -146,11 +146,10 @@ export function Header({
     []
   )
 
-  useEffect(() => {
-    if (!workspaceHoverLocked || hoveredWorkspace !== workspaceMode) return
+  if (workspaceHoverLocked && hoveredWorkspace === workspaceMode) {
     setHoveredWorkspace(null)
     setWorkspaceHoverLocked(false)
-  }, [hoveredWorkspace, workspaceHoverLocked, workspaceMode])
+  }
 
   useEffect(() => {
     const handleSettingsChange = (event: Event) => {

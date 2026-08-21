@@ -35,7 +35,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  Settings,
   AlertCircle,
   AlertTriangle,
   Package,
@@ -76,8 +75,9 @@ import type {
   PluginRuntimeComponentType,
 } from '@/lib/plugin-api'
 import { PluginIcon } from './plugins/PluginIcon'
-import { getPluginTypeLabel } from './plugins/types'
-import { getNestedRecord, getPluginMarketplaceRoutePath } from './plugin-config/utils'
+import { getPluginType, getPluginTypeLabel } from './plugins/types'
+import { AdapterHostPolicyPanel } from './plugin-config/AdapterHostPolicyPanel'
+import { getNestedRecord, getPluginMarketplaceRoutePath, isAdapterManagementPath } from './plugin-config/utils'
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
 import { usePluginConfigEditor } from './plugin-config/hooks/usePluginConfigEditor'
@@ -510,12 +510,20 @@ function PluginDetailsPanel({
   const [readme, setReadme] = useState('')
   const [readmeLoading, setReadmeLoading] = useState(true)
   const [readmeError, setReadmeError] = useState('')
+  const [loadedPluginId, setLoadedPluginId] = useState(plugin.id)
+  if (loadedPluginId !== plugin.id) {
+    setLoadedPluginId(plugin.id)
+    setComponents([])
+    setComponentsLoading(true)
+    setComponentsError('')
+    setReadme('')
+    setReadmeLoading(true)
+    setReadmeError('')
+  }
 
   useEffect(() => {
     let cancelled = false
 
-    setComponentsLoading(true)
-    setComponentsError('')
     getPluginRuntimeComponents(plugin.id)
       .then((data) => {
         if (!cancelled) {
@@ -541,9 +549,6 @@ function PluginDetailsPanel({
   useEffect(() => {
     let cancelled = false
 
-    setReadmeLoading(true)
-    setReadmeError('')
-    setReadme('')
     getLocalPluginReadme(plugin.id)
       .then((content) => {
         if (!cancelled) {
@@ -1200,6 +1205,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
     (item): item is { label: string; value: string } =>
       typeof item.value === 'string' && item.value.trim().length > 0
   )
+  const showHostPolicy = isAdapterManagementPath() && getPluginType(plugin) === 'adapter'
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -1234,24 +1240,26 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             <BookOpen className="mr-2 h-4 w-4" />
             打开文档
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={() => setEditMode(editMode === 'visual' ? 'source' : 'visual')}
-          >
-            {editMode === 'visual' ? (
-              <>
-                <Code2 className="mr-2 h-4 w-4" />
-                源代码
-              </>
-            ) : (
-              <>
-                <Layout className="mr-2 h-4 w-4" />
-                可视化
-              </>
-            )}
-          </Button>
+          {pluginPageTab !== 'host-policy' && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => setEditMode(editMode === 'visual' ? 'source' : 'visual')}
+            >
+              {editMode === 'visual' ? (
+                <>
+                  <Code2 className="mr-2 h-4 w-4" />
+                  源代码
+                </>
+              ) : (
+                <>
+                  <Layout className="mr-2 h-4 w-4" />
+                  可视化
+                </>
+              )}
+            </Button>
+          )}
           <div
             data-dashboard-input="true"
             className="border-input flex h-8 items-center gap-2 rounded-md border bg-transparent px-2 text-sm font-medium shadow-sm"
@@ -1263,23 +1271,27 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             />
             <span className="text-xs">启用</span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8"
-            onClick={() => setResetDialogOpen(true)}
-          >
-            <RotateCcw className="mr-2 h-4 w-4" />
-            重置
-          </Button>
-          <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
-            {saving ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="mr-2 h-4 w-4" />
-            )}
-            保存
-          </Button>
+          {pluginPageTab !== 'host-policy' && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={() => setResetDialogOpen(true)}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                重置
+              </Button>
+              <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
+                {saving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="mr-2 h-4 w-4" />
+                )}
+                保存
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1297,10 +1309,11 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
 
       <Tabs
         value={pluginPageTab}
-        onValueChange={(value) => setPluginPageTab(value as 'settings' | 'details')}
+        onValueChange={(value) => setPluginPageTab(value as 'settings' | 'host-policy' | 'details')}
       >
         <TabsList>
           <TabsTrigger value="settings">设置</TabsTrigger>
+          {showHostPolicy && <TabsTrigger value="host-policy">主程序放行规则</TabsTrigger>}
           <TabsTrigger value="details">详情</TabsTrigger>
         </TabsList>
         <TabsContent value="settings" className="mt-4">
@@ -1385,6 +1398,11 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             </>
           )}
         </TabsContent>
+        {showHostPolicy && (
+          <TabsContent value="host-policy" className="mt-4">
+            <AdapterHostPolicyPanel pluginId={plugin.id} />
+          </TabsContent>
+        )}
         <TabsContent value="details" className="mt-4">
           <PluginDetailsPanel
             plugin={plugin}
@@ -1474,6 +1492,7 @@ export function PluginConfigPage() {
 function PluginConfigPageContent() {
   const { themeConfig } = useTheme()
   const { triggerRestart, isRestarting } = useRestart()
+  const adapterManagement = isAdapterManagementPath()
 
   const {
     plugins,
@@ -1564,6 +1583,7 @@ function PluginConfigPageContent() {
     <>
       <ScrollArea className="h-full">
       <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
+        {!adapterManagement && (
         <div className="flex flex-nowrap items-center gap-2 sm:gap-3">
           <div className="relative min-w-0 flex-1 basis-0 sm:basis-72">
             <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
@@ -1610,6 +1630,7 @@ function PluginConfigPageContent() {
             <span className="hidden sm:inline">重启麦麦</span>
           </Button>
         </div>
+        )}
 
         {/* 统计信息 */}
         {isModernDashboardStyle ? (
@@ -1880,16 +1901,6 @@ function PluginConfigPageContent() {
                     </div>
                   </div>
                   <div className="flex items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-9 w-9 p-0"
-                      title="配置"
-                      aria-label="配置"
-                      onClick={() => openPluginConfig(plugin)}
-                    >
-                      <Settings className="h-4 w-4" />
-                    </Button>
                     <div
                       className="flex h-9 w-9 items-center justify-center"
                       title={pluginDisabled ? '启动插件' : '关闭插件'}
@@ -1907,6 +1918,7 @@ function PluginConfigPageContent() {
                     <Button
                       variant="outline"
                       size="sm"
+                      data-plugin-update-button="true"
                       className="relative h-9 w-9 p-0"
                       disabled={pluginActing || !updateState.canUpdate}
                       title={updateState.title}

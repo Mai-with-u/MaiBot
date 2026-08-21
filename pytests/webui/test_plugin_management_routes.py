@@ -85,6 +85,18 @@ def test_installed_plugins_expose_duplicate_id_failure_reason(client: TestClient
     assert payload["plugins"][0]["load_error"] == failure_reason
 
 
+def test_installed_plugins_expose_offline_adapter_status(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(management_module, "_get_runtime_plugin_load_statuses", lambda: {"test.demo": "offline"})
+    monkeypatch.setattr(management_module, "_get_runtime_plugin_load_failure_reasons", lambda: {})
+
+    response = client.get("/api/webui/plugins/installed")
+
+    assert response.status_code == 200
+    plugin = response.json()["plugins"][0]
+    assert plugin["load_status"] == "offline"
+    assert plugin["load_error"] == ""
+
+
 def test_toggle_plugin_waits_until_runtime_applies_enabled_state(client: TestClient, monkeypatch) -> None:
     plugin_path = support_module.resolve_installed_plugin_path("test.demo")
     assert plugin_path is not None

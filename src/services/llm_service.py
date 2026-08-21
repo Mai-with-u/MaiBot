@@ -4,39 +4,55 @@
 `src.llm_models` 中的底层请求调度器。
 """
 
-from typing import Any, Dict, List, Tuple
+from dataclasses import replace
+from enum import Enum
+from typing import Any, Dict, List, Mapping, Tuple
 
 import hashlib
 import inspect
 import json
+import uuid
 
-from src.common.data_models.embedding_service_data_models import EmbeddingResult
 from src.common.data_models.llm_service_data_models import (
+    ContextFactory,
     LLMAudioTranscriptionResult,
     LLMGenerationOptions,
     LLMImageOptions,
     LLMResponseResult,
     LLMServiceRequest,
     LLMServiceResult,
-    MessageFactory,
     PromptInput,
     PromptMessage,
 )
 from src.common.logger import get_logger
 from src.common.utils.utils_image import ImageUtils
 from src.llm_models.model_client.base_client import BaseClient
-from src.llm_models.payload_content.message import Message, MessageBuilder, RoleType
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    ContextItemBuilder,
+    ContextItemMeta,
+    ContextTextPart,
+    ContextToolCall,
+    FunctionCallItem,
+    FunctionCallOutputItem,
+    ReasoningItem,
+    ReasoningRepresentation,
+    RoleType,
+    get_item_text,
+)
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.llm_models.utils_model import LLMOrchestrator
-from src.services.embedding_service import EmbeddingServiceClient
 from src.services.llm_cache_stats import record_llm_cache_usage
 from src.services.service_task_resolver import (
     get_available_models as _get_available_models,
     resolve_task_name as _resolve_task_name,
-    resolve_task_name_from_model_config as _resolve_task_name_from_model_config,
 )
 
 logger = get_logger("llm_service")
+
+CACHE_STATS_BINARY_KEYS = frozenset({"base64", "encrypted_content", "image_base64", "thought_signature"})
 
 
 class LLMServiceClient:
@@ -44,10 +60,9 @@ class LLMServiceClient:
 
     当前推荐优先使用以下正式接口：
     - `generate_response`
-    - `generate_response_with_messages`
+    - `generate_response_with_context`
     - `generate_response_for_image`
     - `transcribe_audio`
-    - `embed_text`（兼容入口，推荐改用 `EmbeddingServiceClient`）
     """
 
     def __init__(self, task_name: str, request_type: str = "", session_id: str = "") -> None:
@@ -100,50 +115,121 @@ class LLMServiceClient:
         return options
 
     @staticmethod
-    def _serialize_message_for_cache_stats(message: Message) -> Dict[str, Any]:
+    def _serialize_item_for_cache_stats(item: ContextItem) -> Dict[str, Any]:
+        """序列化 Context Item 的可移植投影，媒体仅记录摘要。"""
+
         parts: list[dict[str, Any]] = []
-        for part in message.parts:
-            if hasattr(part, "text"):
+        for part in getattr(item, "parts", ()):
+            if isinstance(part, ContextTextPart):
                 parts.append({"type": "text", "text": part.text})
                 continue
-
-            image_base64 = getattr(part, "image_base64", "")
+            if not isinstance(part, ContextImagePart):
+                continue
+            image_base64 = part.image_base64
             image_digest = hashlib.sha256(image_base64.encode("utf-8")).hexdigest() if image_base64 else ""
             parts.append(
                 {
                     "type": "image",
-                    "format": getattr(part, "image_format", ""),
+                    "format": part.image_format,
                     "size": len(image_base64),
                     "sha256": image_digest,
                 }
             )
 
-        return {
-            "role": str(message.role.value if hasattr(message.role, "value") else message.role),
+        payload: Dict[str, Any] = {
+            "item_id": item.meta.item_id,
+            "item_type": item.__class__.__name__,
             "parts": parts,
-            "tool_call_id": message.tool_call_id,
-            "tool_name": message.tool_name,
-            "tool_calls": [
-                {
-                    "id": tool_call.call_id,
-                    "name": tool_call.func_name,
-                    "arguments": tool_call.args,
-                    "extra_content": tool_call.extra_content,
-                }
-                for tool_call in (message.tool_calls or [])
-            ],
+        }
+        if isinstance(item, ReasoningItem):
+            payload["reasoning"] = get_item_text(item)
+            payload["representation"] = item.representation.value
+        elif isinstance(item, FunctionCallItem):
+            payload["tool_call"] = {
+                "id": item.tool_call.call_id,
+                "name": item.tool_call.func_name,
+                "arguments": item.tool_call.materialize_args(),
+            }
+        elif isinstance(item, FunctionCallOutputItem):
+            payload["call_id"] = item.call_id
+            payload["output"] = item.output
+            payload["tool_name"] = item.tool_name
+        return payload
+
+    @staticmethod
+    def _summarize_wire_binary_for_cache_stats(
+        value: str | bytes,
+        *,
+        media_type: str = "",
+    ) -> Dict[str, Any]:
+        """将 wire payload 中的二进制或 Base64 内容压缩为稳定摘要。"""
+
+        raw_bytes = value.encode("utf-8") if isinstance(value, str) else value
+        payload: Dict[str, Any] = {
+            "type": "omitted_binary",
+            "size_bytes": len(raw_bytes),
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        }
+        if isinstance(value, str):
+            payload["encoded_chars"] = len(value)
+        if media_type:
+            payload["media_type"] = media_type
+        return payload
+
+    @classmethod
+    def _sanitize_wire_value_for_cache_stats(
+        cls,
+        value: Any,
+        *,
+        key: str = "",
+    ) -> Any:
+        """保留 wire 请求结构，同时移除不适合进入 prompt cache 统计池的大块数据。"""
+
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, Enum):
+            return cls._sanitize_wire_value_for_cache_stats(value.value, key=key)
+        if isinstance(value, bytes):
+            return cls._summarize_wire_binary_for_cache_stats(value)
+        if isinstance(value, str):
+            normalized_value = value.strip()
+            if normalized_value.startswith("data:") and ";base64," in normalized_value:
+                header, encoded_value = normalized_value.split(",", maxsplit=1)
+                media_type = header.removeprefix("data:").split(";", maxsplit=1)[0]
+                return cls._summarize_wire_binary_for_cache_stats(
+                    encoded_value,
+                    media_type=media_type,
+                )
+            normalized_key = key.strip().lower().replace("-", "_")
+            if normalized_key in CACHE_STATS_BINARY_KEYS:
+                return cls._summarize_wire_binary_for_cache_stats(value)
+            return value
+        if isinstance(value, Mapping):
+            return {
+                str(item_key): cls._sanitize_wire_value_for_cache_stats(item_value, key=str(item_key))
+                for item_key, item_value in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._sanitize_wire_value_for_cache_stats(item, key=key) for item in value]
+
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return cls._sanitize_wire_value_for_cache_stats(model_dump(exclude_none=True), key=key)
+        return {
+            "type": "wire_object",
+            "class": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
         }
 
     @classmethod
     def _build_cache_stats_prompt_text(
         cls,
         *,
-        messages: List[Message],
+        context_items: List[ContextItem],
         tool_options: Any,
         response_format: Any,
     ) -> str:
         payload = {
-            "messages": [cls._serialize_message_for_cache_stats(message) for message in messages],
+            "context_items": [cls._serialize_item_for_cache_stats(item) for item in context_items],
             "tool_options": tool_options or [],
             "response_format": response_format,
         }
@@ -158,6 +244,17 @@ class LLMServiceClient:
     ) -> None:
         """记录当前调用的 prompt cache 统计。"""
 
+        effective_prompt_text = prompt_text
+        if result.request_wire_payload is not None:
+            effective_prompt_text = json.dumps(
+                {
+                    "wire_protocol": result.wire_protocol,
+                    "request": self._sanitize_wire_value_for_cache_stats(result.request_wire_payload),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+
         record_llm_cache_usage(
             task_name=self.task_name,
             request_type=self.request_type,
@@ -166,7 +263,7 @@ class LLMServiceClient:
             prompt_tokens=result.prompt_tokens,
             prompt_cache_hit_tokens=result.prompt_cache_hit_tokens,
             prompt_cache_miss_tokens=result.prompt_cache_miss_tokens,
-            prompt_text=prompt_text,
+            prompt_text=effective_prompt_text,
         )
 
     async def generate_response(
@@ -187,7 +284,7 @@ class LLMServiceClient:
         """
         active_options = self._normalize_generation_options(options)
         prompt_text = self._build_cache_stats_prompt_text(
-            messages=[MessageBuilder().add_text_content(prompt).build()],
+            context_items=[ContextItemBuilder().add_text_content(prompt).build()],
             tool_options=active_options.tool_options,
             response_format=active_options.response_format,
         )
@@ -205,9 +302,9 @@ class LLMServiceClient:
         self._record_cache_stats(result, prompt_text=prompt_text, session_id=session_id)
         return result
 
-    async def generate_response_with_messages(
+    async def generate_response_with_context(
         self,
-        message_factory: MessageFactory,
+        context_factory: ContextFactory,
         options: LLMGenerationOptions | None = None,
         *,
         session_id: str = "",
@@ -215,7 +312,7 @@ class LLMServiceClient:
         """基于消息工厂生成响应。
 
         Args:
-            message_factory: 消息工厂，会根据客户端能力构建消息列表。
+            context_factory: Context Item 工厂，会根据客户端能力构建上下文。
             options: 文本生成选项。
 
         Returns:
@@ -224,24 +321,24 @@ class LLMServiceClient:
         active_options = self._normalize_generation_options(options)
         prompt_text_holder: dict[str, str] = {}
 
-        async def cache_stats_message_factory(client: BaseClient, model_info: Any = None) -> List[Message]:
-            if len(inspect.signature(message_factory).parameters) >= 2:
-                message_result = message_factory(client, model_info)
+        async def cache_stats_context_factory(client: BaseClient, model_info: Any = None) -> List[ContextItem]:
+            if len(inspect.signature(context_factory).parameters) >= 2:
+                context_result = context_factory(client, model_info)
             else:
-                message_result = message_factory(client)
-            if inspect.isawaitable(message_result):
-                messages = await message_result
+                context_result = context_factory(client)
+            if inspect.isawaitable(context_result):
+                context_items = await context_result
             else:
-                messages = message_result
+                context_items = context_result
             prompt_text_holder["prompt_text"] = self._build_cache_stats_prompt_text(
-                messages=messages,
+                context_items=context_items,
                 tool_options=active_options.tool_options,
                 response_format=active_options.response_format,
             )
-            return messages
+            return context_items
 
-        result = await self._orchestrator.generate_response_with_message_async(
-            message_factory=cache_stats_message_factory,
+        result = await self._orchestrator.generate_response_with_context_async(
+            context_factory=cache_stats_context_factory,
             temperature=active_options.temperature,
             max_tokens=active_options.max_tokens,
             model_name=active_options.model_name,
@@ -336,23 +433,6 @@ class LLMServiceClient:
             session_id=self._resolve_effective_session_id(session_id),
         )
 
-    async def embed_text(self, embedding_input: str, *, session_id: str = "") -> EmbeddingResult:
-        """兼容旧调用的文本嵌入入口。
-
-        Args:
-            embedding_input: 待编码的文本。
-
-        Returns:
-            EmbeddingResult: 向量生成结果对象。
-        """
-        embedding_client = EmbeddingServiceClient(
-            task_name=self.task_name,
-            request_type=self.request_type,
-            session_id=self._resolve_effective_session_id(session_id),
-        )
-        return await embedding_client.embed_text(embedding_input, session_id=session_id)
-
-
 def get_available_models() -> Dict[str, Any]:
     """获取所有可用模型配置。
 
@@ -372,22 +452,6 @@ def resolve_task_name(task_name: str = "") -> str:
         str: 解析得到的任务配置名。
     """
     return _resolve_task_name(task_name)
-
-
-def resolve_task_name_from_model_config(model_config: Any, preferred_task_name: str = "") -> str:
-    """根据旧版 `TaskConfig` 风格参数解析可用任务名。
-
-    Args:
-        model_config: 旧调用方持有的任务配置对象。
-        preferred_task_name: 候选任务名（可选）。
-
-    Returns:
-        str: 可用于 `LLMServiceRequest.task_name` 的任务名。
-    """
-    return _resolve_task_name_from_model_config(
-        model_config=model_config,
-        preferred_task_name=preferred_task_name,
-    )
 
 
 def _normalize_role(role_name: str) -> RoleType:
@@ -430,7 +494,7 @@ def _parse_data_url_image(image_url: str) -> Tuple[str, str]:
     return image_format, image_base64
 
 
-def _append_image_content(message_builder: MessageBuilder, content_item: Any) -> bool:
+def _append_image_content(item_builder: ContextItemBuilder, content_item: Any) -> bool:
     """向消息构建器追加图片片段。
 
     兼容两种输入格式：
@@ -443,7 +507,7 @@ def _append_image_content(message_builder: MessageBuilder, content_item: Any) ->
         if not isinstance(image_format, str) or not isinstance(image_base64, str):
             raise ValueError("图片元组片段必须包含字符串类型的 image_format 和 image_base64")
 
-        message_builder.add_image_content(image_format=image_format, image_base64=image_base64)
+        item_builder.add_image_content(image_format=image_format, image_base64=image_base64)
         return True
 
     if not isinstance(content_item, dict):
@@ -458,30 +522,30 @@ def _append_image_content(message_builder: MessageBuilder, content_item: Any) ->
         image_url = image_url.get("url")
     if isinstance(image_url, str):
         image_format, image_base64 = _parse_data_url_image(image_url)
-        message_builder.add_image_content(image_format=image_format, image_base64=image_base64)
+        item_builder.add_image_content(image_format=image_format, image_base64=image_base64)
         return True
 
     image_format = content_item.get("image_format")
     image_base64 = content_item.get("image_base64")
     if isinstance(image_format, str) and isinstance(image_base64, str):
-        message_builder.add_image_content(image_format=image_format, image_base64=image_base64)
+        item_builder.add_image_content(image_format=image_format, image_base64=image_base64)
         return True
 
     raise ValueError("图片片段缺少可识别的图片数据")
 
 
-def _append_content_parts(message_builder: MessageBuilder, content: Any) -> None:
+def _append_content_parts(item_builder: ContextItemBuilder, content: Any) -> None:
     """将原始消息内容追加到内部消息构建器。
 
     Args:
-        message_builder: 目标消息构建器。
+        item_builder: 目标 Item 构建器。
         content: 原始消息内容。
 
     Raises:
         ValueError: 消息内容结构不受支持时抛出。
     """
     if isinstance(content, str):
-        message_builder.add_text_content(content)
+        item_builder.add_text_content(content)
         return
 
     content_items: List[Any]
@@ -494,9 +558,9 @@ def _append_content_parts(message_builder: MessageBuilder, content: Any) -> None
 
     for content_item in content_items:
         if isinstance(content_item, str):
-            message_builder.add_text_content(content_item)
+            item_builder.add_text_content(content_item)
             continue
-        if _append_image_content(message_builder, content_item):
+        if _append_image_content(item_builder, content_item):
             continue
         if not isinstance(content_item, dict):
             raise ValueError("消息内容列表中仅支持字符串、图片元组或字典片段")
@@ -506,7 +570,7 @@ def _append_content_parts(message_builder: MessageBuilder, content: Any) -> None
             text_content = content_item.get("text")
             if not isinstance(text_content, str):
                 raise ValueError("文本片段缺少 `text` 字段")
-            message_builder.add_text_content(text_content)
+            item_builder.add_text_content(text_content)
             continue
 
         raise ValueError(f"不支持的消息片段类型: {part_type}")
@@ -586,14 +650,17 @@ def _build_tool_calls(raw_tool_calls: Any) -> List[ToolCall] | None:
     return tool_calls or None
 
 
-def _build_message_from_dict(raw_message: PromptMessage) -> Message:
-    """将原始消息字典转换为内部消息对象。
+def _build_context_items_from_dict(
+    raw_message: PromptMessage,
+    logical_turn_by_call_id: dict[str, str],
+) -> List[ContextItem]:
+    """将原始 Chat 风格消息字典转换为独立 Context Items。
 
     Args:
         raw_message: 原始消息字典。
 
     Returns:
-        Message: 规范化后的消息对象。
+        List[ContextItem]: 规范化后的 Context Items。
 
     Raises:
         ValueError: 原始消息结构不合法时抛出。
@@ -603,45 +670,90 @@ def _build_message_from_dict(raw_message: PromptMessage) -> Message:
         raise ValueError("消息缺少字符串类型的 `role` 字段")
 
     role = _normalize_role(raw_role)
-    message_builder = MessageBuilder().set_role(role)
-
-    tool_calls = _build_tool_calls(raw_message.get("tool_calls"))
-    if tool_calls is not None:
-        message_builder.set_tool_calls(tool_calls)
+    item_builder = ContextItemBuilder().set_role(role)
 
     tool_call_id = raw_message.get("tool_call_id")
     if isinstance(tool_call_id, str) and role == RoleType.Tool:
-        message_builder.set_tool_call_id(tool_call_id)
+        item_builder.set_tool_call_id(tool_call_id)
+        item_builder.set_meta(
+            ContextItemMeta.create(logical_turn_id=logical_turn_by_call_id.get(tool_call_id))
+        )
 
     if "content" in raw_message and raw_message["content"] not in (None, "", []):
-        _append_content_parts(message_builder, raw_message["content"])
+        _append_content_parts(item_builder, raw_message["content"])
 
-    return message_builder.build()
+    if role != RoleType.Assistant:
+        return [item_builder.build()]
+
+    logical_turn_id = uuid.uuid4().hex
+    ungrouped_items: List[ContextItem] = []
+    reasoning_content = raw_message.get("reasoning_content")
+    if isinstance(reasoning_content, str) and reasoning_content:
+        ungrouped_items.append(
+            ReasoningItem(
+                meta=ContextItemMeta.create(logical_turn_id=logical_turn_id),
+                text_parts=(reasoning_content,),
+                representation=ReasoningRepresentation.RAW_TEXT,
+            )
+        )
+    if raw_message.get("content") not in (None, "", []):
+        assistant_item = item_builder.build()
+        if not isinstance(assistant_item, AssistantMessageItem):
+            raise TypeError("Assistant 输入未构建为 AssistantMessageItem")
+        ungrouped_items.append(assistant_item)
+    for tool_call in _build_tool_calls(raw_message.get("tool_calls")) or []:
+        ungrouped_items.append(
+            FunctionCallItem(
+                meta=ContextItemMeta.create(logical_turn_id=logical_turn_id),
+                tool_call=ContextToolCall.create(
+                    call_id=tool_call.call_id,
+                    func_name=tool_call.func_name,
+                    args=tool_call.args,
+                    extra_content=tool_call.extra_content,
+                ),
+            )
+        )
+    if not ungrouped_items:
+        raise ValueError("Assistant 消息至少需要正文、reasoning 或 tool_calls")
+
+    output_items: List[ContextItem] = []
+    for item in ungrouped_items:
+        bound_item = replace(item, meta=replace(item.meta, logical_turn_id=logical_turn_id))
+        output_items.append(bound_item)
+        if isinstance(bound_item, FunctionCallItem):
+            logical_turn_by_call_id[bound_item.tool_call.call_id] = logical_turn_id
+    return output_items
 
 
-def _build_prompt_message_factory(prompt: PromptInput) -> MessageFactory:
-    """将统一提示输入转换为消息工厂。
+def _build_prompt_context_factory(prompt: PromptInput) -> ContextFactory:
+    """将统一提示输入转换为 Context Item 工厂。
 
     Args:
         prompt: 原始提示输入。
 
     Returns:
-        MessageFactory: 惰性构建消息列表的工厂函数。
+        ContextFactory: 惰性构建 Context Items 的工厂函数。
     """
     if isinstance(prompt, str):
-        def build_messages(_: BaseClient) -> List[Message]:
-            """构建单条用户消息。"""
-            message_builder = MessageBuilder()
-            message_builder.add_text_content(prompt)
-            return [message_builder.build()]
 
-        return build_messages
+        def build_context(_: BaseClient) -> List[ContextItem]:
+            """构建单条用户消息 Item。"""
+            item_builder = ContextItemBuilder()
+            item_builder.add_text_content(prompt)
+            return [item_builder.build()]
 
-    def build_messages(_: BaseClient) -> List[Message]:
-        """构建多消息对话输入。"""
-        return [_build_message_from_dict(raw_message) for raw_message in prompt]
+        return build_context
 
-    return build_messages
+    def build_context(_: BaseClient) -> List[ContextItem]:
+        """构建多 Item 对话输入。"""
+        logical_turn_by_call_id: dict[str, str] = {}
+        return [
+            item
+            for raw_message in prompt
+            for item in _build_context_items_from_dict(raw_message, logical_turn_by_call_id)
+        ]
+
+    return build_context
 
 
 async def generate(request: LLMServiceRequest) -> LLMServiceResult:
@@ -658,17 +770,17 @@ async def generate(request: LLMServiceRequest) -> LLMServiceResult:
         request_type=request.request_type,
         session_id=request.session_id,
     )
-    if request.message_factory is not None:
-        active_message_factory = request.message_factory
+    if request.context_factory is not None:
+        active_context_factory = request.context_factory
     else:
         prompt = request.prompt
         if prompt is None:
-            raise ValueError("`prompt` 与 `message_factory` 必须且只能提供一个")
-        active_message_factory = _build_prompt_message_factory(prompt)
+            raise ValueError("`prompt` 与 `context_factory` 必须且只能提供一个")
+        active_context_factory = _build_prompt_context_factory(prompt)
 
     try:
-        generation_result = await llm_client.generate_response_with_messages(
-            message_factory=active_message_factory,
+        generation_result = await llm_client.generate_response_with_context(
+            context_factory=active_context_factory,
             options=LLMGenerationOptions(
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,

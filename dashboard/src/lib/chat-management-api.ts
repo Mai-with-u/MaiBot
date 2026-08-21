@@ -107,6 +107,31 @@ export interface ChatAdapterStatus {
   policy: AdapterPolicyStatus
 }
 
+export interface AdapterPolicyDefaults {
+  group: 'allow' | 'block'
+  private: 'allow' | 'block'
+}
+
+export type AdapterHostDefaultAction = 'inherit' | 'allow' | 'block'
+
+export interface AdapterHostPolicySection {
+  default_action: AdapterHostDefaultAction
+  allow_ids: string[]
+  deny_ids: string[]
+}
+
+export interface AdapterHostPolicy {
+  group: AdapterHostPolicySection
+  private: AdapterHostPolicySection
+}
+
+interface AdapterHostPolicyResponse {
+  success: boolean
+  plugin_id: string
+  global_defaults: AdapterPolicyDefaults
+  policy: AdapterHostPolicy
+}
+
 export interface ChatStreamDetail {
   session_id: string
   display_name: string
@@ -337,6 +362,41 @@ export async function updateChatStreamAdapterPolicy(
     throw new Error('聊天流详情为空')
   }
   return result.detail
+}
+
+export async function getAdapterPolicyDefaults(): Promise<AdapterPolicyDefaults> {
+  const result = await backendApi.get<{ success: boolean; defaults: AdapterPolicyDefaults }>(
+    '/api/chat/adapters/policy/defaults',
+    { errorMessage: '获取适配器默认策略失败' }
+  )
+  return result.defaults
+}
+
+export async function updateAdapterPolicyDefaults(
+  defaults: AdapterPolicyDefaults
+): Promise<AdapterPolicyDefaults> {
+  const result = await backendApi.put<{ success: boolean; defaults: AdapterPolicyDefaults }>(
+    '/api/chat/adapters/policy/defaults',
+    { body: defaults, errorMessage: '保存适配器默认策略失败' }
+  )
+  return result.defaults
+}
+
+export async function getAdapterHostPolicy(pluginId: string): Promise<AdapterHostPolicyResponse> {
+  return backendApi.get<AdapterHostPolicyResponse>(
+    `/api/chat/adapters/plugins/${encodeURIComponent(pluginId)}/policy`,
+    { errorMessage: '获取主程序放行规则失败' }
+  )
+}
+
+export async function updateAdapterHostPolicy(
+  pluginId: string,
+  policy: AdapterHostPolicy
+): Promise<AdapterHostPolicyResponse> {
+  return backendApi.put<AdapterHostPolicyResponse>(
+    `/api/chat/adapters/plugins/${encodeURIComponent(pluginId)}/policy`,
+    { body: policy, errorMessage: '保存主程序放行规则失败' }
+  )
 }
 
 export async function deleteChatStream(sessionId: string): Promise<ChatStreamDeleteResult> {

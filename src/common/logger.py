@@ -267,7 +267,12 @@ class WebSocketLogHandler(logging.Handler):
             try:
                 log_dict = json.loads(formatted_msg)
                 message = log_dict.get("event", formatted_msg)
-                module_name = log_dict.get("logger_name") or log_dict.get("module") or record.name
+                module_name = (
+                    log_dict.get("logger_name")
+                    or log_dict.get("logger")
+                    or log_dict.get("module")
+                    or record.name
+                )
                 level_name = str(log_dict.get("level") or record.levelname).upper()
             except (json.JSONDecodeError, ValueError):
                 # 不是 JSON,直接使用消息
@@ -283,6 +288,7 @@ class WebSocketLogHandler(logging.Handler):
                 "timestamp": datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
                 "level": level_name,
                 "module": module_name,
+                "moduleDisplayName": MODULE_ALIASES.get(module_name, module_name),
                 "message": message,
             }
 

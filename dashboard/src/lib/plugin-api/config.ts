@@ -7,7 +7,7 @@
  */
 import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 
-import type { PluginConfigBundle, PluginConfigSchema, PluginRuntimeComponent } from './types'
+import type { PluginConfigBundle, PluginConfigSchema, PluginRuntimeComponent, RuntimeCommand } from './types'
 
 const API_BASE = '/api/webui/plugins/config'
 const RUNTIME_API_BASE = '/api/webui/plugins/runtime'
@@ -160,4 +160,12 @@ export async function getPluginRuntimeComponents(
   })
   const checked = requireSuccess(data, '获取插件组件失败')
   return checked.components ?? []
+}
+
+export async function getRuntimeCommands(): Promise<RuntimeCommand[]> {
+  const data = await backendApi.get<{
+    success: boolean
+    commands?: RuntimeCommand[]
+  }>(`${RUNTIME_API_BASE}/commands`, { errorMessage: '获取命令列表失败' })
+  return requireSuccess(data, '获取命令列表失败').commands ?? []
 }

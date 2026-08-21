@@ -47,6 +47,7 @@ export function ThemeProvider({
   const pendingWebUIStyleRef = useRef<0 | 1 | null>(null)
 
   const resolvedTheme = useMemo<'dark' | 'light'>(() => {
+    void systemThemeTick
     if (themeMode !== 'system') return themeMode
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }, [themeMode, systemThemeTick])

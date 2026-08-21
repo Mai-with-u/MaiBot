@@ -56,10 +56,12 @@ import {
   deleteChatStream,
   deleteChatStreamPrompt,
   deleteChatStreamTalkFrequency,
+  getAdapterPolicyDefaults,
   getChatStreamDetail,
   getChatStreams,
   updateChatStreamLearning,
   updateChatStreamAdapterPolicy,
+  updateAdapterPolicyDefaults,
   updateChatStreamTalkFrequency,
   upsertChatStreamPrompt,
   type ChatConfigRule,
@@ -71,6 +73,7 @@ import {
   type ChatTalkFrequencyRule,
   type ChatStreamDetail,
   type ChatStreamType,
+  type AdapterPolicyDefaults,
 } from '@/lib/chat-management-api'
 import { getBotConfig, updateBotConfigSection } from '@/lib/config-api'
 import { useToast } from '@/hooks/use-toast'
@@ -1132,10 +1135,11 @@ function PromptRuleEditor({
   const isBusy = saveMutation.isPending || deleteMutation.isPending
   const normalizedDraft = draft.trim()
   const changed = normalizedDraft !== prompt.prompt.trim()
-
-  useEffect(() => {
+  const [seenPrompt, setSeenPrompt] = useState(prompt.prompt)
+  if (seenPrompt !== prompt.prompt) {
+    setSeenPrompt(prompt.prompt)
     setDraft(prompt.prompt)
-  }, [prompt.prompt])
+  }
 
   return (
     <div className="bg-muted/20 space-y-2 rounded-md border p-3">
@@ -1279,9 +1283,10 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
       : kind === 'expression'
         ? 'expression_groups'
         : 'jargon_groups'
-  const sectionData = (configQuery.data?.[sectionName] && typeof configQuery.data[sectionName] === 'object'
-    ? configQuery.data[sectionName]
-    : {}) as Record<string, unknown>
+  const sectionData = useMemo(() => {
+    const raw = configQuery.data?.[sectionName]
+    return (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  }, [configQuery.data, sectionName])
   const globalMemorySharingEnabled =
     kind === 'memory' && sectionData.global_memory_sharing_enabled === true
   const groups = useMemo(
@@ -1295,10 +1300,13 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
     [addDialogGroup]
   )
   const chatNameByTargetKey = useMemo(
-    () => new Map(chats.map((chat) => [
-      targetKey(chatToTarget(chat)),
-      formatChatDisplayName(chat.display_name, chat.account_id),
-    ])),
+    () =>
+      new Map(
+        chats.map((chat) => [
+          targetKey(chatToTarget(chat)),
+          formatChatDisplayName(chat.display_name, chat.account_id),
+        ])
+      ),
     [chats]
   )
   const addDialogChats = useMemo(() => {
@@ -1390,7 +1398,11 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
   }
 
   const applySelectedChatsToGroup = () => {
-    if (globalMemorySharingEnabled || addDialogGroupIndex === null || selectedTargetKeys.length === 0) {
+    if (
+      globalMemorySharingEnabled ||
+      addDialogGroupIndex === null ||
+      selectedTargetKeys.length === 0
+    ) {
       return
     }
     const selectedKeySet = new Set(selectedTargetKeys)
@@ -1440,9 +1452,7 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
       <div className="flex shrink-0 flex-col gap-3 border-b p-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
           <h2 className="text-base font-semibold">共享组管理</h2>
-          <p className="text-sm text-muted-foreground">
-            管理表达、黑话和记忆的聊天流共享组。
-          </p>
+          <p className="text-muted-foreground text-sm">管理表达、黑话和记忆的聊天流共享组。</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="bg-background inline-flex rounded-md border p-1">
@@ -1472,7 +1482,7 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {globalMemorySharingEnabled && (
-          <div className="mb-3 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          <div className="bg-muted/30 text-muted-foreground mb-3 rounded-md border px-3 py-2 text-sm">
             全局共享记忆已开启，记忆共享组暂不参与普通记忆检索范围控制。
           </div>
         )}
@@ -1608,7 +1618,7 @@ function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
                 )}
               </div>
               {isAddDialogLimited && (
-                <div className="text-xs text-muted-foreground">
+                <div className="text-muted-foreground text-xs">
                   仅显示前 {MUTUAL_GROUP_CHAT_RESULT_LIMIT} 个匹配项，请输入关键词缩小范围。
                 </div>
               )}
@@ -1672,11 +1682,13 @@ function CompactDetailItem({ label, value }: { label: string; value: ReactNode }
 function getAdapterDisplayName(adapter: ChatAdapterStatus): string {
   const rawName = adapter.gateway_name || adapter.plugin_id || adapter.adapter_id
   const namePart = rawName.split('.').at(-1) || rawName
-  return namePart
-    .replace(/[-_]+/g, ' ')
-    .replace(/\badapter\b/gi, '')
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase()) || '适配器'
+  return (
+    namePart
+      .replace(/[-_]+/g, ' ')
+      .replace(/\badapter\b/gi, '')
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase()) || '适配器'
+  )
 }
 
 function getAdapterPolicyLabel(adapter: ChatAdapterStatus): string {
@@ -1687,7 +1699,7 @@ function getAdapterPolicyLabel(adapter: ChatAdapterStatus): string {
     return '已阻止当前聊天'
   }
   if (!adapter.policy.configured) {
-    return '使用默认：允许'
+    return adapter.policy.allowed ? '使用默认：允许' : '使用默认：拒绝'
   }
   if (adapter.policy.allowed) {
     return adapter.policy.list_type === 'blacklist' ? '黑名单未命中' : '白名单已放行'
@@ -1703,7 +1715,9 @@ function getAdapterPolicyDescription(adapter: ChatAdapterStatus): string {
     return '这条聊天已被单独加入阻止规则。'
   }
   if (!adapter.policy.configured) {
-    return '未设置统一规则，主程序默认放行。'
+    return adapter.policy.allowed
+      ? '未设置统一规则，主程序默认放行。'
+      : '未设置统一规则，主程序默认拒绝。'
   }
   if (adapter.policy.allowed) {
     return adapter.policy.source === 'defaults'
@@ -1736,6 +1750,25 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
   const adapters = detail.adapters ?? []
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const defaultsQuery = useQuery({
+    queryKey: ['adapter-policy-defaults'],
+    queryFn: getAdapterPolicyDefaults,
+  })
+  const defaultsMutation = useMutation({
+    mutationFn: updateAdapterPolicyDefaults,
+    onSuccess: (defaults) => {
+      queryClient.setQueryData(['adapter-policy-defaults'], defaults)
+      void queryClient.invalidateQueries({ queryKey: ['chat-stream-detail'] })
+      toast({ title: '适配器默认策略已保存' })
+    },
+    onError: (error) => {
+      toast({
+        title: '适配器默认策略保存失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    },
+  })
   const policyMutation = useMutation({
     mutationFn: (payload: { adapter_id: string; action: 'allow' | 'block' | 'inherit' }) =>
       updateChatStreamAdapterPolicy(detail.session_id, payload),
@@ -1753,11 +1786,12 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
   })
   const savingAdapterId = policyMutation.variables?.adapter_id
 
-  const saveAdapterPolicy = (
-    adapter: ChatAdapterStatus,
-    action: 'allow' | 'block' | 'inherit'
-  ) => {
+  const saveAdapterPolicy = (adapter: ChatAdapterStatus, action: 'allow' | 'block' | 'inherit') => {
     policyMutation.mutate({ adapter_id: adapter.adapter_id, action })
+  }
+  const saveDefaultPolicy = (chatType: keyof AdapterPolicyDefaults, action: 'allow' | 'block') => {
+    const current = defaultsQuery.data ?? { group: 'allow', private: 'allow' }
+    defaultsMutation.mutate({ ...current, [chatType]: action })
   }
 
   return (
@@ -1765,9 +1799,46 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="font-medium">适配器放行</div>
-          <div className="text-muted-foreground text-xs">设置当前聊天是否允许经过适配器收发消息</div>
+          <div className="text-muted-foreground text-xs">
+            设置当前聊天是否允许经过适配器收发消息
+          </div>
         </div>
         <Badge variant="outline">{adapters.length} 个</Badge>
+      </div>
+      <div className="bg-muted/20 grid gap-2 rounded-md border p-3 sm:grid-cols-2">
+        {(['group', 'private'] as const).map((chatType) => {
+          const action = defaultsQuery.data?.[chatType] ?? 'allow'
+          return (
+            <div key={chatType} className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">
+                  {chatType === 'group' ? '群聊默认策略' : '私聊默认策略'}
+                </div>
+                <div className="text-muted-foreground text-xs">未设置单独规则时生效</div>
+              </div>
+              <div className="flex gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={action === 'allow' ? 'secondary' : 'outline'}
+                  disabled={defaultsQuery.isLoading || defaultsMutation.isPending}
+                  onClick={() => saveDefaultPolicy(chatType, 'allow')}
+                >
+                  放行
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={action === 'block' ? 'destructive' : 'outline'}
+                  disabled={defaultsQuery.isLoading || defaultsMutation.isPending}
+                  onClick={() => saveDefaultPolicy(chatType, 'block')}
+                >
+                  拒绝
+                </Button>
+              </div>
+            </div>
+          )
+        })}
       </div>
       {adapters.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
@@ -1832,7 +1903,9 @@ function ChatAdapterSection({ detail }: { detail: ChatStreamDetail }) {
                   onClick={() => saveAdapterPolicy(adapter, 'inherit')}
                 >
                   <Undo2 className="h-4 w-4" />
-                  {policyMutation.isPending && savingAdapterId === adapter.adapter_id ? '保存中' : '使用默认'}
+                  {policyMutation.isPending && savingAdapterId === adapter.adapter_id
+                    ? '保存中'
+                    : '使用默认'}
                 </Button>
               </div>
               <div className="text-muted-foreground min-w-0 text-xs break-all md:col-span-2">
@@ -2069,7 +2142,9 @@ export function ChatManagementPage() {
     if (typeof window === 'undefined') {
       return 'streams'
     }
-    return new URLSearchParams(window.location.search).get('view') === 'groups' ? 'groups' : 'streams'
+    return new URLSearchParams(window.location.search).get('view') === 'groups'
+      ? 'groups'
+      : 'streams'
   })
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<ChatTypeFilter>('all')
@@ -2243,7 +2318,7 @@ export function ChatManagementPage() {
                         role="button"
                         tabIndex={0}
                         aria-label={`查看 ${formatChatDisplayName(chat.display_name, chat.account_id)} 详情`}
-                        className="cursor-pointer hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-primary/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+                        className="hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-primary/60 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
                         onClick={() => setSelectedChat(chat)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {

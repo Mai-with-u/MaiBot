@@ -38,6 +38,19 @@ export const STORAGE_KEYS = {
   CHAT_USER_NAME: 'maibot_webui_user_name',
 } as const
 
+const GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS = [
+  STORAGE_KEYS.COMPLETED_TOURS,
+  'bot-config-file-mode-notice-dismissed',
+  'bot-config-tabs-guide-dismissed',
+  'bot-config-experimental-features-notice-dismissed',
+  'model-assignment-tour-entry-dismissed',
+  'log-viewer-switch-hint-dismissed',
+  'plugins-restart-notice-dismissed',
+  'memory-quick-start-dismissed',
+] as const
+
+const GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS = ['http-warning-dismissed'] as const
+
 // 默认设置值
 export const DEFAULT_SETTINGS = {
   // 外观
@@ -231,6 +244,31 @@ export function resetAllSettings(): void {
 
   // 触发全局事件
   window.dispatchEvent(new CustomEvent('maibot-settings-reset'))
+}
+
+/**
+ * 重置 WebUI 中所有已关闭或已完成的引导与提示。
+ * 仅清理提示状态，不影响用户设置、认证信息或业务数据。
+ */
+export function resetAllGuidesAndNotices(): number {
+  let clearedCount = 0
+
+  for (const key of GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS) {
+    if (localStorage.getItem(key) !== null) {
+      localStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  for (const key of GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS) {
+    if (sessionStorage.getItem(key) !== null) {
+      sessionStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  window.dispatchEvent(new CustomEvent('maibot-guides-reset'))
+  return clearedCount
 }
 
 /**

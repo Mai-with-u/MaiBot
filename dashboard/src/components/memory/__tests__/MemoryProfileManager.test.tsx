@@ -108,6 +108,23 @@ async function renderManager(initialPersonId?: string) {
 }
 
 describe('MemoryProfileManager 画像库加载', () => {
+  it('两列高度不一致时，画像查询卡片不跟随详情列拉伸', async () => {
+    await renderManager()
+
+    expect(screen.getByText('人物画像查询').closest('.grid')).toHaveClass('items-start')
+  })
+
+  it('画像列表内容较少时自然收缩，较多时按视口限制最大高度', async () => {
+    await renderManager()
+
+    expect(screen.getByLabelText('人物画像列表')).toHaveClass(
+      'max-h-[clamp(32.5rem,70vh,52rem)]',
+    )
+    expect(screen.getByLabelText('人物画像列表')).not.toHaveClass(
+      'h-[clamp(32.5rem,70vh,52rem)]',
+    )
+  })
+
   it('挂载时加载画像库并自动选中第一个人物，同时拉取其证据', async () => {
     await renderManager()
     expect(memoryApi.getMemoryProfiles).toHaveBeenCalledWith(80)

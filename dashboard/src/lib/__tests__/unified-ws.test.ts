@@ -99,6 +99,11 @@ class FakeWebSocket {
     this.onclose?.({ code } as CloseEvent)
   }
 
+  /** 触发 socket.onerror（连接失败路径） */
+  serverError(): void {
+    this.onerror?.()
+  }
+
   lastSent(): SentEnvelope {
     const raw = this.sent[this.sent.length - 1]
     return JSON.parse(raw) as SentEnvelope
@@ -116,12 +121,12 @@ async function loadClient(): Promise<typeof UnifiedWsClientType> {
   return module.unifiedWsClient
 }
 
-/** 建立连接并打开第一个 socket，返回客户端与 socket */
+/** 建立连接并打开最新创建的 socket，返回客户端与 socket */
 async function connectAndOpen() {
   const client = await loadClient()
   const connectPromise = client.connect()
   await flushMicrotasks()
-  const socket = FakeWebSocket.instances[0]
+  const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
   socket.serverOpen()
   await connectPromise
   return { client, socket }
@@ -376,5 +381,325 @@ describe('unifiedWsClient', () => {
     removeListener()
     socket.serverMessage({ op: 'event', domain: 'logs', event: 'entry', data: {} })
     expect(received).toHaveLength(1)
+  })
+
+  it('token 请求抛错或基址为空时无法建立连接', async () => {
+    apiState.tokenError = new Error('网络中断')
+    const client = await loadClient()
+    await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
+    expect(console.error).toHaveBeenCalledWith('获取统一 WebSocket token 失败:', expect.any(Error))
+
+    apiState.tokenError = null
+    apiState.wsBaseUrl = ''
+    await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
+    expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+
+  it('socket.onerror 在握手未完成时拒绝连接，完成后忽略', async () => {
+    const client = await loadClient()
+    const connectPromise = client.connect()
+    await flushMicrotasks()
+    FakeWebSocket.instances[0]?.serverError()
+    await expect(connectPromise).rejects.toThrow('统一 WebSocket 连接失败')
+
+    const opened = await connectAndOpen()
+    opened.socket.serverError()
+    expect(opened.client.getStatus()).toBe('connected')
+  })
+
+  it('握手完成前收到 close 会按关闭码拒绝连接', async () => {
+    const client = await loadClient()
+    const connectPromise = client.connect()
+    await flushMicrotasks()
+    FakeWebSocket.instances[0]?.serverClose(1006)
+    await expect(connectPromise).rejects.toThrow('统一 WebSocket 已关闭 (1006)')
+  })
+
+  it('关闭码 4001 在非 /auth 页跳转登录，已在 /auth 则不再跳转且不重连', async () => {
+    const locationState = {
+      href: 'http://localhost/chat',
+      pathname: '/chat',
+      protocol: 'http:',
+      host: 'localhost',
+    }
+    vi.stubGlobal('location', locationState)
+    const { socket } = await connectAndOpen()
+    socket.serverClose(4001)
+    expect(locationState.href).toBe('/auth')
+
+    await vi.advanceTimersByTimeAsync(600000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    locationState.pathname = '/auth'
+    locationState.href = 'http://localhost/auth'
+    const second = await connectAndOpen()
+    second.socket.serverClose(4001)
+    expect(locationState.href).toBe('http://localhost/auth')
+  })
+
+  it('没有现存 socket 时 restart 会主动建连；已有 socket 则关闭并等待重连', async () => {
+    const client = await loadClient()
+    const restartPromise = client.restart()
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    FakeWebSocket.instances[0]?.serverOpen()
+    await restartPromise
+    expect(client.getStatus()).toBe('connected')
+
+    await client.restart()
+    expect(FakeWebSocket.instances[0]?.readyState).toBe(FakeWebSocket.CLOSED)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+  })
+
+  it('已连接时 unsubscribe 发送退订请求；未 OPEN 的 sendRequest 会抛错', async () => {
+    const { client, socket } = await connectAndOpen()
+    const unsubscribePromise = client.unsubscribe('logs', 'main')
+    await flushMicrotasks()
+    const payload = socket.lastSent()
+    expect(payload).toMatchObject({
+      op: 'unsubscribe',
+      domain: 'logs',
+      topic: 'main',
+      data: {},
+    })
+    socket.serverMessage({ op: 'response', id: payload.id, ok: true, data: { released: true } })
+    await expect(unsubscribePromise).resolves.toEqual({ released: true })
+
+    socket.readyState = FakeWebSocket.CONNECTING
+    await expect(client.call({ domain: 'chat', method: 'noop' })).rejects.toThrow(
+      '统一 WebSocket 尚未连接'
+    )
+  })
+
+  it('过期 socket 的 open/message/error/close 不会改写当前连接', async () => {
+    const client = await loadClient()
+    const connectPromise = client.connect()
+    await flushMicrotasks()
+    const stale = FakeWebSocket.instances[0]
+    expect(stale).toBeDefined()
+
+    const restartPromise = client.restart()
+    await expect(connectPromise).rejects.toThrow('统一 WebSocket 已关闭')
+    await restartPromise
+
+    stale?.serverOpen()
+    stale?.serverMessage({ op: 'event', domain: 'logs', event: 'entry', data: {} })
+    stale?.serverError()
+    stale?.serverClose(1006)
+    expect(client.getStatus()).toBe('idle')
+  })
+
+  it('onStatusChange / onReconnect / onConnectionChange 退订后不再收到后续通知', async () => {
+    const { client, socket } = await connectAndOpen()
+    const statuses: string[] = []
+    const reconnect = vi.fn()
+    const connections: boolean[] = []
+
+    const stopStatus = client.onStatusChange((status) => statuses.push(status))
+    const stopReconnect = client.onReconnect(reconnect)
+    const stopConnection = client.onConnectionChange((connected) => connections.push(connected))
+    stopStatus()
+    stopReconnect()
+    stopConnection()
+
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    FakeWebSocket.instances[1]?.serverOpen()
+    await flushMicrotasks()
+
+    expect(statuses).toEqual(['connected'])
+    expect(connections).toEqual([true])
+    expect(reconnect).not.toHaveBeenCalled()
+  })
+
+  it('updateSubscriptionData 对未知订阅是空操作，已有订阅会在恢复时使用新数据', async () => {
+    const { client, socket } = await connectAndOpen()
+    client.updateSubscriptionData('missing', 'topic', { ignored: true })
+
+    const subscribePromise = client.subscribe('logs', 'main', { level: 'INFO' })
+    await flushMicrotasks()
+    const subscribePayload = socket.lastSent()
+    socket.serverMessage({ op: 'response', id: subscribePayload.id, ok: true, data: {} })
+    await subscribePromise
+
+    client.updateSubscriptionData('logs', 'main', { level: 'DEBUG' })
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    const nextSocket = FakeWebSocket.instances[1]
+    nextSocket.serverOpen()
+    await flushMicrotasks()
+    expect(nextSocket.lastSent()).toMatchObject({
+      op: 'subscribe',
+      domain: 'logs',
+      topic: 'main',
+      data: { level: 'DEBUG' },
+    })
+  })
+
+  it('已连接时再次 connect 直接返回', async () => {
+    const { client } = await connectAndOpen()
+    await client.connect()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('并发 connect 共享同一个握手 Promise', async () => {
+    const client = await loadClient()
+    const first = client.connect()
+    const second = client.connect()
+    await flushMicrotasks()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    FakeWebSocket.instances[0]?.serverOpen()
+    await Promise.all([first, second])
+    expect(client.getStatus()).toBe('connected')
+  })
+
+  it('call 缺省 data 发空对象；成功响应缺 data 解析为 {}；无 id 或默认错误信息按约定处理', async () => {
+    const { client, socket } = await connectAndOpen()
+    const callPromise = client.call({ domain: 'chat', method: 'session.ping' })
+    await flushMicrotasks()
+    const payload = socket.lastSent()
+    expect(payload.data).toEqual({})
+
+    socket.serverMessage({ op: 'response', ok: true, data: { ignored: true } })
+    socket.serverMessage({ op: 'response', id: payload.id, ok: true })
+    await expect(callPromise).resolves.toEqual({})
+
+    const failPromise = client.call({ domain: 'chat', method: 'session.fail' })
+    await flushMicrotasks()
+    const failPayload = socket.lastSent()
+    const expectation = expect(failPromise).rejects.toThrow('统一 WebSocket 请求失败')
+    socket.serverMessage({ op: 'response', id: failPayload.id, ok: false })
+    await expectation
+  })
+
+  it('事件/状态/连接/重连监听器抛错时其余监听器仍继续执行', async () => {
+    const { client, socket } = await connectAndOpen()
+    const healthyEvent = vi.fn()
+    client.addEventListener(() => {
+      throw new Error('事件监听器失败')
+    })
+    client.addEventListener(healthyEvent)
+
+    const statusThrow = vi.fn()
+    statusThrow.mockImplementationOnce(() => undefined)
+    statusThrow.mockImplementation(() => {
+      throw new Error('状态监听器失败')
+    })
+    const healthyStatus = vi.fn()
+    client.onStatusChange(statusThrow)
+    client.onStatusChange(healthyStatus)
+
+    const connThrow = vi.fn()
+    connThrow.mockImplementationOnce(() => undefined)
+    connThrow.mockImplementation(() => {
+      throw new Error('连接监听器失败')
+    })
+    const healthyConn = vi.fn()
+    client.onConnectionChange(connThrow)
+    client.onConnectionChange(healthyConn)
+
+    const reconnectThrow = vi.fn(() => {
+      throw new Error('重连监听器失败')
+    })
+    const healthyReconnect = vi.fn()
+    client.onReconnect(reconnectThrow)
+    client.onReconnect(healthyReconnect)
+
+    socket.serverMessage({ op: 'event', domain: 'logs', event: 'entry', data: { id: 'e1' } })
+    expect(healthyEvent).toHaveBeenCalledTimes(1)
+
+    const subscribePromise = client.subscribe('logs', 'main')
+    await flushMicrotasks()
+    socket.serverMessage({ op: 'response', id: socket.lastSent().id, ok: true, data: {} })
+    await subscribePromise
+
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    const nextSocket = FakeWebSocket.instances[1]
+    nextSocket.serverOpen()
+    await flushMicrotasks()
+    nextSocket.serverMessage({ op: 'response', id: nextSocket.lastSent().id, ok: true, data: {} })
+    await flushMicrotasks()
+
+    expect(healthyStatus).toHaveBeenCalled()
+    expect(healthyConn).toHaveBeenCalled()
+    expect(healthyReconnect).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith('统一 WebSocket 事件监听器执行失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith('WebSocket 状态监听器执行失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith('WebSocket 连接监听器执行失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith('统一 WebSocket 重连监听器执行失败:', expect.any(Error))
+  })
+
+  it('恢复订阅失败只记日志仍通知重连；心跳在 socket 非 OPEN 时不发 ping', async () => {
+    const { client, socket } = await connectAndOpen()
+    const subscribePromise = client.subscribe('logs', 'main', { replay: 1 })
+    await flushMicrotasks()
+    socket.serverMessage({ op: 'response', id: socket.lastSent().id, ok: true, data: {} })
+    await subscribePromise
+
+    const onReconnect = vi.fn()
+    client.onReconnect(onReconnect)
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    const nextSocket = FakeWebSocket.instances[1]
+    nextSocket.serverOpen()
+    await flushMicrotasks()
+    nextSocket.serverMessage({
+      op: 'response',
+      id: nextSocket.lastSent().id,
+      ok: false,
+      error: { message: '恢复失败' },
+    })
+    await flushMicrotasks()
+    expect(onReconnect).toHaveBeenCalledTimes(1)
+    expect(console.error).toHaveBeenCalledWith('恢复统一 WebSocket 订阅失败:', expect.any(Error))
+
+    nextSocket.readyState = FakeWebSocket.CLOSED
+    const sentBefore = nextSocket.sent.length
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(nextSocket.sent).toHaveLength(sentBefore)
+  })
+
+  it('重复 disconnect 不会重复广播 idle；未识别 op 被忽略', async () => {
+    const client = await loadClient()
+    const statuses: string[] = []
+    client.onStatusChange((status) => statuses.push(status))
+    client.disconnect()
+    client.disconnect()
+    expect(statuses).toEqual(['idle'])
+
+    const opened = await connectAndOpen()
+    const received = vi.fn()
+    opened.client.addEventListener(received)
+    opened.socket.serverMessage({ op: 'unknown', data: {} })
+    expect(received).not.toHaveBeenCalled()
+  })
+
+  it('subscribe 省略 data 时发送空对象；重连 connect 失败只记日志', async () => {
+    const { client, socket } = await connectAndOpen()
+    const subscribePromise = client.subscribe('logs', 'main')
+    await flushMicrotasks()
+    expect(socket.lastSent()).toMatchObject({
+      op: 'subscribe',
+      domain: 'logs',
+      topic: 'main',
+      data: {},
+    })
+    socket.serverMessage({ op: 'response', id: socket.lastSent().id, ok: true, data: {} })
+    await subscribePromise
+
+    apiState.wsBaseUrl = ''
+    socket.serverClose(1006)
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushMicrotasks()
+    expect(console.error).toHaveBeenCalledWith('统一 WebSocket 重连失败:', expect.any(Error))
   })
 })

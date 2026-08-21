@@ -1,6 +1,6 @@
 """服务层模型任务解析工具。"""
 
-from typing import Any, Dict
+from typing import Dict
 
 from src.common.logger import get_logger
 from src.config.config import config_manager
@@ -57,52 +57,3 @@ def resolve_task_name(task_name: str = "") -> str:
     if normalized_task_name not in models:
         raise ValueError(f"未找到名为 `{normalized_task_name}` 的模型配置")
     return normalized_task_name
-
-
-def resolve_task_name_from_model_config(model_config: Any, preferred_task_name: str = "") -> str:
-    """根据旧版模型配置对象解析任务名。
-
-    Args:
-        model_config: 旧调用方持有的任务配置对象。
-        preferred_task_name: 候选任务名。
-
-    Returns:
-        str: 解析后的模型任务名。
-
-    Raises:
-        RuntimeError: 当前没有任何可用模型配置时抛出。
-        ValueError: 无法解析任何可用任务名时抛出。
-    """
-    models = get_available_models()
-    if not models:
-        raise RuntimeError("没有可用的模型配置")
-
-    normalized_preferred = str(preferred_task_name or "").strip()
-    if normalized_preferred and normalized_preferred in models:
-        return normalized_preferred
-
-    for task_name, task_cfg in models.items():
-        if task_cfg is model_config:
-            return task_name
-
-    requested_model_list_raw = getattr(model_config, "model_list", [])
-    requested_model_list = [str(item).strip() for item in (requested_model_list_raw or []) if str(item).strip()]
-    if requested_model_list:
-        for task_name, task_cfg in models.items():
-            candidate_list = [str(item).strip() for item in getattr(task_cfg, "model_list", []) if str(item).strip()]
-            if candidate_list == requested_model_list:
-                return task_name
-
-        for requested_model in requested_model_list:
-            for task_name, task_cfg in models.items():
-                candidate_list = [str(item).strip() for item in getattr(task_cfg, "model_list", []) if str(item).strip()]
-                if requested_model in candidate_list:
-                    logger.info(
-                        "旧版 model_config 未命中任务配置，"
-                        f"按模型 `{requested_model}` 近似映射到任务 `{task_name}`"
-                    )
-                    return task_name
-
-    if normalized_preferred:
-        logger.warning(f"无法映射旧版 model_config，回退默认任务: preferred={normalized_preferred}")
-    return resolve_task_name("")

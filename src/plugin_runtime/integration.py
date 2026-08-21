@@ -854,6 +854,10 @@ class PluginRuntimeManager(
             statuses.update(supervisor.get_plugin_load_statuses())
         for plugin_id in self._blocked_plugin_reasons:
             statuses[plugin_id] = "failed"
+        # /offline 是一次临时运行时操作，不会修改插件的 enabled 配置。
+        # 因此已成功卸载的适配器必须保留显式状态，避免 WebUI 将“启用但未加载”误判为加载失败。
+        for plugin_id in self._offline_adapter_plugin_ids:
+            statuses[plugin_id] = "offline"
         return statuses
 
     def get_plugin_load_failure_reasons(self) -> Dict[str, str]:

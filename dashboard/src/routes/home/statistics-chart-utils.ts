@@ -20,7 +20,7 @@ export function formatTokenAxis(value: number, locale: string): string {
     return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value / 1_000_000)}M`
   }
   if (absoluteValue >= 1_000) {
-    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value / 1_000)}k`
+    return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value / 1_000)}K`
   }
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)
 }

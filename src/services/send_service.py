@@ -275,7 +275,7 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
     # 当目标会话没有可继承的上下文消息时，至少补齐当前平台账号，
     # 让按 ``platform + account_id`` 绑定的路由仍有机会命中。
     if not RouteKeyFactory.extract_components(inherited_metadata)[0]:
-        bot_account = get_bot_account(target_stream.platform)
+        bot_account = get_bot_account(target_stream.platform, target_stream.account_id)
         if bot_account:
             inherited_metadata["platform_io_account_id"] = bot_account
 
@@ -538,7 +538,7 @@ def _build_outbound_session_message(
         logger.error(f"[SendService] 未找到聊天流: {stream_id}")
         return None
 
-    bot_user_id = get_bot_account(target_stream.platform)
+    bot_user_id = get_bot_account(target_stream.platform, target_stream.account_id)
     if not bot_user_id:
         logger.error(f"[SendService] 平台 {target_stream.platform} 未配置机器人账号，无法发送消息")
         return None
@@ -695,12 +695,17 @@ async def _apply_successful_delivery_receipt(message: SessionMessage, delivery_b
         message: 已发送成功的内部消息对象。
         delivery_batch: Platform IO 返回的批量回执。
     """
+    message.platform_message_id = None
     if not delivery_batch.sent_receipts:
         return
 
     original_message_id = str(message.message_id or "").strip()
     external_message_id = str(delivery_batch.sent_receipts[0].external_message_id or "").strip()
-    if not external_message_id or external_message_id == original_message_id:
+    if not external_message_id:
+        return
+
+    message.platform_message_id = external_message_id
+    if external_message_id == original_message_id:
         return
 
     message.message_id = external_message_id
@@ -1259,6 +1264,28 @@ async def emoji_to_stream(
     )
 
 
+async def image_to_stream_with_message(
+    image_base64: str,
+    stream_id: str,
+    storage_message: bool = True,
+    set_reply: bool = False,
+    reply_message: Optional[MaiMessage] = None,
+    sync_to_maisaka_history: bool = False,
+    maisaka_source_kind: str = "outbound_send",
+) -> Optional[SessionMessage]:
+    """向指定流发送图片消息，并返回发送成功后的消息对象。"""
+    return await _send_to_target_with_message(
+        message_sequence=_build_message_sequence_from_custom_message("image", image_base64),
+        stream_id=stream_id,
+        typing=False,
+        storage_message=storage_message,
+        set_reply=set_reply,
+        reply_message=reply_message,
+        sync_to_maisaka_history=sync_to_maisaka_history,
+        maisaka_source_kind=maisaka_source_kind,
+    )
+
+
 async def image_to_stream(
     image_base64: str,
     stream_id: str,
@@ -1280,13 +1307,43 @@ async def image_to_stream(
     Returns:
         bool: 发送成功时返回 ``True``。
     """
-    return await _send_to_target(
-        message_sequence=_build_message_sequence_from_custom_message("image", image_base64),
+    return (
+        await image_to_stream_with_message(
+            image_base64=image_base64,
+            stream_id=stream_id,
+            storage_message=storage_message,
+            set_reply=set_reply,
+            reply_message=reply_message,
+            sync_to_maisaka_history=sync_to_maisaka_history,
+            maisaka_source_kind=maisaka_source_kind,
+        )
+        is not None
+    )
+
+
+async def custom_to_stream_with_message(
+    message_type: str,
+    content: str | Dict[str, Any],
+    stream_id: str,
+    processed_plain_text: str = "",
+    typing: bool = False,
+    reply_message: Optional[MaiMessage] = None,
+    set_reply: bool = False,
+    storage_message: bool = True,
+    show_log: bool = True,
+    sync_to_maisaka_history: bool = False,
+    maisaka_source_kind: str = "outbound_send",
+) -> Optional[SessionMessage]:
+    """向指定流发送自定义类型消息，并返回发送成功后的消息对象。"""
+    return await _send_to_target_with_message(
+        message_sequence=_build_message_sequence_from_custom_message(message_type, content),
         stream_id=stream_id,
-        typing=False,
-        storage_message=storage_message,
-        set_reply=set_reply,
+        processed_plain_text=processed_plain_text,
+        typing=typing,
         reply_message=reply_message,
+        set_reply=set_reply,
+        storage_message=storage_message,
+        show_log=show_log,
         sync_to_maisaka_history=sync_to_maisaka_history,
         maisaka_source_kind=maisaka_source_kind,
     )
@@ -1321,8 +1378,39 @@ async def custom_to_stream(
     Returns:
         bool: 发送成功时返回 ``True``。
     """
-    return await _send_to_target(
-        message_sequence=_build_message_sequence_from_custom_message(message_type, content),
+    return (
+        await custom_to_stream_with_message(
+            message_type=message_type,
+            content=content,
+            stream_id=stream_id,
+            processed_plain_text=processed_plain_text,
+            typing=typing,
+            reply_message=reply_message,
+            set_reply=set_reply,
+            storage_message=storage_message,
+            show_log=show_log,
+            sync_to_maisaka_history=sync_to_maisaka_history,
+            maisaka_source_kind=maisaka_source_kind,
+        )
+        is not None
+    )
+
+
+async def custom_reply_set_to_stream_with_message(
+    reply_set: MessageSequence,
+    stream_id: str,
+    processed_plain_text: str = "",
+    typing: bool = False,
+    reply_message: Optional[MaiMessage] = None,
+    set_reply: bool = False,
+    storage_message: bool = True,
+    show_log: bool = True,
+    sync_to_maisaka_history: bool = False,
+    maisaka_source_kind: str = "outbound_send",
+) -> Optional[SessionMessage]:
+    """向指定流发送消息组件序列，并返回发送成功后的消息对象。"""
+    return await _send_to_target_with_message(
+        message_sequence=reply_set,
         stream_id=stream_id,
         processed_plain_text=processed_plain_text,
         typing=typing,
@@ -1362,15 +1450,18 @@ async def custom_reply_set_to_stream(
     Returns:
         bool: 发送成功时返回 ``True``。
     """
-    return await _send_to_target(
-        message_sequence=reply_set,
-        stream_id=stream_id,
-        processed_plain_text=processed_plain_text,
-        typing=typing,
-        reply_message=reply_message,
-        set_reply=set_reply,
-        storage_message=storage_message,
-        show_log=show_log,
-        sync_to_maisaka_history=sync_to_maisaka_history,
-        maisaka_source_kind=maisaka_source_kind,
+    return (
+        await custom_reply_set_to_stream_with_message(
+            reply_set=reply_set,
+            stream_id=stream_id,
+            processed_plain_text=processed_plain_text,
+            typing=typing,
+            reply_message=reply_message,
+            set_reply=set_reply,
+            storage_message=storage_message,
+            show_log=show_log,
+            sync_to_maisaka_history=sync_to_maisaka_history,
+            maisaka_source_kind=maisaka_source_kind,
+        )
+        is not None
     )

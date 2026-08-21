@@ -241,6 +241,8 @@ export function MessageList({
     [messageIndexById, playingMessageIds]
   )
 
+  // TanStack Virtual 与 React Compiler 不兼容，保持现有虚拟列表实现
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => viewportRef.current,

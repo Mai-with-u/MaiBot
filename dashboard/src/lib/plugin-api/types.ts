@@ -53,7 +53,7 @@ export interface InstalledPlugin {
   enabled?: boolean
   disabled?: boolean
   loaded?: boolean
-  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'unknown' | 'loading'
+  load_status?: 'success' | 'failed' | 'inactive' | 'disabled' | 'offline' | 'unknown' | 'loading'
   load_error?: string
   circuit_status?: {
     state: 'open' | 'half_open'
@@ -69,6 +69,17 @@ export interface LegacyInstalledPlugin {
   id: string
   version: string
   path: string
+}
+
+export interface RuntimeCommand {
+  aliases: string[]
+  description: string
+  enabled: boolean
+  id: string
+  name: string
+  pattern: string
+  permission: 'public' | 'operator'
+  plugin_name: string
 }
 
 /**

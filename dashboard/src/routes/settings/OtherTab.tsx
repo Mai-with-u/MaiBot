@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
-import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllSettings, setSetting } from '@/lib/settings-manager'
+import { clearLocalCache, DEFAULT_SETTINGS, exportSettings, formatBytes, getSetting, getStorageUsage, importSettings, resetAllGuidesAndNotices, resetAllSettings, setSetting } from '@/lib/settings-manager'
 import { logWebSocket } from '@/lib/log-websocket'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 
@@ -219,6 +219,15 @@ export function OtherTab() {
     })
   }
 
+  const handleResetGuidesAndNotices = () => {
+    const clearedCount = resetAllGuidesAndNotices()
+    refreshStorageUsage()
+    toast({
+      title: t('settings.other.guidesResetDone'),
+      description: t('settings.other.guidesResetDoneDesc', { count: clearedCount }),
+    })
+  }
+
   const handleResetSetup = async () => {
     setIsResetting(true)
 
@@ -300,6 +309,23 @@ export function OtherTab() {
             onCheckedChange={handleFocusCompanionChange}
             aria-label="专注陪伴入口"
           />
+        </div>
+      </div>
+
+      {/* 引导与提示 */}
+      <div className="rounded-lg border bg-card p-4 sm:p-6">
+        <h3 className="mb-3 flex items-center gap-2 text-base font-semibold sm:mb-4 sm:text-lg">
+          <RotateCcw className="h-5 w-5" />
+          {t('settings.other.guidesAndNotices')}
+        </h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            {t('settings.other.guidesAndNoticesDesc')}
+          </p>
+          <Button variant="outline" onClick={handleResetGuidesAndNotices} className="shrink-0 gap-2">
+            <RotateCcw className="h-4 w-4" />
+            {t('settings.other.resetGuidesAndNotices')}
+          </Button>
         </div>
       </div>
 

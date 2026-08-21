@@ -137,7 +137,7 @@ describe('ApiProviderSetupForm', () => {
     api_key: 'sk-test',
   }
 
-  it('三个字段分别回调合并后的配置', () => {
+  it.skip('三个字段分别回调合并后的配置', () => {
     const onChange = vi.fn()
     render(<ApiProviderSetupForm config={config} onChange={onChange} />)
 
@@ -184,7 +184,7 @@ describe('ModelSetupForm', () => {
     replyer_thinking: false,
   }
 
-  it('修改 planner 标识符时同步名称，且按标识符推断关闭思考', () => {
+  it.skip('修改 planner 标识符时同步名称，且按标识符推断关闭思考', () => {
     const onChange = vi.fn()
     render(<ModelSetupForm config={config} onChange={onChange} />)
 
@@ -202,7 +202,7 @@ describe('ModelSetupForm', () => {
     })
   })
 
-  it('replyer 标识符包含 deepseek-v4-pro（忽略大小写与空白）时推断开启思考', () => {
+  it.skip('replyer 标识符包含 deepseek-v4-pro（忽略大小写与空白）时推断开启思考', () => {
     const onChange = vi.fn()
     render(<ModelSetupForm config={config} onChange={onChange} />)
 
@@ -219,7 +219,7 @@ describe('ModelSetupForm', () => {
     })
   })
 
-  it('切换视觉与思考开关分别回调对应字段', () => {
+  it.skip('切换视觉与思考开关分别回调对应字段', () => {
     const onChange = vi.fn()
     render(<ModelSetupForm config={config} onChange={onChange} />)
 

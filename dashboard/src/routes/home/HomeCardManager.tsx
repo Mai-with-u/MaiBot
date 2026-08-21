@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ExternalLink, GripVertical, Maximize2, Pencil, Plus, RotateCcw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
@@ -736,7 +736,10 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
     })
   }, [])
 
-  useEffect(() => {
+  const cardIdsKey = allCardIds.join('\0')
+  const [seenCardIdsKey, setSeenCardIdsKey] = useState('')
+  if (seenCardIdsKey !== cardIdsKey) {
+    setSeenCardIdsKey(cardIdsKey)
     updateLayout((current) => {
       const knownIds = new Set(allCardIds)
       const newIds = allCardIds.filter((id) => !current.order.includes(id))
@@ -763,15 +766,15 @@ export function HomeCardManager({ cards, pluginCards, controlsPortalId }: HomeCa
       }
       return { ...current, order, hidden, rowModes, styles, widths }
     })
-  }, [allCardIds, cardMap, updateLayout])
+  }
 
-  useEffect(() => {
-    if (!controlsPortalId || typeof document === 'undefined') {
-      setControlsContainer(null)
-      return
-    }
-    setControlsContainer(document.getElementById(controlsPortalId))
-  }, [controlsPortalId])
+  const nextControlsContainer =
+    !controlsPortalId || typeof document === 'undefined'
+      ? null
+      : document.getElementById(controlsPortalId)
+  if (controlsContainer !== nextControlsContainer) {
+    setControlsContainer(nextControlsContainer)
+  }
 
   const visibleCards = useMemo(
     () =>

@@ -20,7 +20,7 @@ function flattenPaths(sections: MenuSection[]): string[] {
 }
 
 describe('useMenuSections', () => {
-  it('配置加载完成前隐藏行为学习入口，其余菜单完整', () => {
+  it('配置加载完成前隐藏受开关控制的入口', () => {
     // 返回一个永不 resolve 的 Promise，模拟配置仍在加载
     mockGetBotConfigCached.mockReturnValue(new Promise(() => {}))
 
@@ -28,12 +28,13 @@ describe('useMenuSections', () => {
     const paths = flattenPaths(result.current)
 
     expect(paths).not.toContain('/resource/behavior')
+    expect(paths).not.toContain('/reply-effects')
     // 其它常规入口不受特性开关影响
     expect(paths).toContain('/')
     expect(paths).toContain('/config/bot')
     expect(paths).toContain('/resource/emoji')
-    // 四个分组都保留（没有分组被过滤成空）
-    expect(result.current).toHaveLength(4)
+    // 五个分组都保留（没有分组被过滤成空）
+    expect(result.current).toHaveLength(5)
   })
 
   it('实验开关开启时显示行为学习入口', async () => {
@@ -52,7 +53,33 @@ describe('useMenuSections', () => {
       'sidebar.groups.botConfig',
       'sidebar.groups.botResources',
       'sidebar.groups.extensionsMonitor',
+      'sidebar.groups.advancedTools',
     ])
+  })
+
+  it('回复评分调试开关开启时显示回复效果入口', async () => {
+    mockGetBotConfigCached.mockResolvedValue({
+      debug: { enable_reply_effect_tracking: true },
+    })
+
+    const { result } = renderHook(() => useMenuSections())
+
+    await waitFor(() => {
+      expect(flattenPaths(result.current)).toContain('/reply-effects')
+    })
+  })
+
+  it('回复评分调试开关关闭或缺失时隐藏回复效果入口', async () => {
+    mockGetBotConfigCached.mockResolvedValue({
+      debug: { enable_reply_effect_tracking: false },
+    })
+
+    const { result } = renderHook(() => useMenuSections())
+
+    await waitFor(() => {
+      expect(mockGetBotConfigCached).toHaveBeenCalled()
+    })
+    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
   })
 
   it('实验开关关闭时隐藏行为学习入口', async () => {
@@ -83,6 +110,7 @@ describe('useMenuSections', () => {
     await waitFor(() => {
       expect(flattenPaths(result.current)).toContain('/resource/behavior')
     })
+    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
   })
 
   it('experimental 存在但缺少开关键时默认显示行为学习入口', async () => {
@@ -103,6 +131,7 @@ describe('useMenuSections', () => {
     await waitFor(() => {
       expect(flattenPaths(result.current)).toContain('/resource/behavior')
     })
+    expect(flattenPaths(result.current)).not.toContain('/reply-effects')
   })
 
   it('收到配置更新事件后重新拉取并刷新菜单', async () => {

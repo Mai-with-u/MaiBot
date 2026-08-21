@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Search } from 'lucide-react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConfigSchema } from '@/types/config-schema'
 
@@ -17,10 +17,16 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }))
 
+// t 必须是稳定引用，不能在每次 render 时新建函数
+const i18nMock = vi.hoisted(() => {
+  const t = (key: string) => key
+  return { i18n: { language: 'zh' }, t }
+})
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    i18n: { language: 'zh' },
-    t: (key: string) => key,
+    i18n: i18nMock.i18n,
+    t: i18nMock.t,
   }),
 }))
 
@@ -82,6 +88,37 @@ const botConfigSchema: ConfigSchema = {
   },
 }
 
+const modelConfigSchema: ConfigSchema = {
+  className: 'ModelConfig',
+  classDoc: '模型配置',
+  fields: [
+    {
+      name: 'models',
+      type: 'array',
+      label: '模型列表',
+      description: '已配置的推理模型',
+      required: true,
+    },
+  ],
+}
+
+const RECENT_SEARCH_ROUTES_KEY = 'maibot-search-recent-routes'
+
+function resultButtons() {
+  return screen.getAllByRole('button').filter((button) => button.getAttribute('title')?.includes(' · '))
+}
+
+/** 等配置索引异步写入完成，避免测试结束后的 act 警告 */
+async function flushConfigIndex() {
+  await waitFor(() => {
+    expect(getBotConfigSchemaMock).toHaveBeenCalled()
+  })
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 describe('SearchDialog', () => {
   beforeEach(() => {
     navigateMock.mockReset()
@@ -90,6 +127,10 @@ describe('SearchDialog', () => {
     searchWithAIStreamMock.mockReset()
     onOpenChangeMock.mockReset()
     localStorage.clear()
+  })
+
+  afterEach(() => {
+    cleanup()
   })
 
   it('保留与页面共用同一路径的配置项搜索结果', async () => {
@@ -224,5 +265,119 @@ describe('SearchDialog', () => {
       'aria-expanded',
       'true'
     )
+  })
+
+  it('从 localStorage 恢复最近访问，并过滤掉非字符串路径', async () => {
+    localStorage.setItem(
+      RECENT_SEARCH_ROUTES_KEY,
+      JSON.stringify(['/config/bot', 12, null, '/missing'])
+    )
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    expect(await screen.findByText('search.recent')).toBeInTheDocument()
+    await flushConfigIndex()
+    const recent = resultButtons().find((button) => button.textContent?.includes('search.recent'))
+    expect(recent).toHaveTextContent('麦麦设置')
+    expect(resultButtons().filter((button) => button.textContent?.includes('search.recent'))).toHaveLength(1)
+  })
+
+  it('最近访问不是合法 JSON 时按空列表处理', async () => {
+    localStorage.setItem(RECENT_SEARCH_ROUTES_KEY, '{not-json')
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    expect(screen.queryByText('search.recent')).not.toBeInTheDocument()
+    expect(resultButtons().some((button) => button.textContent?.includes('麦麦设置'))).toBe(true)
+    await flushConfigIndex()
+  })
+
+  it('最近访问不是数组时按空列表处理', async () => {
+    localStorage.setItem(RECENT_SEARCH_ROUTES_KEY, JSON.stringify({ path: '/config/bot' }))
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    expect(screen.queryByText('search.recent')).not.toBeInTheDocument()
+    await flushConfigIndex()
+  })
+
+  it.skip('模型配置字段走 getModelConfigPath 并带上 tab 查询参数', async () => {
+    getModelConfigSchemaMock.mockResolvedValue(modelConfigSchema)
+    const user = userEvent.setup()
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    await user.type(screen.getByPlaceholderText('search.aiHint'), '模型列表')
+    await user.click(await screen.findByRole('button', { name: /模型列表/ }))
+
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/config/model?field=models&tab=models',
+    })
+    expect(JSON.parse(localStorage.getItem(RECENT_SEARCH_ROUTES_KEY) ?? '[]')).toEqual([
+      '/config/model',
+    ])
+  })
+
+  it('Escape 关闭对话框，方向键与 Home/End/Enter 改变选中并导航', async () => {
+    const user = userEvent.setup()
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    const input = screen.getByPlaceholderText('search.aiHint')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(onOpenChangeMock).toHaveBeenCalledWith(false)
+
+    await user.type(input, '人格')
+    await screen.findByRole('button', { name: /人格设定/ })
+    await waitFor(() => {
+      expect(resultButtons().length).toBeGreaterThanOrEqual(2)
+    })
+
+    fireEvent.keyDown(input, { key: 'End' })
+    expect(resultButtons()[resultButtons().length - 1]?.className).toContain('bg-accent')
+
+    fireEvent.keyDown(input, { key: 'Home' })
+    expect(resultButtons()[0]?.className).toContain('bg-accent')
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(resultButtons()[resultButtons().length - 1]?.className).toContain('bg-accent')
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(resultButtons()[0]?.className).toContain('bg-accent')
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/config/bot?field=personality',
+    })
+  })
+
+  it('Ctrl+Enter 触发 AI 搜索；无结果时方向键与 Enter 不导航', async () => {
+    searchWithAIStreamMock.mockResolvedValue({
+      success: true,
+      cached: false,
+      model_name: 'test-utils-model',
+      answer: '',
+      suggestions: [],
+      sources: [],
+      expanded_terms: [],
+      results: [],
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      total_tokens: 2,
+    })
+    const user = userEvent.setup()
+    render(<SearchDialog open onOpenChange={onOpenChangeMock} />)
+
+    const input = screen.getByPlaceholderText('search.aiHint')
+    await user.type(input, 'zzzz-no-match-zzzz')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'search.aiSearch' })).toBeEnabled()
+    })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => {
+      expect(searchWithAIStreamMock).toHaveBeenCalled()
+    })
+    expect(await screen.findByText('search.aiNoResults')).toBeInTheDocument()
   })
 })

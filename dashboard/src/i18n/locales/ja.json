@@ -25,7 +25,8 @@
       "overview": "概要",
       "botConfig": "ボット設定",
       "botResources": "ボットリソース",
-      "extensionsMonitor": "拡張とメンテナンス",
+      "extensionsMonitor": "拡張と連携",
+      "advancedTools": "高度なツール",
       "system": "システム"
     },
     "menu": {
@@ -46,9 +47,11 @@
       "pluginMarket": "プラグインマーケット",
       "configTemplate": "設定テンプレート",
       "pluginConfig": "プラグイン管理",
+      "adapterManagement": "アダプター管理",
       "mcpSettings": "MCP 設定",
       "dataTransfer": "データ管理",
       "statistics": "詳細統計データ",
+      "replyEffects": "返信効果",
       "logViewer": "ログビューア",
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
@@ -432,6 +435,11 @@
     },
     "other": {
       "display": "表示設定",
+      "guidesAndNotices": "ガイドとお知らせ",
+      "guidesAndNoticesDesc": "完了済みのガイドと閉じたお知らせをリセットします。他の設定やデータには影響しません。",
+      "resetGuidesAndNotices": "すべてのガイドとお知らせをリセット",
+      "guidesResetDone": "ガイドとお知らせをリセットしました",
+      "guidesResetDoneDesc": "{{count}} 件の状態を消去しました。該当ページを開き直すと再表示されます。",
       "enableAvatarFetch": "ユーザーアバターを取得して表示",
       "enableAvatarFetchDesc": "無効にすると、チャットと推論過程ビューはアバター画像を要求せず、既定のアバターを表示します。",
       "performance": "パフォーマンス & ストレージ",

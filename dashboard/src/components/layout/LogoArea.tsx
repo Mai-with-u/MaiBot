@@ -30,7 +30,7 @@ export function LogoArea({ sidebarOpen }: LogoAreaProps) {
         {/* 移动端始终显示完整 Logo，桌面端根据 sidebarOpen 切换 */}
         <div
           className={cn(
-            'flex h-10 w-28 shrink-0 flex-col items-start justify-start gap-2 transition-opacity duration-100',
+            'flex h-10 w-28 shrink-0 flex-col items-start justify-start gap-2 transition-opacity duration-[220ms] motion-reduce:transition-none',
             !sidebarOpen && 'lg:pointer-events-none lg:opacity-0'
           )}
         >

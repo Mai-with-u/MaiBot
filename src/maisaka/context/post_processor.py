@@ -3,18 +3,20 @@
 from dataclasses import dataclass
 from json import dumps, loads
 from math import ceil
+from typing import cast
+
+from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
+from src.maisaka.memory.mid_term import is_mid_term_memory_message
 
 from .history import drop_leading_orphan_tool_results, normalize_tool_call_result_pairs
 from .messages import (
-    AssistantMessage,
     ComplexSessionMessage,
     FOCUS_WAKEUP_SOURCE_KINDS,
     LLMContextMessage,
+    ModelOutputContextMessage,
     SessionBackedMessage,
     ToolResultMessage,
 )
-from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
-from src.maisaka.memory.mid_term import is_mid_term_memory_message
 
 TRIM_TARGET_RATIO = 1.0
 TRIM_THRESHOLD_RATIO = 2.0
@@ -39,6 +41,7 @@ def process_chat_history_after_cycle(
     *,
     max_context_size: int,
     enable_context_optimization: bool = False,
+    pending_call_ids: set[str] | None = None,
 ) -> HistoryPostProcessResult:
     """在每轮结束后统一执行历史裁切与清理。"""
 
@@ -53,7 +56,8 @@ def process_chat_history_after_cycle(
             continue
         processed_history.append(message)
     processed_history, normalized_removed_count, moved_tool_result_count = _normalize_history_structure(
-        processed_history
+        processed_history,
+        pending_call_ids=pending_call_ids,
     )
     remaining_context_count = sum(1 for message in processed_history if message.count_in_context)
 
@@ -65,7 +69,8 @@ def process_chat_history_after_cycle(
         )
         if optimized_removed_messages:
             processed_history, removed_after_optimize_count, moved_after_optimize_count = _normalize_history_structure(
-                processed_history
+                processed_history,
+                pending_call_ids=pending_call_ids,
             )
             optimized_removed_count = len(optimized_removed_messages) + removed_after_optimize_count
             moved_tool_result_count += moved_after_optimize_count
@@ -81,7 +86,8 @@ def process_chat_history_after_cycle(
             target_context_count=target_context_count,
         )
         processed_history, removed_after_trim_count, moved_after_trim_count = _normalize_history_structure(
-            processed_history
+            processed_history,
+            pending_call_ids=pending_call_ids,
         )
         compact_removed_count = len(removed_messages) + removed_after_trim_count
         moved_tool_result_count += moved_after_trim_count
@@ -106,21 +112,39 @@ def _trim_assistant_history_to_latest(
     """只保留最新的若干条 assistant 历史消息。"""
 
     normalized_keep_count = max(0, keep_count)
-    assistant_indexes = [
-        index
-        for index, message in enumerate(chat_history)
-        if isinstance(message, AssistantMessage)
-    ]
-    remove_count = len(assistant_indexes) - normalized_keep_count
+    tool_turn_ids = _collect_tool_turn_ids(chat_history)
+    output_unit_ids: list[tuple[str, str]] = []
+    for message in chat_history:
+        if not isinstance(message, ModelOutputContextMessage):
+            continue
+        logical_turn_id = message.output_item.meta.logical_turn_id
+        unit_id = (
+            ("turn", logical_turn_id)
+            if logical_turn_id in tool_turn_ids
+            else ("item", message.output_item.meta.item_id)
+        )
+        if unit_id not in output_unit_ids:
+            output_unit_ids.append(unit_id)
+    remove_count = len(output_unit_ids) - normalized_keep_count
     if remove_count <= 0:
         return []
 
-    remove_indexes = set(assistant_indexes[:remove_count])
-    removed_messages = [
-        message
+    removed_unit_ids = set(output_unit_ids[:remove_count])
+    remove_indexes = {
+        index
         for index, message in enumerate(chat_history)
-        if index in remove_indexes
-    ]
+        if isinstance(message, ModelOutputContextMessage)
+        and (
+            (
+                "turn",
+                message.output_item.meta.logical_turn_id,
+            )
+            if message.output_item.meta.logical_turn_id in tool_turn_ids
+            else ("item", message.output_item.meta.item_id)
+        )
+        in removed_unit_ids
+    }
+    removed_messages = [message for index, message in enumerate(chat_history) if index in remove_indexes]
     tool_result_by_call_id = {
         message.tool_call_id: message
         for message in chat_history
@@ -129,21 +153,40 @@ def _trim_assistant_history_to_latest(
     preserved_tool_result_ids = {
         tool_call.call_id
         for message in removed_messages
-        if isinstance(message, AssistantMessage)
+        if isinstance(message, ModelOutputContextMessage)
         for tool_call in message.tool_calls
         if tool_call.call_id in tool_result_by_call_id
     }
 
+    folded_message_by_index: dict[int, SessionBackedMessage] = {}
+    for unit_kind, unit_id in removed_unit_ids:
+        if unit_kind != "turn":
+            continue
+        unit_indexes = [
+            index
+            for index, message in enumerate(chat_history)
+            if isinstance(message, ModelOutputContextMessage)
+            and message.output_item.meta.logical_turn_id == unit_id
+            and index in remove_indexes
+        ]
+        if not unit_indexes:
+            continue
+        unit_messages = [
+            cast(ModelOutputContextMessage, chat_history[index])
+            for index in unit_indexes
+        ]
+        folded_message = _build_trimmed_assistant_tool_user_message(
+            unit_messages,
+            tool_result_by_call_id=tool_result_by_call_id,
+        )
+        if folded_message is not None:
+            folded_message_by_index[unit_indexes[0]] = folded_message
+
     optimized_history: list[LLMContextMessage] = []
     for index, message in enumerate(chat_history):
         if index in remove_indexes:
-            if isinstance(message, AssistantMessage):
-                preserved_message = _build_trimmed_assistant_tool_user_message(
-                    message,
-                    tool_result_by_call_id=tool_result_by_call_id,
-                )
-                if preserved_message is not None:
-                    optimized_history.append(preserved_message)
+            if folded_message := folded_message_by_index.get(index):
+                optimized_history.append(folded_message)
             continue
         if isinstance(message, ToolResultMessage) and message.tool_call_id in preserved_tool_result_ids:
             continue
@@ -154,17 +197,18 @@ def _trim_assistant_history_to_latest(
 
 
 def _build_trimmed_assistant_tool_user_message(
-    assistant_message: AssistantMessage,
+    assistant_messages: list[ModelOutputContextMessage],
     *,
     tool_result_by_call_id: dict[str, ToolResultMessage],
 ) -> SessionBackedMessage | None:
-    """将被优化裁掉的 assistant 工具链折叠成普通 user 消息，避免破坏 tool 协议配对。"""
+    """把完整逻辑工具轮次折叠成一条普通 user 消息。"""
 
-    if not assistant_message.tool_calls:
+    tool_calls = [tool_call for message in assistant_messages for tool_call in message.tool_calls]
+    if not tool_calls:
         return None
 
     tool_sections: list[str] = []
-    for tool_call in assistant_message.tool_calls:
+    for tool_call in tool_calls:
         if tool_call.func_name in TRIMMED_TOOL_CALL_DROP_NAMES:
             continue
 
@@ -193,12 +237,16 @@ def _build_trimmed_assistant_tool_user_message(
         return None
 
     folded_text = "[已折叠的历史工具调用]\n" + "\n".join(tool_sections)
-    message_id = f"optimized_tool_history:{assistant_message.timestamp.timestamp()}"
+    first_message = assistant_messages[0]
+    logical_turn_id = first_message.output_item.meta.logical_turn_id
+    if not logical_turn_id:
+        raise ValueError("折叠工具历史时缺少 logical_turn_id")
+    message_id = f"optimized_tool_history:{logical_turn_id}"
     if len(folded_text) > FOLDED_TOOL_COMPLEX_MESSAGE_THRESHOLD:
         return ComplexSessionMessage(
             raw_message=MessageSequence([TextComponent(folded_text)]),
             visible_text=folded_text,
-            timestamp=assistant_message.timestamp,
+            timestamp=first_message.timestamp,
             message_id=message_id,
             source_kind="optimized_tool_history",
             prompt_text=folded_text,
@@ -208,7 +256,7 @@ def _build_trimmed_assistant_tool_user_message(
     return SessionBackedMessage(
         raw_message=MessageSequence([TextComponent(folded_text)]),
         visible_text=folded_text,
-        timestamp=assistant_message.timestamp,
+        timestamp=first_message.timestamp,
         message_id=message_id,
         source_kind="optimized_tool_history",
     )
@@ -254,14 +302,20 @@ def _parse_tool_search_result_tool_names(content: str) -> list[str]:
 
 def _normalize_history_structure(
     chat_history: list[LLMContextMessage],
+    *,
+    pending_call_ids: set[str] | None = None,
 ) -> tuple[list[LLMContextMessage], int, int]:
     """规范化历史消息结构，保证工具调用链符合 LLM 消息协议。"""
 
-    processed_history, normalize_stats = normalize_tool_call_result_pairs(chat_history)
+    processed_history, normalize_stats = normalize_tool_call_result_pairs(
+        chat_history,
+        pending_call_ids=pending_call_ids,
+    )
     processed_history, leading_orphan_removed_count = drop_leading_orphan_tool_results(processed_history)
     removed_count = (
         normalize_stats["orphan_tool_results"]
         + normalize_stats["unanswered_tool_calls"]
+        + normalize_stats["invalid_tool_turns"]
         + leading_orphan_removed_count
     )
     return (
@@ -283,20 +337,56 @@ def _trim_history_to_context_target(
         return []
 
     remove_indexes: list[int] = []
+    visited_indexes: set[int] = set()
+    tool_turn_ids = _collect_tool_turn_ids(chat_history)
     for index, message in enumerate(chat_history):
+        if index in visited_indexes:
+            continue
         if is_mid_term_memory_message(message):
             continue
 
-        remove_indexes.append(index)
-        if message.count_in_context:
-            remaining_context_count -= 1
-            if remaining_context_count <= target_context_count:
-                break
+        unit_indexes = [index]
+        logical_turn_id = _get_logical_turn_id(message)
+        if logical_turn_id in tool_turn_ids:
+            unit_indexes = [
+                candidate_index
+                for candidate_index, candidate in enumerate(chat_history)
+                if _get_logical_turn_id(candidate) == logical_turn_id
+            ]
+
+        visited_indexes.update(unit_indexes)
+        remove_indexes.extend(unit_indexes)
+        remaining_context_count -= sum(1 for unit_index in unit_indexes if chat_history[unit_index].count_in_context)
+        if remaining_context_count <= target_context_count:
+            break
 
     if not remove_indexes:
         return []
 
-    removed_messages = [chat_history[index] for index in remove_indexes]
-    for index in reversed(remove_indexes):
+    normalized_remove_indexes = sorted(set(remove_indexes))
+    removed_messages = [chat_history[index] for index in normalized_remove_indexes]
+    for index in reversed(normalized_remove_indexes):
         del chat_history[index]
     return removed_messages
+
+
+def _get_logical_turn_id(message: LLMContextMessage) -> str | None:
+    """读取参与模型工具循环的历史条目逻辑轮次。"""
+
+    if isinstance(message, ModelOutputContextMessage):
+        return message.output_item.meta.logical_turn_id
+    if isinstance(message, ToolResultMessage):
+        return message.logical_turn_id
+    return None
+
+
+def _collect_tool_turn_ids(chat_history: list[LLMContextMessage]) -> set[str]:
+    """收集至少包含一次 function call/output 的逻辑工具轮次。"""
+
+    return {
+        logical_turn_id
+        for message in chat_history
+        if isinstance(message, (ModelOutputContextMessage, ToolResultMessage))
+        if (logical_turn_id := _get_logical_turn_id(message))
+        if isinstance(message, ToolResultMessage) or bool(message.tool_calls)
+    }

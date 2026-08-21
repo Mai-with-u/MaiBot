@@ -7,7 +7,14 @@ export function isEmbeddedPluginConfigPath(pathname = window.location.pathname):
   return pathname === '/plugin-config/embed' || pathname.startsWith('/plugin-config/embed/')
 }
 
+export function isAdapterManagementPath(pathname = window.location.pathname): boolean {
+  return pathname === '/adapter-management' || pathname.startsWith('/adapter-management/')
+}
+
 export function getPluginConfigRoutePath(pathname = window.location.pathname): string {
+  if (isAdapterManagementPath(pathname)) {
+    return '/adapter-management'
+  }
   return isEmbeddedPluginConfigPath(pathname) ? '/plugin-config/embed' : '/plugin-config'
 }
 

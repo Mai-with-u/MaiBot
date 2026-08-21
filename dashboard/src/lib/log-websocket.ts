@@ -12,6 +12,7 @@ export interface LogEntry {
   timestamp: string
   level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL'
   module: string
+  moduleDisplayName?: string
   moduleBackgroundColor?: string
   moduleBold?: boolean
   moduleColor?: string

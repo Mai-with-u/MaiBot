@@ -863,6 +863,12 @@
   background-color: var(--retro-paper) !important;
 }
 
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-sidebar-collapsed-divider='true'] {
+  border-color: var(--retro-line) !important;
+  border-width: 0 var(--retro-stroke) 0 0 !important;
+}
+
 :root[data-dashboard-style='future-retro'] [data-dashboard-sidebar='true'] h3 {
   color: var(--retro-rust);
   letter-spacing: 0;
@@ -2178,6 +2184,12 @@
   background: transparent !important;
   border-color: currentColor !important;
   color: var(--retro-rust) !important;
+}
+
+:root[data-dashboard-style='future-retro']
+  [data-dashboard-shell='true']
+  [data-plugin-update-button='true'] {
+  border-width: var(--retro-stroke) !important;
 }
 
 :root[data-dashboard-style='future-retro'] *:focus {

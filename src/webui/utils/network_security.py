@@ -26,16 +26,21 @@ def _resolve_ip_addresses(hostname: str, port: int) -> Set[ipaddress.IPv4Address
     return resolved_addresses
 
 
-def _is_forbidden_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def _is_unsafe_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """判断地址是否在任何 WebUI 出站场景中都不应访问。"""
     return any(
         (
-            address.is_loopback,
             address.is_link_local,
             address.is_multicast,
             address.is_reserved,
             address.is_unspecified,
         )
     )
+
+
+def _is_non_public_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """判断地址是否不属于普通公网目标。"""
+    return address.is_private or address.is_loopback or _is_unsafe_ip_address(address)
 
 
 def _should_enforce_public_network(require_public_network: bool | None) -> bool:
@@ -54,8 +59,13 @@ def validate_public_url(
     url: str,
     allowed_schemes: Iterable[str] = ("http", "https"),
     require_public_network: bool | None = None,
+    allow_configured_private_network: bool = False,
 ) -> str:
-    """校验 WebUI 出站 URL，必要时要求目标解析到公网地址。"""
+    """校验 WebUI 出站 URL。
+
+    已保存的模型厂商配置可显式允许回环或私网目标，但链路本地、组播、
+    保留地址和未指定地址始终禁止。任意 URL 入口仍只允许公网目标。
+    """
     normalized_url = url.strip()
     if not normalized_url:
         raise ValueError("URL 不能为空")
@@ -79,7 +89,11 @@ def validate_public_url(
 
     enforce_public_network = _should_enforce_public_network(require_public_network)
 
-    if enforce_public_network and parsed.hostname.lower() in {"localhost", "localhost.localdomain"}:
+    if (
+        enforce_public_network
+        and not allow_configured_private_network
+        and parsed.hostname.lower() in {"localhost", "localhost.localdomain"}
+    ):
         raise ValueError("不允许访问本地主机")
 
     try:
@@ -89,7 +103,12 @@ def validate_public_url(
 
     if enforce_public_network:
         for address in _resolve_ip_addresses(parsed.hostname, port):
-            if _is_forbidden_ip_address(address):
+            is_forbidden = (
+                _is_unsafe_ip_address(address)
+                if allow_configured_private_network
+                else _is_non_public_ip_address(address)
+            )
+            if is_forbidden:
                 raise ValueError(f"禁止访问非公网地址: {address}")
 
     return normalized_url

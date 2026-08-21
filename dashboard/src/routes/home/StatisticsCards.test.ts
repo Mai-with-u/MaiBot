@@ -41,10 +41,10 @@ describe('统计图表坐标格式', () => {
     expect(formatChartTimeAxis(timestamp, 'en-US', 720)).toContain('/')
   })
 
-  it('Token 纵轴使用最多一位小数的 k 和 M 缩写', () => {
+  it('Token 纵轴使用最多一位小数的 K 和 M 缩写', () => {
     expect(formatTokenAxis(999, 'en-US')).toBe('999')
-    expect(formatTokenAxis(1_000, 'en-US')).toBe('1k')
-    expect(formatTokenAxis(1_550, 'en-US')).toBe('1.6k')
+    expect(formatTokenAxis(1_000, 'en-US')).toBe('1K')
+    expect(formatTokenAxis(1_550, 'en-US')).toBe('1.6K')
     expect(formatTokenAxis(1_000_000, 'en-US')).toBe('1M')
     expect(formatTokenAxis(1_250_000, 'en-US')).toBe('1.3M')
   })

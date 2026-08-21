@@ -20,7 +20,9 @@ export function useBackendConnections() {
   }, [])
 
   useEffect(() => {
-    refresh()
+    queueMicrotask(() => {
+      void refresh()
+    })
   }, [refresh])
 
   const addBackend = useCallback(

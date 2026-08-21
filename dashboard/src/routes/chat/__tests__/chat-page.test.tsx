@@ -140,7 +140,16 @@ vi.mock('../MessageList', () => ({
         data-status={props.runtimeStatus?.kind ?? 'none'}
       >
         {props.messages.map((message) => (
-          <div key={message.id} data-testid="msg">
+          <div
+            key={message.id}
+            data-testid="msg"
+            data-id={message.id}
+            data-segments={
+              message.segments
+                ?.map((segment) => `${segment.type}:${String(segment.data)}`)
+                .join('|') ?? ''
+            }
+          >
             {`${message.type}:${message.content}`}
           </div>
         ))}
@@ -533,6 +542,19 @@ describe('聊天页 ChatPage', () => {
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
   })
 
+  it('MaiSaka 监控：会话身份晚于快照到达时恢复当前思考状态', async () => {
+    await renderConnectedPage()
+
+    emitMonitor({
+      type: 'stage.snapshot',
+      data: { entries: [makeStageStatus({ stage: 'Planner 决策' })], timestamp: 1 },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+  })
+
   it('MaiSaka 监控：llm.retry 推断重试状态，llm.error 置为错误状态', async () => {
     await renderConnectedPage()
     emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
@@ -566,6 +588,51 @@ describe('聊天页 ChatPage', () => {
       },
     })
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+  })
+
+  it('MaiSaka 监控：当前阶段快照清除历史回放的模型错误', async () => {
+    await renderConnectedPage()
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '历史模型错误',
+        timestamp: 401,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+
+    emitMonitor({ type: 'stage.snapshot', data: { entries: [], timestamp: 402 } })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+  })
+
+  it('MaiSaka 监控：进入等待消息阶段后清除当前模型错误', async () => {
+    await renderConnectedPage()
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '模型错误',
+        timestamp: 401,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '等待消息', agent_state: 'wait', timestamp: 402 }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
   })
 
   it('关闭虚拟标签页：注销会话、更新持久化并回到默认标签；默认标签不可关闭', async () => {
@@ -692,5 +759,137 @@ describe('聊天页 ChatPage', () => {
 
     expect(mocks.releaseSession).toHaveBeenCalledWith('webui-default')
     expect(mocks.releaseSession).toHaveBeenCalledWith('virtual-1')
+  })
+
+  it('单个会话消息超过上限时丢掉最旧的一条再追加', async () => {
+    await renderConnectedPage()
+
+    emitSession('webui-default', {
+      type: 'history',
+      messages: Array.from({ length: 1000 }, (_, index) => ({
+        content: `历史${index}`,
+        id: `hist-${index}`,
+        is_bot: index % 2 === 1,
+        timestamp: 1000 + index,
+      })),
+    })
+
+    const historyNodes = screen.getAllByTestId('msg')
+    expect(historyNodes).toHaveLength(1000)
+    expect(historyNodes[0]).toHaveTextContent('user:历史0')
+
+    emitSession('webui-default', { type: 'bot_message', content: '溢出新消息', timestamp: 9000 })
+
+    const overflowNodes = screen.getAllByTestId('msg')
+    expect(overflowNodes).toHaveLength(1000)
+    expect(overflowNodes[0]).toHaveTextContent('bot:历史1')
+    expect(overflowNodes[overflowNodes.length - 1]).toHaveTextContent('bot:溢出新消息')
+  })
+
+  it('移除待发送图片后输入区不再携带该附件', async () => {
+    await renderConnectedPage()
+
+    const pngFile = new File(['fake-image'], '截图.png', { type: 'image/png' })
+    await act(async () => {
+      await composerProps().onAddImages(makeFileList([pngFile]))
+    })
+    await waitFor(() => {
+      expect(composerProps().images).toHaveLength(1)
+    })
+
+    const imageId = composerProps().images[0].id
+    act(() => composerProps().onRemoveImage(imageId))
+
+    expect(composerProps().images).toHaveLength(0)
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-images', '')
+  })
+
+  it('读取图片失败：FileReader 报错时提示读取失败', async () => {
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const OriginalFileReader = window.FileReader
+    window.FileReader = class extends OriginalFileReader {
+      override readAsDataURL() {
+        this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
+      }
+    } as typeof FileReader
+
+    try {
+      const pngFile = new File(['fake-image'], '坏图.png', { type: 'image/png' })
+      await act(async () => {
+        await composerProps().onAddImages(makeFileList([pngFile]))
+      })
+    } finally {
+      window.FileReader = OriginalFileReader
+    }
+
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'chat.toast.imageReadFailed', variant: 'destructive' })
+    )
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-images', '')
+  })
+
+  it('读取图片失败：非图片 dataUrl 被拒绝', async () => {
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const OriginalFileReader = window.FileReader
+    window.FileReader = class extends OriginalFileReader {
+      override readAsDataURL() {
+        Object.defineProperty(this, 'result', { value: 'data:text/plain;base64,AAAA' })
+        this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>)
+      }
+    } as typeof FileReader
+
+    try {
+      const pngFile = new File(['fake-image'], '伪装.png', { type: 'image/png' })
+      await act(async () => {
+        await composerProps().onAddImages(makeFileList([pngFile]))
+      })
+    } finally {
+      window.FileReader = OriginalFileReader
+    }
+
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'chat.toast.imageReadFailed', variant: 'destructive' })
+    )
+  })
+
+  it('他人富文本消息按 mime/dataUrl 回退拼出图片与表情段', async () => {
+    await renderConnectedPage()
+
+    emitSession('webui-default', {
+      type: 'user_message',
+      content: '看这个',
+      raw_content: '看这个',
+      timestamp: 500,
+      sender: { name: '别人', user_id: 'qq_999' },
+      images: [
+        { base64: 'AAA111', mimeType: 'image/webp' },
+        { base64: 'BBB222' },
+        { name: 'empty.png' },
+        { dataUrl: 'data:image/jpeg;base64,CCC333' },
+        { data_url: 'data:image/png;base64,REAL', base64: 'IGNORED' },
+      ],
+      emojis: [
+        { data_url: 'data:image/gif;base64,EEE' },
+        { base64: 'FFF', mime_type: 'image/gif' },
+      ],
+    })
+
+    const node = screen.getByText('user:看这个')
+    expect(node).toHaveAttribute(
+      'data-segments',
+      [
+        'text:看这个',
+        'image:data:image/webp;base64,AAA111',
+        'image:data:image/png;base64,BBB222',
+        'image:data:image/jpeg;base64,CCC333',
+        'image:data:image/png;base64,REAL',
+        'emoji:data:image/gif;base64,EEE',
+        'emoji:data:image/gif;base64,FFF',
+      ].join('|')
+    )
   })
 })

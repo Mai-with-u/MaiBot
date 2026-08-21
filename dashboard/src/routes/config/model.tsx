@@ -1,6 +1,7 @@
-import { type CSSProperties, type MouseEvent, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, type MouseEvent, type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -58,6 +59,7 @@ import {
   History,
   Info,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -78,7 +80,8 @@ import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { RestartOverlay } from '@/components/restart-overlay'
 import { RestartProvider, useRestart } from '@/lib/restart-context'
 import { ExtraParamsDialog } from '@/components/ui/extra-params-dialog'
-import { TaskConfigCard, Pagination, ModelTable, ModelCardList } from './model/components'
+import { TaskConfigCard, ModelTable, ModelCardList } from './model/components'
+import { TASK_CONFIGS } from './model/constants'
 import { useModelTour, useModelFetcher, useModelConfig } from './model/hooks'
 import {
   getDeepSeekReasoningEffort,
@@ -92,13 +95,13 @@ import {
   type DeepSeekReasoningEffort,
 } from './model/deepSeekExtraParams'
 import { ProviderForm } from './modelProvider/ProviderForm'
-import { ProviderList } from './modelProvider/ProviderList'
+import { ProviderSidebar } from './modelProvider/ProviderSidebar'
 import type { APIProvider } from './modelProvider/types'
 
 // 导入模块化的类型定义和组件
 import type { ModelInfo } from './model/types'
 
-const MODEL_CONFIG_TABS = ['providers', 'models', 'tasks'] as const
+const MODEL_CONFIG_TABS = ['configuration', 'tasks'] as const
 type ModelConfigTab = (typeof MODEL_CONFIG_TABS)[number]
 
 interface ModelIdentifierMarqueeProps {
@@ -170,11 +173,14 @@ function ModelIdentifierMarquee({ text, className, textClassName }: ModelIdentif
 
 function getInitialModelConfigTab(): ModelConfigTab {
   if (typeof window === 'undefined') {
-    return 'providers'
+    return 'tasks'
   }
 
   const tab = new URLSearchParams(window.location.search).get('tab')
-  return MODEL_CONFIG_TABS.includes(tab as ModelConfigTab) ? (tab as ModelConfigTab) : 'providers'
+  if (tab === 'configuration' || tab === 'models' || tab === 'providers') {
+    return 'configuration'
+  }
+  return 'tasks'
 }
 
 // 主导出组件：包装 RestartProvider
@@ -193,6 +199,7 @@ function ModelConfigPageContent() {
   const routeSearch = useRouterState({ select: (state) => state.location.searchStr })
   const searchFieldPath = getConfigSearchField(routeSearch)
   const scrolledSearchFieldRef = useRef('')
+  const modelConfigurationRef = useRef<HTMLDivElement>(null)
 
   // 核心领域 hook：models / apiProviders / model_task_config 三份草稿及其全部编排
   const mc = useModelConfig()
@@ -258,7 +265,6 @@ function ModelConfigPageContent() {
     testingProviders,
     testResults,
     handleTestProviderConnection,
-    handleTestAllProviderConnections,
     testingModels,
     modelTestResults,
     selectedModelTestResult,
@@ -266,35 +272,20 @@ function ModelConfigPageContent() {
     handleTestModelCapability,
     // 模型批量
     selectedModels,
-    setSelectedModels,
     toggleModelSelection,
     toggleSelectAll,
     batchDeleteDialogOpen,
     setBatchDeleteDialogOpen,
     openBatchDeleteDialog,
     handleConfirmBatchDelete,
-    // 提供商批量
-    selectedProviders,
-    toggleProviderSelection,
-    toggleSelectAllProviders,
-    providerBatchDeleteDialogOpen,
-    setProviderBatchDeleteDialogOpen,
-    openProviderBatchDeleteDialog,
-    handleConfirmProviderBatchDelete,
     // 任务配置
     updateTaskConfig,
     // 搜索 / 分页
     searchQuery,
     setSearchQuery,
+    modelProviderFilter,
+    setModelProviderFilter,
     filteredModels,
-    paginatedModels,
-    page,
-    setPage,
-    pageSize,
-    setPageSize,
-    jumpToPage,
-    setJumpToPage,
-    handleJumpToPage,
     isModelUsed,
     getProviderConfig,
     // embedding 警告
@@ -303,21 +294,68 @@ function ModelConfigPageContent() {
 
   // 纯 UI 态（不属于配置草稿，留在渲染层）
   const [activeTab, setActiveTab] = useState<ModelConfigTab>(getInitialModelConfigTab)
+  const [modelConfigurationHeight, setModelConfigurationHeight] = useState<number>()
+  const [visibleModelCount, setVisibleModelCount] = useState(20)
+  const visibleModels = useMemo(
+    () => filteredModels.slice(0, visibleModelCount),
+    [filteredModels, visibleModelCount]
+  )
+
+  const modelListFilterKey = `${modelProviderFilter}:${searchQuery}`
+  const [seenModelListFilterKey, setSeenModelListFilterKey] = useState(modelListFilterKey)
+  if (seenModelListFilterKey !== modelListFilterKey) {
+    setSeenModelListFilterKey(modelListFilterKey)
+    setVisibleModelCount(20)
+  }
+
+  const handleModelListScroll = (event: UIEvent<HTMLElement>) => {
+    const target = event.currentTarget
+    if (target.scrollHeight - target.scrollTop - target.clientHeight > 160) return
+
+    setVisibleModelCount((current) => Math.min(current + 20, filteredModels.length))
+  }
+
   const [advancedModelSettingsVisible, setAdvancedModelSettingsVisible] = useState(false)
   const [advancedTaskSettingsVisible, setAdvancedTaskSettingsVisible] = useState(false)
+  const [selectedTaskName, setSelectedTaskName] = useState('replyer')
   const [extraParamsDialogOpen, setExtraParamsDialogOpen] = useState(false)
   const [modelComboboxOpen, setModelComboboxOpen] = useState(false)
   const [createVersionDialogOpen, setCreateVersionDialogOpen] = useState(false)
   const [manageVersionsDialogOpen, setManageVersionsDialogOpen] = useState(false)
+  const reduceTaskMotion = useReducedMotion()
+  const visibleTaskFields = useMemo(
+    () =>
+      taskConfigSchema?.fields.filter(
+        (field) => field.type === 'object' && (advancedTaskSettingsVisible || !field.advanced)
+      ) ?? [],
+    [advancedTaskSettingsVisible, taskConfigSchema]
+  )
+  const selectedTaskField =
+    visibleTaskFields.find((field) => field.name === selectedTaskName) ?? visibleTaskFields[0]
+  const selectedTaskMetadata = TASK_CONFIGS.find((config) => config.key === selectedTaskField?.name)
+  const selectedTaskHideTemperature = Boolean(
+    selectedTaskMetadata && 'hideTemperature' in selectedTaskMetadata && selectedTaskMetadata.hideTemperature
+  )
+  const selectedTaskHideMaxTokens = Boolean(
+    selectedTaskMetadata && 'hideMaxTokens' in selectedTaskMetadata && selectedTaskMetadata.hideMaxTokens
+  )
+
+  if (selectedTaskField && selectedTaskField.name !== selectedTaskName) {
+    setSelectedTaskName(selectedTaskField.name)
+  }
 
   useEffect(() => {
     const searchParams = new URLSearchParams(routeSearch.startsWith('?') ? routeSearch.slice(1) : routeSearch)
     const tab = searchParams.get('tab')
-    const nextTab = searchFieldPath
-      ? getModelConfigTabForField(searchFieldPath)
-      : MODEL_CONFIG_TABS.includes(tab as ModelConfigTab)
-        ? (tab as ModelConfigTab)
-        : 'providers'
+    const fieldTab = searchFieldPath ? getModelConfigTabForField(searchFieldPath) : ''
+    const searchedTaskName = searchFieldPath.match(/^model_task_config\.([^.]+)/)?.[1]
+    const nextTab: ModelConfigTab = fieldTab
+      ? fieldTab === 'tasks'
+        ? 'tasks'
+        : 'configuration'
+      : tab === 'configuration' || tab === 'models' || tab === 'providers'
+        ? 'configuration'
+        : 'tasks'
 
     const frameId = window.requestAnimationFrame(() => {
       setActiveTab(nextTab)
@@ -325,10 +363,22 @@ function ModelConfigPageContent() {
         setAdvancedModelSettingsVisible(true)
         setAdvancedTaskSettingsVisible(true)
       }
+      if (searchedTaskName) {
+        setSelectedTaskName(searchedTaskName)
+      }
     })
 
     return () => window.cancelAnimationFrame(frameId)
   }, [routeSearch, searchFieldPath])
+
+  const [seenSearchFieldPath, setSeenSearchFieldPath] = useState(searchFieldPath)
+  if (seenSearchFieldPath !== searchFieldPath) {
+    setSeenSearchFieldPath(searchFieldPath)
+    const searchedSchemaTaskName = searchFieldPath.match(/^model_task_config\.([^.]+)/)?.[1]
+    if (searchedSchemaTaskName && taskConfigSchema?.fields.some((field) => field.name === searchedSchemaTaskName)) {
+      setSelectedTaskName(searchedSchemaTaskName)
+    }
+  }
 
   useEffect(() => {
     if (
@@ -354,12 +404,57 @@ function ModelConfigPageContent() {
         window.cancelAnimationFrame(nestedFrameId)
       }
     }
-  }, [activeTab, advancedModelSettingsVisible, advancedTaskSettingsVisible, loading, searchFieldPath])
+  }, [activeTab, advancedModelSettingsVisible, advancedTaskSettingsVisible, loading, searchFieldPath, selectedTaskName])
   const [newVersionLabel, setNewVersionLabel] = useState('')
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null)
   const [tourEntryVisible, setTourEntryVisible] = useState(
     () => localStorage.getItem('model-assignment-tour-entry-dismissed') !== 'true'
   )
+
+  useLayoutEffect(() => {
+    const updateConfigurationHeight = () => {
+      if (!modelConfigurationRef.current) return
+      if (!window.matchMedia('(min-width: 1024px)').matches) {
+        setModelConfigurationHeight(undefined)
+        return
+      }
+
+      const top = modelConfigurationRef.current.getBoundingClientRect().top
+      const page = modelConfigurationRef.current.closest<HTMLElement>('[data-model-config-page="true"]')
+      if (!page) return
+
+      const pageBottom = page.getBoundingClientRect().bottom
+      const pageBottomPadding = parseFloat(window.getComputedStyle(page).paddingBottom) || 0
+      setModelConfigurationHeight(Math.max(pageBottom - pageBottomPadding - top, 0))
+    }
+
+    updateConfigurationHeight()
+    const frameId = window.requestAnimationFrame(updateConfigurationHeight)
+    window.addEventListener('resize', updateConfigurationHeight)
+    window.visualViewport?.addEventListener('resize', updateConfigurationHeight)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.removeEventListener('resize', updateConfigurationHeight)
+      window.visualViewport?.removeEventListener('resize', updateConfigurationHeight)
+    }
+  }, [activeTab, loading, tourEntryVisible])
+
+  const providerModelCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    models.forEach((model) => counts.set(model.api_provider, (counts.get(model.api_provider) ?? 0) + 1))
+    return counts
+  }, [models])
+  const selectedProviderInfo = apiProviders.find((provider) => provider.name === modelProviderFilter)
+  const selectedProviderIndex = selectedProviderInfo
+    ? apiProviders.findIndex((provider) => provider.name === selectedProviderInfo.name)
+    : -1
+
+  useEffect(() => {
+    if (modelProviderFilter && !apiProviders.some((provider) => provider.name === modelProviderFilter)) {
+      setModelProviderFilter('')
+    }
+  }, [apiProviders, modelProviderFilter, setModelProviderFilter])
 
   // 模型列表获取 (使用 hook 封装的逻辑)
   const {
@@ -417,6 +512,13 @@ function ModelConfigPageContent() {
     openProviderDialogBase(provider, index)
   }
 
+  const handleModelEditDialogOpenChange = (open: boolean) => {
+    // 移动端触摸嵌套弹窗时，Radix 可能把内层操作判定为外层的 outside-interaction。
+    // 额外参数弹窗打开期间只允许内层处理关闭，避免保存参数时连带退出模型编辑。
+    if (!open && extraParamsDialogOpen) return
+    handleEditDialogClose(open)
+  }
+
   // 当选择的提供商变化时，获取模型列表
   useEffect(() => {
     if (editDialogOpen && editingModel?.api_provider) {
@@ -433,9 +535,9 @@ function ModelConfigPageContent() {
   const handleActiveTabChange = (value: string) => {
     const nextTab = MODEL_CONFIG_TABS.includes(value as ModelConfigTab)
       ? (value as ModelConfigTab)
-      : 'providers'
+      : 'tasks'
     setActiveTab(nextTab)
-    const nextUrl = nextTab === 'providers' ? '/config/model' : `/config/model?tab=${nextTab}`
+    const nextUrl = nextTab === 'tasks' ? '/config/model' : '/config/model?tab=configuration'
     window.history.replaceState(null, '', nextUrl)
   }
 
@@ -467,8 +569,8 @@ function ModelConfigPageContent() {
     onCloseEditDialog: () => setEditDialogOpen(false),
     onOpenProviderDialog: () => openProviderDialog(null, null),
     onCloseProviderDialog: () => setProviderDialogOpen(false),
-    onOpenProvidersTab: () => handleActiveTabChange('providers'),
-    onOpenModelsTab: () => handleActiveTabChange('models'),
+    onOpenProvidersTab: () => handleActiveTabChange('configuration'),
+    onOpenModelsTab: () => handleActiveTabChange('configuration'),
     onOpenTasksTab: () => handleActiveTabChange('tasks'),
   })
 
@@ -485,8 +587,11 @@ function ModelConfigPageContent() {
   }
 
   return (
-    <ScrollArea className="h-full">
-      <div data-model-config-page="true" className="space-y-4 p-4 sm:space-y-6 sm:p-6">
+    <div className="h-full overflow-y-auto lg:overflow-hidden">
+      <div
+        data-model-config-page="true"
+        className="flex min-h-full flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:h-full lg:overflow-hidden"
+      >
         {/* 无效模型引用警告 */}
         {invalidModelRefs.length > 0 && (
           <Alert variant="destructive">
@@ -549,18 +654,21 @@ function ModelConfigPageContent() {
         )}
 
         {/* 标签页 */}
-        <Tabs value={activeTab} onValueChange={handleActiveTabChange} className="w-full">
+        <Tabs
+          value={activeTab}
+          onValueChange={handleActiveTabChange}
+          className="flex min-h-0 w-full flex-1 flex-col"
+        >
           <div
             data-model-config-tabs-bar="true"
-            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 border-b bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
+            className="sticky top-0 z-40 -mx-4 flex w-[calc(100%+2rem)] flex-wrap items-stretch gap-2 bg-background px-4 py-2 sm:-mx-6 sm:w-[calc(100%+3rem)] sm:px-6"
           >
             <TabsList
               data-model-config-tabs-list="true"
-              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-3 bg-transparent shadow-none"
+              className="grid h-9 min-w-[min(100%,22rem)] flex-1 grid-cols-2 bg-transparent shadow-none"
             >
-              <TabsTrigger value="providers" className="w-full" data-tour="providers-tab-trigger">模型厂商设置</TabsTrigger>
-              <TabsTrigger value="models" className="w-full" data-tour="models-tab-trigger">模型列表</TabsTrigger>
-              <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">为模型分配功能</TabsTrigger>
+              <TabsTrigger value="configuration" className="w-full" data-tour="providers-tab-trigger">模型设置</TabsTrigger>
+              <TabsTrigger value="tasks" className="w-full" data-tour="tasks-tab-trigger">功能分配</TabsTrigger>
             </TabsList>
             <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
               <Select
@@ -574,11 +682,11 @@ function ModelConfigPageContent() {
               >
                 <SelectTrigger className="h-9 min-w-0 flex-1 sm:w-[190px] sm:flex-none" aria-label="模型配置副本">
                   <History className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <SelectValue placeholder={activeConfigVersion?.label || '当前启用'} />
+                  <SelectValue placeholder={activeConfigVersion?.label || '默认配置'} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="active">
-                    {activeConfigVersion?.label || '默认配置'} · 当前启用
+                    {activeConfigVersion?.label || '默认配置'}
                   </SelectItem>
                   {configVersions.map((version) => (
                     <SelectItem key={version.id} value={version.id} disabled={!version.valid}>
@@ -612,105 +720,38 @@ function ModelConfigPageContent() {
               </Button>
             </div>
           </div>
-          {/* 模型厂商设置标签页 */}
-          <TabsContent value="providers" className="space-y-4 mt-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="hidden">
-                {selectedProviders.size > 0 && (
-                  <Button
-                    onClick={openProviderBatchDeleteDialog}
-                    size="sm"
-                    variant="destructive"
-                    className="w-full sm:w-auto"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    批量删除 ({selectedProviders.size})
-                  </Button>
-                )}
-                <Button
-                  onClick={handleTestAllProviderConnections}
-                  size="sm"
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  disabled={apiProviders.length === 0 || testingProviders.size > 0}
-                >
-                  <Zap className="mr-2 h-4 w-4" />
-                  {testingProviders.size > 0 ? `测试中 (${testingProviders.size})` : '测试全部'}
-                </Button>
-                <Button onClick={() => openProviderDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto">
-                  <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  添加提供商
-                </Button>
-              </div>
-            </div>
-
-            <div data-config-field-path="api_providers">
-              <ProviderList
+          {/* 厂商与模型合并配置视图 */}
+          <TabsContent
+            value="configuration"
+            className="mt-0 min-h-0 flex-1 overflow-visible lg:overflow-hidden"
+          >
+            <div
+              ref={modelConfigurationRef}
+              data-model-config-layout="true"
+              className="grid min-h-0 gap-4 lg:grid-cols-4 lg:overflow-hidden"
+              style={
+                modelConfigurationHeight === undefined
+                  ? undefined
+                  : {
+                      height: modelConfigurationHeight,
+                      maxHeight: modelConfigurationHeight,
+                    }
+              }
+            >
+              <ProviderSidebar
                 providers={apiProviders}
+                modelCounts={providerModelCounts}
+                selectedProvider={modelProviderFilter}
                 testingProviders={testingProviders}
                 testResults={testResults}
-                selectedProviders={selectedProviders}
-                toolbarActions={(
-                  <>
-                  {selectedProviders.size > 0 && (
-                    <Button
-                      onClick={openProviderBatchDeleteDialog}
-                      size="sm"
-                      variant="destructive"
-                      className="w-full sm:w-auto"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                      <span className="text-sm">批量删除 ({selectedProviders.size})</span>
-                    </Button>
-                  )}
-                  <Button
-                    onClick={handleTestAllProviderConnections}
-                    size="sm"
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    disabled={apiProviders.length === 0 || testingProviders.size > 0}
-                  >
-                    <Zap className="mr-2 h-4 w-4" />
-                    <span className="text-sm">
-                      {testingProviders.size > 0 ? `测试中 (${testingProviders.size})` : '测试全部连接'}
-                    </span>
-                  </Button>
-                  <Button onClick={() => openProviderDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto" data-tour="add-provider-button">
-                    <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    <span className="text-sm">添加厂商</span>
-                  </Button>
-                  </>
-                )}
-                onEdit={openProviderDialog}
-                onDelete={openProviderDeleteDialog}
-                onTest={handleTestProviderConnection}
-                onToggleSelect={toggleProviderSelection}
-                onToggleSelectAll={toggleSelectAllProviders}
+                onSelectProvider={setModelProviderFilter}
+                onAdd={() => openProviderDialog(null, null)}
               />
-            </div>
-          </TabsContent>
-          {/* 模型配置标签页 */}
-          <TabsContent value="models" className="space-y-4 mt-0">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <div className="hidden">
-                {selectedModels.size > 0 && (
-                  <Button 
-                    onClick={openBatchDeleteDialog} 
-                    size="sm" 
-                    variant="destructive" 
-                    className="w-full sm:w-auto"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                    批量删除 ({selectedModels.size})
-                  </Button>
-                )}
-                <Button onClick={() => openEditDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto">
-                  <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                  添加模型
-                </Button>
-              </div>
-            </div>
 
+              <section
+                className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-3 lg:h-full lg:overflow-hidden"
+                data-tour="models-tab-trigger"
+              >
           {/* 搜索框 */}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-1 sm:flex-row sm:items-center">
@@ -735,12 +776,17 @@ function ModelConfigPageContent() {
               <Button 
                 onClick={saveConfig} 
                 disabled={saving || autoSaving || !hasUnsavedChanges || isRestarting} 
-                size="sm"
+                size="icon"
                 variant="outline"
-                className="w-full sm:w-auto sm:min-w-[120px]"
+                className="h-9 w-9 shrink-0"
+                title={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
+                aria-label={saving ? '保存中' : autoSaving ? '自动保存中' : hasUnsavedChanges ? '保存配置' : '已保存'}
               >
-                <Save className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                {saving ? '保存中...' : autoSaving ? '自动保存中...' : hasUnsavedChanges ? '保存配置' : '已保存'}
+                {saving || autoSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" strokeWidth={2} fill="none" />
+                )}
               </Button>
               {selectedModels.size > 0 && (
                 <Button
@@ -760,9 +806,73 @@ function ModelConfigPageContent() {
             </div>
           </div>
 
-          <div data-config-field-path="models">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-1 lg:h-0"
+            data-config-field-path="models"
+            onScroll={handleModelListScroll}
+          >
+            {selectedProviderInfo && (
+              <div className="mb-4 rounded-lg border px-4 py-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <h2 className="font-semibold">{selectedProviderInfo.name}</h2>
+                      <span className="text-muted-foreground text-xs">
+                        {providerModelCounts.get(selectedProviderInfo.name) ?? 0} 个模型
+                      </span>
+                      <span className="text-muted-foreground text-xs">
+                        客户端类型：{selectedProviderInfo.client_type}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground mt-1 truncate text-xs" title={selectedProviderInfo.base_url}>
+                      Base URL：{selectedProviderInfo.base_url}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleTestProviderConnection(selectedProviderInfo.name)}
+                      disabled={testingProviders.has(selectedProviderInfo.name)}
+                      title="测试连接"
+                      aria-label={`测试厂商 ${selectedProviderInfo.name} 连接`}
+                    >
+                      {testingProviders.has(selectedProviderInfo.name) ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Zap className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => openProviderDialog(selectedProviderInfo, selectedProviderIndex)}
+                      title="编辑厂商"
+                      aria-label={`编辑厂商 ${selectedProviderInfo.name}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="text-destructive hover:text-destructive h-8 w-8"
+                      onClick={() => openProviderDeleteDialog(selectedProviderIndex)}
+                      title="删除厂商"
+                      aria-label={`删除厂商 ${selectedProviderInfo.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             <ModelCardList
-              paginatedModels={paginatedModels}
+              paginatedModels={visibleModels}
               allModels={models}
               onEdit={openEditDialog}
               onDelete={openDeleteDialog}
@@ -775,7 +885,7 @@ function ModelConfigPageContent() {
 
             {/* 模型列表 - 桌面端表格视图 */}
             <ModelTable
-              paginatedModels={paginatedModels}
+              paginatedModels={visibleModels}
               allModels={models}
               filteredModels={filteredModels}
               selectedModels={selectedModels}
@@ -791,58 +901,132 @@ function ModelConfigPageContent() {
             />
           </div>
 
-          {/* 分页 - 使用模块化组件 */}
-          <Pagination
-            page={page}
-            pageSize={pageSize}
-            totalItems={filteredModels.length}
-            jumpToPage={jumpToPage}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-            onJumpToPageChange={setJumpToPage}
-            onJumpToPage={handleJumpToPage}
-            onSelectionClear={() => setSelectedModels(new Set())}
-          />
-        </TabsContent>
+              </section>
+            </div>
+          </TabsContent>
 
         {/* 模型任务配置标签页 */}
-        <TabsContent value="tasks" className="mt-0 space-y-3">
+        <TabsContent
+          value="tasks"
+          className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-visible lg:overflow-hidden"
+        >
           <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">
               为不同的任务配置使用的模型和参数
             </p>
-            {taskConfigSchema?.fields.some((field) => field.advanced) && (
-              <Button
-                type="button"
-                variant={advancedTaskSettingsVisible ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setAdvancedTaskSettingsVisible((current) => !current)}
-              >
-                高级设置
-              </Button>
-            )}
           </div>
 
-          {taskConfig && taskConfigSchema && (
-            <div className="divide-y-2">
-              {taskConfigSchema.fields
-                .filter(f => f.type === 'object' && (advancedTaskSettingsVisible || !f.advanced))
-                .map((field, index) => {
-                  return (
-                    <div key={field.name} data-config-field-path={`model_task_config.${field.name}`}>
-                      <TaskConfigCard
-                        title={resolveFieldLabel(field, i18n.language)}
-                        description={field.description}
-                        taskConfig={taskConfig[field.name] ?? { model_list: [] }}
-                        modelNames={modelNames}
-                        onChange={(f, value) => updateTaskConfig(field.name, f, value)}
-                        advanced={field.advanced}
-                        showAdvancedSettings={advancedTaskSettingsVisible}
-                        {...(index === 0 ? { dataTour: 'task-model-select' } : {})}
-                      />
-                    </div>
-                  )
-                })}
+          {taskConfig && taskConfigSchema && selectedTaskField && (
+            <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-4 lg:overflow-hidden">
+              <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border lg:h-full">
+                <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
+                  <h2 className="text-sm font-semibold">模型类别</h2>
+                  {taskConfigSchema.fields.some((field) => field.advanced) && (
+                    <Button
+                      type="button"
+                      variant={advancedTaskSettingsVisible ? 'default' : 'outline'}
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setAdvancedTaskSettingsVisible((current) => !current)}
+                    >
+                      高级设置
+                    </Button>
+                  )}
+                </div>
+                <div className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:h-0">
+                  <AnimatePresence initial={false}>
+                    {visibleTaskFields.map((field) => {
+                      const isSelected = field.name === selectedTaskField.name
+                      const assignedModels = taskConfig[field.name]?.model_list ?? []
+                      const isConfigured = assignedModels.length > 0
+                      const modelSummary = isConfigured ? assignedModels.join('、') : '未配置模型'
+
+                      return (
+                        <motion.button
+                          layout={!reduceTaskMotion}
+                          key={field.name}
+                          type="button"
+                          className={cn(
+                            'flex w-full min-w-0 items-center justify-between gap-3 overflow-hidden rounded-md px-3 py-2 text-left transition-colors',
+                            isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                          )}
+                          initial={reduceTaskMotion ? false : { height: 0, opacity: 0, y: -6 }}
+                          animate={{ height: 'auto', opacity: 1, y: 0 }}
+                          exit={reduceTaskMotion ? undefined : { height: 0, opacity: 0, y: -6 }}
+                          transition={{ duration: reduceTaskMotion ? 0 : 0.18, ease: 'easeOut' }}
+                          onClick={() => setSelectedTaskName(field.name)}
+                          aria-pressed={isSelected}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-sm font-medium">
+                                {resolveFieldLabel(field, i18n.language)}
+                              </span>
+                              {field.advanced && (
+                                <span
+                                  className={cn(
+                                    'shrink-0 text-[10px]',
+                                    isSelected ? 'text-primary-foreground/70' : 'text-amber-600 dark:text-amber-400'
+                                  )}
+                                >
+                                  高级
+                                </span>
+                              )}
+                            </span>
+                            <ModelIdentifierMarquee
+                              text={modelSummary}
+                              className="mt-0.5"
+                              textClassName={cn(
+                                'text-xs',
+                                isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                              )}
+                            />
+                          </span>
+                          <span
+                            className={cn(
+                              'shrink-0 text-xs',
+                              isSelected
+                                ? 'text-primary-foreground/75'
+                                : isConfigured
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-muted-foreground'
+                            )}
+                          >
+                            {isConfigured ? `已配置 · ${assignedModels.length}` : '未配置'}
+                          </span>
+                        </motion.button>
+                      )
+                    })}
+                  </AnimatePresence>
+                </div>
+              </aside>
+
+              <section className="min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-lg border px-4 lg:col-span-3 lg:h-full">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={selectedTaskField.name}
+                    data-config-field-path={`model_task_config.${selectedTaskField.name}`}
+                    initial={reduceTaskMotion ? false : { opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={reduceTaskMotion ? undefined : { opacity: 0, x: -8 }}
+                    transition={{ duration: reduceTaskMotion ? 0 : 0.16, ease: 'easeOut' }}
+                  >
+                    <TaskConfigCard
+                      title={resolveFieldLabel(selectedTaskField, i18n.language)}
+                      description={selectedTaskField.description}
+                      taskConfig={taskConfig[selectedTaskField.name] ?? { model_list: [] }}
+                      modelNames={modelNames}
+                      onChange={(field, value) => updateTaskConfig(selectedTaskField.name, field, value)}
+                      hideTemperature={selectedTaskHideTemperature}
+                      hideMaxTokens={selectedTaskHideMaxTokens}
+                      advanced={selectedTaskField.advanced}
+                      showAdvancedSettings={advancedTaskSettingsVisible}
+                      singleModel={selectedTaskField.name === 'embedding'}
+                      dataTour="task-model-select"
+                    />
+                  </motion.div>
+                </AnimatePresence>
+              </section>
             </div>
           )}
         </TabsContent>
@@ -1084,28 +1268,6 @@ function ModelConfigPageContent() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 批量删除提供商确认对话框 */}
-      <AlertDialog open={providerBatchDeleteDialogOpen} onOpenChange={setProviderBatchDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认批量删除提供商</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要删除选中的 {selectedProviders.size} 个提供商吗？
-              如果这些提供商下存在模型，确认时会提示一并处理关联模型。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmProviderBatchDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              批量删除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       {/* 删除提供商影响确认对话框 */}
       <AlertDialog open={deleteConfirmState.isOpen}>
         <AlertDialogContent>
@@ -1151,11 +1313,13 @@ function ModelConfigPageContent() {
       </AlertDialog>
 
       {/* 编辑模型对话框 */}
-      <Dialog open={editDialogOpen} onOpenChange={handleEditDialogClose}>
+      <Dialog open={editDialogOpen} onOpenChange={handleModelEditDialogOpenChange}>
         <DialogContent 
           className="max-w-[95vw] gap-3 p-4 sm:gap-4 sm:p-6 sm:[--dialog-width:64rem]"
           data-tour="model-dialog"
-          preventOutsideClose={tourIsRunning}
+          // 模型编辑是数据录入弹窗，只通过关闭按钮和底部操作显式退出。
+          // 始终拦截 outside-interaction，避免内层弹窗关闭后的延迟触摸事件击穿外层。
+          preventOutsideClose
           confirmOnEnter
         >
           <DialogHeader>
@@ -1937,6 +2101,6 @@ function ModelConfigPageContent() {
       {/* 重启遮罩层 */}
       <RestartOverlay />
       </div>
-    </ScrollArea>
+    </div>
   )
 }

@@ -24,7 +24,8 @@ import {
 import type { InstalledPlugin, MaimaiVersion } from '@/lib/plugin-api'
 import type { PluginInfo } from '@/types/plugin'
 import { useToast } from '@/hooks/use-toast'
-import { getPluginConfigRoutePath } from '../utils'
+import { getPluginType } from '../../plugins/types'
+import { getPluginConfigRoutePath, isAdapterManagementPath } from '../utils'
 
 type PluginStatusIcon = 'loading' | 'warning' | 'circuit'
 
@@ -44,7 +45,7 @@ export interface PluginUpdateState {
 }
 
 export interface PluginListGroup {
-  key: 'success' | 'loading' | 'failed' | 'disabled'
+  key: 'success' | 'loading' | 'offline' | 'failed' | 'disabled'
   label: string
   dotClassName: string
   plugins: InstalledPlugin[]
@@ -110,6 +111,7 @@ function comparePluginVersions(currentVersion: string, latestVersion: string): n
 
 export function usePluginList() {
   const { toast } = useToast()
+  const adapterOnly = isAdapterManagementPath()
   // 深链接初始目标（仅首次渲染读取一次）
   const [initialTarget] = useState(getInitialPluginConfigTarget)
 
@@ -134,11 +136,7 @@ export function usePluginList() {
     if (tabId) {
       params.set('tab', tabId)
     }
-    window.history.replaceState(
-      null,
-      '',
-      `${getPluginConfigRoutePath()}?${params.toString()}`
-    )
+    window.history.replaceState(null, '', `${getPluginConfigRoutePath()}?${params.toString()}`)
   }
 
   const closePluginConfig = () => {
@@ -149,7 +147,7 @@ export function usePluginList() {
   }
 
   const checkPluginUpdates = async () => {
-    if (updateCheckStartedRef.current) {
+    if (adapterOnly || updateCheckStartedRef.current) {
       return
     }
     updateCheckStartedRef.current = true
@@ -185,7 +183,10 @@ export function usePluginList() {
   const loadPlugins = async () => {
     setLoading(true)
     try {
-      const installed = await getInstalledPlugins()
+      const allInstalled = await getInstalledPlugins()
+      const installed = adapterOnly
+        ? allInstalled.filter((plugin) => getPluginType(plugin) === 'adapter')
+        : allInstalled
       setPlugins(installed)
       if (!selectedPlugin && initialTarget.pluginId) {
         const targetPlugin = installed.find((plugin) => plugin.id === initialTarget.pluginId)
@@ -241,6 +242,8 @@ export function usePluginList() {
     !isPluginDisabled(plugin) && (plugin.load_status === 'success' || plugin.loaded === true)
   const isPluginLoading = (plugin: InstalledPlugin) =>
     !isPluginDisabled(plugin) && plugin.load_status === 'loading'
+  const isPluginOffline = (plugin: InstalledPlugin) =>
+    !isPluginDisabled(plugin) && plugin.load_status === 'offline'
   const isPluginCircuitOpen = (plugin: InstalledPlugin) =>
     !isPluginDisabled(plugin) && plugin.circuit_status?.state === 'open'
   const isPluginCircuitHalfOpen = (plugin: InstalledPlugin) =>
@@ -248,7 +251,7 @@ export function usePluginList() {
   const isPluginCircuitActive = (plugin: InstalledPlugin) =>
     isPluginCircuitOpen(plugin) || isPluginCircuitHalfOpen(plugin)
   const isPluginLoadFailed = (plugin: InstalledPlugin) =>
-    !isPluginDisabled(plugin) && !isPluginLoading(plugin) && !isPluginLoadSuccess(plugin)
+    !isPluginDisabled(plugin) && !isPluginLoading(plugin) && !isPluginOffline(plugin) && !isPluginLoadSuccess(plugin)
   const isPluginVersionIncompatible = (plugin: InstalledPlugin) => {
     if (!isPluginLoadFailed(plugin)) {
       return false
@@ -265,6 +268,7 @@ export function usePluginList() {
   const disabledCount = plugins.filter(isPluginDisabled).length
   const loadSuccessCount = plugins.filter(isPluginLoadSuccess).length
   const loadingCount = plugins.filter(isPluginLoading).length
+  const offlineCount = plugins.filter(isPluginOffline).length
   const circuitOpenCount = plugins.filter(isPluginCircuitOpen).length
   const circuitActiveCount = plugins.filter(isPluginCircuitActive).length
   const loadFailedCount = plugins.filter(isPluginLoadFailed).length
@@ -278,6 +282,7 @@ export function usePluginList() {
   const modernLoadSummaryLabel = [
     `加载成功 ${loadSuccessCount} 个`,
     `加载中 ${loadingCount} 个`,
+    offlineCount > 0 ? `已离线 ${offlineCount} 个` : '',
     showsCircuitSummary ? `熔断中 ${circuitOpenCount} 个` : '',
     `加载失败 ${loadFailedCount} 个`,
   ]
@@ -288,6 +293,7 @@ export function usePluginList() {
     `已启用 ${enabledCount} 个`,
     `已禁用 ${disabledCount} 个`,
     `加载中 ${loadingCount} 个`,
+    offlineCount > 0 ? `已离线 ${offlineCount} 个` : '',
     showsCircuitSummary ? `熔断中 ${circuitOpenCount} 个` : '',
     `启动失败 ${loadFailedCount} 个`,
   ]
@@ -306,6 +312,9 @@ export function usePluginList() {
     }
     if (isPluginLoading(plugin)) {
       return 'bg-sky-500'
+    }
+    if (isPluginOffline(plugin)) {
+      return 'bg-slate-500'
     }
     if (isPluginLoadFailed(plugin)) {
       return 'bg-red-500'
@@ -326,6 +335,9 @@ export function usePluginList() {
     if (isPluginLoading(plugin)) {
       return '加载中'
     }
+    if (isPluginOffline(plugin)) {
+      return '已离线'
+    }
     if (isPluginLoadFailed(plugin)) {
       return '启动失败'
     }
@@ -333,7 +345,7 @@ export function usePluginList() {
   }
   const getPluginStatusMeta = (plugin: InstalledPlugin): PluginStatusMeta => {
     if (isPluginDisabled(plugin)) {
-      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用' }
+      return { dotClassName: 'bg-muted-foreground/45', label: '已禁用', showsBadge: false }
     }
     if (isPluginCircuitOpen(plugin)) {
       const remainingSec = Math.ceil(plugin.circuit_status?.remaining_sec ?? 0)
@@ -358,6 +370,14 @@ export function usePluginList() {
         label: '加载中',
         badgeClassName: 'border-sky-600 text-sky-600',
         icon: 'loading' as const,
+      }
+    }
+    if (isPluginOffline(plugin)) {
+      return {
+        dotClassName: 'bg-slate-500',
+        label: '已离线',
+        badgeClassName: 'border-slate-500 text-slate-600',
+        icon: 'warning' as const,
       }
     }
     if (isPluginLoadSuccess(plugin)) {
@@ -432,6 +452,7 @@ export function usePluginList() {
   const pluginListGroupDefinitions: Array<Omit<PluginListGroup, 'plugins'>> = [
     { key: 'success', label: '加载成功', dotClassName: 'bg-emerald-500' },
     { key: 'loading', label: '加载中', dotClassName: 'bg-sky-500' },
+    { key: 'offline', label: '已离线', dotClassName: 'bg-slate-500' },
     { key: 'failed', label: '加载失败', dotClassName: 'bg-red-500' },
     { key: 'disabled', label: '已禁用', dotClassName: 'bg-muted-foreground/45' },
   ]
@@ -441,6 +462,9 @@ export function usePluginList() {
     }
     if (isPluginLoading(plugin)) {
       return 'loading'
+    }
+    if (isPluginOffline(plugin)) {
+      return 'offline'
     }
     if (isPluginLoadFailed(plugin)) {
       return 'failed'
