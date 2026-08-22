@@ -47,27 +47,35 @@ class MemoryGraphAdminService(KernelServiceBase):
             if not name:
                 return {"success": False, "error": "node name 不能为空"}
             entity_hash = compute_hash(name.lower())
-            existing = self.metadata_store.get_entity(entity_hash)
-            created = existing is None
-            revived = bool(existing and existing.get("is_deleted"))
-            if created or revived:
-                entity_hash = self.metadata_store.add_entity(name=name, metadata=kwargs.get("metadata") or {})
-            projection = self._publish_authoritative_graph_projection()
-            result = {
-                "success": True,
-                "created": created,
-                "revived": revived,
-                "node": {"name": name, "hash": entity_hash},
-                "projection": projection,
-            }
-            operation = self.metadata_store.record_v5_operation(
-                action="graph_create_node",
-                target=name,
-                resolved_hashes=[entity_hash],
-                reason=str(kwargs.get("reason", "") or "graph_create_node"),
-                updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
-                result=result,
+            with self.metadata_store.transaction(immediate=True) as conn:
+                existing = self.metadata_store.get_entity(entity_hash)
+                created = existing is None
+                revived = bool(existing and existing.get("is_deleted"))
+                if created or revived:
+                    entity_hash = self.metadata_store.add_entity(name=name, metadata=kwargs.get("metadata") or {})
+                authoritative_result = {
+                    "success": True,
+                    "created": created,
+                    "revived": revived,
+                    "node": {"name": name, "hash": entity_hash},
+                }
+                operation = self.metadata_store.record_v5_operation(
+                    action="graph_create_node",
+                    target=name,
+                    resolved_hashes=[entity_hash],
+                    reason=str(kwargs.get("reason", "") or "graph_create_node"),
+                    updated_by=str(
+                        kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
+                    ),
+                    result=authoritative_result,
+                    conn=conn,
+                )
+            projection = (
+                self._publish_authoritative_graph_projection()
+                if created or revived
+                else {"status": "not_required", "queued": 0}
             )
+            result = {**authoritative_result, "projection": projection}
             return {"operation": operation, **result}
 
         if act == "delete_node":
@@ -98,7 +106,6 @@ class MemoryGraphAdminService(KernelServiceBase):
                 new_name,
                 reason=reason,
                 updated_by=updated_by,
-                record_operation=False,
             )
             if not bool(result.get("success")):
                 return result
@@ -107,20 +114,7 @@ class MemoryGraphAdminService(KernelServiceBase):
                     entity_hash=str(result.get("entity_hash", "") or ""),
                     relation_hashes=tokens((result.get("relation_hash_map") or {}).values()),
                 )
-            operation = self.metadata_store.record_v5_operation(
-                action="graph_rename_node",
-                target=old_name,
-                resolved_hashes=tokens(
-                    [
-                        result.get("entity_hash"),
-                        *((result.get("relation_hash_map") or {}).values()),
-                    ]
-                ),
-                reason=reason,
-                updated_by=updated_by,
-                result=result,
-            )
-            return {"operation": operation, **result}
+            return result
 
         if act == "create_edge":
             subject = str(kwargs.get("subject", "") or kwargs.get("source", "") or "").strip()
@@ -135,27 +129,53 @@ class MemoryGraphAdminService(KernelServiceBase):
             if not isfinite(confidence) or not 0.0 <= confidence <= 1.0:
                 return {"success": False, "error": "confidence 必须位于[0, 1]"}
             expected_hash = self.metadata_store.compute_relation_hash(subject, predicate, obj)
-            existing = self.metadata_store.get_relation(expected_hash)
-            relation_hash = self.metadata_store.add_relation(
-                subject=subject,
-                predicate=predicate,
-                obj=obj,
-                confidence=confidence,
-                source_paragraph=kwargs.get("source_paragraph"),
-                metadata=kwargs.get("metadata") or {},
-            )
-            if existing and bool(existing.get("is_inactive")):
-                self.metadata_store.apply_relation_lifecycle_event(
-                    [relation_hash],
-                    event=RelationLifecycleEvent.EVIDENCE,
-                    policy=self._maintenance_service._relation_lifecycle_policy(),
-                    now=time.time(),
+            with self.metadata_store.transaction(immediate=True) as conn:
+                existing = self.metadata_store.get_relation(expected_hash)
+                relation_hash = self.metadata_store.add_relation(
+                    subject=subject,
+                    predicate=predicate,
+                    obj=obj,
+                    confidence=confidence,
+                    source_paragraph=kwargs.get("source_paragraph"),
+                    metadata=kwargs.get("metadata") or {},
                 )
-            queued = self.metadata_store.reenqueue_authoritative_relation_graph_projection_jobs(
-                [{"relation_hash": relation_hash, "subject": subject, "object": obj}]
-            )
+                if existing and bool(existing.get("is_inactive")):
+                    self.metadata_store.apply_relation_lifecycle_event(
+                        [relation_hash],
+                        event=RelationLifecycleEvent.EVIDENCE,
+                        policy=self._maintenance_service._relation_lifecycle_policy(),
+                        now=time.time(),
+                    )
+                queued = self.metadata_store.reenqueue_authoritative_relation_graph_projection_jobs(
+                    [{"relation_hash": relation_hash, "subject": subject, "object": obj}]
+                )
+                relation = self.metadata_store.get_relation(relation_hash) or {}
+                authoritative_result = {
+                    "success": True,
+                    "created": existing is None,
+                    "reactivated": bool(existing and existing.get("is_inactive")),
+                    "edge": {
+                        "hash": relation_hash,
+                        "subject": subject,
+                        "predicate": predicate,
+                        "object": obj,
+                        "weight": float(relation.get("confidence", confidence)),
+                        "confidence": float(relation.get("confidence", confidence)),
+                    },
+                }
+                operation = self.metadata_store.record_v5_operation(
+                    action="graph_create_edge",
+                    target=relation_hash,
+                    resolved_hashes=[relation_hash],
+                    reason=str(kwargs.get("reason", "") or "graph_create_edge"),
+                    updated_by=str(
+                        kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
+                    ),
+                    result=authoritative_result,
+                    conn=conn,
+                )
+
             projection = self._publish_authoritative_graph_projection(queued=queued)
-            relation = self.metadata_store.get_relation(relation_hash) or {}
             vector_projection: Dict[str, Any] = {"status": "disabled"}
             if self.relation_vectors_enabled:
                 if self.relation_write_service is None:
@@ -174,28 +194,10 @@ class MemoryGraphAdminService(KernelServiceBase):
                         "already_exists": bool(vector_result.vector_already_exists),
                     }
             response = {
-                "success": True,
-                "created": existing is None,
-                "reactivated": bool(existing and existing.get("is_inactive")),
-                "edge": {
-                    "hash": relation_hash,
-                    "subject": subject,
-                    "predicate": predicate,
-                    "object": obj,
-                    "weight": float(relation.get("confidence", confidence)),
-                    "confidence": float(relation.get("confidence", confidence)),
-                },
+                **authoritative_result,
                 "projection": projection,
                 "vector_projection": vector_projection,
             }
-            operation = self.metadata_store.record_v5_operation(
-                action="graph_create_edge",
-                target=relation_hash,
-                resolved_hashes=[relation_hash],
-                reason=str(kwargs.get("reason", "") or "graph_create_edge"),
-                updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
-                result=response,
-            )
             return {"operation": operation, **response}
 
         if act == "delete_edge":
@@ -1175,6 +1177,9 @@ class MemoryGraphAdminService(KernelServiceBase):
         projection_jobs: List[Dict[str, Any]] = []
         resolved_target_hash = target_hash
         old_entity_hash = old_hash
+        queued = 0
+        operation: Optional[Dict[str, Any]] = None
+        authoritative_result: Dict[str, Any] = {}
         try:
             with self.metadata_store.transaction(immediate=True) as conn:
                 cursor = conn.cursor()
@@ -1373,23 +1378,36 @@ class MemoryGraphAdminService(KernelServiceBase):
                         episode_sources,
                         reason="entity_renamed",
                     )
+                self.metadata_store.rebuild_relation_hash_aliases(conn=conn)
+                queued = self.metadata_store.reenqueue_authoritative_relation_graph_projection_jobs(projection_jobs)
+                authoritative_result = {
+                    "success": True,
+                    "renamed": True,
+                    "old_name": source,
+                    "new_name": target,
+                    "entity_hash": resolved_target_hash,
+                    "relation_hash_map": relation_hash_map,
+                }
+                if record_operation:
+                    operation = self.metadata_store.record_v5_operation(
+                        action="graph_rename_node",
+                        target=source,
+                        resolved_hashes=[resolved_target_hash, *tokens(relation_hash_map.values())],
+                        reason=reason,
+                        updated_by=updated_by,
+                        result=authoritative_result,
+                        conn=conn,
+                    )
         except Exception as exc:
             return {"success": False, "error": f"rename failed: {exc}"}
 
-        self.metadata_store.rebuild_relation_hash_aliases()
         self._delete_vectors_by_type(
             entity_hashes=[old_entity_hash],
             relation_hashes=old_relation_hashes,
         )
-        queued = self.metadata_store.reenqueue_authoritative_relation_graph_projection_jobs(projection_jobs)
         projection = self._publish_authoritative_graph_projection(queued=queued)
         result = {
-            "success": True,
-            "renamed": True,
-            "old_name": source,
-            "new_name": target,
-            "entity_hash": resolved_target_hash,
-            "relation_hash_map": relation_hash_map,
+            **authoritative_result,
             "projection": projection,
             "vector_projection": {
                 "status": "invalidated" if old_relation_hashes else "not_required",
@@ -1399,14 +1417,7 @@ class MemoryGraphAdminService(KernelServiceBase):
         }
         if not record_operation:
             return result
-        operation = self.metadata_store.record_v5_operation(
-            action="graph_rename_node",
-            target=source,
-            resolved_hashes=[resolved_target_hash, *tokens(relation_hash_map.values())],
-            reason=reason,
-            updated_by=updated_by,
-            result=result,
-        )
+        assert operation is not None
         return {"operation": operation, **result}
 
     def _update_edge_weight(
@@ -1451,29 +1462,29 @@ class MemoryGraphAdminService(KernelServiceBase):
                 (target_weight, *resolved_hashes),
             )
             updated = int(cursor.rowcount)
-
-        result = {
-            "success": True,
-            "updated": updated,
-            "weight": target_weight,
-            "confidence": target_weight,
-            "hash": relation_hash,
-            "subject": subject,
-            "object": obj,
-            "previous_confidence": {
-                str(row["hash"] or ""): float(row.get("confidence", 0.0) or 0.0) for row in matched
-            },
-            "projection": {
-                "status": "not_required",
-                "reason": "图邻接只保存单位结构边，置信度由 metadata 检索评分读取",
-            },
-        }
-        operation = self.metadata_store.record_v5_operation(
-            action="graph_update_relation_confidence",
-            target=relation_hash or f"{subject}->{obj}",
-            resolved_hashes=resolved_hashes,
-            reason=reason,
-            updated_by=updated_by,
-            result=result,
-        )
+            result = {
+                "success": True,
+                "updated": updated,
+                "weight": target_weight,
+                "confidence": target_weight,
+                "hash": relation_hash,
+                "subject": subject,
+                "object": obj,
+                "previous_confidence": {
+                    str(row["hash"] or ""): float(row.get("confidence", 0.0) or 0.0) for row in matched
+                },
+                "projection": {
+                    "status": "not_required",
+                    "reason": "图邻接只保存单位结构边，置信度由 metadata 检索评分读取",
+                },
+            }
+            operation = self.metadata_store.record_v5_operation(
+                action="graph_update_relation_confidence",
+                target=relation_hash or f"{subject}->{obj}",
+                resolved_hashes=resolved_hashes,
+                reason=reason,
+                updated_by=updated_by,
+                result=result,
+                conn=conn,
+            )
         return {"operation": operation, **result}

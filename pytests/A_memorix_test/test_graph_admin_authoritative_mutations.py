@@ -1,11 +1,12 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 import pytest
 
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
 from src.A_memorix.core.storage.graph_store import GraphStore
 from src.A_memorix.core.storage.metadata_store import MetadataStore
+from src.A_memorix.core.utils.hash import compute_hash
 
 
 def _runtime(tmp_path: Path) -> tuple[SDKMemoryKernel, MetadataStore, GraphStore]:
@@ -215,6 +216,58 @@ async def test_create_node_is_idempotent_and_does_not_increment_appearance_count
         assert second["created"] is False
         assert entity is not None
         assert entity["appearance_count"] == 1
+    finally:
+        metadata_store.close()
+
+
+@pytest.mark.asyncio
+async def test_graph_audit_failure_rolls_back_authoritative_mutations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel, metadata_store, graph_store = _runtime(tmp_path)
+    monkeypatch.setattr(kernel, "initialize", _disable_initialize)
+    relation_hash = metadata_store.add_relation("Alice", "持有", "Map", confidence=0.3)
+    original_entity_hash = metadata_store.add_entity("Before")
+
+    def fail_record_operation(**kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(metadata_store, "record_v5_operation", fail_record_operation)
+    try:
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await kernel.memory_graph_admin(action="create_node", name="Rollback Node")
+        assert metadata_store.get_entity(compute_hash("rollback node")) is None
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await kernel.memory_graph_admin(
+                action="create_edge",
+                subject="Alice",
+                predicate="认识",
+                object="Bob",
+            )
+        rolled_back_relation = metadata_store.compute_relation_hash("Alice", "认识", "Bob")
+        assert metadata_store.get_relation(rolled_back_relation) is None
+        assert metadata_store.count_claimable_relation_graph_projection_jobs() == 0
+        assert graph_store.num_nodes == 0
+
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            await kernel.memory_graph_admin(
+                action="update_edge_weight",
+                hash=relation_hash,
+                weight=0.9,
+            )
+        assert metadata_store.get_relation(relation_hash)["confidence"] == pytest.approx(0.3)
+
+        renamed = await kernel.memory_graph_admin(
+            action="rename_node",
+            name="Before",
+            new_name="After",
+        )
+        assert renamed == {"success": False, "error": "rename failed: audit unavailable"}
+        assert metadata_store.get_entity(original_entity_hash) is not None
+        assert metadata_store.get_entity(compute_hash("after")) is None
     finally:
         metadata_store.close()
 
