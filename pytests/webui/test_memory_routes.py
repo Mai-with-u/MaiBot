@@ -368,6 +368,46 @@ def test_webui_memory_record_context_derives_related_content(
         store.close()
 
 
+def test_webui_memory_record_context_finds_profile_beyond_recent_snapshot_window(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    store, ids = _memory_record_store(tmp_path)
+    connection = store.get_connection()
+    now = 1_720_000_000.0
+    connection.executemany(
+        """
+        INSERT INTO person_profile_snapshots (
+            person_id, profile_version, profile_text, evidence_ids_json,
+            fact_claim_ids_json, updated_at, source_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                f"unrelated-{index}",
+                1,
+                f"无关画像 {index}",
+                "[]",
+                "[]",
+                now + index + 1,
+                "test",
+            )
+            for index in range(201)
+        ],
+    )
+    connection.commit()
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    try:
+        response = client.get(f"/api/webui/memory/records/paragraph/{ids['paragraph']}")
+
+        assert response.status_code == 200
+        profiles = response.json()["related"]["profiles"]
+        assert [item["person_id"] for item in profiles] == ["person-1"]
+    finally:
+        store.close()
+
+
 def test_webui_memory_records_exposes_invalid_type_and_unavailable_database(
     client: TestClient,
     monkeypatch,

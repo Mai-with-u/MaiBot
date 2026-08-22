@@ -1253,27 +1253,50 @@ def _memory_record_context(record_type: str, record_id: str, limit: int) -> dict
             (record["id"], record["id"], limit),
         )
 
-    profile_rows = _query_memory_records(
-        """
-        SELECT s.person_id, s.profile_version, s.profile_text, s.evidence_ids_json,
-               s.fact_claim_ids_json, s.updated_at, s.source_note
-        FROM person_profile_snapshots s
-        JOIN (
-            SELECT person_id, MAX(profile_version) AS max_version
-            FROM person_profile_snapshots GROUP BY person_id
-        ) latest ON latest.person_id = s.person_id AND latest.max_version = s.profile_version
-        ORDER BY s.updated_at DESC
-        LIMIT 200
-        """
-    )
-    paragraph_set = set(paragraph_hashes)
-    fact_set = set(fact_ids)
     profiles = []
+    profile_match_clauses: list[str] = []
+    profile_params: list[Any] = []
+    if paragraph_hashes:
+        placeholders = _memory_placeholders(paragraph_hashes)
+        profile_match_clauses.append(
+            f"""
+            EXISTS (
+                SELECT 1 FROM json_each(COALESCE(s.evidence_ids_json, '[]')) evidence
+                WHERE CAST(evidence.value AS TEXT) IN ({placeholders})
+            )
+            """
+        )
+        profile_params.extend(paragraph_hashes)
+    if fact_ids:
+        placeholders = _memory_placeholders(fact_ids)
+        profile_match_clauses.append(
+            f"""
+            EXISTS (
+                SELECT 1 FROM json_each(COALESCE(s.fact_claim_ids_json, '[]')) claim
+                WHERE CAST(claim.value AS TEXT) IN ({placeholders})
+            )
+            """
+        )
+        profile_params.extend(fact_ids)
+    if profile_match_clauses:
+        profile_rows = _query_memory_records(
+            f"""
+            SELECT s.person_id, s.profile_version, s.profile_text,
+                   s.updated_at, s.source_note
+            FROM person_profile_snapshots s
+            JOIN (
+                SELECT person_id, MAX(profile_version) AS max_version
+                FROM person_profile_snapshots GROUP BY person_id
+            ) latest ON latest.person_id = s.person_id AND latest.max_version = s.profile_version
+            WHERE {" OR ".join(profile_match_clauses)}
+            ORDER BY s.updated_at DESC
+            LIMIT ?
+            """,
+            (*profile_params, limit),
+        )
+    else:
+        profile_rows = []
     for item in profile_rows:
-        evidence_ids = {str(value) for value in _decode_json_payload(item.get("evidence_ids_json"), [])}
-        claim_ids = {str(value) for value in _decode_json_payload(item.get("fact_claim_ids_json"), [])}
-        if not (paragraph_set & evidence_ids or fact_set & claim_ids):
-            continue
         profiles.append(
             {
                 "person_id": str(item.get("person_id") or ""),
@@ -1283,8 +1306,6 @@ def _memory_record_context(record_type: str, record_id: str, limit: int) -> dict
                 "source_note": str(item.get("source_note") or ""),
             }
         )
-        if len(profiles) >= limit:
-            break
 
     relation_ids = [item["id"] for item in relations if item["id"]]
     graph_jobs: list[dict[str, Any]] = []
