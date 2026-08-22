@@ -328,6 +328,10 @@ async def test_runtime_admin_rebuild_all_vectors_replaces_existing_store(
         ["stale-vector"],
     )
     kernel.vector_store.save()
+    kernel._set_runtime_capability("vector_read", False)
+    kernel._apply_runtime_sparse_mode()
+    assert kernel.retriever is not None
+    assert kernel.retriever._runtime_sparse_only is True
 
     preview = await kernel.memory_runtime_admin(action="rebuild_all_vectors", dry_run=True)
     assert preview["success"] is True
@@ -348,6 +352,7 @@ async def test_runtime_admin_rebuild_all_vectors_replaces_existing_store(
     assert kernel.summary_importer.vector_store is not old_summary_importer_store
     assert kernel.person_profile_service.vector_store is not old_profile_store
     assert kernel.episode_retriever.retriever is not old_episode_retriever
+    assert kernel.retriever._runtime_sparse_only is False
 
     config = await kernel.memory_runtime_admin(action="get_config")
     assert config["vector_rebuild_required"] is False

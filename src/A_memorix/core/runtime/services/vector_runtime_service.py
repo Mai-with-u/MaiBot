@@ -923,6 +923,7 @@ class MemoryVectorRuntimeService(KernelServiceBase):
             self._vector_rebuild_source_dimension = None
             self._set_runtime_capability("vector_read", True)
             self._set_runtime_capability("vector_write", True)
+            self._apply_runtime_sparse_mode()
             self._set_vector_health(
                 state="healthy",
                 error_code="",
