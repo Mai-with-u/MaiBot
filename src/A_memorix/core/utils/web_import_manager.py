@@ -3612,10 +3612,15 @@ class ImportTaskManager:
                             time_meta=unit.get("time_meta"),
                         )
                         if person_ids:
-                            self.plugin.record_person_evidence_written(
-                                person_ids,
-                                reason="web_import_json",
-                            )
+                            try:
+                                self.plugin.record_person_evidence_written(
+                                    person_ids,
+                                    reason="web_import_json",
+                                )
+                            except Exception as exc:
+                                warning = f"分块[{chunk_id}]人物画像刷新入队失败: {exc}"
+                                logger.warning(warning)
+                                chunk_warnings.append(warning)
                         vector_result = await self._write_paragraph_vector_or_enqueue(
                             paragraph_hash=para_hash,
                             content=content,

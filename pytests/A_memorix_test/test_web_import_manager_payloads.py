@@ -587,6 +587,48 @@ async def test_json_paragraph_person_ids_are_stored_and_refresh_profiles() -> No
     ]
 
 
+@pytest.mark.asyncio
+async def test_json_paragraph_profile_refresh_failure_is_reported_without_failing_write() -> None:
+    manager, metadata_store = _build_manager()
+    task = _build_progress_task("task-profile-refresh-failure", total_chunks=0)
+    task.files[0].input_mode = "json"
+    manager._tasks[task.task_id] = task
+    units, warnings = manager._build_json_units(
+        {
+            "paragraphs": [
+                {
+                    "content": "用户甲喜欢观星",
+                    "person_ids": ["person-a"],
+                }
+            ]
+        },
+        task.files[0].file_id,
+        task.files[0].name,
+        "script_json",
+    )
+    await manager._register_json_units(task.task_id, task.files[0].file_id, units)
+
+    def fail_profile_refresh(person_ids: list[str], *, reason: str) -> None:
+        del person_ids, reason
+        raise RuntimeError("queue unavailable")
+
+    manager.plugin.record_person_evidence_written = fail_profile_refresh
+
+    await manager._process_json_unit(
+        task.task_id,
+        task.files[0],
+        units[0],
+        asyncio.Semaphore(1),
+        paragraph_metadata={"scope_type": "global"},
+    )
+
+    assert warnings == []
+    assert len(metadata_store.paragraphs) == 1
+    assert task.files[0].chunks[0].status == "completed"
+    assert task.files[0].warning_count == 1
+    assert "人物画像刷新入队失败" in task.files[0].warnings[0]
+
+
 def test_json_paragraph_rejects_non_array_person_ids() -> None:
     manager, _ = _build_manager()
 
