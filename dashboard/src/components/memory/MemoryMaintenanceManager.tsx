@@ -206,8 +206,19 @@ export function MemoryMaintenanceManager({
         description: String(payload.detail ?? payload.error ?? ''),
         variant: payload.success ? 'default' : 'destructive',
       })
-      await onChanged?.()
-      await loadRecycleBin()
+      if (!payload.success) {
+        return
+      }
+      try {
+        await onChanged?.()
+        await loadRecycleBin()
+      } catch (error) {
+        toast({
+          title: `记忆${getActionLabel(nextAction)}已完成，但数据刷新失败`,
+          description: error instanceof Error ? error.message : String(error),
+          variant: 'destructive',
+        })
+      }
     } catch (error) {
       toast({
         title: `记忆${getActionLabel(nextAction)}失败`,

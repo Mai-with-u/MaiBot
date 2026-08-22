@@ -352,12 +352,20 @@ export function useMemoryDelete({
           variant: result.success ? 'default' : 'destructive',
         })
         if (result.success) {
-          await refreshDeleteData()
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
-            queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
-          ])
           setSelectedSources([])
+          try {
+            await refreshDeleteData()
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+              queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+            ])
+          } catch (error) {
+            toast({
+              title: '删除已完成，但数据刷新失败',
+              description: error instanceof Error ? error.message : '未知错误',
+              variant: 'destructive',
+            })
+          }
         }
       } catch (error) {
         setDeletePreviewError(error instanceof Error ? error.message : '删除失败')
@@ -429,7 +437,13 @@ export function useMemoryDelete({
     async (operationId: string) => {
       try {
         setDeleteRestoring(true)
-        await restoreMemoryDelete({ operation_id: operationId, requested_by: 'knowledge_base' })
+        const result = await restoreMemoryDelete({
+          operation_id: operationId,
+          requested_by: 'knowledge_base',
+        })
+        if (result.success === false) {
+          throw new Error(String(result.error || '未能恢复删除操作'))
+        }
         toast({
           title: '恢复成功',
           description: `删除操作 ${operationId} 已恢复`,
@@ -439,11 +453,19 @@ export function useMemoryDelete({
         setDeletePreview(null)
         setDeleteResult(null)
         setDeletePreviewError(null)
-        await refreshDeleteData()
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
-          queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
-        ])
+        try {
+          await refreshDeleteData()
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+            queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+          ])
+        } catch (error) {
+          toast({
+            title: '恢复已完成，但数据刷新失败',
+            description: error instanceof Error ? error.message : '未知错误',
+            variant: 'destructive',
+          })
+        }
       } catch (error) {
         toast({
           title: '恢复失败',
