@@ -1006,7 +1006,7 @@
         "retracted": "撤回済み"
       },
       "evidenceType": {
-        "paragraph": "段落",
+        "paragraph": "メモリ段落",
         "relation": "関係",
         "entity": "エンティティ",
         "fact": "事実",
@@ -1016,7 +1016,7 @@
         "unknown": "不明"
       },
       "evidenceStance": {
-        "support": "支持",
+        "support": "裏付け",
         "refute": "反証"
       },
       "graphJobStatus": {
