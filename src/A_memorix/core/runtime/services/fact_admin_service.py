@@ -59,12 +59,8 @@ class MemoryFactAdminService(KernelServiceBase):
             profile_section=str(self._claim_value(kwargs, existing, "profile_section", "stable_facts")),
             authority=str(self._claim_value(kwargs, existing, "authority", "manual")),
             confidence=float(self._claim_value(kwargs, existing, "confidence", 1.0)),
-            valid_from=self._optional_float(
-                self._claim_value(kwargs, existing, "valid_from", None, allow_none=True)
-            ),
-            valid_to=self._optional_float(
-                self._claim_value(kwargs, existing, "valid_to", None, allow_none=True)
-            ),
+            valid_from=self._optional_float(self._claim_value(kwargs, existing, "valid_from", None, allow_none=True)),
+            valid_to=self._optional_float(self._claim_value(kwargs, existing, "valid_to", None, allow_none=True)),
             supersedes_claim_ids=supersedes_claim_ids,
             reason=str(kwargs.get("reason", "") or "webui_fact_write"),
         )
@@ -115,12 +111,8 @@ class MemoryFactAdminService(KernelServiceBase):
                 profile_section=str(self._claim_value(kwargs, claim, "profile_section", "stable_facts")),
                 authority=str(self._claim_value(kwargs, claim, "authority", "manual")),
                 confidence=float(self._claim_value(kwargs, claim, "confidence", 1.0)),
-                valid_from=self._optional_float(
-                    self._claim_value(kwargs, claim, "valid_from", None, allow_none=True)
-                ),
-                valid_to=self._optional_float(
-                    self._claim_value(kwargs, claim, "valid_to", None, allow_none=True)
-                ),
+                valid_from=self._optional_float(self._claim_value(kwargs, claim, "valid_from", None, allow_none=True)),
+                valid_to=self._optional_float(self._claim_value(kwargs, claim, "valid_to", None, allow_none=True)),
                 reason=str(kwargs.get("reason", "") or "webui_fact_classification_updated"),
             )
             refresh_queued = self._enqueue_profile_refresh(

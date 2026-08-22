@@ -130,9 +130,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         current_dimension = self._current_embedding_status_dimension()
         if stored_dimension is None or int(stored_dimension) != int(current_dimension):
             return False
-        current_fingerprint = self._current_embedding_fingerprint_for_validation(
-            dimension=current_dimension
-        )
+        current_fingerprint = self._current_embedding_fingerprint_for_validation(dimension=current_dimension)
         if current_fingerprint is None:
             return False
         stored_fingerprint = self._stored_embedding_fingerprint(store)
@@ -370,12 +368,8 @@ class MemoryEmbeddingStateService(KernelServiceBase):
                         v1_evidence_root=self._v1_reconciliation_evidence_root(),
                     )
                     self.vector_store.warmup_index(force_train=True)
-                    self.paragraph_vector_store = self._make_vector_store(
-                        self._paragraph_vector_dir()
-                    )
-                    self.graph_vector_store = self._make_vector_store(
-                        self._graph_vector_dir()
-                    )
+                    self.paragraph_vector_store = self._make_vector_store(self._paragraph_vector_dir())
+                    self.graph_vector_store = self._make_vector_store(self._graph_vector_dir())
                     loaded = True
             except VectorStoreIntegrityError as exc:
                 if not self._recover_known_vector_failure(exc):

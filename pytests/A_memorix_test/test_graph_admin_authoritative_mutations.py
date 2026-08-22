@@ -125,9 +125,7 @@ async def test_create_edge_keeps_authoritative_write_and_retry_job_when_graph_sa
         assert result["projection"]["status"] == "pending_retry"
         assert "graph disk unavailable" in result["projection"]["error"]
         assert metadata_store.get_relation(relation_hash) is not None
-        jobs = metadata_store.query(
-            "SELECT relation_hash, status, last_error FROM relation_graph_projection_jobs"
-        )
+        jobs = metadata_store.query("SELECT relation_hash, status, last_error FROM relation_graph_projection_jobs")
         assert jobs == [
             {
                 "relation_hash": relation_hash,

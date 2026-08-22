@@ -440,9 +440,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
         profile_refresh_person_ids = tokens(
             [
                 plan_record.get("target_person_id"),
-                (plan_record.get("plan") or {}).get("person_id")
-                if isinstance(plan_record.get("plan"), dict)
-                else None,
+                (plan_record.get("plan") or {}).get("person_id") if isinstance(plan_record.get("plan"), dict) else None,
             ]
         )
         if rollback_success:

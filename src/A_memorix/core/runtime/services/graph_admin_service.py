@@ -65,9 +65,7 @@ class MemoryGraphAdminService(KernelServiceBase):
                 target=name,
                 resolved_hashes=[entity_hash],
                 reason=str(kwargs.get("reason", "") or "graph_create_node"),
-                updated_by=str(
-                    kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
-                ),
+                updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
                 result=result,
             )
             return {"operation": operation, **result}
@@ -94,9 +92,7 @@ class MemoryGraphAdminService(KernelServiceBase):
             old_name = str(kwargs.get("name", "") or kwargs.get("old_name", "") or kwargs.get("node", "") or "").strip()
             new_name = str(kwargs.get("new_name", "") or kwargs.get("target_name", "") or "").strip()
             reason = str(kwargs.get("reason", "") or "graph_rename_node")
-            updated_by = str(
-                kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
-            )
+            updated_by = str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin")
             result = self._rename_node(
                 old_name,
                 new_name,
@@ -194,9 +190,7 @@ class MemoryGraphAdminService(KernelServiceBase):
                 target=relation_hash,
                 resolved_hashes=[relation_hash],
                 reason=str(kwargs.get("reason", "") or "graph_create_edge"),
-                updated_by=str(
-                    kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
-                ),
+                updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
                 result=response,
             )
             return {"operation": operation, **response}
@@ -247,9 +241,7 @@ class MemoryGraphAdminService(KernelServiceBase):
                 obj=str(kwargs.get("object", "") or kwargs.get("target", "") or "").strip(),
                 weight=float(kwargs.get("weight", kwargs.get("confidence", 1.0))),
                 reason=str(kwargs.get("reason", "") or "graph_update_relation_confidence"),
-                updated_by=str(
-                    kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"
-                ),
+                updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
             )
 
         return {"success": False, "error": f"不支持的 graph action: {act}"}
