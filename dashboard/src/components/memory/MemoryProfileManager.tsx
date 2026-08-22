@@ -159,6 +159,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
   const [correctingEvidenceKey, setCorrectingEvidenceKey] = useState('')
   const initialLoadedRef = useRef(false)
   const initialPersonAppliedRef = useRef('')
+  const aliasRequestIdRef = useRef(0)
 
   const selectedProfile = useMemo(
     () => profiles.find((item) => item.person_id === selectedPersonId) ?? null,
@@ -240,21 +241,31 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
 
   const loadProfileAliases = useCallback(async (personId: string) => {
     const cleanPersonId = personId.trim()
+    const requestId = ++aliasRequestIdRef.current
     if (!cleanPersonId) {
       setProfileAliases(null)
       setAliasText('')
+      setAliasLoading(false)
       return null
     }
     setAliasLoading(true)
+    setProfileAliases(null)
+    setAliasText('')
     try {
       const payload = await getMemoryProfileAliases(cleanPersonId)
       if (!payload.success) {
         throw new Error(String(payload.error ?? '人物别名查询失败'))
       }
+      if (requestId !== aliasRequestIdRef.current) {
+        return null
+      }
       setProfileAliases(payload)
       setAliasText((payload.effective_aliases ?? []).join('\n'))
       return payload
     } catch (error) {
+      if (requestId !== aliasRequestIdRef.current) {
+        return null
+      }
       setProfileAliases(null)
       setAliasText('')
       toast({
@@ -264,7 +275,9 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
       })
       return null
     } finally {
-      setAliasLoading(false)
+      if (requestId === aliasRequestIdRef.current) {
+        setAliasLoading(false)
+      }
     }
   }, [toast])
 
@@ -277,8 +290,10 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
 
   useEffect(() => {
     if (!activePersonId.trim()) {
+      aliasRequestIdRef.current += 1
       setProfileAliases(null)
       setAliasText('')
+      setAliasLoading(false)
       return
     }
     void loadProfileAliases(activePersonId)

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MemoryProfileManager } from '../MemoryProfileManager'
@@ -496,6 +496,51 @@ describe('MemoryProfileManager 画像覆写', () => {
 })
 
 describe('MemoryProfileManager 别名维护', () => {
+  it('切换人物后忽略前一个人物延迟返回的别名', async () => {
+    let resolveFirstAliases: ((value: Awaited<ReturnType<typeof memoryApi.getMemoryProfileAliases>>) => void) | undefined
+    const firstAliases = new Promise<Awaited<ReturnType<typeof memoryApi.getMemoryProfileAliases>>>((resolve) => {
+      resolveFirstAliases = resolve
+    })
+    vi.mocked(memoryApi.getMemoryProfileAliases).mockImplementation(async (personId) => {
+      if (personId === 'p1') {
+        return firstAliases
+      }
+      return {
+        success: true,
+        person_id: personId,
+        primary_name: '李四',
+        derived_aliases: ['李四'],
+        suggested_aliases: [],
+        manual_aliases: [],
+        effective_aliases: ['李四'],
+        has_override: false,
+      }
+    })
+
+    await renderManager()
+    fireEvent.click(await screen.findByText('李四'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('当前有效别名')).toHaveValue('李四')
+    })
+
+    await act(async () => {
+      resolveFirstAliases?.({
+        success: true,
+        person_id: 'p1',
+        primary_name: '张三',
+        derived_aliases: ['张三'],
+        suggested_aliases: [],
+        manual_aliases: ['过期别名'],
+        effective_aliases: ['过期别名'],
+        has_override: true,
+      })
+      await firstAliases
+    })
+
+    expect(screen.getByLabelText('当前有效别名')).toHaveValue('李四')
+  })
+
   it('加载有效别名，保存完整集合并触发画像刷新', async () => {
     await renderManager()
 

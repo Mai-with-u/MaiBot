@@ -167,7 +167,13 @@ def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
 
 def test_person_profile_cooccurring_entities_are_suggestions_not_effective_aliases() -> None:
     metadata_store = FakeMetadataStore()
-    metadata_store.get_paragraphs_by_entity = lambda entity_name: [{"hash": "paragraph-1"}]
+    queried_entities = []
+
+    def get_paragraphs_by_entity(entity_name: str):
+        queried_entities.append(entity_name)
+        return [{"hash": "paragraph-1"}]
+
+    metadata_store.get_paragraphs_by_entity = get_paragraphs_by_entity
     metadata_store.get_paragraph_entities = lambda paragraph_hash: [
         {"name": "测试用户"},
         {"name": "产品经理"},
@@ -181,6 +187,32 @@ def test_person_profile_cooccurring_entities_are_suggestions_not_effective_alias
     assert details["derived_aliases"] == ["测试用户"]
     assert details["suggested_aliases"] == ["产品经理", "向量索引"]
     assert details["effective_aliases"] == ["测试用户"]
+    assert queried_entities == ["测试用户"]
+
+
+def test_person_profile_alias_suggestions_merge_paragraphs_from_trusted_names() -> None:
+    metadata_store = FakeMetadataStore()
+    queried_entities = []
+
+    def get_paragraphs_by_entity(entity_name: str):
+        queried_entities.append(entity_name)
+        return {
+            "测试用户": [{"hash": "paragraph-1"}],
+            "小测": [{"hash": "paragraph-1"}, {"hash": "paragraph-2"}],
+        }.get(entity_name, [])
+
+    metadata_store.get_paragraphs_by_entity = get_paragraphs_by_entity
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: {
+        "paragraph-1": [{"name": "测试用户"}, {"name": "产品经理"}],
+        "paragraph-2": [{"name": "小测"}, {"name": "摄影"}],
+    }[paragraph_hash]
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户", [])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert queried_entities == ["测试用户", "小测"]
+    assert details["suggested_aliases"] == ["产品经理", "摄影"]
 
 
 def test_person_profile_without_master_record_uses_person_id_as_trusted_alias(monkeypatch) -> None:

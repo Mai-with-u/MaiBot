@@ -114,9 +114,7 @@ class PersonProfileService:
                 "task_name": model.task_name,
                 "selected_model_name": model.selected_model_name,
                 "model_list": sorted(
-                    str(item).strip()
-                    for item in getattr(model.task_config, "model_list", [])
-                    if str(item).strip()
+                    str(item).strip() for item in getattr(model.task_config, "model_list", []) if str(item).strip()
                 ),
             }
         return {
@@ -139,8 +137,7 @@ class PersonProfileService:
     ) -> str:
         """计算画像输入版本；检索分数不属于证据内容，故不进入指纹。"""
         stable_vector_evidence = [
-            {key: value for key, value in item.items() if key != "score"}
-            for item in vector_evidence
+            {key: value for key, value in item.items() if key != "score"} for item in vector_evidence
         ]
         payload = self._canonical_profile_value(
             {
@@ -347,19 +344,32 @@ class PersonProfileService:
 
         suggestions: List[str] = []
         excluded = {
-            str(item or "").strip().lower()
-            for item in [person_id, *trusted_aliases]
-            if str(item or "").strip()
+            str(item or "").strip().lower() for item in [person_id, *trusted_aliases] if str(item or "").strip()
         }
         seen = set(excluded)
 
-        try:
-            paragraphs = self.metadata_store.get_paragraphs_by_entity(person_id)
-        except Exception as e:
-            logger.warning(f"从记忆证据收集人物别名候选失败: person_id={person_id}, err={e}")
-            return []
+        paragraphs_by_hash: Dict[str, Dict[str, Any]] = {}
+        query_aliases: List[str] = []
+        query_alias_keys = set()
+        for item in trusted_aliases:
+            alias = str(item or "").strip()
+            alias_key = alias.lower()
+            if not alias or alias_key in query_alias_keys:
+                continue
+            query_alias_keys.add(alias_key)
+            query_aliases.append(alias)
+        for alias in query_aliases:
+            try:
+                paragraphs = self.metadata_store.get_paragraphs_by_entity(alias)
+            except Exception as e:
+                logger.warning(f"从记忆证据收集人物别名候选失败: person_id={person_id}, alias={alias}, err={e}")
+                continue
+            for paragraph in paragraphs:
+                paragraph_hash = str(paragraph.get("hash", "") or "").strip()
+                if paragraph_hash and paragraph_hash not in paragraphs_by_hash:
+                    paragraphs_by_hash[paragraph_hash] = paragraph
 
-        for paragraph in paragraphs[:20]:
+        for paragraph in list(paragraphs_by_hash.values())[:20]:
             paragraph_hash = str(paragraph.get("hash", "") or "").strip()
             if not paragraph_hash:
                 continue
@@ -1214,7 +1224,9 @@ class PersonProfileService:
             return self._apply_manual_override(pid, payload)
 
         unstructured_vector_evidence = [
-            item for item in vector_evidence if not self._source_type_from_source(str(item.get("source", ""))) == "person_fact"
+            item
+            for item in vector_evidence
+            if not self._source_type_from_source(str(item.get("source", ""))) == "person_fact"
         ]
         classified_buckets = await self._classify_profile_evidence(
             person_id=pid,
