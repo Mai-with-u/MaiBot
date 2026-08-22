@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 
 import asyncio
@@ -11,6 +12,7 @@ import pytest
 
 from src.A_memorix.core.runtime import sdk_memory_kernel as kernel_module
 from src.A_memorix.core.runtime.sdk_memory_kernel import SDKMemoryKernel
+from src.A_memorix.core.runtime.services.embedding_state_service import MemoryEmbeddingStateService
 
 
 class _FakeEmbeddingManager:
@@ -146,6 +148,34 @@ async def _wait_background_task(kernel: SDKMemoryKernel, name: str) -> None:
     if task is None:
         return
     await asyncio.wait_for(task, timeout=2.0)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_hash"),
+    [
+        ("observed", "sha256:observed"),
+        ("OBSERVED", "sha256:observed"),
+        ("configured", None),
+        ("unknown", None),
+        (None, None),
+    ],
+)
+def test_embedding_fingerprint_validation_only_trusts_observed_source(
+    source: str | None,
+    expected_hash: str | None,
+) -> None:
+    fingerprint: Dict[str, Any] = {"hash": "sha256:observed"}
+    if source is not None:
+        fingerprint["source"] = source
+    manager = SimpleNamespace(
+        default_dimension=8,
+        get_embedding_fingerprint=lambda *, dimension: fingerprint,
+    )
+    service = MemoryEmbeddingStateService(SimpleNamespace(embedding_manager=manager))
+
+    result = service._current_embedding_fingerprint_for_validation()
+
+    assert (result or {}).get("hash") == expected_hash
 
 
 def test_dual_auto_migration_progress_tracks_stable_fields(

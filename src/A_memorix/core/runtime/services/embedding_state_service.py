@@ -94,7 +94,7 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         fingerprint = self._current_embedding_fingerprint(dimension=dimension)
         if fingerprint is None:
             return None
-        if str(fingerprint.get("source", "") or "").strip().lower() == "configured":
+        if str(fingerprint.get("source", "") or "").strip().lower() != "observed":
             return None
         return fingerprint
 

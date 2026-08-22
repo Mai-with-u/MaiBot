@@ -78,6 +78,7 @@ class OfflineDeterministicEmbedding:
             "provider": "local",
             "model": self.model_name,
             "dimension": effective_dimension,
+            "source": "observed",
         }
 
     def stats(self) -> Dict[str, Any]:
