@@ -126,6 +126,47 @@ async def test_fact_admin_update_can_clear_validity_boundary(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_fact_admin_classification_update_preserves_inactive_status(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    service = _fact_service(store)
+    try:
+        old_claim = await service.memory_fact_admin(
+            action="create",
+            scope_type="person",
+            scope_id="person-1",
+            fact_key="favorite_drink",
+            value_text="咖啡",
+            cardinality="single",
+        )
+        revised = await service.memory_fact_admin(
+            action="update",
+            claim_id=old_claim["claim"]["claim_id"],
+            value_text="绿茶",
+        )
+        new_claim_id = revised["claim"]["claim_id"]
+        await service.memory_fact_admin(action="retract", claim_id=new_claim_id)
+
+        superseded = await service.memory_fact_admin(
+            action="update",
+            claim_id=old_claim["claim"]["claim_id"],
+            profile_section="identity_settings",
+        )
+        retracted = await service.memory_fact_admin(
+            action="update",
+            claim_id=new_claim_id,
+            confidence=0.4,
+        )
+
+        assert superseded["claim"]["status"] == "superseded"
+        assert superseded["replaced"] is False
+        assert retracted["claim"]["status"] == "retracted"
+        assert retracted["replaced"] is False
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_fact_admin_rejects_scope_change_and_does_not_queue_chat_profile(tmp_path: Path) -> None:
     store = MetadataStore(data_dir=tmp_path)
     store.connect()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+import unicodedata
+
 from .base import KernelServiceBase
 
 
@@ -65,6 +67,26 @@ class MemoryFactAdminService(KernelServiceBase):
             reason=str(kwargs.get("reason", "") or "webui_fact_write"),
         )
 
+    @staticmethod
+    def _normalized_identity_value(value: Any) -> str:
+        return " ".join(unicodedata.normalize("NFKC", str(value or "")).strip().split()).casefold()
+
+    @classmethod
+    def _claim_identity_changed(cls, existing: Dict[str, Any], kwargs: Dict[str, Any]) -> bool:
+        comparisons = {
+            "fact_key": cls._normalized_identity_value(existing.get("fact_key", "")),
+            "value_text": cls._normalized_identity_value(existing.get("value_normalized", "")),
+            "polarity": cls._normalized_identity_value(existing.get("polarity", "")),
+            "cardinality": cls._normalized_identity_value(existing.get("cardinality", "")),
+        }
+        for key, current_value in comparisons.items():
+            if key not in kwargs:
+                continue
+            requested_value = cls._normalized_identity_value(kwargs[key])
+            if requested_value != current_value:
+                return True
+        return False
+
     def _create_fact(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         with self.metadata_store.transaction(immediate=True) as conn:
             claim = self._upsert_claim(kwargs=kwargs)
@@ -85,25 +107,27 @@ class MemoryFactAdminService(KernelServiceBase):
             raise ValueError("事实更新不能改变 scope_type 或 scope_id")
 
         with self.metadata_store.transaction(immediate=True) as conn:
-            try:
-                claim = self._upsert_claim(
-                    kwargs=kwargs,
-                    existing=existing,
-                    supersedes_claim_ids=[claim_id],
-                )
-            except ValueError as error:
-                if "不属于同一冲突组" not in str(error):
-                    raise
-                claim = self._upsert_claim(kwargs=kwargs, existing=existing)
-                if str(claim["claim_id"]) != claim_id:
-                    self.metadata_store.retract_fact_claim(
-                        claim_id,
-                        reason=str(kwargs.get("reason", "") or "webui_fact_revised"),
+            claim = existing
+            if self._claim_identity_changed(existing, kwargs):
+                try:
+                    claim = self._upsert_claim(
+                        kwargs=kwargs,
+                        existing=existing,
+                        supersedes_claim_ids=[claim_id],
                     )
-                    claim = self.metadata_store.restore_fact_claim(
-                        str(claim["claim_id"]),
-                        reason=str(kwargs.get("reason", "") or "webui_fact_revised"),
-                    )
+                except ValueError as error:
+                    if "不属于同一冲突组" not in str(error):
+                        raise
+                    claim = self._upsert_claim(kwargs=kwargs, existing=existing)
+                    if str(claim["claim_id"]) != claim_id:
+                        self.metadata_store.retract_fact_claim(
+                            claim_id,
+                            reason=str(kwargs.get("reason", "") or "webui_fact_revised"),
+                        )
+                        claim = self.metadata_store.restore_fact_claim(
+                            str(claim["claim_id"]),
+                            reason=str(kwargs.get("reason", "") or "webui_fact_revised"),
+                        )
 
             claim = self.metadata_store.update_fact_claim_classification(
                 str(claim["claim_id"]),
