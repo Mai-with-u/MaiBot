@@ -128,7 +128,10 @@ class MemoryGraphAdminService(KernelServiceBase):
             obj = str(kwargs.get("object", "") or kwargs.get("target", "") or "").strip()
             if not all([subject, predicate, obj]):
                 return {"success": False, "error": "subject/predicate/object 不能为空"}
-            confidence = float(kwargs.get("confidence", 1.0))
+            try:
+                confidence = float(kwargs.get("confidence", 1.0))
+            except (TypeError, ValueError):
+                return {"success": False, "error": "confidence 必须位于[0, 1]"}
             if not isfinite(confidence) or not 0.0 <= confidence <= 1.0:
                 return {"success": False, "error": "confidence 必须位于[0, 1]"}
             expected_hash = self.metadata_store.compute_relation_hash(subject, predicate, obj)
@@ -235,11 +238,15 @@ class MemoryGraphAdminService(KernelServiceBase):
             }
 
         if act == "update_edge_weight":
+            try:
+                weight = float(kwargs.get("weight", kwargs.get("confidence", 1.0)))
+            except (TypeError, ValueError):
+                return {"success": False, "error": "weight 必须位于[0, 1]"}
             return self._update_edge_weight(
                 relation_hash=str(kwargs.get("hash", "") or kwargs.get("relation_hash", "") or "").strip(),
                 subject=str(kwargs.get("subject", "") or kwargs.get("source", "") or "").strip(),
                 obj=str(kwargs.get("object", "") or kwargs.get("target", "") or "").strip(),
-                weight=float(kwargs.get("weight", kwargs.get("confidence", 1.0))),
+                weight=weight,
                 reason=str(kwargs.get("reason", "") or "graph_update_relation_confidence"),
                 updated_by=str(kwargs.get("updated_by", "") or kwargs.get("requested_by", "") or "memory_graph_admin"),
             )

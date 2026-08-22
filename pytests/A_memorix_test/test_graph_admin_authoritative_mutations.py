@@ -171,6 +171,35 @@ async def test_update_edge_weight_changes_metadata_confidence_without_rebuilding
 
 
 @pytest.mark.asyncio
+async def test_edge_mutations_reject_non_numeric_weight_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel, metadata_store, _ = _runtime(tmp_path)
+    monkeypatch.setattr(kernel, "initialize", _disable_initialize)
+    relation_hash = metadata_store.add_relation("Alice", "持有", "Map", confidence=0.3)
+    try:
+        created = await kernel.memory_graph_admin(
+            action="create_edge",
+            subject="Alice",
+            predicate="认识",
+            object="Bob",
+            confidence="invalid",
+        )
+        updated = await kernel.memory_graph_admin(
+            action="update_edge_weight",
+            hash=relation_hash,
+            weight={"invalid": True},
+        )
+
+        assert created == {"success": False, "error": "confidence 必须位于[0, 1]"}
+        assert updated == {"success": False, "error": "weight 必须位于[0, 1]"}
+        assert metadata_store.get_relation(relation_hash)["confidence"] == pytest.approx(0.3)
+    finally:
+        metadata_store.close()
+
+
+@pytest.mark.asyncio
 async def test_create_node_is_idempotent_and_does_not_increment_appearance_count(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

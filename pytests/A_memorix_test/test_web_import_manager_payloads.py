@@ -601,6 +601,20 @@ def test_json_paragraph_rejects_non_array_person_ids() -> None:
     assert any("paragraph_person_ids_invalid" in warning for warning in warnings)
 
 
+def test_json_paragraph_rejects_non_string_person_id_items() -> None:
+    manager, _ = _build_manager()
+
+    units, warnings = manager._build_json_units(
+        {"paragraphs": [{"content": "用户甲喜欢观星", "person_ids": ["person-a", 42]}]},
+        "file-1",
+        "demo.json",
+        "script_json",
+    )
+
+    assert units == []
+    assert any("paragraph_person_ids_invalid" in warning for warning in warnings)
+
+
 def test_manifest_hit_requires_existing_live_source() -> None:
     manager, metadata_store = _build_manager()
     manager._manifest_path = _test_manifest_path("manifest_hit.json")

@@ -115,7 +115,13 @@ def _normalize_person_ids(raw_person_ids: Any) -> List[str]:
     out: List[str] = []
     seen = set()
     for item in raw_person_ids:
-        person_id = str(item or "").strip()
+        if not isinstance(item, str):
+            raise ImportPayloadValidationError(
+                "段落 person_ids 必须为字符串数组",
+                code="paragraph_person_ids_invalid",
+                field="person_ids",
+            )
+        person_id = item.strip()
         if not person_id or person_id in seen:
             continue
         seen.add(person_id)
