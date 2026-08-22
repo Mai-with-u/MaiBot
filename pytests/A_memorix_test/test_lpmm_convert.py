@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Generator
 
 import json
 import subprocess
@@ -16,6 +17,21 @@ from src.A_memorix.core.utils.web_import_manager import ImportTaskManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONVERT_SCRIPT = REPO_ROOT / "src" / "A_memorix" / "scripts" / "convert_lpmm.py"
+CONFIG_PATH = REPO_ROOT / "config" / "a_memorix.toml"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _provide_lpmm_converter_config() -> Generator[None, None, None]:
+    if CONFIG_PATH.exists():
+        yield
+        return
+
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text('[embedding]\nmodel_name = "auto"\n', encoding="utf-8")
+    try:
+        yield
+    finally:
+        CONFIG_PATH.unlink()
 
 
 def _write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
