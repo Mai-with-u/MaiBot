@@ -3974,7 +3974,7 @@ class ExpressionConfig(ConfigBase):
     )
     """写入表达方式前先让 AI 检查，减少学到奇怪内容。"""
 
-    expression_selection_mode: Literal["legacy", "vector", "vector_intent"] = Field(
+    expression_selection_mode: Literal["legacy", "vector_intent"] = Field(
         default="legacy",
         json_schema_extra={
             "label": {
@@ -3984,20 +3984,18 @@ class ExpressionConfig(ConfigBase):
             },
             "x-widget": "select",
             "advanced": False,
-            "options": ["legacy", "vector", "vector_intent"],
+            "options": ["legacy", "vector_intent"],
             "x-option-labels": {
                 "legacy": "随手",
-                "vector": "精细",
                 "vector_intent": "超级精细",
             },
             "x-option-descriptions": {
                 "legacy": "使用 LLM 进行选择，效果一般",
-                "vector": "使用嵌入模型进行选择，效果较好（需要配置嵌入模型）",
                 "vector_intent": "使用特殊构建的回复方式加上嵌入模型进行选择，效果非常好（需要配置嵌入模型）",
             },
         },
     )
-    """表达方式的使用策略：legacy 使用 LLM 选择，vector 使用嵌入召回，vector_intent 会额外使用表达选择意图。"""
+    """表达方式的使用策略：legacy 随手抽取候选，vector_intent 使用表达意图与嵌入召回。"""
 
     expression_vector_index_path: str = Field(
         default="data/expression_selection/expression_vector_index.json",
