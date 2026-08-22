@@ -10,6 +10,8 @@ on:
       - "setup.cfg"
       - "tox.ini"
       - ".pre-commit-config.yaml"
+      - ".github/scripts/check_ruff_format_regressions.py"
+      - ".github/workflows/ruff-pr.yml"
 jobs:
   ruff:
     runs-on: ubuntu-24.04
@@ -21,10 +23,12 @@ jobs:
         uses: astral-sh/ruff-action@v3
         with:
           args: "--version"
-          version: "latest"
+          version: "0.15.11"
       - name: Run Ruff Check (No Fix)
         run: ruff check --output-format=github
         shell: pwsh
       - name: Run Ruff Format Check
-        run: ruff format --check --diff
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: python .github/scripts/check_ruff_format_regressions.py --baseline-ref "$env:BASE_REF"
         shell: pwsh
