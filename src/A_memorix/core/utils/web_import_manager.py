@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 import asyncio
 import hashlib
 import json
@@ -2535,6 +2535,36 @@ class ImportTaskManager:
             except asyncio.TimeoutError:
                 logger.error("迁移子进程强制终止超时")
 
+    async def _wait_for_import_process(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        task_id: str,
+        poll_callback: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> Tuple[Optional[int], bool]:
+        """轮询导入子进程，并确保协程取消时同步终止进程。"""
+        try:
+            while True:
+                if await self._is_cancel_requested(task_id):
+                    await self._terminate_process(process)
+                    return None, True
+                if poll_callback is not None:
+                    await poll_callback()
+                try:
+                    return_code = await asyncio.wait_for(
+                        process.wait(),
+                        timeout=self._timeout_config()["process_poll_seconds"],
+                    )
+                    return return_code, False
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            await self._terminate_process(process)
+            raise
+        except Exception:
+            await self._terminate_process(process)
+            raise
+
     async def _reload_stores_after_external_migration(self) -> None:
         async with self._storage_lock:
             for store in self._vector_stores_for_persistence():
@@ -2601,24 +2631,20 @@ class ImportTaskManager:
             asyncio.create_task(_drain(process.stderr, stderr_lines)),
         ]
 
-        cancelled = False
-        return_code: Optional[int] = None
-        try:
-            while True:
-                if await self._is_cancel_requested(task_id):
-                    cancelled = True
-                    await self._terminate_process(process)
-                    break
+        async def _refresh_progress() -> None:
+            await self._refresh_maibot_progress_from_state(
+                task_id,
+                file_record.file_id,
+                chunk_id,
+                state_path,
+            )
 
-                await self._refresh_maibot_progress_from_state(task_id, file_record.file_id, chunk_id, state_path)
-                try:
-                    return_code = await asyncio.wait_for(
-                        process.wait(),
-                        timeout=self._timeout_config()["process_poll_seconds"],
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    continue
+        try:
+            return_code, cancelled = await self._wait_for_import_process(
+                process,
+                task_id=task_id,
+                poll_callback=_refresh_progress,
+            )
         finally:
             await asyncio.gather(*drain_tasks, return_exceptions=True)
 
@@ -2783,6 +2809,7 @@ class ImportTaskManager:
             "        failed.append(f'{m}:{e.__class__.__name__}:{e}')\n"
             "print('OK' if not failed else ';'.join(failed))\n"
         )
+        probe: Optional[asyncio.subprocess.Process] = None
         try:
             probe = await asyncio.create_subprocess_exec(
                 sys.executable,
@@ -2795,7 +2822,13 @@ class ImportTaskManager:
                 probe.communicate(),
                 timeout=self._timeout_config()["convert_preflight_seconds"],
             )
+        except asyncio.CancelledError:
+            if probe is not None:
+                await self._terminate_process(probe)
+            raise
         except Exception as e:
+            if probe is not None:
+                await self._terminate_process(probe)
             return False, f"依赖预检执行失败: {e}"
 
         out = (stdout or b"").decode("utf-8", errors="replace").strip()
@@ -2899,22 +2932,11 @@ class ImportTaskManager:
             asyncio.create_task(_drain(process.stderr, stderr_lines)),
         ]
 
-        cancelled = False
-        return_code: Optional[int] = None
         try:
-            while True:
-                if await self._is_cancel_requested(task_id):
-                    cancelled = True
-                    await self._terminate_process(process)
-                    break
-                try:
-                    return_code = await asyncio.wait_for(
-                        process.wait(),
-                        timeout=self._timeout_config()["process_poll_seconds"],
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    continue
+            return_code, cancelled = await self._wait_for_import_process(
+                process,
+                task_id=task_id,
+            )
         finally:
             await asyncio.gather(*drain_tasks, return_exceptions=True)
 

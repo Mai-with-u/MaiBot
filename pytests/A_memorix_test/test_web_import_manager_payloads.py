@@ -1178,6 +1178,46 @@ async def test_cancel_running_task_interrupts_active_run_and_keeps_worker_alive(
 
 
 @pytest.mark.asyncio
+async def test_import_process_is_terminated_when_active_run_is_cancelled(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    process_started = asyncio.Event()
+    process_terminated = asyncio.Event()
+
+    class BlockingProcess:
+        returncode: int | None = None
+
+        async def wait(self) -> int:
+            process_started.set()
+            await asyncio.Future()
+            return 0
+
+    process = BlockingProcess()
+
+    async def not_cancel_requested(task_id: str) -> bool:
+        assert task_id == "task-process-cancel"
+        return False
+
+    async def terminate_process(target) -> None:
+        assert target is process
+        process.returncode = -15
+        process_terminated.set()
+
+    monkeypatch.setattr(manager, "_is_cancel_requested", not_cancel_requested)
+    monkeypatch.setattr(manager, "_terminate_process", terminate_process)
+
+    run_task = asyncio.create_task(
+        manager._wait_for_import_process(process, task_id="task-process-cancel")
+    )
+    await process_started.wait()
+    run_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    assert process_terminated.is_set()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_records_runtime_cancellation(monkeypatch) -> None:
     manager, _ = _build_manager()
     manager._reports_root = _test_directory("cancel_runtime_reports")
