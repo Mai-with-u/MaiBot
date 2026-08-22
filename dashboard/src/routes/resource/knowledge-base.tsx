@@ -14,9 +14,14 @@ import {
   X,
 } from 'lucide-react'
 
+import { useQueryClient } from '@tanstack/react-query'
+
 import { MemoryDeleteDialog } from '@/components/memory/MemoryDeleteDialog'
 import { MemoryEpisodeManager } from '@/components/memory/MemoryEpisodeManager'
-import { MemoryMaintenanceManager } from '@/components/memory/MemoryMaintenanceManager'
+import {
+  MemoryMaintenanceManager,
+  type MemoryMaintenanceAction,
+} from '@/components/memory/MemoryMaintenanceManager'
 import { MemoryProfileManager } from '@/components/memory/MemoryProfileManager'
 import { MemoryTimelineManager } from '@/components/memory/MemoryTimelineManager'
 import { RoutePendingFallback } from '@/components/route-pending-fallback'
@@ -42,6 +47,8 @@ import { cn } from '@/lib/utils'
 import {
   getMemoryImportChatTargets,
   type MemoryImportChatTargetPayload,
+  type MemoryRecordContextPayload,
+  type MemoryRecordPayload,
   type MemoryRuntimeConfigPayload,
   type MemoryTimelineJumpTargetPayload,
 } from '@/lib/memory-api'
@@ -57,11 +64,13 @@ import { CorrectionTab } from './knowledge-base/tabs/CorrectionTab'
 import { DeleteTab } from './knowledge-base/tabs/DeleteTab'
 import { FeedbackTab } from './knowledge-base/tabs/FeedbackTab'
 import { ImportTab } from './knowledge-base/tabs/ImportTab'
+import { MemoryRecordsTab } from './knowledge-base/tabs/MemoryRecordsTab'
 import { TuningTab } from './knowledge-base/tabs/TuningTab'
 import { KnowledgeGraphPage } from './knowledge-graph'
 
 const MEMORY_QUICK_START_DISMISSED_KEY = 'memory-quick-start-dismissed'
 type MemoryConsoleTab =
+  | 'records'
   | 'graph'
   | 'timeline'
   | 'import'
@@ -78,6 +87,7 @@ type LoadableMemoryTab = Extract<
 >
 
 const MEMORY_CONSOLE_TABS: MemoryConsoleTab[] = [
+  'records',
   'graph',
   'timeline',
   'import',
@@ -444,6 +454,7 @@ function resolveVectorPoolsBadge(runtimeConfig: MemoryRuntimeConfigPayload): Vec
 
 export function KnowledgeBasePage() {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const deepLinkRef = useRef<KnowledgeBaseDeepLinkState>(readKnowledgeBaseDeepLink())
   const [activeTab, setActiveTab] = useState<MemoryConsoleTab>(deepLinkRef.current.tab)
   const [quickStartVisible, setQuickStartVisible] = useState(() => {
@@ -475,6 +486,8 @@ export function KnowledgeBasePage() {
   const [maintenanceInitialTarget, setMaintenanceInitialTarget] = useState(
     deepLinkRef.current.maintenanceTarget ?? ''
   )
+  const [maintenanceInitialAction, setMaintenanceInitialAction] =
+    useState<MemoryMaintenanceAction>('reinforce')
 
   // 聊天流列表供审计时间线面板使用（导入面板的聊天流由 useImportForm 自管）
   const [importChatTargets, setImportChatTargets] = useState<MemoryImportChatTargetPayload[]>([])
@@ -579,6 +592,97 @@ export function KnowledgeBasePage() {
       updateKnowledgeBaseDeepLink(tab, query)
     },
     []
+  )
+
+  const refreshMemoryRecords = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+      queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+    ])
+  }, [queryClient])
+
+  const handleMemoryRecordAction = useCallback(
+    (
+      action: string,
+      record: MemoryRecordPayload,
+      context: MemoryRecordContextPayload,
+      targetId?: string
+    ) => {
+      if (action === 'graph') {
+        const paragraphHash =
+          record.type === 'paragraph' ? record.id : context.related.paragraphs[0]?.id || ''
+        setGraphInitialParagraphHash(paragraphHash)
+        switchMemoryTab('graph', { paragraph_hash: paragraphHash || undefined })
+        return
+      }
+
+      if (action === 'correct') {
+        const personId =
+          context.related.profiles[0]?.person_id || String(record.metadata.scope_id || '')
+        memoryCorrection.setRequestText(`修正以下记忆：${record.title}`)
+        if (record.type === 'fact' && personId) {
+          memoryCorrection.setScope('person_profile')
+          memoryCorrection.setPersonId(personId)
+        } else {
+          memoryCorrection.setScope('memory')
+        }
+        switchMemoryTab('correction', { person_id: personId || undefined })
+        return
+      }
+
+      if (action === 'profile') {
+        const personId =
+          targetId ||
+          context.related.profiles[0]?.person_id ||
+          String(record.metadata.scope_id || '')
+        if (!personId) {
+          toast({
+            title: '缺少人物标识',
+            description: '这条事实没有可定位的人物画像',
+            variant: 'destructive',
+          })
+          return
+        }
+        setProfileInitialPersonId(personId)
+        switchMemoryTab('profiles', { person_id: personId })
+        return
+      }
+
+      if (action === 'episode' && targetId) {
+        const episode = context.related.episodes.find((item) => item.id === targetId)
+        setEpisodeInitialTarget({
+          episodeId: targetId,
+          source: episode?.source || '',
+          timeStart: episode?.event_time_start ?? undefined,
+          timeEnd: episode?.event_time_end ?? undefined,
+        })
+        switchMemoryTab('episodes', { episode_id: targetId })
+        return
+      }
+
+      if (action === 'reinforce' || action === 'freeze' || action === 'protect') {
+        setMaintenanceInitialTarget(record.id)
+        setMaintenanceInitialAction(action)
+        switchMemoryTab('maintenance', { target: record.id })
+        return
+      }
+
+      if (action === 'delete' && record.type !== 'fact') {
+        void memoryDelete.openDeletePreview(
+          {
+            mode: record.type,
+            selector: { hashes: [record.id] },
+            reason: 'knowledge_base_record_delete',
+            requested_by: 'knowledge_base',
+          },
+          {
+            title: `删除${record.type === 'paragraph' ? '段落' : record.type === 'entity' ? '实体' : '关系'}`,
+            description: record.title,
+          }
+        )
+      }
+    },
+    [memoryCorrection, memoryDelete, switchMemoryTab, toast]
   )
 
   const handleTimelineJump = useCallback(
@@ -1021,9 +1125,14 @@ export function KnowledgeBasePage() {
               <div className="flex flex-wrap items-center gap-2">
                 <DashboardTabBar
                   variant="grid"
-                  className="w-fit max-w-full auto-cols-max grid-flow-col"
+                  className="w-full max-w-full grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
                 >
                   {[
+                    {
+                      value: 'records',
+                      label: '记忆查询',
+                      description: '查询数据库权威记录与关联内容',
+                    },
                     { value: 'graph', label: '图谱', description: '实体关系图与证据视图' },
                     { value: 'timeline', label: '审计时间线', description: '核对聊天流记忆变动' },
                     { value: 'tuning', label: '调优', description: '检索策略调优' },
@@ -1042,7 +1151,7 @@ export function KnowledgeBasePage() {
                 </DashboardTabBar>
                 <DashboardTabBar
                   variant="grid"
-                  className="w-fit max-w-full auto-cols-max grid-flow-col"
+                  className="w-full max-w-full grid-cols-3 sm:w-fit sm:auto-cols-max sm:grid-flow-col sm:grid-cols-none"
                 >
                   {[
                     { value: 'import', label: '导入', description: '创建并管理导入任务' },
@@ -1063,6 +1172,10 @@ export function KnowledgeBasePage() {
                 </DashboardTabBar>
               </div>
             </div>
+
+            {shouldRenderMemoryTab('records') && (
+              <MemoryRecordsTab onAction={handleMemoryRecordAction} />
+            )}
 
             <TabsContent
               value="graph"
@@ -1119,7 +1232,11 @@ export function KnowledgeBasePage() {
 
             <TabsContent value="maintenance" className="space-y-4">
               {shouldRenderMemoryTab('maintenance') ? (
-                <MemoryMaintenanceManager initialTarget={maintenanceInitialTarget} />
+                <MemoryMaintenanceManager
+                  initialTarget={maintenanceInitialTarget}
+                  initialAction={maintenanceInitialAction}
+                  onChanged={refreshMemoryRecords}
+                />
               ) : null}
             </TabsContent>
 

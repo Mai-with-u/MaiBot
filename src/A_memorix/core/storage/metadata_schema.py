@@ -16,7 +16,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -384,6 +384,23 @@ class MetadataSchemaMixin:
                     ) from exc
         if "fact_claim_ids_json" not in snapshot_columns:
             cursor.execute("ALTER TABLE person_profile_snapshots ADD COLUMN fact_claim_ids_json TEXT")
+
+    @staticmethod
+    def _ensure_person_profile_alias_override_table(cursor: sqlite3.Cursor) -> None:
+        """创建人物画像的人工别名覆盖表。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS person_profile_alias_overrides (
+                person_id TEXT PRIMARY KEY,
+                aliases_json TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                updated_by TEXT,
+                source TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_person_profile_alias_overrides_updated
+            ON person_profile_alias_overrides(updated_at DESC)
+        """)
 
     @staticmethod
     def _ensure_columns(
@@ -1273,6 +1290,7 @@ class MetadataSchemaMixin:
                 source TEXT
             )
         """)
+        self._ensure_person_profile_alias_override_table(cursor)
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_person_profile_switches_enabled
@@ -1595,6 +1613,7 @@ class MetadataSchemaMixin:
         """执行数据库schema迁移"""
         cursor = self._conn.cursor()
         self._ensure_person_profile_snapshot_columns(cursor)
+        self._ensure_person_profile_alias_override_table(cursor)
 
         # vNext 关键表兜底：历史库可能缺失，需在迁移阶段主动补齐。
         cursor.execute("""

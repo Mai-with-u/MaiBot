@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from src.A_memorix.core.strategies.base import ChunkContext, KnowledgeType, ProcessedChunk, SourceInfo
+from src.A_memorix.core.strategies.chat_log import ChatLogStrategy
 from src.A_memorix.core.strategies.factual import FactualStrategy
 from src.A_memorix.core.strategies.narrative import NarrativeStrategy
 from src.A_memorix.core.storage.knowledge_types import ImportStrategy
@@ -216,6 +217,11 @@ def _build_manager(
     legacy_vector_store = _DummyVectorStore()
     paragraph_vector_store = _DummyVectorStore()
     graph_vector_store = _DummyVectorStore()
+    profile_refreshes: list[tuple[list[str], str]] = []
+
+    def record_person_evidence_written(person_ids: list[str], *, reason: str) -> None:
+        profile_refreshes.append((list(person_ids), reason))
+
     plugin = SimpleNamespace(
         metadata_store=metadata_store,
         graph_store=graph_store,
@@ -227,6 +233,8 @@ def _build_manager(
         get_config=lambda key, default=None: config.get(key, default),
         _is_embedding_degraded=lambda: False,
         _allow_metadata_only_write=lambda: True,
+        profile_refreshes=profile_refreshes,
+        record_person_evidence_written=record_person_evidence_written,
     )
     manager = ImportTaskManager(plugin)
     return manager, metadata_store
@@ -499,6 +507,156 @@ def test_narrative_split_progresses_with_high_overlap_and_newline_backoff() -> N
     assert len(set(offsets)) == len(offsets)
 
 
+def test_chat_log_split_keeps_message_boundaries_and_multiline_content() -> None:
+    manager, _ = _build_manager()
+    strategy = manager._determine_strategy(
+        "chat.txt",
+        "",
+        "narrative",
+        chat_log=True,
+        import_params={
+            "chat_log": True,
+            "narrative_window_size": 200,
+            "narrative_overlap": 50,
+        },
+    )
+    assert isinstance(strategy, ChatLogStrategy)
+
+    messages = [
+        f"[2026-08-21 10:{index:02d}] 用户{index}：第{index}条消息" + "内容" * 25
+        for index in range(6)
+    ]
+    messages[2] += "\n这是同一条消息的第二行"
+    chunks = strategy.split("\n".join(messages))
+
+    assert len(chunks) > 1
+    assert all(chunk.chunk.text.startswith("[2026-08-21") for chunk in chunks)
+    assert all("这是同一条消息的第二行" not in chunk.chunk.text or "用户2" in chunk.chunk.text for chunk in chunks)
+    assert [chunk.source.offset_start for chunk in chunks] == sorted(
+        chunk.source.offset_start for chunk in chunks
+    )
+    assert strategy.split_warning == ""
+
+
+def test_chat_log_split_warns_when_message_headers_are_not_recognized() -> None:
+    strategy = ChatLogStrategy("chat.txt", window_size=200, overlap=50)
+
+    chunks = strategy.split("用户甲说了一段没有时间消息头的聊天内容。" * 30)
+
+    assert chunks
+    assert "未识别" in strategy.split_warning
+
+
+@pytest.mark.asyncio
+async def test_json_paragraph_person_ids_are_stored_and_refresh_profiles() -> None:
+    manager, metadata_store = _build_manager()
+    task = _build_progress_task("task-person-ids", total_chunks=0)
+    task.files[0].input_mode = "json"
+    manager._tasks[task.task_id] = task
+    units, warnings = manager._build_json_units(
+        {
+            "paragraphs": [
+                {
+                    "content": "用户甲喜欢观星",
+                    "person_ids": ["person-a", "person-a", "person-b"],
+                }
+            ]
+        },
+        task.files[0].file_id,
+        task.files[0].name,
+        "script_json",
+    )
+    await manager._register_json_units(task.task_id, task.files[0].file_id, units)
+
+    await manager._process_json_unit(
+        task.task_id,
+        task.files[0],
+        units[0],
+        asyncio.Semaphore(1),
+        paragraph_metadata={"scope_type": "global"},
+    )
+
+    assert warnings == []
+    assert units[0]["person_ids"] == ["person-a", "person-b"]
+    assert metadata_store.paragraphs[0]["metadata"] == {
+        "scope_type": "global",
+        "person_ids": ["person-a", "person-b"],
+    }
+    assert manager.plugin.profile_refreshes == [
+        (["person-a", "person-b"], "web_import_json")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_json_paragraph_profile_refresh_failure_is_reported_without_failing_write() -> None:
+    manager, metadata_store = _build_manager()
+    task = _build_progress_task("task-profile-refresh-failure", total_chunks=0)
+    task.files[0].input_mode = "json"
+    manager._tasks[task.task_id] = task
+    units, warnings = manager._build_json_units(
+        {
+            "paragraphs": [
+                {
+                    "content": "用户甲喜欢观星",
+                    "person_ids": ["person-a"],
+                }
+            ]
+        },
+        task.files[0].file_id,
+        task.files[0].name,
+        "script_json",
+    )
+    await manager._register_json_units(task.task_id, task.files[0].file_id, units)
+
+    def fail_profile_refresh(person_ids: list[str], *, reason: str) -> None:
+        del person_ids, reason
+        raise RuntimeError("queue unavailable")
+
+    manager.plugin.record_person_evidence_written = fail_profile_refresh
+
+    await manager._process_json_unit(
+        task.task_id,
+        task.files[0],
+        units[0],
+        asyncio.Semaphore(1),
+        paragraph_metadata={"scope_type": "global"},
+    )
+
+    assert warnings == []
+    assert len(metadata_store.paragraphs) == 1
+    assert task.files[0].chunks[0].status == "completed"
+    assert task.files[0].warning_count == 1
+    assert "人物画像刷新入队失败" in task.files[0].warnings[0]
+
+
+def test_json_paragraph_rejects_non_array_person_ids() -> None:
+    manager, _ = _build_manager()
+
+    units, warnings = manager._build_json_units(
+        {"paragraphs": [{"content": "用户甲喜欢观星", "person_ids": "person-a"}]},
+        "file-1",
+        "demo.json",
+        "script_json",
+    )
+
+    assert units == []
+    assert any("paragraph_person_ids_invalid" in warning for warning in warnings)
+
+
+def test_json_paragraph_rejects_non_string_person_id_items() -> None:
+    manager, _ = _build_manager()
+
+    units, warnings = manager._build_json_units(
+        {"paragraphs": [{"content": "用户甲喜欢观星", "person_ids": ["person-a", 42]}]},
+        "file-1",
+        "demo.json",
+        "script_json",
+    )
+
+    assert units == []
+    assert any("paragraph_person_ids_invalid" in warning for warning in warnings)
+
+
 def test_manifest_hit_requires_existing_live_source() -> None:
     manager, metadata_store = _build_manager()
     manager._manifest_path = _test_manifest_path("manifest_hit.json")
@@ -678,6 +836,31 @@ async def test_persist_processed_chunk_writes_chat_id_metadata() -> None:
 
     assert metadata_store.paragraphs[0]["metadata"] == {"chat_id": "session-1"}
     assert metadata_store.paragraphs[0]["source"] == "web_import:demo.txt"
+
+
+@pytest.mark.asyncio
+async def test_persist_processed_chunk_keeps_events_in_metadata_instead_of_entities() -> None:
+    manager, metadata_store = _build_manager()
+    file_record = SimpleNamespace(source_path="", source_kind="paste", name="chat.txt")
+
+    await manager._persist_processed_chunk(
+        file_record,
+        _build_chunk(
+            {
+                "events": ["用户甲发送了一张图片"],
+                "entities": ["用户甲"],
+                "relations": [{"subject": "用户甲", "predicate": "认识", "object": "用户乙"}],
+            }
+        ),
+        metadata={"chat_id": "session-1"},
+    )
+
+    assert metadata_store.paragraphs[0]["metadata"] == {
+        "chat_id": "session-1",
+        "extracted_events": ["用户甲发送了一张图片"],
+    }
+    assert set(metadata_store.entities) == {"用户甲", "用户乙"}
+    assert "用户甲发送了一张图片" not in metadata_store.entities
 
 
 @pytest.mark.asyncio
@@ -1009,6 +1192,85 @@ async def test_worker_parent_cancellation_is_reported_and_propagated(monkeypatch
     assert task.cancel_origin == "parent_cancel"
     report = json.loads((manager._reports_root / f"{task.task_id}_summary.json").read_text(encoding="utf-8"))
     assert report["cancel_origin"] == "parent_cancel"
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_task_interrupts_active_run_and_keeps_worker_alive(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    manager._reports_root = _test_directory("cancel_running_reports")
+    manager._temp_root = _test_directory("cancel_running_temp")
+    first_task = _build_progress_task("task-running-cancel")
+    second_task = _build_progress_task("task-after-cancel")
+    manager._tasks[first_task.task_id] = first_task
+    manager._tasks[second_task.task_id] = second_task
+    manager._queue.extend([first_task.task_id, second_task.task_id])
+    first_started = asyncio.Event()
+    second_completed = asyncio.Event()
+
+    async def controlled_run(task_id: str) -> None:
+        manager._tasks[task_id].status = "running"
+        if task_id == first_task.task_id:
+            first_started.set()
+            await asyncio.Future()
+        manager._tasks[task_id].status = "completed"
+        second_completed.set()
+
+    monkeypatch.setattr(manager, "_run_task", controlled_run)
+    worker = asyncio.create_task(manager._worker_loop())
+    manager._worker_task = worker
+    await first_started.wait()
+
+    summary = await manager.cancel_task(first_task.task_id)
+    await asyncio.wait_for(second_completed.wait(), timeout=1)
+
+    assert summary is not None
+    assert summary["status"] == "cancel_requested"
+    assert first_task.status == "cancelled"
+    assert first_task.cancel_origin == "user_request"
+    assert second_task.status == "completed"
+    assert not worker.done()
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_import_process_is_terminated_when_active_run_is_cancelled(monkeypatch) -> None:
+    manager, _ = _build_manager()
+    process_started = asyncio.Event()
+    process_terminated = asyncio.Event()
+
+    class BlockingProcess:
+        returncode: int | None = None
+
+        async def wait(self) -> int:
+            process_started.set()
+            await asyncio.Future()
+            return 0
+
+    process = BlockingProcess()
+
+    async def not_cancel_requested(task_id: str) -> bool:
+        assert task_id == "task-process-cancel"
+        return False
+
+    async def terminate_process(target) -> None:
+        assert target is process
+        process.returncode = -15
+        process_terminated.set()
+
+    monkeypatch.setattr(manager, "_is_cancel_requested", not_cancel_requested)
+    monkeypatch.setattr(manager, "_terminate_process", terminate_process)
+
+    run_task = asyncio.create_task(
+        manager._wait_for_import_process(process, task_id="task-process-cancel")
+    )
+    await process_started.wait()
+    run_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    assert process_terminated.is_set()
 
 
 @pytest.mark.asyncio

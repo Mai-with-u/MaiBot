@@ -40,7 +40,7 @@ def test_runtime_migration_adds_episode_profile_and_retry_generation_columns(tmp
             for row in migrated.query("PRAGMA table_info(episode_rebuild_sources)")
         }
 
-        assert migrated.get_schema_version() == SCHEMA_VERSION == 21
+        assert migrated.get_schema_version() == SCHEMA_VERSION == 22
         assert "input_fingerprint" in episode_columns
         assert "evidence_fingerprint" in profile_columns
         assert "retry_revision" in source_rebuild_columns

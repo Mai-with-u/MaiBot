@@ -69,6 +69,10 @@ async def _dispatch_memory_feedback_admin(kernel: Any, command: AdminCommand) ->
     return await kernel.memory_feedback_admin(action=command.action, **command.payload)
 
 
+async def _dispatch_memory_fact_admin(kernel: Any, command: AdminCommand) -> Any:
+    return await kernel.memory_fact_admin(action=command.action, **command.payload)
+
+
 async def _dispatch_memory_runtime_admin(kernel: Any, command: AdminCommand) -> Any:
     return await kernel.memory_runtime_admin(action=command.action, **command.payload)
 
@@ -118,10 +122,14 @@ _PROFILE_ACTIONS = {
     "status",
     "process_pending",
     "list",
+    "get_aliases",
+    "set_aliases",
+    "delete_aliases",
     "set_override",
     "delete_override",
 }
 _FEEDBACK_ACTIONS = {"list", "get", "rollback"}
+_FACT_ACTIONS = {"get", "list", "create", "update", "retract", "restore"}
 _RUNTIME_ACTIONS = {
     "save",
     "get_config",
@@ -199,6 +207,11 @@ ADMIN_COMPONENT_SPECS: dict[str, AdminComponentSpec] = {
         component_name="memory_feedback_admin",
         actions=frozenset(_FEEDBACK_ACTIONS),
         dispatcher=_dispatch_memory_feedback_admin,
+    ),
+    "memory_fact_admin": AdminComponentSpec(
+        component_name="memory_fact_admin",
+        actions=frozenset(_FACT_ACTIONS),
+        dispatcher=_dispatch_memory_fact_admin,
     ),
     "memory_runtime_admin": AdminComponentSpec(
         component_name="memory_runtime_admin",

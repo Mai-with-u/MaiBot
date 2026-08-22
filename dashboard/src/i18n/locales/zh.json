@@ -1067,6 +1067,37 @@
     "navigatedTo": "已导航至 {{page}}"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "有效",
+        "inactive": "已停用",
+        "deleted": "已删除",
+        "conflicted": "有冲突",
+        "superseded": "已取代",
+        "retracted": "已撤回"
+      },
+      "evidenceType": {
+        "paragraph": "段落",
+        "relation": "关系",
+        "entity": "实体",
+        "fact": "事实",
+        "episode": "情景",
+        "profile": "画像",
+        "manual": "人工",
+        "unknown": "未知"
+      },
+      "evidenceStance": {
+        "support": "支持",
+        "refute": "反证"
+      },
+      "graphJobStatus": {
+        "pending": "待处理",
+        "running": "处理中",
+        "failed": "失败",
+        "completed": "已完成",
+        "cancelled": "已取消"
+      }
+    },
     "tuning": {
       "task": {
         "title": "记忆搜索调优",

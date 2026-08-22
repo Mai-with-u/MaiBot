@@ -166,11 +166,11 @@ async def run_embedding_runtime_self_check(
         graph_vector_store=graph_vector_store,
     )
 
-    if vector_store is None or embedding_manager is None:
+    if embedding_manager is None:
         return _build_report(
             ok=False,
             code="runtime_components_missing",
-            message="vector_store 或 embedding_manager 未初始化",
+            message="embedding_manager 未初始化",
             configured_dimension=configured_dimension,
             requested_dimension=requested_dimension,
             vector_store_dimension=vector_store_dimension,

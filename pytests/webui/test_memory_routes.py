@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ import pickle
 import pytest
 
 from src.services.memory_service import MemorySearchResult
+from src.A_memorix.core.storage.metadata_store import MetadataStore
 from src.webui.dependencies import require_auth
 from src.webui.routers import memory as memory_router_module
 from src.webui.routers.memory import compat_router
@@ -212,6 +214,212 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def _memory_record_store(tmp_path: Path) -> tuple[MetadataStore, dict[str, str]]:
+    store = MetadataStore(data_dir=tmp_path / "metadata-records")
+    store.connect()
+    paragraph_hash = store.add_paragraph(
+        "小明喜欢咖啡，并经常去街角咖啡店。",
+        source="chat_summary:chat-1",
+        metadata={"chat_id": "chat-1"},
+        knowledge_type="factual",
+    )
+    entity_hash = store.add_entity("小明", source_paragraph=paragraph_hash)
+    store.add_entity("咖啡", source_paragraph=paragraph_hash)
+    relation_hash = store.add_relation(
+        "小明",
+        "喜欢",
+        "咖啡",
+        confidence=0.92,
+        source_paragraph=paragraph_hash,
+    )
+    claim = store.upsert_fact_claim(
+        scope_type="person",
+        scope_id="person-1",
+        fact_key="favorite_drink",
+        value_text="咖啡",
+        authority="direct_user",
+        stability="stable",
+        evidence_type="paragraph",
+        evidence_id=paragraph_hash,
+        reason="webui metadata query test",
+    )
+    now = 1_720_000_000.0
+    store.query(
+        """
+        INSERT INTO episodes (
+            episode_id, source, title, summary, paragraph_count,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("episode-1", "chat_summary:chat-1", "咖啡店闲聊", "小明谈到自己喜欢咖啡。", 1, now, now),
+    )
+    store.query(
+        "INSERT INTO episode_paragraphs (episode_id, paragraph_hash, position) VALUES (?, ?, ?)",
+        ("episode-1", paragraph_hash, 0),
+    )
+    store.query(
+        """
+        INSERT INTO person_profile_snapshots (
+            person_id, profile_version, profile_text, evidence_ids_json,
+            fact_claim_ids_json, updated_at, source_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "person-1",
+            1,
+            "小明喜欢咖啡。",
+            json.dumps([paragraph_hash]),
+            json.dumps([claim["claim_id"]]),
+            now,
+            "test",
+        ),
+    )
+    store.query(
+        """
+        INSERT INTO relation_graph_projection_jobs (
+            relation_hash, subject, object, desired_active,
+            desired_lifecycle_revision, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (relation_hash, "小明", "咖啡", 1, 0, "pending", now, now),
+    )
+    store.get_connection().commit()
+    return store, {
+        "paragraph": paragraph_hash,
+        "entity": entity_hash,
+        "relation": relation_hash,
+        "fact": str(claim["claim_id"]),
+    }
+
+
+def test_webui_memory_records_searches_authoritative_metadata(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    store, ids = _memory_record_store(tmp_path)
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    try:
+        response = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "咖啡", "types": "paragraph,entity,relation,fact", "limit": 20},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["success"] is True
+        assert {item["type"] for item in payload["items"]} == {"paragraph", "entity", "relation", "fact"}
+        assert ids["paragraph"] in {item["id"] for item in payload["items"]}
+        assert payload["counts"] == {"paragraph": 1, "entity": 1, "relation": 1, "fact": 1}
+        before_delete = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "小明", "types": "entity"},
+        ).json()
+        entity_item = before_delete["items"][0]
+        assert entity_item["metadata"]["active_evidence_count"] == 1
+        cumulative_count = entity_item["metadata"]["appearance_count"]
+
+        store.mark_as_deleted([ids["paragraph"]], "paragraph", reason="test_source_delete")
+        after_delete = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "小明", "types": "entity"},
+        ).json()
+        assert after_delete["items"][0]["metadata"]["active_evidence_count"] == 0
+        assert after_delete["items"][0]["metadata"]["appearance_count"] == cumulative_count
+        assert after_delete["items"][0]["summary"] == "由 0 条有效段落支撑"
+
+        store.query("UPDATE fact_claims SET status = 'retracted' WHERE claim_id = ?", (ids["fact"],))
+        store.get_connection().commit()
+        active_only = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "咖啡", "types": "fact"},
+        ).json()
+        with_inactive = client.get(
+            "/api/webui/memory/records/search",
+            params={"query": "咖啡", "types": "fact", "include_inactive": True},
+        ).json()
+        assert active_only["items"] == []
+        assert with_inactive["items"][0]["status"] == "retracted"
+    finally:
+        store.close()
+
+
+def test_webui_memory_record_context_derives_related_content(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    store, ids = _memory_record_store(tmp_path)
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    try:
+        response = client.get(f"/api/webui/memory/records/paragraph/{ids['paragraph']}")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["record"]["id"] == ids["paragraph"]
+        assert ids["entity"] in {item["id"] for item in payload["related"]["entities"]}
+        assert ids["relation"] in {item["id"] for item in payload["related"]["relations"]}
+        assert ids["fact"] in {item["id"] for item in payload["related"]["facts"]}
+        assert payload["related"]["episodes"][0]["id"] == "episode-1"
+        assert payload["related"]["profiles"][0]["person_id"] == "person-1"
+        assert payload["projection"]["graph_pending_count"] == 1
+        assert payload["available_actions"] == ["graph", "correct", "delete"]
+    finally:
+        store.close()
+
+
+def test_webui_memory_record_context_finds_profile_beyond_recent_snapshot_window(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    store, ids = _memory_record_store(tmp_path)
+    connection = store.get_connection()
+    now = 1_720_000_000.0
+    connection.executemany(
+        """
+        INSERT INTO person_profile_snapshots (
+            person_id, profile_version, profile_text, evidence_ids_json,
+            fact_claim_ids_json, updated_at, source_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                f"unrelated-{index}",
+                1,
+                f"无关画像 {index}",
+                "[]",
+                "[]",
+                now + index + 1,
+                "test",
+            )
+            for index in range(201)
+        ],
+    )
+    connection.commit()
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    try:
+        response = client.get(f"/api/webui/memory/records/paragraph/{ids['paragraph']}")
+
+        assert response.status_code == 200
+        profiles = response.json()["related"]["profiles"]
+        assert [item["person_id"] for item in profiles] == ["person-1"]
+    finally:
+        store.close()
+
+
+def test_webui_memory_records_exposes_invalid_type_and_unavailable_database(
+    client: TestClient,
+    monkeypatch,
+):
+    invalid_response = client.get("/api/webui/memory/records/search", params={"types": "vector"})
+    assert invalid_response.status_code == 400
+
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: None)
+    unavailable_response = client.get("/api/webui/memory/records/search")
+    assert unavailable_response.status_code == 503
+
+
 def test_webui_memory_graph_route(client: TestClient, monkeypatch):
     async def fake_graph_admin(*, action: str, **kwargs):
         assert action == "get_graph"
@@ -244,6 +452,46 @@ def test_webui_memory_graph_route(client: TestClient, monkeypatch):
     assert response.json()["edges"][0]["predicates"] == ["持有"]
     assert response.json()["edges"][0]["relation_count"] == 1
     assert response.json()["edges"][0]["evidence_count"] == 2
+
+
+def test_webui_memory_graph_mutation_routes_forward_audit_fields(client: TestClient, monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_graph_admin(*, action: str, **kwargs):
+        calls.append({"action": action, **kwargs})
+        return {"success": True}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "graph_admin", fake_graph_admin)
+
+    response = client.post(
+        "/api/webui/memory/graph/edge",
+        json={
+            "subject": "Alice",
+            "predicate": "喜欢",
+            "object": "Bob",
+            "confidence": 0.8,
+            "reason": "人工维护",
+            "updated_by": "operator-1",
+        },
+    )
+    invalid = client.post(
+        "/api/webui/memory/graph/edge/weight",
+        json={"hash": "relation-1", "weight": 1.1},
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        {
+            "action": "create_edge",
+            "subject": "Alice",
+            "predicate": "喜欢",
+            "object": "Bob",
+            "confidence": 0.8,
+            "reason": "人工维护",
+            "updated_by": "operator-1",
+        }
+    ]
+    assert invalid.status_code == 422
 
 
 def test_webui_memory_graph_search_route(client: TestClient, monkeypatch):
@@ -436,6 +684,105 @@ def test_webui_memory_profile_evidence_route(client: TestClient, monkeypatch):
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert response.json()["evidence"][0]["hash"] == "p-1"
+
+
+def test_webui_memory_profile_alias_routes(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_profile_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {
+            "success": True,
+            "person_id": kwargs["person_id"],
+            "effective_aliases": kwargs.get("aliases", ["自动别名"]),
+        }
+
+    monkeypatch.setattr(memory_router_module.memory_service, "profile_admin", fake_profile_admin)
+
+    get_response = client.get("/api/webui/memory/profiles/person-1/aliases")
+    put_response = client.put(
+        "/api/webui/memory/profiles/person-1/aliases",
+        json={"aliases": ["新别名", "正式称呼"], "updated_by": "tester", "source": "webui"},
+    )
+    delete_response = client.delete("/api/webui/memory/profiles/person-1/aliases")
+
+    assert get_response.status_code == 200
+    assert put_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert calls == [
+        ("get_aliases", {"person_id": "person-1"}),
+        (
+            "set_aliases",
+            {
+                "person_id": "person-1",
+                "aliases": ["新别名", "正式称呼"],
+                "updated_by": "tester",
+                "source": "webui",
+            },
+        ),
+        ("delete_aliases", {"person_id": "person-1"}),
+    ]
+
+
+def test_webui_memory_fact_crud_routes(client: TestClient, monkeypatch):
+    calls = []
+
+    async def fake_fact_admin(*, action: str, **kwargs):
+        calls.append((action, kwargs))
+        return {"success": True, "claim": {"claim_id": kwargs.get("claim_id", "claim-new")}}
+
+    monkeypatch.setattr(memory_router_module.memory_service, "fact_admin", fake_fact_admin)
+
+    create_response = client.post(
+        "/api/webui/memory/facts",
+        json={
+            "scope_type": "person",
+            "scope_id": "person-1",
+            "fact_key": "favorite_drink",
+            "value_text": "咖啡",
+            "profile_section": "interaction_preferences",
+        },
+    )
+    update_response = client.patch(
+        "/api/webui/memory/facts/claim-1",
+        json={"value_text": "绿茶", "confidence": 0.8, "valid_to": None, "reason": "人工修正"},
+    )
+    retract_response = client.post(
+        "/api/webui/memory/facts/claim-1/retract",
+        json={"reason": "信息失效", "requested_by": "tester"},
+    )
+    restore_response = client.post(
+        "/api/webui/memory/facts/claim-1/restore",
+        json={"reason": "误操作", "requested_by": "tester"},
+    )
+
+    assert [response.status_code for response in (create_response, update_response, retract_response, restore_response)] == [
+        200,
+        200,
+        200,
+        200,
+    ]
+    assert calls[0][0] == "create"
+    assert calls[0][1]["authority"] == "manual"
+    assert calls[1] == (
+        "update",
+        {
+            "claim_id": "claim-1",
+            "value_text": "绿茶",
+            "confidence": 0.8,
+            "valid_to": None,
+            "reason": "人工修正",
+            "updated_by": "webui",
+        },
+    )
+    assert calls[2] == (
+        "retract",
+        {"claim_id": "claim-1", "reason": "信息失效", "requested_by": "tester"},
+    )
+    assert calls[3] == (
+        "restore",
+        {"claim_id": "claim-1", "reason": "误操作", "requested_by": "tester"},
+    )
 
 
 def test_webui_memory_profile_evidence_correct_route(client: TestClient, monkeypatch):
@@ -638,6 +985,7 @@ def test_webui_memory_timeline_returns_chat_scoped_events(client: TestClient, mo
             platform="qq",
             group_id="100",
             user_id=None,
+            account_id="bot-1",
             group_name="测试群",
             user_cardname=None,
             user_nickname=None,
@@ -708,6 +1056,7 @@ def test_webui_memory_timeline_filters_types_and_limit(client: TestClient, monke
             platform="qq",
             group_id="100",
             user_id=None,
+            account_id="bot-1",
             group_name="测试群",
             user_cardname=None,
             user_nickname=None,
@@ -761,6 +1110,7 @@ def test_webui_memory_timeline_deleted_paragraph_prefers_delete_operation(client
             platform="qq",
             group_id="100",
             user_id=None,
+            account_id="bot-1",
             group_name="测试群",
             user_cardname=None,
             user_nickname=None,
@@ -791,6 +1141,7 @@ def test_webui_memory_timeline_uses_latest_message_snapshot(client: TestClient, 
             platform="qq",
             group_id=None,
             user_id="user-1",
+            account_id="bot-1",
             group_name=None,
             user_cardname=None,
             user_nickname=None,
@@ -845,6 +1196,7 @@ def test_webui_memory_timeline_handles_json_bytes_zero_timestamp_and_batches_ite
             platform="qq",
             group_id="100",
             user_id=None,
+            account_id="bot-1",
             group_name="测试群",
             user_cardname=None,
             user_nickname=None,

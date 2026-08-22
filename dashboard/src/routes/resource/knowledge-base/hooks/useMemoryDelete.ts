@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useToast } from '@/hooks/use-toast'
 import { usePendingOperation } from '@/hooks/usePendingOperation'
@@ -57,6 +57,10 @@ export interface UseMemoryDeleteResult {
   selectedSources: string[]
   setSelectedSources: React.Dispatch<React.SetStateAction<string[]>>
   filteredSources: MemorySourceItemPayload[]
+  openDeletePreview: (
+    request: MemoryDeleteRequestPayload,
+    options?: { title?: string; description?: string }
+  ) => Promise<void>
   openSourceDeletePreview: () => Promise<void>
   toggleSourceSelection: (source: string, checked: boolean) => void
   /** 仅刷新来源列表（供纠错回退等外部写操作后同步） */
@@ -115,6 +119,7 @@ export function useMemoryDelete({
   initialItemSearch = '',
 }: UseMemoryDeleteOptions): UseMemoryDeleteResult {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
 
   // 来源列表 / 删除操作列表：仅在删除面板激活时拉取
   const sourcesQuery = useQuery({
@@ -347,8 +352,20 @@ export function useMemoryDelete({
           variant: result.success ? 'default' : 'destructive',
         })
         if (result.success) {
-          await refreshDeleteData()
           setSelectedSources([])
+          try {
+            await refreshDeleteData()
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+              queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+            ])
+          } catch (error) {
+            toast({
+              title: '删除已完成，但数据刷新失败',
+              description: error instanceof Error ? error.message : '未知错误',
+              variant: 'destructive',
+            })
+          }
         }
       } catch (error) {
         setDeletePreviewError(error instanceof Error ? error.message : '删除失败')
@@ -363,6 +380,32 @@ export function useMemoryDelete({
     },
   })
 
+  const openDeletePreview = useCallback(
+    async (
+      request: MemoryDeleteRequestPayload,
+      options?: { title?: string; description?: string }
+    ) => {
+      setDeleteDialogTitle(options?.title || '删除预览')
+      setDeleteDialogDescription(options?.description || '')
+      setDeletePreview(null)
+      setDeleteResult(null)
+      setDeletePreviewError(null)
+      // 暂存待删请求并打开对话框，随后异步拉取预览
+      pendingOp.submit(request)
+      setDeleteDialogOpen(true)
+      setDeletePreviewLoading(true)
+      try {
+        const preview = await previewMemoryDelete(request)
+        setDeletePreview(preview)
+      } catch (error) {
+        setDeletePreviewError(error instanceof Error ? error.message : '删除预览失败')
+      } finally {
+        setDeletePreviewLoading(false)
+      }
+    },
+    [pendingOp]
+  )
+
   const openSourceDeletePreview = useCallback(async () => {
     if (selectedSources.length <= 0) {
       toast({
@@ -372,32 +415,19 @@ export function useMemoryDelete({
       })
       return
     }
-    const request: MemoryDeleteRequestPayload = {
-      mode: 'source',
-      selector: { sources: selectedSources },
-      reason: 'knowledge_base_source_delete',
-      requested_by: 'knowledge_base',
-    }
-    setDeleteDialogTitle('批量删除来源')
-    setDeleteDialogDescription(
-      '删除来源只会删除该来源下的段落，以及失去全部证据的关系，不会自动删除实体'
+    await openDeletePreview(
+      {
+        mode: 'source',
+        selector: { sources: selectedSources },
+        reason: 'knowledge_base_source_delete',
+        requested_by: 'knowledge_base',
+      },
+      {
+        title: '批量删除来源',
+        description: '删除来源只会删除该来源下的段落，以及失去全部证据的关系，不会自动删除实体',
+      }
     )
-    setDeletePreview(null)
-    setDeleteResult(null)
-    setDeletePreviewError(null)
-    // 暂存待删请求并打开对话框，随后异步拉取预览
-    pendingOp.submit(request)
-    setDeleteDialogOpen(true)
-    setDeletePreviewLoading(true)
-    try {
-      const preview = await previewMemoryDelete(request)
-      setDeletePreview(preview)
-    } catch (error) {
-      setDeletePreviewError(error instanceof Error ? error.message : '删除预览失败')
-    } finally {
-      setDeletePreviewLoading(false)
-    }
-  }, [pendingOp, selectedSources, toast])
+  }, [openDeletePreview, selectedSources, toast])
 
   const executePendingDelete = useCallback(async () => {
     await pendingOp.confirm()
@@ -407,7 +437,13 @@ export function useMemoryDelete({
     async (operationId: string) => {
       try {
         setDeleteRestoring(true)
-        await restoreMemoryDelete({ operation_id: operationId, requested_by: 'knowledge_base' })
+        const result = await restoreMemoryDelete({
+          operation_id: operationId,
+          requested_by: 'knowledge_base',
+        })
+        if (result.success === false) {
+          throw new Error(String(result.error || '未能恢复删除操作'))
+        }
         toast({
           title: '恢复成功',
           description: `删除操作 ${operationId} 已恢复`,
@@ -417,7 +453,19 @@ export function useMemoryDelete({
         setDeletePreview(null)
         setDeleteResult(null)
         setDeletePreviewError(null)
-        await refreshDeleteData()
+        try {
+          await refreshDeleteData()
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+            queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
+          ])
+        } catch (error) {
+          toast({
+            title: '恢复已完成，但数据刷新失败',
+            description: error instanceof Error ? error.message : '未知错误',
+            variant: 'destructive',
+          })
+        }
       } catch (error) {
         toast({
           title: '恢复失败',
@@ -428,7 +476,7 @@ export function useMemoryDelete({
         setDeleteRestoring(false)
       }
     },
-    [pendingOp, refreshDeleteData, toast]
+    [pendingOp, queryClient, refreshDeleteData, toast]
   )
 
   const closeDeleteDialog = useCallback(
@@ -511,6 +559,7 @@ export function useMemoryDelete({
     selectedSources,
     setSelectedSources,
     filteredSources,
+    openDeletePreview,
     openSourceDeletePreview,
     toggleSourceSelection,
     refreshSources,

@@ -1931,6 +1931,7 @@ class MetadataStore(
         reason: str = "",
         updated_by: str = "",
         result: Optional[Dict[str, Any]] = None,
+        conn: Optional[sqlite3.Connection] = None,
     ) -> Dict[str, Any]:
         operation_id = f"v5_{uuid.uuid4().hex}"
         created_at = datetime.now().timestamp()
@@ -1944,7 +1945,8 @@ class MetadataStore(
             "resolved_hashes": [str(item or "").strip() for item in (resolved_hashes or []) if str(item or "").strip()],
             "result": result or {},
         }
-        cursor = self._conn.cursor()
+        connection = self._resolve_conn(conn)
+        cursor = connection.cursor()
         cursor.execute(
             """
             INSERT INTO memory_v5_operations (
@@ -1962,7 +1964,8 @@ class MetadataStore(
                 self._json_dumps(payload["result"]),
             ),
         )
-        self._conn.commit()
+        if conn is None:
+            connection.commit()
         return payload
 
     def create_fuzzy_modify_plan(
@@ -2704,9 +2707,14 @@ class MetadataStore(
         resolved = str(row[0])
         return [resolved]
 
-    def rebuild_relation_hash_aliases(self) -> Dict[str, Any]:
+    def rebuild_relation_hash_aliases(
+        self,
+        *,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> Dict[str, Any]:
         """重建 32 位 relation hash 别名映射。"""
-        cursor = self._conn.cursor()
+        connection = self._resolve_conn(conn)
+        cursor = connection.cursor()
         # 历史库兜底：缺表时先创建，避免迁移过程直接中断。
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS relation_hash_aliases (
@@ -2743,7 +2751,8 @@ class MetadataStore(
                 "INSERT INTO relation_hash_aliases(alias32, hash) VALUES (?, ?)",
                 (alias, full_hash),
             )
-        self._conn.commit()
+        if conn is None:
+            connection.commit()
         return {
             "inserted": len(alias_map) - len(conflicts),
             "conflict_count": len(conflicts),
@@ -2902,6 +2911,7 @@ class MetadataStore(
             "memory_feedback_action_logs",
             "paragraph_stale_relation_marks",
             "person_profile_refresh_queue",
+            "person_profile_alias_overrides",
             "fact_transitions",
             "fact_evidence",
             "fact_claims",

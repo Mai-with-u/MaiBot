@@ -986,6 +986,37 @@
     "navigatedTo": "{{page}}으로 이동했습니다"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "활성",
+        "inactive": "비활성",
+        "deleted": "삭제됨",
+        "conflicted": "충돌 있음",
+        "superseded": "대체됨",
+        "retracted": "철회됨"
+      },
+      "evidenceType": {
+        "paragraph": "문단",
+        "relation": "관계",
+        "entity": "엔터티",
+        "fact": "사실",
+        "episode": "에피소드",
+        "profile": "인물 프로필",
+        "manual": "수동",
+        "unknown": "알 수 없음"
+      },
+      "evidenceStance": {
+        "support": "지지",
+        "refute": "반박"
+      },
+      "graphJobStatus": {
+        "pending": "대기 중",
+        "running": "처리 중",
+        "failed": "실패",
+        "completed": "완료",
+        "cancelled": "취소됨"
+      }
+    },
     "tuning": {
       "task": {
         "title": "튜닝 작업",

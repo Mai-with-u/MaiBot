@@ -10,7 +10,7 @@ def test_fuzzy_modify_plan_and_superseded_metadata(tmp_path):
     store = MetadataStore(data_dir=tmp_path)
     store.connect()
     try:
-        assert SCHEMA_VERSION == 21
+        assert SCHEMA_VERSION == 22
 
         paragraph_hash = store.add_paragraph(
             "小明喜欢咖啡",
@@ -470,5 +470,9 @@ async def test_fuzzy_modify_rollback_removes_owned_stale_mark(tmp_path):
         assert restored is not None
         assert restored["metadata"] == {"source_type": "person_fact", "keep": True}
         assert rollback["rollback"]["stale_marks_deleted"][0]["relation_hash"] == relation_hash
+        assert rollback["rollback"]["profile_refresh_person_ids"] == ["person-1"]
+        refresh_request = store.get_person_profile_refresh_request("person-1")
+        assert refresh_request is not None
+        assert refresh_request["reason"] == "memory_correction_rollback"
     finally:
         store.close()

@@ -996,6 +996,37 @@
     "navigatedTo": "{{page}} に移動しました"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "有効",
+        "inactive": "無効",
+        "deleted": "削除済み",
+        "conflicted": "競合あり",
+        "superseded": "置換済み",
+        "retracted": "撤回済み"
+      },
+      "evidenceType": {
+        "paragraph": "メモリ段落",
+        "relation": "関係",
+        "entity": "エンティティ",
+        "fact": "事実",
+        "episode": "エピソード",
+        "profile": "人物プロファイル",
+        "manual": "手動",
+        "unknown": "不明"
+      },
+      "evidenceStance": {
+        "support": "裏付け",
+        "refute": "反証"
+      },
+      "graphJobStatus": {
+        "pending": "処理待ち",
+        "running": "処理中",
+        "failed": "失敗",
+        "completed": "完了",
+        "cancelled": "キャンセル済み"
+      }
+    },
     "tuning": {
       "task": {
         "title": "調整タスク",
