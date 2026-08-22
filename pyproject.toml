@@ -71,6 +71,9 @@ name = "pypi"
 url = "https://pypi.org/simple"
 default = true
 
+[tool.pytest.ini_options]
+pythonpath = [".", "src"]
+
 [tool.ruff]
 
 include = ["*.py"]
