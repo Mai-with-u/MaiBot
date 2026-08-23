@@ -36,6 +36,7 @@ vi.mock('@/components/CodeEditor', () => ({
 }))
 vi.mock('@/lib/prompt-api', () => ({
   activatePromptVersion: vi.fn(),
+  deletePromptVersion: vi.fn(),
   getDefaultPromptFile: vi.fn(),
   getPromptCatalog: vi.fn(),
   getPromptFile: vi.fn(),
@@ -396,6 +397,39 @@ describe('PromptManagementPage', () => {
       description: 'zh-CN/first.prompt',
     })
     expect(window.localStorage.getItem(`${VERSION_STORAGE_PREFIX}.zh-CN/first.prompt`)).toBe('v2')
+  })
+
+  it('删除当前启用的自定义版本会经确认后恢复默认版本', async () => {
+    vi.mocked(promptApi.getPromptFile).mockResolvedValue(
+      makePromptContent('first.prompt', 'v1 内容', {
+        active_version_id: 'v1',
+        versions: [makeVersion({ id: 'v1', label: '版本 1', active: true })],
+      })
+    )
+    vi.mocked(promptApi.deletePromptVersion).mockResolvedValue(
+      makePromptContent('first.prompt', '默认内容', {
+        customized: false,
+        active_version_id: null,
+        versions: [],
+      })
+    )
+    const { user } = await renderReady('v1 内容')
+
+    await user.click(screen.getByRole('button', { name: '删除版本' }))
+    expect(screen.getByText('删除当前启用的版本后，将恢复使用默认 Prompt。此操作无法撤销。')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '确认删除' }))
+
+    await waitFor(() => {
+      expect(promptApi.deletePromptVersion).toHaveBeenCalledWith('zh-CN', 'first.prompt', 'v1')
+    })
+    expect(toastMock).toHaveBeenCalledWith({
+      title: 'Prompt 版本已删除',
+      description: '版本 1 · zh-CN/first.prompt',
+    })
+    expect(window.localStorage.getItem(`${VERSION_STORAGE_PREFIX}.zh-CN/first.prompt`)).toBe(
+      '__default__'
+    )
+    await screen.findByDisplayValue('默认内容')
   })
 
   it('目录、读取、保存、切版本、应用、查看默认和对比失败都会弹出错误提示', async () => {

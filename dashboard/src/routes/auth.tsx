@@ -80,6 +80,13 @@ function AuthRetroGears() {
   )
 }
 
+function resolvePostAuthTarget(): '/' | '/chat/embed' {
+  if (typeof window === 'undefined') return '/'
+  return new URLSearchParams(window.location.search).get('redirect') === '/chat/embed'
+    ? '/chat/embed'
+    : '/'
+}
+
 export function AuthPage() {
   const [token, setToken] = useState('')
   const [isValidating, setIsValidating] = useState(false)
@@ -195,7 +202,7 @@ export function AuthPage() {
           if (data.requires_custom_token || data.is_first_setup) {
             navigate({ to: '/setup' })
           } else {
-            navigate({ to: '/' })
+            navigate({ to: resolvePostAuthTarget() })
           }
           return true
         }
@@ -229,7 +236,10 @@ export function AuthPage() {
           stripTokenFromUrl()
           const setupStatus = await getSetupStatus()
           navigate({
-            to: setupStatus?.requires_custom_token || setupStatus?.is_first_setup ? '/setup' : '/',
+            to:
+              setupStatus?.requires_custom_token || setupStatus?.is_first_setup
+                ? '/setup'
+                : resolvePostAuthTarget(),
           })
           return
         }

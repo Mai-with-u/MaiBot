@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Sequence, Tuple
 import asyncio
 import json
 import os
-import re
 import time
 import uuid
 
@@ -22,9 +21,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 VECTOR_CANDIDATE_HARD_LIMIT = 50
 VECTOR_INDEX_VERSION = 2
-VECTOR_ITEM_WEIGHT = 0.7
-VECTOR_CLUSTER_WEIGHT = 0.1
-VECTOR_LEXICAL_WEIGHT = 0.2
+VECTOR_ITEM_WEIGHT = 0.875
+VECTOR_CLUSTER_WEIGHT = 0.125
 VECTOR_DIVERSITY_LAMBDA = 0.85
 FULL_RECLUSTER_CHANGE_RATIO = 0.05
 CLUSTER_STATE_BOOTSTRAPPING = "BOOTSTRAPPING"
@@ -381,34 +379,6 @@ def l2_normalize(matrix: np.ndarray) -> np.ndarray:
     if np.any(norms <= 0):
         raise ValueError("表达向量索引包含零向量，无法用于余弦检索")
     return matrix / norms
-
-
-def lexical_tokens(text: str) -> set[str]:
-    """把中英文混合文本切成轻量词面 token。"""
-
-    normalized = normalize_text(text).lower()
-    tokens: set[str] = set()
-    for word in re.findall(r"[a-z0-9_#+.-]{2,}", normalized):
-        tokens.add(word)
-    cjk_chars = re.findall(r"[\u4e00-\u9fff]", normalized)
-    tokens.update(cjk_chars)
-    for index in range(len(cjk_chars) - 1):
-        tokens.add("".join(cjk_chars[index : index + 2]))
-    return tokens
-
-
-def lexical_overlap_score(query_tokens: set[str], candidate: IndexedExpression) -> float:
-    """计算 query 与候选 situation/style 的通用词面重合分。"""
-
-    if not query_tokens:
-        return 0.0
-    candidate_tokens = lexical_tokens(f"{candidate.situation}\n{candidate.style}")
-    if not candidate_tokens:
-        return 0.0
-    overlap_count = len(query_tokens & candidate_tokens)
-    if overlap_count <= 0:
-        return 0.0
-    return overlap_count / max(1.0, len(query_tokens) ** 0.5 * len(candidate_tokens) ** 0.5)
 
 
 def _load_npz_array(npz_path: Path, key: str) -> np.ndarray:
@@ -805,31 +775,52 @@ class ExpressionVectorIndex:
         *,
         limit: int,
     ) -> List[dict[str, Any]]:
-        """用轻量 MMR 避免候选池过度集中在同一类表达。"""
+        """用增量向量化 MMR 避免候选池过度集中在同一类表达。"""
 
         if VECTOR_DIVERSITY_LAMBDA >= 0.999:
             return sorted(scored_candidates, key=lambda item: float(item["score"]), reverse=True)[:limit]
+        if not scored_candidates or limit <= 0:
+            return []
 
-        selected: List[dict[str, Any]] = []
-        remaining = list(scored_candidates)
-        while remaining and len(selected) < limit:
-            selected_indices = [int(item["vector_index"]) for item in selected]
-            best_index = 0
-            best_score = float("-inf")
-            for candidate_index, candidate in enumerate(remaining):
-                vector_index = int(candidate["vector_index"])
-                if selected_indices:
-                    diversity_penalty = float(np.max(vectors[selected_indices] @ vectors[vector_index]))
-                else:
-                    diversity_penalty = 0.0
-                mmr_score = VECTOR_DIVERSITY_LAMBDA * float(candidate["score"]) - (
+        candidate_vector_indices = np.fromiter(
+            (int(item["vector_index"]) for item in scored_candidates),
+            dtype=np.int64,
+            count=len(scored_candidates),
+        )
+        candidate_vectors = np.ascontiguousarray(vectors[candidate_vector_indices])
+        relevance_scores = np.fromiter(
+            (float(item["score"]) for item in scored_candidates),
+            dtype=np.float64,
+            count=len(scored_candidates),
+        )
+        selected_mask = np.zeros(len(scored_candidates), dtype=bool)
+        max_diversity_penalties = np.empty(len(scored_candidates), dtype=candidate_vectors.dtype)
+        selected_positions: List[int] = []
+
+        for selection_index in range(min(limit, len(scored_candidates))):
+            if selection_index == 0:
+                mmr_scores = VECTOR_DIVERSITY_LAMBDA * relevance_scores
+            else:
+                mmr_scores = VECTOR_DIVERSITY_LAMBDA * relevance_scores - (
                     1.0 - VECTOR_DIVERSITY_LAMBDA
-                ) * diversity_penalty
-                if mmr_score > best_score:
-                    best_score = mmr_score
-                    best_index = candidate_index
-            selected.append(remaining.pop(best_index))
-        return selected
+                ) * max_diversity_penalties
+            mmr_scores[selected_mask] = float("-inf")
+            best_position = int(np.argmax(mmr_scores))
+            selected_positions.append(best_position)
+            selected_mask[best_position] = True
+
+            # 已计算过的最大重复度不会下降；每轮只需与新选中的表达比较一次。
+            similarities_to_new_selection = candidate_vectors @ candidate_vectors[best_position]
+            if selection_index == 0:
+                max_diversity_penalties[:] = similarities_to_new_selection
+            else:
+                np.maximum(
+                    max_diversity_penalties,
+                    similarities_to_new_selection,
+                    out=max_diversity_penalties,
+                )
+
+        return [scored_candidates[position] for position in selected_positions]
 
     @staticmethod
     def _build_index_expression_item(
@@ -2540,7 +2531,7 @@ class ExpressionVectorIndex:
         while True:
             from src.config.config import global_config
 
-            if global_config.expression.expression_selection_mode not in {"vector", "vector_intent"}:
+            if global_config.expression.expression_selection_mode != "vector_intent":
                 logger.info("表达向量历史补建已停止：当前表达选择模式不是向量模式")
                 return
 
@@ -2674,17 +2665,14 @@ class ExpressionVectorIndex:
         if not pool_candidates:
             return []
 
-        query_tokens = lexical_tokens(normalized_query)
         scored_candidates: List[dict[str, Any]] = []
-        total_weight = VECTOR_ITEM_WEIGHT + VECTOR_CLUSTER_WEIGHT + VECTOR_LEXICAL_WEIGHT
+        total_weight = VECTOR_ITEM_WEIGHT + VECTOR_CLUSTER_WEIGHT
         for candidate in pool_candidates:
             item_similarity = float(profile_vectors[candidate.index] @ query_vector)
             cluster_similarity = float(cluster_scores[candidate.cluster_id])
-            lexical_similarity = lexical_overlap_score(query_tokens, candidate)
             score = (
                 item_similarity * VECTOR_ITEM_WEIGHT
                 + cluster_similarity * VECTOR_CLUSTER_WEIGHT
-                + lexical_similarity * VECTOR_LEXICAL_WEIGHT
             ) / total_weight
             scored_candidates.append(
                 {
@@ -2695,7 +2683,6 @@ class ExpressionVectorIndex:
                     "selector_score": round(float(score), 4),
                     "item_similarity": round(item_similarity, 4),
                     "cluster_similarity": round(cluster_similarity, 4),
-                    "lexical_similarity": round(lexical_similarity, 4),
                     "cluster_id": candidate.cluster_id,
                     "vector_index": candidate.index,
                     "score": float(score),

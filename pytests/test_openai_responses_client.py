@@ -1,13 +1,20 @@
 from dataclasses import replace
+from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
 
+import base64
+
+from PIL import Image as PILImage
 import pytest
 
 from src.config.model_configs import APIProvider, ModelInfo
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.llm_models.model_client.gemini_client import _build_non_tool_parts
-from src.llm_models.model_client.openai_client import _convert_messages
+from src.llm_models.model_client.openai_client import (
+    _convert_messages,
+    _normalize_image_part_for_openai,
+)
 from src.llm_models.model_client.openai_responses_client import (
     OpenAIResponsesClient,
     _consume_response_stream,
@@ -16,6 +23,7 @@ from src.llm_models.model_client.openai_responses_client import (
 )
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
+    ContextImagePart,
     ContextItem,
     ContextItemBuilder,
     ContextItemMeta,
@@ -91,6 +99,26 @@ def test_refusal_item_has_portable_chat_responses_and_gemini_projection() -> Non
         "https://api.example.com/v1",
     ) == [{"role": "assistant", "content": "无法回答这个问题"}]
     assert [part.text for part in _build_non_tool_parts(refusal)] == ["无法回答这个问题"]
+
+
+def test_openai_image_normalizer_converts_gif_first_frame_to_png() -> None:
+    first_frame = PILImage.new("RGB", (2, 2), "red")
+    second_frame = PILImage.new("RGB", (2, 2), "blue")
+    gif_buffer = BytesIO()
+    first_frame.save(gif_buffer, format="GIF", save_all=True, append_images=[second_frame], loop=0)
+    part = ContextImagePart(
+        image_format="gif",
+        image_base64=base64.b64encode(gif_buffer.getvalue()).decode("ascii"),
+    )
+
+    normalized_image = _normalize_image_part_for_openai(part)
+
+    assert normalized_image is not None
+    image_format, image_base64 = normalized_image
+    assert image_format == "png"
+    with PILImage.open(BytesIO(base64.b64decode(image_base64))) as image:
+        assert image.format == "PNG"
+        assert image.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
 
 
 def test_parse_response_preserves_output_items_and_usage() -> None:

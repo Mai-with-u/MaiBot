@@ -1,12 +1,13 @@
 import {
-  Check,
+  ArrowLeft,
   Download,
   FileClock,
-  MessageSquare,
   MoreHorizontal,
   Network,
   Plus,
   Search,
+  Star,
+  StarOff,
   Trash2,
   Upload,
   X,
@@ -17,9 +18,7 @@ import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
-import { AccentPanel } from '@/components/ui/accent-panel'
 import { Button } from '@/components/ui/button'
-import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,18 +26,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ExpressionReviewer } from '@/components/expression-reviewer'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Tabs } from '@/components/ui/tabs'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
@@ -62,7 +51,6 @@ import {
   ClearChatExpressionsConfirmDialog,
   DeleteConfirmDialog,
   ExpressionCreateDialog,
-  ExpressionDetailDialog,
   ExpressionEditDialog,
   LegacyExpressionImportDialog,
 } from './ExpressionDialogs'
@@ -70,11 +58,7 @@ import { ExpressionClusterBrowser } from './ExpressionClusterBrowser'
 import { ExpressionList } from './ExpressionList'
 import { ExpressionReviewLogPanel } from './ExpressionReviewLogPanel'
 
-import type {
-  ChatInfo,
-  Expression,
-  ExpressionGroupInfo,
-} from '@/types/expression'
+import type { ChatInfo, Expression, ExpressionGroupInfo } from '@/types/expression'
 import type { StatsData } from './types'
 
 type IndicatorStatus = 'on' | 'off' | 'mixed'
@@ -121,13 +105,13 @@ export function ExpressionManagementPage() {
   // 浏览面板与对话框等纯 UI 局部态
   const [browserPanelCollapsed, setBrowserPanelCollapsed] = useState(false)
   const [selectedExpression, setSelectedExpression] = useState<Expression | null>(null)
-  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [isLegacyImportOpen, setIsLegacyImportOpen] = useState(false)
   const [deleteConfirmExpression, setDeleteConfirmExpression] = useState<Expression | null>(null)
   const [isBatchDeleteDialogOpen, setIsBatchDeleteDialogOpen] = useState(false)
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false)
+  const [isMoreActionsOpen, setIsMoreActionsOpen] = useState(false)
   const [activeView, setActiveView] = useState<'list' | 'logs' | 'quick' | 'clusters'>('list')
 
   // 兄弟读：聊天流 / 共享组 / 统计 / 审核统计统一以 'expression' 前缀分层，
@@ -153,10 +137,8 @@ export function ExpressionManagementPage() {
         page,
         page_size: pageSize,
         search: search || undefined,
-        chat_id:
-          filters.browseMode === 'chat' ? filters.selectedChatId || undefined : undefined,
-        chat_ids:
-          selectedGroup && !selectedGroup.is_global ? selectedGroup.chat_ids : undefined,
+        chat_id: filters.browseMode === 'chat' ? filters.selectedChatId || undefined : undefined,
+        chat_ids: selectedGroup && !selectedGroup.is_global ? selectedGroup.chat_ids : undefined,
         include_legacy: filters.showLegacyExpressions,
         review_filter: filters.reviewFilter,
       })
@@ -171,8 +153,7 @@ export function ExpressionManagementPage() {
   // 统计：失败时保持占位数值，不打断页面；与列表同领域，list.invalidate() 会一并失效
   const statsQuery = useQuery({
     queryKey: ['expression', 'stats', { include_legacy: showLegacyExpressions }],
-    queryFn: () =>
-      getExpressionStats({ include_legacy: showLegacyExpressions }),
+    queryFn: () => getExpressionStats({ include_legacy: showLegacyExpressions }),
   })
   const stats: StatsData = statsQuery.data ?? DEFAULT_STATS
 
@@ -186,8 +167,7 @@ export function ExpressionManagementPage() {
   // 聊天流列表（随「显示旧格式」开关刷新，保持原页面 loadChatList 的 include_legacy 行为）
   const chatListQuery = useQuery({
     queryKey: ['expression', 'chats', { include_legacy: showLegacyExpressions }],
-    queryFn: () =>
-      getChatList({ include_legacy: showLegacyExpressions }),
+    queryFn: () => getChatList({ include_legacy: showLegacyExpressions }),
   })
   const chatList: ChatInfo[] = chatListQuery.data ?? []
   const chatNameMap = new Map<string, string>()
@@ -196,8 +176,7 @@ export function ExpressionManagementPage() {
   // 表达共享组（随「显示旧格式」开关刷新）
   const groupsQuery = useQuery({
     queryKey: ['expression', 'groups', { include_legacy: showLegacyExpressions }],
-    queryFn: () =>
-      getExpressionGroups({ include_legacy: showLegacyExpressions }),
+    queryFn: () => getExpressionGroups({ include_legacy: showLegacyExpressions }),
   })
   const groups: ExpressionGroupInfo[] = groupsQuery.data ?? []
 
@@ -220,7 +199,7 @@ export function ExpressionManagementPage() {
   // 当前选中的具体聊天（用于导入导出清除与作用域指示）
   const currentChat =
     browseMode === 'chat' && selectedChatId
-      ? chatList.find((chat) => chat.chat_id === selectedChatId) ?? null
+      ? (chatList.find((chat) => chat.chat_id === selectedChatId) ?? null)
       : null
 
   // 导入 / 导出 / 清除：写成功后 invalidate 刷新
@@ -243,23 +222,19 @@ export function ExpressionManagementPage() {
     reviewStatsQuery.refetch()
   }
 
-  const handleViewExpressionById = async (expressionId: number) => {
+  // 聚类项只有 ID，先加载完整记录后复用编辑对话框展示与修改。
+  const handleOpenExpressionById = async (expressionId: number) => {
     try {
       const result = await getExpressionDetail(expressionId)
       setSelectedExpression(result)
-      setIsDetailDialogOpen(true)
+      setIsEditDialogOpen(true)
     } catch (error) {
       toast({
-        title: '加载详情失败',
-        description: error instanceof Error ? error.message : '无法加载表达方式详情',
+        title: '加载表达方式失败',
+        description: error instanceof Error ? error.message : '无法加载表达方式',
         variant: 'destructive',
       })
     }
-  }
-
-  // 查看详情（事件驱动的读取，失败用 toast 反馈用户动作）
-  const handleViewDetail = async (expression: Expression) => {
-    await handleViewExpressionById(expression.id)
   }
 
   // 编辑表达方式
@@ -404,74 +379,45 @@ export function ExpressionManagementPage() {
     return (
       <div className={`flex items-center gap-1.5 px-2 py-1 text-xs ${separated ? 'border-l' : ''}`}>
         <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-        <span className="font-medium leading-none">{statusText}</span>
+        <span className="leading-none font-medium">{statusText}</span>
       </div>
     )
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden p-4 pb-6 sm:p-6">
-      <div className="mb-4 flex shrink-0 flex-col gap-3 sm:mb-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <Tabs
-            value={activeView === 'quick' ? 'quick' : activeView === 'clusters' ? 'clusters' : 'list'}
-            onValueChange={(value) => handleActiveViewChange(value as 'list' | 'quick' | 'clusters')}
-            className="-mx-1 w-[calc(100%+0.5rem)] px-1 sm:mx-0 sm:w-auto sm:p-0"
+      {activeView !== 'list' && (
+        <div className="mb-4 flex shrink-0 justify-end gap-2 sm:mb-3">
+          <Button
+            variant="outline"
+            onClick={() => handleActiveViewChange('list')}
+            className="h-10 justify-center gap-2 sm:h-9"
           >
-            <DashboardTabBar className="h-10 sm:w-fit">
-              <DashboardTabTrigger value="list" className="h-10 flex-1 gap-2 sm:h-9 sm:flex-none">
-                <MessageSquare className="h-4 w-4" />
-                <span>表达</span>
-              </DashboardTabTrigger>
-              <DashboardTabTrigger value="quick" className="h-10 flex-1 gap-2 sm:h-9 sm:flex-none">
-                <Zap className="h-4 w-4" />
-                <span>精选</span>
-                {uncheckedCount > 0 && (
-                  <span className="ml-0.5 rounded-full bg-orange-500 px-1.5 py-0.5 text-xs leading-none text-white">
-                    {uncheckedCount > 99 ? '99+' : uncheckedCount}
-                  </span>
-                )}
-              </DashboardTabTrigger>
-              <DashboardTabTrigger value="clusters" className="h-10 flex-1 gap-2 sm:h-9 sm:flex-none">
-                <Network className="h-4 w-4" />
-                <span>聚类</span>
-              </DashboardTabTrigger>
-            </DashboardTabBar>
-          </Tabs>
-          {(activeView === 'list' || activeView === 'quick') && (
-            <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center lg:justify-end">
-              {activeView === 'quick' && (
-                <Button
-                  variant="outline"
-                  onClick={() => handleActiveViewChange('logs')}
-                  className="h-10 justify-center gap-2 sm:h-9"
-                >
-                  <FileClock className="h-4 w-4" />
-                  AI审核记录
-                </Button>
-              )}
-              {activeView === 'list' && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => setIsLegacyImportOpen(true)}
-                    className="h-10 justify-center gap-2 sm:h-9"
-                  >
-                    <Upload className="h-4 w-4" />
-                    从旧版本导入
-                  </Button>
-                </>
-              )}
-            </div>
+            <ArrowLeft className="h-4 w-4" />
+            返回表达
+          </Button>
+          {activeView === 'quick' && (
+            <Button
+              variant="outline"
+              onClick={() => handleActiveViewChange('logs')}
+              className="h-10 justify-center gap-2 sm:h-9"
+            >
+              <FileClock className="h-4 w-4" />
+              AI审核记录
+            </Button>
           )}
         </div>
-      </div>
+      )}
 
-      <ScrollArea className={activeView === 'list' ? 'min-h-0 flex-1' : 'hidden'}>
-        <div className="pr-3 pb-2 sm:pr-4">
+      <div
+        className={
+          activeView === 'list' ? 'min-h-0 flex-1 overflow-y-auto lg:overflow-hidden' : 'hidden'
+        }
+      >
+        <div className="pr-3 pb-2 sm:pr-4 lg:h-full">
           {/* 表达方式列表 */}
           <div
-            className={`grid grid-cols-1 items-stretch gap-5 transition-[grid-template-columns] duration-200 sm:gap-4 lg:h-[calc(100vh-13rem)] lg:min-h-[30rem] ${
+            className={`grid grid-cols-1 items-stretch gap-5 transition-[grid-template-columns] duration-200 sm:gap-4 lg:h-full lg:min-h-[30rem] ${
               browserPanelCollapsed
                 ? 'lg:grid-cols-[3.25rem_minmax(0,1fr)]'
                 : 'lg:grid-cols-[13.5rem_minmax(0,1fr)]'
@@ -511,7 +457,9 @@ export function ExpressionManagementPage() {
                     : browseMode === 'group'
                       ? groups.map((group) => {
                           const memberNames = group.members
-                            .map((member) => formatChatDisplayName(member.chat_name, member.account_id))
+                            .map((member) =>
+                              formatChatDisplayName(member.chat_name, member.account_id)
+                            )
                             .join('、')
                           return {
                             id: group.index,
@@ -533,9 +481,7 @@ export function ExpressionManagementPage() {
                 }}
                 emptyContent={
                   <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                    {browseMode === 'group'
-                      ? '暂无共享组'
-                      : '当前显示全部表达方式'}
+                    {browseMode === 'group' ? '暂无共享组' : '当前显示全部表达方式'}
                   </div>
                 }
                 collapsed={browserPanelCollapsed}
@@ -563,41 +509,6 @@ export function ExpressionManagementPage() {
             </div>
 
             <div className="flex min-h-0 flex-col space-y-4 sm:space-y-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="relative">
-                    <Search className="text-muted-foreground absolute top-3 left-3 h-4 w-4 sm:top-2 sm:left-2.5" />
-                    <Input
-                      id="search"
-                      aria-label="搜索"
-                      placeholder="搜索情境、风格或上下文..."
-                      value={list.searchInput}
-                      onChange={(e) => list.setSearchInput(e.target.value)}
-                      className="h-10 pl-10 sm:h-8 sm:pl-9"
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Label htmlFor="page-size" className="text-sm whitespace-nowrap">
-                    每页显示
-                  </Label>
-                  <Select
-                    value={list.pageSize.toString()}
-                    onValueChange={(value) => list.setPageSize(parseInt(value))}
-                  >
-                    <SelectTrigger id="page-size" className="h-9 w-20 sm:h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="10">10</SelectItem>
-                      <SelectItem value="20">20</SelectItem>
-                      <SelectItem value="50">50</SelectItem>
-                      <SelectItem value="100">100</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
               {/* 批量操作工具栏 */}
               <div
                 className={`${list.selectedCount > 0 ? 'flex' : 'hidden'} mt-4 flex-col items-start justify-between gap-3 border-t pt-4 sm:mt-3 sm:flex-row sm:items-center sm:pt-3`}
@@ -617,8 +528,8 @@ export function ExpressionManagementPage() {
                         className="gap-1"
                         onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
                       >
-                        <Check className="h-4 w-4" />
-                        批量通过
+                        <Star className="h-4 w-4" />
+                        批量精选
                       </Button>
                       <Button
                         variant="outline"
@@ -626,8 +537,8 @@ export function ExpressionManagementPage() {
                         className="gap-1"
                         onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
                       >
-                        <X className="h-4 w-4" />
-                        批量不通过
+                        <StarOff className="h-4 w-4" />
+                        取消精选
                       </Button>
                       <Button
                         variant="destructive"
@@ -642,68 +553,123 @@ export function ExpressionManagementPage() {
                 </div>
               </div>
 
-              {scopeStatus && (
-                <AccentPanel showRetroStripeDivider={false}>
-                  <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
-                    {renderStatusIndicator('开启学习', scopeStatus.enableLearning, false)}
-                    {renderStatusIndicator('开启使用', scopeStatus.useExpression)}
-                    <Button
-                      onClick={() => setIsCreateDialogOpen(true)}
-                      className="h-7 justify-center gap-1 px-2 text-xs"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      新增
-                    </Button>
-                    {currentChat && (
-                      <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 justify-center gap-1 px-2 text-xs"
-                          onClick={exportSelectedExpressionsToFile}
-                          disabled={list.selectedCount === 0}
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          导出所选
-                        </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-7 w-full sm:w-7"
-                              title="更多"
-                              aria-label="更多操作"
-                            >
-                              <MoreHorizontal className="h-3.5 w-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={() => importInputRef.current?.click()}>
-                              <Upload className="mr-2 h-4 w-4" />
-                              导入
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onSelect={() => setIsClearConfirmOpen(true)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              清除
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        <input
-                          ref={importInputRef}
-                          type="file"
-                          accept="application/json,.json"
-                          className="hidden"
-                          onChange={handleImportFileChange}
-                        />
-                      </div>
-                    )}
+              <div className="border-2 bg-transparent">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
+                  {scopeStatus && (
+                    <>
+                      {renderStatusIndicator('开启学习', scopeStatus.enableLearning, false)}
+                      {renderStatusIndicator('开启使用', scopeStatus.useExpression)}
+                    </>
+                  )}
+                  <div className="relative w-full min-w-0 sm:min-w-48 sm:flex-1">
+                    <Search className="text-muted-foreground absolute top-2 left-2.5 h-4 w-4" />
+                    <input
+                      id="search"
+                      aria-label="搜索"
+                      placeholder="搜索情境、风格或上下文..."
+                      value={list.searchInput}
+                      onChange={(e) => list.setSearchInput(e.target.value)}
+                      className="border-input focus-visible:ring-ring text-foreground placeholder:text-muted-foreground h-8 w-full border-2 bg-transparent py-1 pr-3 pl-9 text-sm focus-visible:ring-1 focus-visible:outline-none"
+                    />
                   </div>
-                </AccentPanel>
-              )}
+                  {scopeStatus && (
+                    <>
+                      <Button
+                        onClick={() => setIsCreateDialogOpen(true)}
+                        className="h-7 justify-center gap-1 px-2 text-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        新增
+                      </Button>
+                      {currentChat && (
+                        <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 justify-center gap-1 px-2 text-xs"
+                            onClick={exportSelectedExpressionsToFile}
+                            disabled={list.selectedCount === 0}
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            导出所选
+                          </Button>
+                          <DropdownMenu
+                            open={isMoreActionsOpen}
+                            onOpenChange={setIsMoreActionsOpen}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="data-[state=open]:bg-accent h-7 w-full transition-colors duration-200 sm:w-7"
+                                title="更多"
+                                aria-label={isMoreActionsOpen ? '关闭更多操作' : '更多操作'}
+                              >
+                                <span className="relative h-3.5 w-3.5" aria-hidden="true">
+                                  <MoreHorizontal
+                                    className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
+                                      isMoreActionsOpen
+                                        ? 'scale-0 rotate-90 opacity-0'
+                                        : 'scale-100 rotate-0 opacity-100'
+                                    }`}
+                                  />
+                                  <X
+                                    className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-200 ease-out ${
+                                      isMoreActionsOpen
+                                        ? 'scale-100 rotate-0 opacity-100'
+                                        : 'scale-0 -rotate-90 opacity-0'
+                                    }`}
+                                  />
+                                </span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="expression-actions-menu-content"
+                            >
+                              <DropdownMenuItem onSelect={() => handleActiveViewChange('quick')}>
+                                <Zap className="mr-2 h-4 w-4" />
+                                精选
+                                {uncheckedCount > 0 && (
+                                  <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-xs leading-none text-white">
+                                    {uncheckedCount > 99 ? '99+' : uncheckedCount}
+                                  </span>
+                                )}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => handleActiveViewChange('clusters')}>
+                                <Network className="mr-2 h-4 w-4" />
+                                聚类
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => setIsLegacyImportOpen(true)}>
+                                <Upload className="mr-2 h-4 w-4" />
+                                从旧版本导入
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => importInputRef.current?.click()}>
+                                <Upload className="mr-2 h-4 w-4" />
+                                导入
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onSelect={() => setIsClearConfirmOpen(true)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                清除
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <input
+                            ref={importInputRef}
+                            type="file"
+                            accept="application/json,.json"
+                            className="hidden"
+                            onChange={handleImportFileChange}
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
 
               <ExpressionList
                 className="lg:min-h-0 lg:flex-1"
@@ -721,18 +687,18 @@ export function ExpressionManagementPage() {
                 reviewFilter={reviewFilter}
                 onReviewFilterChange={(filter) => list.setFilter('reviewFilter', filter)}
                 onEdit={handleEdit}
-                onViewDetail={handleViewDetail}
                 onDelete={(expression) => setDeleteConfirmExpression(expression)}
                 onToggleReviewStatus={toggleReviewStatus}
                 onToggleSelect={list.toggle}
                 onToggleSelectAll={list.toggleAll}
                 onPageChange={list.goToPage}
                 onJumpToPage={handleJumpToPage}
+                onPageSizeChange={list.setPageSize}
               />
             </div>
           </div>
         </div>
-      </ScrollArea>
+      </div>
 
       {activeView === 'logs' && (
         <div className="min-h-[38rem] flex-1 pr-4">
@@ -753,16 +719,8 @@ export function ExpressionManagementPage() {
       )}
 
       {activeView === 'clusters' && (
-        <ExpressionClusterBrowser onOpenExpression={handleViewExpressionById} />
+        <ExpressionClusterBrowser onOpenExpression={handleOpenExpressionById} />
       )}
-
-      {/* 详情对话框 */}
-      <ExpressionDetailDialog
-        expression={selectedExpression}
-        open={isDetailDialogOpen}
-        onOpenChange={setIsDetailDialogOpen}
-        chatNameMap={chatNameMap}
-      />
 
       {/* 创建对话框 */}
       <ExpressionCreateDialog

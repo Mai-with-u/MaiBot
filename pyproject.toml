@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MaiBot"
-version = "1.2.1"
+version = "1.2.2"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,7 +19,7 @@ dependencies = [
     "jieba>=0.42.1",
     "json-repair>=0.47.6",
     "maim-message==0.6.8",
-    "maibot-dashboard==1.7.1.dev20260819402",
+    "maibot-dashboard==1.7.2",
     "maibot-plugin-sdk>=2.8.0",
     "mcp",
     "msgpack>=1.1.2",
@@ -56,7 +56,20 @@ dev = [
 
 
 [tool.uv]
-index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
 
 [tool.ruff]
 

@@ -8,6 +8,7 @@ export interface APIProvider {
   base_url: string
   api_key: string
   client_type: string
+  default_headers?: Record<string, string>
   max_retry: number | null
   timeout: number | null
   retry_interval: number | null

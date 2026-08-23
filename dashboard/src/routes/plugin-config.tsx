@@ -1313,7 +1313,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
       >
         <TabsList>
           <TabsTrigger value="settings">设置</TabsTrigger>
-          {showHostPolicy && <TabsTrigger value="host-policy">主程序放行规则</TabsTrigger>}
+          {showHostPolicy && <TabsTrigger value="host-policy">黑白名单规则</TabsTrigger>}
           <TabsTrigger value="details">详情</TabsTrigger>
         </TabsList>
         <TabsContent value="settings" className="mt-4">

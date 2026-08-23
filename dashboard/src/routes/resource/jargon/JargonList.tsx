@@ -17,6 +17,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
   Table,
@@ -45,6 +53,7 @@ interface JargonListProps {
   onToggleSelectAll: () => void
   onPageChange: (page: number) => void
   onJumpToPage: (page: string) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 /**
@@ -115,6 +124,7 @@ export function JargonList({
   onToggleSelectAll,
   onPageChange,
   onJumpToPage,
+  onPageSizeChange,
 }: JargonListProps) {
   const [jumpToPage, setJumpToPage] = React.useState('')
   const tableColSpan = hideChatColumn ? 6 : 7
@@ -128,10 +138,13 @@ export function JargonList({
     <AccentPanel
       showRetroStripes={false}
       className={cn('bg-card flex min-h-0 flex-col border', className)}
-      contentClassName="flex min-h-0 flex-1 flex-col"
+      contentClassName="flex h-full !min-h-0 flex-1 flex-col"
     >
       {/* 桁面端表格视图 */}
-      <div className="hidden min-h-0 flex-1 overflow-auto md:block">
+      <div
+        data-jargon-table-viewport="true"
+        className="hidden min-h-0 flex-1 overflow-auto md:block"
+      >
         <Table aria-label="黑话列表">
           <TableHeader>
             <TableRow>
@@ -313,8 +326,31 @@ export function JargonList({
       {/* 分页 */}
       {total > 0 && (
         <div className="flex flex-col items-center justify-between gap-2 border-t px-3 py-2 sm:flex-row">
-          <div className="text-muted-foreground text-xs">
-            共 {total} 条记录，第 {page} / {Math.ceil(total / pageSize)} 页
+          <div className="text-muted-foreground flex items-center gap-2 text-xs">
+            <span>
+              共 {total} 条记录，第 {page} / {Math.ceil(total / pageSize)} 页
+            </span>
+            {onPageSizeChange && (
+              <div className="flex items-center gap-1.5">
+                <Label htmlFor="page-size" className="whitespace-nowrap">
+                  每页
+                </Label>
+                <Select
+                  value={pageSize.toString()}
+                  onValueChange={(value) => onPageSizeChange(parseInt(value))}
+                >
+                  <SelectTrigger id="page-size" className="h-7 w-16 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Button

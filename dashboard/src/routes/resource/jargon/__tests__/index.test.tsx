@@ -184,7 +184,13 @@ beforeEach(() => {
   vi.mocked(jargonApi.getJargonChatList).mockResolvedValue({
     success: true,
     data: [
-      { session_id: 'chat-1', chat_name: '测试群', platform: 'qq', account_id: null, is_group: true },
+      {
+        session_id: 'chat-1',
+        chat_name: '测试群',
+        platform: 'qq',
+        account_id: null,
+        is_group: true,
+      },
     ],
   })
   vi.mocked(jargonApi.getJargonDetail).mockResolvedValue({
@@ -216,9 +222,7 @@ beforeEach(() => {
 async function renderPage() {
   render(<JargonManagementPage />, { wrapper: makeWrapper() })
   await screen.findByTestId('list-count')
-  await waitFor(() =>
-    expect(screen.getByTestId('list-count')).toHaveTextContent('2/2')
-  )
+  await waitFor(() => expect(screen.getByTestId('list-count')).toHaveTextContent('2/2'))
 }
 
 describe('JargonManagementPage 特征化', () => {
@@ -237,14 +241,17 @@ describe('JargonManagementPage 特征化', () => {
     // 侧边栏与表单聊天列表各取一份
     expect(jargonApi.getJargonChatList).toHaveBeenCalledTimes(2)
     expect(jargonApi.getJargonChatList).toHaveBeenCalledWith({ include_empty: true })
-    expect(await screen.findByRole('tab', { name: '总数量 2' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '已确认黑话 1' })).toBeInTheDocument()
+    const summaryMenu = await screen.findByRole('button', { name: '黑话分类：总数量 2' })
+    expect(summaryMenu).toBeInTheDocument()
+    await userEvent.setup().click(summaryMenu)
+    expect(await screen.findByRole('menuitemradio', { name: '已确认黑话 1' })).toBeInTheDocument()
   })
 
-  it('切换到已确认黑话标签：以 jargon_status 过滤重新拉取列表', async () => {
+  it('切换到已确认黑话分类：以 jargon_status 过滤重新拉取列表', async () => {
     const user = userEvent.setup()
     await renderPage()
-    await user.click(screen.getByRole('tab', { name: /已确认黑话/ }))
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /已确认黑话/ }))
     await waitFor(() =>
       expect(jargonApi.getJargonList).toHaveBeenCalledWith(
         expect.objectContaining({ jargon_status: 'confirmed_jargon' })
@@ -266,7 +273,8 @@ describe('JargonManagementPage 特征化', () => {
     expect(screen.getByTestId('hide-chat')).toHaveTextContent('true')
 
     // 切到全局黑话：chatId 被重置为 all，session_id 不再传，改传 is_global
-    await user.click(screen.getByRole('tab', { name: /全局黑话/ }))
+    await user.click(screen.getByRole('button', { name: /黑话分类/ }))
+    await user.click(await screen.findByRole('menuitemradio', { name: /全局黑话/ }))
     await waitFor(() =>
       expect(jargonApi.getJargonList).toHaveBeenLastCalledWith(
         expect.objectContaining({ session_id: undefined, is_global: true })

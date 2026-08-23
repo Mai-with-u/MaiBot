@@ -84,7 +84,7 @@ PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
 }
 CONTEXT_SELECTION_CACHE_STABILITY_RATIO = 2.0
 PLANNER_FINAL_USER_REMINDER_TEMPLATE = (
-    "我需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
+    "你需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
 )
 
 

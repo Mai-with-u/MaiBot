@@ -61,7 +61,6 @@ function makeProps(overrides: Partial<ListProps> = {}): ListProps {
     chatNameMap: new Map([['chat-1', '测试群']]),
     reviewFilter: 'all',
     onEdit: vi.fn(),
-    onViewDetail: vi.fn(),
     onDelete: vi.fn(),
     onReviewFilterChange: vi.fn(),
     onToggleReviewStatus: vi.fn(async () => {}),
@@ -103,10 +102,9 @@ describe('ExpressionList 渲染', () => {
     })
     render(<ExpressionList {...props} />)
     const table = getDesktopTable()
-    // 仅人工精选行有徽标（表头「精选」列名与徽标文本相同，故按行内查找）
-    const badges = within(table).getAllByText('精选')
-    // 表头 1 个 + 人工精选行 1 个
-    expect(badges).toHaveLength(2)
+    // 标题保留“精选”，仅人工精选行使用无底纹、无边框的粗体勾选标识。
+    expect(within(table).getByText('精选')).toBeInTheDocument()
+    expect(within(table).getByLabelText('已精选')).toHaveClass('stroke-[3]')
   })
 
   it('hideChatColumn=true 时不渲染聊天列', () => {
@@ -131,20 +129,18 @@ describe('ExpressionList 勾选与操作', () => {
     expect(props.onToggleSelectAll).toHaveBeenCalledTimes(1)
   })
 
-  it('编辑 / 查看详情 / 删除按钮回调携带对应表达方式', async () => {
+  it('编辑 / 删除按钮回调携带对应表达方式', async () => {
     const user = userEvent.setup()
     const props = makeProps()
     render(<ExpressionList {...props} />)
     const table = getDesktopTable()
     await user.click(within(table).getByRole('button', { name: '编辑' }))
     expect(props.onEdit).toHaveBeenCalledWith(props.expressions[0])
-    await user.click(within(table).getByTitle('查看详情'))
-    expect(props.onViewDetail).toHaveBeenCalledWith(props.expressions[0])
     await user.click(within(table).getByRole('button', { name: '删除' }))
     expect(props.onDelete).toHaveBeenCalledWith(props.expressions[0])
   })
 
-  it('审核切换：未精选显示通过按钮，pending 期间禁用，完成后恢复', async () => {
+  it('审核切换：未精选显示精选按钮，pending 期间禁用，完成后恢复', async () => {
     const user = userEvent.setup()
     let resolveToggle: () => void = () => {}
     const onToggleReviewStatus = vi.fn(
@@ -157,7 +153,7 @@ describe('ExpressionList 勾选与操作', () => {
     render(<ExpressionList {...props} />)
     const table = getDesktopTable()
 
-    const approveButton = within(table).getByRole('button', { name: '通过' })
+    const approveButton = within(table).getByRole('button', { name: '精选' })
     await user.click(approveButton)
     expect(onToggleReviewStatus).toHaveBeenCalledWith(props.expressions[0])
     // 未完成前按钮禁用
@@ -169,15 +165,15 @@ describe('ExpressionList 勾选与操作', () => {
     expect(approveButton).toBeEnabled()
   })
 
-  it('人工精选行显示拒绝按钮', () => {
+  it('人工精选行显示取消精选按钮', () => {
     render(
       <ExpressionList
         {...makeProps({ expressions: [makeExpression({ checked: true, modified_by: 'user' })] })}
       />
     )
     const table = getDesktopTable()
-    expect(within(table).getByRole('button', { name: '拒绝' })).toBeInTheDocument()
-    expect(within(table).queryByRole('button', { name: '通过' })).not.toBeInTheDocument()
+    expect(within(table).getByRole('button', { name: '取消精选' })).toBeInTheDocument()
+    expect(within(table).queryByRole('button', { name: '精选' })).not.toBeInTheDocument()
   })
 
   it('精选筛选下拉选择已精选时回调 user_checked', async () => {

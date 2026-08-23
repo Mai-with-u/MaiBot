@@ -678,6 +678,25 @@ describe('useModelConfig 模型编辑与校验', () => {
     unmount()
   })
 
+  it('新增模型时优先使用指定的提供商', async () => {
+    stubConfig({
+      api_providers: [provider('first'), provider('selected')],
+    })
+    const { result, unmount } = await renderLoadedHook()
+
+    act(() => {
+      result.current.openEditDialog(null, null, undefined, 'selected')
+    })
+
+    expect(result.current.editingModel).toEqual(
+      expect.objectContaining({
+        api_provider: 'selected',
+        cache: false,
+      })
+    )
+    unmount()
+  })
+
   it('保存前校验空名称、重复名称、缺失提供商和标识符', async () => {
     const { result, unmount } = await renderLoadedHook()
 

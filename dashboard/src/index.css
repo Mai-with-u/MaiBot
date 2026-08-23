@@ -115,6 +115,42 @@
   }
 }
 
+@keyframes expression-actions-menu-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem) scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes expression-actions-menu-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-0.25rem) scale(0.96);
+  }
+}
+
+.expression-actions-menu-content {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+.expression-actions-menu-content[data-state='open'] {
+  animation: expression-actions-menu-enter 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.expression-actions-menu-content[data-state='closed'] {
+  animation: expression-actions-menu-exit 160ms ease-in;
+}
+
 @keyframes toast-countdown {
   from {
     transform: scaleX(1);
@@ -629,9 +665,7 @@
 :root[data-dashboard-style='future-retro'] body {
   background-color: var(--retro-paper);
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
-  background-size:
-    auto,
-    var(--retro-paper-texture-size);
+  background-size: auto, var(--retro-paper-texture-size);
   color: var(--retro-ink);
   font-family: var(--retro-font-body);
 }
@@ -647,9 +681,7 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-shell='true'] {
   background-color: var(--retro-paper);
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
-  background-size:
-    auto,
-    var(--retro-paper-texture-size);
+  background-size: auto, var(--retro-paper-texture-size);
   color: var(--retro-ink);
 }
 
@@ -819,9 +851,7 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-sidebar='true'] {
   background-color: var(--retro-paper) !important;
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
-  background-size:
-    auto,
-    var(--retro-paper-texture-size) !important;
+  background-size: auto, var(--retro-paper-texture-size) !important;
   border-color: var(--retro-line) !important;
   border-width: 0 var(--retro-stroke) 0 0 !important;
   box-shadow: none !important;
@@ -836,9 +866,7 @@
 :root[data-dashboard-style='future-retro'] [data-dashboard-header-strip='true'] {
   background-color: var(--retro-paper) !important;
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
-  background-size:
-    auto,
-    var(--retro-paper-texture-size) !important;
+  background-size: auto, var(--retro-paper-texture-size) !important;
   border-color: var(--retro-line) !important;
   backdrop-filter: none !important;
 }
@@ -846,9 +874,7 @@
 :root[data-dashboard-style='future-retro'] [data-model-config-tabs-bar='true'] {
   background-color: var(--retro-paper) !important;
   background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture) !important;
-  background-size:
-    auto,
-    var(--retro-paper-texture-size) !important;
+  background-size: auto, var(--retro-paper-texture-size) !important;
   border-color: var(--retro-line) !important;
   color: var(--retro-ink) !important;
 }
@@ -863,8 +889,7 @@
   background-color: var(--retro-paper) !important;
 }
 
-:root[data-dashboard-style='future-retro']
-  [data-dashboard-sidebar-collapsed-divider='true'] {
+:root[data-dashboard-style='future-retro'] [data-dashboard-sidebar-collapsed-divider='true'] {
   border-color: var(--retro-line) !important;
   border-width: 0 var(--retro-stroke) 0 0 !important;
 }
@@ -1057,8 +1082,7 @@
     transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-[data-maibot-status-flip-card='true'][aria-pressed='false']:hover
-  [data-maibot-status-glow='true'] {
+[data-maibot-status-flip-card='true'][aria-pressed='false']:hover [data-maibot-status-glow='true'] {
   opacity: 0.52;
   transform: scale(1);
 }
@@ -1535,6 +1559,12 @@
   border-color: var(--retro-ink) !important;
   border-radius: 0 !important;
   box-shadow: none !important;
+}
+
+/* 浏览范围面板不使用通用卡片底色，直接透出仪表盘的纸张底纹。 */
+:root[data-dashboard-style='future-retro'] [data-chat-scope-panel='true'] {
+  background-color: transparent !important;
+  background-image: none !important;
 }
 
 :root[data-dashboard-style='future-retro'] [data-chat-scope-panel-mode='true'],
@@ -2107,7 +2137,6 @@
 }
 
 :root[data-dashboard-style='future-retro'] [data-dashboard-alert='true'],
-:root[data-dashboard-style='future-retro'] [data-dashboard-table-wrapper='true'],
 :root[data-dashboard-style='future-retro'] [data-dashboard-toast='true'],
 :root[data-dashboard-style='future-retro'] [data-dashboard-radio-item='true'] {
   border-color: var(--retro-line) !important;
@@ -2117,12 +2146,27 @@
   color: var(--retro-ink) !important;
 }
 
-:root[data-dashboard-style='future-retro'] [data-dashboard-table-wrapper='true'] {
-  background: transparent !important;
-}
-
 :root[data-dashboard-style='future-retro'] [data-dashboard-table='true'] {
   color: var(--retro-ink) !important;
+}
+
+/* 表达与黑话列表的数据浏览区直接透出纸张底纹，不使用通用表格的凹陷底色。 */
+:root[data-dashboard-style='future-retro']
+  :is([data-expression-table-viewport='true'], [data-jargon-table-viewport='true'])
+  :is(
+    [data-dashboard-table-wrapper='true'],
+    [data-dashboard-table='true'],
+    [data-dashboard-table-header='true'],
+    [data-dashboard-table-body='true'],
+    [data-dashboard-table-row='true'],
+    [data-dashboard-table-cell='true']
+  ) {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 :root[data-dashboard-style='future-retro']
@@ -2465,8 +2509,7 @@
   height: 0;
 }
 
-[data-dashboard-sidebar='true']
-  [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
+[data-dashboard-sidebar='true'] [data-dashboard-scrollbar='true'][data-orientation='vertical'] {
   right: 0;
   left: auto;
   opacity: 0;

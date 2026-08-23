@@ -815,7 +815,7 @@ wheels = [
 
 [[package]]
 name = "maibot"
-version = "1.2.1"
+version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "ahocorasick-rs" },
@@ -877,7 +877,7 @@ requires-dist = [
     { name = "httpx", extras = ["socks"] },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "json-repair", specifier = ">=0.47.6" },
-    { name = "maibot-dashboard", specifier = ">=1.7.1.dev20260819402" },
+    { name = "maibot-dashboard", specifier = "==1.7.1" },
     { name = "maibot-plugin-sdk", specifier = ">=2.8.0" },
     { name = "maim-message", specifier = "==0.6.8" },
     { name = "mcp" },
@@ -914,11 +914,11 @@ dev = [
 
 [[package]]
 name = "maibot-dashboard"
-version = "1.7.1.dev20260819402"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/34/b9/676b261847313c1f0729ecdc87f536b1f3e63a8eab96a80cd5c4f682115a/maibot_dashboard-1.7.1.dev20260819402.tar.gz", hash = "sha256:3c9834a8c46febf60d411343a17e9642455a5e68df353913f4b048ca02272d70", size = 12801250, upload-time = "2026-08-19T17:21:02.666Z" }
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/3b/34041f1cafce1da615ce933e80df76a8380eb871cf4d45d34a6b7b3df26d/maibot_dashboard-1.7.1.tar.gz", hash = "sha256:d2f96162387e2c4cb6749a508a010396d0c801a8d4e37c237e609c02972dcd3d", size = 12800428, upload-time = "2026-08-20T14:23:44.857Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/82/54/7ad943f1dfbe789257830c08414fe77ef0e165554a1fdf1a47bd041845cb/maibot_dashboard-1.7.1.dev20260819402-py3-none-any.whl", hash = "sha256:887419e5cf907602a7de793fcb0b7785766e98be847bf3c68752c6855f6d998f", size = 12891909, upload-time = "2026-08-19T17:21:00.373Z" },
+    { url = "https://files.pythonhosted.org/packages/53/29/33496af5784b8fc4d88bdf4bfe1dfe2944f4631115e3d0565e67baf652d9/maibot_dashboard-1.7.1-py3-none-any.whl", hash = "sha256:176feaebf53bd713a5939fea2e5b201363d48122ea273712e709e2108dd811cd", size = 12891612, upload-time = "2026-08-20T14:23:42.167Z" },
 ]
 
 [[package]]
