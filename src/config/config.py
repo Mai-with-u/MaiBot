@@ -67,7 +67,7 @@ MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute(
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
 A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.14.39"
+CONFIG_VERSION: str = "8.14.40"
 MODEL_CONFIG_VERSION: str = "1.17.8"
 
 logger = get_logger("config")
@@ -234,10 +234,6 @@ def _normalize_loaded_bot_config_dict(config_data: dict[str, Any]) -> dict[str, 
     a_memorix_config = normalized.get("a_memorix")
     if isinstance(a_memorix_config, dict):
         normalized["a_memorix"] = _normalize_a_memorix_legacy_config(a_memorix_config)
-    expression_config = normalized.get("expression")
-    if isinstance(expression_config, dict) and expression_config.get("expression_selection_mode") == "vector":
-        expression_config["expression_selection_mode"] = "vector_intent"
-        logger.warning("表达选取模式 vector 已移除，当前配置已按 vector_intent 加载")
     return normalized
 
 
@@ -656,6 +652,7 @@ def load_config_from_file(
         config_data, a_memorix_migration_applied = _migrate_legacy_a_memorix_config(config_data)
         if a_memorix_migration_applied:
             legacy_config_migration_reasons.append("a_memorix_legacy_config")
+    if config_class is Config:
         config_data = _normalize_loaded_bot_config_dict(config_data)
     hook_result = apply_config_upgrade_hooks(config_data, config_path.name, old_ver, new_ver)
     upgrade_hook_applied = hook_result.migrated

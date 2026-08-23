@@ -416,6 +416,17 @@ def _copy_personality_to_behavior_style(data: dict[str, Any]) -> list[str]:
     return ["personality.behavior_style"]
 
 
+def _migrate_removed_expression_selection_mode(data: dict[str, Any]) -> list[str]:
+    """8.14.40: 将已移除的 vector 表达选取模式迁移为 vector_intent。"""
+
+    expression = _as_dict(data.get("expression"))
+    if expression is None or expression.get("expression_selection_mode") != "vector":
+        return []
+
+    expression["expression_selection_mode"] = "vector_intent"
+    return ["expression.expression_selection_mode"]
+
+
 BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
     ConfigUpgradeHook(
         target_version="8.10.11",
@@ -456,6 +467,11 @@ BOT_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = (
         target_version="8.14.29",
         config_names=("bot_config.toml",),
         migrate=_copy_personality_to_behavior_style,
+    ),
+    ConfigUpgradeHook(
+        target_version="8.14.40",
+        config_names=("bot_config.toml",),
+        migrate=_migrate_removed_expression_selection_mode,
     ),
 )
 MODEL_CONFIG_UPGRADE_HOOKS: tuple[ConfigUpgradeHook, ...] = ()
