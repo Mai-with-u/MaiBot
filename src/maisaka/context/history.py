@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, cast
 
 from src.common.data_models.message_component_data_model import MessageSequence, ReplyComponent, TextComponent
-from src.llm_models.payload_content.context_item import ContextItem, FunctionCallItem
+from src.llm_models.payload_content.context_item import ContextItem, FunctionCallItem, RoleType
 from src.llm_models.payload_content.context_protocol import (
     analyze_context_item_relations,
     prune_context_items_for_history,
@@ -159,6 +159,29 @@ def normalize_tool_call_result_pairs(
     }
 
 
+def collect_tool_turn_anchor_indices(
+    chat_history: list[LLMContextMessage],
+    logical_turn_ids: set[str],
+) -> dict[str, int]:
+    """定位每个工具轮次之前最近的 user 上下文索引。"""
+
+    first_turn_index_by_id: dict[str, int] = {}
+    for index, message in enumerate(chat_history):
+        logical_turn_id = _get_logical_turn_id(message)
+        if logical_turn_id in logical_turn_ids and logical_turn_id not in first_turn_index_by_id:
+            first_turn_index_by_id[logical_turn_id] = index
+
+    anchor_index_by_turn_id: dict[str, int] = {}
+    for logical_turn_id, first_turn_index in first_turn_index_by_id.items():
+        anchor_index = next(
+            (index for index in range(first_turn_index - 1, -1, -1) if chat_history[index].role == RoleType.User.value),
+            None,
+        )
+        if anchor_index is not None:
+            anchor_index_by_turn_id[logical_turn_id] = anchor_index
+    return anchor_index_by_turn_id
+
+
 def drop_unanswered_tool_calls(
     chat_history: list[LLMContextMessage],
     *,
@@ -196,8 +219,7 @@ def drop_unanswered_tool_calls(
         for message in chat_history
         if _get_logical_turn_id(message) not in invalid_turn_ids
         and not (
-            isinstance(message, ModelOutputContextMessage)
-            and message.output_item.meta.item_id in unanswered_item_ids
+            isinstance(message, ModelOutputContextMessage) and message.output_item.meta.item_id in unanswered_item_ids
         )
     ]
     return filtered_history, len(unanswered_messages)
@@ -230,11 +252,7 @@ def drop_invalid_tool_turns(
     if not invalid_turn_ids:
         return chat_history, 0
 
-    filtered_history = [
-        message
-        for message in chat_history
-        if _get_logical_turn_id(message) not in invalid_turn_ids
-    ]
+    filtered_history = [message for message in chat_history if _get_logical_turn_id(message) not in invalid_turn_ids]
     return filtered_history, len(chat_history) - len(filtered_history)
 
 
@@ -337,16 +355,14 @@ def normalize_tool_result_order(
                 output_indexes.append(cursor)
             cursor += 1
 
-        output_messages = [cast(ModelOutputContextMessage, chat_history[output_index]) for output_index in output_indexes]
+        output_messages = [
+            cast(ModelOutputContextMessage, chat_history[output_index]) for output_index in output_indexes
+        ]
         for output_index, output_message in zip(output_indexes, output_messages, strict=True):
             consumed_indexes.add(output_index)
             normalized_history.append(output_message)
 
-        tool_calls = [
-            tool_call
-            for output_message in output_messages
-            for tool_call in output_message.tool_calls
-        ]
+        tool_calls = [tool_call for output_message in output_messages for tool_call in output_message.tool_calls]
         appended_tool_result_count = 0
         for tool_call in tool_calls:
             tool_call_id = str(tool_call.call_id or "").strip()
