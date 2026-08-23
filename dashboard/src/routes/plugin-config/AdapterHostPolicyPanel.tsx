@@ -96,16 +96,16 @@ function AdapterHostPolicyEditor({
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-base">{title}</CardTitle>
-                    <CardDescription>拒绝 ID 优先于放行 ID，支持使用 * 匹配全部。</CardDescription>
+                    <CardDescription>不阅读的聊天 ID 优先于阅读的聊天 ID，支持使用 * 匹配全部。</CardDescription>
                   </div>
                   <Badge variant="outline">
-                    全局默认：{globalAction === 'allow' ? '放行' : '拒绝'}
+                    全局默认：{globalAction === 'allow' ? '阅读' : '不阅读'}
                   </Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="space-y-2">
-                  <Label>未命中 ID 时</Label>
+                  <Label>默认规则：</Label>
                   <Select
                     value={section.default_action}
                     onValueChange={(value) =>
@@ -117,17 +117,17 @@ function AdapterHostPolicyEditor({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="inherit">
-                        继承全局（{globalAction === 'allow' ? '放行' : '拒绝'}）
+                        默认
                       </SelectItem>
-                      <SelectItem value="allow">此适配器默认放行</SelectItem>
-                      <SelectItem value="block">此适配器默认拒绝</SelectItem>
+                      <SelectItem value="block">不阅读</SelectItem>
+                      <SelectItem value="allow">阅读</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
                   <div>
-                    <Label>明确放行 ID</Label>
+                    <Label>阅读的聊天ID</Label>
                     <p className="text-muted-foreground mt-1 text-xs">
                       群聊填写群号，私聊填写用户 ID。
                     </p>
@@ -142,15 +142,15 @@ function AdapterHostPolicyEditor({
                       )
                     }
                     itemType="string"
-                    placeholder={chatType === 'group' ? '输入允许的群号' : '输入允许的用户 ID'}
+                    placeholder={chatType === 'group' ? '输入需要阅读的群号' : '输入需要阅读的用户 ID'}
                   />
                 </div>
 
                 <div className="space-y-2">
                   <div>
-                    <Label>明确拒绝 ID</Label>
+                    <Label>不阅读的聊天ID</Label>
                     <p className="text-muted-foreground mt-1 text-xs">
-                      同一 ID 不可同时出现在放行和拒绝列表。
+                      同一 ID 不可同时出现在阅读和不阅读列表。
                     </p>
                   </div>
                   <ListFieldEditor
@@ -163,7 +163,7 @@ function AdapterHostPolicyEditor({
                       )
                     }
                     itemType="string"
-                    placeholder={chatType === 'group' ? '输入拒绝的群号' : '输入拒绝的用户 ID'}
+                    placeholder={chatType === 'group' ? '输入不阅读的群号' : '输入不阅读的用户 ID'}
                   />
                 </div>
               </CardContent>

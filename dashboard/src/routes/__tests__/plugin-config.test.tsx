@@ -708,15 +708,15 @@ describe('PluginConfigPage 主程序放行规则', () => {
     await user.click(await screen.findByRole('tab', { name: '黑白名单规则' }))
 
     expect(await screen.findByText('这是 MaiBot 主程序侧规则，与适配器自身名单相互独立。')).toBeInTheDocument()
-    expect(screen.getByText('全局默认：放行')).toBeInTheDocument()
-    expect(screen.getByText('全局默认：拒绝')).toBeInTheDocument()
+    expect(screen.getByText('全局默认：阅读')).toBeInTheDocument()
+    expect(screen.getByText('全局默认：不阅读')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /保存主程序规则/ })).toBeDisabled()
     expect(screen.queryByRole('button', { name: /^保存$/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /源代码/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /重置/ })).not.toBeInTheDocument()
 
     await user.click(screen.getAllByRole('combobox')[0])
-    await user.click(await screen.findByText('此适配器默认放行'))
+    await user.click(await screen.findByText('阅读'))
     await user.click(screen.getAllByRole('button', { name: '添加列表项' })[0])
     await user.click(screen.getByRole('button', { name: /保存主程序规则/ }))
 
@@ -737,7 +737,7 @@ describe('PluginConfigPage 主程序放行规则', () => {
     await user.click(await screen.findByRole('tab', { name: '黑白名单规则' }))
     await user.click(await screen.findByText('群聊规则'))
     await user.click(screen.getAllByRole('combobox')[0])
-    await user.click(await screen.findByText('此适配器默认拒绝'))
+    await user.click(await screen.findByText('不阅读'))
     await user.click(screen.getByRole('button', { name: /保存主程序规则/ }))
 
     await waitFor(() =>
