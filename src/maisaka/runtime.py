@@ -516,7 +516,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
                 quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
                 include_message_id=not message.is_notify and bool(message.message_id),
                 include_chat_id=include_chat_id,
-                is_self_message=source_kind == "guided_reply" and global_config.chat.self_message_special_mark,
+                is_self_message=source_kind == "guided_reply",
             )
             history_message = SessionBackedMessage.from_session_message(
                 message,
@@ -1337,7 +1337,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
     def _should_run_expression_vector_history_backfill() -> bool:
         """判断是否需要启动表达向量历史补建任务。"""
 
-        return global_config.expression.expression_selection_mode in {"vector", "vector_intent"}
+        return global_config.expression.expression_selection_mode == "vector_intent"
 
     def _ensure_expression_vector_history_backfill_running(self) -> None:
         """在向量表达模式下拉起全局历史表达向量补建任务。"""

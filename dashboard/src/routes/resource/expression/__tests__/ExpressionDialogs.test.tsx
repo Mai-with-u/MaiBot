@@ -1,6 +1,6 @@
 /**
  * ExpressionDialogs 行为测试：
- * 覆盖详情对话框渲染 / 创建对话框校验与提交 / 编辑对话框预填与保存 /
+ * 覆盖编辑对话框的信息展示、预填与保存 / 创建对话框校验与提交 /
  * 三个确认对话框回调 / 旧版导入对话框的预览、映射与导入链路。
  */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -21,7 +21,6 @@ import {
   ClearChatExpressionsConfirmDialog,
   DeleteConfirmDialog,
   ExpressionCreateDialog,
-  ExpressionDetailDialog,
   ExpressionEditDialog,
   LegacyExpressionImportDialog,
 } from '../ExpressionDialogs'
@@ -91,67 +90,6 @@ function makeChat(id: string, name: string): ChatInfo {
   }
 }
 
-describe('ExpressionDetailDialog', () => {
-  it('expression 为 null 时不渲染对话框', () => {
-    render(
-      <ExpressionDetailDialog
-        expression={null}
-        open
-        onOpenChange={vi.fn()}
-        chatNameMap={new Map()}
-      />
-    )
-    expect(screen.queryByText('表达方式详情')).not.toBeInTheDocument()
-  })
-
-  it('渲染情境、风格、记录ID、chatNameMap 回退名称与未审核状态', () => {
-    render(
-      <ExpressionDetailDialog
-        expression={makeExpression()}
-        open
-        onOpenChange={vi.fn()}
-        chatNameMap={new Map([['chat-1', '测试群']])}
-      />
-    )
-    expect(screen.getByText('被夸奖时')).toBeInTheDocument()
-    expect(screen.getByText('害羞回应')).toBeInTheDocument()
-    expect(screen.getByText('7')).toBeInTheDocument()
-    expect(screen.getByText('测试群')).toBeInTheDocument()
-    expect(screen.getByText('未审核')).toBeInTheDocument()
-    // create_date 为 null 时创建时间显示 '-'
-    expect(screen.getByText('-')).toBeInTheDocument()
-  })
-
-  it('checked=true 时显示已通过审核', () => {
-    render(
-      <ExpressionDetailDialog
-        expression={makeExpression({ checked: true })}
-        open
-        onOpenChange={vi.fn()}
-        chatNameMap={new Map()}
-      />
-    )
-    expect(screen.getByText('已通过审核')).toBeInTheDocument()
-  })
-
-  it('点击关闭按钮回调 onOpenChange(false)', async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    render(
-      <ExpressionDetailDialog
-        expression={makeExpression()}
-        open
-        onOpenChange={onOpenChange}
-        chatNameMap={new Map()}
-      />
-    )
-    // 对话框存在两个「关闭」按钮（底部按钮与右上角 X），点击任意一个都应回调关闭
-    const closeButtons = screen.getAllByRole('button', { name: '关闭' })
-    await user.click(closeButtons[0])
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-})
-
 describe('ExpressionCreateDialog', () => {
   const chatList = [makeChat('chat-1', 'Chat 1')]
 
@@ -177,7 +115,12 @@ describe('ExpressionCreateDialog', () => {
     const onSuccess = vi.fn()
     vi.mocked(createExpression).mockResolvedValue(makeExpression())
     render(
-      <ExpressionCreateDialog open onOpenChange={vi.fn()} chatList={chatList} onSuccess={onSuccess} />
+      <ExpressionCreateDialog
+        open
+        onOpenChange={vi.fn()}
+        chatList={chatList}
+        onSuccess={onSuccess}
+      />
     )
 
     await user.type(screen.getByLabelText(/情境/), '被感谢时')
@@ -242,7 +185,7 @@ describe('ExpressionEditDialog', () => {
     expect(screen.queryByText('编辑表达方式')).not.toBeInTheDocument()
   })
 
-  it('打开时用 expression 预填输入框', () => {
+  it('打开时预填可编辑字段，并展示原详情中的记录信息', () => {
     render(
       <ExpressionEditDialog
         expression={makeExpression()}
@@ -254,6 +197,9 @@ describe('ExpressionEditDialog', () => {
     )
     expect(screen.getByLabelText('情境')).toHaveValue('被夸奖时')
     expect(screen.getByLabelText('风格')).toHaveValue('害羞回应')
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('未人工精选')).toBeInTheDocument()
+    expect(screen.getByText('-')).toBeInTheDocument()
   })
 
   it('修改情境后保存：调用更新接口并回调 onSuccess', async () => {
@@ -321,9 +267,7 @@ describe('确认对话框', () => {
   it('批量删除确认框展示数量并在确认时回调', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
-    render(
-      <BatchDeleteConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} count={5} />
-    )
+    render(<BatchDeleteConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} count={5} />)
     expect(screen.getByText(/您即将删除 5 个表达方式/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '确认删除' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)

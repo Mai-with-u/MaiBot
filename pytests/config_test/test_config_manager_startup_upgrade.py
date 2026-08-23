@@ -2,6 +2,27 @@ from typing import Any
 
 from src.config import config as config_module
 from src.config.config import Config, ConfigManager, ModelConfig
+from src.config.official_configs import ExpressionConfig
+
+
+def test_expression_selection_schema_exposes_only_supported_modes() -> None:
+    """配置界面不应继续展示已移除的 vector 模式。"""
+
+    field_schema = ExpressionConfig.model_json_schema()["properties"]["expression_selection_mode"]
+
+    assert field_schema["enum"] == ["legacy", "vector_intent"]
+    assert field_schema["options"] == ["legacy", "vector_intent"]
+
+
+def test_normalize_loaded_config_maps_removed_vector_mode() -> None:
+    """旧版 vector 配置应在校验前迁移为 vector_intent。"""
+
+    source_config = {"expression": {"expression_selection_mode": "vector"}}
+
+    normalized = config_module._normalize_loaded_bot_config_dict(source_config)
+
+    assert normalized["expression"]["expression_selection_mode"] == "vector_intent"
+    assert source_config["expression"]["expression_selection_mode"] == "vector"
 
 
 def test_initialize_upgrades_bot_and_model_config_without_exit(monkeypatch):

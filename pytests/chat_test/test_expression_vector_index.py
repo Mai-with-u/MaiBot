@@ -11,14 +11,91 @@ from src.chat.replyer.expression_vector_index import (
     CLUSTER_STATE_BOOTSTRAPPING,
     CLUSTER_STATE_STABLE,
     EMBEDDING_ITEM_FAILURE_ISOLATION_ATTEMPTS,
-    FULL_RECLUSTER_CHANGE_RATIO,
     ExpressionEmbeddingProfile,
     ExpressionHistoryBackfillSelection,
     ExpressionVectorIndex,
     ExpressionVectorIndexUpsertItem,
+    FULL_RECLUSTER_CHANGE_RATIO,
+    VECTOR_CLUSTER_WEIGHT,
+    VECTOR_DIVERSITY_LAMBDA,
+    VECTOR_ITEM_WEIGHT,
     _atomic_write_text,
     expression_fingerprint,
 )
+
+
+def test_vector_candidate_weights_preserve_item_to_cluster_ratio() -> None:
+    """移除词面信号后，应保留表达向量与聚类中心原有的七比一权重。"""
+
+    assert VECTOR_ITEM_WEIGHT + VECTOR_CLUSTER_WEIGHT == pytest.approx(1.0)
+    assert VECTOR_ITEM_WEIGHT / VECTOR_CLUSTER_WEIGHT == pytest.approx(7.0)
+
+
+def _select_by_mmr_reference(
+    scored_candidates: list[dict[str, float | int]],
+    vectors: np.ndarray,
+    *,
+    limit: int,
+) -> list[dict[str, float | int]]:
+    """保留优化前的 MMR 实现，用于验证选择结果完全一致。"""
+
+    selected: list[dict[str, float | int]] = []
+    remaining = list(scored_candidates)
+    while remaining and len(selected) < limit:
+        selected_indices = [int(item["vector_index"]) for item in selected]
+        best_index = 0
+        best_score = float("-inf")
+        for candidate_index, candidate in enumerate(remaining):
+            vector_index = int(candidate["vector_index"])
+            diversity_penalty = (
+                float(np.max(vectors[selected_indices] @ vectors[vector_index]))
+                if selected_indices
+                else 0.0
+            )
+            mmr_score = VECTOR_DIVERSITY_LAMBDA * float(candidate["score"]) - (
+                1.0 - VECTOR_DIVERSITY_LAMBDA
+            ) * diversity_penalty
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_index = candidate_index
+        selected.append(remaining.pop(best_index))
+    return selected
+
+
+def test_vectorized_mmr_matches_reference_selection() -> None:
+    """增量向量化 MMR 应与优化前算法选出完全相同的候选和顺序。"""
+
+    rng = np.random.default_rng(20260821)
+    vectors = rng.normal(size=(160, 48)).astype(np.float32)
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    vector_indices = rng.permutation(vectors.shape[0])[:120]
+    scored_candidates: list[dict[str, float | int]] = [
+        {
+            "id": candidate_id,
+            "vector_index": int(vector_index),
+            "score": float(rng.uniform(-0.2, 0.9)),
+        }
+        for candidate_id, vector_index in enumerate(vector_indices, start=1)
+    ]
+
+    expected = _select_by_mmr_reference(scored_candidates, vectors, limit=50)
+    actual = ExpressionVectorIndex._select_by_mmr(scored_candidates, vectors, limit=50)
+
+    assert [item["id"] for item in actual] == [item["id"] for item in expected]
+
+
+def test_vectorized_mmr_preserves_input_order_for_ties() -> None:
+    """分数和向量完全相同时，应继续按照原候选顺序处理并列项。"""
+
+    vectors = np.array([[1.0, 0.0]] * 6, dtype=np.float32)
+    scored_candidates: list[dict[str, float | int]] = [
+        {"id": index, "vector_index": index, "score": 0.5}
+        for index in range(vectors.shape[0])
+    ]
+
+    selected = ExpressionVectorIndex._select_by_mmr(scored_candidates, vectors, limit=5)
+
+    assert [item["id"] for item in selected] == [0, 1, 2, 3, 4]
 
 
 def test_run_kmeans_repairs_empty_clusters_for_identical_vectors() -> None:
@@ -523,7 +600,7 @@ async def test_history_backfill_uses_uniform_upserts_then_finalizes_after_empty_
     monkeypatch.setattr(
         global_config.expression,
         "expression_selection_mode",
-        "vector",
+        "vector_intent",
     )
     monkeypatch.setattr(vector_index, "get_current_embedding_profile", fake_get_current_embedding_profile)
     monkeypatch.setattr(vector_index, "_load_history_backfill_items", fake_load_history_backfill_items)
@@ -584,7 +661,7 @@ async def test_history_backfill_continues_when_locked_recheck_finds_new_item(
     async def fake_finalize_bootstrap_if_ready(**_kwargs):
         return next(finalize_results)
 
-    monkeypatch.setattr(global_config.expression, "expression_selection_mode", "vector")
+    monkeypatch.setattr(global_config.expression, "expression_selection_mode", "vector_intent")
     monkeypatch.setattr(vector_index, "get_current_embedding_profile", fake_get_current_embedding_profile)
     monkeypatch.setattr(vector_index, "_load_history_backfill_items", fake_load_history_backfill_items)
     monkeypatch.setattr(vector_index, "upsert_expressions", fake_upsert_expressions)

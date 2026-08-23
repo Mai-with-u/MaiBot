@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -161,7 +161,7 @@ async function renderPage() {
 }
 
 describe('EmojiManagementPage 特征化', () => {
-  it('初始加载：以默认筛选拉取列表与统计，状态 Tabs 显示计数', async () => {
+  it('初始加载：以默认筛选拉取列表与统计，状态下拉菜单显示计数', async () => {
     await renderPage()
     await waitFor(() =>
       expect(emojiApi.getEmojiList).toHaveBeenCalledWith({
@@ -170,16 +170,13 @@ describe('EmojiManagementPage 特征化', () => {
         status: 'adopted',
         format: undefined,
         search: undefined,
-        sort_by: 'usage_count',
+        sort_by: 'register_time',
         sort_order: 'desc',
       })
     )
     expect(emojiApi.getEmojiStats).toHaveBeenCalled()
     expect(await screen.findByTestId('list-count')).toHaveTextContent('2/2')
-    // 统计 Tabs：四个状态与各自计数
-    const adoptedTab = await screen.findByRole('tab', { name: /据为己用/ })
-    expect(adoptedTab).toHaveTextContent('4')
-    expect(screen.getByRole('tab', { name: /不认识/ })).toHaveTextContent('1')
+    expect(screen.getByRole('combobox', { name: '表情包状态' })).toHaveTextContent('据为己用 (4)')
     // 命中总数文案（textContent 会向上传播到祖先，限定叶子节点）
     expect(
       screen.getByText(
@@ -190,13 +187,34 @@ describe('EmojiManagementPage 特征化', () => {
     ).toBeInTheDocument()
   })
 
-  it('切换状态 Tab 后按新状态重新拉取列表', async () => {
-    const user = userEvent.setup()
+  it('切换状态下拉菜单后按新状态重新拉取列表', async () => {
     await renderPage()
-    await user.click(await screen.findByRole('tab', { name: /^认识/ }))
+    const statusSelect = await screen.findByRole('combobox', { name: '表情包状态' })
+    fireEvent.keyDown(statusSelect, { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: '认识 (3)' }))
     await waitFor(() =>
       expect(emojiApi.getEmojiList).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'known' })
+      )
+    )
+  })
+
+  it('排序字段与排序方向分别可切换', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+    const sortSelect = screen.getByRole('combobox', { name: '排序字段' })
+    fireEvent.keyDown(sortSelect, { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: '使用次数' }))
+    await waitFor(() =>
+      expect(emojiApi.getEmojiList).toHaveBeenCalledWith(
+        expect.objectContaining({ sort_by: 'usage_count', sort_order: 'desc' })
+      )
+    )
+
+    await user.click(screen.getByRole('button', { name: '切换为正序' }))
+    await waitFor(() =>
+      expect(emojiApi.getEmojiList).toHaveBeenCalledWith(
+        expect.objectContaining({ sort_by: 'usage_count', sort_order: 'asc' })
       )
     )
   })

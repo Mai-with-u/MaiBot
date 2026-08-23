@@ -296,6 +296,7 @@ class ModelInfo(ConfigBase):
         default=False,
         json_schema_extra={
             "x-widget": "switch",
+            "advanced": True,
         },
     )
     """强制流式输出模式 (若模型不支持非流式输出, 请设置为true启用强制流式输出, 默认值为false)"""

@@ -28,6 +28,7 @@ export interface ProviderConfig {
   base_url: string
   api_key: string
   client_type: string
+  default_headers?: Record<string, string>
   max_retry?: number
   timeout?: number
   retry_interval?: number
@@ -41,6 +42,7 @@ export interface TaskConfig {
   temperature?: number
   max_tokens?: number
   slow_threshold?: number
+  hard_timeout?: number
   selection_strategy?: string
 }
 

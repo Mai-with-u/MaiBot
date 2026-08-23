@@ -139,3 +139,16 @@ export async function activatePromptVersion(
     }
   )
 }
+
+export async function deletePromptVersion(
+  language: string,
+  filename: string,
+  versionId: string
+): Promise<PromptFileContent> {
+  return backendApi.delete<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/versions/${encodeURIComponent(versionId)}`,
+    {
+      errorMessage: '删除 Prompt 版本失败',
+    }
+  )
+}

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, ChevronsUpDown, Copy, Eye, EyeOff } from 'lucide-react'
+import { Check, ChevronDown, ChevronsUpDown, Copy, Eye, EyeOff } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -52,6 +54,7 @@ export function ProviderForm({
   const [lastTemplateId, setLastTemplateId] = useState(DEFAULT_PROVIDER_TEMPLATE_ID)
   const [templateComboboxOpen, setTemplateComboboxOpen] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [localProvider, setLocalProvider] = useState<APIProvider | null>(editingProvider)
   const [clientTypes, setClientTypes] = useState<ModelClientType[]>([])
   const [saving, setSaving] = useState(false)
@@ -84,6 +87,7 @@ export function ProviderForm({
       setLocalProvider(null)
       setFormErrors({})
       setShowApiKey(false)
+      setAdvancedOpen(false)
       setSelectedTemplate(DEFAULT_PROVIDER_TEMPLATE_ID)
       setLastTemplateId(DEFAULT_PROVIDER_TEMPLATE_ID)
       setSaving(false)
@@ -93,6 +97,7 @@ export function ProviderForm({
     setLocalProvider(editingProvider)
     setFormErrors({})
     setShowApiKey(false)
+    setAdvancedOpen(false)
 
     // 编辑时匹配已有配置；新增时默认使用 DeepSeek 模板。
     if (editingIndex !== null && editingProvider) {
@@ -500,81 +505,125 @@ export function ProviderForm({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="grid gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="max_retry">最大重试</Label>
-                  <HelpTooltip
-                    content="API 请求失败时的最大重试次数。设置为 0 表示不重试。默认值：2"
-                    side="top"
-                    maxWidth="250px"
+            <Collapsible
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              className="rounded-lg border bg-muted/10"
+            >
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="flex w-full items-center justify-between px-3 hover:bg-muted/60"
+                >
+                  <span>高级配置</span>
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+                  />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4 border-t px-3 py-4">
+                <div className="grid gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Label>默认请求 Headers</Label>
+                    <HelpTooltip
+                      content="该提供商的每一次请求都会携带这些 HTTP 请求头。请求头名称和值均为字符串。"
+                      side="top"
+                      maxWidth="280px"
+                    />
+                  </div>
+                  <KeyValueEditor
+                    value={localProvider?.default_headers ?? {}}
+                    onChange={(headers) => {
+                      const normalizedHeaders = Object.fromEntries(
+                        Object.entries(headers).map(([key, value]) => [key, String(value)])
+                      )
+                      setLocalProvider((prev) =>
+                        prev ? { ...prev, default_headers: normalizedHeaders } : null
+                      )
+                    }}
+                    placeholder="添加请求头，例如 HTTP-Referer"
+                    className="min-h-48"
                   />
                 </div>
-                <Input
-                  id="max_retry"
-                  type="number"
-                  min="0"
-                  value={localProvider?.max_retry ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseInt(e.target.value)
-                    setLocalProvider((prev) =>
-                      prev ? { ...prev, max_retry: val } : null
-                    )
-                  }}
-                  placeholder="默认: 2"
-                />
-              </div>
 
-              <div className="grid gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="timeout">超时(秒)</Label>
-                  <HelpTooltip
-                    content="单次 API 请求的超时时间（秒）。超时后会触发重试或报错。默认值：30 秒"
-                    side="top"
-                    maxWidth="250px"
-                  />
-                </div>
-                <Input
-                  id="timeout"
-                  type="number"
-                  min="1"
-                  value={localProvider?.timeout ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseInt(e.target.value)
-                    setLocalProvider((prev) =>
-                      prev ? { ...prev, timeout: val } : null
-                    )
-                  }}
-                  placeholder="默认: 30"
-                />
-              </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="max_retry">最大重试</Label>
+                      <HelpTooltip
+                        content="API 请求失败时的最大重试次数。设置为 0 表示不重试。默认值：2"
+                        side="top"
+                        maxWidth="250px"
+                      />
+                    </div>
+                    <Input
+                      id="max_retry"
+                      type="number"
+                      min="0"
+                      value={localProvider?.max_retry ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? null : parseInt(e.target.value)
+                        setLocalProvider((prev) =>
+                          prev ? { ...prev, max_retry: val } : null
+                        )
+                      }}
+                      placeholder="默认: 2"
+                    />
+                  </div>
 
-              <div className="grid gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor="retry_interval">重试间隔(秒)</Label>
-                  <HelpTooltip
-                    content="两次重试之间的等待时间（秒）。适当的间隔可以避免触发 API 限流。默认值：10 秒"
-                    side="top"
-                    maxWidth="250px"
-                  />
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="timeout">超时(秒)</Label>
+                      <HelpTooltip
+                        content="单次 API 请求的超时时间（秒）。超时后会触发重试或报错。默认值：30 秒"
+                        side="top"
+                        maxWidth="250px"
+                      />
+                    </div>
+                    <Input
+                      id="timeout"
+                      type="number"
+                      min="1"
+                      value={localProvider?.timeout ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? null : parseInt(e.target.value)
+                        setLocalProvider((prev) =>
+                          prev ? { ...prev, timeout: val } : null
+                        )
+                      }}
+                      placeholder="默认: 30"
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="retry_interval">重试间隔(秒)</Label>
+                      <HelpTooltip
+                        content="两次重试之间的等待时间（秒）。适当的间隔可以避免触发 API 限流。默认值：10 秒"
+                        side="top"
+                        maxWidth="250px"
+                      />
+                    </div>
+                    <Input
+                      id="retry_interval"
+                      type="number"
+                      min="1"
+                      value={localProvider?.retry_interval ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? null : parseInt(e.target.value)
+                        setLocalProvider((prev) =>
+                          prev
+                            ? { ...prev, retry_interval: val }
+                            : null
+                        )
+                      }}
+                      placeholder="默认: 10"
+                    />
+                  </div>
                 </div>
-                <Input
-                  id="retry_interval"
-                  type="number"
-                  min="1"
-                  value={localProvider?.retry_interval ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : parseInt(e.target.value)
-                    setLocalProvider((prev) =>
-                      prev
-                        ? { ...prev, retry_interval: val }
-                        : null
-                    )
-                  }}
-                  placeholder="默认: 10"
-                />
-              </div>
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
           </DialogBody>
 

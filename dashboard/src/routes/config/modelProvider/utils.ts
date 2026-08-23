@@ -6,6 +6,7 @@ import type { APIProvider } from './types'
  */
 export const cleanProviderData = (provider: APIProvider): APIProvider => ({
   ...provider,
+  default_headers: provider.default_headers ?? {},
   max_retry: provider.max_retry ?? 2,
   timeout: provider.timeout ?? 30,
   retry_interval: provider.retry_interval ?? 10,

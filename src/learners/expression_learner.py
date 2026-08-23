@@ -725,7 +725,7 @@ class ExpressionLearner:
 
     @staticmethod
     def _should_sync_expression_vector_index() -> bool:
-        return global_config.expression.expression_selection_mode in {"vector", "vector_intent"}
+        return global_config.expression.expression_selection_mode == "vector_intent"
 
     async def _sync_expression_vector_index_batch(self, expressions: Sequence[MaiExpression]) -> None:
         """表达学习批次写库成功后，同步维护表达向量索引并重聚类。"""

@@ -76,3 +76,51 @@ def test_activate_prompt_version_rejects_placeholder_mismatch(client: TestClient
     assert response.status_code == 400
     assert "缺少参数: name" in response.json()["detail"]
     assert "多余参数: other" in response.json()["detail"]
+
+
+def test_delete_prompt_version_removes_active_override_and_restores_default(client: TestClient) -> None:
+    save_response = client.put(
+        "/api/webui/config/prompts/zh-CN/replyer.prompt",
+        json={"content": "Hi {name}", "create_version": True, "label": "待删除版本"},
+    )
+    version_id = save_response.json()["active_version_id"]
+
+    response = client.delete(
+        f"/api/webui/config/prompts/zh-CN/replyer.prompt/versions/{version_id}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["content"] == "Hello {name}"
+    assert payload["customized"] is False
+    assert payload["active_version_id"] is None
+    assert payload["versions"] == []
+
+    catalog_response = client.get("/api/webui/config/prompts")
+    [file_info] = catalog_response.json()["files"]["zh-CN"]
+    assert file_info["customized"] is False
+    assert file_info["custom_version_count"] == 0
+
+
+def test_delete_inactive_prompt_version_keeps_active_override(client: TestClient) -> None:
+    first_response = client.put(
+        "/api/webui/config/prompts/zh-CN/replyer.prompt",
+        json={"content": "First {name}", "create_version": True, "label": "第一个版本"},
+    )
+    first_version_id = first_response.json()["active_version_id"]
+    second_response = client.put(
+        "/api/webui/config/prompts/zh-CN/replyer.prompt",
+        json={"content": "Second {name}", "create_version": True, "label": "第二个版本"},
+    )
+    second_version_id = second_response.json()["active_version_id"]
+
+    response = client.delete(
+        f"/api/webui/config/prompts/zh-CN/replyer.prompt/versions/{first_version_id}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["content"] == "Second {name}"
+    assert payload["customized"] is True
+    assert payload["active_version_id"] == second_version_id
+    assert [version["id"] for version in payload["versions"]] == [second_version_id]

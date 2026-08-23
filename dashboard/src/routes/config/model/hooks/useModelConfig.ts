@@ -454,6 +454,7 @@ export function useModelConfig() {
         base_url: provider.base_url,
         api_key: provider.api_key,
         client_type: provider.client_type,
+        default_headers: provider.default_headers,
         max_retry: provider.max_retry ?? 2,
         timeout: provider.timeout ?? 30,
         retry_interval: provider.retry_interval ?? 10,
@@ -843,11 +844,16 @@ export function useModelConfig() {
 
   // ---- 模型编辑对话框 ----
   const openEditDialog = useCallback(
-    (model: ModelInfo | null, index: number | null, onOpened?: () => void) => {
+    (
+      model: ModelInfo | null,
+      index: number | null,
+      onOpened?: () => void,
+      preferredProvider?: string
+    ) => {
       // 清除表单验证错误
       setFormErrors({})
 
-      const defaultProvider = providers[0] || ''
+      const defaultProvider = preferredProvider || providers[0] || ''
 
       setEditingModel(
         model || {

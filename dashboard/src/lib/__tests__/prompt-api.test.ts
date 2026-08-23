@@ -4,6 +4,7 @@ import { ApiError, backendApi } from '@/lib/http'
 
 import {
   activatePromptVersion,
+  deletePromptVersion,
   getDefaultPromptFile,
   getPromptCatalog,
   getPromptFile,
@@ -199,5 +200,20 @@ describe('activatePromptVersion', () => {
     await expect(activatePromptVersion('zh', 'planner.txt', 'missing')).rejects.toMatchObject({
       status: 404,
     })
+  })
+})
+
+describe('deletePromptVersion', () => {
+  it('以 DELETE 请求版本端点删除指定版本', async () => {
+    const content = makeFileContent({ customized: false })
+    deleteMock.mockResolvedValue(content)
+
+    await expect(deletePromptVersion('zh', 'planner.txt', 'v2')).resolves.toBe(content)
+    expect(deleteMock).toHaveBeenCalledWith(
+      '/api/webui/config/prompts/zh/planner.txt/versions/v2',
+      {
+        errorMessage: '删除 Prompt 版本失败',
+      }
+    )
   })
 })

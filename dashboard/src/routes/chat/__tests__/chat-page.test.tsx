@@ -542,6 +542,19 @@ describe('聊天页 ChatPage', () => {
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
   })
 
+  it('MaiSaka 监控：会话身份晚于快照到达时恢复当前思考状态', async () => {
+    await renderConnectedPage()
+
+    emitMonitor({
+      type: 'stage.snapshot',
+      data: { entries: [makeStageStatus({ stage: 'Planner 决策' })], timestamp: 1 },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+  })
+
   it('MaiSaka 监控：llm.retry 推断重试状态，llm.error 置为错误状态', async () => {
     await renderConnectedPage()
     emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
@@ -575,6 +588,51 @@ describe('聊天页 ChatPage', () => {
       },
     })
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+  })
+
+  it('MaiSaka 监控：当前阶段快照清除历史回放的模型错误', async () => {
+    await renderConnectedPage()
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '历史模型错误',
+        timestamp: 401,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+
+    emitMonitor({ type: 'stage.snapshot', data: { entries: [], timestamp: 402 } })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+  })
+
+  it('MaiSaka 监控：进入等待消息阶段后清除当前模型错误', async () => {
+    await renderConnectedPage()
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '模型错误',
+        timestamp: 401,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '等待消息', agent_state: 'wait', timestamp: 402 }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
   })
 
   it('关闭虚拟标签页：注销会话、更新持久化并回到默认标签；默认标签不可关闭', async () => {
