@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     ContextItemMeta,
@@ -14,8 +15,11 @@ from src.maisaka.context.history import (
     normalize_tool_call_result_pairs,
     normalize_tool_result_order,
 )
-from src.maisaka.context.messages import ModelOutputContextMessage, ToolResultMessage
-from src.maisaka.context.post_processor import _build_trimmed_assistant_tool_user_message
+from src.maisaka.context.messages import ModelOutputContextMessage, SessionBackedMessage, ToolResultMessage
+from src.maisaka.context.post_processor import (
+    _build_trimmed_assistant_tool_user_message,
+    _trim_history_to_context_target,
+)
 from src.maisaka.chat_loop_service import MaisakaChatLoopService
 
 
@@ -50,6 +54,14 @@ def _result(call_id: str, logical_turn_id: str = "turn-1") -> ToolResultMessage:
         tool_call_id=call_id,
         tool_name="lookup",
         logical_turn_id=logical_turn_id,
+    )
+
+
+def _user(content: str) -> SessionBackedMessage:
+    return SessionBackedMessage(
+        raw_message=MessageSequence([TextComponent(content)]),
+        visible_text=content,
+        timestamp=datetime.now(),
     )
 
 
@@ -142,6 +154,19 @@ def test_context_selection_keeps_complete_tool_turn_beyond_window() -> None:
 
     assert selected == history
     assert "tool_turn_overflow" in selection_reason
+
+
+def test_history_trimming_keeps_user_and_following_tool_turn_together() -> None:
+    trigger = _user("触发工具调用")
+    call = _call("call-item", "call-1")
+    result = _result("call-1")
+    latest = _user("最新消息")
+    history = [trigger, call, result, latest]
+
+    removed = _trim_history_to_context_target(history, target_context_count=2)
+
+    assert removed == [trigger, call, result]
+    assert history == [latest]
 
 
 def test_history_protocol_removes_both_turns_when_call_and_output_turns_mismatch() -> None:
