@@ -1170,6 +1170,17 @@ class MetadataEpisodeMixin:
 
         conditions.append(f"{source_expr} != ''")
         conditions.append("COALESCE(e.paragraph_count, 0) > 0")
+        conditions.append(
+            """
+            COALESCE(e.paragraph_count, 0) = (
+                SELECT COUNT(*)
+                FROM episode_paragraphs ep_current
+                JOIN paragraphs p_current ON p_current.hash = ep_current.paragraph_hash
+                WHERE ep_current.episode_id = e.episode_id
+                  AND (p_current.is_deleted IS NULL OR p_current.is_deleted = 0)
+            )
+            """
+        )
 
         if source:
             token = self._normalize_episode_source(source)

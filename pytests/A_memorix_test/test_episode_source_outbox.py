@@ -135,6 +135,38 @@ def test_source_revision_cas_rejects_stale_publish_and_keeps_old_snapshot(tmp_pa
         store.close()
 
 
+def test_query_episodes_hides_snapshot_with_deleted_evidence(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    source = "chat_summary:deleted-evidence"
+    try:
+        paragraph_hash = store.add_paragraph("Episode 删除证据测试", source=source)
+        now = time.time() + 10.0
+        store.enqueue_episode_source_rebuild(source, reason="initial", debounce_seconds=0.0, now=now)
+        claim = store.claim_episode_source_rebuild_batch(
+            generation_hash="generation-v1",
+            limit=1,
+            max_wait_seconds=0.0,
+            now=now,
+        )[0]
+        published = store.publish_episode_source_rebuild(
+            source,
+            lease_token=claim["lease_token"],
+            claimed_revision=claim["claimed_revision"],
+            generation_hash="generation-v1",
+            episodes_payloads=[_payload(source, paragraph_hash)],
+            now=now,
+        )
+        assert published["published"] is True
+        assert len(store.query_episodes(source=source)) == 1
+
+        assert store.mark_as_deleted([paragraph_hash], "paragraph", reason="test_soft_delete") == 1
+
+        assert store.query_episodes(source=source) == []
+    finally:
+        store.close()
+
+
 def test_expired_source_lease_is_reclaimed_without_accepting_old_token(tmp_path) -> None:
     store = MetadataStore(data_dir=tmp_path)
     store.connect()
