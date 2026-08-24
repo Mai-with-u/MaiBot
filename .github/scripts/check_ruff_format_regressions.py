@@ -26,7 +26,7 @@ def _find_unformatted_files(project_root: Path) -> set[str]:
     if result.returncode not in {0, 1}:
         raise RuntimeError(f"Ruff format 执行失败：\n{output.strip()}")
 
-    unformatted_files = {Path(match).as_posix().lower() for match in UNFORMATTED_FILE_PATTERN.findall(output)}
+    unformatted_files = {Path(match).as_posix() for match in UNFORMATTED_FILE_PATTERN.findall(output)}
     if result.returncode == 1 and not unformatted_files:
         raise RuntimeError(f"无法解析 Ruff format 结果：\n{output.strip()}")
     return unformatted_files
