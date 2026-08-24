@@ -368,6 +368,32 @@ def test_webui_memory_record_context_derives_related_content(
         store.close()
 
 
+def test_webui_fact_context_limits_paragraph_evidence_after_filtering_type(
+    client: TestClient,
+    monkeypatch,
+    tmp_path: Path,
+):
+    store, ids = _memory_record_store(tmp_path)
+    store.add_fact_evidence(
+        ids["fact"],
+        evidence_type="relation",
+        evidence_id=ids["relation"],
+        observed_at=9_999_999_999.0,
+    )
+    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    try:
+        response = client.get(
+            f"/api/webui/memory/records/fact/{ids['fact']}",
+            params={"limit": 1},
+        )
+
+        assert response.status_code == 200
+        paragraphs = response.json()["related"]["paragraphs"]
+        assert [item["id"] for item in paragraphs] == [ids["paragraph"]]
+    finally:
+        store.close()
+
+
 def test_webui_memory_record_context_finds_profile_beyond_recent_snapshot_window(
     client: TestClient,
     monkeypatch,

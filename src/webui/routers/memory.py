@@ -1118,7 +1118,13 @@ def _memory_related_paragraph_hashes(record_type: str, record: dict[str, Any], l
         return [str(row.get("hash") or "") for row in rows if str(row.get("hash") or "").strip()]
 
     evidence_rows = _query_memory_records(
-        "SELECT evidence_id FROM fact_evidence WHERE claim_id = ? ORDER BY observed_at DESC LIMIT ?",
+        """
+        SELECT evidence_id
+        FROM fact_evidence
+        WHERE claim_id = ? AND evidence_type = 'paragraph'
+        ORDER BY observed_at DESC
+        LIMIT ?
+        """,
         (str(record.get("claim_id") or ""), limit),
     )
     evidence_ids = [str(row.get("evidence_id") or "").strip() for row in evidence_rows]
