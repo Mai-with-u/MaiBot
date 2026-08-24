@@ -579,6 +579,34 @@ describe('ModelConfigPage 特征化', () => {
     expect(configApi.updateModelConfig).not.toHaveBeenCalled()
   })
 
+  it('在指定厂商下添加模型时默认选择该厂商', async () => {
+    const user = userEvent.setup()
+    const configWithTwoProviders = {
+      ...baseConfig(),
+      api_providers: [
+        ...baseConfig().api_providers,
+        {
+          name: 'custom-provider',
+          base_url: 'https://example.com/v1',
+          api_key: 'sk-custom',
+          client_type: 'openai',
+        },
+      ],
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(configWithTwoProviders as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(configWithTwoProviders as never)
+
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(screen.getByRole('button', { name: '筛选厂商 custom-provider' }))
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('combobox', { name: 'API 提供商 *' })).toHaveTextContent(
+      'custom-provider'
+    )
+  })
+
   it('搜索无匹配时卡片和表格都显示未找到，并给出结果计数', async () => {
     const user = userEvent.setup()
     await renderModelPage()

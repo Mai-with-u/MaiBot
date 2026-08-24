@@ -844,11 +844,16 @@ export function useModelConfig() {
 
   // ---- 模型编辑对话框 ----
   const openEditDialog = useCallback(
-    (model: ModelInfo | null, index: number | null, onOpened?: () => void) => {
+    (
+      model: ModelInfo | null,
+      index: number | null,
+      onOpened?: () => void,
+      preferredProvider?: string
+    ) => {
       // 清除表单验证错误
       setFormErrors({})
 
-      const defaultProvider = providers[0] || ''
+      const defaultProvider = preferredProvider || providers[0] || ''
 
       setEditingModel(
         model || {

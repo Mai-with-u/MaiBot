@@ -345,14 +345,28 @@ def _trim_history_to_context_target(
         if is_mid_term_memory_message(message):
             continue
 
-        unit_indexes = [index]
+        unit_indexes = {index}
         logical_turn_id = _get_logical_turn_id(message)
         if logical_turn_id in tool_turn_ids:
-            unit_indexes = [
+            unit_indexes = {
                 candidate_index
                 for candidate_index, candidate in enumerate(chat_history)
                 if _get_logical_turn_id(candidate) == logical_turn_id
-            ]
+            }
+        elif message.role == "user":
+            # user 消息触发的工具调用不能在裁切点两侧拆开，否则剩余历史会从
+            # function call 开始，违反部分模型的消息顺序要求。
+            anchored_tool_turn_ids = _collect_following_tool_turn_ids(
+                chat_history,
+                user_index=index,
+                tool_turn_ids=tool_turn_ids,
+            )
+            if anchored_tool_turn_ids:
+                unit_indexes.update(
+                    candidate_index
+                    for candidate_index, candidate in enumerate(chat_history)
+                    if _get_logical_turn_id(candidate) in anchored_tool_turn_ids
+                )
 
         visited_indexes.update(unit_indexes)
         remove_indexes.extend(unit_indexes)
@@ -368,6 +382,24 @@ def _trim_history_to_context_target(
     for index in reversed(normalized_remove_indexes):
         del chat_history[index]
     return removed_messages
+
+
+def _collect_following_tool_turn_ids(
+    chat_history: list[LLMContextMessage],
+    *,
+    user_index: int,
+    tool_turn_ids: set[str],
+) -> set[str]:
+    """收集一条 user 消息之后、下一条 user 消息之前的工具轮次。"""
+
+    following_tool_turn_ids: set[str] = set()
+    for message in chat_history[user_index + 1 :]:
+        if message.role == "user":
+            break
+        logical_turn_id = _get_logical_turn_id(message)
+        if logical_turn_id in tool_turn_ids:
+            following_tool_turn_ids.add(logical_turn_id)
+    return following_tool_turn_ids
 
 
 def _get_logical_turn_id(message: LLMContextMessage) -> str | None:

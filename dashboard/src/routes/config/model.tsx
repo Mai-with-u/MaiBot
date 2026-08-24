@@ -504,8 +504,12 @@ function ModelConfigPageContent() {
   }
 
   // 打开模型编辑对话框：重置高级设置可见性后委托核心 hook
-  const openEditDialog = (model: ModelInfo | null, index: number | null) => {
-    mc.openEditDialog(model, index, () => setAdvancedModelSettingsVisible(false))
+  const openEditDialog = (
+    model: ModelInfo | null,
+    index: number | null,
+    preferredProvider?: string
+  ) => {
+    mc.openEditDialog(model, index, () => setAdvancedModelSettingsVisible(false), preferredProvider)
   }
 
   const openProviderDialog = (provider: APIProvider | null, index: number | null) => {
@@ -752,7 +756,7 @@ function ModelConfigPageContent() {
                 className="flex min-h-0 min-w-0 flex-col gap-4 lg:col-span-3 lg:h-full lg:overflow-hidden"
                 data-tour="models-tab-trigger"
               >
-          {/* 搜索框 */}
+          {/* 搜索与模型操作 */}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-1 sm:flex-row sm:items-center">
               <div className="relative w-full sm:max-w-sm">
@@ -764,6 +768,16 @@ function ModelConfigPageContent() {
                   className="pl-9"
                 />
               </div>
+              <Button
+                onClick={() => openEditDialog(null, null, modelProviderFilter || undefined)}
+                size="sm"
+                variant="outline"
+                className="w-full shrink-0 sm:w-auto"
+                data-tour="add-model-button"
+              >
+                <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
+                <span className="text-sm">添加模型</span>
+              </Button>
               {searchQuery && (
                 <p className="text-sm text-muted-foreground whitespace-nowrap">
                   找到 {filteredModels.length} 个结果
@@ -799,10 +813,6 @@ function ModelConfigPageContent() {
                   <span className="text-sm">批量删除 ({selectedModels.size})</span>
                 </Button>
               )}
-              <Button onClick={() => openEditDialog(null, null)} size="sm" variant="outline" className="w-full sm:w-auto" data-tour="add-model-button">
-                <Plus className="mr-2 h-4 w-4" strokeWidth={2} fill="none" />
-                <span className="text-sm">添加模型</span>
-              </Button>
             </div>
           </div>
 
