@@ -1757,9 +1757,10 @@ class MemoryDeleteAdminService(KernelServiceBase):
         )
         restored_relation_hashes: List[str] = []
         restore_jobs: List[Dict[str, Any]] = []
-        profile_person_ids = self._profile_person_ids_for_delete_items(items)
+        profile_person_ids: List[str] = []
         with self.metadata_store.transaction(immediate=True) as conn:
             self.metadata_store.cancel_delete_cleanup_jobs(operation_id, conn=conn)
+            profile_person_ids = self._profile_person_ids_for_delete_items(items, conn=conn)
 
             for hash_value, payload in entity_payloads.items():
                 entity_row = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
