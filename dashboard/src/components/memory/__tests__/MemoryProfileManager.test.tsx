@@ -220,6 +220,29 @@ describe('MemoryProfileManager 查询流程', () => {
     expect(memoryApi.queryMemoryProfile).not.toHaveBeenCalled()
   })
 
+  it('高级 person_id 只在提交查询后加载别名', async () => {
+    vi.mocked(memoryApi.getMemoryProfiles).mockResolvedValue({ success: true, items: [] })
+    vi.mocked(memoryApi.queryMemoryProfile).mockResolvedValue({
+      success: true,
+      person_id: 'person-direct',
+      profile_text: '直接查询得到的画像',
+    })
+    await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '高级查询' }))
+    vi.mocked(memoryApi.getMemoryProfileAliases).mockClear()
+
+    fireEvent.change(screen.getByLabelText('person_id'), { target: { value: 'person-direct' } })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(memoryApi.getMemoryProfileAliases).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryProfileAliases).toHaveBeenCalledWith('person-direct')
+    })
+  })
+
   it('仅填关键词时走画像检索：更新列表并切换到检索结果模式', async () => {
     await renderManager()
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: ' 王五 ' } })

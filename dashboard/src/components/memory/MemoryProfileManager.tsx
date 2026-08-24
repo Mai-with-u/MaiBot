@@ -167,7 +167,7 @@ export function MemoryProfileManager({ initialPersonId = '' }: MemoryProfileMana
   )
   const profileText = resolveProfileText(queryResult, selectedProfile)
   const selectedDisplayName = selectedProfile?.person_name || selectedPersonId || String(queryResult?.person_id ?? '未选择')
-  const activePersonId = selectedPersonId || queryPersonId.trim() || String(queryResult?.person_id ?? profileEvidence?.person_id ?? '')
+  const activePersonId = selectedPersonId || String(queryResult?.person_id ?? profileEvidence?.person_id ?? '')
   const profileEvidencePersonId = String(profileEvidence?.person_id ?? '').trim()
   const currentProfileEvidence = profileEvidencePersonId && profileEvidencePersonId === activePersonId.trim()
     ? profileEvidence
