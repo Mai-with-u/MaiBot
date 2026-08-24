@@ -35,18 +35,21 @@ class MemoryVectorRecoveryService(KernelServiceBase):
         "v1_metadata_id_collision",
         "v1_tombstone_invalid",
         "v1_tombstone_orphaned",
-        "v1_dimension_mismatch",
-        "v1_fingerprint_missing",
-        "v1_fingerprint_mismatch",
-        "v2_dimension_mismatch",
-        "v2_fingerprint_missing",
-        "v2_fingerprint_mismatch",
         "v2_commit_invalid",
         "v2_commit_mismatch",
         "dual_pool_missing",
         "vector_pair_missing",
         "vector_pair_truncated",
         "vector_pair_count_mismatch",
+    }
+    _EMBEDDING_COMPATIBILITY_CODES = {
+        "embedding_fingerprint_unavailable",
+        "v1_dimension_mismatch",
+        "v1_fingerprint_missing",
+        "v1_fingerprint_mismatch",
+        "v2_dimension_mismatch",
+        "v2_fingerprint_missing",
+        "v2_fingerprint_mismatch",
     }
     _QUARANTINE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
@@ -134,8 +137,17 @@ class MemoryVectorRecoveryService(KernelServiceBase):
         return snapshot
 
     def _disable_vector_channel(self, exc: BaseException) -> None:
-        """未知向量异常只关闭能力，不移动、删除或覆盖原文件。"""
+        """关闭不可信向量能力，但不移动、删除或覆盖原文件。"""
         error_code = exc.error_code if isinstance(exc, VectorStoreIntegrityError) else "vector_unclassified_error"
+        if error_code == "embedding_fingerprint_unavailable":
+            state = "verification_pending"
+            recovery_stage = "waiting_embedding_probe"
+        elif error_code in self._EMBEDDING_COMPATIBILITY_CODES:
+            state = "incompatible"
+            recovery_stage = "rebuild_required"
+        else:
+            state = "unavailable"
+            recovery_stage = "not_started"
         self.vector_store = None
         self.paragraph_vector_store = None
         self.graph_vector_store = None
@@ -144,14 +156,17 @@ class MemoryVectorRecoveryService(KernelServiceBase):
         self._set_runtime_capability("vector_read", False)
         self._set_runtime_capability("vector_write", False)
         self._set_vector_health(
-            state="unavailable",
+            state=state,
             error_code=error_code,
             reason=str(exc),
-            recovery_stage="not_started",
+            recovery_stage=recovery_stage,
             operation_id="",
             trusted_coverage=0.0,
         )
-        logger.exception(f"向量通道发生未分类异常，已保持原文件并降级运行: {exc}")
+        logger.warning(
+            "向量通道暂不可用，已保持原文件并降级运行: "
+            f"code={error_code}, error={exc}"
+        )
 
     def _open_trusted_view(self, quarantine_path: Path) -> Optional[ReadOnlyVectorStoreView]:
         try:

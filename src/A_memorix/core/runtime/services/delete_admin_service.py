@@ -809,6 +809,106 @@ class MemoryDeleteAdminService(KernelServiceBase):
             preview["source"] = source
         return preview
 
+    def _profile_person_ids_for_delete_items(
+        self,
+        items: Sequence[Dict[str, Any]],
+        *,
+        conn: Any = None,
+    ) -> List[str]:
+        """从删除快照及其证据段落中解析需要重建画像的人物。"""
+
+        assert self.metadata_store
+        person_ids: List[str] = []
+        paragraph_hashes: List[str] = []
+
+        def append_metadata(raw_metadata: Any) -> None:
+            metadata = coerce_metadata_dict(raw_metadata)
+            person_ids.extend(tokens(metadata.get("person_ids")))
+            person_ids.extend(
+                tokens(
+                    [
+                        metadata.get("person_id"),
+                        metadata.get("target_person_id"),
+                    ]
+                )
+            )
+
+        def append_fact_snapshot(raw_snapshot: Any) -> None:
+            if not isinstance(raw_snapshot, dict):
+                return
+            for claim in raw_snapshot.get("claims") or []:
+                if not isinstance(claim, dict):
+                    continue
+                if str(claim.get("scope_type", "") or "").strip().lower() != "person":
+                    continue
+                person_ids.extend(tokens([claim.get("scope_id")]))
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("item_type", "") or "").strip()
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            if item_type == "paragraph":
+                paragraph = payload.get("paragraph") if isinstance(payload.get("paragraph"), dict) else {}
+                append_metadata(paragraph.get("metadata"))
+                source = str(paragraph.get("source", "") or "").strip()
+                if source.startswith("person_fact:"):
+                    person_ids.extend(tokens([source.split(":", 1)[1]]))
+                paragraph_hashes.extend(tokens([paragraph.get("hash"), item.get("item_hash")]))
+                append_fact_snapshot(payload.get("fact_evidence_snapshot"))
+                for external_ref in payload.get("external_refs") or []:
+                    if isinstance(external_ref, dict):
+                        append_metadata(external_ref.get("metadata"))
+            elif item_type == "relation":
+                paragraph_hashes.extend(tokens(payload.get("paragraph_hashes")))
+            elif item_type == "entity":
+                paragraph_hashes.extend(
+                    tokens(
+                        link.get("paragraph_hash")
+                        for link in payload.get("paragraph_links") or []
+                        if isinstance(link, dict)
+                    )
+                )
+
+        paragraph_hashes = tokens(paragraph_hashes)
+        if paragraph_hashes:
+            connection = self.metadata_store._resolve_conn(conn)
+            placeholders = ",".join("?" for _ in paragraph_hashes)
+            rows = connection.execute(
+                f"SELECT hash, source, metadata FROM paragraphs WHERE hash IN ({placeholders})",
+                tuple(paragraph_hashes),
+            ).fetchall()
+            for row in rows:
+                paragraph = self.metadata_store._row_to_dict(row, "paragraph")
+                append_metadata(paragraph.get("metadata"))
+                source = str(paragraph.get("source", "") or "").strip()
+                if source.startswith("person_fact:"):
+                    person_ids.extend(tokens([source.split(":", 1)[1]]))
+            append_fact_snapshot(
+                self.metadata_store.snapshot_fact_evidence_for_paragraphs(
+                    paragraph_hashes,
+                    conn=connection,
+                )
+            )
+        return tokens(person_ids)
+
+    def _enqueue_delete_profile_refreshes(
+        self,
+        person_ids: Sequence[str],
+        *,
+        reason: str,
+        conn: Any,
+    ) -> None:
+        assert self.metadata_store
+        if not bool(self._cfg("person_profile.enabled", True)):
+            return
+        for person_id in tokens(person_ids):
+            self.metadata_store.enqueue_person_profile_refresh(
+                person_id=person_id,
+                reason=reason,
+                conn=conn,
+            )
+
     def _build_standard_delete_result(
         self,
         *,
@@ -1149,6 +1249,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
         matched_source_tokens: List[str] = []
         affected_sources: List[str] = []
         stale_relation_hashes: List[str] = []
+        profile_person_ids: List[str] = []
         operation_id = ""
         try:
             with self.metadata_store.transaction(immediate=True) as conn:
@@ -1166,6 +1267,10 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 matched_source_tokens = tokens((plan.get("target_hashes") or {}).get("matched_sources"))
                 affected_sources = tokens(plan.get("sources"))
                 cursor = conn.cursor()
+                profile_person_ids = self._profile_person_ids_for_delete_items(
+                    plan.get("items") or [],
+                    conn=conn,
+                )
                 expected_relation_states = (plan.get("selector") or {}).get("expected_relation_states")
                 if expected_relation_states is not None:
                     if act_mode != "relation":
@@ -1322,6 +1427,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
                     summary_patch={"state": "pending_cleanup", "cleanup_jobs": len(cleanup_jobs)},
                     conn=conn,
                 )
+                self._enqueue_delete_profile_refreshes(
+                    profile_person_ids,
+                    reason="delete_admin_execute",
+                    conn=conn,
+                )
 
             cleanup_result = await self._process_pending_storage_cleanup_jobs_serialized(
                 operation_id=operation_id
@@ -1345,6 +1455,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
             result["cleanup"] = cleanup_result
             result["stale_relation_hashes"] = stale_relation_hashes
             result["skipped_due_to_concurrent_change"] = len(stale_relation_hashes)
+            result["profile_refresh_person_ids"] = profile_person_ids
             return result
         except Exception as exc:
             logger.warning(f"delete_admin execute 失败: {exc}")
@@ -1489,6 +1600,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
                     "error": "未命中可恢复关系",
                 }
 
+            profile_person_ids = self._profile_person_ids_for_delete_items(
+                relation_items,
+                conn=conn,
+            )
+
             restored_targets = [str(item["item_hash"]) for item in relation_items]
             superseded = self.metadata_store.supersede_delete_cleanup_resources(
                 resource_type="relation",
@@ -1557,6 +1673,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 jobs=restore_jobs,
                 conn=conn,
             )
+            self._enqueue_delete_profile_refreshes(
+                profile_person_ids,
+                reason="delete_admin_relation_restore",
+                conn=conn,
+            )
             self.metadata_store.rebuild_relation_hash_aliases()
 
         cleanup = await self._process_pending_storage_cleanup_jobs_serialized(
@@ -1572,6 +1693,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
             "restored_count": len(restored_hashes),
             "failures": failures,
             "cleanup": cleanup,
+            "profile_refresh_person_ids": profile_person_ids,
         }
 
     async def _restore_delete_operation(self, operation: Dict[str, Any]) -> Dict[str, Any]:
@@ -1635,8 +1757,10 @@ class MemoryDeleteAdminService(KernelServiceBase):
         )
         restored_relation_hashes: List[str] = []
         restore_jobs: List[Dict[str, Any]] = []
+        profile_person_ids: List[str] = []
         with self.metadata_store.transaction(immediate=True) as conn:
             self.metadata_store.cancel_delete_cleanup_jobs(operation_id, conn=conn)
+            profile_person_ids = self._profile_person_ids_for_delete_items(items, conn=conn)
 
             for hash_value, payload in entity_payloads.items():
                 entity_row = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
@@ -1788,6 +1912,11 @@ class MemoryDeleteAdminService(KernelServiceBase):
                 summary_patch={"state": "restore_pending", "restore_jobs": len(restore_jobs)},
                 conn=conn,
             )
+            self._enqueue_delete_profile_refreshes(
+                profile_person_ids,
+                reason="delete_admin_restore",
+                conn=conn,
+            )
             self.metadata_store.rebuild_relation_hash_aliases()
 
         cleanup_result = await self._process_pending_storage_cleanup_jobs_serialized(
@@ -1800,6 +1929,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
             "restored_relations": restored_relation_hashes,
             "sources": sources,
             "cleanup": cleanup_result,
+            "profile_refresh_person_ids": profile_person_ids,
         }
         return {
             "success": str(refreshed_operation.get("status", "") or "") == "restored",

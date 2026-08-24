@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 import asyncio
 import hashlib
 import json
@@ -39,6 +39,7 @@ from ..storage import (
 from ..storage.knowledge_types import ImportStrategy
 from ..storage.type_detection import looks_like_quote_text
 from ..strategies.base import KnowledgeType as StrategyKnowledgeType, ProcessedChunk
+from ..strategies.chat_log import ChatLogStrategy
 from ..strategies.factual import FactualStrategy
 from ..strategies.narrative import NarrativeStrategy
 from ..strategies.quote import QuoteStrategy
@@ -403,6 +404,7 @@ class ImportTaskManager:
         self._task_order: deque[str] = deque()
         self._queue: deque[str] = deque()
         self._active_task_id: Optional[str] = None
+        self._active_run_task: Optional[asyncio.Task] = None
 
         self._worker_task: Optional[asyncio.Task] = None
         self._stopping = False
@@ -1826,6 +1828,7 @@ class ImportTaskManager:
             }
 
     async def cancel_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        run_task: Optional[asyncio.Task] = None
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -1842,7 +1845,14 @@ class ImportTaskManager:
                 task.status = "cancel_requested"
                 task.current_step = "cancel_requested"
                 task.updated_at = _now()
-            return task.to_summary()
+                if self._active_task_id == task_id:
+                    run_task = self._active_run_task
+            summary = task.to_summary()
+
+        # 释放状态锁后再取消，避免任务终态收敛与取消接口互相等待。
+        if run_task is not None and not run_task.done():
+            run_task.cancel()
+        return summary
 
     def _build_retry_plan(self, task: ImportTaskRecord) -> Dict[str, Any]:
         chunk_retry_candidates: List[Tuple[ImportFileRecord, List[int]]] = []
@@ -2143,6 +2153,7 @@ class ImportTaskManager:
                 break
 
             task_id: Optional[str] = None
+            run_task: Optional[asyncio.Task] = None
             async with self._lock:
                 while self._queue:
                     candidate = self._queue.popleft()
@@ -2153,6 +2164,8 @@ class ImportTaskManager:
                         continue
                     task_id = candidate
                     self._active_task_id = candidate
+                    run_task = asyncio.create_task(self._run_task(candidate))
+                    self._active_run_task = run_task
                     break
 
             if not task_id:
@@ -2160,10 +2173,16 @@ class ImportTaskManager:
                 continue
 
             try:
-                await self._run_task(task_id)
+                if run_task is None:
+                    continue
+                await run_task
             except asyncio.CancelledError:
-                origin = "runtime_shutdown" if self._stopping else "parent_cancel"
-                reason = "服务关闭" if self._stopping else "上层任务已取消"
+                async with self._lock:
+                    task = self._tasks.get(task_id)
+                    requested_origin = task.cancel_origin if task else ""
+                user_cancelled = requested_origin == "user_request" and not self._stopping
+                origin = "user_request" if user_cancelled else ("runtime_shutdown" if self._stopping else "parent_cancel")
+                reason = "任务已取消" if user_cancelled else ("服务关闭" if self._stopping else "上层任务已取消")
                 finalize_task = asyncio.create_task(
                     self._finalize_cancelled_task(task_id, origin=origin, reason=reason)
                 )
@@ -2173,7 +2192,8 @@ class ImportTaskManager:
                     logger.warning(f"写入任务取消终态超时 task={task_id} origin={origin}")
                 except asyncio.CancelledError:
                     logger.warning(f"写入任务取消终态再次被中断 task={task_id} origin={origin}")
-                raise
+                if not user_cancelled:
+                    raise
             except Exception as e:
                 logger.error(f"导入任务执行失败 task={task_id}: {e}\n{traceback.format_exc()}")
                 async with self._lock:
@@ -2190,6 +2210,8 @@ class ImportTaskManager:
                 async with self._lock:
                     if self._active_task_id == task_id:
                         self._active_task_id = None
+                    if self._active_run_task is run_task:
+                        self._active_run_task = None
                 if should_cleanup:
                     await self._cleanup_task_temp_files(task_id)
 
@@ -2513,6 +2535,36 @@ class ImportTaskManager:
             except asyncio.TimeoutError:
                 logger.error("迁移子进程强制终止超时")
 
+    async def _wait_for_import_process(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        task_id: str,
+        poll_callback: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> Tuple[Optional[int], bool]:
+        """轮询导入子进程，并确保协程取消时同步终止进程。"""
+        try:
+            while True:
+                if await self._is_cancel_requested(task_id):
+                    await self._terminate_process(process)
+                    return None, True
+                if poll_callback is not None:
+                    await poll_callback()
+                try:
+                    return_code = await asyncio.wait_for(
+                        process.wait(),
+                        timeout=self._timeout_config()["process_poll_seconds"],
+                    )
+                    return return_code, False
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            await self._terminate_process(process)
+            raise
+        except Exception:
+            await self._terminate_process(process)
+            raise
+
     async def _reload_stores_after_external_migration(self) -> None:
         async with self._storage_lock:
             for store in self._vector_stores_for_persistence():
@@ -2579,24 +2631,20 @@ class ImportTaskManager:
             asyncio.create_task(_drain(process.stderr, stderr_lines)),
         ]
 
-        cancelled = False
-        return_code: Optional[int] = None
-        try:
-            while True:
-                if await self._is_cancel_requested(task_id):
-                    cancelled = True
-                    await self._terminate_process(process)
-                    break
+        async def _refresh_progress() -> None:
+            await self._refresh_maibot_progress_from_state(
+                task_id,
+                file_record.file_id,
+                chunk_id,
+                state_path,
+            )
 
-                await self._refresh_maibot_progress_from_state(task_id, file_record.file_id, chunk_id, state_path)
-                try:
-                    return_code = await asyncio.wait_for(
-                        process.wait(),
-                        timeout=self._timeout_config()["process_poll_seconds"],
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    continue
+        try:
+            return_code, cancelled = await self._wait_for_import_process(
+                process,
+                task_id=task_id,
+                poll_callback=_refresh_progress,
+            )
         finally:
             await asyncio.gather(*drain_tasks, return_exceptions=True)
 
@@ -2761,6 +2809,7 @@ class ImportTaskManager:
             "        failed.append(f'{m}:{e.__class__.__name__}:{e}')\n"
             "print('OK' if not failed else ';'.join(failed))\n"
         )
+        probe: Optional[asyncio.subprocess.Process] = None
         try:
             probe = await asyncio.create_subprocess_exec(
                 sys.executable,
@@ -2773,7 +2822,13 @@ class ImportTaskManager:
                 probe.communicate(),
                 timeout=self._timeout_config()["convert_preflight_seconds"],
             )
+        except asyncio.CancelledError:
+            if probe is not None:
+                await self._terminate_process(probe)
+            raise
         except Exception as e:
+            if probe is not None:
+                await self._terminate_process(probe)
             return False, f"依赖预检执行失败: {e}"
 
         out = (stdout or b"").decode("utf-8", errors="replace").strip()
@@ -2877,22 +2932,11 @@ class ImportTaskManager:
             asyncio.create_task(_drain(process.stderr, stderr_lines)),
         ]
 
-        cancelled = False
-        return_code: Optional[int] = None
         try:
-            while True:
-                if await self._is_cancel_requested(task_id):
-                    cancelled = True
-                    await self._terminate_process(process)
-                    break
-                try:
-                    return_code = await asyncio.wait_for(
-                        process.wait(),
-                        timeout=self._timeout_config()["process_poll_seconds"],
-                    )
-                    break
-                except asyncio.TimeoutError:
-                    continue
+            return_code, cancelled = await self._wait_for_import_process(
+                process,
+                task_id=task_id,
+            )
         finally:
             await asyncio.gather(*drain_tasks, return_exceptions=True)
 
@@ -3107,6 +3151,15 @@ class ImportTaskManager:
         await self._ensure_embedding_runtime_ready()
 
         chunks = strategy.split(content)
+        if isinstance(strategy, ChatLogStrategy):
+            if strategy.split_warning:
+                await self._append_file_warning(task_id, file_record.file_id, strategy.split_warning)
+            if strategy.oversized_message_count:
+                await self._append_file_warning(
+                    task_id,
+                    file_record.file_id,
+                    f"有 {strategy.oversized_message_count} 条消息超过切块窗口，已保留为完整消息",
+                )
         selected_chunks = list(chunks)
         if file_record.retry_mode == "chunk":
             retry_index_set = set()
@@ -3351,7 +3404,16 @@ class ImportTaskManager:
             paragraphs = data.get("paragraphs", [])
             for p in paragraphs:
                 if isinstance(p, dict) and any(
-                    key in p for key in ("entities", "relations", "time_meta", "source", "type", "knowledge_type")
+                    key in p
+                    for key in (
+                        "entities",
+                        "relations",
+                        "time_meta",
+                        "source",
+                        "type",
+                        "knowledge_type",
+                        "person_ids",
+                    )
                 ):
                     return "script_json"
             return "web_json"
@@ -3420,6 +3482,7 @@ class ImportTaskManager:
                     "knowledge_type": paragraph["knowledge_type"],
                     "chunk_type": paragraph["knowledge_type"],
                     "source": paragraph["source"],
+                    "person_ids": paragraph["person_ids"],
                     "entities": paragraph["entities"],
                     "relations": paragraph["relations"],
                     "preview": paragraph["content"][:120],
@@ -3532,14 +3595,32 @@ class ImportTaskManager:
                     ).value
                     source = str(unit.get("source") or f"web_import:{file_record.name}")
                     if not skip_write:
+                        person_ids = [
+                            str(person_id or "").strip()
+                            for person_id in unit.get("person_ids", [])
+                            if str(person_id or "").strip()
+                        ]
+                        unit_metadata = dict(paragraph_metadata or {})
+                        if person_ids:
+                            unit_metadata["person_ids"] = person_ids
                         para_hash = await self._add_paragraph_metadata(
                             file_record=file_record,
                             content=content,
                             source=source,
-                            metadata=paragraph_metadata,
+                            metadata=unit_metadata,
                             knowledge_type=k_type,
                             time_meta=unit.get("time_meta"),
                         )
+                        if person_ids:
+                            try:
+                                self.plugin.record_person_evidence_written(
+                                    person_ids,
+                                    reason="web_import_json",
+                                )
+                            except Exception as exc:
+                                warning = f"分块[{chunk_id}]人物画像刷新入队失败: {exc}"
+                                logger.warning(warning)
+                                chunk_warnings.append(warning)
                         vector_result = await self._write_paragraph_vector_or_enqueue(
                             paragraph_hash=para_hash,
                             content=content,
@@ -3647,11 +3728,15 @@ class ImportTaskManager:
             return
         data = _coerce_import_data_dict(processed.data, context="分块抽取结果")
         source = self._source_label(file_record)
+        paragraph_metadata = dict(metadata or {})
+        extracted_events = _normalize_import_entity_list(data.get("events"))
+        if extracted_events:
+            paragraph_metadata["extracted_events"] = extracted_events
         para_hash = await self._add_paragraph_metadata(
             file_record=file_record,
             content=content,
             source=source,
-            metadata=metadata,
+            metadata=paragraph_metadata,
             knowledge_type=_storage_type_from_strategy(processed.type),
             time_meta=time_meta,
         )
@@ -3683,7 +3768,7 @@ class ImportTaskManager:
             relations.append((s, p, o))
             entities.extend([s, o])
 
-        for k in ("entities", "events", "verbatim_entities"):
+        for k in ("entities", "verbatim_entities"):
             entities.extend(_normalize_import_entity_list(data.get(k)))
 
         uniq_entities = list({x.strip().lower(): x.strip() for x in entities if str(x).strip()}.values())
@@ -4059,6 +4144,12 @@ JSON schema:
             return FactualStrategy(filename, target_size=_coerce_int(params.get("factual_target_size"), 1200))
         if strategy == ImportStrategy.QUOTE:
             return QuoteStrategy(filename)
+        if bool(params.get("chat_log")):
+            return ChatLogStrategy(
+                filename,
+                window_size=_coerce_int(params.get("narrative_window_size"), 1600),
+                overlap=_coerce_int(params.get("narrative_overlap"), 400),
+            )
         return NarrativeStrategy(
             filename,
             window_size=_coerce_int(params.get("narrative_window_size"), 1600),
@@ -4084,6 +4175,8 @@ JSON schema:
     async def _set_file_strategy(self, task_id: str, file_id: str, strategy: Any) -> None:
         if isinstance(strategy, str):
             strategy_type = strategy
+        elif isinstance(strategy, ChatLogStrategy):
+            strategy_type = "chat_log"
         elif isinstance(strategy, NarrativeStrategy):
             strategy_type = "narrative"
         elif isinstance(strategy, FactualStrategy):

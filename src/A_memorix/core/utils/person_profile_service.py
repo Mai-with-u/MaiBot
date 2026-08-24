@@ -114,9 +114,7 @@ class PersonProfileService:
                 "task_name": model.task_name,
                 "selected_model_name": model.selected_model_name,
                 "model_list": sorted(
-                    str(item).strip()
-                    for item in getattr(model.task_config, "model_list", [])
-                    if str(item).strip()
+                    str(item).strip() for item in getattr(model.task_config, "model_list", []) if str(item).strip()
                 ),
             }
         return {
@@ -139,8 +137,7 @@ class PersonProfileService:
     ) -> str:
         """计算画像输入版本；检索分数不属于证据内容，故不进入指纹。"""
         stable_vector_evidence = [
-            {key: value for key, value in item.items() if key != "score"}
-            for item in vector_evidence
+            {key: value for key, value in item.items() if key != "score"} for item in vector_evidence
         ]
         payload = self._canonical_profile_value(
             {
@@ -340,22 +337,39 @@ class PersonProfileService:
             traits.append(text)
         return traits[:10]
 
-    def _recover_aliases_from_memory(self, person_id: str) -> Tuple[List[str], str]:
-        """当人物主档案缺失时，从已有记忆证据里回捞可用别名。"""
+    def _collect_alias_suggestions_from_memory(self, person_id: str, trusted_aliases: List[str]) -> List[str]:
+        """收集与人物同段出现的实体，仅作为待人工确认的别名候选。"""
         if not person_id:
-            return [], ""
+            return []
 
-        aliases: List[str] = []
-        primary_name = ""
-        seen = set()
+        suggestions: List[str] = []
+        excluded = {
+            str(item or "").strip().lower() for item in [person_id, *trusted_aliases] if str(item or "").strip()
+        }
+        seen = set(excluded)
 
-        try:
-            paragraphs = self.metadata_store.get_paragraphs_by_entity(person_id)
-        except Exception as e:
-            logger.warning(f"从记忆证据回捞人物别名失败: person_id={person_id}, err={e}")
-            return [], ""
+        paragraphs_by_hash: Dict[str, Dict[str, Any]] = {}
+        query_aliases: List[str] = []
+        query_alias_keys = set()
+        for item in trusted_aliases:
+            alias = str(item or "").strip()
+            alias_key = alias.lower()
+            if not alias or alias_key in query_alias_keys:
+                continue
+            query_alias_keys.add(alias_key)
+            query_aliases.append(alias)
+        for alias in query_aliases:
+            try:
+                paragraphs = self.metadata_store.get_paragraphs_by_entity(alias)
+            except Exception as e:
+                logger.warning(f"从记忆证据收集人物别名候选失败: person_id={person_id}, alias={alias}, err={e}")
+                continue
+            for paragraph in paragraphs:
+                paragraph_hash = str(paragraph.get("hash", "") or "").strip()
+                if paragraph_hash and paragraph_hash not in paragraphs_by_hash:
+                    paragraphs_by_hash[paragraph_hash] = paragraph
 
-        for paragraph in paragraphs[:20]:
+        for paragraph in list(paragraphs_by_hash.values())[:20]:
             paragraph_hash = str(paragraph.get("hash", "") or "").strip()
             if not paragraph_hash:
                 continue
@@ -371,48 +385,89 @@ class PersonProfileService:
                 if key in seen:
                     continue
                 seen.add(key)
-                aliases.append(name)
-                if not primary_name:
-                    primary_name = name
-        return aliases, primary_name
+                suggestions.append(name)
+        return suggestions
 
-    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
-        """获取人物别名集合、主展示名、记忆特征。"""
+    def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
+        """只从人物主档案中的可信身份字段推导自动别名。"""
         aliases: List[str] = []
         primary_name = ""
         memory_traits: List[str] = []
         if not person_id:
             return aliases, primary_name, memory_traits
-        recovered_aliases, recovered_primary_name = self._recover_aliases_from_memory(person_id)
         try:
             with get_db_session(auto_commit=False) as session:
                 record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
-                    return recovered_aliases, recovered_primary_name or person_id, memory_traits
-            person_name = str(getattr(record, "person_name", "") or "").strip()
-            nickname = str(getattr(record, "user_nickname", "") or "").strip()
-            group_nicks = self._parse_group_nicks(getattr(record, "group_cardname", None))
-            memory_traits = self._parse_memory_traits(getattr(record, "memory_points", None))
+                    return [person_id], person_id, memory_traits
+            person_name = str(record.person_name or "").strip()
+            nickname = str(record.user_nickname or "").strip()
+            group_nicks = self._parse_group_nicks(record.group_cardname)
+            memory_traits = self._parse_memory_traits(record.memory_points)
 
             primary_name = (
                 person_name
                 or nickname
-                or recovered_primary_name
-                or str(getattr(record, "user_id", "") or "").strip()
+                or next((item for item in group_nicks if item), "")
+                or str(record.user_id or "").strip()
                 or person_id
             )
 
-            candidates = [person_name, nickname] + group_nicks + recovered_aliases
+            candidates = [person_name, nickname] + group_nicks
             seen = set()
             for item in candidates:
                 norm = str(item or "").strip()
-                if not norm or norm in seen:
+                key = norm.lower()
+                if not norm or key in seen:
                     continue
-                seen.add(norm)
+                seen.add(key)
                 aliases.append(norm)
         except Exception as e:
             logger.warning(f"解析人物别名失败: person_id={person_id}, err={e}")
+        if not aliases:
+            aliases = [primary_name or person_id]
+            primary_name = primary_name or person_id
         return aliases, primary_name, memory_traits
+
+    def get_person_alias_details(self, person_id: str) -> Dict[str, Any]:
+        """返回自动别名、人工覆盖和当前实际使用的别名。"""
+        token = str(person_id or "").strip()
+        if not token:
+            return {
+                "person_id": "",
+                "primary_name": "",
+                "derived_aliases": [],
+                "suggested_aliases": [],
+                "manual_aliases": [],
+                "effective_aliases": [],
+                "has_override": False,
+                "memory_traits": [],
+            }
+
+        derived_aliases, primary_name, memory_traits = self._get_derived_person_aliases(token)
+        override = self.metadata_store.get_person_profile_alias_override(token)
+        manual_aliases = list(override.get("aliases", [])) if override else []
+        suggested_aliases = self._collect_alias_suggestions_from_memory(token, derived_aliases + manual_aliases)
+        return {
+            "person_id": token,
+            "primary_name": primary_name,
+            "derived_aliases": derived_aliases,
+            "suggested_aliases": suggested_aliases,
+            "manual_aliases": manual_aliases,
+            "effective_aliases": manual_aliases if override else derived_aliases,
+            "has_override": override is not None,
+            "memory_traits": memory_traits,
+            "override": override,
+        }
+
+    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
+        """获取画像实际使用的别名集合、主展示名和记忆特征。"""
+        details = self.get_person_alias_details(person_id)
+        return (
+            list(details["effective_aliases"]),
+            str(details["primary_name"]),
+            list(details["memory_traits"]),
+        )
 
     def _collect_relation_evidence(
         self,
@@ -1169,7 +1224,9 @@ class PersonProfileService:
             return self._apply_manual_override(pid, payload)
 
         unstructured_vector_evidence = [
-            item for item in vector_evidence if not self._source_type_from_source(str(item.get("source", ""))) == "person_fact"
+            item
+            for item in vector_evidence
+            if not self._source_type_from_source(str(item.get("source", ""))) == "person_fact"
         ]
         classified_buckets = await self._classify_profile_evidence(
             person_id=pid,

@@ -429,6 +429,13 @@ class MemoryService:
             logger.warning(f"反馈纠错管理调用失败: {exc}")
             return {"success": False, "error": str(exc)}
 
+    async def fact_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
+        try:
+            return await self._invoke_admin("memory_fact_admin", action=action, **kwargs)
+        except Exception as exc:
+            logger.warning(f"事实账本管理调用失败: {exc}")
+            return {"success": False, "error": str(exc)}
+
     async def runtime_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         try:
             return await self._invoke_admin("memory_runtime_admin", action=action, **kwargs)

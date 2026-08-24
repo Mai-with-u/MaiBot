@@ -130,6 +130,8 @@ vi.mock('@/lib/memory-api', () => ({
   getMemoryGraphNodeDetail: vi.fn(),
   getMemoryGraphEdgeDetail: vi.fn(),
   getMemoryGraphParagraphDetail: vi.fn(),
+  searchMemoryRecords: vi.fn(),
+  getMemoryRecordContext: vi.fn(),
   previewMemoryDelete: vi.fn(),
   executeMemoryDelete: vi.fn(),
   restoreMemoryDelete: vi.fn(),
@@ -394,6 +396,16 @@ describe('KnowledgeBasePage import workflow', () => {
         edges: [],
         focus_entities: ['Alpha'],
       },
+    })
+    vi.mocked(memoryApi.searchMemoryRecords).mockResolvedValue({
+      success: true,
+      query: '',
+      types: ['paragraph', 'entity', 'relation', 'fact'],
+      include_inactive: false,
+      limit: 80,
+      count: 0,
+      counts: {},
+      items: [],
     })
 
     vi.mocked(memoryApi.getMemoryImportGuide).mockResolvedValue({
@@ -1893,6 +1905,70 @@ describe('KnowledgeBasePage import workflow', () => {
         requested_by: 'knowledge_base',
       }),
     )
+  }, 20_000)
+
+  it('reuses the audited delete preview for authoritative records', async () => {
+    const paragraph: memoryApi.MemoryRecordPayload = {
+      type: 'paragraph',
+      id: 'paragraph-record-1',
+      title: '待删除段落',
+      summary: '这是一条需要删除的权威记录',
+      source: 'chat_summary:chat-1',
+      status: 'active',
+      metadata: {},
+    }
+    vi.mocked(memoryApi.searchMemoryRecords).mockResolvedValue({
+      success: true,
+      query: '',
+      types: ['paragraph'],
+      include_inactive: false,
+      limit: 80,
+      count: 1,
+      counts: { paragraph: 1 },
+      items: [paragraph],
+    })
+    vi.mocked(memoryApi.getMemoryRecordContext).mockResolvedValue({
+      success: true,
+      record: paragraph,
+      related: {
+        paragraphs: [paragraph],
+        entities: [],
+        relations: [],
+        facts: [],
+        episodes: [],
+        profiles: [],
+      },
+      counts: {
+        paragraphs: 1,
+        entities: 0,
+        relations: 0,
+        facts: 0,
+        episodes: 0,
+        profiles: 0,
+      },
+      fact_evidence: [],
+      fact_transitions: [],
+      projection: { graph_jobs: [], graph_pending_count: 0 },
+      available_actions: ['graph', 'correct', 'delete'],
+    })
+
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '记忆查询' }))
+    expect(await screen.findAllByText('待删除段落')).not.toHaveLength(0)
+    await user.click(await screen.findByRole('button', { name: '删除' }))
+
+    await waitFor(() =>
+      expect(memoryApi.previewMemoryDelete).toHaveBeenCalledWith({
+        mode: 'paragraph',
+        selector: { hashes: ['paragraph-record-1'] },
+        reason: 'knowledge_base_record_delete',
+        requested_by: 'knowledge_base',
+      })
+    )
+    expect(await screen.findByTestId('memory-delete-dialog')).toBeInTheDocument()
   }, 20_000)
 
   it('shows feedback correction history and supports rollback', async () => {

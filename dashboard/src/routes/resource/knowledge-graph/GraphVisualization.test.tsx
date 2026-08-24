@@ -159,7 +159,14 @@ function makeNodeDetail(
 ): MemoryGraphNodeDetailPayload {
   return {
     success: true,
-    node: { id: 'alpha', type: 'entity', content: 'Alpha', hash: 'entity-1', appearance_count: 3 },
+    node: {
+      id: 'alpha',
+      type: 'entity',
+      content: 'Alpha',
+      hash: 'entity-1',
+      appearance_count: 3,
+      active_evidence_count: 2,
+    },
     relations: [makeRelation()],
     paragraphs: [makeParagraph()],
     evidence_graph: emptyEvidenceGraph(),
@@ -446,7 +453,8 @@ describe('NodeDetailDialog', () => {
     )
 
     const dialog = screen.getByRole('dialog', { name: '实体详情' })
-    expect(dialog).toHaveTextContent('出现次数 3')
+    expect(dialog).toHaveTextContent('有效证据 2')
+    expect(dialog).toHaveTextContent('累计出现 3')
     expect(dialog).toHaveTextContent('未命名谓词')
     expect(dialog).toHaveTextContent('未命名来源')
     expect(dialog).toHaveTextContent('仅正文')

@@ -437,6 +437,18 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             self._rebuild_graph_from_metadata()
             self._persist()
         rollback_success = not restore_failures
+        profile_refresh_person_ids = tokens(
+            [
+                plan_record.get("target_person_id"),
+                (plan_record.get("plan") or {}).get("person_id") if isinstance(plan_record.get("plan"), dict) else None,
+            ]
+        )
+        if rollback_success:
+            for person_id in profile_refresh_person_ids:
+                self._enqueue_person_profile_refresh(
+                    person_id,
+                    reason="memory_correction_rollback",
+                )
         rollback_result = {
             "success": rollback_success,
             "stored_ids_deleted": paragraph_hashes,
@@ -449,6 +461,7 @@ class MemoryCorrectionAdminService(KernelServiceBase):
             "items": rollback_items,
             "requested_by": requested_by,
             "reason": reason,
+            "profile_refresh_person_ids": profile_refresh_person_ids,
         }
         updated = self.metadata_store.update_fuzzy_modify_plan(
             token,

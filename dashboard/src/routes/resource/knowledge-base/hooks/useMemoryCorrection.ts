@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -158,6 +158,7 @@ export function useMemoryCorrection({
   onSourcesChanged,
 }: UseMemoryCorrectionOptions): UseMemoryCorrectionResult {
   const { toast } = useToast()
+  const queryClient = useQueryClient()
   const configuredCandidateLimit = useMemo(
     () => resolveConfiguredCandidateLimit(runtimeConfig),
     [runtimeConfig]
@@ -494,6 +495,8 @@ export function useMemoryCorrection({
           plansQuery.refetch(),
           onSourcesChanged?.(),
           onRuntimeChanged?.(),
+          queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+          queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
         ])
         const failedSync = syncResults.find((result) => result.status === 'rejected')
         if (failedSync?.status === 'rejected') {
@@ -514,6 +517,7 @@ export function useMemoryCorrection({
       onRuntimeChanged,
       onSourcesChanged,
       plansQuery,
+      queryClient,
       selectedPlan?.plan_id,
       toast,
       warnSyncFailure,
@@ -553,6 +557,8 @@ export function useMemoryCorrection({
           plansQuery.refetch(),
           onSourcesChanged?.(),
           onRuntimeChanged?.(),
+          queryClient.invalidateQueries({ queryKey: ['memory-records'] }),
+          queryClient.invalidateQueries({ queryKey: ['memory-record-context'] }),
         ])
         const failedSync = syncResults.find((result) => result.status === 'rejected')
         if (failedSync?.status === 'rejected') {
@@ -573,6 +579,7 @@ export function useMemoryCorrection({
       onRuntimeChanged,
       onSourcesChanged,
       plansQuery,
+      queryClient,
       selectedPlan?.plan_id,
       toast,
       warnSyncFailure,

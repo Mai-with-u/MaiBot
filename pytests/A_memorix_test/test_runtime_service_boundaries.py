@@ -130,6 +130,15 @@ def test_graph_admin_rename_rehashes_relations_and_invalidates_vectors(tmp_path:
         assert [item["hash"] for item in paragraph_relations] == [new_relation_hash]
         assert old_entity_hash in deleted_vector_ids
         assert old_relation_hash in deleted_vector_ids
+        assert result["projection"]["status"] == "completed"
+        assert result["vector_projection"]["status"] == "invalidated"
+        assert metadata_store.count_claimable_relation_graph_projection_jobs() == 0
+        operation = metadata_store.query(
+            "SELECT action, resolved_hashes_json FROM memory_v5_operations WHERE operation_id = ?",
+            (result["operation"]["operation_id"],),
+        )[0]
+        assert operation["action"] == "graph_rename_node"
+        assert new_relation_hash in operation["resolved_hashes_json"]
     finally:
         metadata_store.close()
 
@@ -916,6 +925,11 @@ def test_dual_manifest_recover_uses_kernel_patched_recovery_boundaries(
     monkeypatch.setattr(kernel, "_paragraph_vector_dir", lambda: paragraph_dir)
     monkeypatch.setattr(kernel, "_graph_vector_dir", lambda: graph_dir)
     monkeypatch.setattr(kernel, "_make_vector_store", fake_make_vector_store)
+    monkeypatch.setattr(
+        kernel,
+        "_current_embedding_fingerprint_for_validation",
+        lambda **kwargs: {"hash": "observed-test-model"},
+    )
     monkeypatch.setattr(
         kernel,
         "_v1_valid_hashes_for_pool",

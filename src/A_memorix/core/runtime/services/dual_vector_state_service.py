@@ -62,7 +62,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
         graph_count = int(manifest.get("graph_vectors", 0) or 0)
         if paragraph_count < 0 or graph_count < 0:
             return False
-        current_fingerprint = self._current_embedding_fingerprint()
+        current_fingerprint = self._current_embedding_fingerprint_for_validation()
         manifest_fingerprint = self._normalize_embedding_fingerprint(manifest.get("embedding_fingerprint"))
         if current_fingerprint is None or manifest_fingerprint is None:
             empty_recovery_generation = (
@@ -307,7 +307,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
                 manifest_dimension = int(manifest.get("dimension", 0) or 0)
                 paragraph_count = int(manifest.get("paragraph_vectors", 0) or 0)
                 graph_count = int(manifest.get("graph_vectors", 0) or 0)
-                current_fingerprint = self._current_embedding_fingerprint()
+                current_fingerprint = self._current_embedding_fingerprint_for_validation()
                 manifest_fingerprint = self._normalize_embedding_fingerprint(
                     manifest.get("embedding_fingerprint")
                 )
@@ -367,7 +367,7 @@ class MemoryDualVectorStateService(KernelServiceBase):
         try:
             paragraph_store = self._make_vector_store(self._paragraph_vector_dir())
             graph_store = self._make_vector_store(self._graph_vector_dir())
-            expected_fingerprint = self._current_embedding_fingerprint()
+            expected_fingerprint = self._current_embedding_fingerprint_for_validation()
             evidence_root = self._v1_reconciliation_evidence_root()
             if paragraph_store.has_data():
                 paragraph_store.load(
@@ -404,16 +404,24 @@ class MemoryDualVectorStateService(KernelServiceBase):
         graph_store = self._make_vector_store(graph_dir)
         if not paragraph_store.has_data() or not graph_store.has_data():
             return False
+        expected_fingerprint = self._current_embedding_fingerprint_for_validation()
+        if expected_fingerprint is None:
+            raise VectorStoreIntegrityError(
+                "双池 ready manifest 缺失且 Embedding 指纹尚未经过真实请求确认",
+                error_code="embedding_fingerprint_unavailable",
+                dimension_status="unknown",
+                fingerprint_status="unknown",
+            )
         try:
             if paragraph_store.has_data():
                 paragraph_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    expected_embedding_fingerprint=expected_fingerprint,
                     v1_valid_hashes=self._v1_valid_hashes_for_pool("paragraph"),
                     v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )
             if graph_store.has_data():
                 graph_store.load(
-                    expected_embedding_fingerprint=self._current_embedding_fingerprint(),
+                    expected_embedding_fingerprint=expected_fingerprint,
                     v1_valid_hashes=self._v1_valid_hashes_for_pool("graph"),
                     v1_evidence_root=self._v1_reconciliation_evidence_root(),
                 )
