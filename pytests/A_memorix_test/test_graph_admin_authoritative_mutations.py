@@ -273,6 +273,47 @@ async def test_graph_audit_failure_rolls_back_authoritative_mutations(
 
 
 @pytest.mark.asyncio
+async def test_rename_node_reports_vector_invalidation_failure_without_hiding_committed_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel, metadata_store, _graph_store = _runtime(tmp_path)
+    monkeypatch.setattr(kernel, "initialize", _disable_initialize)
+    original_hash = metadata_store.add_entity("Before")
+
+    def fail_vector_invalidation(**kwargs: Any) -> int:
+        del kwargs
+        raise RuntimeError("vector store unavailable")
+
+    async def complete_vector_rebuild(**kwargs: Any) -> Dict[str, Any]:
+        del kwargs
+        return {"status": "completed", "entity": {"ready": True}, "relations": {}}
+
+    monkeypatch.setattr(kernel._graph_admin_service, "_delete_vectors_by_type", fail_vector_invalidation)
+    monkeypatch.setattr(kernel._graph_admin_service, "_rebuild_renamed_vectors", complete_vector_rebuild)
+    try:
+        result = await kernel.memory_graph_admin(
+            action="rename_node",
+            name="Before",
+            new_name="After",
+        )
+
+        assert result["success"] is True
+        assert metadata_store.get_entity(original_hash) is None
+        assert metadata_store.get_entity(compute_hash("after")) is not None
+        assert result["vector_projection"]["status"] == "failed"
+        assert result["vector_projection"]["invalidation"] == {
+            "status": "failed",
+            "entity_hashes": [compute_hash("after")],
+            "relation_hashes": [],
+            "error": "vector store unavailable",
+        }
+        assert result["vector_projection"]["rebuild"]["status"] == "completed"
+    finally:
+        metadata_store.close()
+
+
+@pytest.mark.asyncio
 async def test_node_detail_derives_active_evidence_without_rewriting_appearance_count(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

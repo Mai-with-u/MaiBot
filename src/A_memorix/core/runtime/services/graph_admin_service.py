@@ -110,10 +110,23 @@ class MemoryGraphAdminService(KernelServiceBase):
             if not bool(result.get("success")):
                 return result
             if bool(result.get("renamed")):
-                result["vector_projection"] = await self._rebuild_renamed_vectors(
-                    entity_hash=str(result.get("entity_hash", "") or ""),
-                    relation_hashes=tokens((result.get("relation_hash_map") or {}).values()),
+                invalidation_projection = dict(result.get("vector_projection") or {})
+                try:
+                    rebuild_projection = await self._rebuild_renamed_vectors(
+                        entity_hash=str(result.get("entity_hash", "") or ""),
+                        relation_hashes=tokens((result.get("relation_hash_map") or {}).values()),
+                    )
+                except Exception as exc:
+                    rebuild_projection = {"status": "failed", "error": str(exc)}
+                projection_failed = (
+                    str(invalidation_projection.get("status", "") or "") == "failed"
+                    or str(rebuild_projection.get("status", "") or "") == "failed"
                 )
+                result["vector_projection"] = {
+                    "status": "failed" if projection_failed else "completed",
+                    "invalidation": invalidation_projection,
+                    "rebuild": rebuild_projection,
+                }
             return result
 
         if act == "create_edge":
@@ -1401,19 +1414,27 @@ class MemoryGraphAdminService(KernelServiceBase):
         except Exception as exc:
             return {"success": False, "error": f"rename failed: {exc}"}
 
-        self._delete_vectors_by_type(
-            entity_hashes=[old_entity_hash],
-            relation_hashes=old_relation_hashes,
-        )
+        try:
+            self._delete_vectors_by_type(
+                entity_hashes=[old_entity_hash],
+                relation_hashes=old_relation_hashes,
+            )
+            vector_invalidation_error = ""
+        except Exception as exc:
+            # 权威数据与审计已经提交，派生向量失败只能作为投影状态返回。
+            vector_invalidation_error = str(exc)
         projection = self._publish_authoritative_graph_projection(queued=queued)
+        vector_projection = {
+            "status": "failed" if vector_invalidation_error else "invalidated",
+            "entity_hashes": [resolved_target_hash],
+            "relation_hashes": tokens(relation_hash_map.values()),
+        }
+        if vector_invalidation_error:
+            vector_projection["error"] = vector_invalidation_error
         result = {
             **authoritative_result,
             "projection": projection,
-            "vector_projection": {
-                "status": "invalidated" if old_relation_hashes else "not_required",
-                "entity_hashes": [resolved_target_hash],
-                "relation_hashes": tokens(relation_hash_map.values()),
-            },
+            "vector_projection": vector_projection,
         }
         if not record_operation:
             return result
