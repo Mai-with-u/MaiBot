@@ -156,12 +156,6 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
                     client_type="openai_responses",
                     operation="response",
                     wire_protocol="responses",
-                    request_items=(),
-                    tool_definitions=(),
-                    request_parameters={},
-                    wire_response=result.provider_response,
-                    output_items=result.output_items,
-                    trace=result.generation_trace,
                 ),
             )
             return result
@@ -216,20 +210,5 @@ async def test_chat_loop_keeps_reasoning_separate_from_content(monkeypatch) -> N
     assert preview_output_items[1].__class__.__name__ == "ProviderActivityItem"
     generation_attempts = prompt_preview_kwargs["generation_attempts"]
     assert isinstance(generation_attempts, tuple)
-    assert generation_attempts[0].wire_response == {
-        "id": "resp_test",
-        "status": "completed",
-        "output": [
-            {
-                "type": "reasoning",
-                "id": "rs_test",
-                "summary": [{"type": "summary_text", "text": "Provider 原生推理"}],
-            },
-            {
-                "type": "web_search_call",
-                "id": "ws_test",
-                "status": "completed",
-                "action": {"type": "search", "queries": ["Responses API"]},
-            },
-        ],
-    }
+    assert generation_attempts[0].attempt_id == "planner-attempt-1"
+    assert not hasattr(generation_attempts[0], "wire_response")
