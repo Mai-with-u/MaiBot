@@ -408,6 +408,7 @@ class PluginRunner:
         self._start_time: float = time.monotonic()
         self._shutting_down: bool = False
         self._reload_lock: asyncio.Lock = asyncio.Lock()
+        self._plugin_import_lock: asyncio.Lock = asyncio.Lock()
         self._inflight_rpcs: Dict[int, InFlightRPC] = {}
 
         # IPC 日志 Handler：握手成功后安装，将所有 stdlib logging 转发到 Host
@@ -691,10 +692,17 @@ class PluginRunner:
         运行期回调（API/Action/Hook/生命周期）可能在函数体内执行插件本地顶层导入
         （如 ``import config``），调用期间把插件目录临时放回 sys.path 首位并隔离
         其顶层模块缓存，返回后立即恢复，避免污染 Runner 全局导入路径。
+
+        插件导入上下文会修改进程全局的 sys.path/sys.modules，而所有插件回调共享
+        同一个事件循环：若并发回调交错，A 插件上下文激活期间 B 插件的本地导入可能
+        命中 A 的目录，交错退出也可能恢复错误的模块缓存。``_plugin_import_lock``
+        串行化整个上下文生命周期（含回调内的 await），保证任一时刻至多一个插件
+        回调持有导入上下文。
         """
         if plugin_dir:
-            with self._loader.plugin_import_context(plugin_dir):
-                return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
+            async with self._plugin_import_lock:
+                with self._loader.plugin_import_context(plugin_dir):
+                    return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
         return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
 
     async def _invoke_plugin_callable_impl(
