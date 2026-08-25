@@ -237,7 +237,12 @@
       "conversations": "Chat conversations",
       "emptyPreview": "No messages yet",
       "identityHint": "Local chat identity",
+      "myChats": "Chats with Mai",
       "newVirtual": "New virtual identity chat",
+      "observedAvatarAlt": "{{name}}'s avatar",
+      "observedBadge": "Observe",
+      "observedChats": "Mai's chat streams",
+      "observedPreview": "Read-only observation",
       "online": "Online",
       "offline": "Offline",
       "subtitle": "{{count}} conversations",
@@ -248,7 +253,8 @@
       "editName": "Edit nickname",
       "saveName": "Save",
       "savingAvatar": "Saving avatar",
-      "userAvatarAlt": "{{name}}'s avatar"
+      "userAvatarAlt": "{{name}}'s avatar",
+      "waitingObservedChats": "Waiting for chat streams…"
     },
     "dialog": {
       "create": "Create chat",

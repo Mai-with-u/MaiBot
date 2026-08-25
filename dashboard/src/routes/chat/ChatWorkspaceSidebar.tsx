@@ -1,4 +1,15 @@
-import { Bot, Camera, Check, Edit2, Loader2, UserCircle2, X } from 'lucide-react'
+import {
+  Bot,
+  Camera,
+  Check,
+  Edit2,
+  Eye,
+  Loader2,
+  UserCircle2,
+  UserRound,
+  UsersRound,
+  X,
+} from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +20,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
+import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 
 import type { ChatMessage, ChatTab } from './types'
 import { getChatTabDisplayName } from './utils'
@@ -17,11 +29,15 @@ interface ChatWorkspaceSidebarProps {
   className?: string
   tabs: ChatTab[]
   activeTabId: string
+  activeObservedSessionId: string | null
+  observedSessions: Map<string, SessionInfo>
+  observedStageStatuses: Map<string, StageStatusInfo>
   userId: string
   userName: string
   userAvatarVersion?: number
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
+  onSelectObserved: (sessionId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
   onUpdateUserAvatar: (file: File) => Promise<void>
   onUpdateUserName: (name: string) => void
@@ -124,15 +140,91 @@ function ConversationItem({
   )
 }
 
+function ObservedConversationItem({
+  session,
+  status,
+  active,
+  onSelect,
+}: {
+  session: SessionInfo
+  status?: StageStatusInfo
+  active: boolean
+  onSelect: (sessionId: string) => void
+}) {
+  const { t } = useTranslation()
+  const targetId = session.isGroupChat ? session.groupId : session.userId
+  const targetType = session.isGroupChat ? 'group' : 'user'
+  const avatarUrl = useResolvedAvatarUrl(session.platform, targetId ?? undefined, targetType)
+  const Icon = session.isGroupChat ? UsersRound : UserRound
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'relative flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left transition-colors',
+        active
+          ? 'bg-primary/12 text-foreground shadow-inner'
+          : 'hover:bg-muted/70 text-foreground/90'
+      )}
+      onClick={() => onSelect(session.sessionId)}
+    >
+      {active && (
+        <span aria-hidden className="bg-primary absolute top-2 bottom-2 left-0 w-1 rounded-full" />
+      )}
+      <div className="relative shrink-0">
+        <Avatar className="ring-border/60 h-9 w-9 ring-1">
+          {avatarUrl && (
+            <AvatarImage
+              src={avatarUrl}
+              alt={t('chat.sidebar.observedAvatarAlt', { name: session.sessionName })}
+              className="object-cover"
+            />
+          )}
+          <AvatarFallback className="bg-secondary text-secondary-foreground">
+            <Icon className="h-4.5 w-4.5" />
+          </AvatarFallback>
+        </Avatar>
+        <span
+          aria-hidden
+          className={cn(
+            'border-card absolute right-0 bottom-0 h-3 w-3 rounded-full border-2',
+            status?.agentState === 'wait'
+              ? 'bg-blue-500'
+              : status
+                ? 'bg-emerald-500'
+                : 'bg-muted-foreground/40'
+          )}
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{session.sessionName}</span>
+          <span className="bg-secondary text-secondary-foreground flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide">
+            <Eye className="h-2.5 w-2.5" />
+            {t('chat.sidebar.observedBadge')}
+          </span>
+        </div>
+        <p className="text-muted-foreground mt-0.5 truncate text-xs">
+          {status?.stage || t('chat.sidebar.observedPreview')}
+        </p>
+      </div>
+    </button>
+  )
+}
+
 export function ChatWorkspaceSidebar({
   className,
   tabs,
   activeTabId,
+  activeObservedSessionId,
+  observedSessions,
+  observedStageStatuses,
   userId,
   userName,
   userAvatarVersion,
   isUploadingUserAvatar,
   onSwitch,
+  onSelectObserved,
   onClose,
   onUpdateUserAvatar,
   onUpdateUserName,
@@ -147,6 +239,9 @@ export function ChatWorkspaceSidebar({
     userId,
     'user',
     userAvatarVersion
+  )
+  const sortedObservedSessions = Array.from(observedSessions.values()).sort(
+    (a, b) => b.lastActivity - a.lastActivity
   )
 
   const startEditing = () => {
@@ -176,16 +271,51 @@ export function ChatWorkspaceSidebar({
         scrollbars="vertical"
         viewportClassName="[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full"
       >
-        <nav aria-label={t('chat.sidebar.conversations')} className="space-y-0.5 p-2">
-          {tabs.map((tab) => (
-            <ConversationItem
-              key={tab.id}
-              active={activeTabId === tab.id}
-              tab={tab}
-              onSwitch={onSwitch}
-              onClose={onClose}
-            />
-          ))}
+        <nav aria-label={t('chat.sidebar.conversations')} className="p-2">
+          <section aria-labelledby="chat-sidebar-local-heading" className="space-y-0.5">
+            <h2
+              id="chat-sidebar-local-heading"
+              className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
+            >
+              {t('chat.sidebar.myChats')}
+            </h2>
+            {tabs.map((tab) => (
+              <ConversationItem
+                key={tab.id}
+                active={activeObservedSessionId === null && activeTabId === tab.id}
+                tab={tab}
+                onSwitch={onSwitch}
+                onClose={onClose}
+              />
+            ))}
+          </section>
+
+          <section
+            aria-labelledby="chat-sidebar-observed-heading"
+            className="border-border mt-2 space-y-0.5 border-t pt-2"
+          >
+            <h2
+              id="chat-sidebar-observed-heading"
+              className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
+            >
+              {t('chat.sidebar.observedChats')}
+            </h2>
+            {sortedObservedSessions.length === 0 ? (
+              <p className="text-muted-foreground px-2.5 py-2 text-xs">
+                {t('chat.sidebar.waitingObservedChats')}
+              </p>
+            ) : (
+              sortedObservedSessions.map((session) => (
+                <ObservedConversationItem
+                  key={session.sessionId}
+                  session={session}
+                  status={observedStageStatuses.get(session.sessionId)}
+                  active={activeObservedSessionId === session.sessionId}
+                  onSelect={onSelectObserved}
+                />
+              ))
+            )}
+          </section>
         </nav>
       </ScrollArea>
 

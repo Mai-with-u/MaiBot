@@ -237,7 +237,12 @@
       "conversations": "聊天会话",
       "emptyPreview": "暂无消息",
       "identityHint": "本地聊天室身份",
+      "myChats": "与麦麦聊天",
       "newVirtual": "新建虚拟身份对话",
+      "observedAvatarAlt": "{{name}} 的头像",
+      "observedBadge": "观察",
+      "observedChats": "麦麦的聊天流",
+      "observedPreview": "只读观察",
       "online": "在线",
       "offline": "离线",
       "subtitle": "{{count}} 个会话",
@@ -248,7 +253,8 @@
       "editName": "编辑昵称",
       "saveName": "保存",
       "savingAvatar": "正在保存头像",
-      "userAvatarAlt": "{{name}} 的头像"
+      "userAvatarAlt": "{{name}} 的头像",
+      "waitingObservedChats": "等待聊天流…"
     },
     "dialog": {
       "create": "创建对话",

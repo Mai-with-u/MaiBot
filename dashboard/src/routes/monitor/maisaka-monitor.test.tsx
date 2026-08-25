@@ -12,7 +12,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MaisakaMonitor } from './maisaka-monitor'
 import type {
   MaisakaFinalizedToolResult,
   MaisakaMessageMedia,
@@ -26,6 +25,8 @@ import type {
   TimingGateResultEvent,
   ToolExecutionEvent,
 } from '@/lib/maisaka-monitor-client'
+
+import { MaisakaMonitor } from './maisaka-monitor'
 import type { SessionInfo, StageStatusInfo, TimelineEntry } from './use-maisaka-monitor'
 
 const SIDEBAR_COLLAPSED_KEY = 'maisaka-monitor-sidebar-collapsed'
@@ -353,6 +354,16 @@ describe('MaisakaMonitor 空态与侧边栏', () => {
     const { container } = render(<MaisakaMonitor />)
 
     expect(container.querySelector('.bg-emerald-500')).toBeNull()
+  })
+
+  it('嵌入聊天工作区时隐藏自身侧边栏并保留时间线主体', () => {
+    setupMonitorState()
+    const { container } = render(<MaisakaMonitor embedded />)
+
+    expect(screen.queryByText('聊天流')).not.toBeInTheDocument()
+    expect(screen.queryByText('等待 MaiSaka 会话…')).not.toBeInTheDocument()
+    expect(screen.getByText('等待 MaiSaka 推理事件…')).toBeInTheDocument()
+    expect(container.firstElementChild).toHaveClass('h-full', 'min-h-0')
   })
 
   it('无存档时默认折叠侧边栏，点击按钮展开并持久化状态', async () => {

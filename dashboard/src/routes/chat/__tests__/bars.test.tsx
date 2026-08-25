@@ -1,15 +1,15 @@
 import type { ReactNode } from 'react'
-import type { UserEmojiItem } from '@/lib/user-emoji-api'
-import type { ChatImageAttachment, ChatTab } from '../types'
-
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import type { UserEmojiItem } from '@/lib/user-emoji-api'
+
 import { ChatComposer } from '../ChatComposer'
 import { ChatHeaderBar } from '../ChatHeaderBar'
 import { ChatTabBar } from '../ChatTabBar'
-import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import type { ChatImageAttachment, ChatTab } from '../types'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -168,10 +168,13 @@ describe('ChatTabBar', () => {
           }),
         ]}
         activeTabId="virtual-a"
+        activeObservedSessionId={null}
+        observedSessions={new Map()}
         userId="user-a"
         userName="小明"
         isUploadingUserAvatar={false}
         onSwitch={onSwitch}
+        onSelectObserved={vi.fn()}
         onClose={onClose}
         onUpdateUserAvatar={vi.fn(async () => {})}
       />
@@ -198,11 +201,14 @@ describe('ChatTabBar', () => {
       <ChatTabBar
         tabs={[makeTab('webui-default')]}
         activeTabId="webui-default"
+        activeObservedSessionId={null}
+        observedSessions={new Map()}
         userId="user-a"
         userName="小明"
         userAvatarVersion={2}
         isUploadingUserAvatar={false}
         onSwitch={vi.fn()}
+        onSelectObserved={vi.fn()}
         onClose={vi.fn()}
         onUpdateUserAvatar={onUpdateUserAvatar}
       />
@@ -218,15 +224,57 @@ describe('ChatTabBar', () => {
       <ChatTabBar
         tabs={[makeTab('webui-default')]}
         activeTabId="webui-default"
+        activeObservedSessionId={null}
+        observedSessions={new Map()}
         userId="user-a"
         userName="小明"
         isUploadingUserAvatar
         onSwitch={vi.fn()}
+        onSelectObserved={vi.fn()}
         onClose={vi.fn()}
         onUpdateUserAvatar={onUpdateUserAvatar}
       />
     )
     expect(screen.getByRole('button', { name: 'chat.sidebar.editAvatar' })).toBeDisabled()
+  })
+
+  it('移动端切换条同时展示并选择只读观察聊天流', async () => {
+    const user = userEvent.setup()
+    const onSelectObserved = vi.fn()
+    render(
+      <ChatTabBar
+        tabs={[makeTab('webui-default')]}
+        activeTabId="webui-default"
+        activeObservedSessionId="observed-a"
+        observedSessions={
+          new Map([
+            [
+              'observed-a',
+              {
+                sessionId: 'observed-a',
+                sessionName: '测试观察群',
+                isGroupChat: true,
+                groupId: 'group-a',
+                platform: 'qq',
+                lastActivity: 1,
+                eventCount: 2,
+              },
+            ],
+          ])
+        }
+        userId="user-a"
+        userName="小明"
+        isUploadingUserAvatar={false}
+        onSwitch={vi.fn()}
+        onSelectObserved={onSelectObserved}
+        onClose={vi.fn()}
+        onUpdateUserAvatar={vi.fn(async () => {})}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /测试观察群/ }))
+    expect(onSelectObserved).toHaveBeenCalledWith('observed-a')
+    expect(screen.getByLabelText('chat.sidebar.observedBadge')).toBeInTheDocument()
   })
 })
 

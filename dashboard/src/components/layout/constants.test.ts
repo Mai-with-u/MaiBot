@@ -53,6 +53,12 @@ describe('menuSections 菜单结构', () => {
     expect(homeItem.searchDescription).toBe('search.items.homeDesc')
   })
 
+  it('麦麦观察合并进聊天工作区后不再占用主侧边栏入口', () => {
+    expect(allItems).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: '/planner-monitor' })])
+    )
+  })
+
   it('模型管理项携带新手引导 tourId', () => {
     const modelItem = allItems.find((item) => item.path === '/config/model')
 

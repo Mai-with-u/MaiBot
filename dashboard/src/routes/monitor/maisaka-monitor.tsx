@@ -1394,7 +1394,14 @@ function TimelineEventRenderer({
 
 // ─── 主组件 ─────────────────────────────────────────────────
 
-export function MaisakaMonitor() {
+interface MaisakaMonitorProps {
+  /** 嵌入聊天工作区时隐藏重复的会话侧边栏，并使用父容器提供的完整高度。 */
+  embedded?: boolean
+  /** 打开推理详情后返回的地址；未提供时返回当前页面。 */
+  reasoningReturnTo?: string
+}
+
+export function MaisakaMonitor({ embedded = false, reasoningReturnTo }: MaisakaMonitorProps = {}) {
   const navigate = useNavigate()
   const { toast } = useToast()
   const {
@@ -1427,11 +1434,13 @@ export function MaisakaMonitor() {
         stage: target.stage,
         session: target.session,
         stem: target.stem,
-        returnTo: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        returnTo:
+          reasoningReturnTo ??
+          `${window.location.pathname}${window.location.search}${window.location.hash}`,
       })
       navigate({ to: `/reasoning-process?${params.toString()}` })
     },
-    [navigate]
+    [navigate, reasoningReturnTo]
   )
 
   useEffect(() => {
@@ -1623,60 +1632,67 @@ export function MaisakaMonitor() {
   const virtualItems = timelineVirtualizer.getVirtualItems()
 
   return (
-    <div className="flex min-w-0 flex-col gap-4 lg:h-[calc(100vh-116px)] lg:flex-row">
+    <div
+      className={cn(
+        'flex min-w-0 flex-col',
+        embedded ? 'h-full min-h-0 p-2 sm:p-3' : 'gap-4 lg:h-[calc(100vh-116px)] lg:flex-row'
+      )}
+    >
       {/* 会话侧边栏 */}
-      <aside
-        className={cn(
-          'border-border bg-background/45 flex min-w-0 shrink-0 flex-col overflow-hidden border transition-[width] duration-200',
-          sidebarCollapsed ? 'w-full lg:w-16' : 'w-full lg:w-52'
-        )}
-      >
-        <div className={cn('py-2', sidebarCollapsed ? 'px-2' : 'px-3')}>
-          <h2
-            className={cn(
-              'flex items-center gap-2 text-sm font-medium',
-              sidebarCollapsed && 'justify-center text-[0px]'
-            )}
-          >
-            {!sidebarCollapsed && <Activity className="h-4 w-4" />}
-            聊天流
-            {connected && (
-              <span
-                className={cn(
-                  'flex h-2 w-2 rounded-full bg-emerald-500',
-                  !sidebarCollapsed && 'ml-auto'
-                )}
-              />
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 shrink-0"
-              onClick={() => setSidebarCollapsed((value) => !value)}
-              title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronLeft className="h-3.5 w-3.5" />
+      {!embedded && (
+        <aside
+          className={cn(
+            'border-border bg-background/45 flex min-w-0 shrink-0 flex-col overflow-hidden border transition-[width] duration-200',
+            sidebarCollapsed ? 'w-full lg:w-16' : 'w-full lg:w-52'
+          )}
+        >
+          <div className={cn('py-2', sidebarCollapsed ? 'px-2' : 'px-3')}>
+            <h2
+              className={cn(
+                'flex items-center gap-2 text-sm font-medium',
+                sidebarCollapsed && 'justify-center text-[0px]'
               )}
-            </Button>
-          </h2>
-        </div>
-        <Separator />
-        <ScrollArea className="max-h-40 flex-1 lg:max-h-none">
-          <SessionSidebar
-            sessions={sessions}
-            stageStatuses={stageStatuses}
-            selectedSession={selectedSession}
-            onSelect={setSelectedSession}
-            collapsed={sidebarCollapsed}
-          />
-        </ScrollArea>
-      </aside>
+            >
+              {!sidebarCollapsed && <Activity className="h-4 w-4" />}
+              聊天流
+              {connected && (
+                <span
+                  className={cn(
+                    'flex h-2 w-2 rounded-full bg-emerald-500',
+                    !sidebarCollapsed && 'ml-auto'
+                  )}
+                />
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+              >
+                {sidebarCollapsed ? (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </h2>
+          </div>
+          <Separator />
+          <ScrollArea className="max-h-40 flex-1 lg:max-h-none">
+            <SessionSidebar
+              sessions={sessions}
+              stageStatuses={stageStatuses}
+              selectedSession={selectedSession}
+              onSelect={setSelectedSession}
+              collapsed={sidebarCollapsed}
+            />
+          </ScrollArea>
+        </aside>
+      )}
 
       {/* 主时间线区域 */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* 时间线 */}
         <StageStatusPanel
           autoScroll={autoScroll}
@@ -1686,7 +1702,12 @@ export function MaisakaMonitor() {
           status={selectedStageStatus}
         />
 
-        <Card className="min-h-[420px] min-w-0 flex-1 overflow-hidden lg:min-h-0">
+        <Card
+          className={cn(
+            'min-w-0 flex-1 overflow-hidden',
+            embedded ? 'min-h-0' : 'min-h-[420px] lg:min-h-0'
+          )}
+        >
           <ScrollArea className="h-full" ref={scrollRef} onScrollCapture={handleScroll}>
             <div className="min-w-0 p-4">
               {visibleTimelineEntries.length === 0 ? (
