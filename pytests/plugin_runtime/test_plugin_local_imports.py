@@ -62,8 +62,8 @@ def _write_async_local_import_plugin(plugin_dir: Path, plugin_id: str, source_na
         "class ChatLensPlugin:\n"
         "    config_type = ChatLensConfig\n\n"
         "    async def get_status(self):\n"
-        "        import config\n"
         "        await asyncio.sleep(0.05)\n"
+        "        import config\n"
         "        return config.ChatLensConfig.source\n\n"
         "def create_plugin():\n"
         "    return ChatLensPlugin()\n",
