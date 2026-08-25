@@ -65,7 +65,7 @@ def page_api_app(monkeypatch: pytest.MonkeyPatch) -> Tuple[FastAPI, _FakeRuntime
         entry_path=Path("webui/dist/index.js"),
         plugin_version="1.0.0",
     )
-    monkeypatch.setattr(pages_module, "_get_page_records", lambda: [page])
+    monkeypatch.setattr(pages_module, "_get_page_records", lambda: ([page], []))
     monkeypatch.setattr(pages_module, "get_plugin_runtime_manager", lambda: runtime)
 
     app = FastAPI()

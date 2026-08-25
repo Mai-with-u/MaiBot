@@ -1,11 +1,10 @@
 """插件 WebUI 页面清单和静态资源路由。"""
 
-from pathlib import Path
-from typing import Any, Dict, List
-from uuid import uuid4
-
 import json
 import re
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -38,7 +37,7 @@ _MAX_PAGE_API_TIMEOUT_MS = 30_000
 _OPERATION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
-def discover_runtime_plugin_pages() -> List[PluginPageRecord]:
+def discover_runtime_plugin_pages() -> Tuple[List[PluginPageRecord], List[str]]:
     """根据 Runner 当前成功加载的插件目录发现页面。"""
     loaded_plugin_paths = get_plugin_runtime_manager().get_loaded_plugin_paths()
     loaded_plugin_ids = {plugin_id for plugin_id, _plugin_path in loaded_plugin_paths}
@@ -48,15 +47,16 @@ def discover_runtime_plugin_pages() -> List[PluginPageRecord]:
     )
 
 
-def _get_page_records() -> List[PluginPageRecord]:
-    """获取当前页面记录，独立函数便于测试和后续缓存接入。"""
+def _get_page_records() -> Tuple[List[PluginPageRecord], List[str]]:
+    """获取当前页面记录及警告，独立函数便于测试和后续缓存接入。"""
     return discover_runtime_plugin_pages()
 
 
 def _find_plugin_page(plugin_id: str) -> PluginPageRecord:
     """从当前页面记录中查找插件，用于解析其资源根目录。"""
     normalized_plugin_id = validate_plugin_id(plugin_id)
-    for page in _get_page_records():
+    pages, _warnings = _get_page_records()
+    for page in pages:
         if page.plugin_id == normalized_plugin_id:
             return page
     raise HTTPException(status_code=404, detail="插件页面不存在")
@@ -66,7 +66,8 @@ def _find_plugin_page_record(plugin_id: str, page_id: str) -> PluginPageRecord:
     """按插件和页面 ID 查找页面记录，避免跨页面读取 API 白名单。"""
     normalized_plugin_id = validate_plugin_id(plugin_id)
     normalized_page_id = str(page_id or "").strip()
-    for page in _get_page_records():
+    pages, _warnings = _get_page_records()
+    for page in pages:
         if page.plugin_id == normalized_plugin_id and page.page_id == normalized_page_id:
             return page
     raise HTTPException(status_code=404, detail="插件页面不存在")
@@ -134,12 +135,19 @@ def _resolve_asset_path(plugin_path: Path, asset_path: str) -> Path:
 
     plugin_root = plugin_path.resolve()
     asset_root = (plugin_root / "webui" / "dist").resolve()
-    candidate_path = plugin_root / asset_path
-    if candidate_path.exists() and candidate_path.is_symlink():
-        raise HTTPException(status_code=400, detail="插件资源不能是符号链接")
+    try:
+        asset_root.relative_to(plugin_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="插件资源目录超出允许范围") from exc
+
+    check_path = plugin_root
+    for part in ("webui", "dist", *Path(asset_path).parts):
+        check_path = check_path / part
+        if check_path.exists() and check_path.is_symlink():
+            raise HTTPException(status_code=400, detail="插件资源路径包含符号链接")
 
     try:
-        resolved_candidate_path = candidate_path.resolve()
+        resolved_candidate_path = (plugin_root / asset_path).resolve()
         resolved_candidate_path.relative_to(asset_root)
     except (OSError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="插件资源路径超出允许范围") from exc
@@ -153,16 +161,13 @@ def _resolve_asset_path(plugin_path: Path, asset_path: str) -> Path:
 
 @router.get("/pages", dependencies=[Depends(require_auth)])
 async def list_plugin_pages() -> Dict[str, Any]:
-    """返回当前已加载插件声明的 WebUI 页面。"""
-    try:
-        pages = _get_page_records()
-    except ValueError as exc:
-        return {"success": True, "pages": [], "warnings": [str(exc)]}
+    """返回当前已加载插件声明的 WebUI 页面及发现警告。"""
+    pages, warnings = _get_page_records()
 
     return {
         "success": True,
         "pages": [page.to_response_dict() for page in pages],
-        "warnings": [],
+        "warnings": warnings,
     }
 
 

@@ -1,7 +1,6 @@
+import json
 from pathlib import Path
 from typing import Any, Dict
-
-import json
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +16,7 @@ def _write_plugin(
     plugin_id: str,
     *,
     entry: str = "webui/dist/index.js",
+    route: str = "hello",
     write_entry: bool = True,
 ) -> Path:
     plugin_dir = plugins_dir / plugin_id.replace(".", "_")
@@ -40,7 +40,7 @@ def _write_plugin(
                 {
                     "id": "hello",
                     "title": "Hello World",
-                    "route": "hello",
+                    "route": route,
                     "entry": entry,
                     "component": "mount",
                 }
@@ -59,7 +59,7 @@ def test_discovery_only_includes_loaded_plugins_and_generates_host_urls(tmp_path
     first_plugin = _write_plugin(tmp_path, "example.first")
     second_plugin = _write_plugin(tmp_path, "example.second")
 
-    pages = discover_plugin_pages([first_plugin, second_plugin], {"example.first"})
+    pages, _warnings = discover_plugin_pages([first_plugin, second_plugin], {"example.first"})
 
     assert [page.page_id for page in pages] == ["hello"]
     assert pages[0].plugin_id == "example.first"
@@ -69,14 +69,16 @@ def test_discovery_only_includes_loaded_plugins_and_generates_host_urls(tmp_path
     )
 
 
-def test_discovery_rejects_missing_entry_file(tmp_path: Path) -> None:
+def test_discovery_skips_missing_entry_file_with_warning(tmp_path: Path) -> None:
     plugin_path = _write_plugin(tmp_path, "example.missing", write_entry=False)
 
-    with pytest.raises(ValueError, match="入口文件不存在"):
-        discover_plugin_pages([plugin_path], {"example.missing"})
+    pages, warnings = discover_plugin_pages([plugin_path], {"example.missing"})
+
+    assert pages == []
+    assert any("入口文件不存在" in warning for warning in warnings)
 
 
-def test_discovery_rejects_symlinked_entry_file(tmp_path: Path) -> None:
+def test_discovery_skips_symlinked_entry_file_with_warning(tmp_path: Path) -> None:
     plugin_path = _write_plugin(tmp_path, "example.symlink", write_entry=False)
     entry_path = plugin_path / "webui" / "dist" / "index.js"
     outside_path = tmp_path / "outside.js"
@@ -86,15 +88,59 @@ def test_discovery_rejects_symlinked_entry_file(tmp_path: Path) -> None:
     except OSError as exc:
         pytest.skip(f"当前环境不支持符号链接: {exc}")
 
-    with pytest.raises(ValueError, match="符号链接"):
-        discover_plugin_pages([plugin_path], {"example.symlink"})
+    pages, warnings = discover_plugin_pages([plugin_path], {"example.symlink"})
+
+    assert pages == []
+    assert any("符号链接" in warning for warning in warnings)
+
+
+def test_discovery_skips_broken_page_and_keeps_valid_pages(tmp_path: Path) -> None:
+    bad_plugin = _write_plugin(tmp_path, "example.bad", write_entry=False)
+    good_plugin = _write_plugin(tmp_path, "example.good")
+
+    pages, warnings = discover_plugin_pages([bad_plugin, good_plugin], {"example.bad", "example.good"})
+
+    assert [page.plugin_id for page in pages] == ["example.good"]
+    assert any("入口文件不存在" in warning for warning in warnings)
+
+
+def test_discovery_uses_manifest_route_for_host_route(tmp_path: Path) -> None:
+    plugin_path = _write_plugin(tmp_path, "example.custom", route="custom-slug")
+
+    pages, _warnings = discover_plugin_pages([plugin_path], {"example.custom"})
+
+    assert len(pages) == 1
+    assert pages[0].page_id == "hello"
+    assert pages[0].route == "/plugin-pages/example.custom/custom-slug"
+    assert pages[0].entry_url.endswith(
+        "/api/webui/plugins/example.custom/assets/webui/dist/index.js?v=1.0.0"
+    )
+    assert pages[0].api_base == "/api/webui/plugins/example.custom/pages/hello/api"
+
+
+def test_discovery_rejects_dist_symlink_escaping_plugin_root(tmp_path: Path) -> None:
+    plugin_path = _write_plugin(tmp_path, "example.distlink", write_entry=False)
+    outside_dist = tmp_path / "outside_dist"
+    outside_dist.mkdir()
+    (outside_dist / "index.js").write_text("export function mount() {}", encoding="utf-8")
+    dist_path = plugin_path / "webui" / "dist"
+    dist_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dist_path.symlink_to(outside_dist, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前环境不支持符号链接: {exc}")
+
+    pages, warnings = discover_plugin_pages([plugin_path], {"example.distlink"})
+
+    assert pages == []
+    assert any("webui/dist 目录超出插件根目录" in warning for warning in warnings)
 
 
 @pytest.fixture
 def page_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     plugin_path = _write_plugin(tmp_path, "example.first")
-    pages = discover_plugin_pages([plugin_path], {"example.first"})
-    monkeypatch.setattr(pages_module, "discover_runtime_plugin_pages", lambda: pages)
+    pages, _warnings = discover_plugin_pages([plugin_path], {"example.first"})
+    monkeypatch.setattr(pages_module, "discover_runtime_plugin_pages", lambda: (pages, []))
 
     app = FastAPI()
     app.include_router(pages_module.router, prefix="/api/webui/plugins")
@@ -158,6 +204,33 @@ def test_asset_route_returns_javascript(page_app: FastAPI) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/javascript")
     assert b"function mount" in response.content
+
+
+def test_asset_route_rejects_intermediate_symlink_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plugin_path = _write_plugin(tmp_path, "example.symlinkdir")
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "leak.js").write_text("export function mount() {}", encoding="utf-8")
+    sub_path = plugin_path / "webui" / "dist" / "sub"
+    try:
+        sub_path.symlink_to(outside_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"当前环境不支持符号链接: {exc}")
+
+    pages, _warnings = discover_plugin_pages([plugin_path], {"example.symlinkdir"})
+    monkeypatch.setattr(pages_module, "discover_runtime_plugin_pages", lambda: (pages, []))
+
+    app = FastAPI()
+    app.include_router(pages_module.router, prefix="/api/webui/plugins")
+    app.dependency_overrides[require_auth] = lambda: "test-token"
+
+    response = TestClient(app).get(
+        "/api/webui/plugins/example.symlinkdir/assets/webui/dist/sub/leak.js"
+    )
+
+    assert response.status_code == 400
 
 
 def test_page_list_uses_loaded_runtime_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

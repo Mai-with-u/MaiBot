@@ -692,6 +692,14 @@ class PluginLoader:
                 sys.modules.pop(module_name, None)
             sys.modules.update(cached_modules)
 
+    @contextlib.contextmanager
+    def plugin_import_context(self, plugin_dir: str) -> Iterator[None]:
+        """运行期插件本地导入上下文：调用插件回调期间把插件目录临时放回 sys.path 首位并隔离其顶层模块缓存。"""
+        directory = Path(plugin_dir)
+        with self._temporary_sys_path_entry(directory):
+            with self._temporary_plugin_local_modules(directory):
+                yield
+
     # ──── 旧版插件兼容 ────────────────────────────────────────
 
     def _ensure_compat_hook(self) -> None:

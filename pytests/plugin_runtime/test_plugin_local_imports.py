@@ -1,9 +1,10 @@
 """插件入口模块本地顶层导入的回归测试。"""
 
-from pathlib import Path
-
 import json
 import sys
+from pathlib import Path
+
+import pytest
 
 from src.plugin_runtime.runner.plugin_loader import PluginLoader
 
@@ -18,6 +19,9 @@ def _write_local_import_plugin(plugin_dir: Path, plugin_id: str, source_name: st
         "from config import ChatLensConfig\n\n"
         "class ChatLensPlugin:\n"
         "    config_type = ChatLensConfig\n\n"
+        "    def get_status(self):\n"
+        "        import config\n"
+        "        return config.ChatLensConfig.source\n\n"
         "def create_plugin():\n"
         "    return ChatLensPlugin()\n",
         encoding="utf-8",
@@ -112,3 +116,31 @@ def test_plugin_loader_isolates_cached_top_level_modules_between_plugins(tmp_pat
         sys.modules.pop("config", None)
         if previous_config_module is not None:
             sys.modules["config"] = previous_config_module
+
+
+@pytest.mark.asyncio
+async def test_runner_invoke_resolves_runtime_local_import_from_plugin_dir(tmp_path: Path) -> None:
+    """运行期回调内 ``import config`` 应解析到插件自身目录，调用结束后恢复 sys.path。"""
+
+    plugins_root = tmp_path / "plugins"
+    plugin_dir = plugins_root / "chat-lens"
+    _write_local_import_plugin(plugin_dir, "test.chat-lens", "plugin-local")
+
+    loader = PluginLoader(host_version="1.1.0")
+    loaded_plugins = loader.discover_and_load([str(plugins_root)])
+    assert len(loaded_plugins) == 1
+    assert str(plugin_dir) not in sys.path
+
+    from src.plugin_runtime.runner.runner_main import PluginRunner
+
+    runner = object.__new__(PluginRunner)
+    runner._loader = loader
+
+    previous_config_module = sys.modules.get("config")
+    status = await runner._invoke_plugin_callable(
+        loaded_plugins[0].instance.get_status,
+        plugin_dir=str(plugin_dir),
+    )
+    assert status == "plugin-local"
+    assert str(plugin_dir) not in sys.path
+    assert sys.modules.get("config") is previous_config_module

@@ -115,15 +115,21 @@ export function useMenuSections(): MenuSection[] {
 
     const refreshPluginPages = () => {
       pluginPagesController?.abort()
-      pluginPagesController = new AbortController()
-      fetchPluginPages(pluginPagesController.signal)
+      const controller = new AbortController()
+      pluginPagesController = controller
+      fetchPluginPages(controller.signal)
         .then((response) => {
-          if (!cancelled) {
+          if (!cancelled && pluginPagesController === controller && !controller.signal.aborted) {
             setPluginPages(response.pages)
           }
         })
         .catch((error: unknown) => {
-          if (cancelled || (error instanceof Error && error.name === 'AbortError')) {
+          if (
+            cancelled ||
+            pluginPagesController !== controller ||
+            controller.signal.aborted ||
+            (error instanceof Error && error.name === 'AbortError')
+          ) {
             return
           }
           // 页面清单失败不能影响静态插件管理、市场和 MCP 入口。

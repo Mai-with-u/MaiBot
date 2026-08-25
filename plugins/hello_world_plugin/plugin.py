@@ -3,11 +3,10 @@
 你的第一个 MaiCore 插件，包含问候功能、时间查询等基础示例。
 """
 
-from datetime import datetime
-from typing import Any, Dict
-
 import random
 import re
+from datetime import datetime
+from typing import Any, Dict
 
 from maibot_sdk import API, Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType

@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { backendApi } from '@/lib/http'
 import { fetchPluginPages } from '@/lib/plugin-api/pages'
+import { PLUGIN_PAGES_UPDATED_EVENT } from '@/lib/plugin-api/plugin-pages-events'
 
 import { PluginPageHost } from './PluginPageHost'
 import { loadPluginPageModule } from './loader'
@@ -138,6 +139,50 @@ describe('PluginPageHost', () => {
     expect(loadPluginPageModule).not.toHaveBeenCalled()
   })
 
+  it('插件重载后重新发现并重新挂载，旧页面 cleanup 被执行', async () => {
+    const cleanup = vi.fn()
+    const mount = vi.fn((_: HTMLElement, __: Record<string, unknown>) => cleanup)
+    vi.mocked(loadPluginPageModule).mockResolvedValue({ mount })
+    vi.mocked(fetchPluginPages).mockResolvedValueOnce({ success: true, pages: [page], warnings: [] })
+    vi.mocked(fetchPluginPages).mockResolvedValueOnce({ success: true, pages: [page], warnings: [] })
+
+    render(<PluginPageHost />)
+
+    await waitFor(() => {
+      expect(mount).toHaveBeenCalledOnce()
+    })
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    await waitFor(() => {
+      expect(mount).toHaveBeenCalledTimes(2)
+    })
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('插件页面被删除后重新拉取清单并进入错误状态', async () => {
+    const mount = vi.fn()
+    vi.mocked(loadPluginPageModule).mockResolvedValue({ mount })
+    vi.mocked(fetchPluginPages).mockResolvedValueOnce({ success: true, pages: [page], warnings: [] })
+    vi.mocked(fetchPluginPages).mockResolvedValueOnce({ success: true, pages: [], warnings: [] })
+
+    render(<PluginPageHost />)
+
+    await waitFor(() => {
+      expect(mount).toHaveBeenCalledOnce()
+    })
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('插件页面不存在')
+    })
+  })
+
   it('拒绝非 Host 同源插件 API 基址', async () => {
     vi.mocked(fetchPluginPages).mockResolvedValue({
       success: true,
@@ -152,5 +197,37 @@ describe('PluginPageHost', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('插件页面 API 必须使用 Host 同源资源')
     })
     expect(loadPluginPageModule).not.toHaveBeenCalled()
+  })
+  it('id 与 route 不同时按 route slug 匹配并挂载', async () => {
+    paramsMock.pageId = 'custom-slug'
+    const mount = vi.fn()
+    vi.mocked(loadPluginPageModule).mockResolvedValue({ mount })
+    vi.mocked(fetchPluginPages).mockResolvedValue({
+      success: true,
+      pages: [
+        {
+          ...page,
+          page_id: 'hello',
+          route: '/plugin-pages/example.first/custom-slug',
+          api_base: '/api/webui/plugins/example.first/pages/hello/api',
+        },
+      ],
+      warnings: [],
+    })
+
+    try {
+      render(<PluginPageHost />)
+
+      await waitFor(() => {
+        expect(mount).toHaveBeenCalledOnce()
+      })
+      expect(mount).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        expect.objectContaining({ pluginId: 'example.first', pageId: 'hello' })
+      )
+      expect(screen.queryByRole('alert')).toBeNull()
+    } finally {
+      paramsMock.pageId = 'hello'
+    }
   })
 })

@@ -679,9 +679,31 @@ class PluginRunner:
             },
         )
 
-    async def _invoke_plugin_callable(self, handler_method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """调用插件函数；同步函数放到线程中执行，避免阻塞 Runner 事件循环。"""
+    async def _invoke_plugin_callable(
+        self,
+        handler_method: Callable[..., Any],
+        *args: Any,
+        plugin_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """调用插件函数；同步函数放到线程中执行，避免阻塞 Runner 事件循环。
 
+        运行期回调（API/Action/Hook/生命周期）可能在函数体内执行插件本地顶层导入
+        （如 ``import config``），调用期间把插件目录临时放回 sys.path 首位并隔离
+        其顶层模块缓存，返回后立即恢复，避免污染 Runner 全局导入路径。
+        """
+        if plugin_dir:
+            with self._loader.plugin_import_context(plugin_dir):
+                return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
+        return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
+
+    async def _invoke_plugin_callable_impl(
+        self,
+        handler_method: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """插件函数调度：协程直接 await，同步函数放到线程中执行。"""
         if inspect.iscoroutinefunction(handler_method):
             return await handler_method(*args, **kwargs)
 
@@ -1544,7 +1566,7 @@ class PluginRunner:
             return True
 
         try:
-            await self._invoke_plugin_callable(instance.on_load)
+            await self._invoke_plugin_callable(instance.on_load, plugin_dir=meta.plugin_dir)
             return True
         except Exception as exc:
             logger.error(f"插件 {meta.plugin_id} on_load 失败: {exc}", exc_info=True)
@@ -1561,7 +1583,7 @@ class PluginRunner:
             return
 
         try:
-            await self._invoke_plugin_callable(instance.on_unload)
+            await self._invoke_plugin_callable(instance.on_unload, plugin_dir=meta.plugin_dir)
         except Exception as exc:
             logger.error(f"插件 {meta.plugin_id} on_unload 失败: {exc}", exc_info=True)
 
@@ -2062,6 +2084,7 @@ class PluginRunner:
                     result = await self._invoke_plugin_callable(
                         meta.instance.invoke_component,
                         component_name,
+                        plugin_dir=meta.plugin_dir,
                         **invoke.args,
                     )
                     resp_payload = InvokeResultPayload(success=True, result=result)
@@ -2078,7 +2101,11 @@ class PluginRunner:
                 )
 
             try:
-                result = await self._invoke_plugin_callable(handler_method, **invoke.args)
+                result = await self._invoke_plugin_callable(
+                    handler_method,
+                    plugin_dir=meta.plugin_dir,
+                    **invoke.args,
+                )
                 resp_payload = InvokeResultPayload(success=True, result=result)
                 return envelope.make_response(payload=resp_payload.model_dump())
             except Exception as e:
@@ -2124,6 +2151,7 @@ class PluginRunner:
                 handler_method,
                 operation=invoke.operation,
                 request=invoke.request,
+                plugin_dir=meta.plugin_dir,
             )
             resp_payload = InvokeResultPayload(success=True, result=result)
             return envelope.make_response(payload=resp_payload.model_dump())
@@ -2168,7 +2196,11 @@ class PluginRunner:
 
         inflight = self._start_inflight_rpc(envelope, component_name)
         try:
-            raw = await self._invoke_plugin_callable(handler_method, **invoke.args)
+            raw = await self._invoke_plugin_callable(
+                handler_method,
+                plugin_dir=meta.plugin_dir,
+                **invoke.args,
+            )
 
             # 规范化返回值：将 EventHandler 返回展平到 payload 顶层
             if raw is None:
@@ -2226,7 +2258,11 @@ class PluginRunner:
         inflight = self._start_inflight_rpc(envelope, component_name)
         try:
             try:
-                raw = await self._invoke_plugin_callable(handler_method, **invoke.args)
+                raw = await self._invoke_plugin_callable(
+                    handler_method,
+                    plugin_dir=meta.plugin_dir,
+                    **invoke.args,
+                )
             except Exception as exc:
                 logger.error(f"插件 {plugin_id} hook_handler {component_name} 执行异常: {exc}", exc_info=True)
                 return envelope.make_response(
@@ -2312,6 +2348,7 @@ class PluginRunner:
                     config_scope,
                     payload.config_data,
                     payload.config_version,
+                    plugin_dir=meta.plugin_dir,
                 )
             except Exception as e:
                 logger.error(f"插件 {plugin_id} 配置更新失败: {e}")

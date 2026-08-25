@@ -57,6 +57,11 @@ def _resolve_page_entry_path(plugin_path: Path, entry: str) -> Path:
         raise ValueError("插件目录不能是符号链接或不存在")
 
     webui_dist_path = (resolved_plugin_path / _WEBUI_DIST_DIRECTORY).resolve()
+    try:
+        webui_dist_path.relative_to(resolved_plugin_path)
+    except ValueError as exc:
+        raise ValueError("webui/dist 目录超出插件根目录") from exc
+
     candidate_path = resolved_plugin_path / entry
     if candidate_path.exists() and candidate_path.is_symlink():
         raise ValueError(f"页面入口不能是符号链接: {entry}")
@@ -78,6 +83,7 @@ def _build_page_record(plugin_path: Path, manifest: PluginManifest, page: Manife
     page_id = page.id
     entry_path = _resolve_page_entry_path(plugin_path, page.entry)
     encoded_plugin_id = quote(plugin_id, safe="")
+    encoded_route = quote(page.route, safe="")
     encoded_page_id = quote(page_id, safe="")
     encoded_entry = quote(page.entry, safe="/")
 
@@ -85,7 +91,7 @@ def _build_page_record(plugin_path: Path, manifest: PluginManifest, page: Manife
         plugin_id=plugin_id,
         page_id=page_id,
         title=page.title,
-        route=f"{_PLUGIN_PAGE_ROUTE_PREFIX}/{encoded_plugin_id}/{encoded_page_id}",
+        route=f"{_PLUGIN_PAGE_ROUTE_PREFIX}/{encoded_plugin_id}/{encoded_route}",
         entry_url=(
             f"{_PLUGIN_API_PREFIX}/{encoded_plugin_id}/assets/{encoded_entry}"
             f"?v={quote(manifest.version, safe='')}"
@@ -105,10 +111,12 @@ def _build_page_record(plugin_path: Path, manifest: PluginManifest, page: Manife
 def discover_plugin_pages(
     plugin_paths: Iterable[Path],
     loaded_plugin_ids: Collection[str],
-) -> List[PluginPageRecord]:
+) -> Tuple[List[PluginPageRecord], List[str]]:
     """扫描已加载插件的 WebUI 页面声明并生成 Host 页面记录。
 
     Manifest 校验保护声明契约，文件系统解析保护实际资源边界；两层校验都必须保留。
+
+    返回 (有效页面列表, 警告列表)；单个页面声明损坏只跳过该页并记录警告，不影响其余页面。
     """
     # 延迟导入插件路由支持函数，避免页面注册表与插件路由包初始化互相导入。
     from src.webui.routers.plugin.support import load_manifest_json
@@ -120,6 +128,7 @@ def discover_plugin_pages(
         log_compat_warnings=False,
     )
     pages: List[PluginPageRecord] = []
+    warnings: List[str] = []
 
     for plugin_path in plugin_paths:
         candidate_path = Path(plugin_path)
@@ -135,7 +144,11 @@ def discover_plugin_pages(
             continue
 
         for page in manifest.extensions.webui_pages:
-            pages.append(_build_page_record(candidate_path, manifest, page))
+            try:
+                pages.append(_build_page_record(candidate_path, manifest, page))
+            except ValueError as exc:
+                logger.warning(f"插件 {manifest.id} 页面 {page.id} 声明无效，已跳过: {exc}")
+                warnings.append(f"插件 {manifest.id} 页面 {page.id} 声明无效，已跳过: {exc}")
 
     pages.sort(key=lambda page: (page.order, page.plugin_id, page.page_id))
-    return pages
+    return pages, warnings

@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router'
 
 import { backendApi, requireSuccess } from '@/lib/http'
 import { fetchPluginPages } from '@/lib/plugin-api/pages'
+import { PLUGIN_PAGES_UPDATED_EVENT } from '@/lib/plugin-api/plugin-pages-events'
 import type { PluginPageSummary } from '@/lib/plugin-api/types'
 import { APP_VERSION } from '@/lib/version'
 
@@ -125,7 +126,11 @@ function findPluginPage(
   pageId: string
 ): PluginPageSummary {
   const page = pages.find((candidate) => {
-    return candidate.plugin_id === pluginId && candidate.page_id === pageId
+    const routeSlug = candidate.route.slice(candidate.route.lastIndexOf('/') + 1)
+    return (
+      candidate.plugin_id === pluginId &&
+      (candidate.page_id === pageId || routeSlug === pageId)
+    )
   })
   if (!page) {
     throw new Error(`插件页面不存在：${pluginId}/${pageId}`)
@@ -178,20 +183,20 @@ export function PluginPageHost() {
 
   useEffect(() => {
     let cancelled = false
-    const abortController = new AbortController()
+    let abortController = new AbortController()
     disposePluginPage(cleanupRef)
     containerRef.current?.replaceChildren()
     setPhase('loading')
     setErrorMessage(null)
 
-    async function loadAndMount(): Promise<void> {
+    async function loadAndMount(signal: AbortSignal): Promise<void> {
       try {
-        const response = await fetchPluginPages(abortController.signal)
+        const response = await fetchPluginPages(signal)
         const page = findPluginPage(response.pages, pluginId, pageId)
         validatePluginEntry(page.entry)
         validatePluginApiBase(page.api_base)
         const module = await loadPluginPageModule(page.entry)
-        if (cancelled) {
+        if (cancelled || signal.aborted) {
           return
         }
 
@@ -205,14 +210,14 @@ export function PluginPageHost() {
         }
 
         const cleanup = (mount as PluginPageMount)(container, createPluginPageContext(page))
-        if (cancelled) {
+        if (cancelled || signal.aborted) {
           runPluginCleanup(typeof cleanup === 'function' ? cleanup : null)
           return
         }
         cleanupRef.current = typeof cleanup === 'function' ? cleanup : null
         setPhase('ready')
       } catch (error: unknown) {
-        if (cancelled || (error instanceof Error && error.name === 'AbortError')) {
+        if (cancelled || signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
           return
         }
         setPhase('error')
@@ -220,10 +225,22 @@ export function PluginPageHost() {
       }
     }
 
-    void loadAndMount()
+    const handlePluginPagesUpdated = () => {
+      abortController.abort()
+      abortController = new AbortController()
+      disposePluginPage(cleanupRef)
+      containerRef.current?.replaceChildren()
+      setPhase('loading')
+      setErrorMessage(null)
+      void loadAndMount(abortController.signal)
+    }
+
+    window.addEventListener(PLUGIN_PAGES_UPDATED_EVENT, handlePluginPagesUpdated)
+    void loadAndMount(abortController.signal)
     return () => {
       cancelled = true
       abortController.abort()
+      window.removeEventListener(PLUGIN_PAGES_UPDATED_EVENT, handlePluginPagesUpdated)
       disposePluginPage(cleanupRef)
       containerRef.current?.replaceChildren()
     }
