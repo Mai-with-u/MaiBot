@@ -1,13 +1,21 @@
 import { useMemo, useState } from 'react'
 
-import { ChevronRight, FileText, ListTree, Sparkles } from 'lucide-react'
+import { ChevronRight, FileText, ListTree, MoreHorizontal, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { CodeEditor } from '@/components/CodeEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { CodeEditor } from '@/components/CodeEditor'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -630,59 +638,91 @@ export function TuningTab({ tuning }: TuningTabProps) {
               </CardTitle>
               <CardDescription>{t('memory.tuning.task.description')}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-3">
-                <div className="text-sm font-medium">{t('memory.tuning.form.strategy')}</div>
-                <div className="grid gap-3">
-                  <div className="space-y-2">
-                    <Label>{t('memory.tuning.form.objective')}</Label>
-                    <Select value={tuningObjective} onValueChange={setTuningObjective}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="precision_priority">{t('memory.tuning.objectives.precision')}</SelectItem>
-                        <SelectItem value="balanced">{t('memory.tuning.objectives.balanced')}</SelectItem>
-                        <SelectItem value="recall_priority">{t('memory.tuning.objectives.recall')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('memory.tuning.form.intensity')}</Label>
-                    <Select value={tuningIntensity} onValueChange={setTuningIntensity}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="quick">{t('memory.tuning.intensity.quick')}</SelectItem>
-                        <SelectItem value="standard">{t('memory.tuning.intensity.standard')}</SelectItem>
-                        <SelectItem value="deep">{t('memory.tuning.intensity.deep')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-3 border-t pt-4">
-                <div className="text-sm font-medium">{t('memory.tuning.form.evalScope')}</div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>{t('memory.tuning.form.sampleSize')}</Label>
-                    <Input type="number" value={tuningSampleSize} onChange={(event) => setTuningSampleSize(event.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('memory.tuning.form.topKEval')}</Label>
-                    <Input type="number" value={tuningTopKEval} onChange={(event) => setTuningTopKEval(event.target.value)} />
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 border-t pt-4">
-                <Checkbox
-                  id="persist-best-profile"
-                  checked={persistBestProfile}
-                  onCheckedChange={(checked) => setPersistBestProfile(checked === true)}
-                />
-                <Label htmlFor="persist-best-profile">{t('memory.tuning.form.persist')}</Label>
-              </div>
-              <Button className="w-full" onClick={() => void submitTuningTask()} disabled={creatingTuning}>
+            <CardContent className="flex items-center gap-2">
+              <Button className="min-w-0 flex-1" onClick={() => void submitTuningTask()} disabled={creatingTuning}>
                 <Sparkles className="mr-2 h-4 w-4" />
                 {t('memory.tuning.actions.createTask')}
               </Button>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    aria-label={t('memory.tuning.form.parameters')}
+                    title={t('memory.tuning.form.parameters')}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>{t('memory.tuning.form.parameters')}</DialogTitle>
+                    <DialogDescription>{t('memory.tuning.form.parametersDescription')}</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-5">
+                    <section className="space-y-3">
+                      <div className="text-sm font-medium">{t('memory.tuning.form.strategy')}</div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="tuning-objective">{t('memory.tuning.form.objective')}</Label>
+                          <Select value={tuningObjective} onValueChange={setTuningObjective}>
+                            <SelectTrigger id="tuning-objective"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="precision_priority">{t('memory.tuning.objectives.precision')}</SelectItem>
+                              <SelectItem value="balanced">{t('memory.tuning.objectives.balanced')}</SelectItem>
+                              <SelectItem value="recall_priority">{t('memory.tuning.objectives.recall')}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="tuning-intensity">{t('memory.tuning.form.intensity')}</Label>
+                          <Select value={tuningIntensity} onValueChange={setTuningIntensity}>
+                            <SelectTrigger id="tuning-intensity"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="quick">{t('memory.tuning.intensity.quick')}</SelectItem>
+                              <SelectItem value="standard">{t('memory.tuning.intensity.standard')}</SelectItem>
+                              <SelectItem value="deep">{t('memory.tuning.intensity.deep')}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </section>
+                    <section className="space-y-3 border-t pt-4">
+                      <div className="text-sm font-medium">{t('memory.tuning.form.evalScope')}</div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="tuning-sample-size">{t('memory.tuning.form.sampleSize')}</Label>
+                          <Input
+                            id="tuning-sample-size"
+                            type="number"
+                            value={tuningSampleSize}
+                            onChange={(event) => setTuningSampleSize(event.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="tuning-top-k-eval">{t('memory.tuning.form.topKEval')}</Label>
+                          <Input
+                            id="tuning-top-k-eval"
+                            type="number"
+                            value={tuningTopKEval}
+                            onChange={(event) => setTuningTopKEval(event.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </section>
+                    <div className="flex items-center gap-3 border-t pt-4">
+                      <Checkbox
+                        id="persist-best-profile"
+                        checked={persistBestProfile}
+                        onCheckedChange={(checked) => setPersistBestProfile(checked === true)}
+                      />
+                      <Label htmlFor="persist-best-profile">{t('memory.tuning.form.persist')}</Label>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
         </div>

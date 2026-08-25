@@ -1104,6 +1104,8 @@
         "description": "评估并改善记忆搜索效果"
       },
       "form": {
+        "parameters": "调优参数",
+        "parametersDescription": "这些设置只影响下一次调优任务，一般保持默认即可。",
         "strategy": "调优策略",
         "objective": "优化目标",
         "intensity": "评估强度",

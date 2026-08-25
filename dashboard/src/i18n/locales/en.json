@@ -1105,6 +1105,8 @@
         "description": "Retrieval parameter evaluation"
       },
       "form": {
+        "parameters": "Tuning parameters",
+        "parametersDescription": "These settings affect only the next tuning task. The defaults are suitable for most cases.",
         "strategy": "Tuning Strategy",
         "objective": "Objective",
         "intensity": "Evaluation Depth",

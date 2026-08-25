@@ -275,7 +275,7 @@ app.whenReady().then(async () => {
   await win.loadURL(`${DASHBOARD_URL}/resource/knowledge-base`)
   await waitFor(
     win,
-    `document.body && document.body.innerText.includes('运行时自检') && document.body.innerText.includes('刷新数据')`,
+    `document.querySelector('button[aria-label="更多操作"]') && document.querySelector('[role="tab"]')`,
     'memory console ready',
     30000,
     500,

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 
-import { Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, Search, SlidersHorizontal, Upload } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, RefreshCw, Search, Upload } from 'lucide-react'
 
 import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
 import { MemoryProgressIndicator } from '@/components/memory/MemoryProgressIndicator'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
@@ -26,7 +27,11 @@ import type {
 } from '@/lib/memory-api'
 
 import { IMPORT_CHUNK_PAGE_SIZE, IMPORT_KIND_OPTIONS, RUNNING_IMPORT_STATUS } from '../constants'
-import type { ImportContentCategory, UseImportFormResult } from '../hooks/useImportForm'
+import type {
+  ImportContentCategory,
+  UnifiedImportMode,
+  UseImportFormResult,
+} from '../hooks/useImportForm'
 import type { UseImportQueueResult } from '../hooks/useImportQueue'
 import {
   formatImportTime,
@@ -37,6 +42,12 @@ import {
   normalizeImportInputMode,
   normalizeProgress,
 } from '../utils'
+
+const UNIFIED_IMPORT_MODE_OPTIONS = [
+  { value: 'text', label: '文本' },
+  { value: 'file', label: '文件' },
+  { value: 'folder', label: '文件夹' },
+]
 
 function formatChunkSummary(done: unknown, total: unknown, failed: unknown, cancelled: unknown = 0): string {
   const doneCount = Number(done ?? 0)
@@ -154,6 +165,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
   const {
     importCreateMode,
     setImportCreateMode,
+    unifiedImportMode,
+    setUnifiedImportMode,
     importSettings,
     importChatTargets,
     importCommonFileConcurrency,
@@ -211,42 +224,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     setConvertDimension,
     convertBatchSize,
     setConvertBatchSize,
-    backfillLimit,
-    setBackfillLimit,
-    backfillDryRun,
-    setBackfillDryRun,
-    backfillNoCreatedFallback,
-    setBackfillNoCreatedFallback,
-    maibotSourceDb,
-    setMaibotSourceDb,
-    maibotTimeFrom,
-    setMaibotTimeFrom,
-    maibotTimeTo,
-    setMaibotTimeTo,
-    maibotStartId,
-    setMaibotStartId,
-    maibotEndId,
-    setMaibotEndId,
-    maibotStreamIds,
-    setMaibotStreamIds,
-    maibotGroupIds,
-    setMaibotGroupIds,
-    maibotUserIds,
-    setMaibotUserIds,
-    maibotReadBatchSize,
-    setMaibotReadBatchSize,
-    maibotCommitWindowRows,
-    setMaibotCommitWindowRows,
-    maibotEmbedWorkers,
-    setMaibotEmbedWorkers,
-    maibotNoResume,
-    setMaibotNoResume,
-    maibotResetState,
-    setMaibotResetState,
-    maibotDryRun,
-    setMaibotDryRun,
-    maibotVerifyOnly,
-    setMaibotVerifyOnly,
     submitImportByMode,
     creatingImport,
     pathResolveAlias,
@@ -261,6 +238,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
     pathResolveOutput,
   } = form
   const [chatTargetQuery, setChatTargetQuery] = useState('')
+  const [importParametersOpen, setImportParametersOpen] = useState(false)
   const selectedImportChatTarget = useMemo(
     () => importChatTargets.find((chat) => chat.chat_id === importCommonChatId.trim()),
     [importChatTargets, importCommonChatId],
@@ -291,7 +269,6 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 <Upload className="h-4 w-4" />
                 创建导入任务
               </CardTitle>
-              <CardDescription>按“选择导入方式 → 检查公共参数 → 创建任务”的顺序完成导入。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <Tabs
@@ -304,11 +281,46 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                   <MemoryMiniTabs items={IMPORT_KIND_OPTIONS} />
                 </div>
 
-                <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
-                <div className="rounded-md border border-border/60 bg-background/80 px-3 py-2">
-                  <div className="text-sm font-medium text-foreground">公共参数</div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-foreground/75">这些设置会应用到当前导入任务。一般保持默认即可，只在批量导入或排查问题时调整。</div>
+                <div className="space-y-2">
+                  <Label>
+                    资料类别 <span className="text-destructive">*</span>
+                  </Label>
+                  <Select
+                    value={importContentCategory}
+                    onValueChange={(value) =>
+                      setImportContentCategory(value as ImportContentCategory)
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label="资料类别"
+                      aria-required="true"
+                      aria-invalid={importContentCategoryMissing}
+                    >
+                      <SelectValue placeholder="请选择资料类别" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="narrative">叙事资料</SelectItem>
+                      <SelectItem value="factual">事实资料</SelectItem>
+                      <SelectItem value="quote">语录与短句</SelectItem>
+                      <SelectItem value="chat_log">聊天记录</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {importContentCategoryMissing ? (
+                    <div className="text-xs text-destructive" role="status">
+                      请选择资料类别
+                    </div>
+                  ) : null}
                 </div>
+
+                <Dialog open={importParametersOpen} onOpenChange={setImportParametersOpen}>
+                  <DialogContent
+                    aria-describedby={undefined}
+                    className="max-h-[85vh] overflow-y-auto [--dialog-width:72rem]"
+                  >
+                    <DialogHeader>
+                      <DialogTitle>导入参数</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="grid gap-2 rounded-md border bg-background/70 p-3 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-center">
                     <div className="min-w-0">
@@ -346,27 +358,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     </div>
                     <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">需要模型参与抽取，质量更高但耗时更长。</div>
                   </div>
-                  <div className="grid gap-2 rounded-md border bg-background/70 p-3">
-                    <Label>资料类别</Label>
-                    <Select
-                      value={importContentCategory}
-                      onValueChange={(value) => setImportContentCategory(value as ImportContentCategory)}
-                    >
-                      <SelectTrigger aria-label="资料类别" aria-invalid={importContentCategoryMissing}>
-                        <SelectValue placeholder="请选择资料类别" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="narrative">叙事资料</SelectItem>
-                        <SelectItem value="factual">事实资料</SelectItem>
-                        <SelectItem value="quote">语录与短句</SelectItem>
-                        <SelectItem value="chat_log">聊天记录</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {importContentCategoryMissing ? (
-                      <div className="text-xs text-destructive" role="status">请选择资料类别</div>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
+                  <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 lg:grid-cols-[minmax(14rem,1fr)_minmax(18rem,28rem)]">
                     <div className="min-w-0">
                       <Label>资料范围</Label>
                       <div className="mt-0.5 text-xs text-muted-foreground">选择所有聊天可用，或将这批记忆限制在一个明确的聊天流内。</div>
@@ -517,109 +509,126 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     </div>
                   </div>
                 </details>
-              </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
 
               <TabsContent value="upload" className="mt-0">
-                <div className="space-y-3 rounded-xl border bg-background/70 p-4">
-                  <div className="text-xs text-muted-foreground">选择一个或多个本地文件创建导入任务，适合批量导入资料或聊天记录。</div>
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>输入模式</Label>
-                      <Select
-                        value={uploadInputMode}
-                        onValueChange={(value) => setUploadInputMode(normalizeImportInputMode(value))}
-                      >
-                        <SelectTrigger aria-label="upload-input-mode">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">文本</SelectItem>
-                          <SelectItem value="json">结构化 JSON</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>文件选择</Label>
-                      <Input
-                        type="file"
-                        multiple
-                        accept=".txt,.md,.json"
-                        onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))}
-                      />
-                    </div>
-                  </div>
-                  <div className="text-xs text-muted-foreground">已选择 {uploadFiles.length} 个文件</div>
-                </div>
-              </TabsContent>
+                <Tabs
+                  value={unifiedImportMode}
+                  onValueChange={(value) => setUnifiedImportMode(value as UnifiedImportMode)}
+                  className="space-y-4"
+                >
+                  <MemoryMiniTabs items={UNIFIED_IMPORT_MODE_OPTIONS} />
 
-              <TabsContent value="paste" className="mt-0">
-                <div className="space-y-3 rounded-xl border bg-background/70 p-4">
-                  <div className="text-xs text-muted-foreground">直接粘贴少量文本或 JSON，适合临时补充一段资料。</div>
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>内容名称</Label>
-                      <Input value={pasteName} onChange={(event) => setPasteName(event.target.value)} />
+                  <TabsContent value="text" className="mt-0 space-y-3">
+                    <div className="grid gap-3">
+                      <div className="space-y-1">
+                        <Label>内容名称</Label>
+                        <Input value={pasteName} onChange={(event) => setPasteName(event.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>输入模式</Label>
+                        <Select
+                          value={pasteMode}
+                          onValueChange={(value) => setPasteMode(normalizeImportInputMode(value))}
+                        >
+                          <SelectTrigger aria-label="paste-input-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="text">文本</SelectItem>
+                            <SelectItem value="json">结构化 JSON</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>文本内容</Label>
+                        <Textarea
+                          value={pasteContent}
+                          onChange={(event) => setPasteContent(event.target.value)}
+                          rows={8}
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <Label>输入模式</Label>
-                      <Select
-                        value={pasteMode}
-                        onValueChange={(value) => setPasteMode(normalizeImportInputMode(value))}
-                      >
-                        <SelectTrigger aria-label="paste-input-mode">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">文本</SelectItem>
-                          <SelectItem value="json">结构化 JSON</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>粘贴内容</Label>
-                      <Textarea
-                        value={pasteContent}
-                        onChange={(event) => setPasteContent(event.target.value)}
-                        rows={8}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
+                  </TabsContent>
 
-              <TabsContent value="raw_scan" className="mt-0">
-                <div className="space-y-3 rounded-xl border bg-background/70 p-4">
-                  <div className="text-xs text-muted-foreground">扫描目录文件，适合本地批处理</div>
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>输入模式</Label>
-                      <Select
-                        value={rawInputMode}
-                        onValueChange={(value) => setRawInputMode(normalizeImportInputMode(value))}
-                      >
-                        <SelectTrigger aria-label="raw-input-mode">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">文本</SelectItem>
-                          <SelectItem value="json">结构化 JSON</SelectItem>
-                        </SelectContent>
-                      </Select>
+                  <TabsContent value="file" className="mt-0 space-y-3">
+                    <div className="grid gap-3">
+                      <div className="space-y-1">
+                        <Label>输入模式</Label>
+                        <Select
+                          value={uploadInputMode}
+                          onValueChange={(value) =>
+                            setUploadInputMode(normalizeImportInputMode(value))
+                          }
+                        >
+                          <SelectTrigger aria-label="upload-input-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="text">文本</SelectItem>
+                            <SelectItem value="json">结构化 JSON</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>文件选择</Label>
+                        <Input
+                          type="file"
+                          multiple
+                          accept=".txt,.md,.json"
+                          onChange={(event) =>
+                            setUploadFiles(Array.from(event.target.files ?? []))
+                          }
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <Label>相对路径</Label>
-                      <Input value={rawRelativePath} onChange={(event) => setRawRelativePath(event.target.value)} />
+                    <div className="text-xs text-muted-foreground">
+                      已选择 {uploadFiles.length} 个文件
                     </div>
-                    <div className="space-y-1">
-                      <Label>匹配规则（Glob）</Label>
-                      <Input value={rawGlob} onChange={(event) => setRawGlob(event.target.value)} />
+                  </TabsContent>
+
+                  <TabsContent value="folder" className="mt-0 space-y-3">
+                    <div className="grid gap-3">
+                      <div className="space-y-1">
+                        <Label>输入模式</Label>
+                        <Select
+                          value={rawInputMode}
+                          onValueChange={(value) =>
+                            setRawInputMode(normalizeImportInputMode(value))
+                          }
+                        >
+                          <SelectTrigger aria-label="raw-input-mode">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="text">文本</SelectItem>
+                            <SelectItem value="json">结构化 JSON</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>相对路径</Label>
+                        <Input
+                          value={rawRelativePath}
+                          onChange={(event) => setRawRelativePath(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>匹配规则（Glob）</Label>
+                        <Input value={rawGlob} onChange={(event) => setRawGlob(event.target.value)} />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={rawRecursive} onCheckedChange={(value) => setRawRecursive(Boolean(value))} />
-                    递归扫描
-                  </div>
-                </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={rawRecursive}
+                        onCheckedChange={(value) => setRawRecursive(Boolean(value))}
+                      />
+                      递归扫描
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </TabsContent>
 
               <TabsContent value="lpmm_openie" className="mt-0">
@@ -678,196 +687,36 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                 </div>
               </TabsContent>
 
-              <TabsContent value="temporal_backfill" className="mt-0">
-                <div className="space-y-3 rounded-xl border bg-background/70 p-4">
-                  <div className="text-xs text-muted-foreground">为已有数据补齐时间字段</div>
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label>处理上限</Label>
-                      <Input type="number" min={1} value={backfillLimit} onChange={(event) => setBackfillLimit(event.target.value)} />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={backfillDryRun} onCheckedChange={(value) => setBackfillDryRun(Boolean(value))} />
-                      只预演，不写入数据
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={backfillNoCreatedFallback}
-                        onCheckedChange={(value) => setBackfillNoCreatedFallback(Boolean(value))}
-                      />
-                      禁用创建时间回退
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="maibot_migration" className="mt-0">
-                <div className="space-y-3 rounded-xl border bg-background/70 p-4">
-                  <div className="text-xs text-muted-foreground">迁移 MaiBot 历史长期记忆</div>
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="maibot-source-db">源数据库路径</Label>
-                      <Input
-                        id="maibot-source-db"
-                        required
-                        value={maibotSourceDb}
-                        onChange={(event) => setMaibotSourceDb(event.target.value)}
-                        placeholder="data/MaiBot.db"
-                      />
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-time-from">起始时间</Label>
-                        <Input
-                          id="maibot-time-from"
-                          type="datetime-local"
-                          step={1}
-                          max={maibotTimeTo || undefined}
-                          value={maibotTimeFrom}
-                          onChange={(event) => setMaibotTimeFrom(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-time-to">结束时间</Label>
-                        <Input
-                          id="maibot-time-to"
-                          type="datetime-local"
-                          step={1}
-                          min={maibotTimeFrom || undefined}
-                          value={maibotTimeTo}
-                          onChange={(event) => setMaibotTimeTo(event.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-start-id">起始 ID</Label>
-                        <Input
-                          id="maibot-start-id"
-                          type="number"
-                          min={1}
-                          max={maibotEndId || undefined}
-                          step={1}
-                          value={maibotStartId}
-                          onChange={(event) => setMaibotStartId(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-end-id">结束 ID</Label>
-                        <Input
-                          id="maibot-end-id"
-                          type="number"
-                          min={maibotStartId || 1}
-                          step={1}
-                          value={maibotEndId}
-                          onChange={(event) => setMaibotEndId(event.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="maibot-stream-ids">会话 ID 列表</Label>
-                      <Input
-                        id="maibot-stream-ids"
-                        value={maibotStreamIds}
-                        onChange={(event) => setMaibotStreamIds(event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="maibot-group-ids">群组 ID 列表</Label>
-                      <Input
-                        id="maibot-group-ids"
-                        value={maibotGroupIds}
-                        onChange={(event) => setMaibotGroupIds(event.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="maibot-user-ids">用户 ID 列表</Label>
-                      <Input
-                        id="maibot-user-ids"
-                        value={maibotUserIds}
-                        onChange={(event) => setMaibotUserIds(event.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <details className="rounded-md border bg-background/70 p-3 text-sm">
-                    <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-                      <SlidersHorizontal className="h-4 w-4" />
-                      高级选项
-                    </summary>
-                    <div className="mt-3 grid gap-3">
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-read-batch-size">读取批大小</Label>
-                        <Input
-                          id="maibot-read-batch-size"
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={maibotReadBatchSize}
-                          onChange={(event) => setMaibotReadBatchSize(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-commit-window-rows">提交窗口行数</Label>
-                        <Input
-                          id="maibot-commit-window-rows"
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={maibotCommitWindowRows}
-                          onChange={(event) => setMaibotCommitWindowRows(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="maibot-embed-workers">向量线程数</Label>
-                        <Input
-                          id="maibot-embed-workers"
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={maibotEmbedWorkers}
-                          onChange={(event) => setMaibotEmbedWorkers(event.target.value)}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <div className="flex items-center gap-2 text-sm">
-                          <Checkbox checked={maibotNoResume} onCheckedChange={(value) => setMaibotNoResume(Boolean(value))} />
-                          从头开始，不继续上次进度
-                        </div>
-                        <div className="flex items-center gap-2 text-sm">
-                          <Checkbox checked={maibotResetState} onCheckedChange={(value) => setMaibotResetState(Boolean(value))} />
-                          重置迁移状态
-                        </div>
-                      </div>
-                    </div>
-                  </details>
-                  <div className="grid gap-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={maibotDryRun} onCheckedChange={(value) => setMaibotDryRun(Boolean(value))} />
-                      只预演，不写入数据
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={maibotVerifyOnly} onCheckedChange={(value) => setMaibotVerifyOnly(Boolean(value))} />
-                      仅校验
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-
               </Tabs>
 
-              <Button onClick={() => void submitImportByMode()} disabled={creatingImport || importContentCategoryMissing}>
-                {creatingImport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-                创建导入任务
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  className="min-w-0 flex-1"
+                  onClick={() => void submitImportByMode()}
+                  disabled={creatingImport || importContentCategoryMissing}
+                >
+                  {creatingImport ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                  创建导入任务
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label="导入参数"
+                  title="导入参数"
+                  onClick={() => setImportParametersOpen(true)}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
           <Card className="rounded-2xl border-border/70 bg-card/85 shadow-sm">
             <CardHeader>
               <CardTitle>路径预检</CardTitle>
-              <CardDescription>在创建本地扫描、转换或迁移任务前，先确认路径会被解析到哪里。</CardDescription>
+              <CardDescription>在创建文件夹扫描或转换任务前，先确认路径会被解析到哪里。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3">

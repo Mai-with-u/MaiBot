@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-
+import { useQueryClient } from '@tanstack/react-query'
 import {
+  Activity,
+  CheckCircle2,
+  CircleAlert,
   Database,
+  FolderOpen,
+  HardDrive,
   Loader2,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
   Upload,
-  CheckCircle2,
-  CircleAlert,
-  FolderOpen,
-  HardDrive,
   X,
 } from 'lucide-react'
-
-import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { MemoryDeleteDialog } from '@/components/memory/MemoryDeleteDialog'
 import { MemoryEpisodeManager } from '@/components/memory/MemoryEpisodeManager'
@@ -36,10 +36,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { DashboardTabBar, DashboardTabTrigger } from '@/components/ui/dashboard-tabs'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
-import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { useToast } from '@/hooks/use-toast'
@@ -74,16 +80,14 @@ type MemoryConsoleTab =
   | 'graph'
   | 'timeline'
   | 'import'
-  | 'tuning'
   | 'episodes'
   | 'profiles'
-  | 'maintenance'
-  | 'correction'
+  | 'inspection'
   | 'delete'
   | 'feedback'
 type LoadableMemoryTab = Extract<
   MemoryConsoleTab,
-  'timeline' | 'import' | 'tuning' | 'delete' | 'feedback'
+  'timeline' | 'import' | 'delete' | 'feedback'
 >
 
 const MEMORY_CONSOLE_TABS: MemoryConsoleTab[] = [
@@ -91,17 +95,16 @@ const MEMORY_CONSOLE_TABS: MemoryConsoleTab[] = [
   'graph',
   'timeline',
   'import',
-  'tuning',
   'episodes',
   'profiles',
-  'maintenance',
-  'correction',
+  'inspection',
   'delete',
   'feedback',
 ]
 
 interface KnowledgeBaseDeepLinkState {
   tab: MemoryConsoleTab
+  inspectionMode?: 'maintenance' | 'correction' | 'tuning'
   chatId?: string
   timeStart?: number
   timeEnd?: number
@@ -128,11 +131,19 @@ function readKnowledgeBaseDeepLink(): KnowledgeBaseDeepLinkState {
     return { tab: 'graph' }
   }
   const params = new URLSearchParams(window.location.search)
-  const tabParam = params.get('tab') as MemoryConsoleTab | null
+  const rawTab = params.get('tab')
+  const legacyInspectionMode =
+    rawTab === 'maintenance' || rawTab === 'correction' || rawTab === 'tuning' ? rawTab : undefined
+  const tabParam = legacyInspectionMode ? 'inspection' : rawTab as MemoryConsoleTab | null
   const tab = tabParam && MEMORY_CONSOLE_TABS.includes(tabParam) ? tabParam : 'graph'
   const taskId = parseOptionalTimestampQuery(params.get('task_id'))
   return {
     tab,
+    inspectionMode: legacyInspectionMode ?? (
+      params.get('mode') === 'maintenance' || params.get('mode') === 'tuning'
+        ? params.get('mode') as 'maintenance' | 'tuning'
+        : 'correction'
+    ),
     chatId: params.get('chat_id') || undefined,
     timeStart: parseOptionalTimestampQuery(params.get('from') ?? params.get('time_start')),
     timeEnd: parseOptionalTimestampQuery(params.get('to') ?? params.get('time_end')),
@@ -457,6 +468,7 @@ export function KnowledgeBasePage() {
   const queryClient = useQueryClient()
   const deepLinkRef = useRef<KnowledgeBaseDeepLinkState>(readKnowledgeBaseDeepLink())
   const [activeTab, setActiveTab] = useState<MemoryConsoleTab>(deepLinkRef.current.tab)
+  const [runtimeStatusDialogOpen, setRuntimeStatusDialogOpen] = useState(false)
   const [quickStartVisible, setQuickStartVisible] = useState(() => {
     if (typeof window === 'undefined') {
       return true
@@ -488,6 +500,9 @@ export function KnowledgeBasePage() {
   )
   const [maintenanceInitialAction, setMaintenanceInitialAction] =
     useState<MemoryMaintenanceAction>('reinforce')
+  const [inspectionMode, setInspectionMode] = useState<'maintenance' | 'correction' | 'tuning'>(
+    deepLinkRef.current.inspectionMode ?? 'correction'
+  )
 
   // 聊天流列表供审计时间线面板使用（导入面板的聊天流由 useImportForm 自管）
   const [importChatTargets, setImportChatTargets] = useState<MemoryImportChatTargetPayload[]>([])
@@ -524,7 +539,7 @@ export function KnowledgeBasePage() {
   })
 
   const memoryCorrection = useMemoryCorrection({
-    active: activeTab === 'correction',
+    active: activeTab === 'inspection' && inspectionMode === 'correction',
     runtimeConfig,
     initialPlanId: deepLinkRef.current.correctionPlanId ?? '',
     initialPersonId: deepLinkRef.current.personId ?? '',
@@ -535,7 +550,7 @@ export function KnowledgeBasePage() {
 
   // 调优领域：调优配置/任务列表懒加载、调优参数、创建任务、应用最佳；应用后刷新运行时配置
   const memoryTuning = useMemoryTuning({
-    active: activeTab === 'tuning',
+    active: activeTab === 'inspection' && inspectionMode === 'tuning',
     onRuntimeChanged: () => memoryRuntime.refreshRuntimeConfig(),
   })
 
@@ -626,7 +641,8 @@ export function KnowledgeBasePage() {
         } else {
           memoryCorrection.setScope('memory')
         }
-        switchMemoryTab('correction', { person_id: personId || undefined })
+        setInspectionMode('correction')
+        switchMemoryTab('inspection', { mode: 'correction', person_id: personId || undefined })
         return
       }
 
@@ -663,7 +679,8 @@ export function KnowledgeBasePage() {
       if (action === 'reinforce' || action === 'freeze' || action === 'protect') {
         setMaintenanceInitialTarget(record.id)
         setMaintenanceInitialAction(action)
-        switchMemoryTab('maintenance', { target: record.id })
+        setInspectionMode('maintenance')
+        switchMemoryTab('inspection', { mode: 'maintenance', target: record.id })
         return
       }
 
@@ -687,7 +704,33 @@ export function KnowledgeBasePage() {
 
   const handleTimelineJump = useCallback(
     (target: MemoryTimelineJumpTargetPayload) => {
-      const tab = target.tab as MemoryConsoleTab
+      const rawTab = String(target.tab ?? '')
+      if (rawTab === 'correction') {
+        const planId = readJumpParam(target, 'plan_id')
+        if (planId) {
+          memoryCorrection.setSelectedPlanId(planId)
+          memoryCorrection.setPlanSearch(planId)
+        }
+        setInspectionMode('correction')
+        switchMemoryTab('inspection', { mode: 'correction', plan_id: planId || undefined })
+        return
+      }
+
+      if (rawTab === 'maintenance') {
+        const targetText = readJumpParam(target, 'target')
+        setMaintenanceInitialTarget(targetText)
+        setInspectionMode('maintenance')
+        switchMemoryTab('inspection', { mode: 'maintenance', target: targetText })
+        return
+      }
+
+      if (rawTab === 'tuning') {
+        setInspectionMode('tuning')
+        switchMemoryTab('inspection', { mode: 'tuning' })
+        return
+      }
+
+      const tab = rawTab as MemoryConsoleTab
       if (!MEMORY_CONSOLE_TABS.includes(tab)) {
         return
       }
@@ -742,16 +785,6 @@ export function KnowledgeBasePage() {
         return
       }
 
-      if (tab === 'correction') {
-        const planId = readJumpParam(target, 'plan_id')
-        if (planId) {
-          memoryCorrection.setSelectedPlanId(planId)
-          memoryCorrection.setPlanSearch(planId)
-        }
-        switchMemoryTab('correction', { plan_id: planId || undefined })
-        return
-      }
-
       if (tab === 'delete') {
         const operationId = readJumpParam(target, 'operation_id')
         const source = readJumpParam(target, 'source')
@@ -771,13 +804,6 @@ export function KnowledgeBasePage() {
           })
         }
         // 删除数据由 useMemoryDelete 自管加载（enabled:active），切到该 tab 即触发拉取
-        return
-      }
-
-      if (tab === 'maintenance') {
-        const targetText = readJumpParam(target, 'target')
-        setMaintenanceInitialTarget(targetText)
-        switchMemoryTab('maintenance', { target: targetText })
         return
       }
 
@@ -893,98 +919,124 @@ export function KnowledgeBasePage() {
               刷新数据
             </Button>
           </div>
-          {/* 运行时状态条 —— 紧凑、常驻、一眼看完 */}
-          {runtimeBadges.length > 0 ? (
-            <AccentPanel
-              showRetroStripes={false}
-              data-memory-runtime-status="true"
-              className="border-border/60 border bg-transparent"
-              contentClassName="p-3"
-            >
-              <div className="mb-2 flex items-center justify-end gap-2">
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="更多操作"
+                  title="更多操作"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem
+                  className="cursor-pointer gap-2"
+                  onSelect={() => setRuntimeStatusDialogOpen(true)}
+                >
+                  <Activity className="h-4 w-4" />
+                  查看记忆状态
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <Dialog open={runtimeStatusDialogOpen} onOpenChange={setRuntimeStatusDialogOpen}>
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+              <DialogHeader>
+                <DialogTitle>记忆状态</DialogTitle>
+                <DialogDescription>查看长期记忆运行状态、向量配置和数据目录。</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {runtimeConfig?.vector_rebuild_required ? (
                   <Button
                     variant="destructive"
                     size="sm"
-                    className="h-6 px-2 text-[11px]"
                     onClick={() => void memoryRuntime.openVectorRebuildDialog()}
                     disabled={memoryRuntime.vectorRebuilding}
                   >
                     <RotateCcw
                       className={cn(
-                        'mr-1 h-3 w-3',
+                        'mr-2 h-4 w-4',
                         memoryRuntime.vectorRebuilding && 'animate-spin'
                       )}
                     />
                     重建向量
                   </Button>
                 ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-6 px-2 text-[11px]"
-                  onClick={() => void loadPage()}
-                >
-                  <RefreshCw className="mr-1 h-3 w-3" />
+                <Button variant="outline" size="sm" onClick={() => void loadPage()}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
                   刷新数据
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-[11px]"
                   onClick={() => void memoryRuntime.refreshSelfCheck()}
                   disabled={memoryRuntime.refreshingCheck}
                 >
                   <RefreshCw
-                    className={cn('mr-1 h-3 w-3', memoryRuntime.refreshingCheck && 'animate-spin')}
+                    className={cn(
+                      'mr-2 h-4 w-4',
+                      memoryRuntime.refreshingCheck && 'animate-spin'
+                    )}
                   />
                   自检
                 </Button>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 sm:gap-2 lg:grid-cols-4">
-                {runtimeBadges.map((item) => (
-                  <div
-                    key={item.label}
-                    className={cn(
-                      'min-w-0 overflow-hidden border bg-transparent px-2 py-1.5 transition-colors sm:flex sm:items-center sm:gap-2 sm:px-2.5',
-                      item.className
-                    )}
-                  >
-                    <div className="mb-1 w-fit flex-none border bg-transparent p-1 sm:mb-0">
-                      <item.icon className={cn('h-3.5 w-3.5', item.iconClassName)} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-muted-foreground truncate text-[10px] leading-tight font-medium">
-                        {item.label}
-                      </div>
-                      <div
-                        className="truncate text-xs leading-tight font-semibold"
-                        title={item.value}
-                      >
-                        {item.value}
-                      </div>
-                      <div
-                        className={cn(
-                          'text-muted-foreground mt-0.5 truncate text-[10px]',
-                          item.progressValue !== undefined ? 'block' : 'hidden xl:block'
-                        )}
-                      >
-                        {item.description}
-                      </div>
-                      {item.progressValue !== undefined ? (
-                        <div className="mt-1.5 flex items-center gap-1.5">
-                          <Progress value={item.progressValue} className="h-1 flex-1" />
-                          <span className="text-muted-foreground text-[10px] leading-none tabular-nums">
-                            {item.progressLabel}
-                          </span>
+              {runtimeBadges.length > 0 ? (
+                <div
+                  data-memory-runtime-status="true"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                >
+                  {runtimeBadges.map((item) => (
+                    <div
+                      key={item.label}
+                      className={cn(
+                        'bg-background min-w-0 overflow-hidden border p-3 transition-colors',
+                        item.className
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-fit flex-none border bg-transparent p-1.5">
+                          <item.icon className={cn('h-4 w-4', item.iconClassName)} />
                         </div>
-                      ) : null}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-muted-foreground text-xs leading-tight font-medium">
+                            {item.label}
+                          </div>
+                          <div
+                            className="mt-1 truncate text-sm leading-tight font-semibold"
+                            title={item.value}
+                          >
+                            {item.value}
+                          </div>
+                          <div className="text-muted-foreground mt-1 text-xs">
+                            {item.description}
+                          </div>
+                          {item.progressValue !== undefined ? (
+                            <div className="mt-2 flex items-center gap-2">
+                              <Progress value={item.progressValue} className="h-1.5 flex-1" />
+                              <span className="text-muted-foreground text-xs leading-none tabular-nums">
+                                {item.progressLabel}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </AccentPanel>
-          ) : null}
+                  ))}
+                </div>
+              ) : (
+                <div className="text-muted-foreground border border-dashed px-4 py-8 text-center text-sm">
+                  暂无记忆状态数据，请刷新后重试。
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
 
           <Dialog
             open={memoryRuntime.vectorRebuildDialogOpen}
@@ -1083,7 +1135,10 @@ export function KnowledgeBasePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => switchMemoryTab('tuning')}
+                    onClick={() => {
+                      setInspectionMode('tuning')
+                      switchMemoryTab('inspection', { mode: 'tuning' })
+                    }}
                     className="group border-border/70 bg-background/80 hover:border-primary/50 hover:bg-background flex items-start gap-2 rounded-lg border p-3 text-left transition hover:shadow-md"
                   >
                     <div className="flex-none rounded-lg bg-amber-500/10 p-2 text-amber-500 transition-transform group-hover:scale-105">
@@ -1135,7 +1190,6 @@ export function KnowledgeBasePage() {
                     },
                     { value: 'graph', label: '图谱', description: '实体关系图与证据视图' },
                     { value: 'timeline', label: '审计时间线', description: '核对聊天流记忆变动' },
-                    { value: 'tuning', label: '调优', description: '检索策略调优' },
                     { value: 'episodes', label: '情景记忆', description: '查看和重建情景记忆' },
                     { value: 'profiles', label: '人物画像', description: '查询和维护人物画像' },
                   ].map((item) => (
@@ -1155,8 +1209,7 @@ export function KnowledgeBasePage() {
                 >
                   {[
                     { value: 'import', label: '导入', description: '创建并管理导入任务' },
-                    { value: 'maintenance', label: '维护', description: '回收站与记忆状态维护' },
-                    { value: 'correction', label: '记忆修正', description: '预览并确认自然语言记忆修正' },
+                    { value: 'inspection', label: '记忆检修', description: '维护记忆状态并修正记忆内容' },
                     { value: 'delete', label: '删除', description: '批量删除与历史回溯' },
                     { value: 'feedback', label: '纠错历史', description: '查看反馈与回滚' },
                   ].map((item) => (
@@ -1207,12 +1260,6 @@ export function KnowledgeBasePage() {
                 不再走 loadedPanelDataRef 懒加载门控；表单即时可交互，任务列表异步填充 */}
             {shouldRenderMemoryTab('import') && <ImportTab queue={importQueue} form={importForm} />}
 
-            {/* 调优面板数据由 useMemoryTuning 自管加载（enabled:active），不再走懒加载占位门控 */}
-            {shouldRenderMemoryTab('tuning') && <TuningTab tuning={memoryTuning} />}
-
-            {/* 记忆修正面板数据由 useMemoryCorrection 自管加载（enabled:active） */}
-            {shouldRenderMemoryTab('correction') && <CorrectionTab correction={memoryCorrection} />}
-
             <TabsContent value="episodes" className="space-y-4">
               {shouldRenderMemoryTab('episodes') ? (
                 <MemoryEpisodeManager
@@ -1230,13 +1277,32 @@ export function KnowledgeBasePage() {
               ) : null}
             </TabsContent>
 
-            <TabsContent value="maintenance" className="space-y-4">
-              {shouldRenderMemoryTab('maintenance') ? (
-                <MemoryMaintenanceManager
-                  initialTarget={maintenanceInitialTarget}
-                  initialAction={maintenanceInitialAction}
-                  onChanged={refreshMemoryRecords}
-                />
+            <TabsContent value="inspection" className="space-y-4">
+              {shouldRenderMemoryTab('inspection') ? (
+                <Tabs
+                  value={inspectionMode}
+                  onValueChange={(value) => {
+                    const nextMode = value as 'maintenance' | 'correction' | 'tuning'
+                    setInspectionMode(nextMode)
+                    updateKnowledgeBaseDeepLink('inspection', { mode: nextMode })
+                  }}
+                  className="space-y-4"
+                >
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="correction">内容修正</TabsTrigger>
+                    <TabsTrigger value="maintenance">状态维护</TabsTrigger>
+                    <TabsTrigger value="tuning">检索调优</TabsTrigger>
+                  </TabsList>
+                  <CorrectionTab correction={memoryCorrection} />
+                  <TabsContent value="maintenance" className="space-y-4">
+                    <MemoryMaintenanceManager
+                      initialTarget={maintenanceInitialTarget}
+                      initialAction={maintenanceInitialAction}
+                      onChanged={refreshMemoryRecords}
+                    />
+                  </TabsContent>
+                  <TuningTab tuning={memoryTuning} />
+                </Tabs>
               ) : null}
             </TabsContent>
 

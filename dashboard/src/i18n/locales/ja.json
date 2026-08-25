@@ -1033,6 +1033,8 @@
         "description": "検索パラメータ評価"
       },
       "form": {
+        "parameters": "調整パラメータ",
+        "parametersDescription": "これらの設定は次の調整タスクにのみ適用されます。通常は既定値のままで問題ありません。",
         "strategy": "調整方針",
         "objective": "最適化目標",
         "intensity": "評価の深さ",

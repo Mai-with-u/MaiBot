@@ -1023,6 +1023,8 @@
         "description": "검색 매개변수 평가"
       },
       "form": {
+        "parameters": "튜닝 매개변수",
+        "parametersDescription": "이 설정은 다음 튜닝 작업에만 적용됩니다. 일반적으로 기본값을 그대로 사용하면 됩니다.",
         "strategy": "튜닝 전략",
         "objective": "최적화 목표",
         "intensity": "평가 깊이",

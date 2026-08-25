@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -237,6 +237,12 @@ function mockImportCompletedWithErrorsDetail(taskId: string): memoryApi.MemoryIm
 
 async function waitForConsoleReady() {
   await screen.findByRole('tab', { name: '图谱' }, { timeout: 10_000 })
+}
+
+async function openMemoryStatusDialog(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '更多操作' }))
+  await user.click(await screen.findByRole('menuitem', { name: '查看记忆状态' }))
+  await screen.findByRole('dialog', { name: '记忆状态' })
 }
 
 describe('KnowledgeBasePage import workflow', () => {
@@ -1043,9 +1049,6 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitForConsoleReady()
     await user.click(screen.getByRole('tab', { name: '导入' }))
 
-    expect(screen.getByText('向量池')).toBeInTheDocument()
-    expect(screen.getByText('双池')).toBeInTheDocument()
-    expect(screen.getByText('段落 7 · 图谱 5')).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '创建导入任务' })).toBeInTheDocument()
     expect((await screen.findAllByText('import-run-1')).length).toBeGreaterThan(0)
     expect(memoryApi.getMemoryImportSettings).toHaveBeenCalled()
@@ -1053,7 +1056,21 @@ describe('KnowledgeBasePage import workflow', () => {
     expect(memoryApi.getMemoryImportTasks).toHaveBeenCalled()
   })
 
+  it('opens memory runtime data from the more menu', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+
+    expect(screen.queryByText('Embedding 维度')).not.toBeInTheDocument()
+    await openMemoryStatusDialog(user)
+    expect(screen.getByText('Embedding 维度')).toBeInTheDocument()
+    expect(screen.getByText('双池')).toBeInTheDocument()
+    expect(screen.getByText('段落 7 · 图谱 5')).toBeInTheDocument()
+  })
+
   it('shows vector pool migration progress in runtime badges', async () => {
+    const user = userEvent.setup()
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
       config: { plugin: { enabled: true } },
@@ -1108,6 +1125,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
 
     expect(screen.getByText('双池迁移中')).toBeInTheDocument()
     expect(screen.getByText('实体完成 · 11183/12000 · 预计剩余 2分0秒')).toBeInTheDocument()
@@ -1115,6 +1133,7 @@ describe('KnowledgeBasePage import workflow', () => {
   })
 
   it('shows vector failure as degraded ready without disabling memory', async () => {
+    const user = userEvent.setup()
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
       config: { plugin: { enabled: true } },
@@ -1145,6 +1164,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
 
     expect(screen.getByText('降级就绪')).toBeInTheDocument()
     expect(screen.getByText('可用通道：元数据、稀疏、图谱')).toBeInTheDocument()
@@ -1153,6 +1173,7 @@ describe('KnowledgeBasePage import workflow', () => {
   })
 
   it('shows pending ETA while vector pool migration rate is unavailable', async () => {
+    const user = userEvent.setup()
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
       config: { plugin: { enabled: true } },
@@ -1203,12 +1224,14 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
 
     expect(screen.getByText('双池迁移中')).toBeInTheDocument()
     expect(screen.getByText('准备迁移 · 0/12000 · 预计计算中')).toBeInTheDocument()
   })
 
   it('clamps vector pool migration percent inside the progress bar label', async () => {
+    const user = userEvent.setup()
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
       config: { plugin: { enabled: true } },
@@ -1259,12 +1282,14 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
 
     expect(screen.getByText('段落完成 · 10/10 · 预计计算中')).toBeInTheDocument()
     expect(screen.getByText('100.0%')).toBeInTheDocument()
   })
 
   it('keeps displaying legacy vector pool migration details without stable totals', async () => {
+    const user = userEvent.setup()
     vi.mocked(memoryApi.getMemoryRuntimeConfig).mockResolvedValueOnce({
       success: true,
       config: { plugin: { enabled: true } },
@@ -1314,6 +1339,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
 
     expect(screen.getByText('双池迁移中')).toBeInTheDocument()
     expect(screen.getByText('实体完成 · 段落 10967/1 失败 · 实体 216')).toBeInTheDocument()
@@ -1325,6 +1351,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
+    await openMemoryStatusDialog(user)
     await user.click(screen.getByRole('button', { name: '重建向量' }))
     await waitFor(() =>
       expect(memoryApi.rebuildMemoryRuntimeVectors).toHaveBeenCalledWith({ dry_run: true }),
@@ -1352,6 +1379,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await openImportTab()
     const createButton = screen.getByRole('button', { name: '创建导入任务' })
     expect(createButton).toBeDisabled()
+    expect(screen.queryByText('公共参数')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
     await user.click(screen.getByRole('combobox', { name: '资料类别' }))
     await user.click(screen.getByRole('option', { name: '叙事资料' }))
@@ -1370,7 +1398,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.createMemoryUploadImport).toHaveBeenCalledTimes(1))
 
     await openImportTab()
-    await user.click(screen.getByRole('tab', { name: '粘贴导入' }))
+    await user.click(screen.getByRole('tab', { name: '文本' }))
     const editableTextarea = Array.from(container.querySelectorAll('textarea')).find((item) => !item.readOnly)
     if (!editableTextarea) {
       throw new Error('missing editable textarea')
@@ -1380,7 +1408,7 @@ describe('KnowledgeBasePage import workflow', () => {
     await waitFor(() => expect(memoryApi.createMemoryPasteImport).toHaveBeenCalledTimes(1))
 
     await openImportTab()
-    await user.click(screen.getByRole('tab', { name: '本地扫描' }))
+    await user.click(screen.getByRole('tab', { name: '文件夹' }))
     await user.click(screen.getByRole('button', { name: '创建导入任务' }))
     await waitFor(() => expect(memoryApi.createMemoryRawScanImport).toHaveBeenCalledTimes(1))
 
@@ -1394,16 +1422,6 @@ describe('KnowledgeBasePage import workflow', () => {
     await user.click(screen.getByRole('button', { name: '创建导入任务' }))
     await waitFor(() => expect(memoryApi.createMemoryLpmmConvertImport).toHaveBeenCalledTimes(1))
 
-    await openImportTab()
-    await user.click(screen.getByRole('tab', { name: '时序回填' }))
-    await user.click(screen.getByRole('button', { name: '创建导入任务' }))
-    await waitFor(() => expect(memoryApi.createMemoryTemporalBackfillImport).toHaveBeenCalledTimes(1))
-
-    await openImportTab()
-    await user.click(screen.getByRole('tab', { name: 'MaiBot 迁移' }))
-    await user.click(screen.getByRole('button', { name: '创建导入任务' }))
-    await waitFor(() => expect(memoryApi.createMemoryMaibotMigrationImport).toHaveBeenCalledTimes(1))
-
     const [uploadedFiles, uploadPayload] = vi.mocked(memoryApi.createMemoryUploadImport).mock.calls[0]
     expect(uploadedFiles).toHaveLength(3)
     expect(uploadedFiles.map((file) => file.name)).toEqual(['demo.txt', 'demo.json', 'demo.md'])
@@ -1416,89 +1434,6 @@ describe('KnowledgeBasePage import workflow', () => {
       dedupe_policy: 'content_hash',
     })
   }, 60_000)
-
-  it('formats MaiBot migration datetime-local values and numeric options', async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
-    await screen.findByRole('button', { name: '创建导入任务' })
-    await user.click(screen.getByRole('tab', { name: 'MaiBot 迁移' }))
-
-    fireEvent.change(await screen.findByLabelText('源数据库路径'), { target: { value: ' data/old-maibot.db ' } })
-    fireEvent.change(screen.getByLabelText('起始时间'), { target: { value: '2024-01-02T03:04' } })
-    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '2024-01-03T05:06:07' } })
-    fireEvent.change(screen.getByLabelText('起始 ID'), { target: { value: '10' } })
-    fireEvent.change(screen.getByLabelText('结束 ID'), { target: { value: '20' } })
-    await user.click(screen.getByText('高级选项'))
-    fireEvent.change(screen.getByLabelText('读取批大小'), { target: { value: '123' } })
-    fireEvent.change(screen.getByLabelText('提交窗口行数'), { target: { value: '456' } })
-    fireEvent.change(screen.getByLabelText('向量线程数'), { target: { value: '7' } })
-
-    await user.click(screen.getByRole('button', { name: '创建导入任务' }))
-    await waitFor(() => expect(memoryApi.createMemoryMaibotMigrationImport).toHaveBeenCalledTimes(1))
-    const expectedTimeFrom = new Date('2024-01-02T03:04').toISOString()
-    const expectedTimeTo = new Date('2024-01-03T05:06:07').toISOString()
-    expect(vi.mocked(memoryApi.createMemoryMaibotMigrationImport).mock.calls[0][0]).toMatchObject({
-      source_db: 'data/old-maibot.db',
-      time_from: expectedTimeFrom,
-      time_to: expectedTimeTo,
-      start_id: 10,
-      end_id: 20,
-      read_batch_size: 123,
-      commit_window_rows: 456,
-      embed_workers: 7,
-    })
-  }, 20_000)
-
-  it('blocks invalid MaiBot migration input before creating a task', async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
-    await screen.findByRole('button', { name: '创建导入任务' })
-    await user.click(screen.getByRole('tab', { name: 'MaiBot 迁移' }))
-
-    const sourceDbInput = await screen.findByLabelText('源数据库路径')
-    const createButton = screen.getByRole('button', { name: '创建导入任务' })
-    fireEvent.change(sourceDbInput, { target: { value: '   ' } })
-    await user.click(createButton)
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenLastCalledWith(expect.objectContaining({ description: '请填写源数据库路径' })),
-    )
-    expect(memoryApi.createMemoryMaibotMigrationImport).not.toHaveBeenCalled()
-
-    fireEvent.change(sourceDbInput, { target: { value: 'data/old-maibot.db' } })
-    fireEvent.change(screen.getByLabelText('起始时间'), { target: { value: '2024-01-03T00:00' } })
-    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '2024-01-02T00:00' } })
-    await user.click(createButton)
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenLastCalledWith(expect.objectContaining({ description: '起始时间不能晚于结束时间' })),
-    )
-    expect(memoryApi.createMemoryMaibotMigrationImport).not.toHaveBeenCalled()
-
-    fireEvent.change(screen.getByLabelText('起始时间'), { target: { value: '2024-01-02T00:00' } })
-    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '2024-01-03T00:00' } })
-    fireEvent.change(screen.getByLabelText('起始 ID'), { target: { value: '20' } })
-    fireEvent.change(screen.getByLabelText('结束 ID'), { target: { value: '10' } })
-    await user.click(createButton)
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenLastCalledWith(expect.objectContaining({ description: '起始 ID 不能大于结束 ID' })),
-    )
-    expect(memoryApi.createMemoryMaibotMigrationImport).not.toHaveBeenCalled()
-
-    fireEvent.change(screen.getByLabelText('起始 ID'), { target: { value: '10' } })
-    fireEvent.change(screen.getByLabelText('结束 ID'), { target: { value: '20' } })
-    await user.click(screen.getByText('高级选项'))
-    fireEvent.change(screen.getByLabelText('读取批大小'), { target: { value: '0' } })
-    await user.click(createButton)
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenLastCalledWith(expect.objectContaining({ description: '读取批大小 必须填写正整数' })),
-    )
-    expect(memoryApi.createMemoryMaibotMigrationImport).not.toHaveBeenCalled()
-  }, 20_000)
 
   it('loads task detail and supports chunk pagination', async () => {
     const user = userEvent.setup()
@@ -1616,6 +1551,42 @@ describe('KnowledgeBasePage import workflow', () => {
       expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-1', {
         persist: false,
         validate: true,
+      }),
+    )
+  }, 20_000)
+
+  it('keeps tuning parameters in the ellipsis dialog', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await waitForConsoleReady()
+    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await screen.findByText('记忆搜索调优')
+
+    expect(screen.getByText('评估并改善记忆搜索效果')).toBeVisible()
+    expect(screen.queryByText('优化目标')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '调优参数' }))
+    expect(await screen.findByRole('dialog', { name: '调优参数' })).toBeInTheDocument()
+    expect(screen.getByText('优化目标')).toBeVisible()
+    expect(screen.getByLabelText('样本量')).toHaveValue(24)
+    expect(screen.getByLabelText('每次评估查看数量')).toHaveValue(20)
+
+    await user.click(screen.getByRole('combobox', { name: '优化目标' }))
+    await user.click(screen.getByRole('option', { name: '准确率与召回平衡' }))
+    await user.click(screen.getByRole('combobox', { name: '评估强度' }))
+    await user.click(screen.getByRole('option', { name: '深入' }))
+    await user.clear(screen.getByLabelText('样本量'))
+    await user.type(screen.getByLabelText('样本量'), '32')
+    await user.clear(screen.getByLabelText('每次评估查看数量'))
+    await user.type(screen.getByLabelText('每次评估查看数量'), '16')
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '开始调优' }))
+    await waitFor(() =>
+      expect(memoryApi.createMemoryTuningTask).toHaveBeenCalledWith({
+        objective: 'balanced',
+        intensity: 'deep',
+        sample_size: 32,
+        top_k_eval: 16,
       }),
     )
   }, 20_000)
@@ -1802,7 +1773,9 @@ describe('KnowledgeBasePage import workflow', () => {
     await user.click(screen.getByRole('tab', { name: '调优' }))
     await screen.findByText('记忆搜索调优')
 
+    await user.click(screen.getByRole('button', { name: '调优参数' }))
     await user.click(screen.getByLabelText('同时保存为默认设置'))
+    await user.click(screen.getByRole('button', { name: '关闭' }))
     await user.click(screen.getByRole('button', { name: '应用推荐结果' }))
     await waitFor(() =>
       expect(memoryApi.applyBestMemoryTuningProfile).toHaveBeenCalledWith('tune-1', {
