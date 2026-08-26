@@ -743,6 +743,21 @@ class ClientRegistry:
                 stale_entries.append((client, cache_key[0]))
         self._schedule_dispose(stale_entries)
 
+    def _drop_closed_loop_entries(self) -> None:
+        """清理键中事件循环已关闭的缓存条目，避免条目随短生命周期循环增长。"""
+        closed_keys = [
+            cache_key
+            for cache_key in list(self.client_instance_cache)
+            if cache_key[0] is not None and cache_key[0].is_closed()
+        ]
+        stale_entries: List[Tuple[BaseClient, "asyncio.AbstractEventLoop | None"]] = []
+        for cache_key in closed_keys:
+            client = self.client_instance_cache.pop(cache_key, None)
+            if client is not None:
+                stale_entries.append((client, cache_key[0]))
+        if stale_entries:
+            self._schedule_dispose(stale_entries)
+
     @staticmethod
     def _get_client_cache_key(api_provider: APIProvider) -> Tuple[asyncio.AbstractEventLoop | None, str]:
         """生成按事件循环隔离的客户端缓存键。"""
@@ -761,6 +776,9 @@ class ClientRegistry:
         from . import ensure_client_type_loaded
 
         ensure_client_type_loaded(api_provider.client_type)
+
+        # 清理已关闭循环对应的废弃缓存条目
+        self._drop_closed_loop_entries()
 
         # 若此前有因缺少事件循环而挂起的旧客户端释放任务，在此补齐
         self._flush_pending_dispose(self._get_running_loop())

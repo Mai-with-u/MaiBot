@@ -16,7 +16,7 @@ import tomlkit
 
 from src.A_memorix.host_service import a_memorix_host_service
 from src.A_memorix.runtime_registry import get_runtime_kernel
-from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as _chat_manager
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ChatSession, Messages, PersonInfo
 from src.person_info.person_info import resolve_person_id_for_memory
@@ -597,14 +597,24 @@ def _timeline_chat_from_session(chat_session: ChatSession) -> MemoryTimelineChat
             latest_messages = _prefetch_latest_messages_by_session(session, [chat_id])
     except Exception:
         latest_messages = {}
+    if isinstance(chat_session, (ChatSession, BotChatSession)):
+        platform = chat_session.platform
+        group_id = chat_session.group_id
+        user_id = chat_session.user_id
+        account_id = chat_session.account_id
+    else:
+        platform = getattr(chat_session, "platform", None)
+        group_id = getattr(chat_session, "group_id", None)
+        user_id = getattr(chat_session, "user_id", None)
+        account_id = getattr(chat_session, "account_id", None)
     return MemoryTimelineChat(
         chat_id=chat_id,
         chat_name=_get_chat_name(chat_session, latest_messages),
-        platform=getattr(chat_session, "platform", None),
-        group_id=getattr(chat_session, "group_id", None),
-        user_id=getattr(chat_session, "user_id", None),
-        account_id=getattr(chat_session, "account_id", None),
-        is_group=bool(getattr(chat_session, "group_id", None)),
+        platform=platform,
+        group_id=group_id,
+        user_id=user_id,
+        account_id=account_id,
+        is_group=bool(group_id),
     )
 
 

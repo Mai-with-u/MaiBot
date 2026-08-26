@@ -72,8 +72,19 @@ class RateLimiter:
         for stale_key in stale_keys:
             del self._requests[stale_key]
         overflow = len(self._requests) - self.MAX_TRACKED_REQUEST_KEYS
-        for stale_key in list(self._requests)[:max(0, overflow)]:
+        if overflow <= 0:
+            return
+        # 优先淘汰常规请求键，保护处于活跃窗口内的认证失败记录，防止防爆破策略被大流量冲刷弱化。
+        for stale_key in list(self._requests):
+            if overflow <= 0:
+                break
+            if stale_key.endswith(":auth_failures"):
+                continue
             del self._requests[stale_key]
+            overflow -= 1
+        if overflow > 0:
+            for stale_key in list(self._requests)[:overflow]:
+                del self._requests[stale_key]
 
     def _cleanup_expired_blocks(self):
         """清理过期的封禁"""

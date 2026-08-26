@@ -193,14 +193,11 @@ class LPMMConverter:
         config_path = DEFAULT_CONFIG_PATH
         if not config_path.exists():
             return {}
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                parsed = tomlkit.load(f)
-            if not isinstance(parsed, dict):
-                return {}
-            return dict(parsed)
-        except Exception:
-            return {}
+        with open(config_path, "r", encoding="utf-8") as f:
+            parsed = tomlkit.load(f)
+        if not isinstance(parsed, dict):
+            raise TypeError(f"A_Memorix 配置根节点必须是对象: {config_path}")
+        return dict(parsed)
 
     def _load_embedding_fingerprint(self) -> Dict[str, Any]:
         cfg = self._load_plugin_config()

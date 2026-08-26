@@ -51,14 +51,24 @@ class HeartFCMessageReceiver:
             # message.is_mentioned = is_mentioned
             # message.is_at = is_at
 
-            # 以使用租约借用运行时：租约覆盖消息入库与注册全程，
-            # 避免期间运行时被释放/淘汰后仍被写入缓存与状态
+            # 先完成消息入库持久化，确保即便心流运行时借用失败，消息数据也不会丢失。
+            try:
+                await MessageUtils.store_message_to_db_async(message)
+            except Exception as e:
+                logger.error(
+                    f"消息入库失败: session_id={message.session_id}, msg_id={message.message_id}, error={e}",
+                    exc_info=True,
+                )
+
+            # 以使用租约借用运行时完成心流注册，避免处理期间运行时被淘汰。
             try:
                 async with heartflow_manager.borrow_chat(message.session_id) as chat:
-                    await MessageUtils.store_message_to_db_async(message)  # 存储消息到数据库
                     await chat.register_message(message)
             except Exception as e:
-                logger.error(f"出现错误: {e}")
+                logger.error(
+                    f"心流消息注册失败: session_id={message.session_id}, msg_id={message.message_id}, error={e}",
+                    exc_info=True,
+                )
 
             # 3. 日志记录
             mes_name = group_info.group_name if group_info else "私聊"

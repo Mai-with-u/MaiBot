@@ -171,6 +171,8 @@ def _evict_stale_jobs() -> None:
 def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
     _TRANSFER_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     _evict_stale_jobs()
+    if len(_jobs) >= _TRANSFER_JOB_MAX_ENTRIES:
+        raise HTTPException(status_code=429, detail="当前数据迁移任务并发数已达上限，请等待已有任务完成后重试")
     job = _TransferJob(job_id=uuid.uuid4().hex, kind=kind)
     _jobs[job.job_id] = job
     return job

@@ -2115,7 +2115,7 @@ class ImportTaskManager:
     async def shutdown(self) -> None:
         async with self._lock:
             self._stopping = True
-            for task in self._tasks.values():
+            for task in list(self._tasks.values()):
                 if task.status in {"queued", "preparing", "running", "cancel_requested"}:
                     task.cancel_requested_at = _now()
                     task.cancel_origin = "runtime_shutdown"

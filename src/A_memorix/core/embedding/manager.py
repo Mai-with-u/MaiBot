@@ -367,6 +367,7 @@ class EmbeddingManager:
         with self._cache_lock:
             with np.load(cache_path, allow_pickle=False) as data:
                 self._embedding_cache = {str(key): np.asarray(data[key], dtype=np.float32) for key in data.files}
+            self._prune_embedding_cache()
 
             logger.info(f"缓存已加载: {cache_path} ({len(self._embedding_cache)} 条)")
 

@@ -437,6 +437,7 @@ class ChatSummaryWritebackService:
         self._worker_task: Optional[asyncio.Task] = None
         self._stopping = False
         self._states: dict[str, ChatSummaryWritebackState] = {}
+        self._last_prune_time: float = 0.0
 
     async def start(self) -> None:
         if self._worker_task is not None and not self._worker_task.done():
