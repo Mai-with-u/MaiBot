@@ -61,9 +61,10 @@ class HeartflowManager:
         async with self._borrow_create_lock(session_id):
             chat = await self._get_or_create_locked(session_id)
             self._acquire_chat_usage(session_id)
-        # 锁外触发上限淘汰：淘汰需要逐个获取其他会话的创建锁，避免死锁
-        await self._evict_over_limit_chats(protected_session_id=session_id)
         try:
+            # 锁外触发上限淘汰：淘汰需要逐个获取其他会话的创建锁，避免死锁；
+            # 与 yield 同处一个 try/finally，保证调用方在此期间被取消时租约仍被释放
+            await self._evict_over_limit_chats(protected_session_id=session_id)
             yield chat
         finally:
             self.release_chat_usage(session_id)
