@@ -257,8 +257,12 @@ class SummaryImporter:
         target_store = self._graph_vector_store()
         if target_store is None or self.embedding_manager is None:
             if not self._allow_metadata_only_write():
-                missing_dep = "graph_vector_store" if target_store is None else "embedding_manager"
-                raise RuntimeError(f"实体向量依赖缺失: {missing_dep} 不可用且未开启 metadata_only 模式")
+                missing_deps = [
+                    dep
+                    for dep, obj in (("graph_vector_store", target_store), ("embedding_manager", self.embedding_manager))
+                    if obj is None
+                ]
+                raise RuntimeError(f"实体向量依赖缺失: {' 与 '.join(missing_deps)} 不可用且未开启 metadata_only 模式")
             logger.warning(
                 "实体向量依赖不可用，跳过实体向量写入并保留 metadata/graph: "
                 f"store_ready={target_store is not None} embedding_ready={self.embedding_manager is not None}"
@@ -833,8 +837,12 @@ class SummaryImporter:
         vector_writer = getattr(plugin_instance, "write_paragraph_vector_or_enqueue", None)
         if not callable(vector_writer):
             if (self.vector_store is None or self.embedding_manager is None) and not self._allow_metadata_only_write():
-                missing_dep = "vector_store" if self.vector_store is None else "embedding_manager"
-                raise RuntimeError(f"总结导入前置依赖检查失败: {missing_dep} 不可用且未开启 metadata_only 回退")
+                missing_deps = [
+                    dep
+                    for dep, obj in (("vector_store", self.vector_store), ("embedding_manager", self.embedding_manager))
+                    if obj is None
+                ]
+                raise RuntimeError(f"总结导入前置依赖检查失败: {' 与 '.join(missing_deps)} 不可用且未开启 metadata_only 回退")
 
         # 导入总结文本
         hash_value = self.metadata_store.add_paragraph(
@@ -859,10 +867,19 @@ class SummaryImporter:
                     embedding = await self.embedding_manager.encode(summary)
                     self.vector_store.add(vectors=embedding.reshape(1, -1), ids=[hash_value])
                 elif not self._allow_metadata_only_write():
-                    missing_dep = "vector_store" if self.vector_store is None else "embedding_manager"
-                    raise RuntimeError(f"{missing_dep} 不可用")
+                    missing_deps = [
+                        dep
+                        for dep, obj in (("vector_store", self.vector_store), ("embedding_manager", self.embedding_manager))
+                        if obj is None
+                    ]
+                    raise RuntimeError(f"{' 与 '.join(missing_deps)} 不可用")
                 else:
-                    error_reason = "vector_store_unavailable" if self.vector_store is None else "embedding_manager_unavailable"
+                    missing_reasons = []
+                    if self.vector_store is None:
+                        missing_reasons.append("vector_store_unavailable")
+                    if self.embedding_manager is None:
+                        missing_reasons.append("embedding_manager_unavailable")
+                    error_reason = "+".join(missing_reasons) or "vector_runtime_unavailable"
                     self.metadata_store.enqueue_paragraph_vector_backfill(hash_value, error=error_reason)
             except Exception as exc:
                 if not self._allow_metadata_only_write():
