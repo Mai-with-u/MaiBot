@@ -15,6 +15,8 @@ logger = get_logger("heartflow")
 
 HEARTFLOW_ACTIVE_RETENTION_SECONDS = 24 * 60 * 60
 HEARTFLOW_MAX_ACTIVE_CHATS = 100
+HEARTFLOW_DRAIN_TIMEOUT_SECONDS = 30.0
+"""等待在途使用者结束的时限：超时视为租约泄漏，保留运行时并向上抛出异常。"""
 
 
 class HeartflowManager:
@@ -59,6 +61,8 @@ class HeartflowManager:
         async with self._borrow_create_lock(session_id):
             chat = await self._get_or_create_locked(session_id)
             self._acquire_chat_usage(session_id)
+        # 锁外触发上限淘汰：淘汰需要逐个获取其他会话的创建锁，避免死锁
+        await self._evict_over_limit_chats(protected_session_id=session_id)
         try:
             yield chat
         finally:
@@ -83,10 +87,20 @@ class HeartflowManager:
             self._chat_usage_counts[session_id] = count - 1
 
     async def _wait_chat_drained(self, session_id: str) -> None:
-        """等待指定会话的在途使用者全部结束。"""
+        """等待指定会话的在途使用者全部结束。
+
+        超过 :data:`HEARTFLOW_DRAIN_TIMEOUT_SECONDS` 仍未排空视为租约泄漏，
+        抛出 ``TimeoutError`` 并保留现场，避免释放流程持锁无限阻塞。
+        """
         while self._chat_usage_counts.get(session_id, 0) > 0:
             drain_event = self._chat_drain_events.setdefault(session_id, asyncio.Event())
-            await drain_event.wait()
+            try:
+                await asyncio.wait_for(drain_event.wait(), timeout=HEARTFLOW_DRAIN_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError(
+                    f"等待会话 {session_id} 的在途使用者结束超时"
+                    f"（{HEARTFLOW_DRAIN_TIMEOUT_SECONDS}s），可能存在未释放的使用租约"
+                ) from exc
 
     async def _get_or_create_locked(self, session_id: str) -> MaisakaHeartFlowChatting:
         """获取或创建运行时；调用方必须已持有该会话的创建锁。"""
@@ -167,6 +181,8 @@ class HeartflowManager:
 
         self.heartflow_chat_list.pop(session_id, None)
         self._chat_last_active_at.pop(session_id, None)
+        # 等待方在 await 前已持有事件的本地引用，此处回收条目是安全的，避免簿记按 session 无限累积
+        self._chat_drain_events.pop(session_id, None)
         logger.info(f"已淘汰心流聊天 {session_id}: reason={reason}")
         return True
 
