@@ -255,6 +255,16 @@ class SummaryImporter:
             return
 
         target_store = self._graph_vector_store()
+        if target_store is None or self.embedding_manager is None:
+            if not self._allow_metadata_only_write():
+                missing_dep = "graph_vector_store" if target_store is None else "embedding_manager"
+                raise RuntimeError(f"实体向量依赖缺失: {missing_dep} 不可用且未开启 metadata_only 模式")
+            logger.warning(
+                "实体向量依赖不可用，跳过实体向量写入并保留 metadata/graph: "
+                f"store_ready={target_store is not None} embedding_ready={self.embedding_manager is not None}"
+            )
+            return
+
         pending_entities: List[Tuple[str, str, str]] = []
         for entity_hash, name in entities:
             token = str(entity_hash or "").strip()
@@ -703,15 +713,7 @@ class SummaryImporter:
                 metadata=metadata,
             )
 
-            # 7. 持久化（同时保存主向量库与独立的图向量库，避免重复调用相同实例）
-            saved_stores: set[int] = set()
-            for store in (self.vector_store, self._graph_vector_store()):
-                if store is not None and id(store) not in saved_stores:
-                    store.save()
-                    saved_stores.add(id(store))
-            if self.graph_store is not None:
-                self.graph_store.save()
-
+            # 先写入外部引用标记建立幂等索引，确保保存或后续步骤异常时重试可精准去重
             external_id = str((metadata or {}).get("external_id", "") or "").strip()
             if external_id:
                 self.metadata_store.upsert_external_memory_ref(
@@ -720,6 +722,15 @@ class SummaryImporter:
                     source_type="chat_summary",
                     metadata={"chat_id": stream_id},
                 )
+
+            # 7. 持久化（同时保存主向量库与独立的图向量库，避免重复调用相同实例）
+            saved_stores: set[int] = set()
+            for store in (self.vector_store, self._graph_vector_store()):
+                if store is not None and id(store) not in saved_stores:
+                    store.save()
+                    saved_stores.add(id(store))
+            if self.graph_store is not None:
+                self.graph_store.save()
 
             result_msg = f"总结导入成功|长度: {len(summary_text)}|实体: {len(entities)}|关系: {len(relations)}"
             return SummaryImportResult(
