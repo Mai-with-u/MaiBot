@@ -156,10 +156,11 @@ async def websocket_plugin_progress(websocket: WebSocket, token: Optional[str] =
                 break
 
     except WebSocketDisconnect:
-        active_connections.discard(websocket)
         logger.info(f"📡 插件进度 WebSocket 客户端已断开，当前连接数: {len(active_connections)}")
     except Exception as exc:
         logger.error(f"❌ WebSocket 错误: {exc}")
+    finally:
+        # 无论正常断开、异常还是任务被取消（CancelledError 不会被 except Exception 捕获），都必须移除连接引用
         active_connections.discard(websocket)
 
 

@@ -4,6 +4,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
 
 import asyncio
 import dataclasses
+import inspect
 import time
 import uuid
 
@@ -335,6 +336,22 @@ class BaseClient(ABC):
         """
         self.api_provider = api_provider
 
+    async def aclose(self) -> None:
+        """释放客户端持有的底层 HTTP 连接池，供实例被淘汰时调用。
+
+        底层 SDK 客户端类型多样（AsyncOpenAI、genai.Client、httpx.AsyncClient 等），
+        统一按 ``aclose``/``close`` 协议探测并兼容同步/异步关闭方法。
+        """
+        inner_client = getattr(self, "client", None)
+        closer = getattr(inner_client, "aclose", None)
+        if not callable(closer):
+            closer = getattr(inner_client, "close", None)
+        if not callable(closer):
+            return
+        result = closer()
+        if inspect.isawaitable(result):
+            await result
+
     @abstractmethod
     async def get_response(self, request: ResponseRequest) -> APIResponse:
         """获取对话响应。
@@ -419,6 +436,8 @@ class ClientRegistry:
         """(事件循环, APIProvider.name) -> BaseClient 的映射表。"""
         self._owner_client_types: Dict[str, Set[str]] = {}
         """插件 ID -> 该插件拥有的 client_type 集合。"""
+        self._dispose_tasks: Set["asyncio.Task[None]"] = set()
+        """待完成的旧客户端连接池释放任务，持有强引用防止被事件循环回收。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
 
     def register_client_class(self, client_type: str) -> Callable[[Type[BaseClient]], Type[BaseClient]]:
@@ -584,6 +603,22 @@ class ClientRegistry:
             removed_count += 1
         return removed_count
 
+    def _on_dispose_done(self, task: "asyncio.Task[None]") -> None:
+        """回收已完成的释放任务并记录异常。"""
+        self._dispose_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning(f"释放旧 LLM 客户端连接池失败: {task.exception()}")
+
+    def _schedule_dispose(self, stale_clients: List[BaseClient]) -> None:
+        """在当前事件循环上调度释放被淘汰的客户端实例，避免其 HTTP 连接池残留。"""
+        if not stale_clients:
+            return
+        loop = asyncio.get_running_loop()
+        for stale_client in stale_clients:
+            task = loop.create_task(stale_client.aclose())
+            self._dispose_tasks.add(task)
+            task.add_done_callback(self._on_dispose_done)
+
     def clear_client_instance_cache_by_client_type(self, client_type: str) -> None:
         """清理指定客户端类型对应的客户端实例缓存。
 
@@ -599,8 +634,12 @@ class ClientRegistry:
             for cache_key, client in self.client_instance_cache.items()
             if client.api_provider.client_type == normalized_client_type
         ]
+        stale_clients: List[BaseClient] = []
         for cache_key in stale_cache_keys:
-            self.client_instance_cache.pop(cache_key, None)
+            client = self.client_instance_cache.pop(cache_key, None)
+            if client is not None:
+                stale_clients.append(client)
+        self._schedule_dispose(stale_clients)
 
     @staticmethod
     def _get_client_cache_key(api_provider: APIProvider) -> Tuple[asyncio.AbstractEventLoop | None, str]:
@@ -642,7 +681,9 @@ class ClientRegistry:
 
     def clear_client_instance_cache(self) -> None:
         """清空客户端实例缓存。"""
+        stale_clients = list(self.client_instance_cache.values())
         self.client_instance_cache.clear()
+        self._schedule_dispose(stale_clients)
         logger.info("检测到配置重载，已清空LLM客户端实例缓存")
 
 

@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional
+from weakref import WeakValueDictionary
 
 import asyncio
 import hashlib
@@ -275,7 +276,8 @@ class EmojiManager:
         self.emojis: list[MaiEmoji] = []
         self._maintenance_wakeup_event: asyncio.Event = asyncio.Event()
         self._pending_description_tasks: dict[str, asyncio.Task[None]] = {}
-        self._emoji_save_locks: dict[str, asyncio.Lock] = {}
+        # 弱值字典保存按哈希的写入锁：等待中的协程持有强引用，用完即被自动回收，避免按表情哈希无限累积。
+        self._emoji_save_locks: WeakValueDictionary = WeakValueDictionary()
         self._reload_callback_registered: bool = False
 
         config_manager.register_reload_callback(self.reload_runtime_config)
@@ -383,7 +385,10 @@ class EmojiManager:
 
         hash_str = emoji_hash or hashlib.sha256(emoji_bytes).hexdigest()
 
-        save_lock = self._emoji_save_locks.setdefault(hash_str, asyncio.Lock())
+        save_lock = self._emoji_save_locks.get(hash_str)
+        if save_lock is None:
+            save_lock = asyncio.Lock()
+            self._emoji_save_locks[hash_str] = save_lock
         async with save_lock:
             return await self._ensure_emoji_saved_locked(emoji_bytes, hash_str)
 

@@ -333,12 +333,13 @@ class PluginLoader:
         return self._loaded_plugins.get(plugin_id)
 
     def set_loaded_plugin(self, meta: PluginMeta) -> None:
-        """登记一个已经完成初始化的插件。
+        """登记一个已经完成初始化的插件，并清除其历史失败记录。
 
         Args:
             meta: 待登记的插件元数据。
         """
         self._loaded_plugins[meta.plugin_id] = meta
+        self._failed_plugins.pop(meta.plugin_id, None)
 
     def remove_loaded_plugin(self, plugin_id: str) -> Optional[PluginMeta]:
         """移除一个已加载插件的元数据。
