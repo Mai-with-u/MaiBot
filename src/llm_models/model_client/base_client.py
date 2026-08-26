@@ -335,13 +335,27 @@ class BaseClient(ABC):
             api_provider: API 提供商配置。
         """
         self.api_provider = api_provider
+        self._active_request_leases = 0
+        """正在使用本实例的进行中请求数；淘汰时需等待归零后再关闭连接池。"""
+        self._dispose_pending = False
+        """实例已被注册表淘汰，待活跃请求归零后关闭连接池。"""
+        self._closed = False
+        """底层连接池是否已关闭，保证 aclose 幂等。"""
 
     async def aclose(self) -> None:
         """释放客户端持有的底层 HTTP 连接池，供实例被淘汰时调用。
 
         底层 SDK 客户端类型多样（AsyncOpenAI、genai.Client、httpx.AsyncClient 等），
         统一按 ``aclose``/``close`` 协议探测并兼容同步/异步关闭方法。
+        本方法幂等：重复调用不会重复关闭底层资源。
+
+        注意：调用方应通过请求租约（``acquire_request_lease``/``release_request_lease``）
+        确保没有进行中的请求正在使用本实例，避免关闭连接池打断在途请求。
         """
+        if self._closed:
+            return
+        # 先同步置位再执行异步关闭，保证并发调用方只会真正关闭一次
+        self._closed = True
         inner_client = getattr(self, "client", None)
         closer = getattr(inner_client, "aclose", None)
         if not callable(closer):
@@ -351,6 +365,29 @@ class BaseClient(ABC):
         result = closer()
         if inspect.isawaitable(result):
             await result
+
+    def acquire_request_lease(self) -> None:
+        """登记一次进行中的请求，使淘汰流程推迟到该请求结束后再关闭连接池。"""
+        self._active_request_leases += 1
+
+    def release_request_lease(self) -> None:
+        """注销一次已结束的请求租约。"""
+        if self._active_request_leases > 0:
+            self._active_request_leases -= 1
+
+    def mark_dispose_pending(self) -> bool:
+        """标记实例已被注册表淘汰，等待关闭连接池。
+
+        Returns:
+            bool: True 表示当前无活跃请求，可立即调度关闭；
+                  False 表示仍有请求在使用本实例，由最后一个结束的请求负责关闭。
+        """
+        self._dispose_pending = True
+        return self._active_request_leases == 0
+
+    def should_close_after_release(self) -> bool:
+        """请求结束后判断是否应由当前调用方关闭连接池（实例已被淘汰且活跃请求归零）。"""
+        return self._dispose_pending and not self._closed and self._active_request_leases == 0
 
     @abstractmethod
     async def get_response(self, request: ResponseRequest) -> APIResponse:
@@ -438,6 +475,8 @@ class ClientRegistry:
         """插件 ID -> 该插件拥有的 client_type 集合。"""
         self._dispose_tasks: Set["asyncio.Task[None]"] = set()
         """待完成的旧客户端连接池释放任务，持有强引用防止被事件循环回收。"""
+        self._pending_dispose_clients: List[BaseClient] = []
+        """因暂无可用事件循环而挂起的被淘汰客户端，待下次进入事件循环时补齐释放。"""
         config_manager.register_reload_callback(self.clear_client_instance_cache)
 
     def register_client_class(self, client_type: str) -> Callable[[Type[BaseClient]], Type[BaseClient]]:
@@ -603,21 +642,90 @@ class ClientRegistry:
             removed_count += 1
         return removed_count
 
+    @staticmethod
+    def _get_running_loop() -> "asyncio.AbstractEventLoop | None":
+        """返回当前运行中的事件循环；不在事件循环内时返回 None。"""
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
     def _on_dispose_done(self, task: "asyncio.Task[None]") -> None:
         """回收已完成的释放任务并记录异常。"""
         self._dispose_tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
             logger.warning(f"释放旧 LLM 客户端连接池失败: {task.exception()}")
 
-    def _schedule_dispose(self, stale_clients: List[BaseClient]) -> None:
-        """在当前事件循环上调度释放被淘汰的客户端实例，避免其 HTTP 连接池残留。"""
-        if not stale_clients:
+    def _start_dispose_task(self, loop: asyncio.AbstractEventLoop, stale_client: BaseClient) -> None:
+        """在指定事件循环上创建并跟踪一个旧客户端释放任务。"""
+        task = loop.create_task(stale_client.aclose())
+        self._dispose_tasks.add(task)
+        task.add_done_callback(self._on_dispose_done)
+
+    def _flush_pending_dispose(self, loop: asyncio.AbstractEventLoop | None) -> None:
+        """补齐释放此前因缺少可用事件循环而挂起的被淘汰客户端。"""
+        if loop is None or not self._pending_dispose_clients:
             return
-        loop = asyncio.get_running_loop()
-        for stale_client in stale_clients:
-            task = loop.create_task(stale_client.aclose())
-            self._dispose_tasks.add(task)
-            task.add_done_callback(self._on_dispose_done)
+        pending_clients = self._pending_dispose_clients
+        self._pending_dispose_clients = []
+        for stale_client in pending_clients:
+            self._start_dispose_task(loop, stale_client)
+        logger.info(f"已在当前事件循环上补齐 {len(pending_clients)} 个此前挂起的旧 LLM 客户端释放任务")
+
+    def _dispose_when_possible(
+        self,
+        stale_client: BaseClient,
+        owner_loop: asyncio.AbstractEventLoop | None,
+        current_loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """为单个无活跃请求的被淘汰客户端选择合适的事件循环并调度关闭。
+
+        Args:
+            stale_client: 已无活跃请求的被淘汰客户端。
+            owner_loop: 其缓存键绑定的事件循环，可能为 None（创建时无运行中循环）。
+            current_loop: 当前运行中的事件循环，可能为 None。
+        """
+        target_loop = owner_loop if owner_loop is not None else current_loop
+        if target_loop is None:
+            # 创建与清理都发生在没有事件循环的上下文：挂起，待下次有运行中的循环时补齐释放
+            self._pending_dispose_clients.append(stale_client)
+            logger.debug("暂无可用于释放 LLM 客户端的事件循环，已挂起待下次进入事件循环时处理")
+            return
+        if target_loop is current_loop:
+            self._start_dispose_task(target_loop, stale_client)
+            return
+        # 客户端绑定在其他线程的事件循环上，跨线程安全投递释放任务
+        try:
+            target_loop.call_soon_threadsafe(self._start_dispose_task, target_loop, stale_client)
+        except RuntimeError:
+            # 目标循环已终止，其上的连接资源已随之结束，无法也无需再调度异步关闭
+            logger.warning("LLM 客户端所属事件循环已关闭，跳过其连接池释放")
+
+    def _schedule_dispose(
+        self,
+        stale_entries: List[Tuple[BaseClient, "asyncio.AbstractEventLoop | None"]],
+    ) -> None:
+        """调度释放被淘汰的客户端实例，避免其 HTTP 连接池残留。
+
+        Args:
+            stale_entries: (被淘汰客户端, 其缓存键绑定的事件循环) 列表。
+
+        关闭策略：
+        - 关闭任务优先投递回客户端缓存键绑定的事件循环（可能属于其他线程）。
+        - 仍有进行中请求的实例推迟到其最后一个请求结束时由请求方关闭，
+          避免立即 aclose 打断在途请求。
+        - 找不到任何可用事件循环时先挂起，待下次有运行中的事件循环时补齐释放。
+        """
+        if not stale_entries:
+            return
+
+        current_loop = self._get_running_loop()
+        self._flush_pending_dispose(current_loop)
+
+        for stale_client, owner_loop in stale_entries:
+            if not stale_client.mark_dispose_pending():
+                continue
+            self._dispose_when_possible(stale_client, owner_loop, current_loop)
 
     def clear_client_instance_cache_by_client_type(self, client_type: str) -> None:
         """清理指定客户端类型对应的客户端实例缓存。
@@ -634,21 +742,18 @@ class ClientRegistry:
             for cache_key, client in self.client_instance_cache.items()
             if client.api_provider.client_type == normalized_client_type
         ]
-        stale_clients: List[BaseClient] = []
+        stale_entries: List[Tuple[BaseClient, "asyncio.AbstractEventLoop | None"]] = []
         for cache_key in stale_cache_keys:
             client = self.client_instance_cache.pop(cache_key, None)
             if client is not None:
-                stale_clients.append(client)
-        self._schedule_dispose(stale_clients)
+                # 缓存键首位即该客户端绑定的事件循环，释放任务应投递回原循环
+                stale_entries.append((client, cache_key[0]))
+        self._schedule_dispose(stale_entries)
 
     @staticmethod
     def _get_client_cache_key(api_provider: APIProvider) -> Tuple[asyncio.AbstractEventLoop | None, str]:
         """生成按事件循环隔离的客户端缓存键。"""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        return loop, api_provider.name
+        return ClientRegistry._get_running_loop(), api_provider.name
 
     def get_client_class_instance(self, api_provider: APIProvider, force_new: bool = False) -> BaseClient:
         """获取注册的 API 客户端实例。
@@ -663,6 +768,9 @@ class ClientRegistry:
         from . import ensure_client_type_loaded
 
         ensure_client_type_loaded(api_provider.client_type)
+
+        # 若此前有因缺少事件循环而挂起的旧客户端释放任务，在此补齐
+        self._flush_pending_dispose(self._get_running_loop())
 
         # 如果强制创建新实例，直接创建不使用缓存
         if force_new:
@@ -681,9 +789,12 @@ class ClientRegistry:
 
     def clear_client_instance_cache(self) -> None:
         """清空客户端实例缓存。"""
-        stale_clients = list(self.client_instance_cache.values())
+        stale_entries = [
+            (client, owner_loop)
+            for (owner_loop, _provider_name), client in self.client_instance_cache.items()
+        ]
         self.client_instance_cache.clear()
-        self._schedule_dispose(stale_clients)
+        self._schedule_dispose(stale_entries)
         logger.info("检测到配置重载，已清空LLM客户端实例缓存")
 
 

@@ -28,6 +28,8 @@ class CircuitPermit:
     allowed: bool
     half_open: bool = False
     reason: str = ""
+    bound_state: "_CircuitState | None" = None
+    """获取许可时绑定的熔断状态对象；被 forget_plugins 清理后失效。"""
 
 
 @dataclass(slots=True)
@@ -79,6 +81,7 @@ class PluginCircuitBreaker:
                 operation=operation,
                 allowed=False,
                 reason=f"插件熔断中，剩余 {remaining_sec:.1f}s",
+                bound_state=state,
             )
 
         if state.state == "open" and now >= state.opened_until:
@@ -94,6 +97,7 @@ class PluginCircuitBreaker:
                     operation=operation,
                     allowed=False,
                     reason="插件半开测试已有进行中的调用",
+                    bound_state=state,
                 )
             state.half_open_inflight = True
             return CircuitPermit(
@@ -102,6 +106,7 @@ class PluginCircuitBreaker:
                 operation=operation,
                 allowed=True,
                 half_open=True,
+                bound_state=state,
             )
 
         return CircuitPermit(
@@ -109,7 +114,21 @@ class PluginCircuitBreaker:
             component_name=component_name,
             operation=operation,
             allowed=True,
+            bound_state=state,
         )
+
+    def _resolve_bound_state(self, permit: CircuitPermit) -> _CircuitState | None:
+        """解析许可绑定的熔断状态；绑定已失效时返回 None。
+
+        许可绑定的状态对象若已被 ``forget_plugins`` 清理（如插件卸载），
+        或同 ID 插件重载后状态被重建，则本次完成回调直接忽略：
+        避免在途调用通过 setdefault 重建已清理的状态，或把结果写入新插件的状态。
+        """
+        state = self._states.get(permit.plugin_id)
+        if state is None or state is not permit.bound_state:
+            logger.debug(f"插件 {permit.plugin_id} 的熔断许可已失效，忽略本次调用结果记录")
+            return None
+        return state
 
     def record_success(self, permit: CircuitPermit) -> None:
         """记录一次插件调用成功。"""
@@ -117,8 +136,11 @@ class PluginCircuitBreaker:
         if not permit.allowed:
             return
 
+        state = self._resolve_bound_state(permit)
+        if state is None:
+            return
+
         now = time.monotonic()
-        state = self._states.setdefault(permit.plugin_id, _CircuitState())
         was_half_open = state.state == "half_open" or permit.half_open
         self._reset_cooldown_if_stable(state, now)
         state.consecutive_failures = 0
@@ -137,8 +159,11 @@ class PluginCircuitBreaker:
         if not permit.allowed:
             return
 
+        state = self._resolve_bound_state(permit)
+        if state is None:
+            return
+
         now = time.monotonic()
-        state = self._states.setdefault(permit.plugin_id, _CircuitState())
         self._reset_cooldown_if_stable(state, now)
         state.half_open_inflight = False
 

@@ -2054,6 +2054,8 @@ class PluginRunnerSupervisor:
             for plugin_id, registration in list(self._registered_plugins.items()):
                 if registration.llm_providers:
                     client_registry.unregister_plugin_providers(plugin_id)
+        # 清空注册表前同步清理各插件的熔断状态，避免同 ID 插件重载后继承旧状态
+        get_plugin_circuit_breaker().forget_plugins(list(self._registered_plugins.keys()))
         self._authorization.clear()
         self._api_registry.clear()
         self._component_registry.clear()

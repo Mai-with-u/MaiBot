@@ -149,17 +149,23 @@ def _evict_stale_jobs() -> None:
     expired_count = sum(
         1 for finished_at, _ in finished_jobs if now - finished_at > _TRANSFER_JOB_RETENTION_SECONDS
     )
+    # 计算容量压力时把即将插入的新任务一并计入，保证插入后任务总数不超过上限
     removable_count = min(
-        max(expired_count, len(_jobs) - _TRANSFER_JOB_MAX_ENTRIES),
+        max(expired_count, len(_jobs) + 1 - _TRANSFER_JOB_MAX_ENTRIES),
         len(finished_jobs),
     )
     for _, job_id in finished_jobs[:removable_count]:
-        job = _jobs.pop(job_id, None)
-        if job is not None and job.file_path is not None:
+        job = _jobs.get(job_id)
+        if job is None:
+            continue
+        if job.file_path is not None:
             try:
                 job.file_path.unlink(missing_ok=True)
             except OSError as exc:
+                # 删除失败时保留任务记录及其 file_path，待后续回收时重试
                 logger.warning(f"清理数据迁移任务文件失败: {job.file_path}, error={exc}")
+                continue
+        _jobs.pop(job_id, None)
 
 
 def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
