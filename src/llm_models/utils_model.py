@@ -873,6 +873,36 @@ class LLMOrchestrator:
         request: ClientRequest,
         retry_limit: Optional[int] = None,
     ) -> APIResponse:
+        """持有客户端请求租约执行单模型请求，避免淘汰流程在请求进行中关闭其连接池。
+
+        Args:
+            api_provider: 当前请求对应的 API 提供商配置。
+            client: 已初始化的客户端实例。
+            request: 统一客户端请求对象。
+            retry_limit: 显式指定的重试次数；未指定时使用 Provider 配置。
+
+        Returns:
+            APIResponse: 统一响应对象。
+
+        Raises:
+            ModelAttemptFailed: 当当前模型重试耗尽或遇到硬错误时抛出。
+        """
+        client.acquire_request_lease()
+        try:
+            return await self._attempt_request_on_model_with_retry(api_provider, client, request, retry_limit)
+        finally:
+            client.release_request_lease()
+            # 实例已被注册表淘汰且本请求是最后一个使用者时，由请求方负责关闭连接池
+            if client.should_close_after_release():
+                await client.aclose()
+
+    async def _attempt_request_on_model_with_retry(
+        self,
+        api_provider: APIProvider,
+        client: BaseClient,
+        request: ClientRequest,
+        retry_limit: Optional[int] = None,
+    ) -> APIResponse:
         """在单个模型上执行请求，并处理重试逻辑。
 
         Args:
