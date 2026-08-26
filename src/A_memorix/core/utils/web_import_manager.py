@@ -394,6 +394,10 @@ class ImportTaskRecord:
 
 
 class ImportTaskManager:
+    # 内存中保留的任务记录数量上限：任务记录含文件与分块明细，
+    # 超限后按插入顺序淘汰最旧的已完成/已取消/已失败任务，防止字典无界增长。
+    MAX_RETAINED_FINISHED_TASKS = 50
+
     def __init__(self, plugin: Any):
         self.plugin = plugin
         self._lock = asyncio.Lock()
@@ -2325,6 +2329,7 @@ class ImportTaskManager:
                 task.current_step = "completed"
             task.finished_at = _now()
             task.updated_at = _now()
+            self._prune_finished_tasks_locked()
             self._try_write_task_report(task)
             task_kind = str(task.params.get("task_kind") or task.source).strip().lower()
             write_task_kinds = {"upload", "paste", "raw_scan", "lpmm_openie", "maibot_migration", "lpmm_convert"}
@@ -4411,3 +4416,29 @@ JSON schema:
         task.finished_at = _now()
         task.updated_at = _now()
         self._recompute_task_progress(task)
+        self._prune_finished_tasks_locked()
+
+    def _prune_finished_tasks_locked(self) -> None:
+        """把内存任务记录裁剪到容量上限内（需持有 ``self._lock``）。
+
+        只淘汰已到终态的任务；活跃与排队中的任务不受影响。
+        """
+
+        overflow = len(self._tasks) - self.MAX_RETAINED_FINISHED_TASKS
+        if overflow <= 0:
+            return
+        finished_statuses = {"completed", "completed_with_errors", "cancelled", "failed"}
+        removed_count = 0
+        # _task_order 新任务在左侧，从最旧的一端开始淘汰。
+        for task_id in list(reversed(self._task_order)):
+            if removed_count >= overflow:
+                break
+            task = self._tasks.get(task_id)
+            if task is None or task.status not in finished_statuses:
+                continue
+            self._tasks.pop(task_id, None)
+            try:
+                self._task_order.remove(task_id)
+            except ValueError:
+                pass
+            removed_count += 1

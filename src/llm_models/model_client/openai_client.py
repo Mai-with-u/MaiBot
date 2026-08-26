@@ -1244,6 +1244,8 @@ async def _default_stream_response_handler(
         return response, usage_record
     finally:
         accumulator.close()
+        # 中断/解析异常路径下显式关闭底层流，避免 SSE 连接滞留到 GC 才释放。
+        await resp_stream.close()
 
 
 def _default_normal_response_parser(

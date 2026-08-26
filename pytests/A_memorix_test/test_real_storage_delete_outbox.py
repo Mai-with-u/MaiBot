@@ -116,15 +116,23 @@ def _runtime_config(data_dir: Path) -> Dict[str, Any]:
 
 
 async def _open_runtime(data_dir: Path) -> SDKMemoryKernel:
-    kernel = SDKMemoryKernel(
-        plugin_root=Path.cwd(),
-        config=_runtime_config(data_dir),
-    )
-    await kernel.initialize()
-    await kernel._stop_background_tasks()
-
     embedding = OfflineDeterministicEmbedding(EMBEDDING_DIMENSION)
     await embedding.initialize()
+
+    import src.A_memorix.core.runtime.sdk_memory_kernel as smk
+    old_create = smk.create_embedding_api_adapter
+    smk.create_embedding_api_adapter = lambda *args, **kwargs: embedding
+    try:
+        kernel = SDKMemoryKernel(
+            plugin_root=Path.cwd(),
+            config=_runtime_config(data_dir),
+        )
+        await kernel.initialize()
+    finally:
+        smk.create_embedding_api_adapter = old_create
+
+    await kernel._stop_background_tasks()
+
     kernel.embedding_manager = embedding
     kernel.embedding_dimension = EMBEDDING_DIMENSION
     if kernel.relation_write_service is not None:

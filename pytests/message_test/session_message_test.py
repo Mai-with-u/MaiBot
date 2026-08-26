@@ -58,7 +58,7 @@ class DummyDBSession:
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def exec(self, statement):
+    def exec(self, statement, *args, **kwargs):
         return self
 
     def first(self):
@@ -71,11 +71,11 @@ class DummyDBSession:
         return []
 
 
-def get_db_session():
+def get_db_session(*args, **kwargs):
     return DummyDBSession()
 
 
-def get_manual_db_session():
+def get_manual_db_session(*args, **kwargs):
     return DummyDBSession()
 
 
@@ -122,8 +122,14 @@ def setup_mocks(monkeypatch):
     db_mod.get_db_session = get_db_session
     db_mod.get_manual_db_session = get_manual_db_session
 
-    db_model_mod = _stub_module("src.common.database.database_model")
-    db_model_mod.Messages = None  # 可以根据需要添加更多的属性或方法
+    class DynamicModelModule(ModuleType):
+        def __getattr__(self, name):
+            cls = type(name, (), {})
+            setattr(self, name, cls)
+            return cls
+
+    db_model_mod = DynamicModelModule("src.common.database.database_model")
+    monkeypatch.setitem(sys.modules, "src.common.database.database_model", db_model_mod)
 
     emoji_manager_mod = _stub_module("src.emoji_system.emoji_manager")
     emoji_manager_mod.emoji_manager = None  # 可以根据需要添加更多的属性或方法
@@ -136,6 +142,9 @@ def setup_mocks(monkeypatch):
 
     voice_utils_mod = _stub_module("src.common.utils.utils_voice")
     voice_utils_mod.get_voice_text = dummy_get_voice_text
+
+    system_utils_mod = _stub_module("src.common.utils.system_utils")
+    system_utils_mod.is_bot_self = lambda *a, **k: False
 
     person_utils_mod = _stub_module("src.common.utils.utils_person")
     person_utils_mod.PersonUtils = DummyPersonUtils
@@ -202,7 +211,8 @@ async def test_image(monkeypatch):
     msg.raw_message = MessageSequence(components=[])
     msg.raw_message.components = [ImageComponent(binary_hash="image_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一张图片，网卡了加载不出来] Hello, world!"
+    # 待识别或无描述图片保持空串，由上层渲染占位
+    assert msg.processed_plain_text == " Hello, world!"
 
 
 @pytest.mark.asyncio
@@ -213,7 +223,7 @@ async def test_emoji(monkeypatch):
     msg.raw_message = MessageSequence(components=[])
     msg.raw_message.components = [EmojiComponent(binary_hash="emoji_hash"), TextComponent("Hello, world!")]
     await msg.process()
-    assert msg.processed_plain_text == "[一个表情，网卡了加载不出来] Hello, world!"
+    assert msg.processed_plain_text == "[表情包] Hello, world!"
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,9 @@ class GlobalAnnouncementManager:
         if chat_id in self._user_disabled_actions:
             try:
                 self._user_disabled_actions[chat_id].remove(action_name)
+                # 列表清空后删除键，避免空条目随聊天数无界积累。
+                if not self._user_disabled_actions[chat_id]:
+                    del self._user_disabled_actions[chat_id]
                 return True
             except ValueError:
                 logger.warning(f"动作 {action_name} 不在禁用列表中")
@@ -52,6 +55,8 @@ class GlobalAnnouncementManager:
         if chat_id in self._user_disabled_commands:
             try:
                 self._user_disabled_commands[chat_id].remove(command_name)
+                if not self._user_disabled_commands[chat_id]:
+                    del self._user_disabled_commands[chat_id]
                 return True
             except ValueError:
                 logger.warning(f"命令 {command_name} 不在禁用列表中")
@@ -73,6 +78,8 @@ class GlobalAnnouncementManager:
         if chat_id in self._user_disabled_event_handlers:
             try:
                 self._user_disabled_event_handlers[chat_id].remove(handler_name)
+                if not self._user_disabled_event_handlers[chat_id]:
+                    del self._user_disabled_event_handlers[chat_id]
                 return True
             except ValueError:
                 logger.warning(f"事件处理器 {handler_name} 不在禁用列表中")
@@ -94,6 +101,8 @@ class GlobalAnnouncementManager:
         if chat_id in self._user_disabled_tools:
             try:
                 self._user_disabled_tools[chat_id].remove(tool_name)
+                if not self._user_disabled_tools[chat_id]:
+                    del self._user_disabled_tools[chat_id]
                 return True
             except ValueError:
                 logger.warning(f"工具 {tool_name} 不在禁用列表中")

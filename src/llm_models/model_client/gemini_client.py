@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Callable, Coroutine, Dict, List, Optional
 import asyncio
 import base64
 import binascii
+import contextlib
 import io
 import json
 import uuid
@@ -634,12 +635,14 @@ async def _default_stream_response_handler(
     last_response: GenerateContentResponse | None = None
 
     try:
-        async for chunk in response_stream:
-            last_response = chunk
-            if interrupt_flag and interrupt_flag.is_set():
-                raise ReqAbortException("请求被外部信号中断")
-            _process_stream_chunk(chunk, content_buffer, reasoning_buffer, tool_calls_buffer)
-            usage_record = _extract_usage_record(chunk) or usage_record
+        # 中断/解析异常路径下显式关闭底层流（async generator），避免连接滞留到 GC 才释放。
+        async with contextlib.aclosing(response_stream):
+            async for chunk in response_stream:
+                last_response = chunk
+                if interrupt_flag and interrupt_flag.is_set():
+                    raise ReqAbortException("请求被外部信号中断")
+                _process_stream_chunk(chunk, content_buffer, reasoning_buffer, tool_calls_buffer)
+                usage_record = _extract_usage_record(chunk) or usage_record
         return (
             _build_stream_api_response(
                 content_buffer,

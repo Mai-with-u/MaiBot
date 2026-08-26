@@ -235,6 +235,8 @@ def test_install_plugin_preserves_manifest_declared_id(client: TestClient, monke
                         "name": "Declared Plugin",
                         "version": "1.0.0",
                         "author": {"name": "author"},
+                        "host_application": {"min_version": "1.0.0", "max_version": "1.99.99"},
+                        "sdk": {"min_version": "2.0.0", "max_version": "2.99.99"},
                     }
                 ),
                 encoding="utf-8",
@@ -271,6 +273,8 @@ def test_install_plugin_backfills_missing_manifest_id(client: TestClient, monkey
                         "name": "Legacy Plugin",
                         "version": "1.0.0",
                         "author": {"name": "author"},
+                        "host_application": {"min_version": "1.0.0", "max_version": "1.99.99"},
+                        "sdk": {"min_version": "2.0.0", "max_version": "2.99.99"},
                     }
                 ),
                 encoding="utf-8",
@@ -360,6 +364,7 @@ def test_clone_repository_reports_plugin_and_mirror_progress(tmp_path, monkeypat
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     service = mirror_service_module.GitMirrorService(max_retries=1, timeout=1, config=FakeMirrorConfig())
+    monkeypatch.setattr(mirror_service_module, "validate_public_url", lambda url, **kw: url)
     monkeypatch.setattr(mirror_service_module.subprocess, "run", fake_run)
     mirror_service_module.set_update_progress_callback(collect_progress)
 

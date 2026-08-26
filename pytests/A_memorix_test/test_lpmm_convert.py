@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import json
+import os
 import subprocess
 import sys
 
@@ -25,6 +26,8 @@ def _write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
 
 def _run_convert(input_dir: Path, output_dir: Path, *, dimension: int = 2) -> subprocess.CompletedProcess[str]:
     data_dir = input_dir.parents[3]
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [
             sys.executable,
@@ -45,6 +48,7 @@ def _run_convert(input_dir: Path, output_dir: Path, *, dimension: int = 2) -> su
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
 
 
@@ -60,6 +64,8 @@ def test_lpmm_converter_rejects_paths_outside_import_root(tmp_path: Path) -> Non
     data_dir = tmp_path / "a-memorix"
     outside_input = tmp_path / "outside"
     outside_input.mkdir()
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         [
             sys.executable,
@@ -77,6 +83,7 @@ def test_lpmm_converter_rejects_paths_outside_import_root(tmp_path: Path) -> Non
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
 
     assert result.returncode != 0
