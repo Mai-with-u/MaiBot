@@ -704,8 +704,10 @@ class SummaryImporter:
             )
 
             # 7. 持久化
-            self.vector_store.save()
-            self.graph_store.save()
+            if self.vector_store is not None:
+                self.vector_store.save()
+            if self.graph_store is not None:
+                self.graph_store.save()
 
             external_id = str((metadata or {}).get("external_id", "") or "").strip()
             if external_id:
@@ -833,8 +835,13 @@ class SummaryImporter:
                 logger.warning(f"总结导入段落进入回退写入: {result}")
         else:
             try:
-                embedding = await self.embedding_manager.encode(summary)
-                self.vector_store.add(vectors=embedding.reshape(1, -1), ids=[hash_value])
+                if self.vector_store is not None and self.embedding_manager is not None:
+                    embedding = await self.embedding_manager.encode(summary)
+                    self.vector_store.add(vectors=embedding.reshape(1, -1), ids=[hash_value])
+                elif not self._allow_metadata_only_write():
+                    raise RuntimeError("vector_store 或 embedding_manager 不可用")
+                else:
+                    self.metadata_store.enqueue_paragraph_vector_backfill(hash_value, error="vector_store_unavailable")
             except Exception as exc:
                 if not self._allow_metadata_only_write():
                     raise

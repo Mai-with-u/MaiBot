@@ -28,6 +28,8 @@ class RateLimiter:
     def __init__(self):
         # 存储格式: {key: [(timestamp, count), ...]}
         self._requests: Dict[str, List] = defaultdict(list)
+        # 独立存储认证失败记录，避免常规流量限流键的容量淘汰削弱防爆破封禁保护
+        self._auth_failures: Dict[str, List] = defaultdict(list)
         # 被封禁的 IP: {ip: unblock_timestamp}
         self._blocked: Dict[str, float] = {}
 
@@ -72,16 +74,6 @@ class RateLimiter:
         for stale_key in stale_keys:
             del self._requests[stale_key]
         overflow = len(self._requests) - self.MAX_TRACKED_REQUEST_KEYS
-        if overflow <= 0:
-            return
-        # 优先淘汰常规请求键，保护处于活跃窗口内的认证失败记录，防止防爆破策略被大流量冲刷弱化。
-        for stale_key in list(self._requests):
-            if overflow <= 0:
-                break
-            if stale_key.endswith(":auth_failures"):
-                continue
-            del self._requests[stale_key]
-            overflow -= 1
         if overflow > 0:
             for stale_key in list(self._requests)[:overflow]:
                 del self._requests[stale_key]
@@ -174,17 +166,19 @@ class RateLimiter:
             (是否被封禁, 剩余尝试次数)
         """
         ip = self._get_client_ip(request)
-        key = f"{ip}:auth_failures"
+        now = time.time()
+        cutoff = now - window_seconds
 
-        # 清理过期记录
-        self._cleanup_old_requests(key, window_seconds)
+        # 在独立的认证失败存储中滑动清理
+        self._auth_failures[ip] = [(ts, count) for ts, count in self._auth_failures[ip] if ts > cutoff]
+        if not self._auth_failures[ip]:
+            del self._auth_failures[ip]
 
         # 计算当前失败次数
-        current_failures = sum(count for _, count in self._requests[key])
+        current_failures = sum(count for _, count in self._auth_failures[ip])
 
         # 记录本次失败
-        now = time.time()
-        self._requests[key].append((now, 1))
+        self._auth_failures[ip].append((now, 1))
         current_failures += 1
 
         remaining = max_failures - current_failures
@@ -205,9 +199,8 @@ class RateLimiter:
         重置失败计数（认证成功后调用）
         """
         ip = self._get_client_ip(request)
-        key = f"{ip}:auth_failures"
-        if key in self._requests:
-            del self._requests[key]
+        self._auth_failures.pop(ip, None)
+        self._requests.pop(f"{ip}:auth_failures", None)
 
 
 # 全局单例

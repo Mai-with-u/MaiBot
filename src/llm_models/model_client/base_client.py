@@ -678,9 +678,9 @@ class ClientRegistry:
             owner_loop: 其缓存键绑定的事件循环，可能为 None（创建时无运行中循环）。
             current_loop: 当前运行中的事件循环，可能为 None。
         """
-        target_loop = owner_loop if owner_loop is not None else current_loop
-        if target_loop is None:
-            # 创建与清理都发生在没有事件循环的上下文：挂起，待下次有运行中的循环时补齐释放
+        target_loop = owner_loop if (owner_loop is not None and not owner_loop.is_closed()) else current_loop
+        if target_loop is None or target_loop.is_closed():
+            # 所有候选事件循环均不可用：挂起待下次进入可用事件循环时补齐释放
             self._pending_dispose_clients.append(stale_client)
             logger.debug("暂无可用于释放 LLM 客户端的事件循环，已挂起待下次进入事件循环时处理")
             return
@@ -691,8 +691,11 @@ class ClientRegistry:
         try:
             target_loop.call_soon_threadsafe(self._start_dispose_task, target_loop, stale_client)
         except RuntimeError:
-            # 目标循环已终止，其上的连接资源已随之结束，无法也无需再调度异步关闭
-            logger.warning("LLM 客户端所属事件循环已关闭，跳过其连接池释放")
+            # 目标循环在调用时刚关闭：回退到当前可用循环释放或挂起
+            if current_loop is not None and not current_loop.is_closed():
+                self._start_dispose_task(current_loop, stale_client)
+            else:
+                self._pending_dispose_clients.append(stale_client)
 
     def _schedule_dispose(
         self,
@@ -750,11 +753,15 @@ class ClientRegistry:
             for cache_key in list(self.client_instance_cache)
             if cache_key[0] is not None and cache_key[0].is_closed()
         ]
+        if not closed_keys:
+            return
+        current_loop = self._get_running_loop()
         stale_entries: List[Tuple[BaseClient, "asyncio.AbstractEventLoop | None"]] = []
         for cache_key in closed_keys:
             client = self.client_instance_cache.pop(cache_key, None)
             if client is not None:
-                stale_entries.append((client, cache_key[0]))
+                # 原循环已关闭，直接在当前活动循环上调度关闭
+                stale_entries.append((client, current_loop))
         if stale_entries:
             self._schedule_dispose(stale_entries)
 

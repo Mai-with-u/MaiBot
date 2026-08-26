@@ -510,9 +510,11 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
                 # 优先保留 manifest 中声明的真实 id，并重命名安装目录
                 manifest_plugin_id = validate_plugin_id(manifest_plugin_id)
                 new_target_path, new_old_format_path = get_plugin_candidate_paths(manifest_plugin_id)
-                if new_target_path != target_path and new_old_format_path != target_path:
-                    if new_target_path.exists() or new_old_format_path.exists():
+                # 检查两个候选路径中除当前临时克隆目录外的其他目录是否已存在
+                for candidate in (new_target_path, new_old_format_path):
+                    if candidate != target_path and candidate.exists():
                         raise ValueError(f"目标目录已存在插件: {manifest_plugin_id}")
+                if new_target_path != target_path:
                     shutil.move(str(target_path), str(new_target_path))
                     target_path = new_target_path
                     manifest_path = resolve_plugin_file_path(target_path, "_manifest.json")
