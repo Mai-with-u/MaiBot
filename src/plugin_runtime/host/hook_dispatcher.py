@@ -406,6 +406,33 @@ class HookDispatcher:
             return hook_spec.default_timeout_ms
         return self._get_default_timeout_ms()
 
+    async def _invoke_hook_handler_if_registered(
+        self,
+        hook_name: str,
+        hook_spec: HookSpec,
+        target: _HookInvocationTarget,
+        kwargs: Dict[str, Any],
+    ) -> HookHandlerExecutionResult:
+        """校验处理器条目仍注册后执行；供后台观察任务使用。
+
+        任务入队到真正启动之间插件可能已被卸载/重载：
+        若不校验，旧任务会通过 try_acquire 的 setdefault 重建已清理的熔断状态，
+        或把结果写入同 ID 重载后插件的新状态。
+        """
+        current_entries = target.supervisor.component_registry.get_hook_handlers(hook_name)
+        if target.entry not in current_entries:
+            logger.debug(f"HookHandler {target.entry.full_name} 已注销或被禁用，跳过观察执行")
+            return HookHandlerExecutionResult(
+                handler_name=target.entry.full_name,
+                plugin_id=target.entry.plugin_id,
+            )
+        return await self._invoke_handler(
+            hook_name=hook_name,
+            hook_spec=hook_spec,
+            target=target,
+            kwargs=kwargs,
+        )
+
     async def _invoke_handler(
         self,
         hook_name: str,
@@ -678,7 +705,7 @@ class HookDispatcher:
             kwargs: 调用参数快照。
         """
 
-        execution_result = await self._invoke_handler(
+        execution_result = await self._invoke_hook_handler_if_registered(
             hook_name=hook_name,
             hook_spec=hook_spec,
             target=target,

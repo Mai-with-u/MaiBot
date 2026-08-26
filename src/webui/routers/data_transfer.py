@@ -423,8 +423,11 @@ def _run_import_job(job_id: str, archive_path: Path, enabled_parts: set[str]) ->
         job.error = str(exc)
         job.message = "导入失败"
     finally:
+        # 仅在删除成功后清空 file_path；失败时保留记录与路径，供 _evict_stale_jobs 后续重试
         try:
             archive_path.unlink(missing_ok=True)
+            if job.file_path == archive_path:
+                job.file_path = None
         except OSError as exc:
             logger.warning(f"清理导入临时文件失败: {archive_path}, error={exc}")
 
@@ -505,8 +508,20 @@ async def create_data_import(
 
     job = _new_job("import")
     upload_path = _TRANSFER_TEMP_DIR / f"{job.job_id}-upload.zip"
-    await _save_upload_file(file, upload_path)
-    await file.close()
+    # 上传前先把临时文件挂到任务上，确保任何失败路径都能被过期回收统一清理
+    job.file_path = upload_path
+    try:
+        try:
+            await _save_upload_file(file, upload_path)
+        finally:
+            await file.close()
+    except Exception as exc:
+        # 上传失败：任务置为终态并保留 file_path，交由 _evict_stale_jobs 统一回收重试
+        logger.warning(f"保存上传的数据包失败: {exc}")
+        job.error = str(exc)
+        job.message = "导入失败"
+        job.status = "failed"
+        raise HTTPException(status_code=500, detail="保存上传文件失败") from exc
 
     background_tasks.add_task(_run_import_job, job.job_id, upload_path, enabled_parts)
     return DataImportResponse(job_id=job.job_id, status=job.status)

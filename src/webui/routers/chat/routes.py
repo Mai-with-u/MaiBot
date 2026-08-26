@@ -1127,7 +1127,11 @@ async def _release_deleted_chat_runtime(session_id: str) -> None:
 
     core_chat_manager.release_session(session_id)
     replyer_manager.invalidate_replyer(session_id)
-    await heartflow_manager.release_chat(session_id, reason="chat_deleted")
+    try:
+        await heartflow_manager.release_chat(session_id, reason="chat_deleted")
+    except Exception as exc:
+        # 数据库记录已删除；运行时停止失败仅记录，待后续释放/淘汰流程重试
+        logger.error(f"释放已删除聊天流 {session_id} 的心流运行时失败: {exc}", exc_info=True)
 
 
 async def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:

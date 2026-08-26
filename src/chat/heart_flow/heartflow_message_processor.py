@@ -51,15 +51,14 @@ class HeartFCMessageReceiver:
             # message.is_mentioned = is_mentioned
             # message.is_at = is_at
 
-            chat = None
+            # 以使用租约借用运行时：租约覆盖消息入库与注册全程，
+            # 避免期间运行时被释放/淘汰后仍被写入缓存与状态
             try:
-                chat = await heartflow_manager.get_or_create_heartflow_chat(message.session_id)
+                async with heartflow_manager.borrow_chat(message.session_id) as chat:
+                    await MessageUtils.store_message_to_db_async(message)  # 存储消息到数据库
+                    await chat.register_message(message)
             except Exception as e:
                 logger.error(f"出现错误: {e}")
-
-            await MessageUtils.store_message_to_db_async(message)  # 存储消息到数据库
-            if chat is not None:
-                await chat.register_message(message)
 
             # 3. 日志记录
             mes_name = group_info.group_name if group_info else "私聊"

@@ -188,30 +188,31 @@ class RuntimeCoreCapabilityMixin:
             from src.maisaka.context.message_adapter import build_visible_text_from_sequence
             from src.plugin_runtime.host.message_utils import PluginMessageUtils
 
-            runtime = await heartflow_manager.get_or_create_heartflow_chat(stream_id)
-            message_sequence = PluginMessageUtils._message_sequence_from_dict(segments)
-            visible_text = str(args.get("visible_text") or "").strip()
-            if not visible_text:
-                visible_text = build_visible_text_from_sequence(message_sequence)
-            if not visible_text:
-                visible_text = "[插件上下文消息]"
+            # 以使用租约借用运行时，避免租约期间被释放/淘汰流程停止
+            async with heartflow_manager.borrow_chat(stream_id) as runtime:
+                message_sequence = PluginMessageUtils._message_sequence_from_dict(segments)
+                visible_text = str(args.get("visible_text") or "").strip()
+                if not visible_text:
+                    visible_text = build_visible_text_from_sequence(message_sequence)
+                if not visible_text:
+                    visible_text = "[插件上下文消息]"
 
-            source_kind = str(args.get("source_kind") or f"plugin:{plugin_id}").strip() or f"plugin:{plugin_id}"
-            context_message = SessionBackedMessage(
-                raw_message=message_sequence,
-                visible_text=visible_text,
-                timestamp=datetime.now(),
-                message_id=str(args.get("message_id") or "").strip() or None,
-                source_kind=source_kind,
-            )
-            runtime._chat_history.append(context_message)
-            return {
-                "success": True,
-                "index": len(runtime._chat_history) - 1,
-                "stream_id": stream_id,
-                "visible_text": visible_text,
-                "source_kind": source_kind,
-            }
+                source_kind = str(args.get("source_kind") or f"plugin:{plugin_id}").strip() or f"plugin:{plugin_id}"
+                context_message = SessionBackedMessage(
+                    raw_message=message_sequence,
+                    visible_text=visible_text,
+                    timestamp=datetime.now(),
+                    message_id=str(args.get("message_id") or "").strip() or None,
+                    source_kind=source_kind,
+                )
+                runtime._chat_history.append(context_message)
+                return {
+                    "success": True,
+                    "index": len(runtime._chat_history) - 1,
+                    "stream_id": stream_id,
+                    "visible_text": visible_text,
+                    "source_kind": source_kind,
+                }
         except Exception as exc:
             logger.error(f"[cap.maisaka.context.append] 执行失败: {exc}", exc_info=True)
             return {"success": False, "error": str(exc)}
@@ -236,15 +237,16 @@ class RuntimeCoreCapabilityMixin:
             if chat_session is None:
                 return {"success": False, "error": f"未找到已存在的聊天流: {stream_id}"}
 
-            runtime = await heartflow_manager.get_or_create_heartflow_chat(stream_id)
-            result = await runtime.enqueue_proactive_task(
-                plugin_id=plugin_id,
-                intent=intent,
-                reason=str(args.get("reason") or "").strip(),
-                priority=str(args.get("priority") or "").strip(),
-                metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else None,
-            )
-            return {"success": True, **result}
+            # 以使用租约借用运行时，避免租约期间被释放/淘汰流程停止
+            async with heartflow_manager.borrow_chat(stream_id) as runtime:
+                result = await runtime.enqueue_proactive_task(
+                    plugin_id=plugin_id,
+                    intent=intent,
+                    reason=str(args.get("reason") or "").strip(),
+                    priority=str(args.get("priority") or "").strip(),
+                    metadata=args.get("metadata") if isinstance(args.get("metadata"), dict) else None,
+                )
+                return {"success": True, **result}
         except Exception as exc:
             logger.error(f"[cap.maisaka.proactive.trigger] 执行失败: {exc}", exc_info=True)
             return {"success": False, "error": str(exc)}
