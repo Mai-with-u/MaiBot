@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 import json
 import shutil
 import tempfile
+import time
 import uuid
 import zipfile
 
@@ -34,6 +35,9 @@ _OPTIONAL_EXPORT_PARTS = ("plugins", "logs")
 _ALLOWED_IMPORT_PARTS = set(_EXPORT_DIRS)
 _TRANSFER_TEMP_DIR = Path(tempfile.gettempdir()) / "maibot_webui_transfer"
 _CHUNK_SIZE = 1024 * 1024
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+_TRANSFER_JOB_RETENTION_SECONDS = 30 * 60
+_TRANSFER_JOB_MAX_ENTRIES = 64
 
 TransferJobStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 
@@ -80,7 +84,7 @@ class _TransferJob:
     def __init__(self, job_id: str, kind: Literal["export", "import"]) -> None:
         self.job_id = job_id
         self.kind = kind
-        self.status: TransferJobStatus = "pending"
+        self._status: TransferJobStatus = "pending"
         self.progress = 0
         self.message = "等待处理"
         self.total_files = 0
@@ -92,6 +96,18 @@ class _TransferJob:
         self.manifest: dict[str, Any] | None = None
         self.error: str | None = None
         self.cancel_requested = False
+        self.finished_at: float | None = None
+
+    @property
+    def status(self) -> TransferJobStatus:
+        """任务状态；进入终态时记录时间戳，供过期回收使用。"""
+        return self._status
+
+    @status.setter
+    def status(self, value: TransferJobStatus) -> None:
+        self._status = value
+        if value in _TERMINAL_JOB_STATUSES and self.finished_at is None:
+            self.finished_at = time.monotonic()
 
     def to_response(self) -> DataTransferJobResponse:
         download_url = None
@@ -118,8 +134,37 @@ class _TransferJob:
 _jobs: dict[str, _TransferJob] = {}
 
 
+def _evict_stale_jobs() -> None:
+    """回收已结束且超过保留时长的任务记录，避免长期运行时任务字典无限累积。
+
+    超出容量上限时，即使未到期也会从最早的已结束任务开始回收；
+    进行中的任务（未进入终态）永远不会被回收。
+    """
+    now = time.monotonic()
+    finished_jobs = sorted(
+        (job.finished_at, job_id)
+        for job_id, job in _jobs.items()
+        if job.finished_at is not None
+    )
+    expired_count = sum(
+        1 for finished_at, _ in finished_jobs if now - finished_at > _TRANSFER_JOB_RETENTION_SECONDS
+    )
+    removable_count = min(
+        max(expired_count, len(_jobs) - _TRANSFER_JOB_MAX_ENTRIES),
+        len(finished_jobs),
+    )
+    for _, job_id in finished_jobs[:removable_count]:
+        job = _jobs.pop(job_id, None)
+        if job is not None and job.file_path is not None:
+            try:
+                job.file_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(f"清理数据迁移任务文件失败: {job.file_path}, error={exc}")
+
+
 def _new_job(kind: Literal["export", "import"]) -> _TransferJob:
     _TRANSFER_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    _evict_stale_jobs()
     job = _TransferJob(job_id=uuid.uuid4().hex, kind=kind)
     _jobs[job.job_id] = job
     return job

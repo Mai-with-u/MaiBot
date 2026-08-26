@@ -75,6 +75,7 @@ from src.services.bot_account_service import (
 from .authorization import AuthorizationManager
 from .api_registry import APIRegistry
 from .capability_service import CapabilityService
+from .circuit_breaker import get_plugin_circuit_breaker
 from .component_registry import ComponentRegistry
 from .event_dispatcher import EventDispatcher
 from .hook_dispatcher import HookDispatchResult, HookDispatcher
@@ -1189,6 +1190,7 @@ class PluginRunnerSupervisor:
             removed_llm_providers = client_registry.unregister_plugin_providers(payload.plugin_id)
         self._authorization.revoke_permission_token(payload.plugin_id)
         removed_registration = self._registered_plugins.pop(payload.plugin_id, None) is not None
+        get_plugin_circuit_breaker().forget_plugins([payload.plugin_id])
         await self._unregister_all_message_gateway_drivers_for_plugin(payload.plugin_id)
         self._message_gateway_states.pop(payload.plugin_id, None)
 

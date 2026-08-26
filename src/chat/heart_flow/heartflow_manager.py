@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from typing import Dict
+from weakref import WeakValueDictionary
 
 import asyncio
 import time
@@ -20,7 +21,8 @@ class HeartflowManager:
 
     def __init__(self) -> None:
         self.heartflow_chat_list: OrderedDict[str, MaisakaHeartFlowChatting] = OrderedDict()
-        self._chat_create_locks: Dict[str, asyncio.Lock] = {}
+        # 使用弱值字典保存会话创建锁：等待中的协程持有强引用，锁用完且无人引用时自动回收，避免按 session 无限累积。
+        self._chat_create_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         self._chat_last_active_at: Dict[str, float] = {}
 
     async def get_or_create_heartflow_chat(self, session_id: str) -> MaisakaHeartFlowChatting:
@@ -30,7 +32,7 @@ class HeartflowManager:
                 self._touch_chat(session_id)
                 return chat
 
-            create_lock = self._chat_create_locks.setdefault(session_id, asyncio.Lock())
+            create_lock = self._borrow_create_lock(session_id)
             async with create_lock:
                 if chat := self.heartflow_chat_list.get(session_id):
                     self._touch_chat(session_id)
@@ -79,9 +81,6 @@ class HeartflowManager:
         """停止并移除指定会话的心流实例。"""
         chat = self.heartflow_chat_list.pop(session_id, None)
         self._chat_last_active_at.pop(session_id, None)
-        lock = self._chat_create_locks.get(session_id)
-        if lock is not None and not lock.locked():
-            self._chat_create_locks.pop(session_id, None)
         if chat is None:
             return
 
@@ -91,13 +90,32 @@ class HeartflowManager:
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
 
+    def _borrow_create_lock(self, session_id: str) -> asyncio.Lock:
+        """获取指定会话的创建锁；弱值字典在无人引用时自动回收条目。"""
+        create_lock = self._chat_create_locks.get(session_id)
+        if create_lock is None:
+            create_lock = asyncio.Lock()
+            self._chat_create_locks[session_id] = create_lock
+        return create_lock
+
+    async def release_chat(self, session_id: str, *, reason: str) -> None:
+        """停止并移除指定会话的心流实例及其活跃时间簿记（供聊天流删除、CLI 退出等外部场景调用）。
+
+        与 ``get_or_create_heartflow_chat`` 基于同一把创建锁串行化，
+        避免释放完成后，并发进行中的创建流程又把运行时写回列表（复活已删除会话）。
+        外部不应直接操作 ``heartflow_chat_list``，否则会遗留运行中的后台任务和簿记数据。
+        """
+        async with self._borrow_create_lock(session_id):
+            await self._evict_chat(session_id, reason=reason)
+
     async def clear_chat_history_context(self, session_id: str) -> bool:
         """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""
 
         if session_id not in self.heartflow_chat_list:
             return False
 
-        await self._evict_chat(session_id, reason="clear_context_command")
+        async with self._borrow_create_lock(session_id):
+            await self._evict_chat(session_id, reason="clear_context_command")
         return True
 
     def adjust_talk_frequency(self, session_id: str, frequency: float) -> None:

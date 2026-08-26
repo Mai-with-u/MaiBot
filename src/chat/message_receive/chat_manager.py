@@ -198,6 +198,11 @@ class ChatManager:
         if session is not None and self._update_session_identity(session, message):
             self._save_session(session)
 
+    def release_session(self, session_id: str) -> None:
+        """释放指定聊天流的内存缓存（会话对象与最近一条消息），供聊天流删除等场景调用。"""
+        self.sessions.pop(session_id, None)
+        self.last_messages.pop(session_id, None)
+
     @staticmethod
     def _normalize_identity_text(value: Optional[str]) -> Optional[str]:
         normalized_value = str(value or "").strip()

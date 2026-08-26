@@ -1,7 +1,7 @@
 """插件运行时熔断器。"""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Iterable, Literal
 
 import time
 
@@ -180,6 +180,24 @@ class PluginCircuitBreaker:
             return
         state.cooldown_level = 0
         state.last_recovered_at = 0.0
+
+    def forget_plugins(self, plugin_ids: Iterable[str]) -> int:
+        """清除指定插件（例如已卸载）的熔断状态，避免状态按插件 ID 无限累积。
+
+        Args:
+            plugin_ids: 待清除状态的插件 ID 列表。
+
+        Returns:
+            int: 实际清除的插件状态数量。
+        """
+        removed_count = 0
+        for plugin_id in plugin_ids:
+            normalized_plugin_id = str(plugin_id or "").strip()
+            if not normalized_plugin_id:
+                continue
+            if self._states.pop(normalized_plugin_id, None) is not None:
+                removed_count += 1
+        return removed_count
 
     def get_plugin_statuses(self) -> Dict[str, Dict[str, Any]]:
         """返回当前存在熔断状态的插件快照。"""
