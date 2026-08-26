@@ -24,6 +24,7 @@ class RateLimiter:
     # 追踪的请求键（IP/规则组合）数量上限：公网环境下 IP 数可能持续增长，
     # 超过上限时清理过期键并淘汰最旧键，防止字典无界膨胀。
     MAX_TRACKED_REQUEST_KEYS = 10000
+    MAX_TRACKED_AUTH_FAILURE_KEYS = 5000
 
     def __init__(self):
         # 存储格式: {key: [(timestamp, count), ...]}
@@ -169,10 +170,23 @@ class RateLimiter:
         now = time.time()
         cutoff = now - window_seconds
 
-        # 在独立的认证失败存储中滑动清理
+        # 在独立的认证失败存储中清理所有已过期的 IP 记录，防止未再次请求的 IP 长期滞留
+        stale_ips = [
+            recorded_ip
+            for recorded_ip, records in self._auth_failures.items()
+            if all(ts <= cutoff for ts, _ in records)
+        ]
+        for stale_ip in stale_ips:
+            del self._auth_failures[stale_ip]
+
+        # 超过认证失败容量上限时按 FIFO 淘汰最旧的记录
+        auth_overflow = len(self._auth_failures) - self.MAX_TRACKED_AUTH_FAILURE_KEYS
+        if auth_overflow > 0:
+            for stale_ip in list(self._auth_failures)[:auth_overflow]:
+                del self._auth_failures[stale_ip]
+
+        # 过滤当前 IP 窗口内的记录
         self._auth_failures[ip] = [(ts, count) for ts, count in self._auth_failures[ip] if ts > cutoff]
-        if not self._auth_failures[ip]:
-            del self._auth_failures[ip]
 
         # 计算当前失败次数
         current_failures = sum(count for _, count in self._auth_failures[ip])
