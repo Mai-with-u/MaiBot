@@ -27,6 +27,9 @@ REPORT_INTERVAL_SECONDS = 300
 REPORT_INTERVAL_CALLS = 50
 SUMMARY_LIMIT = 5
 PROMPT_CACHE_POOL_SIZE = 128
+# 统计键包含 session_id，长期运行会随会话数量无界增长；
+# 超过上限后按插入顺序 FIFO 淘汰最旧的键（调试统计用途，淘汰不影响正确性）。
+MAX_CACHE_STATS_KEYS = 256
 CACHE_STATS_DIR = Path("logs") / "llm_cache_stats"
 REPORT_FILE_NAME = "report.html"
 SESSION_REPORT_FILE_NAME = "sessions.html"
@@ -206,6 +209,17 @@ def _normalize_model_name(model_name: str) -> str:
 def _normalize_session_id(session_id: str) -> str:
     normalized = str(session_id or "").strip()
     return normalized or "unknown"
+
+
+def _evict_oldest_cache_stats_keys_locked() -> None:
+    """限制统计键数量，防止 stats/prompt_pools 随会话数无界增长（需持有 _store.lock）。"""
+
+    overflow = len(_store.stats) - MAX_CACHE_STATS_KEYS
+    if overflow <= 0:
+        return
+    for key in list(_store.stats)[:overflow]:
+        _store.stats.pop(key, None)
+        _store.prompt_pools.pop(key, None)
 
 
 def _normalize_cache_tokens(
@@ -1373,6 +1387,7 @@ def record_llm_cache_usage(
                 session_id=normalized_session_id,
             )
             _store.stats[key] = stat
+            _evict_oldest_cache_stats_keys_locked()
 
         stat.calls += 1
         stat.prompt_tokens += normalized_prompt_tokens

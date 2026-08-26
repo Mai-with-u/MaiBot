@@ -10,6 +10,7 @@ import uuid
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlmodel import col, select
 import tomlkit
 
@@ -396,22 +397,32 @@ def _prefetch_latest_messages_by_session(db_session: Any, session_ids: list[str]
     if not session_ids:
         return {}
 
-    statement = (
-        select(Messages)
+    # 用分组最大时间戳的子查询只取每个会话的最新一条消息，
+    # 避免把所有会话的全部消息行物化进内存（大库下单请求可达数百 MB）。
+    latest_per_session = (
+        select(col(Messages.session_id), func.max(col(Messages.timestamp)).label("max_timestamp"))
         .where(col(Messages.session_id).in_(session_ids))
-        .order_by(col(Messages.session_id).asc(), col(Messages.timestamp).desc())
+        .group_by(col(Messages.session_id))
+        .subquery()
+    )
+    statement = select(Messages).join(
+        latest_per_session,
+        (col(Messages.session_id) == col(latest_per_session.c.session_id))
+        & (col(Messages.timestamp) == col(latest_per_session.c.max_timestamp)),
     )
     latest: dict[str, dict[str, Any]] = {}
     for message in db_session.exec(statement).all():
         chat_id = str(message.session_id or "").strip()
-        if chat_id and chat_id not in latest:
-            latest[chat_id] = {
-                "group_id": message.group_id,
-                "group_name": message.group_name,
-                "user_id": message.user_id,
-                "user_cardname": message.user_cardname,
-                "user_nickname": message.user_nickname,
-            }
+        if not chat_id or chat_id in latest:
+            # 同一时间戳并列时跳过重复行。
+            continue
+        latest[chat_id] = {
+            "group_id": message.group_id,
+            "group_name": message.group_name,
+            "user_id": message.user_id,
+            "user_cardname": message.user_cardname,
+            "user_nickname": message.user_nickname,
+        }
     return latest
 
 
@@ -589,11 +600,11 @@ def _timeline_chat_from_session(chat_session: ChatSession) -> MemoryTimelineChat
     return MemoryTimelineChat(
         chat_id=chat_id,
         chat_name=_get_chat_name(chat_session, latest_messages),
-        platform=chat_session.platform,
-        group_id=chat_session.group_id,
-        user_id=chat_session.user_id,
-        account_id=chat_session.account_id,
-        is_group=bool(chat_session.group_id),
+        platform=getattr(chat_session, "platform", None),
+        group_id=getattr(chat_session, "group_id", None),
+        user_id=getattr(chat_session, "user_id", None),
+        account_id=getattr(chat_session, "account_id", None),
+        is_group=bool(getattr(chat_session, "group_id", None)),
     )
 
 
@@ -1368,6 +1379,11 @@ def _timeline_query_limit(limit: int, multiplier: int, minimum: int) -> Optional
     return max(limit * multiplier, minimum)
 
 
+# 时间界探测每类事件的目标条数：limit<=0 在收集器内表示"不限制"，
+# 全表扫描只为求 min/max 时间戳代价过高；改用有界采样估计时间范围。
+_TIMELINE_BOUND_PASS_LIMIT = 200
+
+
 def _append_limit(sql: str, limit: Optional[int]) -> str:
     if limit is None:
         return sql
@@ -1994,7 +2010,8 @@ async def _memory_timeline(
                 time_start=None,
                 time_end=None,
                 accepted_types=set(),
-                limit=0,
+                # 有界采样代替全表扫描：min/max 时间范围基于最近一批事件估计。
+                limit=_TIMELINE_BOUND_PASS_LIMIT,
             )
         )
     bound_events = _dedupe_timeline_events(bound_events)

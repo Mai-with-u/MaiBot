@@ -75,6 +75,8 @@ logger = get_logger("maisaka_runtime")
 
 MAX_INTERNAL_ROUNDS = 10
 MAX_RETAINED_MESSAGE_CACHE_SIZE = 200
+# 心流周期记录仅用于调试观察，保留最近若干条即可，避免长期运行时无界增长。
+HISTORY_LOOP_MAX_LENGTH = 200
 CONTEXT_RESTORE_FILL_RATIO = 0.5
 CONTEXT_RESTORE_SHORT_RESTART_SECONDS = 5 * 60
 CONTEXT_RESTORE_SHORT_OFFLINE_SECONDS = 30 * 60
@@ -158,7 +160,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             is_group_chat=self.chat_stream.is_group_session,
         )
         self._chat_history: list[LLMContextMessage] = []
-        self.history_loop: list[CycleDetail] = []
+        self.history_loop: deque[CycleDetail] = deque(maxlen=HISTORY_LOOP_MAX_LENGTH)
 
         # Keep all original messages for batching and later learning.
         self.message_cache: list[SessionMessage] = []

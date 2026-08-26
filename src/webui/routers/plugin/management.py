@@ -496,12 +496,27 @@ async def install_plugin(request: InstallPluginRequest, maibot_session: Optional
         try:
             with open(manifest_path, "r", encoding="utf-8") as file_obj:
                 manifest = json.load(file_obj)
-            for field in ["manifest_version", "id", "name", "version", "author"]:
+            for field in ["manifest_version", "name", "version", "author"]:
                 if field not in manifest:
                     raise ValueError(f"缺少必需字段: {field}")
             manifest_plugin_id = _read_manifest_plugin_id(manifest)
-            if manifest_plugin_id != plugin_id:
-                raise ValueError(f"插件 ID 不匹配：期望 {plugin_id}，实际 {manifest_plugin_id}")
+            if not manifest_plugin_id:
+                # 缺少 id 时回填请求中的 plugin_id
+                manifest["id"] = plugin_id
+                with open(manifest_path, "w", encoding="utf-8") as file_obj:
+                    json.dump(manifest, file_obj, ensure_ascii=False, indent=2)
+                manifest_plugin_id = plugin_id
+            elif manifest_plugin_id != plugin_id:
+                # 优先保留 manifest 中声明的真实 id，并重命名安装目录
+                manifest_plugin_id = validate_plugin_id(manifest_plugin_id)
+                new_target_path, _ = get_plugin_candidate_paths(manifest_plugin_id)
+                if new_target_path != target_path:
+                    if new_target_path.exists():
+                        raise ValueError(f"目标目录已存在插件: {manifest_plugin_id}")
+                    shutil.move(str(target_path), str(new_target_path))
+                    target_path = new_target_path
+                    manifest_path = resolve_plugin_file_path(target_path, "_manifest.json")
+                plugin_id = manifest_plugin_id
         except Exception as e:
             remove_tree(target_path)
             await update_progress(

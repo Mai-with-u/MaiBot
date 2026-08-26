@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from html import escape
 from os import getenv
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Coroutine, cast
 
 import asyncio
 import concurrent.futures
@@ -26,6 +26,19 @@ logger = get_logger("maibot_statistic")
 
 STATISTICS_REPORT_PATH_ENV = "MAIBOT_STATISTICS_REPORT_PATH"
 DEFAULT_STATISTICS_REPORT_PATH = "maibot_statistics.html"
+
+# 后台任务强引用集合：asyncio 对 task 仅持有弱引用，创建后不保存引用的
+# 任务可能在执行中被垃圾回收；任务完成后通过回调自动移除。
+_background_tasks: set["asyncio.Task[None]"] = set()
+
+
+def _create_tracked_task(coro: "Coroutine[Any, Any, None]") -> "asyncio.Task[None]":
+    """创建带强引用的后台任务，防止统计任务执行中途被 GC 静默回收。"""
+
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 class _LocalStorageProxy:
@@ -564,8 +577,8 @@ class StatisticOutputTask(AsyncTask):
             except Exception as e:
                 logger.exception(f"后台统计数据输出过程中发生异常：{e}")
 
-        # 创建后台任务，立即返回
-        asyncio.create_task(_async_collect_and_output())
+        # 创建后台任务，立即返回（保留强引用防止任务被 GC 中途回收）
+        _create_tracked_task(_async_collect_and_output())
 
     # -- 以下为统计数据收集方法 --
 
@@ -3188,5 +3201,5 @@ class AsyncStatisticOutputTask(AsyncTask):
             except Exception as e:
                 logger.exception(f"后台统计数据输出过程中发生异常：{e}")
 
-        # 创建后台任务，立即返回
-        asyncio.create_task(_async_collect_and_output())
+        # 创建后台任务，立即返回（保留强引用防止任务被 GC 中途回收）
+        _create_tracked_task(_async_collect_and_output())

@@ -524,17 +524,13 @@ class EmojiManager:
         logger.debug("[数据库] 开始加载所有表情包记录...")
         try:
             with get_db_session() as session:
-                statement = select(Images)
+                # 在 SQL 层完成过滤：Images 表同时存放聊天图片等记录，
+                # 无过滤的全表物化会随聊天图片数量增长造成启动内存尖峰。
+                statement = select(Images).filter_by(image_type=ImageType.EMOJI, is_registered=True, is_banned=False)
                 results = session.exec(statement).all()
                 self.emojis = []
                 removed_record_count = 0
                 for record in results:
-                    if record.image_type != ImageType.EMOJI:
-                        continue
-                    if not record.is_registered:
-                        continue
-                    if record.is_banned:
-                        continue
                     try:
                         if record.no_file_flag or _resolve_existing_emoji_path(record.full_path) is None:
                             logger.warning(
@@ -563,6 +559,16 @@ class EmojiManager:
             self.emojis = []
             self._emoji_num = 0
             raise e
+
+    @staticmethod
+    def _release_emoji_image_bytes(emoji: MaiEmoji) -> None:
+        """注册完成后释放内存中的图片字节。
+
+        表情文件已持久化到磁盘与数据库，后续使用（如转 base64）会按需从磁盘回读
+        （见 get_emoji_base64_information 等处的 image_bytes or 回读逻辑）；
+        长期驻留 bytes 会让整个表情集合常驻占用数十 MB 内存。
+        """
+        emoji.image_bytes = None
 
     def register_emoji_to_db(self, emoji: MaiEmoji) -> EmojiRegisterStatus:
         # sourcery skip: extract-method
@@ -936,6 +942,7 @@ class EmojiManager:
                     register_status = self.register_emoji_to_db(new_emoji)
                     if register_status == "registered":
                         self.emojis.append(new_emoji)
+                        self._release_emoji_image_bytes(new_emoji)
                         self._emoji_num = len(self.emojis)
                         logger.info(f"[register_emoji] 成功替换并注册新表情包: {new_emoji.description}")
                         return True
@@ -1282,6 +1289,7 @@ class EmojiManager:
         register_status = self.register_emoji_to_db(target_emoji)
         if register_status == "registered":
             self.emojis.append(target_emoji)
+            self._release_emoji_image_bytes(target_emoji)
             self._emoji_num = len(self.emojis)
             logger.info(f"[register_emoji] Registered new emoji: {target_emoji.file_name}")
         elif register_status == "failed":

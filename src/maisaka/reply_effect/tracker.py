@@ -344,6 +344,7 @@ class ReplyEffectTracker:
                 record.confidence_note = self._build_confidence_note(record)
                 record.followup_summary = self._build_followup_summary(record)
                 self._storage.save_record(record)
+                self._prune_finished_tracked_records()
                 return None
             record.status = ReplyEffectStatus.EVALUATING
             record.finalize_reason = reason
@@ -405,6 +406,36 @@ class ReplyEffectTracker:
             record.confidence_note = self._build_confidence_note(record)
             record.followup_summary = self._build_followup_summary(record)
             self._storage.save_record(record)
+        async with self._state_lock:
+            self._prune_finished_tracked_records()
+
+    def _prune_finished_tracked_records(self) -> None:
+        """移除已到终态且不再被未决记录引用的追踪记录，防止字典随回复数无界增长。
+
+        候选引用只在记录处于 PENDING/EVALUATING 时产生与消费，因此终态记录
+        一旦没有任何活跃记录引用即可安全移除（磁盘上的记录文件不受影响）。
+        调用方必须持有 ``self._state_lock``。
+        """
+
+        if not self._tracked_records:
+            return
+        active_statuses = {ReplyEffectStatus.PENDING, ReplyEffectStatus.EVALUATING}
+        referenced_ids = {
+            candidate_id
+            for record in self._tracked_records.values()
+            if record.status in active_statuses
+            for followup in record.followup_messages
+            for candidate_id in followup.candidate_effect_ids
+        }
+        terminal_statuses = {
+            ReplyEffectStatus.FINALIZED,
+            ReplyEffectStatus.INCOMPLETE,
+            ReplyEffectStatus.EVALUATION_FAILED,
+        }
+        for effect_id in list(self._tracked_records):
+            tracked = self._tracked_records[effect_id]
+            if tracked.status in terminal_statuses and effect_id not in referenced_ids:
+                del self._tracked_records[effect_id]
 
     async def _apply_associations(self, evaluated: Dict[str, list[ReplyAssociation]]) -> None:
         """把一次批量评审的关联边同步到所有仍保留的候选记录。"""

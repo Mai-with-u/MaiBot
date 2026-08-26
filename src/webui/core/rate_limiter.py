@@ -21,6 +21,10 @@ class RateLimiter:
     使用滑动窗口算法实现
     """
 
+    # 追踪的请求键（IP/规则组合）数量上限：公网环境下 IP 数可能持续增长，
+    # 超过上限时清理过期键并淘汰最旧键，防止字典无界膨胀。
+    MAX_TRACKED_REQUEST_KEYS = 10000
+
     def __init__(self):
         # 存储格式: {key: [(timestamp, count), ...]}
         self._requests: Dict[str, List] = defaultdict(list)
@@ -50,6 +54,26 @@ class RateLimiter:
         now = time.time()
         cutoff = now - window_seconds
         self._requests[key] = [(ts, count) for ts, count in self._requests[key] if ts > cutoff]
+        # 窗口内已无记录的键直接删除，避免空键随历史 IP 数无界积累。
+        if not self._requests[key]:
+            del self._requests[key]
+        self._enforce_request_key_limit(cutoff)
+
+    def _enforce_request_key_limit(self, cutoff: float) -> None:
+        """限制追踪键总数：超限时先清除全部过期键，仍超额则按插入顺序淘汰最旧键。"""
+
+        if len(self._requests) <= self.MAX_TRACKED_REQUEST_KEYS:
+            return
+        stale_keys = [
+            stale_key
+            for stale_key, records in self._requests.items()
+            if all(ts <= cutoff for ts, _ in records)
+        ]
+        for stale_key in stale_keys:
+            del self._requests[stale_key]
+        overflow = len(self._requests) - self.MAX_TRACKED_REQUEST_KEYS
+        for stale_key in list(self._requests)[:max(0, overflow)]:
+            del self._requests[stale_key]
 
     def _cleanup_expired_blocks(self):
         """清理过期的封禁"""
