@@ -151,6 +151,14 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelFetcher: { endpoint: '/models', parser: 'openai' },
   },
   {
+    id: 'orcarouter',
+    name: 'OrcaRouter',
+    base_url: 'https://api.orcarouter.ai/v1',
+    client_type: 'openai',
+    display_name: 'OrcaRouter',
+    modelFetcher: { endpoint: '/models', parser: 'openai' },
+  },
+  {
     id: 'mistral',
     name: 'Mistral',
     base_url: 'https://api.mistral.ai/v1',

@@ -40,4 +40,12 @@ describe('providerTemplates', () => {
   it('直接按 URL 查找模板时不把未知 URL 识别为内置模板', () => {
     expect(findTemplateByBaseUrl('https://example.com/v1')).toBeNull()
   })
+
+  it('识别 OrcaRouter 内置模板并支持模型列表获取', () => {
+    const template = findTemplateByBaseUrl('https://api.orcarouter.ai/v1')
+
+    expect(template?.id).toBe('orcarouter')
+    expect(template?.display_name).toBe('OrcaRouter')
+    expect(template?.modelFetcher).toEqual({ endpoint: '/models', parser: 'openai' })
+  })
 })

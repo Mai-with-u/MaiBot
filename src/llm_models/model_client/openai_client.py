@@ -148,6 +148,7 @@ OpenAIResponseParser = Callable[[ChatCompletion], Tuple[APIResponse, UsageTuple 
 PROVIDER_REASONING_KEYS_BY_DOMAIN: Dict[str, str] = {
     "api.groq.com": "reasoning",
     "openrouter.ai": "reasoning",
+    "api.orcarouter.ai": "reasoning",
 }
 """按 provider 域名指定的原生推理字段名。"""
 
