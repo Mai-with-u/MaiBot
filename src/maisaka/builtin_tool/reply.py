@@ -1,6 +1,7 @@
 ﻿"""reply 内置工具。"""
 
 from typing import Any, Optional
+import re
 import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
@@ -18,7 +19,44 @@ from .context import BuiltinToolRuntimeContext
 
 logger = get_logger("maisaka_builtin_reply")
 _REPLY_TOOL_INTERNAL_ARGUMENTS = {"msg_id", "set_quote"}
+_TEXT_MODE_VALUES = {"auto", "required", "none"}
 _RICH_REPLY_ARGUMENTS = {"attach_pic", "attach_emoji", "attach_at"}
+
+
+def _has_rich_reply_attachments(arguments: dict[str, Any]) -> bool:
+    """判断 reply 是否明确要求发送附件，从而允许正文为空。"""
+
+    if not isinstance(arguments, dict):
+        return False
+    if str(arguments.get("attach_emoji") or "").strip():
+        return True
+    for key in ("attach_pic", "attach_at"):
+        value = arguments.get(key)
+        if isinstance(value, list) and any(item not in (None, "") for item in value):
+            return True
+        if isinstance(value, (str, dict)) and str(value).strip():
+            return True
+    return False
+def _explicit_attachment_only_requested(text: str) -> bool:
+    """从规划器思考中识别“只发附件、不要文字”的明确要求。"""
+
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    if not normalized:
+        return False
+    attachment_only = (
+        ("只发" in normalized or "只要" in normalized or "仅发" in normalized or "只发送" in normalized)
+        and ("图" in normalized or "图片" in normalized or "表情" in normalized or "附件" in normalized)
+    )
+    no_text = any(
+        phrase in normalized
+        for phrase in (
+            "不带文字", "不要文字", "不需要文字", "不要附文字", "不附文字",
+            "别加字", "不发文字", "不要加文字", "不加文字", "只发图",
+        )
+    )
+    return attachment_only and no_text
+
+
 _DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 _DUPLICATE_TARGET_REPLY_REMINDER_TEMPLATE = (
     "你刚刚已经回复过这条消息，你刚刚的发言是：“{previous_reply}”\n"
@@ -104,6 +142,15 @@ def get_tool_spec() -> ToolSpec:
             "description": "可选。控制本次回复的篇幅和表达方式；正常回复不会附加额外要求。",
             "enum": ["简短表达", "正常回复", "长回复"],
         },
+        "text_mode": {
+            "type": "string",
+            "description": (
+                "可选。控制附件回复是否带文字：auto 由场景决定；required 必须带文字；"
+                "none 只发送图片/表情包/@，完全不发送文字。使用 none 时必须提供至少一个附件。"
+            ),
+            "enum": ["auto", "required", "none"],
+            "default": "auto",
+        },
     }
     if _use_expression_intent():
         properties["expression_intent"] = {
@@ -184,7 +231,10 @@ def get_tool_spec() -> ToolSpec:
 
     return ToolSpec(
         name="reply",
-        description="根据当前思考生成并发送一条可见回复。",
+        description=(
+            "根据当前思考生成并发送一条可见回复。可自由组合文字、图片、表情包和 at；"
+            "启用富回复时也可以只发送附件而不发送文字。"
+        ),
         parameters_schema={
             "type": "object",
             "properties": properties,
@@ -303,6 +353,9 @@ async def handle_tool(
     latest_thought = context.reasoning if context is not None else invocation.reasoning
     target_message_id = str(invocation_arguments.get("msg_id") or "").strip()
     set_quote = bool(invocation_arguments.get("set_quote", True))
+    text_mode = str(invocation_arguments.get("text_mode") or "auto").strip().lower()
+    if text_mode not in _TEXT_MODE_VALUES:
+        text_mode = "auto"
     rich_reply_enabled = bool(config_module.global_config.experimental.enable_rich_reply)
     reply_tool_args = {
         key: value
@@ -314,6 +367,17 @@ async def handle_tool(
             reply_tool_args.pop(key, None)
     if not _use_expression_intent():
         reply_tool_args.pop("expression_intent", None)
+    has_requested_attachments = _has_rich_reply_attachments(invocation_arguments)
+    # 兼容旧模型/旧工具调用：当规划器思考已经明确说“只发图、不带文字”，
+    # 即使没有填写新 text_mode 参数，也强制进入纯附件模式。
+    if (
+        text_mode == "auto"
+        and rich_reply_enabled
+        and has_requested_attachments
+        and _explicit_attachment_only_requested(latest_thought)
+    ):
+        text_mode = "none"
+        reply_tool_args["text_mode"] = "none"
     enable_reply_quote = bool(config_module.global_config.chat.reply_style.enable_reply_quote)
     effective_set_quote = set_quote and enable_reply_quote
 
@@ -321,6 +385,12 @@ async def handle_tool(
         return tool_ctx.build_failure_result(
             invocation.tool_name,
             "reply 工具需要提供有效的 `msg_id` 参数。",
+        )
+
+    if text_mode == "none" and (not rich_reply_enabled or not has_requested_attachments):
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            "text_mode=none 需要开启富回复并提供图片、表情包或 at 附件。",
         )
 
     target_message = tool_ctx.runtime.find_source_message_by_id(target_message_id)
@@ -379,8 +449,19 @@ async def handle_tool(
         )
 
     reply_text = reply_result.completion.response_text.strip() if success else ""
+    has_rich_reply_attachments = rich_reply_enabled and has_requested_attachments
+    if text_mode == "none":
+        # 即使模型误生成了说明文字，none 模式也必须硬性丢弃，避免“只发图”变成“文字+图”。
+        if reply_text:
+            logger.info(
+                f"{tool_ctx.runtime.log_prefix} reply 已启用纯附件模式，丢弃模型生成的文字: "
+                f"目标消息编号={target_message_id}"
+            )
+        reply_text = ""
 
-    if not reply_text:
+    # 富回复允许“纯附件”消息：正文为空时仍可发送图片、表情包或 at。
+    # 没有任何附件时仍保持原有保护，避免发送空消息。
+    if not reply_text and not has_rich_reply_attachments:
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
         reply_metadata = _build_monitor_metadata(reply_result)
         logger.warning(
@@ -408,7 +489,10 @@ async def handle_tool(
             "enable_chinese_typo": True,
         }
 
-    if not reply_text:
+    if text_mode == "none":
+        # Hook 也不能破坏纯附件模式。
+        reply_text = ""
+    if not reply_text and not has_rich_reply_attachments:
         reply_result.completion.response_text = ""
         reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
         return tool_ctx.build_failure_result(
@@ -440,8 +524,14 @@ async def handle_tool(
             metadata=reply_metadata,
         )
     reply_sequences = [item.sequence for item in reply_items]
-    reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
-    combined_reply_text = "".join(reply_segments)
+    if text_mode == "none":
+        # 附件的描述词仅用于内部展示，不能作为 processed_plain_text 或工具结果中的“文字”。
+        # 这样纯附件回复的状态也不会再显示成“卖萌、可爱……”这类假文字。
+        reply_segments = ["" for _ in reply_sequences]
+        combined_reply_text = ""
+    else:
+        reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
+        combined_reply_text = "".join(reply_segments)
     reply_result.completion.response_text = combined_reply_text
     reply_result.text_fragments = reply_segments
     reply_result.monitor_detail = build_reply_monitor_detail(reply_result)
@@ -560,7 +650,11 @@ async def handle_tool(
         )
     return tool_ctx.build_success_result(
         invocation.tool_name,
-        f'"{bot_name}"已生成并向"{target_user_name}"发送了回复"{combined_reply_text}"',
+        (
+            f'"{bot_name}"已生成并向"{target_user_name}"发送了纯附件回复'
+            if text_mode == "none"
+            else f'"{bot_name}"已生成并向"{target_user_name}"发送了回复"{combined_reply_text}"'
+        ),
         structured_content={
             "msg_id": target_message_id,
             "set_quote": set_quote,

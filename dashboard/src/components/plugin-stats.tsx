@@ -102,7 +102,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       updateVoteStats(result)
       toast({
         title: result.liked ? '已点赞' : '已取消点赞',
-        description: result.liked ? '感谢你的支持' : '已更新你的反馈状态',
+        description: result.liked ? '感谢你的支持' : '已移除你的点赞',
       })
       return
     }

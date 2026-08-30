@@ -352,9 +352,9 @@ class SessionMessage(MaiMessage):
 
         if tuple_content:
             desc, _ = tuple_content
-            content = f"[表情包: {desc}]"
+            content = f"[消息类型]表情包（表情解读：{desc}）"
         else:
-            content = "[表情包]"
+            content = "[消息类型]表情包"
         component.content = content
         component.binary_data = b""  # 处理完就丢掉二进制数据，节省内存
         return content

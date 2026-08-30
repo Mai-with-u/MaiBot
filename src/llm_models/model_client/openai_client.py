@@ -152,6 +152,48 @@ PROVIDER_REASONING_KEYS_BY_DOMAIN: Dict[str, str] = {
 """按 provider 域名指定的原生推理字段名。"""
 
 
+def _detect_audio_file_name(audio_bytes: bytes) -> str:
+    """根据音频文件头返回适合 OpenAI multipart 上传的文件名。
+
+    语音组件只携带二进制数据，不能假定所有适配器都传入 WAV。上传时必须让
+    文件扩展名与真实内容一致，否则兼容接口会把 MP3、Ogg 等内容按 WAV 解码。
+
+    Args:
+        audio_bytes: 原始音频二进制数据。
+
+    Returns:
+        str: 与真实音频格式匹配的上传文件名。
+
+    Raises:
+        ValueError: 音频为空、仍为 QQ Silk，或无法识别文件格式。
+    """
+    if not audio_bytes:
+        raise ValueError("音频转写请求缺少音频数据")
+
+    if audio_bytes.startswith((b"#!SILK_V3", b"\x02#!SILK_V3")):
+        raise ValueError("收到 QQ Silk 原始语音；适配器必须先将语音转码为 WAV、MP3 等通用格式")
+    if len(audio_bytes) >= 12 and audio_bytes.startswith(b"RIFF") and audio_bytes[8:12] == b"WAVE":
+        return "audio.wav"
+    if audio_bytes.startswith(b"fLaC"):
+        return "audio.flac"
+    if audio_bytes.startswith(b"OggS"):
+        return "audio.ogg"
+    if audio_bytes.startswith(b"\x1aE\xdf\xa3"):
+        return "audio.webm"
+    if audio_bytes.startswith(b"#!AMR"):
+        return "audio.amr"
+    if audio_bytes.startswith(b"ID3") or (
+        len(audio_bytes) >= 2 and audio_bytes[0] == 0xFF and audio_bytes[1] & 0xE0 == 0xE0
+    ):
+        return "audio.mp3"
+    if len(audio_bytes) >= 12 and audio_bytes[4:8] == b"ftyp":
+        major_brand = audio_bytes[8:12]
+        return "audio.m4a" if major_brand in {b"M4A ", b"M4B ", b"M4P "} else "audio.mp4"
+
+    header_hex = audio_bytes[:16].hex(" ")
+    raise ValueError(f"无法识别音频格式，文件头: {header_hex}")
+
+
 def _build_fallback_tool_call_id(prefix: str) -> str:
     """为缺失原始调用 ID 的工具调用生成唯一兜底标识。"""
 
@@ -1775,13 +1817,15 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
 
         try:
             request_overrides = split_openai_request_overrides(extra_params)
-            audio_file: FileTypes = ("audio.wav", io.BytesIO(base64.b64decode(audio_base64)))
+            audio_bytes = base64.b64decode(audio_base64, validate=True)
+            audio_file_name = _detect_audio_file_name(audio_bytes)
+            audio_file: FileTypes = (audio_file_name, io.BytesIO(audio_bytes))
             snapshot_provider_request["request_kwargs"] = {
                 "audio_base64": audio_base64,
                 "extra_body": request_overrides.extra_body or None,
                 "extra_headers": request_overrides.extra_headers or None,
                 "extra_query": request_overrides.extra_query or None,
-                "file_name": "audio.wav",
+                "file_name": audio_file_name,
                 "model": model_info.model_identifier,
             }
             raw_response = await self.client.audio.transcriptions.create(

@@ -9,7 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
-import { AlertCircle, AlertTriangle, ArrowUpDown, CheckCircle2, Filter, Info, Loader2, Search, Settings2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, ArrowUpDown, CheckCircle2, Filter, Heart, Info, Loader2, Search, Settings2 } from 'lucide-react'
 
 import { RestartOverlay } from '@/components/restart-overlay'
 import { useToast } from '@/hooks/use-toast'
@@ -53,7 +53,20 @@ import { PluginDetailPage } from '../plugin-detail'
 
 const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
 const PLUGIN_MARKET_SCROLL_TOP_KEY = 'plugins-market-scroll-top'
+const PLUGIN_MARKET_FAVORITES_KEY = 'plugins-market-favorites'
 const MARKETPLACE_SORT_KEYS: MarketplaceSortKey[] = ['default', 'latest', 'downloads', 'likes', 'rating']
+
+const readFavoritePluginIds = (): Set<string> => {
+  try {
+    const raw = localStorage.getItem(PLUGIN_MARKET_FAVORITES_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+const getFavoritePluginId = (plugin: PluginInfo): string => plugin.manifest?.id || plugin.id
 
 interface PluginMarketplaceViewState {
   searchQuery: string
@@ -177,6 +190,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const [, setInstalledPlugins] = useState<InstalledPlugin[]>([])
   const [pluginStats, setPluginStats] = useState<Record<string, PluginStatsData>>({})
   const [likingPluginIds, setLikingPluginIds] = useState<Set<string>>(() => new Set())
+  const [favoritePluginIds, setFavoritePluginIds] = useState<Set<string>>(readFavoritePluginIds)
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
   
   // 安装对话框状态
   const [installDialogOpen, setInstallDialogOpen] = useState(false)
@@ -211,6 +226,25 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const dismissRestartNotice = () => {
     localStorage.setItem('plugins-restart-notice-dismissed', 'true')
     setRestartNoticeVisible(false)
+  }
+
+  const toggleFavoritePlugin = (plugin: PluginInfo) => {
+    const pluginId = getFavoritePluginId(plugin)
+    setFavoritePluginIds((currentIds) => {
+      const nextIds = new Set(currentIds)
+      const isRemoving = nextIds.has(pluginId)
+      if (isRemoving) {
+        nextIds.delete(pluginId)
+      } else {
+        nextIds.add(pluginId)
+      }
+      localStorage.setItem(PLUGIN_MARKET_FAVORITES_KEY, JSON.stringify([...nextIds]))
+      toast({
+        title: isRemoving ? '已取消收藏' : '收藏成功',
+        description: plugin.manifest?.name || plugin.id,
+      })
+      return nextIds
+    })
   }
 
   useEffect(() => {
@@ -688,6 +722,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
 
         return nextStats
       })
+      toast({
+        title: result.liked ? '已点赞' : '已取消点赞',
+        description: result.liked ? '感谢你的支持' : '已移除你的点赞',
+      })
     } finally {
       setLikingPluginIds((currentIds) => {
         const nextIds = new Set(currentIds)
@@ -930,7 +968,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     return plugins.filter(p => {
       if (!p.manifest) return false
       if (p.source === 'local') return false
-      if (!showInstalledPlugins && p.installed) return false
+      if (!showFavoritesOnly && !showInstalledPlugins && p.installed) return false
+      if (showFavoritesOnly && !favoritePluginIds.has(getFavoritePluginId(p))) return false
       const matchesSearch = searchQuery === '' ||
         p.manifest.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.manifest.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1049,12 +1088,25 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
               </SelectContent>
             </Select>
 
+            <Button
+              type="button"
+              variant={showFavoritesOnly ? 'secondary' : 'outline'}
+              className="h-9 w-full gap-2 sm:w-auto"
+              onClick={() => setShowFavoritesOnly((current) => !current)}
+              title="只显示我收藏的插件"
+              aria-pressed={showFavoritesOnly}
+            >
+              <Heart className={showFavoritesOnly ? 'h-4 w-4 fill-current' : 'h-4 w-4'} />
+              我的收藏
+              <span>{favoritePluginIds.size}</span>
+            </Button>
+
             <Badge
               variant="outline"
               data-plugin-market-count-badge="true"
               className="h-9 border-input bg-transparent px-3 text-sm font-normal"
             >
-              全部插件 {getFilteredPluginCount()}
+              {showFavoritesOnly ? '我的收藏' : '全部插件'} {getFilteredPluginCount()}
             </Badge>
 
             <Button
@@ -1148,6 +1200,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
             pluginStats={pluginStats}
             pluginProgressById={pluginProgressById}
             likingPluginIds={likingPluginIds}
+            favoritePluginIds={favoritePluginIds}
+            showFavoritesOnly={showFavoritesOnly}
+            onToggleFavorite={toggleFavoritePlugin}
             onInstall={openInstallDialog}
             onLike={handleLike}
             onUpdate={handleUpdate}

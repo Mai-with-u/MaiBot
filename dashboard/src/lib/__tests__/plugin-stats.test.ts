@@ -174,7 +174,7 @@ describe('plugin-stats', () => {
 
       await expect(stats.likePlugin('plugin-a', 'user-1')).resolves.toEqual({
         success: false,
-        error: '点赞过于频繁，请稍后再试',
+        error: '点赞暂时失败，请稍后再试',
       })
       await expect(stats.dislikePlugin('plugin-a', 'user-1')).resolves.toEqual({
         success: false,

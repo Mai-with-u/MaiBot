@@ -403,13 +403,28 @@ class BuiltinToolRuntimeContext:
     ) -> List[PostProcessedReplyMessage]:
         """处理 replyer 正文和附件，并保留每条消息的发送提示。"""
 
-        items = self.post_process_reply_message_items(
-            reply_text,
-            skip_post_process=skip_post_process,
-            enable_splitter=enable_splitter,
-            enable_chinese_typo=enable_chinese_typo,
-        )
         attachment_args = dict(attachments or {})
+        has_attachment_request = any(
+            bool(attachment_args.get(key))
+            for key in ("attach_at", "attach_pic", "attach_emoji")
+        )
+
+        # 纯附件回复的正文按设计就是空字符串，不能进入普通文字后处理。
+        # 普通后处理会把空文本替换成“呃呃”，从而造成“呃呃 + 表情包”。
+        if not reply_text.strip() and has_attachment_request:
+            items = [
+                PostProcessedReplyMessage(
+                    sequence=MessageSequence([]),
+                    quote_previous=False,
+                )
+            ]
+        else:
+            items = self.post_process_reply_message_items(
+                reply_text,
+                skip_post_process=skip_post_process,
+                enable_splitter=enable_splitter,
+                enable_chinese_typo=enable_chinese_typo,
+            )
 
         at_components = [
             self._resolve_at_attachment(raw_target)

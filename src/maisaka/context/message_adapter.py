@@ -101,7 +101,14 @@ def build_visible_text_from_sequence(message_sequence: MessageSequence) -> str:
             continue
 
         if isinstance(component, EmojiComponent):
-            append_visible_part(component.content.strip() or "[表情包]")
+            emoji_description = component.content.strip()
+            if emoji_description.startswith("[消息类型]表情包"):
+                emoji_text = emoji_description
+            else:
+                emoji_text = "[消息类型]表情包"
+                if emoji_description:
+                    emoji_text += f"（表情解读：{emoji_description}）"
+            append_visible_part(emoji_text)
             continue
 
         if isinstance(component, ImageComponent):

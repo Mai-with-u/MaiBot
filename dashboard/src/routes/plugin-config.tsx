@@ -1512,6 +1512,7 @@ function PluginConfigPageContent() {
     setActingPluginId,
     performTogglePlugin,
     checkingUpdates,
+    checkPluginUpdates,
     getPluginUpdateState,
     getPluginRepositoryUrl,
     isPluginDisabled,
@@ -1583,12 +1584,11 @@ function PluginConfigPageContent() {
     <>
       <ScrollArea className="h-full">
       <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
-        {!adapterManagement && (
-        <div className="flex flex-nowrap items-center gap-2 sm:gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="relative min-w-0 flex-1 basis-0 sm:basis-72">
             <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
-              placeholder="搜索插件..."
+              placeholder={adapterManagement ? '搜索适配器...' : '搜索插件...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9"
@@ -1610,11 +1610,23 @@ function PluginConfigPageContent() {
           </div>
           <Button
             variant="outline"
+            size="sm"
+            className="h-9 shrink-0 px-2 sm:px-3"
+            onClick={() => void checkPluginUpdates({ forceRefresh: true, showToast: true })}
+            disabled={checkingUpdates}
+            title="从插件市场重新获取最新版本信息"
+          >
+            <RefreshCw className={`h-4 w-4 ${checkingUpdates ? 'animate-spin' : ''} sm:mr-2`} />
+            <span className="hidden sm:inline">检测更新</span>
+          </Button>
+          <Button
+            variant="outline"
             size="icon"
             className="shrink-0"
             onClick={loadPlugins}
-            aria-label="刷新"
-            title="刷新"
+            disabled={loading}
+            aria-label="刷新插件列表"
+            title="刷新插件列表"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
@@ -1630,7 +1642,6 @@ function PluginConfigPageContent() {
             <span className="hidden sm:inline">重启麦麦</span>
           </Button>
         </div>
-        )}
 
         {/* 统计信息 */}
         {isModernDashboardStyle ? (

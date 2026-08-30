@@ -282,8 +282,8 @@ describe('usePluginList', () => {
     expect(result.current.selectedPlugin?.id).toBe('test.emoji')
     expect(result.current.selectedPluginTab).toBe('advanced')
     expect(window.location.search).toBe('?plugin=test.emoji&tab=advanced')
-    // 深链接已选中插件时，首屏不拉市场更新
-    expect(fetchPluginList).not.toHaveBeenCalled()
+    // 即使通过深链接进入配置页，启动时也会自动检测一次更新
+    expect(fetchPluginList).toHaveBeenCalledWith({ forceRefresh: true })
   })
 
   it('深链接插件不在已装列表时保持未选中', async () => {
@@ -364,7 +364,7 @@ describe('usePluginList', () => {
     expect(result.current.selectedPluginTab).toBeUndefined()
     expect(window.location.pathname).toBe('/plugin-config/embed')
     expect(window.location.search).toBe('')
-    await waitFor(() => expect(fetchPluginList).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(fetchPluginList).toHaveBeenCalledTimes(2))
   })
 
   it('performTogglePlugin 按启停结果提示，并在失败时弹出错误', async () => {
@@ -482,7 +482,7 @@ describe('usePluginList', () => {
 
     const plugin = result.current.plugins[0]
     expect(result.current.getPluginUpdateState(plugin).title).toBe(
-      '插件市场中没有找到该插件，无法判断新版本'
+      '插件清单中没有仓库地址，无法更新/升级'
     )
 
     vi.mocked(fetchPluginList).mockResolvedValueOnce([
@@ -495,7 +495,7 @@ describe('usePluginList', () => {
     warn.mockRestore()
   })
 
-  it('更新检查启动后再次触发会直接返回，检查中不会重复请求', async () => {
+  it('更新检查中不会重复请求，完成后允许再次手动检测', async () => {
     const deferred = createDeferred<PluginInfo[]>()
     vi.mocked(fetchPluginList).mockReturnValue(deferred.promise)
     const plugin = makePlugin('test.emoji', { manifest: { name: 'Emoji Plugin' } })
@@ -518,7 +518,7 @@ describe('usePluginList', () => {
     })
     await waitFor(() => expect(result.current.checkingUpdates).toBe(false))
     act(() => result.current.closePluginConfig())
-    expect(fetchPluginList).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(fetchPluginList).toHaveBeenCalledTimes(2))
   })
 
   it('仅看有更新时只保留 hasUpdate 插件，市场已有数据时不再重复检查', async () => {
@@ -537,10 +537,10 @@ describe('usePluginList', () => {
     await waitFor(() => expect(result.current.checkingUpdates).toBe(false))
 
     expect(result.current.getPluginUpdateState(latest)).toMatchObject({
-      canUpdate: false,
+      canUpdate: true,
       hasUpdate: false,
       latestVersion: '3.0.0',
-      title: '当前已是最新版本',
+      title: '检查官方仓库并更新到最新版本',
     })
 
     act(() => result.current.setShowUpdateOnly(true))
@@ -754,6 +754,9 @@ describe('usePluginList', () => {
 
   it('getPluginUpdateState / getPluginRepositoryUrl 覆盖仓库来源与版本比较分支', async () => {
     const noMarket = makePlugin('none.plugin')
+    const noMarketWithRepo = makePlugin('repo-only.plugin', {
+      manifest: { repository_url: 'https://example.com/repo-only.git' },
+    })
     const noRepo = makePlugin('norepo.plugin', { manifest: { version: '1.0.0' } })
     const fromUrls = makePlugin('urls.plugin', {
       manifest: {
@@ -772,6 +775,7 @@ describe('usePluginList', () => {
     })
     vi.mocked(getInstalledPlugins).mockResolvedValue([
       noMarket,
+      noMarketWithRepo,
       noRepo,
       fromUrls,
       currentNewer,
@@ -796,14 +800,27 @@ describe('usePluginList', () => {
     await waitFor(() => expect(result.current.checkingUpdates).toBe(false))
 
     expect(result.current.getPluginUpdateState(noMarket).title).toBe(
-      '插件市场中没有找到该插件，无法判断新版本'
+      '插件清单中没有仓库地址，无法更新/升级'
     )
+    expect(result.current.getPluginUpdateState(noMarketWithRepo)).toEqual({
+      canUpdate: true,
+      hasUpdate: false,
+      title: '从插件仓库更新到最新版本',
+    })
     expect(result.current.getPluginUpdateState(noRepo).title).toBe(
       '插件清单中没有仓库地址，无法更新/升级'
     )
     expect(result.current.getPluginRepositoryUrl(fromUrls)).toBe('https://example.com/from-urls.git')
-    expect(result.current.getPluginUpdateState(fromUrls).title).toBe('当前已是最新版本')
-    expect(result.current.getPluginUpdateState(currentNewer).title).toBe('当前已是最新版本')
+    expect(result.current.getPluginUpdateState(fromUrls)).toMatchObject({
+      canUpdate: true,
+      hasUpdate: false,
+      title: '检查官方仓库并更新到最新版本',
+    })
+    expect(result.current.getPluginUpdateState(currentNewer)).toMatchObject({
+      canUpdate: true,
+      hasUpdate: false,
+      title: '检查官方仓库并更新到最新版本',
+    })
     expect(result.current.getPluginUpdateState(incompatibleMarket)).toEqual({
       canUpdate: false,
       hasUpdate: false,

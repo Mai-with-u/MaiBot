@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Download, Info, Loader2, RefreshCw, ThumbsUp, Trash2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Download, Heart, Info, Loader2, RefreshCw, ThumbsUp, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,8 @@ interface PluginCardProps {
   loadProgress: PluginLoadProgress | null
   isAnyPluginInstalling?: boolean
   likingPluginIds: Set<string>
+  isFavorite?: boolean
+  onToggleFavorite?: (plugin: PluginInfo) => void
   onInstall: (plugin: PluginInfo) => void
   onLike: (plugin: PluginInfo) => void
   onUpdate: (plugin: PluginInfo) => void
@@ -36,6 +38,8 @@ export function PluginCard({
   loadProgress,
   isAnyPluginInstalling = false,
   likingPluginIds,
+  isFavorite = false,
+  onToggleFavorite = () => undefined,
   onInstall,
   onLike,
   onUpdate,
@@ -173,7 +177,7 @@ export function PluginCard({
         </div>
       </CardContent>
       <CardFooter className="mt-auto px-4 pb-4 pt-1.5">
-        <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:items-center sm:justify-end">
+        <div className="grid w-full grid-cols-4 gap-2 sm:flex sm:items-center sm:justify-end">
           <Button
             variant={isLiked ? 'secondary' : 'outline'}
             size="sm"
@@ -189,6 +193,16 @@ export function PluginCard({
               <ThumbsUp className={isLiked ? 'h-4 w-4 fill-current' : 'h-4 w-4'} />
             )}
             <span>{likeCount.toLocaleString()}</span>
+          </Button>
+          <Button
+            variant={isFavorite ? 'secondary' : 'outline'}
+            size="sm"
+            className="w-full px-0 sm:w-8"
+            title={isFavorite ? '取消收藏' : '收藏插件'}
+            aria-label={isFavorite ? '取消收藏' : '收藏插件'}
+            onClick={() => onToggleFavorite(plugin)}
+          >
+            <Heart className={isFavorite ? 'h-4 w-4 fill-current' : 'h-4 w-4'} />
           </Button>
           <Button 
             variant="outline"

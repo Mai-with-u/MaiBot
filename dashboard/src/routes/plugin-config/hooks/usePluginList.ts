@@ -127,7 +127,7 @@ export function usePluginList() {
   const [marketPluginsById, setMarketPluginsById] = useState<Record<string, PluginInfo>>({})
   const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
-  const updateCheckStartedRef = useRef(false)
+  const updateCheckInFlightRef = useRef(false)
 
   const openPluginConfig = (plugin: InstalledPlugin, tabId?: string | null) => {
     setSelectedPlugin(plugin)
@@ -146,20 +146,26 @@ export function usePluginList() {
     void checkPluginUpdates()
   }
 
-  const checkPluginUpdates = async () => {
-    if (adapterOnly || updateCheckStartedRef.current) {
+  const checkPluginUpdates = async (
+    options: { forceRefresh?: boolean; showToast?: boolean } = {}
+  ) => {
+    if (updateCheckInFlightRef.current) {
       return
     }
-    updateCheckStartedRef.current = true
+    updateCheckInFlightRef.current = true
     setCheckingUpdates(true)
     try {
-      const [marketPlugins, currentMaimaiVersion] = await Promise.all([
-        fetchPluginList(),
+      const [marketPlugins, currentMaimaiVersion, allInstalled] = await Promise.all([
+        fetchPluginList({ forceRefresh: options.forceRefresh }),
         getMaimaiVersion().catch((error) => {
           console.warn('获取麦麦版本信息失败，跳过插件更新兼容性检查:', error)
           return null
         }),
+        getInstalledPlugins({ forceRefresh: options.forceRefresh }),
       ])
+      const installed = adapterOnly
+        ? allInstalled.filter((plugin) => getPluginType(plugin) === 'adapter')
+        : allInstalled
       const nextMarketPluginsById: Record<string, PluginInfo> = {}
       for (const marketPlugin of marketPlugins) {
         nextMarketPluginsById[marketPlugin.id] = marketPlugin
@@ -167,14 +173,53 @@ export function usePluginList() {
           nextMarketPluginsById[marketPlugin.manifest.id] = marketPlugin
         }
       }
+      const normalizedMaimaiVersion =
+        currentMaimaiVersion?.version === '0.0.0' ? null : currentMaimaiVersion
+
+      setPlugins(installed)
       setMarketPluginsById(nextMarketPluginsById)
-      setMaimaiVersion(currentMaimaiVersion?.version === '0.0.0' ? null : currentMaimaiVersion)
+      setMaimaiVersion(normalizedMaimaiVersion)
+      setSelectedPlugin((currentPlugin) => {
+        if (!currentPlugin) return currentPlugin
+        return installed.find((plugin) => plugin.id === currentPlugin.id) ?? currentPlugin
+      })
+
+      if (!selectedPlugin && initialTarget.pluginId) {
+        const targetPlugin = installed.find((plugin) => plugin.id === initialTarget.pluginId)
+        if (targetPlugin) {
+          openPluginConfig(targetPlugin, initialTarget.tabId)
+        }
+      }
+
+      if (options.showToast) {
+        const updateCount = installed.filter((plugin) => {
+          const marketPlugin =
+            nextMarketPluginsById[plugin.id] ||
+            (plugin.manifest.id ? nextMarketPluginsById[plugin.manifest.id] : undefined)
+          if (!marketPlugin || comparePluginVersions(plugin.manifest.version, marketPlugin.manifest.version) <= 0) {
+            return false
+          }
+          return (
+            !normalizedMaimaiVersion ||
+            isManifestCompatibleWithMaimai(marketPlugin.manifest, normalizedMaimaiVersion)
+          )
+        }).length
+        toast({
+          title: '更新检测完成',
+          description: updateCount > 0 ? `发现 ${updateCount} 个可更新插件` : '当前已是最新版本',
+        })
+      }
     } catch (error) {
-      updateCheckStartedRef.current = false
       console.warn('加载插件市场版本信息失败:', error)
-      setMarketPluginsById({})
-      setMaimaiVersion(null)
+      if (options.showToast) {
+        toast({
+          title: '检测更新失败',
+          description: error instanceof Error ? error.message : '无法获取最新插件信息',
+          variant: 'destructive',
+        })
+      }
     } finally {
+      updateCheckInFlightRef.current = false
       setCheckingUpdates(false)
     }
   }
@@ -206,10 +251,8 @@ export function usePluginList() {
   }
 
   useEffect(() => {
-    loadPlugins()
-    if (!initialTarget.pluginId) {
-      void checkPluginUpdates()
-    }
+    void loadPlugins()
+    void checkPluginUpdates({ forceRefresh: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -407,25 +450,31 @@ export function usePluginList() {
       return { canUpdate: false, hasUpdate: false, title: '正在检查更新' }
     }
 
+    const repositoryUrl = getPluginRepositoryUrl(plugin)
+    if (!repositoryUrl) {
+      return { canUpdate: false, hasUpdate: false, title: '插件清单中没有仓库地址，无法更新/升级' }
+    }
+
     const marketPlugin =
       marketPluginsById[plugin.id] ||
       (plugin.manifest.id ? marketPluginsById[plugin.manifest.id] : undefined)
     if (!marketPlugin) {
       return {
-        canUpdate: false,
+        canUpdate: true,
         hasUpdate: false,
-        title: '插件市场中没有找到该插件，无法判断新版本',
+        title: '从插件仓库更新到最新版本',
       }
-    }
-
-    if (!getPluginRepositoryUrl(plugin)) {
-      return { canUpdate: false, hasUpdate: false, title: '插件清单中没有仓库地址，无法更新/升级' }
     }
 
     const currentVersion = plugin.manifest.version
     const latestVersion = marketPlugin.manifest.version
     if (comparePluginVersions(currentVersion, latestVersion) <= 0) {
-      return { canUpdate: false, hasUpdate: false, latestVersion, title: '当前已是最新版本' }
+      return {
+        canUpdate: true,
+        hasUpdate: false,
+        latestVersion,
+        title: '检查官方仓库并更新到最新版本',
+      }
     }
 
     if (maimaiVersion && !isManifestCompatibleWithMaimai(marketPlugin.manifest, maimaiVersion)) {
@@ -524,6 +573,7 @@ export function usePluginList() {
     performTogglePlugin,
     // 市场版本 / 更新派生
     checkingUpdates,
+    checkPluginUpdates,
     getPluginUpdateState,
     getPluginRepositoryUrl,
     // 状态派生

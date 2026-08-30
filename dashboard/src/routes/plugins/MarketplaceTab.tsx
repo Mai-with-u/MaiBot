@@ -40,6 +40,9 @@ interface MarketplaceTabProps {
   pluginStats: Record<string, PluginStatsData>
   pluginProgressById: PluginProgressById
   likingPluginIds: Set<string>
+  favoritePluginIds?: Set<string>
+  showFavoritesOnly?: boolean
+  onToggleFavorite?: (plugin: PluginInfo) => void
   onInstall: (plugin: PluginInfo) => void
   onLike: (plugin: PluginInfo) => void
   onUpdate: (plugin: PluginInfo) => void
@@ -181,6 +184,9 @@ export function MarketplaceTab({
   pluginStats,
   pluginProgressById,
   likingPluginIds,
+  favoritePluginIds = new Set<string>(),
+  showFavoritesOnly = false,
+  onToggleFavorite = () => undefined,
   onInstall,
   onLike,
   onUpdate,
@@ -253,7 +259,12 @@ export function MarketplaceTab({
       return false
     }
 
-    if (hideInstalledPlugins && plugin.installed) {
+    if (!showFavoritesOnly && hideInstalledPlugins && plugin.installed) {
+      return false
+    }
+
+    const pluginIdentity = plugin.manifest?.id || plugin.id
+    if (showFavoritesOnly && !favoritePluginIds.has(pluginIdentity)) {
       return false
     }
 
@@ -331,6 +342,8 @@ export function MarketplaceTab({
       loadProgress={pluginProgressById[plugin.id] ?? null}
       isAnyPluginInstalling={isAnyPluginInstalling}
       likingPluginIds={likingPluginIds}
+      isFavorite={favoritePluginIds.has(plugin.manifest?.id || plugin.id)}
+      onToggleFavorite={onToggleFavorite}
       onInstall={onInstall}
       onLike={onLike}
       onUpdate={onUpdate}

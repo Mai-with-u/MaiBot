@@ -66,17 +66,19 @@ def _append_emoji_component(
 ) -> bool:
     """将表情组件追加到 LLM 消息构建器。"""
     image_format = _guess_image_format(component.binary_data)
-    if enable_visual_message and image_format and component.binary_data:
-        builder.add_text_content("[消息类型]表情包")
-        builder.add_image_content(image_format, base64.b64encode(component.binary_data).decode("utf-8"))
-        return True
-
     normalized_content = component.content.strip()
-    if normalized_content:
-        builder.add_text_content(normalized_content)
-        return True
+    if normalized_content.startswith("[消息类型]表情包"):
+        emoji_label = normalized_content
+    else:
+        emoji_label = "[消息类型]表情包"
+        if normalized_content:
+            emoji_label += f"（表情解读：{normalized_content}）"
 
-    builder.add_text_content("[表情包]")
+    # 无论模型是否能看到图片，都明确保留“这是表情包消息”的类型信息，
+    # 避免把表情包的识别描述误当成用户说出的普通文字。
+    builder.add_text_content(emoji_label)
+    if enable_visual_message and image_format and component.binary_data:
+        builder.add_image_content(image_format, base64.b64encode(component.binary_data).decode("utf-8"))
     return True
 
 

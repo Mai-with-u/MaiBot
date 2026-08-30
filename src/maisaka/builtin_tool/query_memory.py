@@ -38,13 +38,13 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
                 },
                 "mode": {
                     "type": "string",
-                    "description": "search事实偏好，time时间段，episode经历，aggregate整体，hybrid不确定。",
+                    "description": "search按关键词检索；time按时间检索且必须提供time_start/time_end；hybrid按关键词+时间联合检索且必须同时提供query和时间；episode检索经历；aggregate检索整体信息。不确定且没有时间条件时使用search。",
                     "enum": sorted(_ALLOWED_QUERY_MODES),
                     "default": "search",
                 },
                 "person_name": {
                     "type": "string",
-                    "description": "人物名；用于定向过滤。",
+                    "description": "人物昵称；用于定向过滤。昵称可能与普通短语或句子相同，应按实际昵称原样填写；不确定人物时留空。",
                 },
                 "time_start": {
                     "type": "string",
@@ -203,6 +203,10 @@ async def handle_tool(
 
     time_start = _normalize_optional_time(invocation.arguments.get("time_start"))
     time_end = _normalize_optional_time(invocation.arguments.get("time_end"))
+    requested_mode = mode
+    if mode == "hybrid" and time_start is None and time_end is None:
+        # Planner 在没有时间条件时偶尔会误选 hybrid；此时其语义等同普通关键词检索。
+        mode = "search"
     if not clean_query and time_start is None and time_end is None:
         return tool_ctx.build_failure_result(
             invocation.tool_name,
@@ -220,15 +224,16 @@ async def handle_tool(
         group_id=group_id,
     )
     respect_filter = bool(invocation.arguments.get("respect_filter", True))
-    fallback_applied = False
-    fallback_reason = ""
-    fallback_query = ""
+    fallback_applied = requested_mode != mode
+    fallback_reason = "hybrid_without_time" if fallback_applied else ""
+    fallback_query = clean_query if fallback_applied else ""
     effective_mode = mode
     primary_hit_count = 0
 
     logger.info(
         f"{runtime.log_prefix} 触发长期记忆检索工具: "
-        f"mode={mode} query={clean_query!r} person_name={person_name!r} person_id={person_id!r}"
+        f"mode={requested_mode} effective_mode={mode} query={clean_query!r} "
+        f"person_name={person_name!r} person_id={person_id!r}"
     )
     try:
         result = await memory_service.search(
@@ -285,7 +290,7 @@ async def handle_tool(
     structured_content.update(
         {
             "query": clean_query,
-            "mode": mode,
+            "mode": requested_mode,
             "effective_mode": effective_mode,
             "limit": limit,
             "chat_id": session_id,
@@ -312,8 +317,10 @@ async def handle_tool(
         )
 
     content = _build_success_content(result, limit=limit)
-    if fallback_applied:
+    if fallback_reason == "person_filter_miss":
         content = f"提示：人物定向检索未命中，已自动降级为关键词检索。\n{content}"
+    elif fallback_reason == "hybrid_without_time":
+        content = f"提示：hybrid 模式未提供时间范围，已自动按关键词检索。\n{content}"
     metadata: Dict[str, Any] = with_memory_feedback_task()
     replyer_memory_reference = _build_replyer_memory_reference(structured_content)
     if replyer_memory_reference:

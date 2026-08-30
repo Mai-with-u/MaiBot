@@ -43,6 +43,7 @@ export interface VoteStatsResponse extends StatsResponse {
   disliked?: boolean
   likes?: number
   dislikes?: number
+  user_like_count?: number
 }
 
 export interface RatingStatsResponse extends StatsResponse {
@@ -338,7 +339,7 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 429) {
-        return { success: false, error: '点赞过于频繁，请稍后再试' }
+        return { success: false, error: '点赞暂时失败，请稍后再试' }
       }
       if (error.status !== undefined) {
         return { success: false, error: getReadableError(error.detail, '点赞失败') }

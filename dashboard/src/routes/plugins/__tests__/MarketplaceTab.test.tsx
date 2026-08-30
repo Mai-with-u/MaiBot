@@ -697,4 +697,20 @@ describe('PluginIcon', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('svg.lucide-search')).not.toBeNull()
   })
+
+  it('我的收藏只展示收藏插件，并可从卡片取消收藏', async () => {
+    const alpha = makePlugin('alpha')
+    const beta = makePlugin('beta')
+    const onToggleFavorite = vi.fn()
+    renderTab([alpha, beta], {
+      showFavoritesOnly: true,
+      favoritePluginIds: new Set(['beta']),
+      onToggleFavorite,
+    })
+
+    expect(getDisplayedPluginNames()).toEqual(['插件-beta'])
+    await userEvent.click(screen.getByRole('button', { name: '取消收藏' }))
+    expect(onToggleFavorite).toHaveBeenCalledWith(beta)
+  })
+
 })

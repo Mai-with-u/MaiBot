@@ -56,6 +56,7 @@ from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.memory.mid_term import is_mid_term_memory_message
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
+from src.workspaces import WorkspaceContext, workspace_service
 
 from .maisaka_expression_selector import maisaka_expression_selector
 
@@ -100,19 +101,27 @@ class BaseMaisakaReplyGenerator:
             session_id=getattr(chat_stream, "session_id", "") if chat_stream is not None else "",
         )
 
+    def _workspace_context(self) -> WorkspaceContext:
+        """返回当前回复会话实时生效的 Workspace 策略。"""
+
+        session_id = getattr(self.chat_stream, "session_id", "") if self.chat_stream is not None else ""
+        return workspace_service.resolve_context(session_id)
+
     def _build_personality_prompt(self) -> str:
         """构建 replyer 使用的人设提示。"""
         try:
-            bot_name = global_config.bot.nickname
-            alias_names = global_config.bot.alias_names
+            persona = self._workspace_context().persona
+            bot_name = persona.nickname.strip() or global_config.bot.nickname
+            alias_names = list(persona.alias_names) if persona.alias_names else global_config.bot.alias_names
             bot_aliases = f"，也有人叫你{','.join(alias_names)}" if alias_names else ""
 
-            prompt_personality = global_config.personality.personality.strip()
+            prompt_personality = persona.personality.strip() or global_config.personality.personality.strip()
             if not prompt_personality:
                 prompt_personality = "是人类。"
 
             prompt_lines = [f"你的名字是{bot_name}{bot_aliases}。", prompt_personality]
-            emotion_suffix = build_personality_emotion_suffix(global_config.experimental.emotion_trait)
+            emotion_trait = persona.emotion_trait.strip() or global_config.experimental.emotion_trait
+            emotion_suffix = build_personality_emotion_suffix(emotion_trait)
             if emotion_suffix:
                 prompt_lines.append(emotion_suffix)
             return "\n".join(prompt_lines)
@@ -120,10 +129,9 @@ class BaseMaisakaReplyGenerator:
             logger.warning(f"构建 Maisaka 人设提示词失败: {exc}")
             return "你的名字是麦麦。\n是人类。"
 
-    @staticmethod
-    def _select_reply_style() -> str:
+    def _select_reply_style(self) -> str:
         """返回 replyer 使用的基础表达风格。"""
-        return global_config.personality.reply_style
+        return self._workspace_context().persona.reply_style.strip() or global_config.personality.reply_style
 
     @staticmethod
     def _select_temporary_reply_style() -> str:
@@ -245,7 +253,14 @@ class BaseMaisakaReplyGenerator:
                 continue
 
             if isinstance(component, EmojiComponent):
-                rendered_parts.append(component.content.strip() or "[表情包]")
+                emoji_description = component.content.strip()
+                if emoji_description.startswith("[消息类型]表情包"):
+                    emoji_text = emoji_description
+                else:
+                    emoji_text = "[消息类型]表情包"
+                    if emoji_description:
+                        emoji_text += f"（表情解读：{emoji_description}）"
+                rendered_parts.append(emoji_text)
                 continue
 
             if isinstance(component, VoiceComponent):
@@ -406,12 +421,17 @@ class BaseMaisakaReplyGenerator:
 
         prompt_lines: List[str] = []
 
+        persona = self._workspace_context().persona
         if is_group_chat is True:
             if group_chat_prompt := global_config.chat.reply_style.group_chat_prompt.strip():
                 prompt_lines.append(f"通用注意事项：\n{group_chat_prompt}")
+            if persona.group_chat_prompt.strip():
+                prompt_lines.append(f"当前子系统注意事项：\n{persona.group_chat_prompt.strip()}")
         elif is_group_chat is False:
             if private_chat_prompt := global_config.chat.reply_style.private_chat_prompts.strip():
                 prompt_lines.append(f"通用注意事项：\n{private_chat_prompt}")
+            if persona.private_chat_prompt.strip():
+                prompt_lines.append(f"当前子系统注意事项：\n{persona.private_chat_prompt.strip()}")
 
         if chat_prompt := self._get_chat_prompt_for_chat(session_id, is_group_chat).strip():
             prompt_lines.append(f"当前聊天额外注意事项：\n{chat_prompt}")
@@ -445,7 +465,7 @@ class BaseMaisakaReplyGenerator:
                 "余計な内容（不要な前置きや後置き、コロン、括弧、スタンプ、通常の at や @ など）は出力せず、"
                 "発言内容だけを出力してください。"
             )
-        return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
+        return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好；如果本次额外附件已经足够表达，可以输出空内容。"
 
     @staticmethod
     def _replace_regex_capture_groups(reaction: str, match: re.Match[str]) -> str:
@@ -622,6 +642,20 @@ class BaseMaisakaReplyGenerator:
         )
         if attachment_prompt.strip():
             sections.append("【额外发送内容参考】\n" + attachment_prompt.strip())
+            text_mode = str((reply_tool_args or {}).get("text_mode") or "auto").strip().lower()
+            if text_mode == "none":
+                sections.append(
+                    "本次使用纯附件模式：只发送上面指定的图片、表情包或 at，绝对不要输出任何文字、"
+                    "解释、描述或占位符。回复正文必须为空。"
+                )
+            elif text_mode == "required":
+                sections.append("本次必须同时发送文字和上面指定的附件，请生成自然简短的文字。")
+            else:
+                sections.append(
+                    "本次回复的文字、图片、表情包和 at 可以自由组合：可以只发文字，也可以文字配附件，"
+                    "也可以只发附件。如果附件本身已经足够表达意思，允许不输出文字；此时不要输出“无”、"
+                    "“空”或其他占位符。"
+                )
         sections.append(self._build_reply_instruction())
         return "\n\n".join(sections)
 
@@ -1370,7 +1404,11 @@ class BaseMaisakaReplyGenerator:
             break
 
         generation_result.generation_attempts = tuple(all_generation_attempts)
-        result.success = bool(response_text)
+        has_rich_attachments = any(
+            bool(active_reply_tool_args.get(key))
+            for key in ("attach_pic", "attach_emoji", "attach_at")
+        )
+        result.success = bool(response_text) or has_rich_attachments
         result.output_items = PromptCLIVisualizer.build_structured_context_item_payload(
             generation_result.output_items,
             keep_base64=False,
