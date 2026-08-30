@@ -56,6 +56,7 @@
       "reasoningProcess": "推論プロセス",
       "maisakaMonitor": "MaiSaka チャット監視",
       "chatManagement": "チャット管理",
+      "workspaces": "サブシステム",
       "localChat": "ローカルチャット",
       "settings": "WebUI 設定"
     }

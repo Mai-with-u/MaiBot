@@ -32,6 +32,7 @@ from src.webui.routers.search import router as search_router
 from src.webui.routers.statistics import router as statistics_router
 from src.webui.routers.system import router as system_router
 from src.webui.routers.user_emoji import router as user_emoji_router
+from src.webui.routers.workspaces import router as workspaces_router
 from src.webui.routers.websocket.auth import router as ws_auth_router
 from src.webui.routers.websocket.unified import router as unified_ws_router
 from src.webui.version_compatibility import (
@@ -73,6 +74,8 @@ router.include_router(search_router)
 router.include_router(model_router)
 # 注册长期记忆管理路由
 router.include_router(memory_router)
+# 注册 Workspace 子系统管理路由
+router.include_router(workspaces_router)
 # 注册 WebSocket 认证路由
 router.include_router(ws_auth_router)
 # 注册统一 WebSocket 路由

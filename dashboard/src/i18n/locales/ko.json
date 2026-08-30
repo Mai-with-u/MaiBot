@@ -56,6 +56,7 @@
       "reasoningProcess": "추론 과정",
       "maisakaMonitor": "MaiSaka 채팅 모니터",
       "chatManagement": "채팅 관리",
+      "workspaces": "하위 시스템",
       "localChat": "로컬 채팅",
       "settings": "WebUI 설정"
     }

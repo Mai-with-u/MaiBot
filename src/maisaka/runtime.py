@@ -67,6 +67,7 @@ from src.mcp_module.provider import MCPToolProvider
 from src.mcp_module.service import get_mcp_service
 from src.plugin_runtime.tool_provider import PluginToolProvider
 from src.services.message_word_frequency_service import update_high_frequency_terms_from_context_messages
+from src.workspaces import WorkspaceContext, workspace_service
 
 from .chat_loop_service import ChatResponse, MaisakaChatLoopService
 from .reasoning_engine import MaisakaReasoningEngine
@@ -149,6 +150,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         if chat_stream is None:
             raise ValueError(f"未找到会话 {session_id} 对应的 Maisaka 运行时")
         self.chat_stream: BotChatSession = chat_stream
+        self.workspace_context: WorkspaceContext = workspace_service.resolve_context(session_id)
 
         session_name = chat_manager.get_session_name(session_id) or session_id
         self.session_name = session_name
@@ -221,6 +223,18 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         )
         self._register_tool_providers()
         self._emit_monitor_session_start()
+
+    def refresh_workspace_context(self) -> WorkspaceContext:
+        """刷新当前会话的 Workspace 策略，使 WebUI 修改无需重启即可生效。"""
+
+        context = workspace_service.resolve_context(self.session_id)
+        if context.policy_revision != self.workspace_context.policy_revision or context.workspace_id != self.workspace_context.workspace_id:
+            logger.info(
+                f"{self.log_prefix} Workspace 策略已刷新: "
+                f"{self.workspace_context.workspace_name} -> {context.workspace_name}, revision={context.policy_revision}"
+            )
+            self.workspace_context = context
+        return self.workspace_context
 
     @property
     def _max_context_size(self) -> int:

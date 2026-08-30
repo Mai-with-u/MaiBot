@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import {
   Activity,
   Box,
+  Boxes,
   Brain,
   Database,
   FileText,
@@ -23,6 +24,7 @@ import type { MenuIcon, MenuSection } from './types'
 const HomeIcon = createStreamlineIcon('allergens-fish-remix', Home)
 const MonitorIcon = createStreamlineIcon('desktop-chat-remix', Activity)
 const ChatManagementIcon = createStreamlineIcon('chat-two-bubbles-oval-remix', MessageSquare)
+const WorkspacesIcon: MenuIcon = (props) => createElement(Boxes, props)
 const BotConfigIcon = createStreamlineIcon('page-setting-remix', Settings)
 const ModelIcon = createStreamlineIcon('module-remix', Box)
 const PromptIcon = createStreamlineIcon('script-1-remix', FileText)
@@ -50,6 +52,7 @@ export const menuSections: MenuSection[] = [
       },
       { icon: MonitorIcon, label: 'sidebar.menu.maisakaMonitor', path: '/planner-monitor' },
       { icon: ChatManagementIcon, label: 'sidebar.menu.chatManagement', path: '/chat-management' },
+      { icon: WorkspacesIcon, label: 'sidebar.menu.workspaces', path: '/workspaces' },
     ],
   },
   {

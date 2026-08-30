@@ -56,6 +56,7 @@
       "reasoningProcess": "Reasoning Process",
       "maisakaMonitor": "MaiSaka Chat Monitor",
       "chatManagement": "Chat Management",
+      "workspaces": "Subsystems",
       "localChat": "Local Chat",
       "settings": "WebUI Settings"
     }

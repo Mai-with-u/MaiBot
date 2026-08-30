@@ -1523,6 +1523,7 @@ class MaisakaReasoningEngine:
         """构造当前聊天的工具暴露上下文。"""
 
         chat_stream = self._runtime.chat_stream
+        workspace = self._runtime.refresh_workspace_context()
         return ToolAvailabilityContext(
             session_id=self._runtime.session_id,
             stream_id=self._runtime.session_id,
@@ -1530,6 +1531,12 @@ class MaisakaReasoningEngine:
             group_id=str(getattr(chat_stream, "group_id", "") or "").strip(),
             user_id=str(getattr(chat_stream, "user_id", "") or "").strip(),
             platform=str(getattr(chat_stream, "platform", "") or "").strip(),
+            workspace_id=workspace.workspace_id,
+            memory_space_id=workspace.memory_space_id,
+            workspace_policy_revision=workspace.policy_revision,
+            inherit_global_tools=workspace.inherit_global_tools,
+            allowed_tools=workspace.allowed_tools,
+            denied_tools=workspace.denied_tools,
         )
 
     def _build_tool_execution_context(
@@ -1546,6 +1553,7 @@ class MaisakaReasoningEngine:
         """
 
         chat_stream = self._runtime.chat_stream
+        workspace = self._runtime.refresh_workspace_context()
         return ToolExecutionContext(
             session_id=self._runtime.session_id,
             stream_id=self._runtime.session_id,
@@ -1554,6 +1562,14 @@ class MaisakaReasoningEngine:
             group_id=str(getattr(chat_stream, "group_id", "") or "").strip(),
             user_id=str(getattr(chat_stream, "user_id", "") or "").strip(),
             platform=str(getattr(chat_stream, "platform", "") or "").strip(),
+            workspace_id=workspace.workspace_id,
+            memory_space_id=workspace.memory_space_id,
+            workspace_policy_revision=workspace.policy_revision,
+            metadata={
+                "inherit_global_tools": workspace.inherit_global_tools,
+                "allowed_tools": tuple(workspace.allowed_tools),
+                "denied_tools": tuple(workspace.denied_tools),
+            },
         )
 
     @staticmethod

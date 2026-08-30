@@ -42,6 +42,7 @@ from src.plugin_runtime.hook_payloads import (
 from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.services.llm_service import LLMServiceClient
+from src.workspaces import WorkspaceContext, workspace_service
 
 from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.context.history import normalize_tool_call_result_pairs
@@ -631,10 +632,22 @@ class MaisakaChatLoopService:
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
 
     @property
+    def workspace_context(self) -> WorkspaceContext:
+        """实时解析当前会话的 Workspace，确保配置修改无需重启。"""
+
+        return workspace_service.resolve_context(self._session_id)
+
+    @property
     def behavior_style_prompt(self) -> str:
         """返回 Planner 使用的行为风格提示词。"""
 
-        return global_config.personality.behavior_style.strip()
+        return self.workspace_context.persona.behavior_style.strip() or global_config.personality.behavior_style.strip()
+
+    @property
+    def bot_name(self) -> str:
+        """返回 Workspace 人设覆盖后的机器人昵称。"""
+
+        return self.workspace_context.persona.nickname.strip() or global_config.bot.nickname.strip()
 
     @staticmethod
     def _resolve_llm_request_type(request_kind: str) -> str:
@@ -747,11 +760,10 @@ class MaisakaChatLoopService:
 
         return load_prompt(self._get_chat_prompt_name(), **self.build_prompt_template_context(tools_section))
 
-    @staticmethod
-    def _build_planner_final_user_reminder() -> str:
+    def _build_planner_final_user_reminder(self) -> str:
         """构造每轮 Planner 请求末尾的一次性 user 提醒。"""
 
-        return PLANNER_FINAL_USER_REMINDER_TEMPLATE.format(bot_name=global_config.bot.nickname.strip())
+        return PLANNER_FINAL_USER_REMINDER_TEMPLATE.format(bot_name=self.bot_name)
 
     def _get_chat_prompt_name(self) -> str:
         """选择当前聊天使用的 Planner 模板。"""
@@ -764,7 +776,7 @@ class MaisakaChatLoopService:
         """构造 Maisaka prompt 模板的公共渲染参数。"""
 
         return {
-            "bot_name": global_config.bot.nickname,
+            "bot_name": self.bot_name,
             "behavior_style": self.behavior_style_prompt,
             "file_tools_section": tools_section,
             "group_chat_attention_block": self._build_group_chat_attention_block(),
@@ -800,12 +812,17 @@ class MaisakaChatLoopService:
 
         prompt_lines: List[str] = []
 
+        persona = self.workspace_context.persona
         if self._is_group_chat is True:
             if group_chat_prompt := str(global_config.chat.reply_style.group_chat_prompt or "").strip():
                 prompt_lines.append(f"通用注意事项：\n{group_chat_prompt}")
+            if persona.group_chat_prompt.strip():
+                prompt_lines.append(f"当前子系统注意事项：\n{persona.group_chat_prompt.strip()}")
         elif self._is_group_chat is False:
             if private_chat_prompt := str(global_config.chat.reply_style.private_chat_prompts or "").strip():
                 prompt_lines.append(f"通用注意事项：\n{private_chat_prompt}")
+            if persona.private_chat_prompt.strip():
+                prompt_lines.append(f"当前子系统注意事项：\n{persona.private_chat_prompt.strip()}")
 
         if not prompt_lines:
             return ""

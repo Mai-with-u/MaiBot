@@ -56,6 +56,7 @@
       "reasoningProcess": "推理过程",
       "maisakaMonitor": "麦麦观察",
       "chatManagement": "聊天管理",
+      "workspaces": "子系统",
       "localChat": "本地聊天室",
       "settings": "WEBUI设置"
     }

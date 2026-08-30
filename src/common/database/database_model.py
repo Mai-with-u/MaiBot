@@ -583,3 +583,166 @@ class BotPlatformAccount(SQLModel, table=True):
     last_adapter_id: Optional[str] = Field(default=None, max_length=255, nullable=True)
     last_plugin_id: Optional[str] = Field(default=None, max_length=255, nullable=True)
     last_gateway_name: Optional[str] = Field(default=None, max_length=255, nullable=True)
+
+class MemorySpace(SQLModel, table=True):
+    """记忆空间元数据；具体记忆对象成员关系由 A-Memorix 接入层维护。"""
+
+    __tablename__ = "memory_spaces"  # type: ignore
+
+    id: str = Field(primary_key=True, max_length=64)
+    name: str = Field(unique=True, index=True, max_length=100)
+    description: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    space_type: str = Field(default="private", index=True, max_length=32)
+    enabled: bool = Field(default=True, index=True)
+    policy_revision: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+
+
+class PersonaProfile(SQLModel, table=True):
+    """可被工作区复用的结构化人设覆盖层。"""
+
+    __tablename__ = "persona_profiles"  # type: ignore
+
+    id: str = Field(primary_key=True, max_length=64)
+    name: str = Field(unique=True, index=True, max_length=100)
+    description: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    nickname: str = Field(default="", max_length=100)
+    alias_names_json: str = Field(default="[]", sa_column=Column(Text, nullable=False, server_default="[]"))
+    personality: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    behavior_style: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    reply_style: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    group_chat_prompt: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    private_chat_prompt: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    multiple_reply_style: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    emotion_trait: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+
+
+class Workspace(SQLModel, table=True):
+    """会话子系统，统一绑定记忆空间、人设、工具和插件策略。"""
+
+    __tablename__ = "workspaces"  # type: ignore
+
+    id: str = Field(primary_key=True, max_length=64)
+    name: str = Field(unique=True, index=True, max_length=100)
+    description: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    memory_space_id: str = Field(foreign_key="memory_spaces.id", index=True, max_length=64)
+    persona_profile_id: Optional[str] = Field(default=None, foreign_key="persona_profiles.id", index=True, max_length=64)
+    is_default: bool = Field(default=False, index=True)
+    enabled: bool = Field(default=True, index=True)
+    inherit_global_tools: bool = Field(default=True)
+    inherit_global_plugins: bool = Field(default=True)
+    policy_revision: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default="1"))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+
+
+class WorkspaceMembership(SQLModel, table=True):
+    """聊天会话到主工作区的一对一归属。"""
+
+    __tablename__ = "workspace_memberships"  # type: ignore
+    __table_args__ = (UniqueConstraint("session_id", name="uq_workspace_memberships_session"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: str = Field(foreign_key="workspaces.id", index=True, max_length=64)
+    session_id: str = Field(foreign_key="chat_sessions.session_id", index=True, max_length=255)
+    assigned_by: str = Field(default="manual", max_length=32)
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+
+
+class WorkspaceSelector(SQLModel, table=True):
+    """面向未来适配器与多账号场景的动态会话归属规则。"""
+
+    __tablename__ = "workspace_selectors"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: str = Field(foreign_key="workspaces.id", index=True, max_length=64)
+    platform: str = Field(default="", index=True, max_length=100)
+    account_id: str = Field(default="", index=True, max_length=255)
+    chat_type: str = Field(default="any", index=True, max_length=32)
+    target_id: str = Field(default="", index=True, max_length=255)
+    priority: int = Field(default=0, index=True)
+    enabled: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+
+
+class WorkspaceToolPolicy(SQLModel, table=True):
+    """工作区工具显式允许或拒绝规则。"""
+
+    __tablename__ = "workspace_tool_policies"  # type: ignore
+    __table_args__ = (UniqueConstraint("workspace_id", "tool_name", name="uq_workspace_tool_policy"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: str = Field(foreign_key="workspaces.id", index=True, max_length=64)
+    tool_name: str = Field(index=True, max_length=255)
+    effect: str = Field(default="deny", index=True, max_length=16)
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+
+
+class WorkspacePluginPolicy(SQLModel, table=True):
+    """工作区插件启停策略及 Schema 驱动的请求级配置覆盖。"""
+
+    __tablename__ = "workspace_plugin_policies"  # type: ignore
+    __table_args__ = (UniqueConstraint("workspace_id", "plugin_id", name="uq_workspace_plugin_policy"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: str = Field(foreign_key="workspaces.id", index=True, max_length=64)
+    plugin_id: str = Field(index=True, max_length=255)
+    effect: str = Field(default="inherit", index=True, max_length=16)
+    overrides_json: str = Field(default="{}", sa_column=Column(Text, nullable=False, server_default="{}"))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+
+
+class MemorySpaceACL(SQLModel, table=True):
+    """记忆空间之间的双向声明式访问和传输权限。"""
+
+    __tablename__ = "memory_space_acl"  # type: ignore
+    __table_args__ = (UniqueConstraint("owner_space_id", "peer_space_id", name="uq_memory_space_acl_pair"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_space_id: str = Field(foreign_key="memory_spaces.id", index=True, max_length=64)
+    peer_space_id: str = Field(foreign_key="memory_spaces.id", index=True, max_length=64)
+    can_read_from_peer: bool = Field(default=False)
+    expose_to_peer: bool = Field(default=False)
+    can_import_from_peer: bool = Field(default=False)
+    can_publish_to_peer: bool = Field(default=False)
+    filters_json: str = Field(default="{}", sa_column=Column(Text, nullable=False, server_default="{}"))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+
+
+class MemoryTransferJob(SQLModel, table=True):
+    """选择性链接、复制或发布记忆的可审计任务。"""
+
+    __tablename__ = "memory_transfer_jobs"  # type: ignore
+
+    id: str = Field(primary_key=True, max_length=64)
+    source_space_id: str = Field(foreign_key="memory_spaces.id", index=True, max_length=64)
+    target_space_id: str = Field(foreign_key="memory_spaces.id", index=True, max_length=64)
+    mode: str = Field(index=True, max_length=16)
+    filters_json: str = Field(default="{}", sa_column=Column(Text, nullable=False, server_default="{}"))
+    approval_policy: str = Field(default="manual", index=True, max_length=16)
+    conflict_policy: str = Field(default="skip", max_length=16)
+    status: str = Field(default="pending", index=True, max_length=16)
+    created_by: str = Field(default="webui", max_length=64)
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))
+
+
+class WorkspaceAuditLog(SQLModel, table=True):
+    """工作区配置和权限变更审计记录。"""
+
+    __tablename__ = "workspace_audit_logs"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: Optional[str] = Field(default=None, foreign_key="workspaces.id", index=True, max_length=64)
+    action: str = Field(index=True, max_length=100)
+    actor: str = Field(default="system", max_length=64)
+    details_json: str = Field(default="{}", sa_column=Column(Text, nullable=False, server_default="{}"))
+    created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True, nullable=False))

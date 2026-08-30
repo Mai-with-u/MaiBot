@@ -60,6 +60,7 @@ const expectedPaths = [
   '/reasoning-process',
   '/planner-monitor',
   '/chat-management',
+  '/workspaces',
   '/chat',
   '/settings',
   '/config/pack-market',

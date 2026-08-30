@@ -217,6 +217,13 @@ const chatManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/chat-management'), 'ChatManagementPage'),
 })
 
+// Workspace 子系统管理路由
+const workspacesRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/workspaces',
+  component: lazyRouteComponent(() => import('./routes/workspaces'), 'WorkspacesPage'),
+})
+
 // 外部程序嵌入用聊天室路由，不挂载 dashboard 顶栏
 const chatEmbedRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -396,6 +403,7 @@ const routeTree = rootRoute.addChildren([
     reasoningProcessRoute,
     plannerMonitorRoute,
     chatManagementRoute,
+    workspacesRoute,
     chatRoute,
     settingsRoute,
     packMarketRoute,

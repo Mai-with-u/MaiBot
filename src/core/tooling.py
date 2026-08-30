@@ -181,6 +181,9 @@ class ToolExecutionContext:
     group_id: str = ""
     user_id: str = ""
     platform: str = ""
+    workspace_id: str = ""
+    memory_space_id: str = ""
+    workspace_policy_revision: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -194,6 +197,21 @@ class ToolAvailabilityContext:
     group_id: str = ""
     user_id: str = ""
     platform: str = ""
+    workspace_id: str = ""
+    memory_space_id: str = ""
+    workspace_policy_revision: int = 0
+    inherit_global_tools: bool = True
+    allowed_tools: frozenset[str] = field(default_factory=frozenset)
+    denied_tools: frozenset[str] = field(default_factory=frozenset)
+
+    def is_tool_allowed(self, tool_name: str) -> bool:
+        """根据当前 Workspace 策略判断工具是否应暴露。"""
+
+        if tool_name in self.denied_tools:
+            return False
+        if self.inherit_global_tools:
+            return True
+        return tool_name in self.allowed_tools
 
 
 @dataclass(slots=True)
@@ -311,6 +329,8 @@ class ToolRegistry:
                     continue
                 seen_names.add(spec.name)
                 collected_specs.append(spec)
+        if context is not None and context.workspace_id:
+            return [spec for spec in collected_specs if context.is_tool_allowed(spec.name)]
         return collected_specs
 
     async def get_tool_spec(
@@ -384,7 +404,21 @@ class ToolRegistry:
                 group_id=context.group_id,
                 user_id=context.user_id,
                 platform=context.platform,
+                workspace_id=context.workspace_id,
+                memory_space_id=context.memory_space_id,
+                workspace_policy_revision=context.workspace_policy_revision,
+                inherit_global_tools=bool(context.metadata.get("inherit_global_tools", True)),
+                allowed_tools=frozenset(context.metadata.get("allowed_tools", ())),
+                denied_tools=frozenset(context.metadata.get("denied_tools", ())),
             )
+
+        if availability_context is not None and availability_context.workspace_id:
+            if not availability_context.is_tool_allowed(invocation.tool_name):
+                return ToolExecutionResult(
+                    tool_name=invocation.tool_name,
+                    success=False,
+                    error_message=f"当前子系统不允许使用工具：{invocation.tool_name}",
+                )
 
         for provider in self._providers:
             provider_specs = await provider.list_tools(availability_context)
