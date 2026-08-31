@@ -32,6 +32,8 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+    // CodeMirror 扩展依赖同一份 state/view 单例；混用包管理器时重复实例会导致扩展解析失败。
+    dedupe: ['@codemirror/state', '@codemirror/view'],
   },
   optimizeDeps: {
     include: ['react', 'react-dom'],
