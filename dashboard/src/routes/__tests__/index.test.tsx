@@ -432,7 +432,7 @@ describe('IndexPage 特征化', () => {
     for (const light of featureLights?.querySelectorAll(
       '[data-dashboard-feature-status-light="true"]'
     ) ?? []) {
-      expect(light).toHaveClass('rounded-full', 'border-0')
+      expect(light).toHaveClass('rounded-none', 'border-0')
     }
   })
 
