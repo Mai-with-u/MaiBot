@@ -1766,6 +1766,25 @@ function ModelConfigPageContent() {
                     }
                   />
                 </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="send_temperature" className="cursor-pointer">
+                      发送 temperature 参数
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      关闭后不发送由 MaiBot 管理的模型温度和任务温度
+                    </p>
+                  </div>
+                  <Switch
+                    id="send_temperature"
+                    checked={editingModel?.send_temperature ?? true}
+                    onCheckedChange={(checked) =>
+                      setEditingModel((prev) =>
+                        prev ? { ...prev, send_temperature: checked } : null
+                      )
+                    }
+                  />
+                </div>
               </div>
             )}
 
@@ -1794,12 +1813,15 @@ function ModelConfigPageContent() {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    启用后将覆盖「为模型分配功能」中的任务温度配置
+                    {editingModel?.send_temperature === false
+                      ? '已在高级设置中关闭 temperature 参数发送'
+                      : '启用后将覆盖「为模型分配功能」中的任务温度配置'}
                   </p>
                 </div>
                 <Switch
                   id="enable_model_temperature"
                   checked={editingModel?.temperature != null}
+                  disabled={editingModel?.send_temperature === false}
                   onCheckedChange={(checked) => {
                     if (checked) {
                       setEditingModel((prev) => prev ? { ...prev, temperature: 0.7 } : null)
@@ -1810,7 +1832,7 @@ function ModelConfigPageContent() {
                 />
               </div>
               
-              {editingModel?.temperature != null && (
+              {editingModel?.temperature != null && editingModel.send_temperature !== false && (
                 <div className="space-y-3 pt-2 border-t">
                   <div className="flex items-center justify-between gap-3">
                     <Label className="text-sm">温度值</Label>

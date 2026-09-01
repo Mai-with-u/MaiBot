@@ -358,6 +358,15 @@ describe('ModelConfigPage 特征化', () => {
 
     await user.click(within(dialog).getByRole('button', { name: '高级设置' }))
     expect(within(dialog).getByRole('switch', { name: '支持缓存' })).toBeChecked()
+    const sendTemperatureSwitch = within(dialog).getByRole('switch', {
+      name: '发送 temperature 参数',
+    })
+    const customTemperatureSwitch = within(dialog).getByRole('switch', { name: '自定义模型温度' })
+    expect(sendTemperatureSwitch).toBeChecked()
+    await user.click(sendTemperatureSwitch)
+    expect(customTemperatureSwitch).toBeDisabled()
+    await user.click(sendTemperatureSwitch)
+    expect(customTemperatureSwitch).toBeEnabled()
 
     await user.click(within(dialog).getByRole('button', { name: '已配置 2 个参数' }))
     const reopenedExtraParamsDialog = await screen.findByRole('dialog', {

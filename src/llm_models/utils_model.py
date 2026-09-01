@@ -571,6 +571,8 @@ class LLMOrchestrator:
         Returns:
             Optional[float]: 最终生效的温度参数。
         """
+        if not model_info.send_temperature:
+            return None
         if temperature is not None:
             return temperature
         if model_info.temperature is not None:

@@ -613,6 +613,7 @@ def serialize_model_info_snapshot(model_info: ModelInfo) -> dict[str, Any]:
         "max_tokens": model_info.max_tokens,
         "model_identifier": model_info.model_identifier,
         "name": model_info.name,
+        "send_temperature": model_info.send_temperature,
         "temperature": model_info.temperature,
         "visual": model_info.visual,
     }
@@ -630,6 +631,7 @@ def deserialize_model_info_snapshot(raw_model_info: Any) -> ModelInfo:
         max_tokens=raw_model_info.get("max_tokens"),
         model_identifier=str(raw_model_info.get("model_identifier") or ""),
         name=str(raw_model_info.get("name") or ""),
+        send_temperature=bool(raw_model_info.get("send_temperature", True)),
         temperature=raw_model_info.get("temperature"),
         visual=bool(raw_model_info.get("visual", False)),
     )
