@@ -24,7 +24,7 @@ def build_scoped_user_id(platform: str, user_id: str) -> str:
     """构造插件管理权限使用的跨平台用户 ID。"""
 
     normalized_platform = platform.strip().lower()
-    normalized_user_id = user_id.strip()
+    normalized_user_id = user_id.strip().lower()
     if not normalized_platform or not normalized_user_id:
         return ""
     return f"{normalized_platform}:{normalized_user_id}"
