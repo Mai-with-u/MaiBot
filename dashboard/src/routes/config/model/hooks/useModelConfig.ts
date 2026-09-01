@@ -1246,7 +1246,7 @@ export function useModelConfig() {
         } else {
           toast({
             title: testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
-            description: testResult.error || `${modelName} 未通过模型能力测试`,
+            description: `${modelName} 未通过模型能力测试，请点击“详情”查看完整错误信息`,
             variant: 'destructive',
             duration: 10000,
             action: buildModelTestDetailAction(testResult),

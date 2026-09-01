@@ -1206,8 +1206,8 @@ function ModelConfigPageContent() {
 
                 {selectedModelTestResult.error && (
                   <div>
-                    <h4 className="mb-2 text-sm font-semibold">错误信息</h4>
-                    <pre className="bg-muted max-h-40 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
+                    <h4 className="mb-2 text-sm font-semibold">完整错误信息</h4>
+                    <pre className="bg-muted overflow-auto rounded-md p-3 text-xs break-all whitespace-pre-wrap">
                       {selectedModelTestResult.error}
                     </pre>
                   </div>
