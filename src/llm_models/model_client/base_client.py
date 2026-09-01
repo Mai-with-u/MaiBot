@@ -73,7 +73,7 @@ class GenerationTrace:
 
 @dataclass(frozen=True, slots=True)
 class GenerationAttempt:
-    """一次实际 Provider 调用的完整诊断记录。"""
+    """一次实际 Provider 调用的轻量诊断记录。"""
 
     attempt_id: str
     workflow_purpose: str
@@ -89,13 +89,6 @@ class GenerationAttempt:
     client_type: str
     operation: str
     wire_protocol: str
-    request_items: Tuple[ContextItem, ...]
-    tool_definitions: Tuple[Dict[str, Any], ...]
-    request_parameters: Dict[str, Any]
-    wire_request: Any = None
-    wire_response: Any = None
-    output_items: Tuple[ModelOutputItem, ...] = ()
-    trace: GenerationTrace | None = None
     error: Dict[str, Any] | None = None
 
 

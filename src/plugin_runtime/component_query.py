@@ -846,6 +846,16 @@ class ComponentQueryService:
         """
 
         if isinstance(result, dict):
+            stop_after_execution = result.get("stop_after_execution", False)
+            if not isinstance(stop_after_execution, bool):
+                return ToolExecutionResult(
+                    tool_name=entry.name,
+                    success=False,
+                    error_message="插件工具返回字段 `stop_after_execution` 必须为布尔值。",
+                    structured_content=result,
+                    metadata={"plugin_id": entry.plugin_id},
+                )
+
             success = bool(result.get("success", True))
             content = str(result.get("content", result.get("message", "")) or "").strip()
             content_items = ComponentQueryService._parse_tool_content_items(result.get("content_items"))
@@ -860,6 +870,7 @@ class ComponentQueryService:
                 structured_content=result,
                 content_items=content_items,
                 metadata={"plugin_id": entry.plugin_id},
+                stop_after_execution=stop_after_execution,
             )
 
         if isinstance(result, (list, tuple)) and result:

@@ -208,6 +208,7 @@ class ToolExecutionResult:
     content_items: list[ToolContentItem] = field(default_factory=list)
     post_history_messages: list[Any] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    stop_after_execution: bool = False
 
     def get_history_content(self) -> str:
         """获取适合写入对话历史的结果文本。

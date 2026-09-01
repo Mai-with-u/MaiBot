@@ -15,6 +15,7 @@ tools/roleplay_benchmark/data/server.*.log
 !pytests/A_memorix_test/data/real_dialogues/private_alice_weekend.json
 pytests/A_memorix_test/data/benchmarks/results/
 data1/
+start_all_memory_limited.bat
 mongodb/
 NapCat.Framework.Windows.Once/
 NapCat.Framework.Windows.OneKey/

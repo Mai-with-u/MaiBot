@@ -141,6 +141,7 @@ export function Layout({ children }: LayoutProps) {
       }
     }
     pathToLabel['/chat'] = t('workspace.chat')
+    pathToLabel['/planner-monitor'] = t('sidebar.menu.maisakaMonitor')
     pathToLabel['/focus'] = t('sidebar.menu.focusCompanion')
     pathToLabel['/logs'] = t('workspace.logs')
     pathToLabel['/reasoning-process'] = t('sidebar.menu.reasoningProcess')

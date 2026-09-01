@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
-import type { ChatTab } from '../types'
-
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ChatWorkspaceSidebar } from '../ChatWorkspaceSidebar'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
+
+import { ChatWorkspaceSidebar } from '../ChatWorkspaceSidebar'
+import type { ChatTab } from '../types'
 
 // t 稳定引用，拼上关心的插值参数便于断言
 const { tMock } = vi.hoisted(() => ({
@@ -70,10 +71,14 @@ function renderSidebar(overrides: Partial<Parameters<typeof ChatWorkspaceSidebar
   const props: Parameters<typeof ChatWorkspaceSidebar>[0] = {
     tabs: [makeTab('webui-default')],
     activeTabId: 'webui-default',
+    activeObservedSessionId: null,
+    observedSessions: new Map(),
+    observedStageStatuses: new Map(),
     userId: 'user-a',
     userName: '人类',
     isUploadingUserAvatar: false,
     onSwitch: vi.fn(),
+    onSelectObserved: vi.fn(),
     onClose: vi.fn(),
     onUpdateUserAvatar: vi.fn(async () => {}),
     onUpdateUserName: vi.fn(),
@@ -143,6 +148,69 @@ describe('ChatWorkspaceSidebar', () => {
     expect(container.querySelector('[class*="bg-muted-foreground/40"]')).not.toBeNull()
   })
 
+  it('展示全部观察聊天流并按活跃时间排序，选择后进入只读观察', async () => {
+    const user = userEvent.setup()
+    const sessions = new Map<string, SessionInfo>([
+      [
+        'old-session',
+        {
+          sessionId: 'old-session',
+          sessionName: '旧群聊',
+          isGroupChat: true,
+          groupId: 'group-old',
+          platform: 'qq',
+          lastActivity: 1,
+          eventCount: 3,
+        },
+      ],
+      [
+        'new-session',
+        {
+          sessionId: 'new-session',
+          sessionName: '新的私聊',
+          isGroupChat: false,
+          userId: 'user-new',
+          platform: 'qq',
+          lastActivity: 2,
+          eventCount: 5,
+        },
+      ],
+    ])
+    const statuses = new Map<string, StageStatusInfo>([
+      [
+        'new-session',
+        {
+          sessionId: 'new-session',
+          stage: '正在思考',
+          detail: '',
+          roundText: '',
+          agentState: 'running',
+          stageStartedAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    ])
+    const { props } = renderSidebar({
+      activeObservedSessionId: 'new-session',
+      observedSessions: sessions,
+      observedStageStatuses: statuses,
+    })
+
+    expect(screen.getByText('chat.sidebar.myChats')).toBeInTheDocument()
+    expect(screen.getByText('chat.sidebar.observedChats')).toBeInTheDocument()
+    const observedButtons = screen
+      .getAllByRole('button')
+      .filter((button) => /新的私聊|旧群聊/.test(button.textContent ?? ''))
+    expect(observedButtons.map((button) => button.textContent)).toEqual([
+      expect.stringContaining('新的私聊'),
+      expect.stringContaining('旧群聊'),
+    ])
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /旧群聊/ }))
+    expect(props.onSelectObserved).toHaveBeenCalledWith('old-session')
+  })
+
   it('编辑昵称后按 Enter 提交去除首尾空白', async () => {
     const user = userEvent.setup()
     const { props } = renderSidebar()
@@ -155,9 +223,7 @@ describe('ChatWorkspaceSidebar', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(props.onUpdateUserName).toHaveBeenCalledWith('新名字')
     // 提交后退出编辑态
-    expect(
-      screen.queryByPlaceholderText('chat.identity.namePlaceholder')
-    ).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('chat.identity.namePlaceholder')).not.toBeInTheDocument()
   })
 
   it('空昵称提交时回退默认昵称（点击保存按钮）', async () => {
@@ -180,9 +246,7 @@ describe('ChatWorkspaceSidebar', () => {
     fireEvent.change(input, { target: { value: '改了一半' } })
     fireEvent.keyDown(input, { key: 'Escape' })
 
-    expect(
-      screen.queryByPlaceholderText('chat.identity.namePlaceholder')
-    ).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('chat.identity.namePlaceholder')).not.toBeInTheDocument()
     expect(props.onUpdateUserName).not.toHaveBeenCalled()
     // 原昵称保持展示
     expect(screen.getByText('人类')).toBeInTheDocument()

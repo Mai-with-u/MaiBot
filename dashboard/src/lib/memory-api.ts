@@ -54,6 +54,7 @@ export interface MemoryGraphSearchItem {
   entity_name?: string
   entity_hash?: string
   appearance_count?: number
+  active_evidence_count?: number
   subject?: string
   predicate?: string
   object?: string
@@ -155,6 +156,7 @@ export interface MemoryGraphNodeDetailPayload {
     content: string
     hash?: string
     appearance_count?: number
+    active_evidence_count?: number
   }
   relations: MemoryGraphRelationDetailPayload[]
   paragraphs: MemoryGraphParagraphDetailPayload[]
@@ -173,6 +175,128 @@ export interface MemoryGraphParagraphDetailResponsePayload {
   success: boolean
   paragraph: MemoryGraphParagraphDetailPayload
   evidence_graph: MemoryEvidenceGraphPayload
+}
+
+export type MemoryRecordType = 'paragraph' | 'entity' | 'relation' | 'fact'
+
+export interface MemoryRecordPayload {
+  type: MemoryRecordType
+  id: string
+  title: string
+  summary: string
+  source: string
+  status: string
+  created_at?: number | null
+  updated_at?: number | null
+  metadata: Record<string, unknown>
+}
+
+export interface MemoryRecordSearchPayload {
+  success: boolean
+  query: string
+  types: MemoryRecordType[]
+  include_inactive: boolean
+  limit: number
+  count: number
+  counts: Partial<Record<MemoryRecordType, number>>
+  items: MemoryRecordPayload[]
+}
+
+export interface MemoryRecordEpisodePayload {
+  id: string
+  title: string
+  summary: string
+  source: string
+  paragraph_count: number
+  event_time_start?: number | null
+  event_time_end?: number | null
+  updated_at?: number | null
+}
+
+export interface MemoryRecordProfilePayload {
+  person_id: string
+  profile_version: number
+  profile_text: string
+  updated_at?: number | null
+  source_note: string
+}
+
+export interface MemoryRecordRelatedPayload {
+  paragraphs: MemoryRecordPayload[]
+  entities: MemoryRecordPayload[]
+  relations: MemoryRecordPayload[]
+  facts: MemoryRecordPayload[]
+  episodes: MemoryRecordEpisodePayload[]
+  profiles: MemoryRecordProfilePayload[]
+}
+
+export interface MemoryRecordFactEvidencePayload extends Record<string, unknown> {
+  evidence_type?: string
+  evidence_id?: string
+  stance?: string
+  weight?: number
+  observed_at?: number | null
+  metadata?: Record<string, unknown>
+}
+
+export interface MemoryRecordFactTransitionPayload extends Record<string, unknown> {
+  transition_id?: string
+  old_claim_id?: string
+  new_claim_id?: string
+  transition_type?: string
+  reason?: string
+  evidence_type?: string
+  evidence_id?: string
+  created_at?: number | null
+}
+
+export interface MemoryRecordGraphJobPayload extends Record<string, unknown> {
+  relation_hash?: string
+  desired_active?: number | boolean
+  status?: string
+  attempt_count?: number
+  last_error?: string
+  updated_at?: number | null
+}
+
+export interface MemoryRecordContextPayload {
+  success: boolean
+  record: MemoryRecordPayload
+  related: MemoryRecordRelatedPayload
+  counts: Record<keyof MemoryRecordRelatedPayload, number>
+  fact_evidence: MemoryRecordFactEvidencePayload[]
+  fact_transitions: MemoryRecordFactTransitionPayload[]
+  projection: {
+    graph_jobs: MemoryRecordGraphJobPayload[]
+    graph_pending_count: number
+  }
+  available_actions: string[]
+}
+
+export interface MemoryFactWritePayload {
+  scope_type: 'person' | 'chat'
+  scope_id: string
+  fact_key: string
+  value_text: string
+  polarity?: 'positive' | 'negative'
+  cardinality?: 'single' | 'set'
+  stability?: 'stable' | 'temporal' | 'uncertain'
+  profile_section?: string
+  authority?: 'manual' | 'direct_user' | 'imported' | 'summary_derived'
+  confidence?: number
+  valid_from?: number | null
+  valid_to?: number | null
+  reason?: string
+  updated_by?: string
+}
+
+export interface MemoryFactActionPayload extends Record<string, unknown> {
+  success: boolean
+  claim?: Record<string, unknown>
+  previous_claim_id?: string
+  replaced?: boolean
+  refresh_queued?: boolean
+  error?: string
 }
 
 export interface MemoryVectorStoreSnapshot {
@@ -1232,6 +1356,21 @@ export interface MemoryProfileOverridePayload extends Record<string, unknown> {
   error?: string
 }
 
+export interface MemoryProfileAliasesPayload extends Record<string, unknown> {
+  success: boolean
+  person_id?: string
+  primary_name?: string
+  derived_aliases?: string[]
+  suggested_aliases?: string[]
+  manual_aliases?: string[]
+  effective_aliases?: string[]
+  has_override?: boolean
+  override?: Record<string, unknown> | null
+  refresh_queued?: boolean
+  deleted?: boolean
+  error?: string
+}
+
 export interface MemoryMaintenanceItemPayload extends Record<string, unknown> {
   hash?: string
   relation_hash?: string
@@ -1255,6 +1394,92 @@ export interface MemoryMaintenanceActionPayload extends Record<string, unknown> 
   success: boolean
   detail?: string
   error?: string
+}
+
+export async function searchMemoryRecords(
+  options: {
+    query?: string
+    types?: MemoryRecordType[]
+    limit?: number
+    includeInactive?: boolean
+  } = {}
+): Promise<MemoryRecordSearchPayload> {
+  const params = new URLSearchParams({
+    query: options.query ?? '',
+    types: (options.types ?? []).join(','),
+    limit: String(options.limit ?? 80),
+    include_inactive: String(options.includeInactive ?? false),
+  })
+  return requestJson<MemoryRecordSearchPayload>(`/records/search?${params.toString()}`)
+}
+
+export async function getMemoryRecordContext(
+  recordType: MemoryRecordType,
+  recordId: string,
+  limit: number = 50
+): Promise<MemoryRecordContextPayload> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  return requestJson<MemoryRecordContextPayload>(
+    `/records/${encodeURIComponent(recordType)}/${encodeURIComponent(recordId)}?${params.toString()}`
+  )
+}
+
+export async function createMemoryFact(
+  payload: MemoryFactWritePayload
+): Promise<MemoryFactActionPayload> {
+  return requestJson<MemoryFactActionPayload>('/facts', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function updateMemoryFact(
+  claimId: string,
+  payload: MemoryFactWritePayload
+): Promise<MemoryFactActionPayload> {
+  return requestJson<MemoryFactActionPayload>(`/facts/${encodeURIComponent(claimId)}`, {
+    method: 'PATCH',
+    body: {
+      fact_key: payload.fact_key,
+      value_text: payload.value_text,
+      polarity: payload.polarity,
+      cardinality: payload.cardinality,
+      stability: payload.stability,
+      profile_section: payload.profile_section,
+      authority: payload.authority,
+      confidence: payload.confidence,
+      valid_from: payload.valid_from,
+      valid_to: payload.valid_to,
+      reason: payload.reason,
+      updated_by: payload.updated_by,
+    },
+  })
+}
+
+export async function retractMemoryFact(
+  claimId: string,
+  reason: string
+): Promise<MemoryFactActionPayload> {
+  return requestJson<MemoryFactActionPayload>(
+    `/facts/${encodeURIComponent(claimId)}/retract`,
+    {
+      method: 'POST',
+      body: { reason, requested_by: 'knowledge_base' },
+    }
+  )
+}
+
+export async function restoreMemoryFact(
+  claimId: string,
+  reason: string
+): Promise<MemoryFactActionPayload> {
+  return requestJson<MemoryFactActionPayload>(
+    `/facts/${encodeURIComponent(claimId)}/restore`,
+    {
+      method: 'POST',
+      body: { reason, requested_by: 'knowledge_base' },
+    }
+  )
 }
 
 export async function getMemoryGraph(limit: number = 120): Promise<MemoryGraphPayload> {
@@ -1619,6 +1844,44 @@ export async function deleteMemoryProfileOverride(
 ): Promise<MemoryProfileOverridePayload> {
   return requestJson<MemoryProfileOverridePayload>(
     `/profiles/override/${encodeURIComponent(personId)}`,
+    {
+      method: 'DELETE',
+    }
+  )
+}
+
+export async function getMemoryProfileAliases(
+  personId: string
+): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(personId)}/aliases`
+  )
+}
+
+export async function setMemoryProfileAliases(payload: {
+  person_id: string
+  aliases: string[]
+  updated_by?: string
+  source?: string
+}): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(payload.person_id)}/aliases`,
+    {
+      method: 'PUT',
+      body: {
+        aliases: payload.aliases,
+        updated_by: payload.updated_by,
+        source: payload.source,
+      },
+    }
+  )
+}
+
+export async function deleteMemoryProfileAliases(
+  personId: string
+): Promise<MemoryProfileAliasesPayload> {
+  return requestJson<MemoryProfileAliasesPayload>(
+    `/profiles/${encodeURIComponent(personId)}/aliases`,
     {
       method: 'DELETE',
     }

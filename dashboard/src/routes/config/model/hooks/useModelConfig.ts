@@ -429,6 +429,7 @@ export function useModelConfig() {
       price_out: model.price_out ?? 0,
       cache: model.cache ?? false,
       cache_price_in: model.cache_price_in ?? 0,
+      send_temperature: model.send_temperature ?? true,
       visual: model.visual ?? false,
       force_stream_mode: model.force_stream_mode ?? false,
       extra_params: model.extra_params ?? {},
@@ -865,6 +866,7 @@ export function useModelConfig() {
           cache: isDeepSeekTemplateProvider(defaultProvider),
           cache_price_in: 0,
           temperature: null,
+          send_temperature: true,
           max_tokens: null,
           visual: false,
           force_stream_mode: false,
@@ -980,6 +982,7 @@ export function useModelConfig() {
       price_out: editingModel.price_out ?? 0,
       cache: editingModel.cache ?? false,
       cache_price_in: editingModel.cache_price_in ?? 0,
+      send_temperature: editingModel.send_temperature ?? true,
       visual: editingModel.visual ?? false,
       force_stream_mode: editingModel.force_stream_mode ?? false,
       extra_params: editingModel.extra_params ?? {},
@@ -1243,7 +1246,7 @@ export function useModelConfig() {
         } else {
           toast({
             title: testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
-            description: testResult.error || `${modelName} 未通过模型能力测试`,
+            description: `${modelName} 未通过模型能力测试，请点击“详情”查看完整错误信息`,
             variant: 'destructive',
             duration: 10000,
             action: buildModelTestDetailAction(testResult),

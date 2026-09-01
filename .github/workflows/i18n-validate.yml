@@ -8,6 +8,8 @@ on:
       - "dashboard/src/i18n/index.ts"
       - "dashboard/src/i18n/locales/*.json"
       - "scripts/i18n_validate.py"
+      - ".github/scripts/check_i18n_regressions.py"
+      - ".github/workflows/i18n-validate.yml"
       - "src/common/i18n/**/*.py"
       - "src/common/prompt_i18n.py"
       - "src/prompt/prompt_manager.py"
@@ -21,6 +23,8 @@ on:
       - "dashboard/src/i18n/index.ts"
       - "dashboard/src/i18n/locales/*.json"
       - "scripts/i18n_validate.py"
+      - ".github/scripts/check_i18n_regressions.py"
+      - ".github/workflows/i18n-validate.yml"
       - "src/common/i18n/**/*.py"
       - "src/common/prompt_i18n.py"
       - "src/prompt/prompt_manager.py"
@@ -31,8 +35,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate locale files
-        run: python scripts/i18n_validate.py
+      - uses: astral-sh/setup-uv@v6
+      - name: 校验新增的国际化问题
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: uv run --isolated --no-project --with "tomlkit>=0.13.3" python .github/scripts/check_i18n_regressions.py --baseline-ref "$BASE_REF"

@@ -7,14 +7,15 @@
  *
  * 注意：vitest.config.ts 开启了 mockReset，所有 vi.fn 的实现必须在 beforeEach 里重建。
  */
-import type { MaisakaMonitorEvent, StageStatusEvent } from '@/lib/maisaka-monitor-client'
-import type { UserEmojiItem } from '@/lib/user-emoji-api'
-import type { ChatImageAttachment, ChatMessage, ChatRuntimeStatus, ChatTab } from '../types'
-
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { MaisakaMonitorEvent, StageStatusEvent } from '@/lib/maisaka-monitor-client'
+import type { UserEmojiItem } from '@/lib/user-emoji-api'
+import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
+
 import { ChatPage } from '../index'
+import type { ChatImageAttachment, ChatMessage, ChatRuntimeStatus, ChatTab } from '../types'
 
 // ---------- 桩组件 props 类型（只声明页面实际传入且测试用到的字段） ----------
 
@@ -43,13 +44,22 @@ interface ComposerStubProps {
 interface SidebarStubProps {
   tabs: ChatTab[]
   activeTabId: string
+  activeObservedSessionId: string | null
+  observedSessions: Map<string, SessionInfo>
+  observedStageStatuses: Map<string, StageStatusInfo>
   userId: string
   userName: string
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
+  onSelectObserved: (sessionId: string) => void
   onClose: (tabId: string) => void
   onUpdateUserAvatar: (file: File) => Promise<void> | void
   onUpdateUserName: (name: string) => void
+}
+
+interface MonitorStubProps {
+  embedded?: boolean
+  reasoningReturnTo?: string
 }
 
 // ---------- 共享 mock 状态（vi.hoisted 保证在 vi.mock 工厂之前初始化） ----------
@@ -64,12 +74,16 @@ const mocks = vi.hoisted(() => ({
   onSessionMessage: vi.fn(),
   onConnectionChange: vi.fn(),
   monitorSubscribe: vi.fn(),
+  monitorHook: vi.fn(),
+  setSelectedObservedSession: vi.fn(),
   uploadWebuiUserAvatar: vi.fn(),
   loadUserEmojiPayload: vi.fn(),
   // 会话消息监听器：tabId -> 监听器列表，由 onSessionMessage 的实现填充
   sessionListeners: new Map<string, Array<(message: Record<string, unknown>) => void>>(),
   connectionListeners: [] as Array<(connected: boolean) => void>,
   monitorListeners: [] as Array<(event: MaisakaMonitorEvent) => void>,
+  observedSessions: new Map<string, SessionInfo>(),
+  observedStageStatuses: new Map<string, StageStatusInfo>(),
   // 各桩组件最近一次接收到的 props
   composer: null as ComposerStubProps | null,
   sidebar: null as SidebarStubProps | null,
@@ -119,6 +133,20 @@ vi.mock('@/lib/chat-ws-client', () => ({
 
 vi.mock('@/lib/maisaka-monitor-client', () => ({
   maisakaMonitorClient: { subscribe: mocks.monitorSubscribe },
+}))
+
+vi.mock('@/routes/monitor/use-maisaka-monitor', () => ({
+  useMaisakaMonitor: mocks.monitorHook,
+}))
+
+vi.mock('@/routes/monitor/maisaka-monitor', () => ({
+  MaisakaMonitor: (props: MonitorStubProps) => (
+    <div
+      data-testid="maisaka-monitor"
+      data-embedded={String(props.embedded)}
+      data-return-to={props.reasoningReturnTo}
+    />
+  ),
 }))
 
 vi.mock('@/lib/avatar-url', () => ({
@@ -178,11 +206,25 @@ vi.mock('../ChatWorkspaceSidebar', () => ({
   ChatWorkspaceSidebar: (props: SidebarStubProps) => {
     mocks.sidebar = props
     return (
-      <div data-testid="sidebar" data-active={props.activeTabId}>
+      <div
+        data-testid="sidebar"
+        data-active={props.activeTabId}
+        data-active-observed={props.activeObservedSessionId ?? ''}
+      >
         {props.tabs.map((tab) => (
           <div key={tab.id} data-testid={`tab-${tab.id}`} data-connected={String(tab.isConnected)}>
             {tab.label}
           </div>
+        ))}
+        {Array.from(props.observedSessions.values()).map((session) => (
+          <button
+            key={session.sessionId}
+            type="button"
+            data-testid={`observed-${session.sessionId}`}
+            onClick={() => props.onSelectObserved(session.sessionId)}
+          >
+            {session.sessionName}
+          </button>
         ))}
       </div>
     )
@@ -286,6 +328,7 @@ async function renderConnectedPage() {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/')
   localStorage.clear()
   localStorage.setItem('maibot_webui_user_id', USER_ID)
   localStorage.setItem('maibot_webui_user_name', USER_NAME)
@@ -293,6 +336,8 @@ beforeEach(() => {
   mocks.sessionListeners.clear()
   mocks.connectionListeners.length = 0
   mocks.monitorListeners.length = 0
+  mocks.observedSessions.clear()
+  mocks.observedStageStatuses.clear()
   mocks.composer = null
   mocks.sidebar = null
   mocks.messageList = null
@@ -330,6 +375,11 @@ beforeEach(() => {
       return async () => {}
     }
   )
+  mocks.monitorHook.mockReturnValue({
+    sessions: mocks.observedSessions,
+    stageStatuses: mocks.observedStageStatuses,
+    setSelectedSession: mocks.setSelectedObservedSession,
+  })
 })
 
 afterEach(() => cleanup())
@@ -542,6 +592,49 @@ describe('聊天页 ChatPage', () => {
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
   })
 
+  it('从统一侧边栏选择真实聊天流后显示只读观察，切回本地聊天恢复输入区', async () => {
+    mocks.observedSessions.set('observed-1', {
+      sessionId: 'observed-1',
+      sessionName: '测试群(123)',
+      isGroupChat: true,
+      groupId: '123',
+      platform: 'qq',
+      lastActivity: 10,
+      eventCount: 4,
+    })
+    await renderConnectedPage()
+
+    act(() => sidebarProps().onSelectObserved('observed-1'))
+
+    expect(mocks.setSelectedObservedSession).toHaveBeenCalledWith('observed-1')
+    expect(screen.getByTestId('sidebar')).toHaveAttribute('data-active-observed', 'observed-1')
+    expect(screen.getByTestId('maisaka-monitor')).toHaveAttribute('data-embedded', 'true')
+    expect(screen.getByTestId('maisaka-monitor')).toHaveAttribute(
+      'data-return-to',
+      '/chat?observe=observed-1'
+    )
+    expect(screen.queryByTestId('composer')).not.toBeInTheDocument()
+
+    act(() => sidebarProps().onSwitch('webui-default'))
+    expect(screen.getByTestId('composer')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar')).toHaveAttribute('data-active-observed', '')
+  })
+
+  it('从推理详情携带 observe 参数返回时恢复原聊天流观察视图', async () => {
+    window.history.replaceState({}, '', '/chat?observe=session%2Fwith%2Fslash')
+
+    render(<ChatPage />)
+
+    await waitFor(() => {
+      expect(mocks.setSelectedObservedSession).toHaveBeenCalledWith('session/with/slash')
+    })
+    expect(screen.getByTestId('maisaka-monitor')).toHaveAttribute(
+      'data-return-to',
+      '/chat?observe=session%2Fwith%2Fslash'
+    )
+    expect(screen.queryByTestId('composer')).not.toBeInTheDocument()
+  })
+
   it('MaiSaka 监控：会话身份晚于快照到达时恢复当前思考状态', async () => {
     await renderConnectedPage()
 
@@ -686,9 +779,7 @@ describe('聊天页 ChatPage', () => {
       await sidebarProps().onUpdateUserAvatar(okFile)
     })
     expect(mocks.uploadWebuiUserAvatar).toHaveBeenCalledWith(USER_ID, okFile)
-    expect(
-      Number(localStorage.getItem('maibot_webui_user_avatar_version'))
-    ).toBeGreaterThan(0)
+    expect(Number(localStorage.getItem('maibot_webui_user_avatar_version'))).toBeGreaterThan(0)
     expect(mocks.toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'chat.toast.avatarSaved' })
     )

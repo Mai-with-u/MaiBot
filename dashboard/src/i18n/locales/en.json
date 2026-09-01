@@ -237,7 +237,12 @@
       "conversations": "Chat conversations",
       "emptyPreview": "No messages yet",
       "identityHint": "Local chat identity",
+      "myChats": "Chats with Mai",
       "newVirtual": "New virtual identity chat",
+      "observedAvatarAlt": "{{name}}'s avatar",
+      "observedBadge": "Observe",
+      "observedChats": "Mai's chat streams",
+      "observedPreview": "Read-only observation",
       "online": "Online",
       "offline": "Offline",
       "subtitle": "{{count}} conversations",
@@ -248,7 +253,8 @@
       "editName": "Edit nickname",
       "saveName": "Save",
       "savingAvatar": "Saving avatar",
-      "userAvatarAlt": "{{name}}'s avatar"
+      "userAvatarAlt": "{{name}}'s avatar",
+      "waitingObservedChats": "Waiting for chat streams…"
     },
     "dialog": {
       "create": "Create chat",
@@ -1068,12 +1074,45 @@
     "navigatedTo": "Navigated to {{page}}"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "Active",
+        "inactive": "Inactive",
+        "deleted": "Deleted",
+        "conflicted": "Conflicted",
+        "superseded": "Superseded",
+        "retracted": "Retracted"
+      },
+      "evidenceType": {
+        "paragraph": "Paragraph",
+        "relation": "Relation",
+        "entity": "Entity",
+        "fact": "Fact",
+        "episode": "Episode",
+        "profile": "Profile",
+        "manual": "Manual",
+        "unknown": "Unknown"
+      },
+      "evidenceStance": {
+        "support": "Support",
+        "refute": "Refute"
+      },
+      "graphJobStatus": {
+        "pending": "Pending",
+        "running": "Running",
+        "failed": "Failed",
+        "completed": "Completed",
+        "cancelled": "Cancelled"
+      }
+    },
     "tuning": {
       "task": {
         "title": "Tuning Task",
         "description": "Retrieval parameter evaluation"
       },
       "form": {
+        "parameters": "Tuning parameters",
+        "parametersDescription": "These settings affect only the next tuning task. The defaults are suitable for most cases.",
         "strategy": "Tuning Strategy",
         "objective": "Objective",
         "intensity": "Evaluation Depth",

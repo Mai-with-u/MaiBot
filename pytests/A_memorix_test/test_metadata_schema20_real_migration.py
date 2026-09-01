@@ -583,7 +583,7 @@ def _table_structure_fingerprint(store: MetadataStore, table: str) -> dict[str, 
     }
 
 
-def test_schema16_database_migrates_to_schema21_without_losing_live_data(tmp_path: Path) -> None:
+def test_schema16_database_migrates_to_schema22_without_losing_live_data(tmp_path: Path) -> None:
     bootstrap = MetadataStore(data_dir=tmp_path)
     bootstrap.connect()
     database_path = bootstrap.get_db_path()
@@ -593,7 +593,7 @@ def test_schema16_database_migrates_to_schema21_without_losing_live_data(tmp_pat
     migrated = MetadataStore(data_dir=tmp_path)
     migrated.connect()
     try:
-        assert migrated.get_schema_version() == SCHEMA_VERSION == 21
+        assert migrated.get_schema_version() == SCHEMA_VERSION == 22
 
         paragraphs = {
             str(row["hash"]): dict(row)
@@ -825,7 +825,7 @@ def test_schema16_database_migrates_to_schema21_without_losing_live_data(tmp_pat
     reopened = MetadataStore(data_dir=tmp_path)
     reopened.connect()
     try:
-        assert reopened.get_schema_version() == 21
+        assert reopened.get_schema_version() == 22
         assert len(reopened.query("SELECT hash FROM paragraphs")) == 4
         assert len(reopened.query("SELECT hash FROM relations")) == 3
         assert len(reopened.query("SELECT source FROM episode_rebuild_sources")) == 7
@@ -844,7 +844,7 @@ def test_schema16_migration_repairs_known_orphans_and_creates_backup(tmp_path: P
     migrated = MetadataStore(data_dir=tmp_path)
     migrated.connect()
     try:
-        assert migrated.get_schema_version() == SCHEMA_VERSION == 21
+        assert migrated.get_schema_version() == SCHEMA_VERSION == 22
         assert migrated.query("PRAGMA foreign_key_check") == []
         assert migrated.query(
             "SELECT 1 FROM paragraph_relations WHERE paragraph_hash = ?",
@@ -876,7 +876,7 @@ def test_schema16_migration_repairs_known_orphans_and_creates_backup(tmp_path: P
         )
         assert stale_mark == {"task_id": None, "reason": "orphan-task"}
 
-        backup_path = tmp_path / "metadata.db.pre-schema16-to-21-repair.bak"
+        backup_path = tmp_path / "metadata.db.pre-schema16-to-22-repair.bak"
         assert backup_path.is_file()
         with sqlite3.connect(backup_path) as backup_connection:
             assert backup_connection.execute(
@@ -903,10 +903,10 @@ def test_schema16_migration_preserves_unknown_foreign_key_violation(tmp_path: Pa
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM unknown_child").fetchone()[0] == 1
         assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 16
-    assert (tmp_path / "metadata.db.pre-schema16-to-21-repair.bak").is_file()
+    assert (tmp_path / "metadata.db.pre-schema16-to-22-repair.bak").is_file()
 
 
-def test_schema16_migration_matches_fresh_schema21_structure(tmp_path: Path) -> None:
+def test_schema16_migration_matches_fresh_schema22_structure(tmp_path: Path) -> None:
     fresh = MetadataStore(data_dir=tmp_path / "fresh")
     fresh.connect()
 

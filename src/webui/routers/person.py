@@ -149,6 +149,7 @@ async def get_person_list(
     search: Optional[str] = Query(None, description="搜索关键词"),
     is_known: Optional[bool] = Query(None, description="是否已认识筛选"),
     platform: Optional[str] = Query(None, description="平台筛选"),
+    user_id: Optional[str] = Query(None, description="平台用户 ID 精确筛选"),
 ) -> PersonListResponse:
     """获取人物信息列表。
 
@@ -158,6 +159,7 @@ async def get_person_list(
         search: 搜索关键词，用于匹配人物名称、昵称和用户 ID。
         is_known: 是否已认识筛选条件。
         platform: 平台筛选条件。
+        user_id: 平台用户 ID 精确筛选条件。
 
     Returns:
         PersonListResponse: 分页后的人物信息列表。
@@ -181,6 +183,8 @@ async def get_person_list(
         # 平台过滤
         if platform:
             statement = statement.where(col(PersonInfo.platform) == platform)
+        if user_id:
+            statement = statement.where(col(PersonInfo.user_id) == user_id)
 
         # 排序：最后更新时间倒序（NULL 值放在最后）
         # Peewee 不支持 nulls_last，使用 CASE WHEN 来实现
@@ -206,6 +210,8 @@ async def get_person_list(
                 count_statement = count_statement.where(col(PersonInfo.is_known) == is_known)
             if platform:
                 count_statement = count_statement.where(col(PersonInfo.platform) == platform)
+            if user_id:
+                count_statement = count_statement.where(col(PersonInfo.user_id) == user_id)
             total = len(session.exec(count_statement).all())
             data = [person_to_response(person) for person in persons]
 

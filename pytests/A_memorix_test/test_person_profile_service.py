@@ -21,6 +21,7 @@ class FakeMetadataStore:
                 "status": "active",
             }
         ]
+        self.alias_override = None
 
     def get_latest_person_profile_snapshot(self, person_id: str):
         return next(
@@ -74,6 +75,16 @@ class FakeMetadataStore:
         return {}
 
     @staticmethod
+    def get_paragraphs_by_entity(entity_name: str):
+        del entity_name
+        return []
+
+    @staticmethod
+    def get_paragraph_entities(paragraph_hash: str):
+        del paragraph_hash
+        return []
+
+    @staticmethod
     def get_relation_status_batch(relation_hashes):
         del relation_hashes
         return {}
@@ -87,6 +98,10 @@ class FakeMetadataStore:
     def get_person_profile_override(person_id: str):
         del person_id
         return None
+
+    def get_person_profile_alias_override(self, person_id: str):
+        assert person_id == "person-1"
+        return self.alias_override
 
     def upsert_person_profile_snapshot(self, **kwargs):
         snapshot = {
@@ -130,6 +145,107 @@ class FakeRetriever:
                 metadata={"source_type": "chat_summary", "person_id": "person-1"},
             )
         ]
+
+
+def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
+    metadata_store = FakeMetadataStore()
+    metadata_store.alias_override = {
+        "person_id": "person-1",
+        "aliases": ["新别名", "正式称呼"],
+    }
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["旧昵称"], "正式称呼", ["记忆特征"])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["旧昵称"]
+    assert details["manual_aliases"] == ["新别名", "正式称呼"]
+    assert details["effective_aliases"] == ["新别名", "正式称呼"]
+    assert details["has_override"] is True
+    assert service.get_person_aliases("person-1") == (["新别名", "正式称呼"], "正式称呼", ["记忆特征"])
+
+
+def test_person_profile_cooccurring_entities_are_suggestions_not_effective_aliases() -> None:
+    metadata_store = FakeMetadataStore()
+    queried_entities = []
+
+    def get_paragraphs_by_entity(entity_name: str):
+        queried_entities.append(entity_name)
+        return [{"hash": "paragraph-1"}]
+
+    metadata_store.get_paragraphs_by_entity = get_paragraphs_by_entity
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: [
+        {"name": "测试用户"},
+        {"name": "产品经理"},
+        {"name": "向量索引"},
+    ]
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["测试用户"]
+    assert details["suggested_aliases"] == ["产品经理", "向量索引"]
+    assert details["effective_aliases"] == ["测试用户"]
+    assert queried_entities == ["测试用户"]
+
+
+def test_person_profile_alias_suggestions_merge_paragraphs_from_trusted_names() -> None:
+    metadata_store = FakeMetadataStore()
+    queried_entities = []
+
+    def get_paragraphs_by_entity(entity_name: str):
+        queried_entities.append(entity_name)
+        return {
+            "测试用户": [{"hash": "paragraph-1"}],
+            "小测": [{"hash": "paragraph-1"}, {"hash": "paragraph-2"}],
+        }.get(entity_name, [])
+
+    metadata_store.get_paragraphs_by_entity = get_paragraphs_by_entity
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: {
+        "paragraph-1": [{"name": "测试用户"}, {"name": "产品经理"}],
+        "paragraph-2": [{"name": "小测"}, {"name": "摄影"}],
+    }[paragraph_hash]
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+    service._get_derived_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户", [])
+
+    details = service.get_person_alias_details("person-1")
+
+    assert queried_entities == ["测试用户", "小测"]
+    assert details["suggested_aliases"] == ["产品经理", "摄影"]
+
+
+def test_person_profile_without_master_record_uses_person_id_as_trusted_alias(monkeypatch) -> None:
+    class EmptyPersonSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            del exc_type, exc_value, traceback
+
+        def exec(self, statement):
+            del statement
+            return self
+
+        @staticmethod
+        def first():
+            return None
+
+    metadata_store = FakeMetadataStore()
+    metadata_store.get_paragraphs_by_entity = lambda entity_name: [{"hash": "paragraph-1"}]
+    metadata_store.get_paragraph_entities = lambda paragraph_hash: [
+        {"name": "person-1"},
+        {"name": "产品经理"},
+    ]
+    monkeypatch.setattr(profile_service_module, "get_db_session", lambda **kwargs: EmptyPersonSession())
+    service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
+
+    details = service.get_person_alias_details("person-1")
+
+    assert details["derived_aliases"] == ["person-1"]
+    assert details["suggested_aliases"] == ["产品经理"]
+    assert details["effective_aliases"] == ["person-1"]
+    assert details["primary_name"] == "person-1"
 
 
 @pytest.mark.asyncio

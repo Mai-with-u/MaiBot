@@ -31,37 +31,6 @@ vi.mock('@/lib/memory-api', () => ({
   rebuildMemoryEpisodes: vi.fn(),
 }))
 
-// 用按钮驱动滑块，覆盖 length<2 早退以及变更/提交时间窗口
-vi.mock('@/components/ui/slider', () => ({
-  Slider: ({
-    value,
-    onValueChange,
-    onValueCommit,
-  }: {
-    value?: number[]
-    onValueChange?: (next: number[]) => void
-    onValueCommit?: (next: number[]) => void
-  }) => {
-    const current = value ?? [0, 0]
-    return (
-      <div>
-        <button type="button" onClick={() => onValueChange?.(current.slice(0, 1))}>
-          时间轴滑块短变更
-        </button>
-        <button type="button" onClick={() => onValueChange?.([current[0] + 3600, current[1]])}>
-          时间轴滑块变更
-        </button>
-        <button type="button" onClick={() => onValueCommit?.(current.slice(0, 1))}>
-          时间轴滑块短提交
-        </button>
-        <button type="button" onClick={() => onValueCommit?.([current[0] + 7200, current[1]])}>
-          时间轴滑块提交
-        </button>
-      </div>
-    )
-  },
-}))
-
 function patchPointerCapture() {
   if (!Element.prototype.hasPointerCapture) {
     Element.prototype.hasPointerCapture = () => false
@@ -1251,33 +1220,21 @@ describe('MemoryTimelineManager 范围、筛选与分页', () => {
     expect(screen.getByText('事件20')).toBeInTheDocument()
   })
 
-  it('滑块短值忽略，变更只改草稿，提交后才重新请求', async () => {
-    vi.mocked(memoryApi.getMemoryTimeline).mockResolvedValue(
-      makeTimelinePayload([], {
-        range: { min_time: 1_700_000_000, max_time: 1_700_000_000 },
-      }),
-    )
+  it('审计范围独占整行，摘要合并到事件列表且不显示时间滑块', async () => {
     await renderTimeline({ initialChatId: 'chat-1' })
-    await waitFor(() => expect(memoryApi.getMemoryTimeline).toHaveBeenCalled())
+    const cards = document.querySelectorAll<HTMLElement>('[data-dashboard-card="true"]')
 
-    const startLabel = screen.getByText(/窗口开始：/)
-    const before = startLabel.textContent
-    const callsBefore = vi.mocked(memoryApi.getMemoryTimeline).mock.calls.length
-
-    fireEvent.click(screen.getByRole('button', { name: '时间轴滑块短变更' }))
-    fireEvent.click(screen.getByRole('button', { name: '时间轴滑块短提交' }))
-    expect(startLabel.textContent).toBe(before)
-    expect(memoryApi.getMemoryTimeline).toHaveBeenCalledTimes(callsBefore)
-
-    fireEvent.click(screen.getByRole('button', { name: '时间轴滑块变更' }))
-    expect(startLabel.textContent).not.toBe(before)
-
-    fireEvent.click(screen.getByRole('button', { name: '时间轴滑块提交' }))
-    await waitFor(() => {
-      expect(vi.mocked(memoryApi.getMemoryTimeline).mock.calls.length).toBeGreaterThan(callsBefore)
-      const last = vi.mocked(memoryApi.getMemoryTimeline).mock.calls.at(-1)?.[0]
-      expect(last?.timeStart).toBeGreaterThan(1_700_000_000)
-    })
+    expect(cards).toHaveLength(2)
+    expect(within(cards[0]).getByText('审计范围')).toBeInTheDocument()
+    expect(within(cards[1]).getByText('事件列表')).toBeInTheDocument()
+    expect(within(cards[1]).getByRole('region', { name: '变动摘要' })).toBeInTheDocument()
+    expect(screen.queryByText('选择真实聊天流与时间窗口，核对长期记忆对象的变动记录。')).not.toBeInTheDocument()
+    expect(screen.queryByText(/窗口开始：|窗口结束：/)).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '刷新时间线' }).compareDocumentPosition(
+        screen.getByRole('button', { name: '最近 24 小时' }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
   })
 
   it('过期请求的成功和失败都不会覆盖更新的结果', async () => {

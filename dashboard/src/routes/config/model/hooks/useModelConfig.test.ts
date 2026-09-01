@@ -1590,6 +1590,17 @@ describe('useModelConfig 连接测试与手动保存', () => {
       await result.current.handleTestModelCapability('chat')
     })
     expect(lastToast()?.title).toBe('模型响应异常')
+    expect(lastToast()?.description).toBe(
+      'chat 未通过模型能力测试，请点击“详情”查看完整错误信息'
+    )
+    expect(lastToast()?.description).not.toContain('空响应')
+
+    const failedResultAction = lastToast()?.action
+    expect(isValidElement(failedResultAction)).toBe(true)
+    act(() => {
+      ;(failedResultAction as { props: { onClick: () => void } }).props.onClick()
+    })
+    expect(result.current.selectedModelTestResult?.error).toBe('空响应')
 
     testModelCapabilityMock.mockResolvedValueOnce({
       success: false,
@@ -1611,7 +1622,7 @@ describe('useModelConfig 连接测试与手动保存', () => {
     expect(lastToast()).toEqual(
       expect.objectContaining({
         title: '工具调用未通过',
-        description: 'chat 未通过模型能力测试',
+        description: 'chat 未通过模型能力测试，请点击“详情”查看完整错误信息',
         variant: 'destructive',
       })
     )

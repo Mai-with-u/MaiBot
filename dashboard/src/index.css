@@ -2766,7 +2766,7 @@
   [data-dashboard-shell='true']
   [data-dashboard-feature-status-light='true'] {
   border: 0 !important;
-  border-radius: 9999px !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
 }
 

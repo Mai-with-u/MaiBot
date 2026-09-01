@@ -26,6 +26,21 @@ def test_get_all_sources_ignores_soft_deleted_paragraphs(tmp_path: Path) -> None
     assert sources[0]["count"] == 1
 
 
+def test_get_paragraphs_by_hashes_ignores_soft_deleted_paragraphs(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        live_hash = store.add_paragraph("Alice 喜欢地图", source="live-source")
+        deleted_hash = store.add_paragraph("Bob 喜欢咖啡", source="deleted-source")
+        assert store.mark_as_deleted([deleted_hash], "paragraph", reason="test_soft_delete") == 1
+
+        paragraphs = store.get_paragraphs_by_hashes([live_hash, deleted_hash])
+    finally:
+        store.close()
+
+    assert set(paragraphs) == {live_hash}
+
+
 def test_add_paragraph_merges_chat_metadata_when_content_exists(tmp_path: Path) -> None:
     store = MetadataStore(data_dir=tmp_path)
     store.connect()

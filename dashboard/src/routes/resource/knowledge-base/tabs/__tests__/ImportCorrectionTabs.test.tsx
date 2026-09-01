@@ -151,6 +151,8 @@ function makeForm(overrides: Partial<UseImportFormResult> = {}): UseImportFormRe
   return {
     importCreateMode: 'upload',
     setImportCreateMode: vi.fn(),
+    unifiedImportMode: 'file',
+    setUnifiedImportMode: vi.fn(),
     importSettings: {
       max_file_concurrency: 8,
       max_chunk_concurrency: 16,
@@ -215,42 +217,6 @@ function makeForm(overrides: Partial<UseImportFormResult> = {}): UseImportFormRe
     setConvertDimension: vi.fn(),
     convertBatchSize: '32',
     setConvertBatchSize: vi.fn(),
-    backfillLimit: '100',
-    setBackfillLimit: vi.fn(),
-    backfillDryRun: false,
-    setBackfillDryRun: vi.fn(),
-    backfillNoCreatedFallback: false,
-    setBackfillNoCreatedFallback: vi.fn(),
-    maibotSourceDb: 'data/MaiBot.db',
-    setMaibotSourceDb: vi.fn(),
-    maibotTimeFrom: '',
-    setMaibotTimeFrom: vi.fn(),
-    maibotTimeTo: '',
-    setMaibotTimeTo: vi.fn(),
-    maibotStartId: '',
-    setMaibotStartId: vi.fn(),
-    maibotEndId: '',
-    setMaibotEndId: vi.fn(),
-    maibotStreamIds: '',
-    setMaibotStreamIds: vi.fn(),
-    maibotGroupIds: '',
-    setMaibotGroupIds: vi.fn(),
-    maibotUserIds: '',
-    setMaibotUserIds: vi.fn(),
-    maibotReadBatchSize: '',
-    setMaibotReadBatchSize: vi.fn(),
-    maibotCommitWindowRows: '',
-    setMaibotCommitWindowRows: vi.fn(),
-    maibotEmbedWorkers: '',
-    setMaibotEmbedWorkers: vi.fn(),
-    maibotNoResume: false,
-    setMaibotNoResume: vi.fn(),
-    maibotResetState: false,
-    setMaibotResetState: vi.fn(),
-    maibotDryRun: false,
-    setMaibotDryRun: vi.fn(),
-    maibotVerifyOnly: false,
-    setMaibotVerifyOnly: vi.fn(),
     submitImportByMode: vi.fn(async () => {}),
     creatingImport: false,
     buildCommonImportPayload: vi.fn(() => ({})),
@@ -523,6 +489,8 @@ describe('ImportTab', () => {
 
     const submit = screen.getByRole('button', { name: '创建导入任务' })
     expect(submit).toBeDisabled()
+    expect(screen.queryByText('公共参数')).not.toBeInTheDocument()
+    expect(screen.queryByText('这些设置会应用到当前导入任务。一般保持默认即可，只在批量导入或排查问题时调整。')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
 
     await user.click(screen.getByRole('combobox', { name: '资料类别' }))
@@ -551,6 +519,7 @@ describe('ImportTab', () => {
       form: { importChatTargets: manyChats, importCommonChatId: 'g-1' },
     })
 
+    await user.click(screen.getByRole('button', { name: '导入参数' }))
     expect(screen.getByText('备用群 B')).toBeInTheDocument()
     expect(screen.queryByText('备用群 D')).not.toBeInTheDocument()
     expect(screen.getByText(/当前选择：测试群 · 账号 bot-1 · 10001/)).toBeInTheDocument()
@@ -591,7 +560,7 @@ describe('ImportTab', () => {
     expect(form.setImportCommonChatId).toHaveBeenCalledWith('')
   })
 
-  it('编辑公共参数、高级参数与上传输入', async () => {
+  it('通过省略号编辑导入参数与上传输入', async () => {
     const user = userEvent.setup()
     const { form } = renderImport({
       form: {
@@ -601,6 +570,9 @@ describe('ImportTab', () => {
       },
     })
 
+    expect(screen.queryByText('文件并发数')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '导入参数' }))
+    expect(await screen.findByRole('dialog', { name: '导入参数' })).toHaveClass('[--dialog-width:72rem]')
     fireEvent.change(controlNearLabel('文件并发数'), { target: { value: '6' } })
     expect(form.setImportCommonFileConcurrency).toHaveBeenCalledWith('6')
     fireEvent.change(controlNearLabel('分块并发数'), { target: { value: '9' } })
@@ -620,6 +592,7 @@ describe('ImportTab', () => {
     expect(form.setImportCommonForce).toHaveBeenCalledWith(true)
     expect(form.setImportCommonClearManifest).toHaveBeenCalledWith(true)
 
+    await user.click(screen.getByRole('button', { name: '关闭' }))
     expect(screen.getByText('已选择 1 个文件')).toBeInTheDocument()
     await user.click(screen.getByRole('combobox', { name: 'upload-input-mode' }))
     await user.click(screen.getByRole('option', { name: '结构化 JSON' }))
@@ -633,21 +606,21 @@ describe('ImportTab', () => {
     expect(form.setUploadFiles).toHaveBeenLastCalledWith([])
   })
 
-  it('切换导入方式并编辑各模式字段', async () => {
+  it('切换统一导入类型并编辑各模式字段', async () => {
     const user = userEvent.setup()
-    const setImportCreateMode = vi.fn()
+    const setUnifiedImportMode = vi.fn()
     const { rerender, form } = renderImport({
-      form: { setImportCreateMode, pasteName: '草稿', pasteContent: '旧内容' },
+      form: { setUnifiedImportMode, pasteName: '草稿', pasteContent: '旧内容' },
     })
 
-    await user.click(screen.getByRole('tab', { name: '粘贴导入' }))
-    expect(setImportCreateMode).toHaveBeenCalledWith('paste')
+    await user.click(screen.getByRole('tab', { name: '文本' }))
+    expect(setUnifiedImportMode).toHaveBeenCalledWith('text')
 
     rerender(
       <Tabs defaultValue="import">
         <ImportTab
           form={makeForm({
-            importCreateMode: 'paste',
+            unifiedImportMode: 'text',
             pasteName: '草稿',
             pasteContent: '旧内容',
             setPasteName: form.setPasteName,
@@ -670,7 +643,7 @@ describe('ImportTab', () => {
       <Tabs defaultValue="import">
         <ImportTab
           form={makeForm({
-            importCreateMode: 'raw_scan',
+            unifiedImportMode: 'folder',
             rawRelativePath: 'notes',
             rawGlob: '*.txt',
             setRawInputMode: form.setRawInputMode,
@@ -733,65 +706,6 @@ describe('ImportTab', () => {
     fireEvent.change(screen.getByDisplayValue('8'), { target: { value: '16' } })
     expect(form.setConvertBatchSize).toHaveBeenCalledWith('16')
 
-    rerender(
-      <Tabs defaultValue="import">
-        <ImportTab
-          form={makeForm({
-            importCreateMode: 'temporal_backfill',
-            backfillLimit: '10',
-            setBackfillLimit: form.setBackfillLimit,
-            setBackfillDryRun: form.setBackfillDryRun,
-            setBackfillNoCreatedFallback: form.setBackfillNoCreatedFallback,
-          })}
-          queue={makeQueue()}
-        />
-      </Tabs>,
-    )
-    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '20' } })
-    await user.click(checkboxNear('只预演，不写入数据'))
-    await user.click(checkboxNear('禁用创建时间回退'))
-    expect(form.setBackfillLimit).toHaveBeenCalledWith('20')
-    expect(form.setBackfillDryRun).toHaveBeenCalledWith(true)
-  })
-
-  it('编辑 MaiBot 迁移字段与高级选项', async () => {
-    const user = userEvent.setup()
-    const { form } = renderImport({
-      form: {
-        importCreateMode: 'maibot_migration',
-        maibotTimeFrom: '2024-01-02T03:04',
-        maibotTimeTo: '2024-01-03T05:06',
-        maibotStartId: '1',
-        maibotEndId: '9',
-        maibotStreamIds: 's1',
-        maibotGroupIds: 'g1',
-        maibotUserIds: 'u1',
-        maibotReadBatchSize: '10',
-        maibotCommitWindowRows: '20',
-        maibotEmbedWorkers: '2',
-      },
-    })
-
-    fireEvent.change(screen.getByLabelText('源数据库路径'), { target: { value: 'data/old.db' } })
-    fireEvent.change(screen.getByLabelText('起始时间'), { target: { value: '2024-02-01T00:00' } })
-    fireEvent.change(screen.getByLabelText('结束时间'), { target: { value: '2024-02-02T00:00' } })
-    fireEvent.change(screen.getByLabelText('起始 ID'), { target: { value: '3' } })
-    fireEvent.change(screen.getByLabelText('结束 ID'), { target: { value: '8' } })
-    fireEvent.change(screen.getByLabelText('会话 ID 列表'), { target: { value: 's2' } })
-    fireEvent.change(screen.getByLabelText('群组 ID 列表'), { target: { value: 'g2' } })
-    fireEvent.change(screen.getByLabelText('用户 ID 列表'), { target: { value: 'u2' } })
-    await user.click(screen.getByText('高级选项'))
-    fireEvent.change(screen.getByLabelText('读取批大小'), { target: { value: '11' } })
-    fireEvent.change(screen.getByLabelText('提交窗口行数'), { target: { value: '22' } })
-    fireEvent.change(screen.getByLabelText('向量线程数'), { target: { value: '3' } })
-    await user.click(checkboxNear('从头开始，不继续上次进度'))
-    await user.click(checkboxNear('重置迁移状态'))
-    const dryRuns = screen.getAllByText('只预演，不写入数据')
-    await user.click(checkboxNear(dryRuns[dryRuns.length - 1].textContent ?? '只预演，不写入数据'))
-    await user.click(checkboxNear('仅校验'))
-    expect(form.setMaibotSourceDb).toHaveBeenCalledWith('data/old.db')
-    expect(form.setMaibotNoResume).toHaveBeenCalledWith(true)
-    expect(form.setMaibotVerifyOnly).toHaveBeenCalledWith(true)
   })
 
   it('路径预检在别名为空时禁用，解析中展示 loading', async () => {

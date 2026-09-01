@@ -1,10 +1,11 @@
-import { Bot, Camera, Loader2, UserCircle2, X } from 'lucide-react'
+import { Bot, Camera, Eye, Loader2, UserCircle2, UserRound, UsersRound, X } from 'lucide-react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { cn } from '@/lib/utils'
+import type { SessionInfo } from '@/routes/monitor/use-maisaka-monitor'
 
 import type { ChatTab } from './types'
 import { getChatTabDisplayName } from './utils'
@@ -12,11 +13,14 @@ import { getChatTabDisplayName } from './utils'
 interface ChatTabBarProps {
   tabs: ChatTab[]
   activeTabId: string
+  activeObservedSessionId: string | null
+  observedSessions: Map<string, SessionInfo>
   userId: string
   userName: string
   userAvatarVersion?: number
   isUploadingUserAvatar: boolean
   onSwitch: (tabId: string) => void
+  onSelectObserved: (sessionId: string) => void
   onClose: (tabId: string, e?: React.MouseEvent | React.KeyboardEvent) => void
   onUpdateUserAvatar: (file: File) => Promise<void>
 }
@@ -27,11 +31,14 @@ interface ChatTabBarProps {
 export function ChatTabBar({
   tabs,
   activeTabId,
+  activeObservedSessionId,
+  observedSessions,
   userId,
   userName,
   userAvatarVersion,
   isUploadingUserAvatar,
   onSwitch,
+  onSelectObserved,
   onClose,
   onUpdateUserAvatar,
 }: ChatTabBarProps) {
@@ -43,12 +50,15 @@ export function ChatTabBar({
     'user',
     userAvatarVersion
   )
+  const sortedObservedSessions = Array.from(observedSessions.values()).sort(
+    (a, b) => b.lastActivity - a.lastActivity
+  )
 
   return (
     <div className="bg-card/85 supports-backdrop-filter:bg-card/65 shrink-0 border-b backdrop-blur">
-      <div className="scrollbar-thin flex items-center gap-1 overflow-x-auto px-3 py-2">
+      <div className="flex scrollbar-thin items-center gap-1 overflow-x-auto px-3 py-2">
         {tabs.map((tab) => {
-          const active = activeTabId === tab.id
+          const active = activeObservedSessionId === null && activeTabId === tab.id
           const Icon = tab.type === 'virtual' ? UserCircle2 : Bot
           const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
           return (
@@ -96,6 +106,27 @@ export function ChatTabBar({
                 </button>
               )}
             </div>
+          )
+        })}
+        {sortedObservedSessions.map((session) => {
+          const active = activeObservedSessionId === session.sessionId
+          const Icon = session.isGroupChat ? UsersRound : UserRound
+          return (
+            <button
+              key={session.sessionId}
+              type="button"
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition',
+                active
+                  ? 'bg-primary text-primary-foreground border-transparent shadow-sm'
+                  : 'bg-background/60 text-muted-foreground hover:text-foreground hover:bg-background border-transparent'
+              )}
+              onClick={() => onSelectObserved(session.sessionId)}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              <span className="max-w-32 truncate font-medium">{session.sessionName}</span>
+              <Eye className="h-3 w-3 opacity-70" aria-label={t('chat.sidebar.observedBadge')} />
+            </button>
           )
         })}
         <button

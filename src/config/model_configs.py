@@ -284,6 +284,15 @@ class ModelInfo(ConfigBase):
     )
     """模型级别温度（可选），会覆盖任务配置中的温度"""
 
+    send_temperature: bool = Field(
+        default=True,
+        json_schema_extra={
+            "x-widget": "switch",
+            "advanced": True,
+        },
+    )
+    """是否向模型服务发送由 MaiBot 管理的 temperature 参数。"""
+
     max_tokens: int | None = Field(
         default=None,
         json_schema_extra={

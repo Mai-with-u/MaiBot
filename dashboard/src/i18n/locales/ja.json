@@ -165,7 +165,12 @@
       "conversations": "チャット会話",
       "emptyPreview": "まだメッセージはありません",
       "identityHint": "ローカルチャット身份",
+      "myChats": "麦麦とのチャット",
       "newVirtual": "仮想身份チャットを作成",
+      "observedAvatarAlt": "{{name}}のアバター",
+      "observedBadge": "観察",
+      "observedChats": "麦麦のチャットストリーム",
+      "observedPreview": "読み取り専用の観察",
       "online": "オンライン",
       "offline": "オフライン",
       "subtitle": "{{count}} 件の会話",
@@ -176,7 +181,8 @@
       "editName": "ニックネームを編集",
       "saveName": "保存",
       "savingAvatar": "アバターを保存中",
-      "userAvatarAlt": "{{name}}のアバター"
+      "userAvatarAlt": "{{name}}のアバター",
+      "waitingObservedChats": "チャットストリームを待機中…"
     },
     "dialog": {
       "create": "会話を作成",
@@ -996,12 +1002,45 @@
     "navigatedTo": "{{page}} に移動しました"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "有効",
+        "inactive": "無効",
+        "deleted": "削除済み",
+        "conflicted": "競合あり",
+        "superseded": "置換済み",
+        "retracted": "撤回済み"
+      },
+      "evidenceType": {
+        "paragraph": "メモリ段落",
+        "relation": "関係",
+        "entity": "エンティティ",
+        "fact": "事実",
+        "episode": "エピソード",
+        "profile": "人物プロファイル",
+        "manual": "手動",
+        "unknown": "不明"
+      },
+      "evidenceStance": {
+        "support": "裏付け",
+        "refute": "反証"
+      },
+      "graphJobStatus": {
+        "pending": "処理待ち",
+        "running": "処理中",
+        "failed": "失敗",
+        "completed": "完了",
+        "cancelled": "キャンセル済み"
+      }
+    },
     "tuning": {
       "task": {
         "title": "調整タスク",
         "description": "検索パラメータ評価"
       },
       "form": {
+        "parameters": "調整パラメータ",
+        "parametersDescription": "これらの設定は次の調整タスクにのみ適用されます。通常は既定値のままで問題ありません。",
         "strategy": "調整方針",
         "objective": "最適化目標",
         "intensity": "評価の深さ",

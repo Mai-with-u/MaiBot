@@ -38,6 +38,7 @@ export async function getPersonList(params: {
   search?: string
   is_known?: boolean
   platform?: string
+  user_id?: string
 }): Promise<PersonListData> {
   const data = await backendApi.get<PersonListResponse>(`${API_BASE}/list`, {
     query: {
@@ -46,6 +47,7 @@ export async function getPersonList(params: {
       search: params.search || undefined,
       is_known: params.is_known,
       platform: params.platform || undefined,
+      user_id: params.user_id || undefined,
     },
     errorMessage: '获取人物列表失败',
   })

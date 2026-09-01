@@ -1002,39 +1002,27 @@ class EmojiManager:
         image_bytes = target_emoji.image_bytes or await asyncio.to_thread(
             target_emoji.read_image_bytes, target_emoji.full_path
         )
-        image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
         try:
+            request_image_format = image_format
             if image_format == "gif":
                 try:
                     image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
                 except Exception as e:
                     logger.error(f"[构建描述] 转换 GIF 图片时出错: {e}")
                     return False, target_emoji
-                prompt: str = (
-                    "这是一个动态图表情包，每一张图代表了动态图的一帧。"
-                    "请只返回该表情包常见的情绪/场景标签，最多 5 个，"
-                    "使用逗号分隔，标签可为中文或英文，不要附带解释。"
-                )
-                image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
-                description_result = await emoji_manager_vlm.generate_response_for_image(
-                    prompt,
-                    image_base64,
-                    "jpg",
-                    session_id=session_id,
-                )
-                description = description_result.response
-            else:
-                prompt: str = (
-                    "这是一个表情包图片，请提取该表情主要表达的情绪或语气标签，"
-                    "最多 5 个，使用逗号分隔，返回纯文本标签列表，不要解释，不要输出其他内容。"
-                )
-                description_result = await emoji_manager_vlm.generate_response_for_image(
-                    prompt,
-                    image_base64,
-                    image_format,
-                    session_id=session_id,
-                )
-                description = description_result.response
+                request_image_format = "jpg"
+
+            analysis_prompt_template = prompt_manager.get_prompt("emoji_content_analysis")
+            analysis_prompt_template.add_context("image_type", "GIF" if image_format == "gif" else "STATIC")
+            analysis_prompt = await prompt_manager.render_prompt(analysis_prompt_template)
+            image_base64 = ImageUtils.image_bytes_to_base64(image_bytes)
+            description_result = await emoji_manager_vlm.generate_response_for_image(
+                analysis_prompt,
+                image_base64,
+                request_image_format,
+                session_id=session_id,
+            )
+            description = description_result.response
         except Exception as e:
             logger.error(f"[构建描述] 调用视觉模型生成表情包描述时出错: {e}")
             return False, target_emoji

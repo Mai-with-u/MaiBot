@@ -191,6 +191,34 @@ describe('MessageList', () => {
     delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTo
   })
 
+  it('切换到已有历史消息的会话时默认滚动到底部', () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.dataset.testid === 'chat-viewport' ? 100 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.dataset.testid === 'chat-viewport' ? 1000 : 0
+    })
+
+    render(
+      <MessageList
+        botDisplayName="MaiBot"
+        isLoadingHistory={false}
+        language="zh-CN"
+        messages={createMessages(20)}
+        userName="测试用户"
+      />
+    )
+
+    expect(scrollToMock).toHaveBeenCalledWith({
+      top: 1000,
+      behavior: 'auto',
+    })
+  })
+
   it('只渲染虚拟窗口，并仅在用户接近底部时自动跟随新消息', () => {
     const initialMessages = createMessages(20)
     const view = render(

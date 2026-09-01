@@ -215,6 +215,7 @@ def _serialize_tool_results(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             "tool_call_source": str(tool.get("tool_call_source", "")),
             "tool_call_source_label": str(tool.get("tool_call_source_label", "")),
             "success": bool(tool.get("success", False)),
+            "stop_after_execution": bool(tool.get("stop_after_execution", False)),
             "duration_ms": float(tool.get("duration_ms", 0.0) or 0.0),
             "summary": str(tool.get("summary", "")),
         }
