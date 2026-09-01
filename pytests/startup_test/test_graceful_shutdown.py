@@ -264,6 +264,25 @@ def test_runner_timeout_kills_and_returns_failure(runner, monkeypatch):
     logger.error.assert_called_once()
 
 
+def test_runner_kill_reap_timeout_returns_failure(runner, monkeypatch):
+    handlers, clock, logger = runner
+    worker = Mock(returncode=None)
+    worker.poll.return_value = None
+
+    def wait(timeout):
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        clock[0] += 0.1
+        raise subprocess.TimeoutExpired("fixture", timeout)
+
+    worker.wait.side_effect = wait
+    monkeypatch.setattr(process_runner.subprocess, "Popen", lambda *a, **kw: worker)
+
+    assert process_runner.supervise_worker(["fixture"], {}, logger) == 1
+    worker.kill.assert_called_once()
+    assert worker.wait.call_args_list[-1].kwargs == {"timeout": 5}
+    logger.error.assert_any_call("Worker 强制终止后仍无法回收；应用关闭未完成")
+
+
 def test_runner_restart_42_and_exited_worker_signal(runner, monkeypatch):
     handlers, clock, logger = runner
     workers = [Mock(returncode=42), Mock(returncode=0)]

@@ -46,7 +46,10 @@ def supervise_worker(command: Sequence[str], env: dict[str, str], logger) -> int
                 if deadline is not None and time.monotonic() >= deadline:
                     logger.error("Worker 优雅关闭超时，强制终止；应用关闭未完成")
                     process.kill()
-                    process.wait(timeout=5)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.error("Worker 强制终止后仍无法回收；应用关闭未完成")
                     return 1
                 try:
                     process.wait(timeout=0.1)
