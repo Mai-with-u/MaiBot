@@ -1,0 +1,3 @@
+Input type: {image_type}
+This is an emoji or sticker image. When the input type is GIF, the image is a horizontal strip of distinct frames extracted from an animation; when the input type is STATIC, it is a single static image.
+Extract up to 5 tags describing the main emotion, tone, or common usage scenario. Separate the tags with commas. Return only the plain-text tag list, without explanations or any other content.
