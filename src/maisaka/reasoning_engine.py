@@ -101,6 +101,7 @@ logger = get_logger("maisaka_reasoning_engine")
 
 HISTORY_DEFERRED_TOOL_RESULT_NAMES = {"wait"}
 TOOL_RESULT_MEDIA_TYPES = {"image", "audio", "resource_link", "resource", "binary"}
+STOP_AFTER_EXECUTION_PAUSE_REASON = "stop_after_execution"
 BEHAVIOR_SELECTOR_CONTEXT_MESSAGE_LIMIT = 8
 BEHAVIOR_SELECTOR_CONTEXT_TEXT_LIMIT = 1800
 BEHAVIOR_SCENARIO_CONSTRAINT_TEXT = (
@@ -823,6 +824,11 @@ class MaisakaReasoningEngine:
     def _cycle_end_for_pause_tool(pause_tool_name: Optional[str]) -> CycleEnd:
         """返回工具要求暂停时对应的结束原因。"""
 
+        if pause_tool_name == STOP_AFTER_EXECUTION_PAUSE_REASON:
+            return CycleEnd(
+                "tool_stop_after_execution",
+                "插件工具请求在当前批次执行完成后结束 Planner，并等待新消息。",
+            )
         if pause_tool_name == "wait":
             return CycleEnd("tool_pause:wait", "Planner 调用 wait，本轮暂停并在等待结束后继续判断。")
         if pause_tool_name == "wait_rest":
@@ -1990,6 +1996,7 @@ class MaisakaReasoningEngine:
             "tool_call_source": tool_call_source,
             "tool_call_source_label": tool_call_source_label,
             "success": result.success,
+            "stop_after_execution": result.stop_after_execution,
             "duration_ms": round(duration_ms, 2),
             "summary": self._build_tool_result_summary(tool_call, result),
             "detail": normalized_detail,
@@ -2046,6 +2053,7 @@ class MaisakaReasoningEngine:
         tool_result_summaries: list[str] = []
         tool_monitor_results: list[dict[str, Any]] = []
         deferred_post_history_messages: list[LLMContextMessage] = []
+        should_stop_after_execution = False
 
         if self._runtime._tool_registry is None:
             total_tool_count = len(tool_calls)
@@ -2114,6 +2122,9 @@ class MaisakaReasoningEngine:
             if not result.success and tool_call.func_name == "reply":
                 logger.warning(f"{self._runtime.log_prefix} 回复工具未生成可见消息，将继续下一轮循环")
 
+            if result.success and result.stop_after_execution:
+                should_stop_after_execution = True
+
             if bool(result.metadata.get("wait_rest", False)):
                 self._runtime._reset_consecutive_wait_count("wait_limit_rest")
                 self._runtime._enter_stop_state()
@@ -2125,4 +2136,14 @@ class MaisakaReasoningEngine:
                 return True, invocation.tool_name, tool_result_summaries, tool_monitor_results
 
         self._append_tool_post_history_messages(deferred_post_history_messages)
+        if should_stop_after_execution:
+            self._runtime._end_planner_continuation()
+            self._runtime._reset_consecutive_wait_count("tool_stop_after_execution")
+            self._runtime._enter_stop_state()
+            return (
+                True,
+                STOP_AFTER_EXECUTION_PAUSE_REASON,
+                tool_result_summaries,
+                tool_monitor_results,
+            )
         return False, "", tool_result_summaries, tool_monitor_results

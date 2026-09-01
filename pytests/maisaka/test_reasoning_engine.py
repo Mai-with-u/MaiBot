@@ -2,20 +2,142 @@
 
 from types import SimpleNamespace
 from typing import Optional
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from src.common.data_models.llm_service_data_models import LLMResponseResult
+from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation
 from src.llm_models.model_client.base_client import GenerationAttempt, GenerationTrace
 from src.llm_models.payload_content.context_item import (
     ContextItemMeta,
     ProviderActivityItem,
 )
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
+from src.llm_models.payload_content.tool_option import ToolCall
 from src.maisaka.chat_loop_service import ChatResponse, MaisakaChatLoopService
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
-from src.maisaka.monitor.events import _serialize_planner_block
-from src.maisaka.reasoning_engine import MaisakaReasoningEngine
+from src.maisaka.mode_policy import is_idle_cycle_reason
+from src.maisaka.monitor.events import _serialize_planner_block, _serialize_tool_results
+from src.maisaka.reasoning_engine import STOP_AFTER_EXECUTION_PAUSE_REASON, MaisakaReasoningEngine
+
+
+class _ToolRegistryStub:
+    """按顺序返回预设工具结果。"""
+
+    def __init__(self, results: list[ToolExecutionResult]) -> None:
+        self._results = list(results)
+        self.invoked_tool_names: list[str] = []
+
+    async def list_tools(self, context: object) -> list[object]:
+        del context
+        return []
+
+    async def invoke(self, invocation: ToolInvocation, context: ToolExecutionContext) -> ToolExecutionResult:
+        del context
+        self.invoked_tool_names.append(invocation.tool_name)
+        return self._results.pop(0)
+
+
+def _build_tool_engine(results: list[ToolExecutionResult]) -> tuple[MaisakaReasoningEngine, SimpleNamespace]:
+    """构造仅用于工具批次测试的推理引擎。"""
+
+    runtime = SimpleNamespace(
+        _tool_registry=_ToolRegistryStub(results),
+        session_id="session-test",
+        chat_stream=SimpleNamespace(
+            is_group_session=True,
+            group_id="group-test",
+            user_id="",
+            platform="test",
+        ),
+        is_action_tool_currently_available=lambda tool_name: True,
+        _update_stage_status=lambda *args, **kwargs: None,
+        _reset_consecutive_wait_count=Mock(),
+        _end_planner_continuation=Mock(),
+        _enter_stop_state=Mock(),
+        log_prefix="[test]",
+    )
+    engine = MaisakaReasoningEngine(runtime)
+    engine._record_tool_execution_effects = AsyncMock()  # type: ignore[method-assign]
+    engine._append_tool_execution_result = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    engine._append_tool_post_history_messages = lambda messages: None  # type: ignore[method-assign]
+    return engine, runtime
+
+
+@pytest.mark.asyncio
+async def test_successful_stop_request_finishes_after_full_tool_batch() -> None:
+    engine, runtime = _build_tool_engine(
+        [
+            ToolExecutionResult(
+                tool_name="terminal_tool",
+                success=True,
+                content="已完成",
+                stop_after_execution=True,
+            ),
+            ToolExecutionResult(
+                tool_name="second_terminal_tool",
+                success=True,
+                content="第二个终止工具完成",
+                stop_after_execution=True,
+            ),
+            ToolExecutionResult(tool_name="following_tool", success=True, content="后续工具完成"),
+        ]
+    )
+
+    should_pause, pause_reason, _, monitor_results = await engine._handle_tool_calls(
+        [
+            ToolCall(call_id="call-1", func_name="terminal_tool"),
+            ToolCall(call_id="call-2", func_name="second_terminal_tool"),
+            ToolCall(call_id="call-3", func_name="following_tool"),
+        ],
+        "测试思考",
+    )
+
+    assert should_pause is True
+    assert pause_reason == STOP_AFTER_EXECUTION_PAUSE_REASON
+    assert runtime._tool_registry.invoked_tool_names == [
+        "terminal_tool",
+        "second_terminal_tool",
+        "following_tool",
+    ]
+    assert [result["stop_after_execution"] for result in monitor_results] == [True, True, False]
+    runtime._end_planner_continuation.assert_called_once_with()
+    assert runtime._reset_consecutive_wait_count.call_args_list[-1].args == ("tool_stop_after_execution",)
+    runtime._enter_stop_state.assert_called_once_with()
+
+    cycle_end = engine._cycle_end_for_pause_tool(pause_reason)
+    assert cycle_end.reason == "tool_stop_after_execution"
+    assert is_idle_cycle_reason(cycle_end.reason) is True
+
+
+@pytest.mark.asyncio
+async def test_failed_stop_request_keeps_planner_running() -> None:
+    engine, runtime = _build_tool_engine(
+        [
+            ToolExecutionResult(
+                tool_name="terminal_tool",
+                success=False,
+                error_message="执行失败",
+                stop_after_execution=True,
+            ),
+            ToolExecutionResult(tool_name="following_tool", success=True, content="后续工具完成"),
+        ]
+    )
+
+    should_pause, pause_reason, _, _ = await engine._handle_tool_calls(
+        [
+            ToolCall(call_id="call-1", func_name="terminal_tool"),
+            ToolCall(call_id="call-2", func_name="following_tool"),
+        ],
+        "测试思考",
+    )
+
+    assert should_pause is False
+    assert pause_reason == ""
+    assert runtime._tool_registry.invoked_tool_names == ["terminal_tool", "following_tool"]
+    runtime._end_planner_continuation.assert_not_called()
+    runtime._enter_stop_state.assert_not_called()
 
 
 def _build_chat_response(content: Optional[str], reasoning: str) -> ChatResponse:
@@ -82,6 +204,21 @@ def test_native_tool_summary_is_serialized_without_provider_state() -> None:
         }
     ]
     assert "provider_state" not in block
+
+
+def test_tool_stop_request_is_serialized_for_monitor() -> None:
+    tools = _serialize_tool_results(
+        [
+            {
+                "tool_call_id": "call-test",
+                "tool_name": "test_tool",
+                "success": True,
+                "stop_after_execution": True,
+            }
+        ]
+    )
+
+    assert tools[0]["stop_after_execution"] is True
 
 
 @pytest.mark.asyncio

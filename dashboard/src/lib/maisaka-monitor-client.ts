@@ -240,6 +240,7 @@ export interface MaisakaFinalizedToolResult {
   tool_call_source?: string
   tool_call_source_label?: string
   success: boolean
+  stop_after_execution?: boolean
   duration_ms: number
   summary: string
   prompt_html_uri?: string

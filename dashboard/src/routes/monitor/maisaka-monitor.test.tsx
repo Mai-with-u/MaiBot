@@ -1060,6 +1060,43 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('找到了结果')).toBeInTheDocument()
   })
 
+  it('插件工具请求结束 Planner 时同时展示终止提示与整批工具结果', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.finalized',
+          makeFinalized({
+            tools: [
+              makeToolResult({
+                tool_call_id: 'tc-stop',
+                tool_name: 'complete_task',
+                summary: '任务已完成',
+                stop_after_execution: true,
+              }),
+              makeToolResult({
+                tool_call_id: 'tc-following',
+                tool_name: 'record_result',
+                summary: '结果已记录',
+              }),
+            ],
+            final_state: {
+              time_records: {},
+              agent_state: 'stop',
+              end_reason: 'tool_stop_after_execution',
+            },
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('本轮思考暂时结束')).toBeInTheDocument()
+    expect(screen.getByText('等待新的消息。')).toBeInTheDocument()
+    expect(screen.getByText('2 个')).toBeInTheDocument()
+    expect(screen.getByText('任务已完成')).toBeInTheDocument()
+    expect(screen.getByText('结果已记录')).toBeInTheDocument()
+  })
+
   it('planner.finalized 无执行结果时回退展示 tool_calls，空文本给出占位', () => {
     setupMonitorState({
       timeline: [
