@@ -12,6 +12,10 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 7999,
+    watch: {
+      // 依赖目录的本地备份不应进入 Vite 文件监听，否则会占用大量句柄并导致服务无响应。
+      ignored: ['**/node_modules.mixed-backup-*/**'],
+    },
     allowedHosts: ['sengokucolad.tail1e46b9.ts.net'],
     proxy: {
       '/api': {
