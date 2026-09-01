@@ -753,6 +753,90 @@ class MetadataFactMixin:
             "conflicting_claim_ids": conflicts,
         }
 
+    def update_fact_claim_classification(
+        self,
+        claim_id: str,
+        *,
+        stability: str,
+        profile_section: str,
+        authority: str,
+        confidence: float,
+        valid_from: Optional[float],
+        valid_to: Optional[float],
+        reason: str = "",
+        updated_at: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """更新不参与 claim 身份计算的分类字段。"""
+
+        token = _required_token("claim_id", claim_id)
+        normalized_stability = _enum_token("stability", stability, _STABILITIES)
+        normalized_profile_section = _enum_token("profile_section", profile_section, _PROFILE_SECTIONS)
+        normalized_authority = _enum_token("authority", authority, _AUTHORITIES)
+        normalized_confidence = float(confidence)
+        if not 0.0 <= normalized_confidence <= 1.0:
+            raise ValueError("confidence 必须在 0 到 1 之间")
+        normalized_valid_from = float(valid_from) if valid_from is not None else None
+        normalized_valid_to = float(valid_to) if valid_to is not None else None
+        if (
+            normalized_valid_from is not None
+            and normalized_valid_to is not None
+            and normalized_valid_to < normalized_valid_from
+        ):
+            raise ValueError("valid_to 不能早于 valid_from")
+
+        now = float(updated_at) if updated_at is not None else datetime.now().timestamp()
+        with self.transaction(immediate=True) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT * FROM fact_claims WHERE claim_id = ?", (token,))
+            previous = self._fact_claim_row(cursor.fetchone())
+            if previous is None:
+                raise ValueError(f"事实 claim 不存在: {token}")
+
+            changed = any(
+                (
+                    str(previous.get("stability", "")) != normalized_stability,
+                    str(previous.get("profile_section", "")) != normalized_profile_section,
+                    str(previous.get("authority", "")) != normalized_authority,
+                    float(previous.get("confidence", 0.0) or 0.0) != normalized_confidence,
+                    previous.get("valid_from") != normalized_valid_from,
+                    previous.get("valid_to") != normalized_valid_to,
+                )
+            )
+            cursor.execute(
+                """
+                UPDATE fact_claims
+                SET stability = ?, profile_section = ?, authority = ?, confidence = ?,
+                    valid_from = ?, valid_to = ?, updated_at = ?
+                WHERE claim_id = ?
+                """,
+                (
+                    normalized_stability,
+                    normalized_profile_section,
+                    normalized_authority,
+                    normalized_confidence,
+                    normalized_valid_from,
+                    normalized_valid_to,
+                    now,
+                    token,
+                ),
+            )
+            if changed:
+                self._append_fact_transition(
+                    cursor,
+                    old_claim_id=token,
+                    new_claim_id=token,
+                    transition_type="classify",
+                    reason=reason,
+                    evidence_type="manual",
+                    evidence_id="",
+                    created_at=now,
+                )
+            cursor.execute("SELECT * FROM fact_claims WHERE claim_id = ?", (token,))
+            updated = self._fact_claim_row(cursor.fetchone())
+        if updated is None:
+            raise RuntimeError(f"事实 claim 分类更新后丢失: {token}")
+        return {**updated, "changed": changed}
+
     def get_fact_claim(self, claim_id: str) -> Optional[Dict[str, Any]]:
         token = str(claim_id or "").strip()
         if not token:

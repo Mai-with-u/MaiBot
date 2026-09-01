@@ -237,7 +237,12 @@
       "conversations": "聊天会话",
       "emptyPreview": "暂无消息",
       "identityHint": "本地聊天室身份",
+      "myChats": "与麦麦聊天",
       "newVirtual": "新建虚拟身份对话",
+      "observedAvatarAlt": "{{name}} 的头像",
+      "observedBadge": "观察",
+      "observedChats": "麦麦的聊天流",
+      "observedPreview": "只读观察",
       "online": "在线",
       "offline": "离线",
       "subtitle": "{{count}} 个会话",
@@ -248,7 +253,8 @@
       "editName": "编辑昵称",
       "saveName": "保存",
       "savingAvatar": "正在保存头像",
-      "userAvatarAlt": "{{name}} 的头像"
+      "userAvatarAlt": "{{name}} 的头像",
+      "waitingObservedChats": "等待聊天流…"
     },
     "dialog": {
       "create": "创建对话",
@@ -1067,12 +1073,45 @@
     "navigatedTo": "已导航至 {{page}}"
   },
   "memory": {
+    "records": {
+      "status": {
+        "active": "有效",
+        "inactive": "已停用",
+        "deleted": "已删除",
+        "conflicted": "有冲突",
+        "superseded": "已取代",
+        "retracted": "已撤回"
+      },
+      "evidenceType": {
+        "paragraph": "段落",
+        "relation": "关系",
+        "entity": "实体",
+        "fact": "事实",
+        "episode": "情景",
+        "profile": "画像",
+        "manual": "人工",
+        "unknown": "未知"
+      },
+      "evidenceStance": {
+        "support": "支持",
+        "refute": "反证"
+      },
+      "graphJobStatus": {
+        "pending": "待处理",
+        "running": "处理中",
+        "failed": "失败",
+        "completed": "已完成",
+        "cancelled": "已取消"
+      }
+    },
     "tuning": {
       "task": {
         "title": "记忆搜索调优",
         "description": "评估并改善记忆搜索效果"
       },
       "form": {
+        "parameters": "调优参数",
+        "parametersDescription": "这些设置只影响下一次调优任务，一般保持默认即可。",
         "strategy": "调优策略",
         "objective": "优化目标",
         "intensity": "评估强度",

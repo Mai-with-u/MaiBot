@@ -6,10 +6,11 @@
 
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
 import os
 import time
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 import httpx
 import tomlkit
@@ -17,11 +18,13 @@ import tomlkit
 from src.common.logger import get_logger
 from src.config.config import CONFIG_DIR
 from src.config.model_configs import APIProvider, TaskConfig
+from src.llm_models.exceptions import RespNotOkException
 from src.llm_models.model_client import ensure_client_type_loaded
 from src.llm_models.model_client.base_client import client_registry
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
 from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
 from src.llm_models.payload_content.tool_option import ToolCall
+from src.llm_models.request_snapshot import format_request_snapshot_log_info
 from src.llm_models.utils_model import LLMOrchestrator, LLMResponseResult
 from src.webui.dependencies import require_auth
 from src.webui.utils.network_security import validate_public_url
@@ -171,7 +174,7 @@ async def test_model_capability(request: ModelTestRequest):
             model_name=model_name,
             visual_tested=visual_enabled,
             latency_ms=latency_ms,
-            error=str(e),
+            error=_format_model_test_error(e),
         )
 
 
@@ -432,8 +435,34 @@ async def _test_embedding_model(model_name: str) -> ModelTestResponse:
             visual_tested=False,
             tool_call_ok=False,
             latency_ms=latency_ms,
-            error=str(e),
+            error=_format_model_test_error(e),
         )
+
+
+def _format_model_test_error(error: Exception) -> str:
+    """格式化模型测试的完整诊断信息。
+
+    常规 LLM 调用为了面向用户展示，会将 HTTP 错误映射为“参数不正确”等摘要。
+    模型测试用于排查配置，因此需要同时保留 HTTP 状态、上游响应、
+    底层异常与已脱敏的请求快照信息。
+    """
+    lines = [f"错误类型: {type(error).__name__}", f"错误摘要: {error}"]
+
+    if isinstance(error, RespNotOkException):
+        lines.insert(1, f"HTTP 状态码: {error.status_code}")
+        upstream_detail = str(error.message or "").strip()
+        if upstream_detail and upstream_detail != str(error):
+            lines.append(f"上游返回:\n{upstream_detail}")
+
+    cause = error.__cause__
+    if cause is not None:
+        lines.append(f"底层异常: {type(cause).__name__}: {cause}")
+
+    snapshot_info = format_request_snapshot_log_info(error).strip()
+    if snapshot_info:
+        lines.append(snapshot_info)
+
+    return "\n".join(lines)
 
 
 def _build_model_test_prompt(visual_enabled: bool) -> str:

@@ -116,8 +116,13 @@ def test_failed_request_snapshot_aggregates_attempts_and_externalizes_image(monk
     assert image_part["image_reference"]["base64_omitted"] is True
     assert (tmp_path / image_part["image_reference"]["image_path"]).is_file()
     first_attempt = payload["generation_attempts"][0]
-    assert first_attempt["wire_request"]["request_kwargs"]["messages"] == ["重复请求体"]
-    assert first_attempt["wire_request"]["request_kwargs"]["authorization"] == "[REDACTED]"
+    assert "request_items" not in first_attempt
+    assert "tool_definitions" not in first_attempt
+    assert "request_parameters" not in first_attempt
+    assert "wire_request" not in first_attempt
+    assert "wire_response" not in first_attempt
+    assert "output_items" not in first_attempt
+    assert "trace" not in first_attempt
     assert payload["api_provider"]["default_headers"]["Authorization"] == "[已脱敏]"
     assert payload["request_parameters"]["max_tokens"] == 256
     restored_items = deserialize_persisted_context_items_snapshot(payload["request_items"])

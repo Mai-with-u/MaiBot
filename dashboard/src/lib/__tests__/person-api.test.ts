@@ -73,7 +73,14 @@ describe('getPersonList', () => {
     })
 
     await expect(
-      getPersonList({ page: 2, page_size: 20, search: '', is_known: false, platform: '' })
+      getPersonList({
+        page: 2,
+        page_size: 20,
+        search: '',
+        is_known: false,
+        platform: '',
+        user_id: '10086',
+      })
     ).resolves.toEqual({
       data: [person],
       total: 42,
@@ -88,6 +95,7 @@ describe('getPersonList', () => {
         search: undefined,
         is_known: false,
         platform: undefined,
+        user_id: '10086',
       },
       errorMessage: '获取人物列表失败',
     })

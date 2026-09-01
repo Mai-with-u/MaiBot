@@ -91,6 +91,7 @@ function makeDelete(overrides: Partial<UseMemoryDeleteResult> = {}): UseMemoryDe
     selectedSources: [],
     setSelectedSources: vi.fn(),
     filteredSources: [],
+    openDeletePreview: vi.fn(async () => {}),
     openSourceDeletePreview: vi.fn(async () => {}),
     toggleSourceSelection: vi.fn(),
     refreshSources: vi.fn(async () => {}),

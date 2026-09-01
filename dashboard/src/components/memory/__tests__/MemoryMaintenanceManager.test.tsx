@@ -184,6 +184,31 @@ describe('MemoryMaintenanceManager 维护操作', () => {
     })
   })
 
+  it('维护成功后的刷新失败不会改写业务结果', async () => {
+    const onChanged = vi.fn().mockRejectedValue(new Error('列表刷新超时'))
+    render(<MemoryMaintenanceManager onChanged={onChanged} />)
+    await waitFor(() => {
+      expect(memoryApi.getMemoryRecycleBin).toHaveBeenCalled()
+    })
+    fireEvent.change(screen.getByLabelText('维护目标'), { target: { value: 'hash-a' } })
+    fireEvent.click(screen.getByRole('button', { name: /执行强化/ }))
+
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '记忆强化完成' }),
+      )
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '记忆强化已完成，但数据刷新失败',
+          description: '列表刷新超时',
+        }),
+      )
+    })
+    expect(toastMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: '记忆强化失败' }),
+    )
+  })
+
   it('API 抛错时弹出失败 toast', async () => {
     vi.mocked(memoryApi.reinforceMemory).mockRejectedValue(new Error('网络超时'))
     await renderManager()

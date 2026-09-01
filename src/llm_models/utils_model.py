@@ -41,7 +41,7 @@ from src.llm_models.model_client.base_client import (
     ResponseRequest,
     client_registry,
 )
-from src.llm_models.generation_diagnostics import sanitize_diagnostic_url, sanitize_generation_diagnostic
+from src.llm_models.generation_diagnostics import sanitize_diagnostic_url
 from src.llm_models.request_snapshot import (
     attach_request_snapshot,
     format_request_snapshot_log_info,
@@ -438,7 +438,6 @@ class LLMOrchestrator:
         model_info = execution_result.model_info
 
         logger.debug(f"LLM请求总耗时: {time.time() - start_time}")
-        logger.debug(f"LLM生成内容: {response}")
 
         if usage := response.usage:
             llm_usage_recorder.record_usage_to_database(
@@ -503,7 +502,6 @@ class LLMOrchestrator:
 
         time_cost = time.time() - start_time
         logger.debug(f"LLM请求总耗时: {time_cost}")
-        logger.debug(f"LLM生成内容: {response}")
 
         self._check_slow_request(time_cost, model_info.name)
         if usage := response.usage:
@@ -573,6 +571,8 @@ class LLMOrchestrator:
         Returns:
             Optional[float]: 最终生效的温度参数。
         """
+        if not model_info.send_temperature:
+            return None
         if temperature is not None:
             return temperature
         if model_info.temperature is not None:
@@ -843,32 +843,11 @@ class LLMOrchestrator:
         if trace_context is None:
             return
         started_timestamp = trace_context.current_attempt_started_at or time.time()
-        internal_request = serialize_client_request_snapshot(request)
-        raw_tool_definitions = internal_request.get("tool_options")
-        tool_definitions = tuple(
-            dict(item)
-            for item in raw_tool_definitions
-            if isinstance(item, dict)
-        ) if isinstance(raw_tool_definitions, list) else ()
-        request_parameters = {
-            key: value
-            for key, value in internal_request.items()
-            if key
-            not in {
-                "audio_base64",
-                "context_items",
-                "embedding_input",
-                "model_info",
-                "request_kind",
-                "tool_options",
-            }
-        }
         operation = {
             ResponseRequest: "response",
             EmbeddingRequest: "embedding",
             AudioTranscriptionRequest: "audio_transcription",
         }[type(request)]
-        request_items = tuple(request.context_items) if isinstance(request, ResponseRequest) else ()
         attempt_number = trace_context.attempt or len(trace_context.generation_attempts) + 1
         attempt = GenerationAttempt(
             attempt_id=f"{trace_context.request_id}:{attempt_number}",
@@ -885,15 +864,6 @@ class LLMOrchestrator:
             client_type=api_provider.client_type,
             operation=operation,
             wire_protocol=response.wire_protocol or api_provider.client_type,
-            request_items=request_items,
-            tool_definitions=tool_definitions,
-            request_parameters=sanitize_generation_diagnostic(request_parameters),
-            wire_request=sanitize_generation_diagnostic(response.request_wire_payload),
-            wire_response=sanitize_generation_diagnostic(
-                response.provider_response if response.provider_response is not None else response.raw_data
-            ),
-            output_items=response.output_items,
-            trace=response.generation_trace,
         )
         trace_context.generation_attempts.append(attempt)
         response.generation_attempts = tuple(trace_context.generation_attempts)

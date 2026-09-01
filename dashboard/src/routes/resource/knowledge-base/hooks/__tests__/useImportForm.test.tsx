@@ -17,8 +17,6 @@ vi.mock('@/lib/memory-api', () => ({
   createMemoryRawScanImport: vi.fn(),
   createMemoryLpmmOpenieImport: vi.fn(),
   createMemoryLpmmConvertImport: vi.fn(),
-  createMemoryTemporalBackfillImport: vi.fn(),
-  createMemoryMaibotMigrationImport: vi.fn(),
   resolveMemoryImportPath: vi.fn(),
 }))
 
@@ -91,7 +89,7 @@ describe('useImportForm', () => {
       vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({ success: true, settings: {} } as never)
     })
 
-    it('paste 模式调用 createMemoryPasteImport 并在成功后回调 onCreated', async () => {
+    it('文本模式调用 createMemoryPasteImport 并在成功后回调 onCreated', async () => {
       vi.mocked(memoryApi.createMemoryPasteImport).mockResolvedValue({
         success: true,
         task: { task_id: 'task-paste-1' },
@@ -99,7 +97,7 @@ describe('useImportForm', () => {
       const { result, onCreated } = renderForm()
 
       act(() => {
-        result.current.setImportCreateMode('paste')
+        result.current.setUnifiedImportMode('text')
         result.current.setPasteContent('要导入的内容')
         result.current.setImportContentCategory('factual')
       })
@@ -112,10 +110,10 @@ describe('useImportForm', () => {
       expect(onCreated).toHaveBeenCalledWith('task-paste-1')
     })
 
-    it('paste 内容为空时拦截，不调用任何 create 接口', async () => {
+    it('文本内容为空时拦截，不调用任何 create 接口', async () => {
       const { result, onCreated } = renderForm()
 
-      act(() => result.current.setImportCreateMode('paste'))
+      act(() => result.current.setUnifiedImportMode('text'))
       await act(async () => {
         await result.current.submitImportByMode()
       })
@@ -128,7 +126,7 @@ describe('useImportForm', () => {
       const { result, onCreated } = renderForm()
 
       act(() => {
-        result.current.setImportCreateMode('paste')
+        result.current.setUnifiedImportMode('text')
         result.current.setPasteContent('要导入的内容')
       })
       expect(result.current.importContentCategoryMissing).toBe(true)

@@ -145,6 +145,7 @@ def build_tool_record_payload(
         "history_content": result.get_history_content(),
         "structured_content": build_tool_record_structured_content(result.structured_content),
         "metadata": normalize_tool_record_value(result.metadata),
+        "stop_after_execution": result.stop_after_execution,
     }
     if tool_spec is not None:
         payload["provider_name"] = tool_spec.provider_name

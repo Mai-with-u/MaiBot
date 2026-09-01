@@ -20,7 +20,6 @@ from src.llm_models.model_client.base_client import (
     ClientRequest,
     EmbeddingRequest,
     GenerationAttempt,
-    GenerationTrace,
     RequestTraceContext,
     ResponseRequest,
 )
@@ -92,42 +91,6 @@ def _json_friendly(value: Any) -> Any:
         return _json_friendly(to_dict())
 
     return str(value)
-
-
-def extract_error_response_body(error: Exception) -> Any | None:
-    """尽量从异常对象中提取上游返回体，便于排查模型请求失败。"""
-    candidate_errors = [error, getattr(error, "__cause__", None)]
-
-    for candidate in candidate_errors:
-        if candidate is None:
-            continue
-
-        response = getattr(candidate, "response", None)
-        if response is not None:
-            response_json = getattr(response, "json", None)
-            if callable(response_json):
-                try:
-                    return _json_friendly(response_json())
-                except Exception:
-                    pass
-
-            response_text = getattr(response, "text", None)
-            if response_text not in (None, ""):
-                return str(response_text)
-
-            response_content = getattr(response, "content", None)
-            if response_content not in (None, b"", ""):
-                return _json_friendly(response_content)
-
-        response_body = getattr(candidate, "body", None)
-        if response_body not in (None, "", b""):
-            return _json_friendly(response_body)
-
-        ext_info = getattr(candidate, "ext_info", None)
-        if ext_info is not None:
-            return _json_friendly(ext_info)
-
-    return None
 
 
 def _sanitize_filename_component(value: str) -> str:
@@ -650,6 +613,7 @@ def serialize_model_info_snapshot(model_info: ModelInfo) -> dict[str, Any]:
         "max_tokens": model_info.max_tokens,
         "model_identifier": model_info.model_identifier,
         "name": model_info.name,
+        "send_temperature": model_info.send_temperature,
         "temperature": model_info.temperature,
         "visual": model_info.visual,
     }
@@ -667,6 +631,7 @@ def deserialize_model_info_snapshot(raw_model_info: Any) -> ModelInfo:
         max_tokens=raw_model_info.get("max_tokens"),
         model_identifier=str(raw_model_info.get("model_identifier") or ""),
         name=str(raw_model_info.get("name") or ""),
+        send_temperature=bool(raw_model_info.get("send_temperature", True)),
         temperature=raw_model_info.get("temperature"),
         visual=bool(raw_model_info.get("visual", False)),
     )
@@ -905,40 +870,6 @@ def _build_request_parameters(internal_request: dict[str, Any]) -> dict[str, Any
     }
 
 
-def serialize_generation_trace(trace: GenerationTrace | None) -> dict[str, Any] | None:
-    """序列化稳定的 Provider 成功响应索引。"""
-
-    if trace is None:
-        return None
-    return {
-        "provider": trace.provider,
-        "endpoint": sanitize_diagnostic_url(trace.endpoint),
-        "model": trace.model,
-        "response_id": trace.response_id,
-        "status": trace.status,
-        "prompt_tokens": trace.prompt_tokens,
-        "completion_tokens": trace.completion_tokens,
-        "total_tokens": trace.total_tokens,
-        "prompt_cache_hit_tokens": trace.prompt_cache_hit_tokens,
-        "prompt_cache_miss_tokens": trace.prompt_cache_miss_tokens,
-        "output_item_ids": list(trace.output_item_ids),
-    }
-
-
-def _serialize_generation_attempt_items(items: Sequence[ContextItem]) -> list[dict[str, Any]]:
-    """序列化 Attempt Items，并将内联媒体外置为可重放引用。"""
-
-    from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
-
-    return [
-        PromptCLIVisualizer.sanitize_structured_context_item_snapshot(
-            serialize_context_item_snapshot(item),
-            keep_base64=False,
-        )
-        for item in items
-    ]
-
-
 def serialize_generation_attempt(attempt: GenerationAttempt) -> dict[str, Any]:
     """把运行时 Attempt DTO 转换为 schema v6 JSON。"""
 
@@ -957,13 +888,6 @@ def serialize_generation_attempt(attempt: GenerationAttempt) -> dict[str, Any]:
         "client_type": attempt.client_type,
         "operation": attempt.operation,
         "wire_protocol": attempt.wire_protocol,
-        "request_items": _serialize_generation_attempt_items(attempt.request_items),
-        "tool_definitions": sanitize_generation_diagnostic(attempt.tool_definitions),
-        "request_parameters": sanitize_generation_diagnostic(attempt.request_parameters),
-        "wire_request": sanitize_generation_diagnostic(attempt.wire_request),
-        "wire_response": sanitize_generation_diagnostic(attempt.wire_response),
-        "output_items": _serialize_generation_attempt_items(attempt.output_items),
-        "trace": serialize_generation_trace(attempt.trace),
     }
     if attempt.error is not None:
         payload["error"] = sanitize_generation_diagnostic(attempt.error)
@@ -975,29 +899,14 @@ def record_failed_generation_attempt(
     api_provider: APIProvider,
     client_type: str,
     error: Exception,
-    internal_request: dict[str, Any],
     model_info: ModelInfo,
     operation: str,
-    provider_request: dict[str, Any],
     trace_context: RequestTraceContext,
 ) -> GenerationAttempt:
     """把一次实际失败调用追加到内存诊断链。"""
 
     attempt_number = trace_context.attempt or len(trace_context.generation_attempts) + 1
     started_timestamp = trace_context.current_attempt_started_at or time.time()
-    raw_context_items = internal_request.get("context_items")
-    request_items = (
-        tuple(deserialize_context_items_snapshot(raw_context_items))
-        if isinstance(raw_context_items, list)
-        else ()
-    )
-    raw_tool_definitions = internal_request.get("tool_options")
-    tool_definitions = tuple(
-        dict(item)
-        for item in raw_tool_definitions
-        if isinstance(item, dict)
-    ) if isinstance(raw_tool_definitions, list) else ()
-    response_body = extract_error_response_body(error)
     attempt = GenerationAttempt(
         attempt_id=f"{trace_context.request_id}:{attempt_number}",
         workflow_purpose=trace_context.request_type or trace_context.task_name,
@@ -1013,11 +922,6 @@ def record_failed_generation_attempt(
         client_type=client_type,
         operation=operation,
         wire_protocol=client_type,
-        request_items=request_items,
-        tool_definitions=tool_definitions,
-        request_parameters=_build_request_parameters(internal_request),
-        wire_request=sanitize_generation_diagnostic(provider_request),
-        wire_response=sanitize_generation_diagnostic(response_body),
         error={
             "message": str(error),
             "status_code": getattr(error, "status_code", None),
@@ -1113,10 +1017,8 @@ def save_failed_request_snapshot(
             api_provider=api_provider,
             client_type=client_type,
             error=error,
-            internal_request=internal_request,
             model_info=model_info,
             operation=operation,
-            provider_request=provider_request,
             trace_context=active_trace_context,
         )
         error.generation_trace_context = active_trace_context

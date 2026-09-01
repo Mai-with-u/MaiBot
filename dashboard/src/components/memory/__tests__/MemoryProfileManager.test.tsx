@@ -1,12 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MemoryProfileManager } from '../MemoryProfileManager'
 import * as memoryApi from '@/lib/memory-api'
-import type {
-  MemoryProfileEvidencePayload,
-  MemoryProfileItemPayload,
-} from '@/lib/memory-api'
+import * as personApi from '@/lib/person-api'
+import type { MemoryProfileEvidencePayload, MemoryProfileItemPayload } from '@/lib/memory-api'
 
 // toast 桩：用 hoisted 保证 vi.mock 工厂内能引用同一个实例
 const toastMock = vi.hoisted(() => vi.fn())
@@ -16,12 +14,19 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 // 组件消费的人物画像 API 全部打桩，避免真实请求
 vi.mock('@/lib/memory-api', () => ({
   correctMemoryProfileEvidence: vi.fn(),
+  deleteMemoryProfileAliases: vi.fn(),
   deleteMemoryProfileOverride: vi.fn(),
+  getMemoryProfileAliases: vi.fn(),
   getMemoryProfileEvidence: vi.fn(),
   getMemoryProfiles: vi.fn(),
   queryMemoryProfile: vi.fn(),
   searchMemoryProfiles: vi.fn(),
+  setMemoryProfileAliases: vi.fn(),
   setMemoryProfileOverride: vi.fn(),
+}))
+
+vi.mock('@/lib/person-api', () => ({
+  getPersonList: vi.fn(),
 }))
 
 /** 构造一条画像库条目 */
@@ -69,16 +74,50 @@ function makeEvidencePayload(personId: string): MemoryProfileEvidencePayload {
 }
 
 beforeEach(() => {
+  vi.mocked(personApi.getPersonList).mockResolvedValue({
+    data: [],
+    total: 0,
+    page: 1,
+    page_size: 1,
+  })
   vi.mocked(memoryApi.getMemoryProfiles).mockResolvedValue({
     success: true,
-    items: [makeProfile(), makeProfile({ person_id: 'p2', person_name: '李四', profile_version: 1, profile_text: '李四的画像', has_manual_override: false, manual_override: null })],
+    items: [
+      makeProfile(),
+      makeProfile({
+        person_id: 'p2',
+        person_name: '李四',
+        profile_version: 1,
+        profile_text: '李四的画像',
+        has_manual_override: false,
+        manual_override: null,
+      }),
+    ],
   })
   vi.mocked(memoryApi.getMemoryProfileEvidence).mockImplementation(async ({ personId }) =>
-    makeEvidencePayload(personId),
+    makeEvidencePayload(personId)
   )
+  vi.mocked(memoryApi.getMemoryProfileAliases).mockImplementation(async (personId) => ({
+    success: true,
+    person_id: personId,
+    primary_name: personId === 'p1' ? '张三' : '李四',
+    derived_aliases: personId === 'p1' ? ['张三', '小张'] : ['李四'],
+    suggested_aliases: personId === 'p1' ? ['产品经理'] : [],
+    manual_aliases: personId === 'p1' ? ['张三', '阿三'] : [],
+    effective_aliases: personId === 'p1' ? ['张三', '阿三'] : ['李四'],
+    has_override: personId === 'p1',
+  }))
   vi.mocked(memoryApi.searchMemoryProfiles).mockResolvedValue({
     success: true,
-    items: [makeProfile({ person_id: 'p9', person_name: '王五', profile_text: '王五的画像', has_manual_override: false, manual_override: null })],
+    items: [
+      makeProfile({
+        person_id: 'p9',
+        person_name: '王五',
+        profile_text: '王五的画像',
+        has_manual_override: false,
+        manual_override: null,
+      }),
+    ],
   })
   vi.mocked(memoryApi.queryMemoryProfile).mockResolvedValue({
     success: true,
@@ -86,7 +125,25 @@ beforeEach(() => {
     profile_text: '查询得到的画像',
   })
   vi.mocked(memoryApi.setMemoryProfileOverride).mockResolvedValue({ success: true })
-  vi.mocked(memoryApi.deleteMemoryProfileOverride).mockResolvedValue({ success: true, deleted: true })
+  vi.mocked(memoryApi.deleteMemoryProfileOverride).mockResolvedValue({
+    success: true,
+    deleted: true,
+  })
+  vi.mocked(memoryApi.setMemoryProfileAliases).mockResolvedValue({
+    success: true,
+    person_id: 'p1',
+    effective_aliases: ['张三', '三哥'],
+    has_override: true,
+    refresh_queued: true,
+  })
+  vi.mocked(memoryApi.deleteMemoryProfileAliases).mockResolvedValue({
+    success: true,
+    person_id: 'p1',
+    effective_aliases: ['张三', '小张'],
+    has_override: false,
+    deleted: true,
+    refresh_queued: true,
+  })
   vi.mocked(memoryApi.correctMemoryProfileEvidence).mockResolvedValue({
     success: true,
     operation_id: 'op-1',
@@ -117,12 +174,8 @@ describe('MemoryProfileManager 画像库加载', () => {
   it('画像列表内容较少时自然收缩，较多时按视口限制最大高度', async () => {
     await renderManager()
 
-    expect(screen.getByLabelText('人物画像列表')).toHaveClass(
-      'max-h-[clamp(32.5rem,70vh,52rem)]',
-    )
-    expect(screen.getByLabelText('人物画像列表')).not.toHaveClass(
-      'h-[clamp(32.5rem,70vh,52rem)]',
-    )
+    expect(screen.getByLabelText('人物画像列表')).toHaveClass('max-h-[clamp(32.5rem,70vh,52rem)]')
+    expect(screen.getByLabelText('人物画像列表')).not.toHaveClass('h-[clamp(32.5rem,70vh,52rem)]')
   })
 
   it('挂载时加载画像库并自动选中第一个人物，同时拉取其证据', async () => {
@@ -131,7 +184,10 @@ describe('MemoryProfileManager 画像库加载', () => {
     expect(await screen.findByText('张三')).toBeInTheDocument()
     expect(screen.getByText('李四')).toBeInTheDocument()
     // 有画像覆写的行展示徽章（限定在张三所在表格行内查询）
-    const row = screen.getByText('张三').closest('tr')
+    const row = screen
+      .getAllByText('张三')
+      .map((item) => item.closest('tr'))
+      .find(Boolean)
     expect(row).not.toBeNull()
     expect(within(row as HTMLTableRowElement).getByText('画像覆写')).toBeInTheDocument()
     // 自动选中 p1 后按默认证据数量 12 拉取证据
@@ -156,7 +212,7 @@ describe('MemoryProfileManager 画像库加载', () => {
           title: '加载人物画像失败',
           description: '服务不可用',
           variant: 'destructive',
-        }),
+        })
       )
     })
     expect(screen.getByText('还没有人物画像快照')).toBeInTheDocument()
@@ -180,20 +236,61 @@ describe('MemoryProfileManager 画像库加载', () => {
 })
 
 describe('MemoryProfileManager 查询流程', () => {
+  it('默认使用精确查询，并按切换结果显示对应参数', async () => {
+    await renderManager()
+
+    expect(screen.getByRole('button', { name: '精确查询' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('平台')).toBeInTheDocument()
+    expect(screen.getByLabelText('用户账号')).toBeInTheDocument()
+    expect(screen.queryByLabelText('人物关键词')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '模糊查询' }))
+
+    expect(screen.getByRole('button', { name: '模糊查询' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('人物关键词')).toBeInTheDocument()
+    expect(screen.queryByLabelText('平台')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('用户账号')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('强制刷新画像')).not.toBeInTheDocument()
+  })
+
   it('没有任何查询条件时提交只弹提示，不发起请求', async () => {
     await renderManager()
     fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '请输入查询条件', variant: 'destructive' }),
+        expect.objectContaining({ title: '请输入查询条件', variant: 'destructive' })
       )
     })
     expect(memoryApi.searchMemoryProfiles).not.toHaveBeenCalled()
     expect(memoryApi.queryMemoryProfile).not.toHaveBeenCalled()
   })
 
-  it('仅填关键词时走画像检索：更新列表并切换到检索结果模式', async () => {
+  it('高级 person_id 只在提交查询后加载别名', async () => {
+    vi.mocked(memoryApi.getMemoryProfiles).mockResolvedValue({ success: true, items: [] })
+    vi.mocked(memoryApi.queryMemoryProfile).mockResolvedValue({
+      success: true,
+      person_id: 'person-direct',
+      profile_text: '直接查询得到的画像',
+    })
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '高级查询' }))
+    vi.mocked(memoryApi.getMemoryProfileAliases).mockClear()
+
+    fireEvent.change(screen.getByLabelText('person_id'), { target: { value: 'person-direct' } })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(memoryApi.getMemoryProfileAliases).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryProfileAliases).toHaveBeenCalledWith('person-direct')
+    })
+  })
+
+  it('仅填关键词时走画像检索并更新候选列表', async () => {
+    await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: ' 王五 ' } })
     fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
 
@@ -208,13 +305,51 @@ describe('MemoryProfileManager 查询流程', () => {
         expect.objectContaining({
           title: '人物画像检索完成',
           description: '命中 1 个画像。',
-        }),
+        })
       )
     })
-    expect(screen.getByText('检索结果')).toBeInTheDocument()
+    expect(screen.queryByText('检索结果')).not.toBeInTheDocument()
     expect(await screen.findByText('王五')).toBeInTheDocument()
     // 原画像库条目被替换
     expect(screen.queryByText('张三')).not.toBeInTheDocument()
+  })
+
+  it('切回精确查询后忽略模糊查询中保留的关键词', async () => {
+    await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '模糊查询' }))
+    fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '王五' } })
+    fireEvent.click(screen.getByRole('button', { name: '精确查询' }))
+    fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
+    fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
+    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith({
+        personId: '',
+        personKeyword: '',
+        platform: 'qq',
+        userId: '10086',
+        limit: 12,
+        forceRefresh: false,
+      })
+    })
+  })
+
+  it('切到模糊查询后忽略精确查询中保留的平台账号', async () => {
+    await renderManager()
+    fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
+    fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
+    fireEvent.click(screen.getByRole('button', { name: '模糊查询' }))
+    fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '王五' } })
+    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.searchMemoryProfiles).toHaveBeenCalledWith({
+        personKeyword: '王五',
+        limit: 80,
+      })
+    })
+    expect(memoryApi.queryMemoryProfile).not.toHaveBeenCalled()
   })
 
   it('平台加账号定位时先查询画像再检索列表并拉取证据', async () => {
@@ -252,7 +387,7 @@ describe('MemoryProfileManager 查询流程', () => {
     })
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '人物画像查询完成', description: '已获取画像结果。' }),
+        expect.objectContaining({ title: '人物画像查询完成', description: '已获取画像结果。' })
       )
     })
   })
@@ -273,7 +408,7 @@ describe('MemoryProfileManager 查询流程', () => {
           title: '人物画像查询失败',
           description: '人物不存在',
           variant: 'destructive',
-        }),
+        })
       )
     })
   })
@@ -361,7 +496,7 @@ describe('MemoryProfileManager 证据展示与纠错', () => {
     })
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '画像证据已纠错', description: '删除记录 op-1' }),
+        expect.objectContaining({ title: '画像证据已纠错', description: '删除记录 op-1' })
       )
     })
     // 应用 refreshed_evidence（证据清空）后展示空态
@@ -385,7 +520,7 @@ describe('MemoryProfileManager 证据展示与纠错', () => {
           title: '画像证据纠错失败',
           description: '证据已被移除',
           variant: 'destructive',
-        }),
+        })
       )
     })
   })
@@ -401,7 +536,7 @@ describe('MemoryProfileManager 画像覆写', () => {
     fireEvent.click(screen.getByRole('button', { name: /保存画像覆写/ }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '缺少人物 ID', variant: 'destructive' }),
+        expect.objectContaining({ title: '缺少人物 ID', variant: 'destructive' })
       )
     })
     expect(memoryApi.setMemoryProfileOverride).not.toHaveBeenCalled()
@@ -442,7 +577,7 @@ describe('MemoryProfileManager 画像覆写', () => {
           title: '保存人物画像覆写失败',
           description: '写入被拒绝',
           variant: 'destructive',
-        }),
+        })
       )
     })
   })
@@ -464,5 +599,108 @@ describe('MemoryProfileManager 画像覆写', () => {
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith({ title: '人物画像覆写已删除' })
     })
+  })
+})
+
+describe('MemoryProfileManager 别名维护', () => {
+  it('切换人物后忽略前一个人物延迟返回的别名', async () => {
+    let resolveFirstAliases:
+      ((value: Awaited<ReturnType<typeof memoryApi.getMemoryProfileAliases>>) => void) | undefined
+    const firstAliases = new Promise<Awaited<ReturnType<typeof memoryApi.getMemoryProfileAliases>>>(
+      (resolve) => {
+        resolveFirstAliases = resolve
+      }
+    )
+    vi.mocked(memoryApi.getMemoryProfileAliases).mockImplementation(async (personId) => {
+      if (personId === 'p1') {
+        return firstAliases
+      }
+      return {
+        success: true,
+        person_id: personId,
+        primary_name: '李四',
+        derived_aliases: ['李四'],
+        suggested_aliases: [],
+        manual_aliases: [],
+        effective_aliases: ['李四'],
+        has_override: false,
+      }
+    })
+
+    await renderManager()
+    fireEvent.click(await screen.findByText('李四'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('当前有效别名')).toHaveValue('李四')
+    })
+
+    await act(async () => {
+      resolveFirstAliases?.({
+        success: true,
+        person_id: 'p1',
+        primary_name: '张三',
+        derived_aliases: ['张三'],
+        suggested_aliases: [],
+        manual_aliases: ['过期别名'],
+        effective_aliases: ['过期别名'],
+        has_override: true,
+      })
+      await firstAliases
+    })
+
+    expect(screen.getByLabelText('当前有效别名')).toHaveValue('李四')
+  })
+
+  it('加载有效别名，保存完整集合并触发画像刷新', async () => {
+    await renderManager()
+
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    expect(aliasInput).toHaveValue('张三\n阿三')
+    expect(screen.getByText('人工别名生效中')).toBeInTheDocument()
+    expect(screen.getByText('可信自动别名')).toBeInTheDocument()
+    expect(screen.getByText('小张')).toBeInTheDocument()
+
+    fireEvent.change(aliasInput, { target: { value: '张三\n三哥，老张' } })
+    fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.setMemoryProfileAliases).toHaveBeenCalledWith({
+        person_id: 'p1',
+        aliases: ['张三', '三哥', '老张'],
+        updated_by: 'knowledge_base',
+        source: 'webui',
+      })
+    })
+    await waitFor(() => {
+      expect(memoryApi.getMemoryProfileEvidence).toHaveBeenLastCalledWith({
+        personId: 'p1',
+        limit: 12,
+        forceRefresh: true,
+      })
+    })
+  })
+
+  it('共同出现候选不会自动生效，确认后才加入编辑列表', async () => {
+    await renderManager()
+
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    expect((aliasInput as HTMLTextAreaElement).value).not.toContain('产品经理')
+
+    fireEvent.click(screen.getByRole('button', { name: '加入 产品经理' }))
+
+    expect(aliasInput).toHaveValue('张三\n阿三\n产品经理')
+    expect(screen.getByRole('button', { name: '已加入 产品经理' })).toBeDisabled()
+  })
+
+  it('恢复可信自动别名会删除人工覆盖', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await renderManager()
+
+    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
+
+    await waitFor(() => {
+      expect(memoryApi.deleteMemoryProfileAliases).toHaveBeenCalledWith('p1')
+    })
+    expect(window.confirm).toHaveBeenCalledWith('确认恢复 p1 的可信自动别名？')
   })
 })

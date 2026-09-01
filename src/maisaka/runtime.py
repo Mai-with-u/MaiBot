@@ -370,6 +370,79 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
 
         return max(1, ceil(self._max_context_size * CONTEXT_RESTORE_FILL_RATIO))
 
+    async def restore_proactive_user_context(self) -> int:
+        """主动回合前确保上下文含有可回复的真实用户消息。
+
+        主动任务触发于长期静默的聊天流，运行时历史中可能没有任何带
+        msg_id 的用户消息，Planner 唯一的文本出口 reply 会因缺少引用
+        目标而无法发言。此处复用启动恢复的取数与转换链路，从消息库
+        回填最近的用户消息作为可引用目标。返回本次回填的消息条数。
+        """
+
+        if any(
+            isinstance(message, SessionBackedMessage) and message.source_kind == "user" and message.message_id
+            for message in self._chat_history
+        ):
+            return 0
+
+        try:
+            recent_messages = await asyncio.to_thread(
+                find_messages,
+                session_id=self.session_id,
+                limit=self._get_context_restore_limit(),
+                limit_mode="latest",
+                filter_bot=True,
+            )
+            # 会话流发生分裂迁移时，历史消息仍挂在旧 session_id 下，
+            # 此时按平台目标（群号或用户号）回退查询，保证仍能取到历史。
+            if not recent_messages:
+                if self.chat_stream.is_group_session:
+                    recent_messages = await asyncio.to_thread(
+                        find_messages,
+                        platform=self.chat_stream.platform,
+                        group_id=self.chat_stream.group_id,
+                        limit=self._get_context_restore_limit(),
+                        limit_mode="latest",
+                        filter_bot=True,
+                    )
+                else:
+                    recent_messages = await asyncio.to_thread(
+                        find_messages,
+                        platform=self.chat_stream.platform,
+                        user_id=self.chat_stream.user_id,
+                        limit=self._get_context_restore_limit(),
+                        limit_mode="latest",
+                        filter_bot=True,
+                    )
+        except Exception as exc:
+            logger.warning(f"{self.log_prefix} 主动回合回填用户消息失败: {exc}", exc_info=True)
+            return 0
+
+        recent_messages = select_messages_after_latest_clear_marker(recent_messages)
+        existing_message_ids = {
+            message.message_id
+            for message in self._chat_history
+            if isinstance(message, SessionBackedMessage) and message.message_id
+        }
+        restored_history: list[LLMContextMessage] = []
+        for message in recent_messages:
+            if message.is_notify or message.message_id in existing_message_ids:
+                continue
+            history_message = await self._reasoning_engine._build_history_message(message, source_kind="user")
+            if history_message is not None:
+                restored_history.append(history_message)
+
+        if not restored_history:
+            return 0
+
+        insert_index = next(
+            (index for index, message in enumerate(self._chat_history) if isinstance(message, SessionBackedMessage)),
+            len(self._chat_history),
+        )
+        self._chat_history[insert_index:insert_index] = restored_history
+        logger.info(f"{self.log_prefix} 主动回合已回填用户消息 {len(restored_history)} 条，作为可回复引用目标")
+        return len(restored_history)
+
     @staticmethod
     def _build_context_restore_reference_message(
         restored_history: Sequence[LLMContextMessage],

@@ -48,7 +48,7 @@ class _FakeEmbeddingManager:
             "provider": "fake-provider",
             "dimension": effective_dimension,
             "dimension_request_mode": "explicit",
-            "source": "configured",
+            "source": "observed",
         }
 
 

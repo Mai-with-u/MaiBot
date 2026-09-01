@@ -348,7 +348,13 @@ def _build_retrieval_filter_search_kernel(tmp_path, config: dict[str, Any]) -> S
 async def test_memory_graph_admin_search_orders_and_dedupes_results() -> None:
     kernel = _build_kernel(
         entities=[
-            {"hash": "e1", "name": "Alice", "appearance_count": 5, "is_deleted": 0},
+            {
+                "hash": "e1",
+                "name": "Alice",
+                "appearance_count": 5,
+                "active_evidence_count": 2,
+                "is_deleted": 0,
+            },
             {"hash": "e1", "name": "Alice Duplicate", "appearance_count": 99, "is_deleted": 0},
             {"hash": "e2", "name": "Alice Cooper", "appearance_count": 7, "is_deleted": 0},
             {"hash": "e3", "name": "my alice note", "appearance_count": 11, "is_deleted": 0},
@@ -373,6 +379,8 @@ async def test_memory_graph_admin_search_orders_and_dedupes_results() -> None:
     relation_items = [item for item in payload["items"] if item["type"] == "relation"]
 
     assert [item["entity_hash"] for item in entity_items] == ["e1", "e2", "e3"]
+    assert entity_items[0]["active_evidence_count"] == 2
+    assert entity_items[0]["appearance_count"] == 5
     assert [item["relation_hash"] for item in relation_items] == ["r3", "r1", "r2", ""]
     assert relation_items[0]["confidence"] == pytest.approx(0.9)
     assert relation_items[1]["confidence"] == pytest.approx(0.6)

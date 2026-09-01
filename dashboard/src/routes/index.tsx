@@ -108,7 +108,7 @@ function FeatureStatusLight({
       <span
         data-dashboard-feature-status-light="true"
         className={cn(
-          'h-2.5 w-2.5 shrink-0 rounded-full border-0 transition-[background-color,opacity]',
+          'h-2.5 w-2.5 shrink-0 rounded-none border-0 transition-[background-color,opacity]',
           enabled ? 'bg-primary opacity-100' : 'bg-muted-foreground/25 opacity-45'
         )}
       />

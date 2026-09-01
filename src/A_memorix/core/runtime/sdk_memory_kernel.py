@@ -199,6 +199,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
             MemoryDualVectorStateService,
             MemoryEmbeddingStateService,
             MemoryEpisodeAdminService,
+            MemoryFactAdminService,
             MemoryFeedbackCorrectionService,
             MemoryGraphAdminService,
             MemoryImportTuningAdminService,
@@ -235,6 +236,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
         self._search_hit_service = MemorySearchHitProcessingService(self)
         self._source_admin_service = MemorySourceAdminService(self)
         self._feedback_service = MemoryFeedbackCorrectionService(self)
+        self._fact_admin_service = MemoryFactAdminService(self)
         self._vector_runtime_service = MemoryVectorRuntimeService(self)
         self._ingest_service = MemoryIngestService(self)
         self._maintenance_service = MemoryMaintenanceService(self)
@@ -412,6 +414,17 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     def _current_embedding_fingerprint(self, *, dimension: Optional[int] = None) -> Optional[Dict[str, Any]]:
         service = self._embedding_state_service
         return type(service)._current_embedding_fingerprint(service, dimension=dimension)
+
+    def _current_embedding_fingerprint_for_validation(
+        self,
+        *,
+        dimension: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        service = self._embedding_state_service
+        return type(service)._current_embedding_fingerprint_for_validation(
+            service,
+            dimension=dimension,
+        )
 
     def _stored_embedding_fingerprint(self, store: Optional[VectorStore] = None) -> Optional[Dict[str, Any]]:
         service = self._embedding_state_service
@@ -1109,6 +1122,10 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
     async def memory_feedback_admin(self, *args: Any, **kwargs: Any) -> Any:
         return await self._feedback_service.memory_feedback_admin(*args, **kwargs)
+
+    async def memory_fact_admin(self, *, action: str, **kwargs: Any) -> Dict[str, Any]:
+        service = self._fact_admin_service
+        return await type(service).memory_fact_admin(service, action=action, **kwargs)
 
     async def memory_runtime_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         service = self._vector_runtime_service

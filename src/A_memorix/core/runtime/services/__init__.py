@@ -7,6 +7,7 @@ from .dual_vector_state_service import MemoryDualVectorStateService
 from .embedding_state_service import MemoryEmbeddingStateService
 from .episode_admin_service import MemoryEpisodeAdminService
 from .feedback_correction_service import MemoryFeedbackCorrectionService
+from .fact_admin_service import MemoryFactAdminService
 from .graph_admin_service import MemoryGraphAdminService
 from .import_tuning_admin_service import MemoryImportTuningAdminService
 from .ingest_service import MemoryIngestService
@@ -36,6 +37,7 @@ __all__ = [
     "MemoryEmbeddingStateService",
     "MemoryEpisodeAdminService",
     "MemoryFeedbackCorrectionService",
+    "MemoryFactAdminService",
     "MemoryGraphAdminService",
     "MemoryImportTuningAdminService",
     "MemoryIngestService",

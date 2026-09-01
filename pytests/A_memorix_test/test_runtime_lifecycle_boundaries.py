@@ -27,7 +27,12 @@ async def test_runtime_lifecycle_initialize_preserves_startup_sequence(
     events: list[str] = []
 
     class FakeEmbeddingManager:
-        pass
+        def get_embedding_fingerprint(self, *, dimension: int) -> dict[str, Any]:
+            return {
+                "hash": "observed-lifecycle-model",
+                "dimension": dimension,
+                "source": "observed",
+            }
 
     class FakeVectorStore:
         def __init__(self, name: str) -> None:

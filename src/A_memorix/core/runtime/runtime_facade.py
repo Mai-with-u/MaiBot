@@ -124,3 +124,13 @@ class KernelRuntimeFacade:
         error: str = "",
     ) -> None:
         self._kernel._enqueue_paragraph_vector_backfill(paragraph_hash, error=error)
+
+    def record_person_evidence_written(self, person_ids: Sequence[str], *, reason: str) -> None:
+        """在人物证据提交后激活人物并合并画像刷新请求。"""
+
+        unique_person_ids = list(
+            dict.fromkeys(str(person_id or "").strip() for person_id in person_ids if str(person_id or "").strip())
+        )
+        for person_id in unique_person_ids:
+            self._kernel._mark_person_active(person_id)
+            self._kernel._enqueue_person_profile_refresh(person_id, reason=reason)

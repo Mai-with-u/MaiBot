@@ -12,7 +12,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MaisakaMonitor } from './maisaka-monitor'
 import type {
   MaisakaFinalizedToolResult,
   MaisakaMessageMedia,
@@ -26,6 +25,8 @@ import type {
   TimingGateResultEvent,
   ToolExecutionEvent,
 } from '@/lib/maisaka-monitor-client'
+
+import { MaisakaMonitor } from './maisaka-monitor'
 import type { SessionInfo, StageStatusInfo, TimelineEntry } from './use-maisaka-monitor'
 
 const SIDEBAR_COLLAPSED_KEY = 'maisaka-monitor-sidebar-collapsed'
@@ -353,6 +354,16 @@ describe('MaisakaMonitor 空态与侧边栏', () => {
     const { container } = render(<MaisakaMonitor />)
 
     expect(container.querySelector('.bg-emerald-500')).toBeNull()
+  })
+
+  it('嵌入聊天工作区时隐藏自身侧边栏并保留时间线主体', () => {
+    setupMonitorState()
+    const { container } = render(<MaisakaMonitor embedded />)
+
+    expect(screen.queryByText('聊天流')).not.toBeInTheDocument()
+    expect(screen.queryByText('等待 MaiSaka 会话…')).not.toBeInTheDocument()
+    expect(screen.getByText('等待 MaiSaka 推理事件…')).toBeInTheDocument()
+    expect(container.firstElementChild).toHaveClass('h-full', 'min-h-0')
   })
 
   it('无存档时默认折叠侧边栏，点击按钮展开并持久化状态', async () => {
@@ -1047,6 +1058,43 @@ describe('时间线事件卡片', () => {
     expect(screen.getByText('1 个')).toBeInTheDocument()
     expect(screen.getByText('web_search')).toBeInTheDocument()
     expect(screen.getByText('找到了结果')).toBeInTheDocument()
+  })
+
+  it('插件工具请求结束 Planner 时同时展示终止提示与整批工具结果', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'planner.finalized',
+          makeFinalized({
+            tools: [
+              makeToolResult({
+                tool_call_id: 'tc-stop',
+                tool_name: 'complete_task',
+                summary: '任务已完成',
+                stop_after_execution: true,
+              }),
+              makeToolResult({
+                tool_call_id: 'tc-following',
+                tool_name: 'record_result',
+                summary: '结果已记录',
+              }),
+            ],
+            final_state: {
+              time_records: {},
+              agent_state: 'stop',
+              end_reason: 'tool_stop_after_execution',
+            },
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('本轮思考暂时结束')).toBeInTheDocument()
+    expect(screen.getByText('等待新的消息。')).toBeInTheDocument()
+    expect(screen.getByText('2 个')).toBeInTheDocument()
+    expect(screen.getByText('任务已完成')).toBeInTheDocument()
+    expect(screen.getByText('结果已记录')).toBeInTheDocument()
   })
 
   it('planner.finalized 无执行结果时回退展示 tool_calls，空文本给出占位', () => {
