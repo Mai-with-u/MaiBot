@@ -32,6 +32,7 @@ _EXPORT_DIRS: dict[str, Path] = {
 _REQUIRED_EXPORT_PARTS = ("config", "data")
 _OPTIONAL_EXPORT_PARTS = ("plugins", "logs")
 _ALLOWED_IMPORT_PARTS = set(_EXPORT_DIRS)
+_EXCLUDED_EXPORT_PATHS = {"data/.a_memorix_runtime_writer.lock"}
 _TRANSFER_TEMP_DIR = Path(tempfile.gettempdir()) / "maibot_webui_transfer"
 _CHUNK_SIZE = 1024 * 1024
 
@@ -151,8 +152,11 @@ def _iter_export_files(root: Path, archive_root: str, job: _TransferJob) -> list
         return []
     if root.is_file():
         _raise_if_cancelled(job)
+        archive_name = f"{archive_root}/{root.name}"
+        if archive_name in _EXCLUDED_EXPORT_PATHS:
+            return []
         stat = root.stat()
-        return [(root, f"{archive_root}/{root.name}", stat.st_size)]
+        return [(root, archive_name, stat.st_size)]
 
     files: list[tuple[Path, str, int]] = []
     root_resolved = root.resolve()
@@ -164,7 +168,11 @@ def _iter_export_files(root: Path, archive_root: str, job: _TransferJob) -> list
             resolved_path = file_path.resolve()
             resolved_path.relative_to(root_resolved)
             relative_path = resolved_path.relative_to(root_resolved).as_posix()
-            files.append((resolved_path, f"{archive_root}/{relative_path}", resolved_path.stat().st_size))
+            archive_name = f"{archive_root}/{relative_path}"
+            # 运行时写者锁不包含业务数据，Windows 下持锁读取还会触发 PermissionError。
+            if archive_name in _EXCLUDED_EXPORT_PATHS:
+                continue
+            files.append((resolved_path, archive_name, resolved_path.stat().st_size))
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(f"跳过无法导出的文件: {file_path}, error={exc}")
     return files
