@@ -245,6 +245,14 @@ async function openMemoryStatusDialog(user: ReturnType<typeof userEvent.setup>) 
   await screen.findByRole('dialog', { name: '记忆状态' })
 }
 
+async function openInspectionMode(
+  user: ReturnType<typeof userEvent.setup>,
+  mode: '内容修正' | '状态维护' | '检索调优',
+) {
+  await user.click(screen.getByRole('tab', { name: '记忆检修' }))
+  await user.click(await screen.findByRole('tab', { name: mode }))
+}
+
 describe('KnowledgeBasePage import workflow', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('zh')
@@ -1533,7 +1541,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
 
     await user.click(screen.getByRole('button', { name: '开始调优' }))
@@ -1560,7 +1568,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
 
     expect(screen.getByText('评估并改善记忆搜索效果')).toBeVisible()
@@ -1600,7 +1608,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
     await user.click(screen.getByRole('button', { name: '开始调优' }))
 
@@ -1622,7 +1630,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
     await user.click(screen.getByRole('button', { name: '应用推荐结果' }))
 
@@ -1640,7 +1648,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('当前调优结果')
 
     expect(screen.getByText('验证通过，建议应用。')).toBeInTheDocument()
@@ -1669,7 +1677,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('当前调优结果')
 
     expect(screen.getByText('任务状态')).toBeInTheDocument()
@@ -1698,7 +1706,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('当前调优结果')
 
     expect(screen.getAllByText('失败').length).toBeGreaterThan(0)
@@ -1755,7 +1763,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('当前调优结果')
 
     expect(screen.getByText('验证未通过，不建议应用。')).toBeInTheDocument()
@@ -1770,7 +1778,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
 
     await user.click(screen.getByRole('button', { name: '调优参数' }))
@@ -1794,7 +1802,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
 
     expect(screen.getByRole('button', { name: '应用推荐结果' })).toBeDisabled()
@@ -1816,7 +1824,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '调优' }))
+    await openInspectionMode(user, '检索调优')
     await screen.findByText('记忆搜索调优')
 
     const applyButton = screen.getByRole('button', { name: '应用推荐结果' })
@@ -1972,7 +1980,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '记忆修正' }))
+    await openInspectionMode(user, '内容修正')
     await screen.findByLabelText('修正内容')
     await screen.findByText('correction-plan-1')
     await waitFor(() => expect(memoryApi.getMemoryCorrectionPlan).toHaveBeenCalledWith('correction-plan-1'))
@@ -1997,7 +2005,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '记忆修正' }))
+    await openInspectionMode(user, '内容修正')
     await screen.findByLabelText('修正内容')
 
     await user.type(screen.getByLabelText('修正内容'), '把测试用户的常住城市改为杭州')
@@ -2021,7 +2029,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '记忆修正' }))
+    await openInspectionMode(user, '内容修正')
     await screen.findByText('correction-plan-1')
     await waitFor(() => expect(memoryApi.getMemoryCorrectionPlan).toHaveBeenCalledWith('correction-plan-1'))
 
