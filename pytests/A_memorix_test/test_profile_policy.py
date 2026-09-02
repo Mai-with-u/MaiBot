@@ -30,6 +30,7 @@ def test_should_auto_enqueue_episode_respects_disabled_source_types() -> None:
     config_getter = _config_getter({"episode.disabled_source_types": ["person_fact", "manual"]})
 
     assert profile_policy.should_auto_enqueue_episode(config_getter, source_type="manual") is False
+    assert profile_policy.should_auto_enqueue_episode(config_getter, source_type="knowledge_pack") is False
     assert profile_policy.should_auto_enqueue_episode(config_getter, source_type="chat_summary") is True
 
 

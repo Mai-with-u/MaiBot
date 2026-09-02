@@ -16,7 +16,7 @@ from .knowledge_types import (
 
 logger = get_logger("A_Memorix.MetadataSchema")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 24
 RUNTIME_AUTO_MIGRATION_MIN_SCHEMA_VERSION = 9
 
 
@@ -1039,6 +1039,64 @@ class MetadataSchemaMixin:
             ON memory_fuzzy_modify_plans(target_person_id, target_chat_id)
         """)
 
+    @staticmethod
+    def _ensure_knowledge_package_tables(cursor: sqlite3.Cursor) -> None:
+        """创建可分享知识包的安装登记和段落归属表。"""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_packages (
+                installation_id TEXT PRIMARY KEY,
+                package_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                name TEXT NOT NULL,
+                content_level TEXT NOT NULL,
+                content_digest TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                chat_id TEXT,
+                status TEXT NOT NULL DEFAULT 'installed',
+                installed_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(package_id, version, scope_type, scope_key)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_packages_updated
+            ON knowledge_packages(status, updated_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_packages_package
+            ON knowledge_packages(package_id, version, status)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_package_paragraphs (
+                installation_id TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                paragraph_hash TEXT NOT NULL,
+                PRIMARY KEY (installation_id, doc_id),
+                FOREIGN KEY (installation_id) REFERENCES knowledge_packages(installation_id) ON DELETE CASCADE,
+                FOREIGN KEY (paragraph_hash) REFERENCES paragraphs(hash) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_package_paragraphs_hash
+            ON knowledge_package_paragraphs(paragraph_hash, installation_id)
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_package_resources (
+                installation_id TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                resource_key TEXT NOT NULL,
+                created_by_installation INTEGER NOT NULL CHECK(created_by_installation IN (0, 1)),
+                PRIMARY KEY (installation_id, resource_type, resource_key),
+                FOREIGN KEY (installation_id) REFERENCES knowledge_packages(installation_id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_package_resources_lookup
+            ON knowledge_package_resources(resource_type, resource_key, created_by_installation)
+        """)
+
     def _initialize_tables(self) -> None:
         """初始化数据库表结构"""
         cursor = self._conn.cursor()
@@ -1599,6 +1657,7 @@ class MetadataSchemaMixin:
         self._ensure_relation_graph_projection_tables(cursor)
         self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
+        self._ensure_knowledge_package_tables(cursor)
         self._create_temporal_indexes_if_ready()
         self._create_performance_indexes()
         # 新版 schema 包含完整字段，直接写入版本信息
@@ -1914,6 +1973,7 @@ class MetadataSchemaMixin:
         self._ensure_relation_graph_projection_tables(cursor)
         self._ensure_external_memory_refs_foreign_key(cursor)
         self._ensure_fuzzy_modify_plan_tables(cursor)
+        self._ensure_knowledge_package_tables(cursor)
 
         # 检查paragraphs表是否有knowledge_type列
         cursor.execute("PRAGMA table_info(paragraphs)")
