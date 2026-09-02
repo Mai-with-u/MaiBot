@@ -450,6 +450,13 @@ class MemoryService:
             logger.warning(f"导入管理调用失败: {exc}")
             return {"success": False, "error": str(exc)}
 
+    async def bundle_admin(self, *, action: str, timeout_ms: int = 120000, **kwargs) -> Dict[str, Any]:
+        try:
+            return await self._invoke_admin("memory_bundle_admin", action=action, timeout_ms=timeout_ms, **kwargs)
+        except Exception as exc:
+            logger.warning(f"记忆包管理调用失败: {exc}")
+            return {"success": False, "error": str(exc)}
+
     async def tuning_admin(self, *, action: str, timeout_ms: int = 120000, **kwargs) -> Dict[str, Any]:
         try:
             return await self._invoke_admin("memory_tuning_admin", action=action, timeout_ms=timeout_ms, **kwargs)

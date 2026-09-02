@@ -3,15 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlmodel import col, select
 
 import json
 import shutil
-import uuid
-
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
-from sqlmodel import col, select
 import tomlkit
+import uuid
 
 from src.A_memorix.host_service import a_memorix_host_service
 from src.A_memorix.runtime_registry import get_runtime_kernel
@@ -3763,6 +3763,59 @@ async def cancel_memory_import_task(task_id: str):
 @router.post("/import/tasks/{task_id}/retry")
 async def retry_memory_import_task(task_id: str, payload: dict[str, Any] = Body(default_factory=dict)):
     return await _import_retry(task_id, payload)
+
+
+@router.post("/bundles/export")
+async def export_memory_bundle(payload: dict[str, Any] = Body(default_factory=dict)):
+    return await memory_service.bundle_admin(action="export", timeout_ms=600000, **_unwrap_payload(payload))
+
+
+@router.post("/bundles/import")
+async def import_memory_bundle(
+    file: UploadFile = File(...),
+    payload_json: str = Form("{}"),
+):
+    staging_dir, staged_files = await _stage_upload_files([file])
+    try:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"payload_json 不是有效 JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload_json 必须为对象")
+        payload = _validate_import_chat_id(_unwrap_payload(payload))
+        staged_path = str(staged_files[0]["staged_path"])
+        return await memory_service.bundle_admin(
+            action="import",
+            path=staged_path,
+            timeout_ms=600000,
+            **payload,
+        )
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+@router.get("/bundles")
+async def list_memory_bundles(limit: int = Query(50, ge=1, le=200)):
+    return await memory_service.bundle_admin(action="list", limit=limit)
+
+
+@router.get("/bundles/download/{file_name}", response_class=FileResponse)
+async def download_memory_bundle(file_name: str) -> FileResponse:
+    payload = await memory_service.bundle_admin(action="resolve_file", file_name=Path(file_name).name)
+    if not bool(payload.get("success", False)):
+        raise HTTPException(status_code=404, detail=str(payload.get("error", "记忆包不存在")))
+    path = Path(str(payload.get("path", "") or ""))
+    return FileResponse(
+        path,
+        media_type="application/vnd.a-memorix.bundle+zip",
+        filename=path.name,
+    )
+
+
+@router.delete("/bundles/{installation_id}")
+async def uninstall_memory_bundle(installation_id: str):
+    return await memory_service.bundle_admin(action="uninstall", installation_id=installation_id)
 
 
 @router.get("/retrieval_tuning/settings")

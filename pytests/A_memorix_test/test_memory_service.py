@@ -259,6 +259,29 @@ async def test_import_admin_uses_long_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bundle_admin_uses_long_timeout(monkeypatch):
+    service = MemoryService()
+    calls = []
+
+    async def fake_invoke(component_name, args=None, **kwargs):
+        calls.append((component_name, args, kwargs))
+        return {"success": True, "file_name": "knowledge.amembundle"}
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+
+    result = await service.bundle_admin(action="export", content_level="knowledge")
+
+    assert result["success"] is True
+    assert calls == [
+        (
+            "memory_bundle_admin",
+            {"action": "export", "content_level": "knowledge"},
+            {"timeout_ms": 120000},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tuning_admin_uses_long_timeout(monkeypatch):
     service = MemoryService()
     calls = []
