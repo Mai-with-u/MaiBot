@@ -26,7 +26,7 @@ import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
@@ -273,34 +273,24 @@ export function ImportTab({ queue, form }: ImportTabProps) {
       value="import"
       className="space-y-6 [&_input]:h-10 [&_[role=combobox]]:h-10 [&_textarea]:min-h-[96px]"
     >
-      <div
-        role="tablist"
-        aria-label="导入导出功能"
-        className="border-border/60 bg-muted/30 flex w-fit gap-1 rounded-xl border p-1"
+      <Tabs
+        value={transferMode}
+        onValueChange={(value) => setTransferMode(value as 'import' | 'bundle')}
       >
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={transferMode === 'import'}
-          variant={transferMode === 'import' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => setTransferMode('import')}
+        <TabsList
+          aria-label="导入导出功能"
+          className="border-border/60 bg-muted/30 h-auto w-fit gap-1 rounded-xl border"
         >
-          <Upload className="mr-2 h-4 w-4" />
-          导入任务
-        </Button>
-        <Button
-          type="button"
-          role="tab"
-          aria-selected={transferMode === 'bundle'}
-          variant={transferMode === 'bundle' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => setTransferMode('bundle')}
-        >
-          <PackageOpen className="mr-2 h-4 w-4" />
-          记忆包导入导出
-        </Button>
-      </div>
+          <TabsTrigger value="import">
+            <Upload className="mr-2 h-4 w-4" />
+            导入任务
+          </TabsTrigger>
+          <TabsTrigger value="bundle">
+            <PackageOpen className="mr-2 h-4 w-4" />
+            记忆包导入导出
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <div
         className={cn(

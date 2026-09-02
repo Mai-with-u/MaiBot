@@ -489,7 +489,10 @@ describe('ImportTab', () => {
 
     const submit = screen.getByRole('button', { name: '创建导入任务' })
     expect(submit).toBeDisabled()
-    expect(screen.getByRole('tab', { name: '导入任务' })).toHaveAttribute('aria-selected', 'true')
+    const importTab = screen.getByRole('tab', { name: '导入任务' })
+    expect(importTab).toHaveAttribute('data-dashboard-tabs-trigger', 'true')
+    expect(importTab.closest('[data-dashboard-tabs-list="true"]')).not.toBeNull()
+    expect(importTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: '记忆包导入导出' })).toHaveAttribute(
       'aria-selected',
       'false',
