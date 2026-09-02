@@ -31,13 +31,20 @@ def build_scoped_user_id(platform: str, user_id: str) -> str:
 
 
 def normalize_operator_permissions(permission_list: Iterable[str]) -> Set[str]:
-    """规范化插件管理权限列表。"""
+    """规范化插件管理权限列表。
 
-    return {
-        permission.strip().lower()
-        for permission in permission_list
-        if permission.strip()
-    }
+    与 ``build_scoped_user_id`` 保持一致：仅将平台前缀转小写，``user_id`` 保持原样
+    （openid 等标识符是大小写敏感的，整体转小写会导致匹配失败）。
+    """
+
+    normalized: Set[str] = set()
+    for permission in permission_list:
+        permission = permission.strip()
+        if not permission:
+            continue
+        platform, _, user_id = permission.partition(":")
+        normalized.add(f"{platform.strip().lower()}:{user_id.strip()}")
+    return normalized
 
 
 def has_plugin_management_permission(
