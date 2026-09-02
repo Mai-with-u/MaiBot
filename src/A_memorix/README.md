@@ -12,6 +12,7 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 - [快速入门](QUICK_START.md)
 - [配置参数详解](CONFIG_REFERENCE.md)
 - [导入指南与最佳实践](IMPORT_GUIDE.md)
+- [可分享记忆包格式](docs/memory_bundle_format.md)
 - [修改约定](MODIFICATION_POLICY.md)
 - [更新日志](CHANGELOG.md)
 
@@ -21,7 +22,7 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 
 - 旧 `components/commands/*`、`components/tools/*` 与 `server.py` 已移除。
 - 统一入口为宿主侧 host service + [`core/runtime/sdk_memory_kernel.py`](core/runtime/sdk_memory_kernel.py)。
-- 元数据 schema 为 `v9`，支持外部引用与运维操作记录（如 `external_memory_refs`、`memory_v5_operations`、`delete_operations`）。
+- 元数据 schema 为 `v24`，支持外部引用、知识包安装登记与运维操作记录。
 
 如果你还在使用旧版 slash 命令（如 `/query`、`/memory`、`/visualize`），需要按本文的 Tool 接口迁移。
 
@@ -31,7 +32,7 @@ A_Memorix 是 MaiBot 内置的长期记忆子系统。
 - 写入与去重：`external_id` 幂等、段落/关系联合写入、Episode pending 队列处理。
 - Episode 能力：按 source 重建、状态查询、批处理 pending。
 - 人物画像：自动快照 + 手动 override。
-- 管理能力：图谱、来源、Episode、画像、导入、调优、V5 运维、删除恢复全套管理工具。
+- 管理能力：图谱、来源、Episode、画像、导入、可分享记忆包、调优、V5 运维、删除恢复全套管理工具。
 
 ## Tool 接口 (v2.0.0)
 

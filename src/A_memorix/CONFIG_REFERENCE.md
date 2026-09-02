@@ -1,6 +1,6 @@
 # A_Memorix 配置参考 (v2.0.0)
 
-本文档对应当前仓库代码（`__version__ = 2.0.0`、`SCHEMA_VERSION = 21`）。
+本文档对应当前仓库代码（`__version__ = 2.0.0`、`SCHEMA_VERSION = 24`）。
 
 说明：
 
