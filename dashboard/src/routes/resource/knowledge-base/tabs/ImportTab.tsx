@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react'
 
-import { Check, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, RefreshCw, Search, Upload } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MoreHorizontal,
+  PackageOpen,
+  RefreshCw,
+  Search,
+  Upload,
+} from 'lucide-react'
 
 import { MemoryMiniTabs } from '@/components/memory/MemoryMiniTabs'
 import { MemoryProgressIndicator } from '@/components/memory/MemoryProgressIndicator'
@@ -42,6 +52,7 @@ import {
   normalizeImportInputMode,
   normalizeProgress,
 } from '../utils'
+import { MemoryBundleCard } from './MemoryBundleCard'
 
 const UNIFIED_IMPORT_MODE_OPTIONS = [
   { value: 'text', label: '文本' },
@@ -239,6 +250,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
   } = form
   const [chatTargetQuery, setChatTargetQuery] = useState('')
   const [importParametersOpen, setImportParametersOpen] = useState(false)
+  const [transferMode, setTransferMode] = useState<'import' | 'bundle'>('import')
   const selectedImportChatTarget = useMemo(
     () => importChatTargets.find((chat) => chat.chat_id === importCommonChatId.trim()),
     [importChatTargets, importCommonChatId],
@@ -261,7 +273,41 @@ export function ImportTab({ queue, form }: ImportTabProps) {
       value="import"
       className="space-y-6 [&_input]:h-10 [&_[role=combobox]]:h-10 [&_textarea]:min-h-[96px]"
     >
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div
+        role="tablist"
+        aria-label="导入导出功能"
+        className="border-border/60 bg-muted/30 flex w-fit gap-1 rounded-xl border p-1"
+      >
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={transferMode === 'import'}
+          variant={transferMode === 'import' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setTransferMode('import')}
+        >
+          <Upload className="mr-2 h-4 w-4" />
+          导入任务
+        </Button>
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={transferMode === 'bundle'}
+          variant={transferMode === 'bundle' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setTransferMode('bundle')}
+        >
+          <PackageOpen className="mr-2 h-4 w-4" />
+          记忆包导入导出
+        </Button>
+      </div>
+
+      <div
+        className={cn(
+          'grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]',
+          transferMode !== 'import' && 'hidden',
+        )}
+      >
         <div className="order-2 space-y-6 lg:order-1">
           <Card className="rounded-2xl border-border/70 shadow-sm">
             <CardHeader>
@@ -1235,6 +1281,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
             )}
           </CardContent>
         </Card>
+      {transferMode === 'bundle' ? <MemoryBundleCard chatTargets={importChatTargets} /> : null}
     </TabsContent>
   )
 }

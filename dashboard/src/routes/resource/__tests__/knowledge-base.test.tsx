@@ -1055,7 +1055,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
+    await user.click(screen.getByRole('tab', { name: '导入导出' }))
 
     expect(await screen.findByRole('button', { name: '创建导入任务' })).toBeInTheDocument()
     expect((await screen.findAllByText('import-run-1')).length).toBeGreaterThan(0)
@@ -1379,7 +1379,7 @@ describe('KnowledgeBasePage import workflow', () => {
     const { container } = renderPage()
 
     const openImportTab = async () => {
-      await user.click(screen.getByRole('tab', { name: '导入' }))
+      await user.click(screen.getByRole('tab', { name: '导入导出' }))
       await screen.findByRole('button', { name: '创建导入任务' })
     }
 
@@ -1448,7 +1448,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
+    await user.click(screen.getByRole('tab', { name: '导入导出' }))
 
     expect(await screen.findByText('alpha.txt')).toBeInTheDocument()
     expect(await screen.findByText('chunk-preview-0')).toBeInTheDocument()
@@ -1477,7 +1477,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
+    await user.click(screen.getByRole('tab', { name: '导入导出' }))
 
     expect((await screen.findAllByText('完成（有错误）')).length).toBeGreaterThan(0)
     expect(await screen.findByText('成功 9 / 12 分块 · 失败 3')).toBeInTheDocument()
@@ -1488,7 +1488,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
+    await user.click(screen.getByRole('tab', { name: '导入导出' }))
     await screen.findByText('任务详情')
 
     await user.click(screen.getByRole('button', { name: '取消选中导入任务' }))
@@ -1523,7 +1523,7 @@ describe('KnowledgeBasePage import workflow', () => {
     renderPage()
 
     await waitForConsoleReady()
-    await user.click(screen.getByRole('tab', { name: '导入' }))
+    await user.click(screen.getByRole('tab', { name: '导入导出' }))
     await screen.findByText('导入队列')
 
     const initialCalls = vi.mocked(memoryApi.getMemoryImportTasks).mock.calls.length

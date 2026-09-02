@@ -678,6 +678,93 @@ export interface MemoryImportActionPayload {
   error?: string
 }
 
+export type MemoryBundleContentLevel = 'knowledge' | 'full'
+export type MemoryBundleSelectorType = 'all' | 'source' | 'chat' | 'import_task' | 'package'
+
+export interface MemoryBundleManifestPayload {
+  format: string
+  format_version: number
+  created_at: string
+  content_level: MemoryBundleContentLevel
+  content_digest: string
+  package: {
+    id: string
+    version: string
+    name: string
+    description?: string
+    author?: string
+  }
+  selector: {
+    type: MemoryBundleSelectorType
+    values?: string[]
+    precision?: string
+  }
+  counts: Record<string, number>
+  components: string[]
+  embedding_fingerprint?: Record<string, unknown> | null
+}
+
+export interface MemoryBundleExportPayload {
+  success: boolean
+  file_name?: string
+  path?: string
+  manifest?: MemoryBundleManifestPayload
+  counts?: Record<string, number>
+  size?: number
+  error?: string
+}
+
+export interface MemoryBundleImportPayload {
+  success: boolean
+  already_installed?: boolean
+  installation_id?: string
+  package?: MemoryBundleManifestPayload['package']
+  content_level?: MemoryBundleContentLevel
+  mode?: 'merge' | 'restore'
+  scope_type?: 'global' | 'chat'
+  chat_id?: string
+  inserted?: Record<string, number>
+  mapped_paragraphs?: number
+  error?: string
+}
+
+export interface MemoryBundleInstallationPayload {
+  installation_id: string
+  package_id: string
+  version: string
+  name: string
+  content_level: MemoryBundleContentLevel
+  content_digest: string
+  scope_type: 'global' | 'chat'
+  scope_key: string
+  chat_id?: string | null
+  status: string
+  installed_at: number
+  updated_at: number
+  paragraph_count: number
+}
+
+export interface MemoryBundleListPayload {
+  success: boolean
+  items: MemoryBundleInstallationPayload[]
+  count: number
+  error?: string
+}
+
+export interface MemoryBundleUninstallPayload {
+  success: boolean
+  installation_id?: string
+  removed_memories?: boolean
+  removed?: Record<string, number>
+  retained_shared?: Record<string, number>
+  removed_vectors?: {
+    paragraphs: number
+    graph: number
+  }
+  message?: string
+  error?: string
+}
+
 export interface MemoryTuningProfilePayload {
   success: boolean
   profile?: Record<string, unknown>
@@ -2161,6 +2248,59 @@ export async function retryMemoryImportTask(
       method: 'POST',
       body: payload,
     }
+  )
+}
+
+export async function exportMemoryBundle(payload: {
+  content_level: MemoryBundleContentLevel
+  selector: Record<string, unknown>
+  include_vectors?: boolean
+  package: {
+    id?: string
+    version: string
+    name: string
+    description?: string
+    author?: string
+  }
+}): Promise<MemoryBundleExportPayload> {
+  return requestJson<MemoryBundleExportPayload>('/bundles/export', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function importMemoryBundle(
+  file: File,
+  payload: {
+    scope_type: 'global' | 'chat'
+    chat_id?: string
+    mode?: 'merge' | 'restore'
+  }
+): Promise<MemoryBundleImportPayload> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('payload_json', JSON.stringify(payload))
+  return requestJson<MemoryBundleImportPayload>('/bundles/import', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function getMemoryBundles(limit: number = 50): Promise<MemoryBundleListPayload> {
+  return requestJson<MemoryBundleListPayload>(`/bundles?limit=${limit}`)
+}
+
+export async function uninstallMemoryBundle(installationId: string): Promise<MemoryBundleUninstallPayload> {
+  return requestJson<MemoryBundleUninstallPayload>(`/bundles/${encodeURIComponent(installationId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function downloadMemoryBundle(fileName: string): Promise<Blob> {
+  return backendApi.request<Blob>(
+    'GET',
+    `${API_BASE}/bundles/download/${encodeURIComponent(fileName)}`,
+    { parse: 'blob' },
   )
 }
 

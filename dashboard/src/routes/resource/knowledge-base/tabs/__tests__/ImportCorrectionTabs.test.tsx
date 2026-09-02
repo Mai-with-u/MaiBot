@@ -489,6 +489,11 @@ describe('ImportTab', () => {
 
     const submit = screen.getByRole('button', { name: '创建导入任务' })
     expect(submit).toBeDisabled()
+    expect(screen.getByRole('tab', { name: '导入任务' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '记忆包导入导出' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
     expect(screen.queryByText('公共参数')).not.toBeInTheDocument()
     expect(screen.queryByText('这些设置会应用到当前导入任务。一般保持默认即可，只在批量导入或排查问题时调整。')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请选择资料类别')
