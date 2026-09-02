@@ -81,6 +81,10 @@ async def _dispatch_memory_import_admin(kernel: Any, command: AdminCommand) -> A
     return await kernel.memory_import_admin(action=command.action, **command.payload)
 
 
+async def _dispatch_memory_bundle_admin(kernel: Any, command: AdminCommand) -> Any:
+    return await kernel.memory_bundle_admin(action=command.action, **command.payload)
+
+
 async def _dispatch_memory_tuning_admin(kernel: Any, command: AdminCommand) -> Any:
     return await kernel.memory_tuning_admin(action=command.action, **command.payload)
 
@@ -162,6 +166,7 @@ _IMPORT_ACTIONS = {
     "cancel",
     "retry_failed",
 }
+_BUNDLE_ACTIONS = {"export", "inspect", "import", "list", "resolve_file", "uninstall"}
 _TUNING_ACTIONS = {
     "settings",
     "get_settings",
@@ -222,6 +227,11 @@ ADMIN_COMPONENT_SPECS: dict[str, AdminComponentSpec] = {
         component_name="memory_import_admin",
         actions=frozenset(_IMPORT_ACTIONS),
         dispatcher=_dispatch_memory_import_admin,
+    ),
+    "memory_bundle_admin": AdminComponentSpec(
+        component_name="memory_bundle_admin",
+        actions=frozenset(_BUNDLE_ACTIONS),
+        dispatcher=_dispatch_memory_bundle_admin,
     ),
     "memory_tuning_admin": AdminComponentSpec(
         component_name="memory_tuning_admin",

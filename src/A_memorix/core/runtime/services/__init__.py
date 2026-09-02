@@ -1,4 +1,5 @@
 from .background_task_service import MemoryBackgroundTaskService
+from .bundle_admin_service import MemoryBundleAdminService
 from .chat_filter_service import MemoryChatFilterService
 from .correction_admin_service import MemoryCorrectionAdminService
 from .delete_admin_service import MemoryDeleteAdminService
@@ -29,6 +30,7 @@ from .vector_runtime_service import MemoryVectorRuntimeService
 
 __all__ = [
     "MemoryBackgroundTaskService",
+    "MemoryBundleAdminService",
     "MemoryChatFilterService",
     "MemoryCorrectionAdminService",
     "MemoryDeleteAdminService",

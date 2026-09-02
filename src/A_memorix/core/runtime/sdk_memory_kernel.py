@@ -192,6 +192,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
         from .services import (
             MemoryBackgroundTaskService,
+            MemoryBundleAdminService,
             MemoryChatFilterService,
             MemoryCorrectionAdminService,
             MemoryDeleteAdminService,
@@ -223,6 +224,7 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
 
         self._graph_admin_service = MemoryGraphAdminService(self)
         self._background_task_service = MemoryBackgroundTaskService(self)
+        self._bundle_admin_service = MemoryBundleAdminService(self)
         self._chat_filter_service = MemoryChatFilterService(self)
         self._delete_admin_service = MemoryDeleteAdminService(self)
         self._dual_vector_migration_service = MemoryDualVectorMigrationService(self)
@@ -1134,6 +1136,10 @@ class SDKMemoryKernel(KernelCompatibilityMixin):
     async def memory_import_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         service = self._import_tuning_admin_service
         return await type(service).memory_import_admin(service, action=action, **kwargs)
+
+    async def memory_bundle_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
+        service = self._bundle_admin_service
+        return await type(service).memory_bundle_admin(service, action=action, **kwargs)
 
     async def memory_tuning_admin(self, *, action: str, **kwargs) -> Dict[str, Any]:
         service = self._import_tuning_admin_service

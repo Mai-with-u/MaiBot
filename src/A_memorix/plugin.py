@@ -292,6 +292,10 @@ class AMemorixPlugin(MaiBotPlugin):
     async def handle_memory_import_admin(self, action: str, **kwargs):
         return await self._dispatch_admin_tool("memory_import_admin", action=action, **kwargs)
 
+    @Tool("memory_bundle_admin", description="可分享记忆包管理接口", parameters=_ADMIN_TOOL_PARAMS)
+    async def handle_memory_bundle_admin(self, action: str, **kwargs):
+        return await self._dispatch_admin_tool("memory_bundle_admin", action=action, **kwargs)
+
     @Tool("memory_tuning_admin", description="长期记忆调优管理接口", parameters=_ADMIN_TOOL_PARAMS)
     async def handle_memory_tuning_admin(self, action: str, **kwargs):
         return await self._dispatch_admin_tool("memory_tuning_admin", action=action, **kwargs)
