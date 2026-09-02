@@ -978,7 +978,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
         </div>
       </div>
 
-      <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
+      {transferMode === 'import' ? (
+        <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
           <CardHeader className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>任务详情</CardTitle>
@@ -1271,6 +1272,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
             )}
           </CardContent>
         </Card>
+      ) : null}
       {transferMode === 'bundle' ? <MemoryBundleCard chatTargets={importChatTargets} /> : null}
     </TabsContent>
   )

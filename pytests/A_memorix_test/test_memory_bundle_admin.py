@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,7 @@ import shutil
 import time
 import zipfile
 
+import numpy as np
 import pytest
 
 from src.A_memorix.core.runtime.services.bundle_admin_service import MemoryBundleAdminService
@@ -27,6 +29,20 @@ class _FakeVectorStore:
         self.ids.difference_update(ids)
         return removed
 
+    def __contains__(self, item_id: str) -> bool:
+        return item_id in self.ids
+
+    def add(self, vectors: np.ndarray, ids: list[str]) -> None:
+        assert vectors.shape[0] == len(ids)
+        self.ids.update(ids)
+
+    def get_vectors(self, ids: list[str]) -> dict[str, np.ndarray]:
+        return {
+            item_id: np.asarray([float(index), 1.0], dtype=np.float32)
+            for index, item_id in enumerate(ids)
+            if item_id in self.ids
+        }
+
 
 class _BundleKernel:
     def __init__(self, data_dir: Path) -> None:
@@ -39,6 +55,8 @@ class _BundleKernel:
         self._graph_admin_service = _GraphAdmin()
         self.paragraph_vectors = _FakeVectorStore()
         self.graph_vectors = _FakeVectorStore()
+        self.dual_vector_pools_enabled = True
+        self.current_embedding_fingerprint: dict[str, Any] | None = None
 
     async def initialize(self) -> None:
         return None
@@ -53,9 +71,16 @@ class _BundleKernel:
     def _graph_vector_store(self) -> _FakeVectorStore:
         return self.graph_vectors
 
+    def _dual_vector_pools_enabled(self) -> bool:
+        return self.dual_vector_pools_enabled
+
     @staticmethod
-    def _current_embedding_fingerprint_for_validation() -> None:
-        return None
+    def _stored_embedding_fingerprint(store: _FakeVectorStore) -> dict[str, Any]:
+        _ = store
+        return {"hash": "test-embedding", "dimension": 2}
+
+    def _current_embedding_fingerprint_for_validation(self) -> dict[str, Any] | None:
+        return self.current_embedding_fingerprint
 
     @staticmethod
     def _persist(*, force_vectors: bool = False) -> None:
@@ -174,6 +199,79 @@ async def test_knowledge_bundle_exports_lpmm_semantics_and_installs_without_extr
 
 
 @pytest.mark.asyncio
+async def test_single_pool_bundle_exports_graph_vectors_with_typed_archive_ids(tmp_path: Path) -> None:
+    source_kernel = _BundleKernel(tmp_path / "single-pool-source")
+    target_kernel = _BundleKernel(tmp_path / "single-pool-target")
+    try:
+        source_kernel.dual_vector_pools_enabled = False
+        source_kernel.graph_vectors = source_kernel.paragraph_vectors
+        paragraph_hash = source_kernel.metadata_store.add_paragraph(
+            "水稻属于禾本科。",
+            source="manual:single-pool",
+            metadata={"scope_type": "global"},
+            knowledge_type="factual",
+        )
+        entity_hashes = [
+            source_kernel.metadata_store.add_entity(name, source_paragraph=paragraph_hash)
+            for name in ("水稻", "禾本科")
+        ]
+        relation_hash = source_kernel.metadata_store.add_relation(
+            "水稻",
+            "属于",
+            "禾本科",
+            source_paragraph=paragraph_hash,
+        )
+        source_kernel.paragraph_vectors.ids.update([paragraph_hash, *entity_hashes, relation_hash])
+
+        exported = await MemoryBundleAdminService(source_kernel).memory_bundle_admin(
+            action="export",
+            content_level="knowledge",
+            include_vectors=True,
+            selector={"type": "source", "value": "manual:single-pool"},
+        )
+
+        assert exported["success"] is True
+        assert "vectors/graph.npz" in exported["manifest"]["components"]
+        with zipfile.ZipFile(exported["path"], "r") as archive:
+            with np.load(BytesIO(archive.read("vectors/graph.npz")), allow_pickle=False) as payload:
+                archived_ids = {str(item_id) for item_id in payload["ids"].tolist()}
+        assert archived_ids == {
+            *(f"entity:{entity_hash}" for entity_hash in entity_hashes),
+            f"relation:{relation_hash}",
+        }
+
+        target_kernel.dual_vector_pools_enabled = False
+        target_kernel.graph_vectors = target_kernel.paragraph_vectors
+        target_kernel.relation_vectors_enabled = True
+        target_kernel.current_embedding_fingerprint = {"hash": "test-embedding", "dimension": 2}
+        installed = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
+            action="import",
+            path=str(_copy_bundle_for_install(exported["path"], target_kernel.data_dir)),
+            scope_type="global",
+        )
+        assert installed["vectors"] == {
+            "bundle_compatible": True,
+            "imported": {"paragraphs": 1, "graph": 3},
+            "generated": {"paragraphs": 0, "entities": 0, "relations": 0},
+        }
+        assert target_kernel.paragraph_vectors.ids == {
+            paragraph_hash,
+            *entity_hashes,
+            relation_hash,
+        }
+
+        uninstalled = await MemoryBundleAdminService(target_kernel).memory_bundle_admin(
+            action="uninstall",
+            installation_id=installed["installation_id"],
+        )
+        assert uninstalled["removed_vectors"] == {"paragraphs": 1, "graph": 3}
+        assert target_kernel.paragraph_vectors.ids == set()
+    finally:
+        source_kernel.metadata_store.close()
+        target_kernel.metadata_store.close()
+
+
+@pytest.mark.asyncio
 async def test_import_task_selector_reads_persisted_source_set_report(tmp_path: Path) -> None:
     kernel = _BundleKernel(tmp_path / "history-source")
     kernel.import_task_manager = _HistoryOnlyImportManager()
@@ -266,6 +364,18 @@ async def test_full_bundle_restores_closed_episode_and_profile_with_chat_remap(t
             )
 
         source_service = MemoryBundleAdminService(source_kernel)
+        knowledge_exported = await source_service.memory_bundle_admin(
+            action="export",
+            content_level="knowledge",
+            include_vectors=False,
+            selector={"type": "chat", "chat_id": "chat-old"},
+        )
+        assert knowledge_exported["manifest"]["counts"] == {
+            "paragraphs": 1,
+            "entities": 0,
+            "relations": 0,
+        }
+
         exported = await source_service.memory_bundle_admin(
             action="export",
             content_level="full",

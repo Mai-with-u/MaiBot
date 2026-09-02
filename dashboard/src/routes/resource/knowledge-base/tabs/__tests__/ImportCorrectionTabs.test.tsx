@@ -24,6 +24,10 @@ import type { UseMemoryCorrectionResult } from '../../hooks/useMemoryCorrection'
 import { CorrectionTab } from '../CorrectionTab'
 import { ImportTab } from '../ImportTab'
 
+vi.mock('../MemoryBundleCard', () => ({
+  MemoryBundleCard: () => <div>记忆包功能面板</div>,
+}))
+
 afterEach(() => {
   cleanup()
 })
@@ -478,6 +482,22 @@ const manyChats: MemoryImportChatTargetPayload[] = [
 ]
 
 describe('ImportTab', () => {
+  it('切换到记忆包页时隐藏导入任务详情', async () => {
+    const user = userEvent.setup()
+    renderImport({
+      queue: {
+        selectedImportTaskId: 'task-run-1',
+        selectedImportTaskResolved: makeImportTask(),
+      },
+    })
+
+    expect(screen.getByText('任务详情')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: '记忆包导入导出' }))
+
+    expect(screen.getByText('记忆包功能面板')).toBeInTheDocument()
+    expect(screen.queryByText('任务详情')).not.toBeInTheDocument()
+  })
+
   it('未选资料类别时禁用提交并展示校验文案', async () => {
     const user = userEvent.setup()
     const { form } = renderImport({

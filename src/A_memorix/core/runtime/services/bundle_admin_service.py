@@ -568,16 +568,32 @@ class MemoryBundleAdminService(KernelServiceBase):
         self,
         store: Any,
         ids: Sequence[str],
+        *,
+        archive_ids: Optional[Sequence[str]] = None,
     ) -> Optional[bytes]:
         if store is None or not ids:
             return None
+        exported_ids = list(archive_ids) if archive_ids is not None else list(ids)
+        if len(exported_ids) != len(ids):
+            raise ValueError("导出向量 ID 映射数量不一致")
         vector_map = store.get_vectors(ids)
-        ordered_ids = [item_id for item_id in ids if item_id in vector_map]
-        if not ordered_ids:
+        ordered_pairs = [
+            (stored_id, exported_id)
+            for stored_id, exported_id in zip(ids, exported_ids, strict=True)
+            if stored_id in vector_map
+        ]
+        if not ordered_pairs:
             return None
-        vectors = np.stack([vector_map[item_id] for item_id in ordered_ids]).astype(np.float32, copy=False)
+        vectors = np.stack([vector_map[stored_id] for stored_id, _ in ordered_pairs]).astype(
+            np.float32,
+            copy=False,
+        )
         buffer = BytesIO()
-        np.savez_compressed(buffer, ids=np.asarray(ordered_ids), vectors=vectors)
+        np.savez_compressed(
+            buffer,
+            ids=np.asarray([exported_id for _, exported_id in ordered_pairs]),
+            vectors=vectors,
+        )
         return buffer.getvalue()
 
     async def _export_bundle(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -616,14 +632,21 @@ class MemoryBundleAdminService(KernelServiceBase):
         description = str(package.get("description") or "").strip()
         author = str(package.get("author") or "").strip()
         now_iso = datetime.now(timezone.utc).isoformat()
-        counts = {table: len(rows) for table, rows in state_tables.items()}
+        if content_level == "knowledge":
+            counts = {
+                table: len(state_tables[table])
+                for table in ("paragraphs", "entities", "relations")
+            }
+        else:
+            counts = {table: len(rows) for table, rows in state_tables.items()}
 
         paragraph_ids = [str(row["hash"]) for row in state_tables["paragraphs"]]
-        graph_ids = [
-            self._graph_vector_id("entity", str(row["hash"])) for row in state_tables["entities"]
-        ] + [
-            self._graph_vector_id("relation", str(row["hash"])) for row in state_tables["relations"]
+        entity_ids = [str(row["hash"]) for row in state_tables["entities"]]
+        relation_ids = [str(row["hash"]) for row in state_tables["relations"]]
+        graph_ids = [self._graph_vector_id("entity", item_id) for item_id in entity_ids] + [
+            self._graph_vector_id("relation", item_id) for item_id in relation_ids
         ]
+        graph_storage_ids = graph_ids if self._dual_vector_pools_enabled() else entity_ids + relation_ids
         members: Dict[str, bytes] = {
             "knowledge.json": _canonical_json_bytes(knowledge),
         }
@@ -637,7 +660,11 @@ class MemoryBundleAdminService(KernelServiceBase):
             embedding_fingerprint = self._stored_embedding_fingerprint(paragraph_store)
             if embedding_fingerprint is not None:
                 paragraph_vectors = self._export_vector_member(paragraph_store, paragraph_ids)
-                graph_vectors = self._export_vector_member(graph_store, graph_ids)
+                graph_vectors = self._export_vector_member(
+                    graph_store,
+                    graph_storage_ids,
+                    archive_ids=graph_ids,
+                )
                 if paragraph_vectors is not None:
                     members["vectors/paragraphs.npz"] = paragraph_vectors
                 if graph_vectors is not None:
@@ -814,6 +841,7 @@ class MemoryBundleAdminService(KernelServiceBase):
         store: Any,
         *,
         allowed_ids: set[str],
+        store_id_by_archive_id: Optional[Dict[str, str]] = None,
     ) -> Tuple[int, set[str]]:
         if store is None:
             return 0, set()
@@ -824,12 +852,27 @@ class MemoryBundleAdminService(KernelServiceBase):
             raise ValueError("记忆包向量数量与 ID 数量不一致")
         accepted_indexes = [index for index, item_id in enumerate(ids) if item_id in allowed_ids]
         accepted_ids = {ids[index] for index in accepted_indexes}
-        missing_indexes = [index for index in accepted_indexes if ids[index] not in store]
-        if not missing_indexes:
+        resolved_store_ids = [
+            (
+                index,
+                store_id_by_archive_id.get(ids[index], ids[index])
+                if store_id_by_archive_id is not None
+                else ids[index],
+            )
+            for index in accepted_indexes
+        ]
+        missing_items = [
+            (index, store_id)
+            for index, store_id in resolved_store_ids
+            if store_id not in store
+        ]
+        if not missing_items:
             return 0, accepted_ids
-        missing_ids = [ids[index] for index in missing_indexes]
-        store.add(vectors[missing_indexes], missing_ids)
-        return len(missing_ids), accepted_ids
+        store.add(
+            vectors[[index for index, _ in missing_items]],
+            [store_id for _, store_id in missing_items],
+        )
+        return len(missing_items), accepted_ids
 
     def _bundle_vectors_compatible(self, manifest: Dict[str, Any]) -> bool:
         packaged = manifest.get("embedding_fingerprint")
@@ -1514,10 +1557,23 @@ class MemoryBundleAdminService(KernelServiceBase):
                     } | {
                         self._graph_vector_id("relation", relation_hash) for relation_hash in relation_hashes
                     }
+                    graph_store_ids = None
+                    if not self._dual_vector_pools_enabled():
+                        graph_store_ids = {
+                            self._graph_vector_id("entity", entity_hash): entity_hash
+                            for entity_hash in entity_hashes
+                        }
+                        graph_store_ids.update(
+                            {
+                                self._graph_vector_id("relation", relation_hash): relation_hash
+                                for relation_hash in relation_hashes
+                            }
+                        )
                     count, ids = self._import_vector_member(
                         members["vectors/graph.npz"],
                         self._graph_vector_store(),
                         allowed_ids=allowed_graph_ids,
+                        store_id_by_archive_id=graph_store_ids,
                     )
                     vector_imported["graph"] = count
                     packaged_vector_ids.update(ids)
@@ -1672,12 +1728,17 @@ class MemoryBundleAdminService(KernelServiceBase):
         if paragraph_store is not None and removed_vector_ids["paragraphs"]:
             removed_paragraph_vectors = int(paragraph_store.delete(removed_vector_ids["paragraphs"]) or 0)
         graph_store = self._graph_vector_store()
-        graph_vector_ids = [
-            self._graph_vector_id("entity", entity_hash) for entity_hash in removed_vector_ids["entities"]
-        ]
-        graph_vector_ids.extend(
-            self._graph_vector_id("relation", relation_hash) for relation_hash in removed_vector_ids["relations"]
-        )
+        if self._dual_vector_pools_enabled():
+            graph_vector_ids = [
+                self._graph_vector_id("entity", entity_hash)
+                for entity_hash in removed_vector_ids["entities"]
+            ]
+            graph_vector_ids.extend(
+                self._graph_vector_id("relation", relation_hash)
+                for relation_hash in removed_vector_ids["relations"]
+            )
+        else:
+            graph_vector_ids = removed_vector_ids["entities"] + removed_vector_ids["relations"]
         removed_graph_vectors = 0
         if graph_store is not None and graph_vector_ids:
             removed_graph_vectors = int(graph_store.delete(graph_vector_ids) or 0)
