@@ -161,6 +161,7 @@ export function MemoryEpisodeManager({
   const initialLoadedRef = useRef(false)
   const initialTargetKeyRef = useRef('')
   const pendingInitialTargetRef = useRef<{ source: string; timeStart: string; timeEnd: string } | null>(null)
+  const detailRequestIdRef = useRef(0)
 
   const selectedEpisode = useMemo(() => detail?.episode ?? items.find((item) => getEpisodeId(item) === selectedId), [detail?.episode, items, selectedId])
   const selectedEpisodeParagraphs = useMemo(() => getEpisodeParagraphs(selectedEpisode), [selectedEpisode])
@@ -190,8 +191,8 @@ export function MemoryEpisodeManager({
       ])
       const nextItems = listPayload.items ?? []
       setItems(nextItems)
-      if (!selectedId && nextItems.length > 0) {
-        setSelectedId(getEpisodeId(nextItems[0]))
+      if (nextItems.length > 0) {
+        setSelectedId((current) => current || getEpisodeId(nextItems[0]))
       }
     } catch (error) {
       toast({
@@ -202,25 +203,34 @@ export function MemoryEpisodeManager({
     } finally {
       setLoading(false)
     }
-  }, [limit, loadStatus, personId, platform, query, selectedId, showAdvancedPersonId, source, timeEnd, timeStart, toast, userId])
+  }, [limit, loadStatus, personId, platform, query, showAdvancedPersonId, source, timeEnd, timeStart, toast, userId])
 
   const loadDetail = useCallback(async (episodeId: string) => {
+    const requestId = detailRequestIdRef.current + 1
+    detailRequestIdRef.current = requestId
     if (!episodeId) {
       setDetail(null)
       return
     }
+    setDetail(null)
     setDetailLoading(true)
     try {
       const payload = await getMemoryEpisode(episodeId)
-      setDetail(payload)
+      if (detailRequestIdRef.current === requestId) {
+        setDetail(payload)
+      }
     } catch (error) {
-      toast({
-        title: '加载 Episode 详情失败',
-        description: error instanceof Error ? error.message : String(error),
-        variant: 'destructive',
-      })
+      if (detailRequestIdRef.current === requestId) {
+        toast({
+          title: '加载 Episode 详情失败',
+          description: error instanceof Error ? error.message : String(error),
+          variant: 'destructive',
+        })
+      }
     } finally {
-      setDetailLoading(false)
+      if (detailRequestIdRef.current === requestId) {
+        setDetailLoading(false)
+      }
     }
   }, [toast])
 
