@@ -355,22 +355,24 @@ class MemoryBackgroundTaskService(KernelServiceBase):
     async def _embedding_probe_loop(self) -> None:
         try:
             while not self._background_stopping:
-                await asyncio.sleep(self._embedding_probe_interval_seconds())
-                if self._background_stopping:
-                    break
                 startup_deferred = self._is_startup_self_check_deferred()
                 vector_fingerprint_pending = (
                     str(self._vector_health.get("error_code", "") or "")
                     == "embedding_fingerprint_unavailable"
                 )
-                if not self._embedding_fallback_enabled() and not startup_deferred and not vector_fingerprint_pending:
-                    continue
-                if not self._is_embedding_degraded() and not startup_deferred and not vector_fingerprint_pending:
-                    continue
-                try:
-                    await self._recover_embedding_once()
-                except Exception as exc:
-                    logger.warning(f"embedding 恢复探测失败: {exc}")
+                should_probe = (
+                    (self._embedding_fallback_enabled() or startup_deferred or vector_fingerprint_pending)
+                    and (self._is_embedding_degraded() or startup_deferred or vector_fingerprint_pending)
+                )
+                if should_probe:
+                    try:
+                        await self._recover_embedding_once()
+                    except Exception as exc:
+                        logger.warning(f"embedding 恢复探测失败: {exc}")
+                if self._background_stopping:
+                    break
+                # 第一次探测应在后台任务启动后立即执行，避免已有向量等待完整探测周期才恢复。
+                await asyncio.sleep(self._embedding_probe_interval_seconds())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
