@@ -24,10 +24,10 @@ from src.services import llm_service as llm_api
 from src.services import message_service as message_api
 
 from ..storage import (
-    KnowledgeType,
-    VectorStore,
     GraphStore,
+    KnowledgeType,
     MetadataStore,
+    VectorStore,
     resolve_stored_knowledge_type,
 )
 from ..embedding import EmbeddingAPIAdapter
@@ -236,6 +236,17 @@ class SummaryImporter:
             if store is not None:
                 return store
         return self.vector_store
+
+    def _persist_vector_store(self, store: VectorStore) -> None:
+        plugin_instance = self._plugin_instance()
+        if plugin_instance is not None:
+            plugin_instance.persist_vector_store(store)
+            return
+
+        embedding_fingerprint = self.embedding_manager.get_embedding_fingerprint(
+            dimension=int(store.dimension)
+        )
+        store.save(embedding_fingerprint=embedding_fingerprint)
 
     @staticmethod
     def _graph_vector_id(item_type: str, hash_value: str) -> str:
@@ -704,7 +715,7 @@ class SummaryImporter:
             )
 
             # 7. 持久化
-            self.vector_store.save()
+            self._persist_vector_store(self.vector_store)
             self.graph_store.save()
 
             external_id = str((metadata or {}).get("external_id", "") or "").strip()

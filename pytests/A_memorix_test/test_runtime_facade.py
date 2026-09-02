@@ -30,6 +30,7 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
     monkeypatch.setattr(kernel, "_is_embedding_degraded", lambda: False)
     monkeypatch.setattr(kernel, "_dual_vector_pools_enabled", lambda: True)
     monkeypatch.setattr(kernel, "_allow_metadata_only_write", lambda: True)
+    monkeypatch.setattr(kernel, "_save_vector_store", lambda store: events.append(("persist_vector", store)))
 
     async def fake_execute_request_with_dedup(request_key, executor):
         events.append(("dedup", request_key))
@@ -62,6 +63,8 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
     assert facade.is_embedding_degraded() is False
     assert facade._dual_vector_pools_enabled() is True
     assert facade.allow_metadata_only_write() is True
+    vector_store = object()
+    facade.persist_vector_store(vector_store)  # type: ignore[arg-type]
 
     dedup_hit, dedup_payload = await facade.execute_request_with_dedup("request-1", lambda: _async_payload("ok"))
     assert dedup_hit is False
@@ -97,6 +100,7 @@ async def test_runtime_facade_delegates_kernel_runtime_methods(monkeypatch: pyte
     assert ("dedup", "request-1") in events
     assert ("tuning", ({"retrieval": {"enable_ppr": False}}, False)) in events
     assert ("backfill", ("paragraph-1", "missing")) in events
+    assert ("persist_vector", vector_store) in events
 
 
 async def _async_payload(value: str) -> dict[str, str]:

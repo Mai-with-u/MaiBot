@@ -240,6 +240,20 @@ def _build_manager(
     return manager, metadata_store
 
 
+def test_runtime_store_persistence_uses_fingerprint_entrypoint() -> None:
+    manager, _ = _build_manager()
+    persisted: list[object] = []
+    graph_saves: list[bool] = []
+    manager.plugin.persist_vector_store = lambda store: persisted.append(store)
+    manager.plugin.graph_store.save = lambda: graph_saves.append(True)
+    expected_stores = manager._vector_stores_for_persistence()
+
+    manager._save_runtime_stores_locked()
+
+    assert persisted == expected_stores
+    assert graph_saves == [True]
+
+
 def _build_progress_task(task_id: str, total_chunks: int = 2) -> ImportTaskRecord:
     file_record = ImportFileRecord(
         file_id="file-1",

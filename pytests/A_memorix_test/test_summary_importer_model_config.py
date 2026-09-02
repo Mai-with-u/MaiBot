@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import asyncio
 
 import pytest
@@ -10,6 +12,23 @@ from src.A_memorix.core.utils.summary_importer import (
 )
 from src.config.model_configs import TaskConfig
 from src.services import llm_service as llm_api
+
+
+def test_persist_vector_store_delegates_to_runtime_facade() -> None:
+    persisted: list[object] = []
+    plugin = SimpleNamespace(persist_vector_store=lambda store: persisted.append(store))
+    importer = SummaryImporter(
+        vector_store=None,
+        graph_store=None,
+        metadata_store=None,
+        embedding_manager=None,
+        plugin_config={"plugin_instance": plugin},
+    )
+    store = object()
+
+    importer._persist_vector_store(store)  # type: ignore[arg-type]
+
+    assert persisted == [store]
 
 
 def _fake_available_models() -> dict[str, TaskConfig]:

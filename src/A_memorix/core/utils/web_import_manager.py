@@ -570,7 +570,7 @@ class ImportTaskManager:
 
     def _save_runtime_stores_locked(self) -> None:
         for store in self._vector_stores_for_persistence():
-            store.save()
+            self.plugin.persist_vector_store(store)
         self.plugin.graph_store.save()
 
     def _cfg_int(self, key: str, default: int) -> int:
