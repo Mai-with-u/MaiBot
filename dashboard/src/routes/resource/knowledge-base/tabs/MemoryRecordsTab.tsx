@@ -86,6 +86,14 @@ const ACTION_ICONS: Record<string, typeof Database> = {
   restore_fact: RotateCcw,
 }
 
+const KNOWLEDGE_TYPE_LABELS: Record<string, string> = {
+  structured: '结构化资料',
+  narrative: '叙事资料',
+  factual: '事实资料',
+  quote: '引用资料',
+  mixed: '混合资料',
+}
+
 const FACT_TRANSITION_LABELS: Record<string, string> = {
   assert: '写入',
   reinforce: '确认',
@@ -163,6 +171,14 @@ function formatTimestamp(value?: number | null): string {
   }).format(new Date(value * 1000))
 }
 
+function getKnowledgeTypeLabel(record: MemoryRecordPayload): string {
+  if (record.type !== 'paragraph') {
+    return ''
+  }
+  const knowledgeType = String(record.metadata.knowledge_type ?? '').trim().toLowerCase()
+  return KNOWLEDGE_TYPE_LABELS[knowledgeType] ?? knowledgeType
+}
+
 function RecordTypeIcon({ type, className }: { type: MemoryRecordType; className?: string }) {
   const Icon =
     type === 'paragraph'
@@ -186,6 +202,7 @@ function RecordButton({
   onSelect: (record: MemoryRecordPayload) => void
   compact?: boolean
 }) {
+  const knowledgeTypeLabel = getKnowledgeTypeLabel(record)
   return (
     <button
       type="button"
@@ -210,6 +227,7 @@ function RecordButton({
         ) : null}
         <span className="text-muted-foreground mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
           <span>{RECORD_LABELS[record.type]}</span>
+          {knowledgeTypeLabel ? <Badge variant="secondary">{knowledgeTypeLabel}</Badge> : null}
           {record.status !== 'active' ? (
             <Badge variant="outline">
               <LocalizedEnumLabel value={record.status} labels={RECORD_STATUS_LABELS} />
@@ -591,6 +609,9 @@ export function MemoryRecordsTab({ onAction }: MemoryRecordsTabProps) {
                   <section className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge>{RECORD_LABELS[detail.record.type]}</Badge>
+                      {getKnowledgeTypeLabel(detail.record) ? (
+                        <Badge variant="secondary">{getKnowledgeTypeLabel(detail.record)}</Badge>
+                      ) : null}
                       <Badge variant="outline">
                         <LocalizedEnumLabel
                           value={detail.record.status}

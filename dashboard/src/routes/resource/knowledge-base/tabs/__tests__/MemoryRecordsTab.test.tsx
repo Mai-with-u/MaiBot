@@ -129,6 +129,7 @@ describe('MemoryRecordsTab', () => {
     renderTab()
 
     expect(await screen.findAllByText('小明喜欢咖啡')).not.toHaveLength(0)
+    expect(screen.getAllByText('事实资料')).not.toHaveLength(0)
     expect(await screen.findByText('关联实体')).toBeInTheDocument()
     expect(screen.getByText('小明')).toBeInTheDocument()
     expect(contextMock).toHaveBeenCalledWith('paragraph', 'paragraph-01')
