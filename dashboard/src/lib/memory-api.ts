@@ -1293,6 +1293,7 @@ export interface MemoryFeedbackCorrectionRollbackPayload {
 
 export interface MemorySourceItemPayload {
   source: string
+  count?: number
   paragraph_count?: number
   relation_count?: number
   episode_rebuild_blocked?: boolean

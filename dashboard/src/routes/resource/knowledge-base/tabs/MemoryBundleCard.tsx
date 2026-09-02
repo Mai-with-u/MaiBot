@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-
 import { Download, Loader2, PackageOpen, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -21,13 +20,19 @@ import {
   downloadMemoryBundle,
   exportMemoryBundle,
   getMemoryBundles,
+  getMemoryImportTasks,
+  getMemorySources,
   importMemoryBundle,
   uninstallMemoryBundle,
   type MemoryBundleContentLevel,
   type MemoryBundleInstallationPayload,
   type MemoryBundleSelectorType,
   type MemoryImportChatTargetPayload,
+  type MemoryImportTaskPayload,
+  type MemorySourceItemPayload,
 } from '@/lib/memory-api'
+
+import { getImportStatusLabel } from '../utils'
 
 interface MemoryBundleCardProps {
   chatTargets: MemoryImportChatTargetPayload[]
@@ -54,7 +59,7 @@ function selectorPayload(type: MemoryBundleSelectorType, value: string): Record<
   if (type === 'import_task') {
     return { type, task_id: token }
   }
-  return { type, package_id: token }
+  return { type, installation_id: token }
 }
 
 export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
@@ -66,6 +71,9 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   const [packageVersion, setPackageVersion] = useState('1.0.0')
   const [includeVectors, setIncludeVectors] = useState(true)
   const [exporting, setExporting] = useState(false)
+  const [sources, setSources] = useState<MemorySourceItemPayload[]>([])
+  const [importTasks, setImportTasks] = useState<MemoryImportTaskPayload[]>([])
+  const [loadingExportOptions, setLoadingExportOptions] = useState(false)
 
   const [bundleFile, setBundleFile] = useState<File | null>(null)
   const [installScope, setInstallScope] = useState<'global' | 'chat'>('global')
@@ -78,6 +86,32 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const chatOptions = useMemo(() => chatTargets.slice(0, 200), [chatTargets])
+  const installedPackageOptions = useMemo(
+    () => installations.filter((item) => item.status === 'installed'),
+    [installations]
+  )
+
+  const refreshExportOptions = useCallback(async () => {
+    setLoadingExportOptions(true)
+    try {
+      const [sourcePayload, taskPayload] = await Promise.all([
+        getMemorySources(),
+        getMemoryImportTasks(200),
+      ])
+      if (!sourcePayload.success) {
+        throw new Error('读取记忆来源失败')
+      }
+      if (!taskPayload.success) {
+        throw new Error('读取导入任务失败')
+      }
+      setSources(sourcePayload.items || [])
+      setImportTasks(taskPayload.items || [])
+    } catch (error) {
+      setNotice({ kind: 'error', text: errorMessage(error) })
+    } finally {
+      setLoadingExportOptions(false)
+    }
+  }, [])
 
   const refreshInstallations = useCallback(async () => {
     setLoadingInstallations(true)
@@ -97,6 +131,10 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   useEffect(() => {
     void refreshInstallations()
   }, [refreshInstallations])
+
+  useEffect(() => {
+    void refreshExportOptions()
+  }, [refreshExportOptions])
 
   const handleExport = async () => {
     setExporting(true)
@@ -278,19 +316,79 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                   </SelectContent>
                 </Select>
               </div>
-            ) : selectorType !== 'all' ? (
+            ) : selectorType === 'source' ? (
               <div className="space-y-2">
-                <Label>
-                  {selectorType === 'source'
-                    ? '来源'
-                    : selectorType === 'import_task'
-                      ? '导入任务 ID'
-                      : '包 ID 或安装 ID'}
-                </Label>
-                <Input
-                  value={selectorValue}
-                  onChange={(event) => setSelectorValue(event.target.value)}
-                />
+                <Label>来源</Label>
+                <Select value={selectorValue} onValueChange={setSelectorValue}>
+                  <SelectTrigger aria-label="记忆包导出来源" disabled={loadingExportOptions}>
+                    <SelectValue
+                      placeholder={loadingExportOptions ? '正在读取来源' : '选择记忆来源'}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sources.length ? (
+                      sources.map((item) => (
+                        <SelectItem key={item.source} value={item.source}>
+                          {item.source} · {Number(item.count ?? item.paragraph_count ?? 0)} 条段落
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__no_sources__" disabled>
+                        暂无可选来源
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : selectorType === 'import_task' ? (
+              <div className="space-y-2">
+                <Label>导入任务</Label>
+                <Select value={selectorValue} onValueChange={setSelectorValue}>
+                  <SelectTrigger aria-label="记忆包导出任务" disabled={loadingExportOptions}>
+                    <SelectValue
+                      placeholder={loadingExportOptions ? '正在读取导入任务' : '选择导入任务'}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {importTasks.length ? (
+                      importTasks.map((task) => (
+                        <SelectItem key={task.task_id} value={task.task_id}>
+                          {task.source || task.task_kind || '导入任务'} ·{' '}
+                          {task.task_id.slice(0, 12)} · {getImportStatusLabel(task.status)}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__no_import_tasks__" disabled>
+                        暂无导入任务
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : selectorType === 'package' ? (
+              <div className="space-y-2">
+                <Label>已安装知识包</Label>
+                <Select value={selectorValue} onValueChange={setSelectorValue}>
+                  <SelectTrigger aria-label="记忆包导出知识包" disabled={loadingInstallations}>
+                    <SelectValue
+                      placeholder={loadingInstallations ? '正在读取安装记录' : '选择已安装知识包'}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {installedPackageOptions.length ? (
+                      installedPackageOptions.map((item) => (
+                        <SelectItem key={item.installation_id} value={item.installation_id}>
+                          {item.name} · {item.version} ·{' '}
+                          {item.scope_type === 'global' ? '全局' : '指定聊天流'}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="__no_installed_packages__" disabled>
+                        暂无已安装知识包
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             ) : null}
 
