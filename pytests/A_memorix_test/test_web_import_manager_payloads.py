@@ -1348,3 +1348,18 @@ async def test_late_user_cancellation_keeps_completed_result() -> None:
     assert summary["status"] == "completed"
     assert summary["cancel_origin"] == ""
     assert summary["cancel_requested_at"] is None
+
+
+def test_metadata_only_import_ready_check_does_not_require_vector_stores() -> None:
+    manager, _ = _build_manager()
+    manager.plugin.vector_store = None
+    manager.plugin.paragraph_vector_store = None
+    manager.plugin.graph_vector_store = None
+
+    manager._ensure_ready()
+
+    manager.plugin.get_config = lambda key, default=None: (
+        False if key == "embedding.fallback.allow_metadata_only_write" else default
+    )
+    with pytest.raises(ValueError, match="paragraph_vector_store, graph_vector_store"):
+        manager._ensure_ready()

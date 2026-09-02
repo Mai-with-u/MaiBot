@@ -1398,13 +1398,18 @@ class ImportTaskManager:
         return task.status in {"preparing", "running", "cancel_requested"}
 
     def _ensure_ready(self) -> None:
-        required_attrs = ("metadata_store", "vector_store", "graph_store", "embedding_manager")
+        required_attrs = ("metadata_store", "graph_store", "embedding_manager")
 
         def _collect_missing() -> List[str]:
             missing_local: List[str] = []
             for attr in required_attrs:
                 if getattr(self.plugin, attr, None) is None:
                     missing_local.append(attr)
+            if not self._allow_metadata_only_write():
+                if self._paragraph_vector_store() is None:
+                    missing_local.append("paragraph_vector_store")
+                if self._graph_vector_store() is None:
+                    missing_local.append("graph_vector_store")
             return missing_local
 
         missing = _collect_missing()
