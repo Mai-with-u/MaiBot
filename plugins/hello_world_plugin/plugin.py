@@ -3,13 +3,12 @@
 你的第一个 MaiCore 插件，包含问候功能、时间查询等基础示例。
 """
 
-from datetime import datetime
-from typing import Any
-
 import random
 import re
+from datetime import datetime
+from typing import Any, Dict
 
-from maibot_sdk import Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
+from maibot_sdk import API, Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
 
 
@@ -73,6 +72,16 @@ class HelloWorldPlugin(MaiBotPlugin):
 
     async def on_unload(self) -> None:
         """处理插件卸载。"""
+
+    # ===== WebUI 页面 API =====
+
+    @API("webui.hello.greet", description="返回 WebUI 页面问候语", version="1", public=False)
+    async def greet_webui(self, message: str = "") -> Dict[str, str]:
+        """为 Hello World WebUI 页面提供独立的问候接口。"""
+
+        normalized_message = message.strip()
+        greeting = normalized_message or "你好，来自 MaiBot 插件页面！"
+        return {"message": greeting}
 
     # ===== HomeCard 组件 =====
 

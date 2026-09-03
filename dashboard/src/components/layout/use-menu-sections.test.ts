@@ -1,10 +1,12 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BOT_CONFIG_UPDATED_EVENT, getBotConfigCached } from '@/lib/config-api'
+import { fetchPluginPages } from '@/lib/plugin-api/pages'
+import { PLUGIN_PAGES_UPDATED_EVENT } from '@/lib/plugin-api/plugin-pages-events'
 
 import type { MenuSection } from './types'
-import { useMenuSections } from './use-menu-sections'
+import { appendPluginPages, resolvePluginPageIcon, useMenuSections } from './use-menu-sections'
 
 // mock 配置 API：避免测试中发起真实请求，同时保持事件名常量与源码一致
 vi.mock('@/lib/config-api', () => ({
@@ -12,7 +14,17 @@ vi.mock('@/lib/config-api', () => ({
   getBotConfigCached: vi.fn(),
 }))
 
+vi.mock('@/lib/plugin-api/pages', () => ({
+  fetchPluginPages: vi.fn(),
+}))
+
 const mockGetBotConfigCached = vi.mocked(getBotConfigCached)
+const mockFetchPluginPages = vi.mocked(fetchPluginPages)
+
+beforeEach(() => {
+  mockGetBotConfigCached.mockResolvedValue({})
+  mockFetchPluginPages.mockResolvedValue({ success: true, pages: [], warnings: [] })
+})
 
 /** 把菜单分组拍平成路径列表，便于断言某个入口是否可见 */
 function flattenPaths(sections: MenuSection[]): string[] {
@@ -20,9 +32,144 @@ function flattenPaths(sections: MenuSection[]): string[] {
 }
 
 describe('useMenuSections', () => {
+  it('使用受控 Lucide 图标清单解析插件页面图标，未知值回退 Puzzle', () => {
+    expect(resolvePluginPageIcon('bar-chart-3')).not.toBe(resolvePluginPageIcon('unknown'))
+    expect(resolvePluginPageIcon(null)).toBe(resolvePluginPageIcon('puzzle'))
+  })
+
+  it('追加页面时使用 Manifest icon', () => {
+    const sections = appendPluginPages(
+      [
+        {
+          title: 'sidebar.groups.extensionsMonitor',
+          items: [],
+        },
+      ],
+      [
+        {
+          plugin_id: 'example.first',
+          page_id: 'hello',
+          title: '插件你好',
+          route: '/plugin-pages/example.first/hello',
+          entry: '/api/webui/plugins/example.first/assets/webui/dist/index.js',
+          component: 'mount',
+          icon: 'bar-chart-3',
+          order: 0,
+          permissions: [],
+          api_base: '/api/webui/plugins/example.first/pages/hello/api',
+        },
+      ]
+    )
+
+    expect(sections[0].items[0].icon).toBe(resolvePluginPageIcon('bar-chart-3'))
+  })
+
+  it('收到插件生命周期事件后重新拉取页面清单', async () => {
+    mockFetchPluginPages
+      .mockResolvedValueOnce({ success: true, pages: [], warnings: [] })
+      .mockResolvedValueOnce({
+        success: true,
+        pages: [
+          {
+            plugin_id: 'example.first',
+            page_id: 'hello',
+            title: '插件你好',
+            route: '/plugin-pages/example.first/hello',
+            entry: '/api/webui/plugins/example.first/assets/webui/dist/index.js',
+            component: 'mount',
+            icon: null,
+            order: 0,
+            permissions: [],
+            api_base: '/api/webui/plugins/example.first/pages/hello/api',
+          },
+        ],
+        warnings: [],
+      })
+
+    const { result } = renderHook(() => useMenuSections())
+    await waitFor(() => expect(mockFetchPluginPages).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    await waitFor(() => {
+      expect(mockFetchPluginPages).toHaveBeenCalledTimes(2)
+      expect(flattenPaths(result.current)).toContain('/plugin-pages/example.first/hello')
+    })
+  })
+
+  it('菜单卸载后不再响应插件生命周期事件', async () => {
+    const { unmount } = renderHook(() => useMenuSections())
+
+    await waitFor(() => expect(mockFetchPluginPages).toHaveBeenCalledTimes(1))
+    unmount()
+
+    act(() => {
+      window.dispatchEvent(new Event(PLUGIN_PAGES_UPDATED_EVENT))
+    })
+
+    expect(mockFetchPluginPages).toHaveBeenCalledTimes(1)
+  })
+
+  it('把插件页面追加到扩展与集成分组并保留 Host 路由', async () => {
+    mockFetchPluginPages.mockResolvedValue({
+      success: true,
+      pages: [
+        {
+          plugin_id: 'example.first',
+          page_id: 'hello',
+          title: '插件你好',
+          route: '/plugin-pages/example.first/hello',
+          entry: '/api/webui/plugins/example.first/assets/webui/dist/index.js',
+          component: 'mount',
+          icon: null,
+          order: 10,
+          permissions: [],
+          api_base: '/api/webui/plugins/example.first/pages/hello/api',
+        },
+      ],
+      warnings: [],
+    })
+
+    const { result } = renderHook(() => useMenuSections())
+
+    await waitFor(() => {
+      expect(flattenPaths(result.current)).toContain('/plugin-pages/example.first/hello')
+    })
+
+    const extensionsSection = result.current.find(
+      (section) => section.title === 'sidebar.groups.extensionsMonitor'
+    )
+    expect(extensionsSection?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: '插件你好',
+          labelMode: 'text',
+          icon: expect.anything(),
+        }),
+      ])
+    )
+  })
+
+  it('插件页面清单请求失败时保留静态扩展入口', async () => {
+    mockFetchPluginPages.mockRejectedValue(new Error('页面服务不可用'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { result } = renderHook(() => useMenuSections())
+
+    await waitFor(() => {
+      expect(mockFetchPluginPages).toHaveBeenCalled()
+    })
+    const paths = flattenPaths(result.current)
+    expect(paths).toEqual(expect.arrayContaining(['/plugin-config', '/plugins', '/mcp-settings']))
+    expect(paths.some((path) => path.startsWith('/plugin-pages/'))).toBe(false)
+  })
+
   it('配置加载完成前隐藏受开关控制的入口', () => {
     // 返回一个永不 resolve 的 Promise，模拟配置仍在加载
     mockGetBotConfigCached.mockReturnValue(new Promise(() => {}))
+    mockFetchPluginPages.mockReturnValue(new Promise(() => {}))
 
     const { result } = renderHook(() => useMenuSections())
     const paths = flattenPaths(result.current)

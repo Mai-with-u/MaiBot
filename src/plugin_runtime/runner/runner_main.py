@@ -72,6 +72,7 @@ from src.plugin_runtime.protocol.envelope import (
 from src.plugin_runtime.protocol.errors import ErrorCode
 from src.plugin_runtime.runner.log_handler import RunnerIPCLogHandler
 from src.plugin_runtime.runner.plugin_paths import PluginPaths, build_plugin_paths
+from src.plugin_runtime.runner.manifest_validator import PluginManifest
 from src.plugin_runtime.runner.plugin_loader import PluginCandidate, PluginLoader, PluginMeta
 from src.plugin_runtime.runner.rpc_client import RPCClient
 
@@ -407,6 +408,7 @@ class PluginRunner:
         self._start_time: float = time.monotonic()
         self._shutting_down: bool = False
         self._reload_lock: asyncio.Lock = asyncio.Lock()
+        self._plugin_import_lock: asyncio.Lock = asyncio.Lock()
         self._inflight_rpcs: Dict[int, InFlightRPC] = {}
 
         # IPC 日志 Handler：握手成功后安装，将所有 stdlib logging 转发到 Host
@@ -678,9 +680,38 @@ class PluginRunner:
             },
         )
 
-    async def _invoke_plugin_callable(self, handler_method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """调用插件函数；同步函数放到线程中执行，避免阻塞 Runner 事件循环。"""
+    async def _invoke_plugin_callable(
+        self,
+        handler_method: Callable[..., Any],
+        *args: Any,
+        plugin_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """调用插件函数；同步函数放到线程中执行，避免阻塞 Runner 事件循环。
 
+        运行期回调（API/Action/Hook/生命周期）可能在函数体内执行插件本地顶层导入
+        （如 ``import config``），调用期间把插件目录临时放回 sys.path 首位并隔离
+        其顶层模块缓存，返回后立即恢复，避免污染 Runner 全局导入路径。
+
+        插件导入上下文会修改进程全局的 sys.path/sys.modules，而所有插件回调共享
+        同一个事件循环：若并发回调交错，A 插件上下文激活期间 B 插件的本地导入可能
+        命中 A 的目录，交错退出也可能恢复错误的模块缓存。``_plugin_import_lock``
+        串行化整个上下文生命周期（含回调内的 await），保证任一时刻至多一个插件
+        回调持有导入上下文。
+        """
+        if plugin_dir:
+            async with self._plugin_import_lock:
+                with self._loader.plugin_import_context(plugin_dir):
+                    return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
+        return await self._invoke_plugin_callable_impl(handler_method, *args, **kwargs)
+
+    async def _invoke_plugin_callable_impl(
+        self,
+        handler_method: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """插件函数调度：协程直接 await，同步函数放到线程中执行。"""
         if inspect.iscoroutinefunction(handler_method):
             return await handler_method(*args, **kwargs)
 
@@ -1363,6 +1394,8 @@ class PluginRunner:
                         metadata=component_metadata,
                     )
                 )
+
+        self._warn_webui_api_whitelist_gaps(meta.manifest, components)
         if hasattr(instance, "get_config_reload_subscriptions"):
             config_reload_subscriptions = list(instance.get_config_reload_subscriptions())
         if hasattr(instance, "get_llm_providers"):
@@ -1429,6 +1462,37 @@ class PluginRunner:
             return False
 
     @staticmethod
+    def _warn_webui_api_whitelist_gaps(manifest: PluginManifest, components: List[ComponentDeclaration]) -> None:
+        """检查 WebUI 页面 API 白名单是否覆盖真实的 API 组件。
+
+        Manifest 只能约束声明格式，组件是否真实存在要等插件实例完成装饰器收集后才能确认。
+        这里选择告警而不是拒绝加载，以保持现有插件的兼容性；页面调用不存在的 API 仍由 Host
+        在请求时返回明确的 404。
+
+        Args:
+            manifest: 当前插件的已解析 Manifest。
+            components: Runner 从插件实例收集到的组件声明。
+        """
+
+        extensions = manifest.extensions
+        if extensions is None or not extensions.webui_pages:
+            return
+
+        registered_api_names = {
+            component.name
+            for component in components
+            if component.component_type.strip().upper() == "API" and component.name.strip()
+        }
+        for page in extensions.webui_pages:
+            for operation, component_name in page.api.items():
+                if component_name in registered_api_names:
+                    continue
+                logger.warning(
+                    f"插件 {manifest.id} WebUI 页面 {page.id} 的 API 白名单未闭合: "
+                    f"operation={operation}, api={component_name} 未找到对应的 @API 组件"
+                )
+
+    @staticmethod
     def _get_plugin_default_config(instance: object) -> Dict[str, Any]:
         """获取插件默认配置。
 
@@ -1443,6 +1507,9 @@ class PluginRunner:
             return {}
         try:
             default_config = cast(_ConfigAwarePlugin, instance).get_default_config()
+        except PluginConfigVersionError:
+            # 配置契约错误必须在 Runner 当前边界直接暴露，不能回退为空配置。
+            raise
         except Exception as exc:
             logger.warning(f"读取插件默认配置失败: {exc}")
             return {}
@@ -1507,7 +1574,7 @@ class PluginRunner:
             return True
 
         try:
-            await self._invoke_plugin_callable(instance.on_load)
+            await self._invoke_plugin_callable(instance.on_load, plugin_dir=meta.plugin_dir)
             return True
         except Exception as exc:
             logger.error(f"插件 {meta.plugin_id} on_load 失败: {exc}", exc_info=True)
@@ -1524,7 +1591,7 @@ class PluginRunner:
             return
 
         try:
-            await self._invoke_plugin_callable(instance.on_unload)
+            await self._invoke_plugin_callable(instance.on_unload, plugin_dir=meta.plugin_dir)
         except Exception as exc:
             logger.error(f"插件 {meta.plugin_id} on_unload 失败: {exc}", exc_info=True)
 
@@ -2025,6 +2092,7 @@ class PluginRunner:
                     result = await self._invoke_plugin_callable(
                         meta.instance.invoke_component,
                         component_name,
+                        plugin_dir=meta.plugin_dir,
                         **invoke.args,
                     )
                     resp_payload = InvokeResultPayload(success=True, result=result)
@@ -2041,7 +2109,11 @@ class PluginRunner:
                 )
 
             try:
-                result = await self._invoke_plugin_callable(handler_method, **invoke.args)
+                result = await self._invoke_plugin_callable(
+                    handler_method,
+                    plugin_dir=meta.plugin_dir,
+                    **invoke.args,
+                )
                 resp_payload = InvokeResultPayload(success=True, result=result)
                 return envelope.make_response(payload=resp_payload.model_dump())
             except Exception as e:
@@ -2087,6 +2159,7 @@ class PluginRunner:
                 handler_method,
                 operation=invoke.operation,
                 request=invoke.request,
+                plugin_dir=meta.plugin_dir,
             )
             resp_payload = InvokeResultPayload(success=True, result=result)
             return envelope.make_response(payload=resp_payload.model_dump())
@@ -2131,7 +2204,11 @@ class PluginRunner:
 
         inflight = self._start_inflight_rpc(envelope, component_name)
         try:
-            raw = await self._invoke_plugin_callable(handler_method, **invoke.args)
+            raw = await self._invoke_plugin_callable(
+                handler_method,
+                plugin_dir=meta.plugin_dir,
+                **invoke.args,
+            )
 
             # 规范化返回值：将 EventHandler 返回展平到 payload 顶层
             if raw is None:
@@ -2189,7 +2266,11 @@ class PluginRunner:
         inflight = self._start_inflight_rpc(envelope, component_name)
         try:
             try:
-                raw = await self._invoke_plugin_callable(handler_method, **invoke.args)
+                raw = await self._invoke_plugin_callable(
+                    handler_method,
+                    plugin_dir=meta.plugin_dir,
+                    **invoke.args,
+                )
             except Exception as exc:
                 logger.error(f"插件 {plugin_id} hook_handler {component_name} 执行异常: {exc}", exc_info=True)
                 return envelope.make_response(
@@ -2275,6 +2356,7 @@ class PluginRunner:
                     config_scope,
                     payload.config_data,
                     payload.config_version,
+                    plugin_dir=meta.plugin_dir,
                 )
             except Exception as e:
                 logger.error(f"插件 {plugin_id} 配置更新失败: {e}")

@@ -62,6 +62,32 @@ export interface InstalledPlugin {
     half_open_inflight: boolean
   } | null
 }
+
+/**
+ * Host 生成的插件 WebUI 页面清单项。
+ *
+ * 页面入口和路由均由 Host 生成，插件 Manifest 中的本地路径不会直接暴露给前端。
+ */
+export interface PluginPageSummary {
+  plugin_id: string
+  page_id: string
+  title: string
+  route: string
+  entry: string
+  component: string
+  icon: string | null
+  order: number
+  permissions: string[]
+  api_base: string
+}
+
+export interface PluginPagesResponse {
+  success: boolean
+  pages: PluginPageSummary[]
+  warnings: string[]
+  message?: string
+}
+
 /**
  * 旧版本插件格式(直接包含 version 字段)
  */

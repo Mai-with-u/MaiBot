@@ -20,7 +20,7 @@ export function NavItem({
   const matchRoute = useMatchRoute()
   const isActive = item.external ? false : matchRoute({ to: item.path })
   const Icon = item.icon
-  const label = t(item.label)
+  const label = item.labelMode === 'text' ? item.label : t(item.label)
 
   const menuItemContent = (
     <>

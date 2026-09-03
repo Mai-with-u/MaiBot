@@ -7,6 +7,7 @@
  */
 import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 
+import { notifyPluginPagesUpdated } from './plugin-pages-events'
 import type { PluginConfigBundle, PluginConfigSchema, PluginRuntimeComponent, RuntimeCommand } from './types'
 
 const API_BASE = '/api/webui/plugins/config'
@@ -139,10 +140,14 @@ export async function resetPluginConfig(
 export async function togglePlugin(
   pluginId: string
 ): Promise<{ success: boolean; enabled: boolean; message: string; note?: string }> {
-  return backendApi.post<{ success: boolean; enabled: boolean; message: string; note?: string }>(
+  const response = await backendApi.post<{ success: boolean; enabled: boolean; message: string; note?: string }>(
     `${API_BASE}/${pluginId}/toggle`,
     { errorMessage: '切换插件状态失败' }
   )
+  if (response.success) {
+    notifyPluginPagesUpdated()
+  }
+  return response
 }
 
 /**
