@@ -1,6 +1,7 @@
 services:
   core:
     container_name: maim-bot-core
+    stop_grace_period: 70s # Runner 最多等待 Worker 60 秒，再保留强制退出时间
     #### prod ####
     image: sengokucola/maibot:latest
     # image: infinitycat/maibot:latest

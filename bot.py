@@ -7,37 +7,20 @@ import asyncio
 import hashlib
 import os
 import platform
+
 # import shutil
 import signal
-import subprocess
 import sys
 import time
 import traceback
 
-from src.common.i18n import set_locale, t, tn
-from src.common.logger import get_logger, initialize_logging, shutdown_logging
-from src.common.runtime_loop import set_main_loop
-from src.common.shutdown import request_shutdown
-from src.common.update_notice import emit_terminal_update_notice_if_needed
-from src.config.legacy_upgrade_confirmation import require_legacy_upgrade_confirmation
-
-# 设置工作目录为脚本所在目录
-script_dir = os.path.dirname(os.path.abspath(__file__))
-os.chdir(script_dir)
-set_locale(os.getenv("MAIBOT_LOCALE", "zh-CN"))
-
-# 检查是否是 Worker 进程，只在 Worker 进程中输出详细的初始化信息
-# Runner 进程只需要基本的日志功能，不需要详细的初始化日志
-is_worker = os.environ.get("MAIBOT_WORKER_PROCESS") == "1"
-initialize_logging(verbose=is_worker)
-install(extra_lines=3)
-logger = get_logger("main")
-
-# 定义重启退出码
-RESTART_EXIT_CODE = 42
+# 在业务导入前接管 Worker 信号；此时只记录停止请求，不调用尚未初始化的组件。
 _active_main_loop: asyncio.AbstractEventLoop | None = None
 _active_main_task: asyncio.Task[None] | None = None
 _shutdown_signal_count: int = 0
+_shutdown_task: asyncio.Task[bool] | None = None
+_shutdown_deadline: float | None = None
+SHUTDOWN_TIMEOUT = 50.0  # 为 Runner 的 60 秒硬截止保留余量。
 _RunResultT = TypeVar("_RunResultT")
 # print("-----------------------------------------")
 # print("\n\n\n\n\n")
@@ -57,11 +40,13 @@ def _mark_shutdown_and_interrupt(_signum: int, _frame: object) -> None:
 
     global _shutdown_signal_count
     _shutdown_signal_count += 1
-    request_shutdown("signal")
+    if _shutdown_signal_count > 1 or _shutdown_task is not None:
+        return
     main_loop = _active_main_loop
     if main_loop is None or main_loop.is_closed():
         return
 
+    request_shutdown("signal")
     try:
         main_loop.call_soon_threadsafe(_cancel_active_main_task_from_signal)
     except RuntimeError:
@@ -71,9 +56,56 @@ def _mark_shutdown_and_interrupt(_signum: int, _frame: object) -> None:
 def _cancel_active_main_task_from_signal() -> None:
     """在事件循环线程中取消当前主任务。"""
 
-    if _active_main_task is None or _active_main_task.done():
+    if (
+        _shutdown_task is not None
+        or _active_main_task is None
+        or _active_main_task.done()
+        or _active_main_task.cancelling()
+    ):
         return
     _active_main_task.cancel()
+
+
+def _set_active_main_task(task: asyncio.Task[None]) -> None:
+    """先发布任务，再消费停止标记；交接前的请求和交接后的回调都不会丢失。"""
+    global _active_main_task
+    _active_main_task = task
+    if _shutdown_signal_count:
+        request_shutdown("signal")
+        _cancel_active_main_task_from_signal()
+
+
+def _install_early_worker_signal_handlers() -> None:
+    """允许慢速导入期间收到的停止请求在事件循环就绪后被消费。"""
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGBREAK"):
+        signals.append(signal.SIGBREAK)
+    for sig in signals:
+        signal.signal(sig, _mark_shutdown_and_interrupt)
+
+
+if __name__ == "__main__" and os.environ.get("MAIBOT_WORKER_PROCESS") == "1":
+    _install_early_worker_signal_handlers()
+
+
+from src.common.i18n import set_locale, t, tn  # noqa: E402
+from src.common.logger import get_logger, initialize_logging, shutdown_logging  # noqa: E402
+from src.common.runtime_loop import set_main_loop  # noqa: E402
+from src.common.process_runner import RESTART_EXIT_CODE, supervise_worker  # noqa: E402
+from src.common.shutdown import application_signal_handlers, request_shutdown  # noqa: E402
+from src.common.update_notice import emit_terminal_update_notice_if_needed  # noqa: E402
+from src.config.legacy_upgrade_confirmation import require_legacy_upgrade_confirmation  # noqa: E402
+
+# 设置工作目录为脚本所在目录
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
+set_locale(os.getenv("MAIBOT_LOCALE", "zh-CN"))
+
+# Runner 只需要基本日志；详细组件初始化由 Worker 输出。
+is_worker = os.environ.get("MAIBOT_WORKER_PROCESS") == "1"
+initialize_logging(verbose=is_worker)
+install(extra_lines=3)
+logger = get_logger("main")
 
 
 def run_runner_process():
@@ -88,39 +120,9 @@ def run_runner_process():
     env = os.environ.copy()
     env["MAIBOT_WORKER_PROCESS"] = "1"
 
-    while True:
-        logger.info(t("startup.launching_script", script_file=script_file))
-
-        # 启动子进程 (Worker)
-        # 使用 sys.executable 确保使用相同的 Python 解释器
-        cmd = [python_executable, script_file] + sys.argv[1:]
-
-        process = subprocess.Popen(cmd, env=env)
-
-        try:
-            # 等待子进程结束
-            return_code = process.wait()
-
-            if return_code == RESTART_EXIT_CODE:
-                logger.info(t("startup.restart_requested", exit_code=RESTART_EXIT_CODE))
-                time.sleep(1)  # 稍作等待
-                continue
-            else:
-                logger.info(t("startup.program_exited", return_code=return_code))
-                sys.exit(return_code)
-
-        except KeyboardInterrupt:
-            # 向子进程发送终止信号
-            if process.poll() is None:
-                # 在 Windows 上，Ctrl+C 通常已经发送给了子进程（如果它们共享控制台）
-                # 但为了保险，我们可以尝试 terminate
-                try:
-                    process.terminate()
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    logger.warning(t("startup.child_process_force_kill"))
-                    process.kill()
-            sys.exit(0)
+    logger.info(t("startup.launching_script", script_file=script_file))
+    cmd = [python_executable, script_file] + sys.argv[1:]
+    sys.exit(supervise_worker(cmd, env, logger))
 
 
 # 检查是否是 Worker 进程
@@ -208,42 +210,87 @@ def easter_egg():
     print(rainbow_text)
 
 
-async def graceful_shutdown(main_system: MainSystem | None = None):  # sourcery skip: use-named-expression
+async def graceful_shutdown(main_system: MainSystem | None = None) -> bool:
+    global _shutdown_deadline
+    _shutdown_deadline = time.monotonic() + SHUTDOWN_TIMEOUT
     try:
         request_shutdown("graceful_shutdown")
         logger.info(t("startup.shutdown_started"))
+        success = True
 
         # 关闭 WebUI 服务器
-        try:
-            if main_system is not None and main_system.webui_server is not None:
-                await main_system.webui_server.shutdown()
-        except Exception as e:
-            logger.warning(f"关闭 WebUI 服务器时出错: {e}")
+        if main_system is not None and main_system.webui_server is not None:
+            success = (
+                await _await_shutdown_step(main_system.webui_server.shutdown(), timeout=5.0, step_name="关闭 WebUI")
+                and success
+            )
+
+        from src.config.config import config_manager
+
+        success = (
+            await _await_shutdown_step(config_manager.stop_file_watcher(), timeout=5.0, step_name="停止配置监听")
+            and success
+        )
+        if main_system is not None and main_system.app is not None:
+            success = (
+                await _await_shutdown_step(main_system.app.stop(), timeout=5.0, step_name="停止消息入口") and success
+            )
 
         from src.core.event_bus import event_bus
         from src.core.types import EventType
 
         # 触发 ON_STOP 事件
-        await _await_shutdown_step(
-            event_bus.emit(event_type=EventType.ON_STOP),
-            timeout=5.0,
-            step_name="触发 ON_STOP 事件",
+        success = (
+            await _await_shutdown_step(
+                event_bus.emit(event_type=EventType.ON_STOP),
+                timeout=5.0,
+                step_name="触发 ON_STOP 事件",
+            )
+            and success
         )
 
         # 停止新版本插件运行时
         from src.plugin_runtime.integration import get_plugin_runtime_manager
 
-        await _await_shutdown_step(
-            get_plugin_runtime_manager().stop(),
-            timeout=8.0,
-            step_name="停止插件运行时",
+        success = (
+            await _await_shutdown_step(
+                get_plugin_runtime_manager().stop(),
+                timeout=8.0,
+                step_name="停止插件运行时",
+            )
+            and success
         )
 
+        # 先停止记忆写入者，再等待内核持久化、关闭存储和释放 writer lock。
+        # 必须早于 remaining_tasks 的粗粒度取消。
+        from src.A_memorix.host_service import a_memorix_host_service
+        from src.services.memory_flow_service import memory_automation_service
+        from src.emoji_system.emoji_manager import emoji_manager
+        from src.mcp_module.service import get_mcp_service
+
+        success = (
+            await _await_shutdown_step(memory_automation_service.shutdown(), timeout=5.0, step_name="停止记忆自动写入")
+            and success
+        )
+        success = (
+            await _await_shutdown_step(a_memorix_host_service.stop(), timeout=30.0, step_name="关闭 A_Memorix 并持久化")
+            and success
+        )
+        try:
+            emoji_manager.shutdown()
+        except Exception:
+            logger.exception("Emoji 清理失败，继续后续关闭步骤")
+            success = False
+        success = await _await_shutdown_step(get_mcp_service().close(), timeout=5.0, step_name="关闭 MCP") and success
+
         # 停止所有异步任务
-        await _await_shutdown_step(
-            async_task_manager.stop_and_wait_all_tasks(),
-            timeout=5.0,
-            step_name="停止异步任务管理器任务",
+        success = (
+            await _await_shutdown_step(
+                async_task_manager.stop_and_wait_all_tasks(),
+                timeout=5.0,
+                step_name="停止异步任务管理器任务",
+            )
+            and success
         )
 
         # 获取所有剩余任务，排除当前任务
@@ -259,32 +306,48 @@ async def graceful_shutdown(main_system: MainSystem | None = None):  # sourcery 
 
             # 等待所有任务完成，设置超时
             try:
-                await asyncio.wait_for(asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=5.0)
+                await asyncio.wait_for(
+                    asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=_shutdown_time_left(5.0)
+                )
                 logger.info(t("startup.remaining_tasks_cancelled"))
             except asyncio.TimeoutError:
                 logger.warning(t("startup.remaining_tasks_cancel_timeout"))
+                success = False
             except Exception as e:
                 logger.error(t("startup.remaining_tasks_cancel_error", error=e))
+                success = False
 
-        logger.info(t("startup.shutdown_completed"))
+        if success:
+            logger.info(t("startup.shutdown_completed"))
+        else:
+            logger.error("应用优雅关闭未完成；退出状态为失败")
+        return success
 
     except Exception as e:
         logger.error(t("startup.shutdown_failed", error=e), exc_info=True)
+        return False
 
 
-async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str):
-    """为关停步骤设置硬超时，避免单个组件阻塞 Ctrl+C 退出。"""
+def _shutdown_time_left(step_timeout: float) -> float:
+    if _shutdown_deadline is None:
+        return step_timeout
+    return min(step_timeout, max(0.0, _shutdown_deadline - time.monotonic()))
+
+
+async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str) -> bool:
+    """步骤共享关闭预算；不响应取消/阻塞事件循环的代码最终由 Runner 有界终止。"""
 
     try:
-        return await asyncio.wait_for(awaitable, timeout=timeout)
+        await asyncio.wait_for(awaitable, timeout=_shutdown_time_left(timeout))
+        return True
     except asyncio.TimeoutError:
         logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
-        return None
+        return False
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         logger.warning(f"{step_name} 失败，继续执行后续关停步骤: {exc}", exc_info=True)
-        return None
+        return False
 
 
 def _cancel_main_task(main_loop: asyncio.AbstractEventLoop | None, main_task: asyncio.Task[None] | None) -> None:
@@ -330,15 +393,18 @@ def _run_graceful_shutdown(
     main_system: MainSystem | None,
 ) -> bool:
     """在同步入口中执行异步优雅关闭。"""
+    global _shutdown_task
     if main_loop is None or main_loop.is_closed():
         return False
 
     try:
-        shutdown_task = main_loop.create_task(graceful_shutdown(main_system))
-        _run_until_complete(main_loop, shutdown_task)
-        return True
+        if _shutdown_task is None:
+            _shutdown_task = main_loop.create_task(graceful_shutdown(main_system))
+        return _run_until_complete(main_loop, _shutdown_task)
     except KeyboardInterrupt:
         _print_interrupt_exit_notice()
+    except asyncio.CancelledError:
+        logger.error("应用优雅关闭任务被取消；关闭未完成")
     except Exception as ge:
         logger.error(t("startup.graceful_shutdown_error", error=ge))
     return False
@@ -460,6 +526,7 @@ if __name__ == "__main__":
     main_system: MainSystem | None = None
     main_tasks: asyncio.Task[None] | None = None
     shutdown_completed = False
+    worker_signals = None
     try:
         # 获取MainSystem实例
         main_system = raw_main()
@@ -469,7 +536,8 @@ if __name__ == "__main__":
         asyncio.set_event_loop(loop)
         set_main_loop(loop)
         _active_main_loop = loop
-        signal.signal(signal.SIGINT, _mark_shutdown_and_interrupt)
+        worker_signals = application_signal_handlers(_mark_shutdown_and_interrupt)
+        worker_signals.__enter__()
 
         # 初始化 WebSocket 日志推送
         from src.common.logger import initialize_ws_handler
@@ -479,10 +547,10 @@ if __name__ == "__main__":
         try:
             # 执行初始化和任务调度
             initialize_task = loop.create_task(main_system.initialize())
-            _active_main_task = initialize_task
+            _set_active_main_task(initialize_task)
             _run_until_complete(loop, initialize_task)
             main_tasks = loop.create_task(main_system.schedule_tasks())
-            _active_main_task = main_tasks
+            _set_active_main_task(main_tasks)
             _run_until_complete(loop, main_tasks)
 
         except KeyboardInterrupt:
@@ -529,6 +597,12 @@ if __name__ == "__main__":
             shutdown_completed = _run_graceful_shutdown(loop, main_system)
         exit_code = 1  # 标记发生错误
     finally:
+        # 覆盖初始化异常、正常任务返回及 restart=42；关闭失败不得伪装成成功。
+        if loop is not None and not loop.is_closed():
+            _cancel_main_task(loop, main_tasks)
+            shutdown_completed = _run_graceful_shutdown(loop, main_system)
+            if not shutdown_completed:
+                exit_code = 1
         try:
             # 确保 loop 在任何情况下都尝试关闭（如果存在且未关闭）
             if "loop" in locals() and loop and not loop.is_closed():
@@ -547,6 +621,9 @@ if __name__ == "__main__":
             print(t("startup.prepare_exit"))
         except KeyboardInterrupt:
             _print_interrupt_exit_notice()
+
+        if worker_signals is not None:
+            worker_signals.__exit__(None, None, None)
 
         # 使用 os._exit() 强制退出，避免被阻塞
         # 由于已经在 graceful_shutdown() 中完成了所有清理工作，这是安全的
