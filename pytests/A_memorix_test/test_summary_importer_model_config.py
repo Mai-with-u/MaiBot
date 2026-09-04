@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from src.A_memorix.core.utils.summary_importer import (
+    SUMMARY_PROMPT_TEMPLATE,
     SummaryImporter,
     _message_timestamp,
     _normalize_entity_items,
@@ -179,6 +180,174 @@ def test_summary_importer_message_timestamp_accepts_time_fallback():
         time = 123.5
 
     assert _message_timestamp(Message()) == 123.5
+
+
+def test_summary_prompt_requires_incremental_output_from_current_window() -> None:
+    prompt = SUMMARY_PROMPT_TEMPLATE.format(
+        bot_name="测试机器人",
+        personality_context="",
+        previous_summary_context="\n历史净化摘要回顾：\n- 用户喜欢绿茶。\n",
+        chat_history="用户：今天天气不错。",
+    )
+
+    assert "只输出当前聊天窗口新引入或明确变更" in prompt
+    assert "不得把未变化的历史事实再次写入 summary" in prompt
+    assert '"summary": ""' in prompt
+
+
+@pytest.mark.asyncio
+async def test_empty_incremental_summary_is_successful_noop(monkeypatch) -> None:
+    class SummaryStore:
+        @staticmethod
+        def get_external_memory_ref(external_id: str):
+            assert external_id == "summary-noop-1"
+            return None
+
+        @staticmethod
+        def get_live_paragraphs_by_source(source: str):
+            assert source == "chat_summary:stream-1"
+            return [{"content": "用户喜欢绿茶。", "created_at": 1.0, "metadata": {}}]
+
+    importer = SummaryImporter(
+        vector_store=None,
+        graph_store=None,
+        metadata_store=SummaryStore(),
+        embedding_manager=None,
+        plugin_config={"summarization": {"model_name": ["memory"]}},
+    )
+
+    async def fake_self_check():
+        return True, ""
+
+    async def fake_generate(request):
+        assert "用户喜欢绿茶" in request.prompt
+        return SimpleNamespace(
+            success=True,
+            completion=SimpleNamespace(
+                response='{"summary": "", "entities": [], "relations": []}',
+            ),
+        )
+
+    importer._ensure_runtime_self_check = fake_self_check
+    monkeypatch.setattr(
+        "src.A_memorix.core.utils.summary_importer.message_api.get_messages_by_time_in_chat",
+        lambda **kwargs: [SimpleNamespace(timestamp=2.0)],
+    )
+    monkeypatch.setattr(
+        "src.A_memorix.core.utils.summary_importer.message_api.build_readable_messages",
+        lambda messages: "用户：今天天气不错。",
+    )
+    monkeypatch.setattr(llm_api, "get_available_models", _fake_available_models)
+    monkeypatch.setattr(llm_api, "generate", fake_generate)
+
+    result = await importer.import_from_stream(
+        "stream-1",
+        metadata={
+            "external_id": "summary-noop-1",
+            "summary_review_count": 1,
+        },
+    )
+
+    assert result.success is True
+    assert result.skipped is True
+    assert result.paragraph_hash == ""
+
+
+@pytest.mark.asyncio
+async def test_history_only_followup_windows_do_not_write_repeated_paragraphs(monkeypatch) -> None:
+    class SummaryStore:
+        def __init__(self) -> None:
+            self.paragraphs = []
+            self.refs = {}
+
+        def get_external_memory_ref(self, external_id: str):
+            return self.refs.get(external_id)
+
+        def get_live_paragraphs_by_source(self, source: str):
+            assert source == "chat_summary:stream-1"
+            return list(self.paragraphs)
+
+        def upsert_external_memory_ref(self, *, external_id: str, paragraph_hash: str, **kwargs):
+            del kwargs
+            self.refs[external_id] = {
+                "external_id": external_id,
+                "paragraph_hash": paragraph_hash,
+            }
+
+    class GraphStore:
+        def save(self) -> None:
+            return None
+
+    store = SummaryStore()
+    importer = SummaryImporter(
+        vector_store=None,
+        graph_store=GraphStore(),
+        metadata_store=store,
+        embedding_manager=None,
+        plugin_config={"summarization": {"model_name": ["memory"]}},
+    )
+    prompts = []
+    paragraph_writes = []
+
+    async def fake_self_check():
+        return True, ""
+
+    async def fake_generate(request):
+        prompts.append(request.prompt)
+        summary = "用户愿意和阿九一起组队游戏。" if len(prompts) == 1 else ""
+        return SimpleNamespace(
+            success=True,
+            completion=SimpleNamespace(
+                response=f'{{"summary": "{summary}", "entities": [], "relations": []}}',
+            ),
+        )
+
+    async def fake_execute_import(summary, entities, relations, stream_id, **kwargs):
+        del entities, relations, kwargs
+        paragraph_hash = f"paragraph-{len(paragraph_writes) + 1}"
+        paragraph_writes.append(summary)
+        store.paragraphs.append(
+            {
+                "hash": paragraph_hash,
+                "content": summary,
+                "source": f"chat_summary:{stream_id}",
+                "created_at": float(len(paragraph_writes)),
+                "metadata": {},
+            }
+        )
+        return paragraph_hash
+
+    importer._ensure_runtime_self_check = fake_self_check
+    importer._execute_import = fake_execute_import
+    importer._persist_vector_store = lambda store: None
+    monkeypatch.setattr(
+        "src.A_memorix.core.utils.summary_importer.message_api.get_messages_by_time_in_chat",
+        lambda **kwargs: [SimpleNamespace(timestamp=2.0)],
+    )
+    monkeypatch.setattr(
+        "src.A_memorix.core.utils.summary_importer.message_api.build_readable_messages",
+        lambda messages: "用户：继续聊刚才的话题。",
+    )
+    monkeypatch.setattr(llm_api, "get_available_models", _fake_available_models)
+    monkeypatch.setattr(llm_api, "generate", fake_generate)
+
+    results = [
+        await importer.import_from_stream(
+            "stream-1",
+            metadata={
+                "external_id": f"summary-window-{index}",
+                "summary_review_count": 1,
+            },
+        )
+        for index in range(3)
+    ]
+
+    assert paragraph_writes == ["用户愿意和阿九一起组队游戏。"]
+    assert [result.skipped for result in results] == [False, True, True]
+    assert "历史净化摘要回顾（只用于理解上下文" not in prompts[0]
+    assert "历史净化摘要回顾（只用于理解上下文" in prompts[1]
+    assert "用户愿意和阿九一起组队游戏" in prompts[1]
+    assert "不得直接复制到本轮增量" in prompts[1]
 
 
 @pytest.mark.parametrize(
