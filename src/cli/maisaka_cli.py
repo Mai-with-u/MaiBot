@@ -17,10 +17,11 @@ from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
 from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
 from src.config.config import config_manager
+from src.platform_io import PlatformIOManager, RouteBinding, get_platform_io_manager
 
-from .maisaka_cli_sender import CLI_PLATFORM_NAME
 from .console import console
 from .input_reader import InputReader
+from .maisaka_cli_sender import CLI_PLATFORM_NAME, CliPlatformDriver
 
 
 class BufferCLI:
@@ -33,6 +34,8 @@ class BufferCLI:
         self._reader = InputReader()
         self._message_receiver = HeartFCMessageReceiver()
         self._session: BotChatSession | None = None
+        self._driver = CliPlatformDriver()
+        self._platform_io: PlatformIOManager = get_platform_io_manager()
 
     @staticmethod
     def _get_current_model_name() -> str:
@@ -94,12 +97,45 @@ class BufferCLI:
         )
         await self._message_receiver.process_message(message)
 
-    async def run(self) -> None:
-        """主交互循环。"""
-        self._reader.start(asyncio.get_event_loop())
-        self._show_banner()
+    async def _register_output_driver(self) -> None:
+        """注册 CLI 平台驱动及其精确发送路由。"""
+
+        if self._platform_io.is_started:
+            await self._platform_io.add_driver(self._driver)
+        else:
+            self._platform_io.register_driver(self._driver)
 
         try:
+            self._platform_io.bind_send_route(
+                RouteBinding(
+                    route_key=self._driver.descriptor.route_key,
+                    driver_id=self._driver.driver_id,
+                    driver_kind=self._driver.descriptor.kind,
+                )
+            )
+        except Exception:
+            if self._platform_io.is_started:
+                await self._platform_io.remove_driver(self._driver.driver_id)
+            else:
+                self._platform_io.unregister_driver(self._driver.driver_id)
+            raise
+
+    async def _unregister_output_driver(self) -> None:
+        """注销 CLI 平台驱动及其发送路由。"""
+
+        self._platform_io.unbind_send_route(self._driver.descriptor.route_key, self._driver.driver_id)
+        if self._platform_io.is_started:
+            await self._platform_io.remove_driver(self._driver.driver_id)
+        else:
+            self._platform_io.unregister_driver(self._driver.driver_id)
+
+    async def run(self) -> None:
+        """主交互循环。"""
+        await self._register_output_driver()
+        try:
+            self._reader.start(asyncio.get_event_loop())
+            self._show_banner()
+
             while True:
                 console.print("[bold cyan]> [/bold cyan]", end="")
                 raw_input = await self._reader.get_line()
@@ -113,7 +149,8 @@ class BufferCLI:
 
                 await self._dispatch_input(user_text)
         finally:
+            await self._unregister_output_driver()
             if self._session is not None:
-                runtime = heartflow_manager.heartflow_chat_list.pop(self._session.session_id, None)
+                runtime = heartflow_manager.pop_heartflow_chat(self._session.session_id)
                 if runtime is not None:
                     await runtime.stop()

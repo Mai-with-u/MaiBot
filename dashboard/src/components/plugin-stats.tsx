@@ -49,32 +49,35 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
     let cancelled = false
 
     void Promise.all([
-      getPluginStats(pluginId),
-      getPluginUserState(pluginId),
-    ])
-      .then(([statsData, userState]) => {
-        if (cancelled) {
-          return
-        }
-
-        setStats(statsData)
-        if (userState) {
+      getPluginStats(pluginId)
+        .then((statsData) => {
+          if (!cancelled) {
+            setStats(statsData)
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('加载插件统计失败:', error)
+        }),
+      getPluginUserState(pluginId)
+        .then((userState) => {
+          if (cancelled) {
+            return
+          }
           setLiked(userState.liked)
           setDisliked(userState.disliked)
           setUserRating(userState.rating ?? 0)
           setSavedUserRating(userState.rating ?? 0)
           setUserComment(userState.comment)
           setSavedUserComment(userState.comment)
-        }
-      })
-      .catch((error: unknown) => {
-        console.error('加载插件统计失败:', error)
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      })
+        })
+        .catch((error: unknown) => {
+          console.error('加载插件用户状态失败:', error)
+        }),
+    ]).finally(() => {
+      if (!cancelled) {
+        setLoading(false)
+      }
+    })
 
     return () => {
       cancelled = true
@@ -95,44 +98,42 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
 
   const handleLike = async () => {
     setActionLoading('like')
-    const result = await likePlugin(pluginId)
-    setActionLoading(null)
-
-    if (result.success) {
+    try {
+      const result = await likePlugin(pluginId)
       updateVoteStats(result)
       toast({
         title: result.liked ? '已点赞' : '已取消点赞',
         description: result.liked ? '感谢你的支持' : '已更新你的反馈状态',
       })
-      return
+    } catch (error) {
+      toast({
+        title: '点赞失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    } finally {
+      setActionLoading(null)
     }
-
-    toast({
-      title: '点赞失败',
-      description: result.error || '未知错误',
-      variant: 'destructive',
-    })
   }
 
   const handleDislike = async () => {
     setActionLoading('dislike')
-    const result = await dislikePlugin(pluginId)
-    setActionLoading(null)
-
-    if (result.success) {
+    try {
+      const result = await dislikePlugin(pluginId)
       updateVoteStats(result)
       toast({
         title: result.disliked ? '已点踩' : '已取消点踩',
         description: '已更新你的反馈状态',
       })
-      return
+    } catch (error) {
+      toast({
+        title: '操作失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    } finally {
+      setActionLoading(null)
     }
-
-    toast({
-      title: '操作失败',
-      description: result.error || '未知错误',
-      variant: 'destructive',
-    })
   }
 
   const handleSubmitRating = async () => {
@@ -154,10 +155,17 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
     const commentToSubmit = commentChanged ? userComment : undefined
 
     setActionLoading('rating')
-    const result = await ratePlugin(pluginId, ratingToSubmit, commentToSubmit)
-    setActionLoading(null)
+    try {
+      const result = await ratePlugin(pluginId, ratingToSubmit, commentToSubmit)
+      if (!result.success) {
+        toast({
+          title: '评价失败',
+          description: result.error || '未知错误',
+          variant: 'destructive',
+        })
+        return
+      }
 
-    if (result.success) {
       const nextUserRating = result.user_rating === null
         ? 0
         : Number(result.user_rating ?? userRating)
@@ -182,14 +190,15 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
         : currentStats)
       setIsRatingDialogOpen(false)
       toast({ title: '评价已更新', description: '你的评分或评论已保存' })
-      return
+    } catch (error) {
+      toast({
+        title: '评价失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      })
+    } finally {
+      setActionLoading(null)
     }
-
-    toast({
-      title: '评价失败',
-      description: result.error || '未知错误',
-      variant: 'destructive',
-    })
   }
 
   if (loading) {

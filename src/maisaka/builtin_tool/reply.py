@@ -4,7 +4,6 @@ from typing import Any, Optional
 import traceback
 
 from src.chat.replyer.replyer_manager import replyer_manager
-from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
 from src.common.data_models.reply_generation_data_models import ReplyGenerationResult, build_reply_monitor_detail
 from src.common.logger import get_logger
 from src.config import config as config_module
@@ -450,65 +449,52 @@ async def handle_tool(
     send_results: list[dict[str, Any]] = []
     try:
         sent = False
-        if tool_ctx.runtime.chat_stream.platform == CLI_PLATFORM_NAME:
-            for index, segment in enumerate(reply_segments):
-                render_cli_message(segment)
-                send_results.append(
-                    _build_send_result(
-                        index=index,
-                        segment=segment,
-                        set_quote=effective_set_quote if index == 0 else False,
-                        success=True,
-                    )
-                )
-            sent = True
-        else:
-            previous_sent_message = None
-            for index, reply_item in enumerate(reply_items):
-                reply_sequence = reply_item.sequence
-                segment = reply_segments[index]
-                segment_set_quote, segment_reply_message = _resolve_segment_reply_context(
-                    index=index,
-                    quote_previous=reply_item.quote_previous,
-                    effective_set_quote=effective_set_quote,
-                    target_message=target_message,
-                    previous_sent_message=previous_sent_message,
-                )
-                sent_message = await send_service._send_to_target_with_message(
-                    message_sequence=reply_sequence,
-                    stream_id=tool_ctx.runtime.session_id,
-                    processed_plain_text=segment,
-                    set_reply=segment_set_quote,
-                    reply_message=segment_reply_message,
-                    selected_expressions=reply_result.selected_expression_ids or None,
-                    typing=index > 0,
-                    sync_to_maisaka_history=True,
-                    maisaka_source_kind="guided_reply",
-                )
-                sent = sent_message is not None
-                if not sent:
-                    send_results.append(
-                        _build_send_result(
-                            index=index,
-                            segment=segment,
-                            set_quote=segment_set_quote,
-                            success=False,
-                        )
-                    )
-                    break
-                sent_message_id = str(getattr(sent_message, "message_id", "") or "").strip()
-                if sent_message_id:
-                    sent_message_ids.append(sent_message_id)
+        previous_sent_message = None
+        for index, reply_item in enumerate(reply_items):
+            reply_sequence = reply_item.sequence
+            segment = reply_segments[index]
+            segment_set_quote, segment_reply_message = _resolve_segment_reply_context(
+                index=index,
+                quote_previous=reply_item.quote_previous,
+                effective_set_quote=effective_set_quote,
+                target_message=target_message,
+                previous_sent_message=previous_sent_message,
+            )
+            sent_message = await send_service._send_to_target_with_message(
+                message_sequence=reply_sequence,
+                stream_id=tool_ctx.runtime.session_id,
+                processed_plain_text=segment,
+                set_reply=segment_set_quote,
+                reply_message=segment_reply_message,
+                selected_expressions=reply_result.selected_expression_ids or None,
+                typing=index > 0,
+                sync_to_maisaka_history=True,
+                maisaka_source_kind="guided_reply",
+            )
+            sent = sent_message is not None
+            if not sent:
                 send_results.append(
                     _build_send_result(
                         index=index,
                         segment=segment,
                         set_quote=segment_set_quote,
-                        success=True,
-                        message_id=sent_message_id,
+                        success=False,
                     )
                 )
-                previous_sent_message = sent_message
+                break
+            sent_message_id = str(getattr(sent_message, "message_id", "") or "").strip()
+            if sent_message_id:
+                sent_message_ids.append(sent_message_id)
+            send_results.append(
+                _build_send_result(
+                    index=index,
+                    segment=segment,
+                    set_quote=segment_set_quote,
+                    success=True,
+                    message_id=sent_message_id,
+                )
+            )
+            previous_sent_message = sent_message
     except Exception:
         logger.exception(f"{tool_ctx.runtime.log_prefix} 发送文字消息时发生异常，目标消息编号={target_message_id}")
         return tool_ctx.build_failure_result(
@@ -535,8 +521,6 @@ async def handle_tool(
     target_user_name = target_user_info.user_cardname or target_user_info.user_nickname or target_user_info.user_id
     bot_name = config_module.global_config.bot.nickname.strip() or "MaiSaka"
 
-    if tool_ctx.runtime.chat_stream.platform == CLI_PLATFORM_NAME:
-        tool_ctx.append_guided_reply_to_chat_history(combined_reply_text)
     reply_metadata["sent_message_ids"] = sent_message_ids
     reply_metadata["send_results"] = send_results
     track_reply_effect = getattr(tool_ctx.runtime, "track_reply_effect", None)

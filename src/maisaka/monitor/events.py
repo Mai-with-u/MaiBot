@@ -372,7 +372,10 @@ async def emit_stage_status(
     updated_at: float,
     timestamp: float,
 ) -> None:
-    """广播单个聊天流的当前阶段状态。"""
+    """广播单个聊天流的当前阶段状态。
+
+    阶段账本由 ``stage_status`` 维护；此处只推送已写入的载荷，不回写账本。
+    """
 
     await _broadcast("stage.status", {
         "session_id": session_id,
@@ -392,7 +395,10 @@ async def emit_stage_removed(
     session_id: str,
     session_name: str = "",
 ) -> None:
-    """广播聊天流阶段状态移除事件。"""
+    """广播聊天流阶段状态移除事件。
+
+    阶段账本由 ``stage_status`` 维护；此处只推送移除通知，不回写账本。
+    """
 
     await _broadcast("stage.removed", {
         "session_id": session_id,

@@ -1,6 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle, Loader2, Save, ShieldCheck } from 'lucide-react'
-import { useState } from 'react'
 
 import { ListFieldEditor } from '@/components/ListFieldEditor'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -16,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
+import { useConfigForm } from '@/hooks/useConfigForm'
 import { getAdapterHostPolicy, updateAdapterHostPolicy } from '@/lib/chat-management-api'
 import type {
   AdapterHostDefaultAction,
@@ -28,11 +28,21 @@ interface AdapterHostPolicyPanelProps {
   pluginId: string
 }
 
-interface AdapterHostPolicyEditorProps {
-  initialPolicy: AdapterHostPolicy
+type AdapterHostPolicyConfig = Awaited<ReturnType<typeof getAdapterHostPolicy>>
+
+/** 只编辑 policy；globalDefaults 仅用于只读展示，保存只提交 policy。 */
+interface AdapterHostPolicyDraft {
+  policy: AdapterHostPolicy
   globalDefaults: AdapterPolicyDefaults
+}
+
+interface AdapterHostPolicyEditorProps {
+  policy: AdapterHostPolicy
+  globalDefaults: AdapterPolicyDefaults
+  isDirty: boolean
   saving: boolean
-  onSave: (policy: AdapterHostPolicy) => void
+  onChange: (policy: AdapterHostPolicy) => void
+  onSave: () => void
 }
 
 function clonePolicy(policy: AdapterHostPolicy): AdapterHostPolicy {
@@ -51,26 +61,25 @@ function clonePolicy(policy: AdapterHostPolicy): AdapterHostPolicy {
 }
 
 function AdapterHostPolicyEditor({
-  initialPolicy,
+  policy,
   globalDefaults,
+  isDirty,
   saving,
+  onChange,
   onSave,
 }: AdapterHostPolicyEditorProps) {
-  const [policy, setPolicy] = useState<AdapterHostPolicy>(() => clonePolicy(initialPolicy))
-  const hasChanges = JSON.stringify(policy) !== JSON.stringify(initialPolicy)
-
   const updateSection = (
     chatType: ChatStreamType,
     field: 'default_action' | 'allow_ids' | 'deny_ids',
     value: AdapterHostDefaultAction | string[]
   ) => {
-    setPolicy((current) => ({
-      ...current,
+    onChange({
+      ...policy,
       [chatType]: {
-        ...current[chatType],
+        ...policy[chatType],
         [field]: value,
       },
-    }))
+    })
   }
 
   return (
@@ -173,7 +182,7 @@ function AdapterHostPolicyEditor({
       </div>
 
       <div className="flex justify-end">
-        <Button disabled={!hasChanges || saving} onClick={() => onSave(policy)}>
+        <Button disabled={!isDirty || saving} onClick={onSave}>
           {saving ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
@@ -190,14 +199,19 @@ export function AdapterHostPolicyPanel({ pluginId }: AdapterHostPolicyPanelProps
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const queryKey = ['adapter-host-policy', pluginId] as const
-  const policyQuery = useQuery({
+  // omit schema：主程序规则无字段 schema；保存留在本页，手动提交 draft.policy。
+  const form = useConfigForm<AdapterHostPolicyDraft, AdapterHostPolicyConfig>({
     queryKey,
-    queryFn: () => getAdapterHostPolicy(pluginId),
+    loadConfig: () => getAdapterHostPolicy(pluginId),
+    seed: (res) => ({
+      policy: clonePolicy(res.policy),
+      globalDefaults: res.global_defaults,
+    }),
   })
   const saveMutation = useMutation({
     mutationFn: (policy: AdapterHostPolicy) => updateAdapterHostPolicy(pluginId, policy),
     onSuccess: (response) => {
-      queryClient.setQueryData(queryKey, response)
+      queryClient.setQueryData([...queryKey, 'config'], response)
       void queryClient.invalidateQueries({ queryKey: ['chat-stream-detail'] })
       toast({ title: '主程序放行规则已保存' })
     },
@@ -210,7 +224,7 @@ export function AdapterHostPolicyPanel({ pluginId }: AdapterHostPolicyPanelProps
     },
   })
 
-  if (policyQuery.isLoading) {
+  if (form.isLoading || (!form.draft && !form.error)) {
     return (
       <div className="text-muted-foreground flex h-48 items-center justify-center gap-2 text-sm">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -219,24 +233,27 @@ export function AdapterHostPolicyPanel({ pluginId }: AdapterHostPolicyPanelProps
     )
   }
 
-  if (policyQuery.isError || !policyQuery.data) {
+  if (form.error || !form.draft) {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          {policyQuery.error instanceof Error ? policyQuery.error.message : '主程序规则加载失败'}
+          {form.error instanceof Error ? form.error.message : '主程序规则加载失败'}
         </AlertDescription>
       </Alert>
     )
   }
 
+  const draft = form.draft
+
   return (
     <AdapterHostPolicyEditor
-      key={JSON.stringify(policyQuery.data.policy)}
-      initialPolicy={policyQuery.data.policy}
-      globalDefaults={policyQuery.data.global_defaults}
+      policy={draft.policy}
+      globalDefaults={draft.globalDefaults}
+      isDirty={form.isDirty}
       saving={saveMutation.isPending}
-      onSave={(policy) => saveMutation.mutate(policy)}
+      onChange={(policy) => form.setDraft((current) => ({ ...current, policy }))}
+      onSave={() => saveMutation.mutate(draft.policy)}
     />
   )
 }

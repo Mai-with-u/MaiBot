@@ -61,6 +61,7 @@ export function SurveyRenderer({
   const [submissionId, setSubmissionId] = useState<string | null>(null)
   const [hasAlreadySubmitted, setHasAlreadySubmitted] = useState(false)
   const [isCheckingSubmission, setIsCheckingSubmission] = useState(true)
+  const [checkError, setCheckError] = useState<string | null>(null)
 
   // 当 initialAnswers 变化时更新答案（合并而非替换）
   useEffect(() => {
@@ -72,13 +73,18 @@ export function SurveyRenderer({
     }
   }, [initialAnswers, getInitialAnswerMap])
 
-  // 检查是否已提交过
+  // 检查是否已提交过；失败走局部错误，不把检查失败当成「未提交」
   useEffect(() => {
     const checkSubmission = async () => {
+      setCheckError(null)
       if (!config.settings?.allowMultiple) {
-        const result = await checkUserSubmission(config.id)
-        if (result.success && result.hasSubmitted) {
-          setHasAlreadySubmitted(true)
+        try {
+          const hasSubmitted = await checkUserSubmission(config.id)
+          if (hasSubmitted) {
+            setHasAlreadySubmitted(true)
+          }
+        } catch (error) {
+          setCheckError(error instanceof Error ? error.message : '检查提交状态失败')
         }
       }
       setIsCheckingSubmission(false)
@@ -189,14 +195,10 @@ export function SurveyRenderer({
         { allowMultiple: config.settings?.allowMultiple }
       )
 
-      if (result.success && result.submissionId) {
-        setIsSubmitted(true)
-        setSubmissionId(result.submissionId)
+      setIsSubmitted(true)
+      setSubmissionId(result.submissionId ?? null)
+      if (result.submissionId) {
         onSubmitSuccess?.(result.submissionId)
-      } else {
-        const error = result.error || '提交失败'
-        setSubmitError(error)
-        onSubmitError?.(error)
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '提交失败'
@@ -314,6 +316,13 @@ export function SurveyRenderer({
       {/* 问卷内容 - 可滚动区域 */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-4 pr-4">
+          {checkError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{checkError}</AlertDescription>
+            </Alert>
+          )}
+
           {questionsToShow.map((question, index) => (
             <div 
               key={question.id}

@@ -797,7 +797,7 @@ def _sync_sent_message_to_maisaka_history(
     try:
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-        runtime = heartflow_manager.heartflow_chat_list.get(session_id)
+        runtime = heartflow_manager.get_heartflow_chat(session_id)
         if runtime is None:
             return
         runtime.append_sent_message_to_chat_history(message, source_kind=source_kind)

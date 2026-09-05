@@ -34,6 +34,7 @@ from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 from src.maisaka.builtin_tool.provider import MaisakaBuiltinToolProvider
 from src.maisaka.context.clear_context import select_messages_after_latest_clear_marker
 from src.maisaka.context.history import drop_leading_orphan_tool_results
+from src.maisaka.context.inbound_factory import SessionInboundFlags, build_session_inbound_message_sync
 from src.maisaka.context.message_adapter import parse_speaker_content
 from src.maisaka.context.messages import (
     LLMContextMessage,
@@ -570,36 +571,16 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
         """将一条已发送成功的消息同步到 Maisaka 内部历史。"""
 
         try:
-            from src.maisaka.context.history import build_prefixed_message_sequence, build_session_message_visible_text
-            from src.maisaka.context.messages import SessionBackedMessage
-            from src.maisaka.context.planner_messages import (
-                build_planner_prefix,
-                extract_quote_ids_from_message_sequence,
-            )
-
             user_info = message.message_info.user_info
             speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
-            include_chat_id = self._is_focus_mode_active_for_current_chat()
-            planner_prefix = build_planner_prefix(
-                timestamp=message.timestamp,
-                user_name=speaker_name,
-                group_card=user_info.user_cardname or "",
-                message_id=message.message_id,
-                chat_id=message.session_id,
-                quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
-                include_message_id=not message.is_notify and bool(message.message_id),
-                include_chat_id=include_chat_id,
-                is_self_message=source_kind == "guided_reply",
-            )
-            history_message = SessionBackedMessage.from_session_message(
+            history_message = build_session_inbound_message_sync(
                 message,
-                raw_message=build_prefixed_message_sequence(message.raw_message, planner_prefix),
-                visible_text=build_session_message_visible_text(
-                    message,
-                    include_reply_components=source_kind != "guided_reply",
-                ),
+                flags=SessionInboundFlags.sent_message(),
                 source_kind=source_kind,
+                include_chat_id=self._is_focus_mode_active_for_current_chat(),
             )
+            if history_message is None:
+                return False
             self._chat_history.append(history_message)
             self._schedule_sent_image_recognition(message)
             self._emit_monitor_message_sent(
@@ -1430,6 +1411,7 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             MaisakaBuiltinToolProvider(self._reasoning_engine.build_builtin_tool_handlers())
         )
         self._tool_registry.register_provider(PluginToolProvider())
+        # MCPService.close 是进程级停机，不能作为会话 ToolProvider 直接注册。
         self._tool_registry.register_provider(MCPToolProvider(get_mcp_service()))
         self._chat_loop_service.set_tool_registry(self._tool_registry)
 

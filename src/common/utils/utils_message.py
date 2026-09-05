@@ -245,7 +245,7 @@ class MessageUtils:
         try:
             from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-            runtime = heartflow_manager.heartflow_chat_list.get(session_id)
+            runtime = heartflow_manager.get_heartflow_chat(session_id)
             if runtime is not None:
                 message.reply_frequency = float(runtime._get_effective_reply_frequency())
                 return

@@ -14,7 +14,6 @@ from src.common.message_repository import count_messages, find_messages
 from src.chat.utils.utils import is_bot_self
 from src.config.config import global_config
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
-from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
 
 logger = get_logger("memory_flow_service")
@@ -543,17 +542,7 @@ class ChatSummaryWritebackService:
     async def _load_last_trigger_message_count(self, *, session_id: str, total_message_count: int) -> int:
         """从已落库的聊天摘要恢复触发游标，避免服务重启后重复摘要。"""
         try:
-            runtime_manager = getattr(memory_service_module, "a_memorix_host_service", None)
-            ensure_kernel = getattr(runtime_manager, "_ensure_kernel", None)
-            if not callable(ensure_kernel):
-                return 0
-
-            kernel = await ensure_kernel()
-            metadata_store = getattr(kernel, "metadata_store", None)
-            if metadata_store is None:
-                return 0
-
-            paragraphs = metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}")
+            paragraphs = await memory_service.get_paragraphs_by_source(f"chat_summary:{session_id}")
             if not paragraphs:
                 return 0
 

@@ -97,6 +97,9 @@ def build_mcp_client_runtime_config(mcp_config: "MCPConfig") -> MCPClientRuntime
 
     Returns:
         MCPClientRuntimeConfig: MCP 客户端宿主能力运行时配置。
+
+    Raises:
+        ValueError: 已启用 Sampling 但模型任务名为空。
     """
 
     roots = [
@@ -107,14 +110,18 @@ def build_mcp_client_runtime_config(mcp_config: "MCPConfig") -> MCPClientRuntime
         for root in mcp_config.client.roots.items
         if root.enabled and root.uri.strip()
     ]
+    sampling_task_name = mcp_config.client.sampling.task_name.strip()
+    enable_sampling = mcp_config.client.sampling.enable
+    if enable_sampling and not sampling_task_name:
+        raise ValueError("MCP Sampling 已启用，但模型任务名为空")
 
     return MCPClientRuntimeConfig(
         client_name=mcp_config.client.client_name.strip() or "MaiBot",
         client_version=mcp_config.client.client_version.strip() or "1.0.0",
         enable_roots=mcp_config.client.roots.enable and bool(roots),
         roots=roots,
-        enable_sampling=mcp_config.client.sampling.enable,
-        sampling_task_name=mcp_config.client.sampling.task_name.strip() or "planner",
+        enable_sampling=enable_sampling,
+        sampling_task_name=sampling_task_name,
         # 当前宿主桥接层尚未实现 includeContext 的上下文收集，不能向服务端声明虚假能力。
         sampling_include_context_support=False,
         sampling_tool_support=mcp_config.client.sampling.tool_support,

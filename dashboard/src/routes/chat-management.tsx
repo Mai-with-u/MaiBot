@@ -57,8 +57,6 @@ import {
   deleteChatStreamPrompt,
   deleteChatStreamTalkFrequency,
   getAdapterPolicyDefaults,
-  getChatStreamDetail,
-  getChatStreams,
   updateChatStreamLearning,
   updateChatStreamAdapterPolicy,
   updateAdapterPolicyDefaults,
@@ -75,35 +73,26 @@ import {
   type ChatStreamType,
   type AdapterPolicyDefaults,
 } from '@/lib/chat-management-api'
-import { getBotConfig, updateBotConfigSection } from '@/lib/config-api'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
-const PAGE_SIZE = 10
-type ChatTypeFilter = 'all' | ChatStreamType
-type ChatManagementView = 'groups' | 'streams'
-type MutualGroupKind = 'expression' | 'jargon' | 'memory'
+import {
+  useChatStreamsList,
+  type ChatManagementView,
+  type ChatTypeFilter,
+} from './chat-management/useChatStreamsList'
+import {
+  MUTUAL_GROUP_CHAT_RESULT_LIMIT,
+  MUTUAL_GROUP_KIND_LABEL,
+  chatToTarget,
+  getTargetDisplayName,
+  targetKey,
+  targetLabel,
+  useMutualGroups,
+  type MutualGroupKind,
+} from './chat-management/useMutualGroups'
+
 type LearningKind = 'expression' | 'jargon' | 'behavior'
-const MUTUAL_GROUP_CHAT_RESULT_LIMIT = 50
-
-const MUTUAL_GROUP_KIND_LABEL: Record<MutualGroupKind, string> = {
-  expression: '表达',
-  jargon: '黑话',
-  memory: '记忆',
-}
-
-interface TargetItem {
-  platform: string
-  item_id: string
-  rule_type?: ChatStreamType | string
-  type?: ChatStreamType | string
-}
-
-interface ChatStreamGroupConfig {
-  targets?: TargetItem[]
-  expression_groups?: TargetItem[]
-  jargon_groups?: TargetItem[]
-}
 
 function formatTimestamp(timestamp: number | null): string {
   if (!timestamp) {
@@ -128,76 +117,6 @@ function getChatTypeText(chatType: ChatStreamType): string {
 
 function getChatLogicalId(chat: ChatStream): string {
   return chat.target_id || (chat.chat_type === 'group' ? chat.group_id : chat.user_id) || '-'
-}
-
-function getTargetRuleType(target: TargetItem): ChatStreamType {
-  return target.rule_type === 'private' || target.type === 'private' ? 'private' : 'group'
-}
-
-function normalizeTarget(target: unknown): TargetItem | null {
-  if (!target || typeof target !== 'object') {
-    return null
-  }
-  const rawTarget = target as Record<string, unknown>
-  const platform = String(rawTarget.platform ?? '').trim()
-  const itemId = String(rawTarget.item_id ?? '').trim()
-  const rawRuleType = rawTarget.rule_type ?? rawTarget.type
-  const ruleType = rawRuleType === 'private' ? 'private' : 'group'
-  if (!platform || !itemId) {
-    return null
-  }
-  return { platform, item_id: itemId, rule_type: ruleType }
-}
-
-function normalizeMutualGroups(value: unknown): ChatStreamGroupConfig[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  return value.map((group) => {
-    if (!group || typeof group !== 'object') {
-      return { targets: [] }
-    }
-    const rawGroup = group as ChatStreamGroupConfig
-    const rawTargets =
-      rawGroup.targets ?? rawGroup.expression_groups ?? rawGroup.jargon_groups ?? []
-    const targets = Array.isArray(rawTargets)
-      ? rawTargets.map(normalizeTarget).filter((target): target is TargetItem => target !== null)
-      : []
-    return { targets }
-  })
-}
-
-function serializeMutualGroups(groups: ChatStreamGroupConfig[]): ChatStreamGroupConfig[] {
-  return groups.map((group) => ({
-    targets: (group.targets ?? []).map((target) => ({
-      platform: target.platform,
-      item_id: target.item_id,
-      rule_type: getTargetRuleType(target),
-    })),
-  }))
-}
-
-function targetKey(target: TargetItem): string {
-  return `${target.platform}:${target.item_id}:${getTargetRuleType(target)}`
-}
-
-function targetLabel(target: TargetItem): string {
-  return `${target.platform}:${target.item_id}:${getChatTypeText(getTargetRuleType(target))}`
-}
-
-function getTargetDisplayName(
-  target: TargetItem,
-  chatNameByTargetKey: Map<string, string>
-): string {
-  return chatNameByTargetKey.get(targetKey(target)) ?? '未找到聊天流'
-}
-
-function chatToTarget(chat: ChatStream): TargetItem {
-  return {
-    platform: chat.platform,
-    item_id: getChatLogicalId(chat),
-    rule_type: chat.chat_type,
-  }
 }
 
 function HoverScrollText({
@@ -265,34 +184,6 @@ function HoverScrollText({
       </span>
     </span>
   )
-}
-
-function matchesSearch(chat: ChatStream, query: string): boolean {
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) {
-    return true
-  }
-
-  return [
-    chat.id,
-    chat.display_name,
-    chat.session_id,
-    chat.chat_type,
-    chat.target_id,
-    chat.platform,
-    chat.account_id,
-    chat.group_id,
-    chat.group_name,
-    chat.user_id,
-    chat.user_nickname,
-    chat.user_cardname,
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(normalizedQuery))
-}
-
-function matchesTypeFilter(chat: ChatStream, filter: ChatTypeFilter): boolean {
-  return filter === 'all' || chat.chat_type === filter
 }
 
 function formatRuleTarget(rule: ChatConfigRule | null): string {
@@ -1260,192 +1151,30 @@ function ChatPromptSection({ detail }: { detail: ChatStreamDetail }) {
 }
 
 function MutualGroupsView({ chats }: { chats: ChatStream[] }) {
-  const queryClient = useQueryClient()
-  const { toast } = useToast()
-  const [kind, setKind] = useState<MutualGroupKind>(() => {
-    if (typeof window === 'undefined') {
-      return 'expression'
-    }
-    const queryKind = new URLSearchParams(window.location.search).get('kind')
-    return queryKind === 'memory' || queryKind === 'jargon' ? queryKind : 'expression'
-  })
-  const [addDialogGroupIndex, setAddDialogGroupIndex] = useState<number | null>(null)
-  const [addDialogSearch, setAddDialogSearch] = useState('')
-  const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>([])
-  const configQuery = useQuery({
-    queryKey: ['chat-management-mutual-groups-config'],
-    queryFn: () => getBotConfig(),
-  })
-  const sectionName = kind === 'memory' ? 'a_memorix' : kind
-  const groupFieldName =
-    kind === 'memory'
-      ? 'shared_memory_groups'
-      : kind === 'expression'
-        ? 'expression_groups'
-        : 'jargon_groups'
-  const sectionData = useMemo(() => {
-    const raw = configQuery.data?.[sectionName]
-    return (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  }, [configQuery.data, sectionName])
-  const globalMemorySharingEnabled =
-    kind === 'memory' && sectionData.global_memory_sharing_enabled === true
-  const groups = useMemo(
-    () => normalizeMutualGroups(sectionData[groupFieldName]),
-    [groupFieldName, sectionData]
-  )
-  const addDialogGroup = addDialogGroupIndex === null ? null : (groups[addDialogGroupIndex] ?? null)
-  const selectedTargetKeySet = useMemo(() => new Set(selectedTargetKeys), [selectedTargetKeys])
-  const addDialogExistingKeySet = useMemo(
-    () => new Set((addDialogGroup?.targets ?? []).map(targetKey)),
-    [addDialogGroup]
-  )
-  const chatNameByTargetKey = useMemo(
-    () =>
-      new Map(
-        chats.map((chat) => [
-          targetKey(chatToTarget(chat)),
-          formatChatDisplayName(chat.display_name, chat.account_id),
-        ])
-      ),
-    [chats]
-  )
-  const addDialogChats = useMemo(() => {
-    const keyword = addDialogSearch.trim().toLowerCase()
-    return chats.filter((chat) => {
-      const target = chatToTarget(chat)
-      if (addDialogExistingKeySet.has(targetKey(target))) {
-        return false
-      }
-      if (!keyword) {
-        return true
-      }
-      return [
-        chat.display_name,
-        chat.account_id,
-        chat.platform,
-        getChatLogicalId(chat),
-        chat.user_id,
-        chat.group_id,
-        chat.session_id,
-        getChatTypeText(chat.chat_type),
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(keyword)
-    })
-  }, [addDialogExistingKeySet, addDialogSearch, chats])
-  const visibleAddDialogChats = addDialogChats.slice(0, MUTUAL_GROUP_CHAT_RESULT_LIMIT)
-  const isAddDialogLimited = addDialogChats.length > visibleAddDialogChats.length
-
-  const saveMutation = useMutation({
-    mutationFn: (nextSectionData: Record<string, unknown>) =>
-      updateBotConfigSection(sectionName, nextSectionData),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['chat-management-mutual-groups-config'] })
-      toast({
-        title: '共享组已保存',
-        description: `${MUTUAL_GROUP_KIND_LABEL[kind]}共享组配置已更新。`,
-      })
-    },
-    onError: (error) => {
-      toast({
-        title: '保存共享组失败',
-        description: error instanceof Error ? error.message : '请稍后重试',
-        variant: 'destructive',
-      })
-    },
-  })
-
-  const updateGroups = (nextGroups: ChatStreamGroupConfig[]) => {
-    if (globalMemorySharingEnabled) {
-      return
-    }
-    saveMutation.mutate({
-      ...sectionData,
-      [groupFieldName]: serializeMutualGroups(nextGroups),
-    })
-  }
-
-  const createGroup = () => {
-    if (globalMemorySharingEnabled) {
-      return
-    }
-    updateGroups([...groups, { targets: [] }])
-  }
-
-  const openAddDialog = (groupIndex: number) => {
-    if (globalMemorySharingEnabled) {
-      return
-    }
-    setAddDialogGroupIndex(groupIndex)
-    setAddDialogSearch('')
-    setSelectedTargetKeys([])
-  }
-
-  const closeAddDialog = () => {
-    setAddDialogGroupIndex(null)
-    setAddDialogSearch('')
-    setSelectedTargetKeys([])
-  }
-
-  const toggleAddDialogChat = (target: TargetItem) => {
-    const key = targetKey(target)
-    setSelectedTargetKeys((currentKeys) =>
-      currentKeys.includes(key)
-        ? currentKeys.filter((currentKey) => currentKey !== key)
-        : [...currentKeys, key]
-    )
-  }
-
-  const applySelectedChatsToGroup = () => {
-    if (
-      globalMemorySharingEnabled ||
-      addDialogGroupIndex === null ||
-      selectedTargetKeys.length === 0
-    ) {
-      return
-    }
-    const selectedKeySet = new Set(selectedTargetKeys)
-    const selectedTargets = chats
-      .map(chatToTarget)
-      .filter((target) => selectedKeySet.has(targetKey(target)))
-    const nextGroups = groups.map((group, index) => {
-      if (index !== addDialogGroupIndex) {
-        return group
-      }
-      const targets = group.targets ?? []
-      const existingKeys = new Set(targets.map(targetKey))
-      const nextTargets = selectedTargets.filter((target) => !existingKeys.has(targetKey(target)))
-      return { targets: [...targets, ...nextTargets] }
-    })
-    updateGroups(nextGroups)
-    closeAddDialog()
-  }
-
-  const removeTarget = (groupIndex: number, targetIndex: number) => {
-    if (globalMemorySharingEnabled) {
-      return
-    }
-    updateGroups(
-      groups.map((group, index) =>
-        index === groupIndex
-          ? {
-              targets: (group.targets ?? []).filter(
-                (_, memberIndex) => memberIndex !== targetIndex
-              ),
-            }
-          : group
-      )
-    )
-  }
-
-  const deleteGroup = (groupIndex: number) => {
-    if (globalMemorySharingEnabled) {
-      return
-    }
-    updateGroups(groups.filter((_, index) => index !== groupIndex))
-  }
-  const editingDisabled = saveMutation.isPending || globalMemorySharingEnabled
+  const {
+    kind,
+    setKind,
+    addDialogGroupIndex,
+    addDialogSearch,
+    setAddDialogSearch,
+    selectedTargetKeys,
+    configQuery,
+    groups,
+    chatNameByTargetKey,
+    addDialogChats,
+    visibleAddDialogChats,
+    isAddDialogLimited,
+    selectedTargetKeySet,
+    editingDisabled,
+    globalMemorySharingEnabled,
+    createGroup,
+    openAddDialog,
+    closeAddDialog,
+    toggleAddDialogChat,
+    applySelectedChatsToGroup,
+    removeTarget,
+    deleteGroup,
+  } = useMutualGroups(chats)
 
   return (
     <section className="bg-background flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
@@ -2138,68 +1867,34 @@ function DeleteChatStreamDialog({
 }
 
 export function ChatManagementPage() {
-  const [activeView, setActiveView] = useState<ChatManagementView>(() => {
-    if (typeof window === 'undefined') {
-      return 'streams'
-    }
-    return new URLSearchParams(window.location.search).get('view') === 'groups'
-      ? 'groups'
-      : 'streams'
-  })
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<ChatTypeFilter>('all')
-  const [page, setPage] = useState(1)
-  const [selectedChat, setSelectedChat] = useState<ChatStream | null>(null)
-  const [deletingChat, setDeletingChat] = useState<ChatStream | null>(null)
   const {
-    data: chats = [],
+    activeView,
+    setActiveView,
+    search,
+    setSearch,
+    typeFilter,
+    setTypeFilter,
+    setPage,
+    selectedChat,
+    setSelectedChat,
+    deletingChat,
+    setDeletingChat,
+    chats,
     error,
     isFetching,
     isLoading,
     refetch,
-  } = useQuery({
-    queryKey: ['chat-streams'],
-    queryFn: () => getChatStreams(),
-  })
-  const detailQuery = useQuery({
-    queryKey: ['chat-stream-detail', selectedChat?.session_id],
-    queryFn: () => getChatStreamDetail(selectedChat?.session_id ?? ''),
-    enabled: Boolean(selectedChat?.session_id),
-  })
-
-  const filteredChats = useMemo(
-    () =>
-      chats.filter((chat) => matchesTypeFilter(chat, typeFilter) && matchesSearch(chat, search)),
-    [chats, search, typeFilter]
-  )
-  const pageCount = Math.max(1, Math.ceil(filteredChats.length / PAGE_SIZE))
-  const currentPage = Math.min(page, pageCount)
-  const paginatedChats = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE
-    return filteredChats.slice(start, start + PAGE_SIZE)
-  }, [currentPage, filteredChats])
-  const visibleStart = filteredChats.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
-  const visibleEnd = Math.min(currentPage * PAGE_SIZE, filteredChats.length)
-  const groupCount = chats.filter((chat) => chat.chat_type === 'group').length
-  const privateCount = chats.length - groupCount
-
-  useEffect(() => {
-    const frameId = window.requestAnimationFrame(() => setPage(1))
-    return () => window.cancelAnimationFrame(frameId)
-  }, [search, typeFilter])
-
-  useEffect(() => {
-    if (page > pageCount) {
-      const frameId = window.requestAnimationFrame(() => setPage(pageCount))
-      return () => window.cancelAnimationFrame(frameId)
-    }
-  }, [page, pageCount])
-
-  const handleChatDeleted = (sessionId: string) => {
-    if (selectedChat?.session_id === sessionId) {
-      setSelectedChat(null)
-    }
-  }
+    detailQuery,
+    filteredChats,
+    pageCount,
+    currentPage,
+    paginatedChats,
+    visibleStart,
+    visibleEnd,
+    groupCount,
+    privateCount,
+    handleChatDeleted,
+  } = useChatStreamsList()
 
   return (
     <main className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4 md:p-6">

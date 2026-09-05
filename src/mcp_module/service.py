@@ -1,7 +1,8 @@
 """进程级 MCP 运行时服务。
 
-该服务在主事件循环中统一持有 MCP 连接，聊天 Runtime 只通过轻量 Provider
-访问共享连接，避免每个聊天流重复启动 stdio 子进程和远程 HTTP 会话。
+该服务在主事件循环中统一持有 MCP 连接，避免每个聊天流重复启动 stdio 子进程
+和远程 HTTP 会话。会话 Runtime 通过 MCPToolProvider 适配 ToolProvider；
+Provider.close 不得关闭本服务。
 """
 
 from __future__ import annotations

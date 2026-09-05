@@ -8,7 +8,6 @@ from .icon_routes import router as icon_router
 from .management import router as management_router
 from .progress import get_progress_router, update_progress
 from .runtime_routes import router as runtime_router
-from .stats_proxy import router as stats_proxy_router
 
 router = APIRouter(prefix="/plugins", tags=["插件管理"])
 router.include_router(catalog_router)
@@ -16,7 +15,6 @@ router.include_router(management_router)
 router.include_router(icon_router)
 router.include_router(config_router)
 router.include_router(runtime_router)
-router.include_router(stats_proxy_router)
 
 set_update_progress_callback(update_progress)
 

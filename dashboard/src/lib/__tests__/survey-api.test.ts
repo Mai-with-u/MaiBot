@@ -65,7 +65,7 @@ describe('submitSurvey', () => {
       userId: 'fp_custom_user',
     })
 
-    expect(result).toEqual({ success: true, submissionId: 'sub-1', message: '感谢参与' })
+    expect(result).toEqual({ submissionId: 'sub-1', message: '感谢参与' })
     expect(postMock).toHaveBeenCalledTimes(1)
     const [path, options] = postMock.mock.calls[0]
     expect(path).toBe('/survey/submit')
@@ -95,12 +95,12 @@ describe('submitSurvey', () => {
     expect(postMock.mock.calls[0][1]?.body).toMatchObject({ userId: 'fp_stored_user' })
   })
 
-  it('429 限流时返回频率提示', async () => {
+  it('429 限流时抛出频率提示', async () => {
     postMock.mockRejectedValue(new ApiError('提交失败', { status: 429 }))
 
-    await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
-      success: false,
-      error: '提交过于频繁，请稍后再试',
+    await expect(submitSurvey('s', 'v1', [])).rejects.toMatchObject({
+      message: '提交过于频繁，请稍后再试',
+      status: 429,
     })
   })
 
@@ -109,39 +109,36 @@ describe('submitSurvey', () => {
       new ApiError('提交失败', { status: 409, detail: { error: '该问卷限一人一份' } })
     )
 
-    await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
-      success: false,
-      error: '该问卷限一人一份',
+    await expect(submitSurvey('s', 'v1', [])).rejects.toMatchObject({
+      message: '该问卷限一人一份',
+      status: 409,
     })
   })
 
   it('409 且错误体无可用 error 字段时使用默认重复提交文案', async () => {
     postMock.mockRejectedValue(new ApiError('提交失败', { status: 409, detail: { error: 42 } }))
 
-    await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
-      success: false,
-      error: '你已经提交过这份问卷了',
+    await expect(submitSurvey('s', 'v1', [])).rejects.toMatchObject({
+      message: '你已经提交过这份问卷了',
+      status: 409,
     })
   })
 
-  it('其他 HTTP 错误时返回 ApiError 的 message', async () => {
+  it('其他 HTTP 错误时抛出 ApiError 的 message', async () => {
     postMock.mockRejectedValue(new ApiError('服务暂不可用', { status: 503 }))
 
-    await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
-      success: false,
-      error: '服务暂不可用',
+    await expect(submitSurvey('s', 'v1', [])).rejects.toMatchObject({
+      message: '服务暂不可用',
+      status: 503,
     })
   })
 
-  it('网络层失败（无 status）时返回网络错误文案', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('网络层失败（无 status）向上抛出 ApiError', async () => {
     postMock.mockRejectedValue(new ApiError('网络请求失败'))
 
-    await expect(submitSurvey('s', 'v1', [])).resolves.toEqual({
-      success: false,
-      error: '网络错误',
+    await expect(submitSurvey('s', 'v1', [])).rejects.toMatchObject({
+      message: '网络请求失败',
     })
-    expect(consoleError).toHaveBeenCalled()
   })
 })
 
@@ -155,27 +152,26 @@ describe('getSurveyStats', () => {
     }
     getMock.mockResolvedValue({ stats })
 
-    await expect(getSurveyStats('survey-2026')).resolves.toEqual({ success: true, stats })
+    await expect(getSurveyStats('survey-2026')).resolves.toEqual(stats)
     expect(getMock).toHaveBeenCalledWith('/survey/stats/survey-2026', {
       errorMessage: '获取统计数据失败',
     })
   })
 
-  it('HTTP 错误时返回 ApiError 的 message', async () => {
+  it('HTTP 错误时向上抛出 ApiError', async () => {
     getMock.mockRejectedValue(new ApiError('获取统计数据失败', { status: 404 }))
 
-    await expect(getSurveyStats('missing')).resolves.toEqual({
-      success: false,
-      error: '获取统计数据失败',
+    await expect(getSurveyStats('missing')).rejects.toMatchObject({
+      message: '获取统计数据失败',
+      status: 404,
     })
   })
 
-  it('非 ApiError 异常时返回网络错误文案', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('非 ApiError 异常时原样抛出', async () => {
     getMock.mockRejectedValue(new TypeError('Failed to fetch'))
 
-    await expect(getSurveyStats('s')).resolves.toEqual({ success: false, error: '网络错误' })
-    expect(consoleError).toHaveBeenCalled()
+    await expect(getSurveyStats('s')).rejects.toBeInstanceOf(TypeError)
+    await expect(getSurveyStats('s')).rejects.toThrow('Failed to fetch')
   })
 })
 
@@ -192,10 +188,7 @@ describe('getUserSubmissions', () => {
     ]
     getMock.mockResolvedValue({ submissions })
 
-    await expect(getUserSubmissions('survey-2026', 'fp_user_a')).resolves.toEqual({
-      success: true,
-      submissions,
-    })
+    await expect(getUserSubmissions('survey-2026', 'fp_user_a')).resolves.toEqual(submissions)
     expect(getMock).toHaveBeenCalledWith('/survey/submissions', {
       query: { user_id: 'fp_user_a', survey_id: 'survey-2026' },
       errorMessage: '获取提交记录失败',
@@ -214,12 +207,12 @@ describe('getUserSubmissions', () => {
     })
   })
 
-  it('HTTP 错误时返回 ApiError 的 message', async () => {
+  it('HTTP 错误时向上抛出 ApiError', async () => {
     getMock.mockRejectedValue(new ApiError('获取提交记录失败', { status: 500 }))
 
-    await expect(getUserSubmissions('s', 'u')).resolves.toEqual({
-      success: false,
-      error: '获取提交记录失败',
+    await expect(getUserSubmissions('s', 'u')).rejects.toMatchObject({
+      message: '获取提交记录失败',
+      status: 500,
     })
   })
 })
@@ -228,33 +221,31 @@ describe('checkUserSubmission', () => {
   it('携带 user_id 与 survey_id 检查提交状态', async () => {
     getMock.mockResolvedValue({ hasSubmitted: true })
 
-    await expect(checkUserSubmission('survey-2026', 'fp_user_a')).resolves.toEqual({
-      success: true,
-      hasSubmitted: true,
-    })
+    await expect(checkUserSubmission('survey-2026', 'fp_user_a')).resolves.toBe(true)
     expect(getMock).toHaveBeenCalledWith('/survey/check', {
       query: { user_id: 'fp_user_a', survey_id: 'survey-2026' },
       errorMessage: '检查失败',
     })
   })
 
-  it('HTTP 错误时返回 ApiError 的 message', async () => {
+  it('未提交时返回 false', async () => {
+    getMock.mockResolvedValue({ hasSubmitted: false })
+
+    await expect(checkUserSubmission('s', 'u')).resolves.toBe(false)
+  })
+
+  it('HTTP 错误时向上抛出 ApiError', async () => {
     getMock.mockRejectedValue(new ApiError('检查失败', { status: 500 }))
 
-    await expect(checkUserSubmission('s', 'u')).resolves.toEqual({
-      success: false,
-      error: '检查失败',
+    await expect(checkUserSubmission('s', 'u')).rejects.toMatchObject({
+      message: '检查失败',
+      status: 500,
     })
   })
 
-  it('非 ApiError 异常时返回网络错误文案', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('非 ApiError 异常时原样抛出', async () => {
     getMock.mockRejectedValue(new Error('boom'))
 
-    await expect(checkUserSubmission('s', 'u')).resolves.toEqual({
-      success: false,
-      error: '网络错误',
-    })
-    expect(consoleError).toHaveBeenCalled()
+    await expect(checkUserSubmission('s', 'u')).rejects.toThrow('boom')
   })
 })

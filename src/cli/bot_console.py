@@ -274,6 +274,6 @@ class BotConsole:
         finally:
             await self._unregister_output_driver()
             if self._session_id is not None:
-                runtime = heartflow_manager.heartflow_chat_list.pop(self._session_id, None)
+                runtime = heartflow_manager.pop_heartflow_chat(self._session_id)
                 if runtime is not None:
                     await runtime.stop()

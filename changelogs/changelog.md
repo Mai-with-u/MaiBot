@@ -1,5 +1,58 @@
 # 更新日志
 
+# [1.2.5] - 2026-9-5
+
+## 聊天流
+
+- WebUI 聊天历史与清空改为解析已存在的真实聊天流，不再自行计算 session_id；虚拟身份按所属 platform 查找。
+
+## 核心
+
+- 抽出进程停机步骤编排，三个入口仍保持各自原有停机集合与顺序。
+- EventBus 的 IPC 事件桥接改为初始化注入，core 不再硬依赖 plugin_runtime。
+- HeartflowManager 收口活循环注册表，调用方不再直接 get/pop 内部字典；WebUI 删除聊天流会 stop 心流 runtime，并移除缓存以免写回。
+- Legacy WS 入站改由 LegacyPlatformDriver 接入 Platform IO，最终进入 chat_bot.receive_message；MessageServer 仍负责出站与 echo。
+- Maisaka CLI 出站改为与 Bot 控制台一致的 Platform IO 本地驱动，去掉 reply/emoji 工具中的 CLI 发送旁路。
+
+## 插件运行时
+
+- Host/Runner RPC 抽出共享会话层，握手与入站回复仍直写，线协议不变。
+- PluginRuntimeManager 改为组合绑定能力实现，不再多继承 mixin；capability 名与 ACTION 词汇不变。
+- 将 ACTION/action 到 TOOL 的类型映射收口为单一 normalize 函数；SDK 仍产出 ACTION，host 仍存 TOOL 与 legacy_component_type。
+
+## Maisaka
+
+- 消息开口判定收到 TurnPolicy.decide，调度副作用仍留在 scheduler。
+- MemoryService 增加段落来源具名 preview；启发式记忆改为相同 preview 富集后的纯函数过滤。
+- WebUI 记忆记录查询与聊天摘要写回游标改为走 MemoryService 具名读取，不再直接摸 kernel store。
+- SessionMessage 入站历史收口到统一工厂；规划器前缀、转发折叠和视觉回填仍按路径标志区分，Focus 唤醒保持原文。
+- 观察阶段状态改为 monitor 投影，WebUI/CLI 可见字段保持不变。
+
+## 模型
+
+- WebUI 单模测试/人设生成改为注入合成 TaskConfig，不再覆盖编排器私有方法。
+- Prompt 模板缺失时固定回退 zh-CN，不再跟随 UI 的 DEFAULT_LOCALE。
+- MCP Sampling 空任务名不再静默回退 planner；配置省略键仍默认 planner。
+
+## Webui [1.7.4]
+
+- 插件点赞、评分与下载改为直连统计服务，不再经过主后端浅代理。
+- 将 `/api/chat` 路由拆分为本地聊天室与聊天流两个模块，对外路径保持不变。
+- 聊天流规则匹配改为走 ChatConfigUtils 的公开 interface。
+- 适配器主程序规则面板接入配置表单编排，仍为单节草稿 + 手动保存。
+- 聊天流管理、插件市场与知识图谱页将状态机沉入领域 hook，过滤、检索回退与深链接语义不变。
+
+## 细节
+
+- Legacy WS 入站改经 LegacyPlatformDriver 进入 Platform IO，出站与 echo 仍走 MessageServer。
+- Maisaka CLI 出站改为 PlatformIO driver，去掉回复/表情路径上的平台特判。
+- 删除主后端 `stats_proxy` 路由。
+- MCP 会话工具改为明确的 ToolProvider 适配器，进程级连接仍由 MCPService 持有，工具列表与调用结果不变。
+- 已有数据库初始化不再用 create_all 静默补表，缺表需走 schema 版本链；空库仍按当前模型建最新结构。
+- 数据库服务 CRUD 失败改为抛出异常，不再静默返回 None、空列表或 0。
+- 已安装插件列表与问卷请求失败改为抛出错误，页面用局部错误或变更 toast 呈现，空列表仅表示确实没有数据。
+- 删除未使用的 LLMRequest、统计 hourly 拉取、`/statistics/summary|models`、TCPTransportServer、`emit_inbound`、catalog `POST /clone`，以及死副本 `schemas/chat.py`。
+
 # [1.2.4] - 2026-9-1
 
 ## Maisaka

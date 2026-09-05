@@ -117,11 +117,19 @@ describe('getInstalledPlugins', () => {
     expect(getMock).toHaveBeenCalledTimes(1)
   })
 
-  it('HTTP 层错误（非 401）被吞掉并返回空列表', async () => {
+  it('HTTP 层错误（非 401）向上抛出 ApiError，且不写入 TTL 缓存', async () => {
     const { getMock, getInstalledPlugins, ApiError } = await loadInstalledModule()
-    getMock.mockRejectedValue(new ApiError('获取已安装插件列表失败', { status: 500 }))
+    getMock.mockRejectedValueOnce(new ApiError('获取已安装插件列表失败', { status: 500 }))
 
-    await expect(getInstalledPlugins()).resolves.toEqual([])
+    await expect(getInstalledPlugins()).rejects.toMatchObject({
+      status: 500,
+      message: '获取已安装插件列表失败',
+    })
+
+    const plugins = [makeInstalledPlugin('demo', '1.2.0')]
+    getMock.mockResolvedValueOnce({ success: true, plugins })
+    await expect(getInstalledPlugins()).resolves.toEqual(plugins)
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 
   it('401 认证失效向上抛出 ApiError', async () => {
@@ -163,11 +171,17 @@ describe('getInstalledPlugins', () => {
     expect(getMock).toHaveBeenCalledTimes(2)
   })
 
-  it('业务级失败（success 为 false）返回空列表', async () => {
-    const { getMock, getInstalledPlugins } = await loadInstalledModule()
+  it('业务级失败（success 为 false）抛出 ApiError，且不写入 TTL 缓存', async () => {
+    const { getMock, getInstalledPlugins, ApiError } = await loadInstalledModule()
     getMock.mockResolvedValue({ success: false, message: '插件系统未初始化' })
 
-    await expect(getInstalledPlugins()).resolves.toEqual([])
+    await expect(getInstalledPlugins()).rejects.toBeInstanceOf(ApiError)
+    await expect(getInstalledPlugins()).rejects.toMatchObject({ message: '插件系统未初始化' })
+
+    const plugins = [makeInstalledPlugin('demo', '1.2.0')]
+    getMock.mockResolvedValueOnce({ success: true, plugins })
+    await expect(getInstalledPlugins()).resolves.toEqual(plugins)
+    expect(getMock).toHaveBeenCalledTimes(3)
   })
 
   it('success 为 true 但 plugins 字段缺省时返回空列表', async () => {

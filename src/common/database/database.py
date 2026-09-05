@@ -12,7 +12,7 @@ from sqlmodel import SQLModel, Session, create_engine
 
 import threading
 
-from src.common.database.migrations import create_database_migration_bootstrapper
+from src.common.database.migrations import SQLiteSchemaInspector, create_database_migration_bootstrapper
 from src.common.logger import get_logger
 
 if TYPE_CHECKING:
@@ -119,6 +119,18 @@ def ensure_runtime_performance_indexes() -> None:
     logger.info(f"数据库运行期性能索引检查完成，耗时={int((perf_counter() - index_start_time) * 1000)}ms")
 
 
+def _is_empty_database() -> bool:
+    """判断当前数据库是否为空库。
+
+    空库指数据库文件尚不存在，或已存在但没有任何用户表。
+    已有用户表的数据库即使缺少部分模型表，也不视为空库。
+    """
+    if not _DB_FILE.exists():
+        return True
+    with engine.connect() as connection:
+        return not SQLiteSchemaInspector().list_user_tables(connection)
+
+
 def initialize_database() -> None:
     """初始化数据库连接、结构与启动期迁移。
 
@@ -126,7 +138,8 @@ def initialize_database() -> None:
         1. 确保数据库目录存在；
         2. 加载 SQLModel 模型定义；
         3. 执行已注册的启动期迁移；
-        4. 兜底执行 ``create_all`` 确保当前模型定义已建表。
+        4. 仅当数据库文件不存在或没有任何用户表时，按当前模型 ``create_all``；
+           已有库跳过 ``create_all``，缺表需通过 schema 版本链补齐。
     """
     global _db_initialized
     if _db_initialized:
@@ -139,14 +152,19 @@ def initialize_database() -> None:
         _DB_DIR.mkdir(parents=True, exist_ok=True)
         import src.common.database.database_model  # noqa: F401
 
+        # 按初始化前的库状态决定是否建表，避免已有库被 create_all 静默补表。
+        should_create_all = _is_empty_database()
         migration_state = _migration_bootstrapper.prepare_database()
         logger.info(
             "数据库迁移准备完成，"
             f" 当前版本={migration_state.resolved_version.version}，目标版本={migration_state.target_version}"
         )
-        create_all_start_time = perf_counter()
-        SQLModel.metadata.create_all(engine)
-        logger.debug(f"数据库模型建表检查完成，耗时={int((perf_counter() - create_all_start_time) * 1000)}ms")
+        if should_create_all:
+            create_all_start_time = perf_counter()
+            SQLModel.metadata.create_all(engine)
+            logger.debug(f"数据库模型建表完成，耗时={int((perf_counter() - create_all_start_time) * 1000)}ms")
+        else:
+            logger.info("已有数据库跳过 create_all，缺表需通过 schema 版本链补齐。")
         ensure_runtime_performance_indexes()
         finalize_start_time = perf_counter()
         _migration_bootstrapper.finalize_database(migration_state)

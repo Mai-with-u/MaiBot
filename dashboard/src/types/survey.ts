@@ -99,22 +99,8 @@ export interface SurveyStats {
   }
 }
 
-// API 响应
+// API 成功响应（失败由请求层抛出 ApiError）
 export interface SurveySubmitResponse {
-  success: boolean
   submissionId?: string
   message?: string
-  error?: string
-}
-
-export interface SurveyStatsResponse {
-  success: boolean
-  stats?: SurveyStats
-  error?: string
-}
-
-export interface UserSubmissionsResponse {
-  success: boolean
-  submissions?: StoredSubmission[]
-  error?: string
 }

@@ -1,23 +1,24 @@
 """WebUI 聊天运行时服务。"""
 
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, cast
 import base64
 import binascii
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple, cast
 
 from pydantic import BaseModel
 from sqlmodel import col, delete, select
 
 from src.chat.message_receive.bot import chat_bot
+from src.chat.message_receive.chat_manager import BotChatSession, chat_manager as core_chat_manager
 from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import is_bot_self
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, PersonInfo
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
-from src.common.utils.utils_session import SessionUtils
 from src.config.config import global_config
 
 from .serializers import serialize_message_sequence
@@ -30,6 +31,29 @@ VIRTUAL_GROUP_ID_PREFIX = "webui_virtual_group_"
 WEBUI_USER_ID_PREFIX = "webui_user_"
 
 AsyncMessageSender = Callable[[Dict[str, Any]], Awaitable[None]]
+
+
+def _select_resolved_session(
+    sessions: List[BotChatSession],
+    *,
+    platform: str,
+    chat_type: str,
+    target_id: str,
+) -> BotChatSession:
+    """从已解析的聊天流中选出唯一或最近活跃的一条。"""
+    if len(sessions) == 1:
+        return sessions[0]
+
+    selected_session = max(
+        sessions,
+        key=lambda session: session.last_active_timestamp or datetime.min,
+    )
+    logger.warning(
+        f"按目标解析到 {len(sessions)} 条聊天流，使用最近活跃的一条: "
+        f"platform={platform}, chat_type={chat_type}, target_id={target_id}, "
+        f"session_id={selected_session.session_id}"
+    )
+    return selected_session
 
 
 class VirtualIdentityConfig(BaseModel):
@@ -191,43 +215,80 @@ class ChatHistoryManager:
         self,
         group_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        platform: Optional[str] = None,
     ) -> Optional[str]:
-        """根据会话标识解析内部聊天会话 ID。
+        """根据平台、目标 ID 解析已存在的真实聊天流 ID。
 
-        优先按虚拟群聊解析；否则按 WebUI 私聊解析。
+        不自行计算 session_id。有 ``group_id`` 时必须传入对应 ``platform``；
+        私聊未传 ``platform`` 时使用 ``WEBUI_CHAT_PLATFORM``。
 
         Args:
-            group_id: 群组标识（虚拟群聊模式）。
-            user_id: 用户标识（私聊模式）。
+            group_id: 群组标识（群聊 / 虚拟群聊）。
+            user_id: 用户标识（私聊）。
+            platform: 聊天流所属平台。
 
         Returns:
-            Optional[str]: 内部聊天会话 ID；当 group_id 与 user_id 均未提供时返回 ``None``。
+            Optional[str]: 真实聊天流 ID；未匹配到时返回 ``None``。
         """
         if group_id:
-            return SessionUtils.calculate_session_id(WEBUI_CHAT_PLATFORM, group_id=group_id)
-        if user_id:
-            return SessionUtils.calculate_session_id(WEBUI_CHAT_PLATFORM, user_id=user_id)
-        return None
+            if not platform:
+                logger.warning(
+                    f"按群聊解析聊天流时缺少 platform，拒绝自行计算 session_id: group_id={group_id}"
+                )
+                return None
+            chat_type = "group"
+            target_id = group_id
+            resolved_platform = platform
+        elif user_id:
+            chat_type = "private"
+            target_id = user_id
+            resolved_platform = platform or WEBUI_CHAT_PLATFORM
+        else:
+            return None
+
+        matched_sessions = core_chat_manager.resolve_sessions_by_target(
+            platform=resolved_platform,
+            target_id=target_id,
+            chat_type=chat_type,
+        )
+        if not matched_sessions:
+            logger.debug(
+                "未解析到真实聊天流: "
+                f"platform={resolved_platform}, chat_type={chat_type}, target_id={target_id}"
+            )
+            return None
+        selected_session = _select_resolved_session(
+            matched_sessions,
+            platform=resolved_platform,
+            chat_type=chat_type,
+            target_id=target_id,
+        )
+        return selected_session.session_id
 
     def get_history(
         self,
         limit: int = 50,
         group_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        platform: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """获取指定会话的历史消息。
 
         Args:
             limit: 最大返回条数。
-            group_id: 群组标识（虚拟群聊模式）。
-            user_id: 用户标识（私聊模式）。
+            group_id: 群组标识（群聊 / 虚拟群聊）。
+            user_id: 用户标识（私聊）。
+            platform: 聊天流所属平台。
 
         Returns:
             List[Dict[str, Any]]: 历史消息列表。
         """
-        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id)
+        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id, platform=platform)
         if session_id is None:
-            logger.debug("获取聊天历史时缺少 group_id 与 user_id，返回空列表")
+            logger.debug(
+                "获取聊天历史时未解析到真实聊天流，返回空列表 "
+                f"(platform={platform}, group_id={group_id}, user_id={user_id})"
+            )
             return []
         try:
             messages = find_messages(
@@ -252,7 +313,8 @@ class ChatHistoryManager:
                     self._enrich_reply_segments(segments, message_index, session_id)
                 result.append(item)
             logger.debug(
-                f"从数据库加载了 {len(result)} 条聊天记录 (group_id={group_id}, user_id={user_id})"
+                "从数据库加载了 "
+                f"{len(result)} 条聊天记录 (platform={platform}, group_id={group_id}, user_id={user_id})"
             )
             return result
         except Exception as exc:
@@ -263,17 +325,19 @@ class ChatHistoryManager:
         self,
         group_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        platform: Optional[str] = None,
     ) -> int:
         """清空指定会话的历史消息。
 
         Args:
-            group_id: 群组标识（虚拟群聊模式）。
-            user_id: 用户标识（私聊模式）。
+            group_id: 群组标识（群聊 / 虚拟群聊）。
+            user_id: 用户标识（私聊）。
+            platform: 聊天流所属平台。
 
         Returns:
             int: 被删除的消息数量。
         """
-        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id)
+        session_id = self._resolve_session_id(group_id=group_id, user_id=user_id, platform=platform)
         if session_id is None:
             return 0
         try:
@@ -282,7 +346,8 @@ class ChatHistoryManager:
                 result = session.exec(statement)
                 deleted = result.rowcount or 0
             logger.info(
-                f"已清空 {deleted} 条聊天记录 (group_id={group_id}, user_id={user_id})"
+                "已清空 "
+                f"{deleted} 条聊天记录 (platform={platform}, group_id={group_id}, user_id={user_id})"
             )
             return deleted
         except Exception as exc:
@@ -858,10 +923,16 @@ async def send_initial_chat_state(
 
     history_group_id = get_active_history_group_id(virtual_config)
     history_user_id = None if history_group_id else user_id
+    if history_group_id:
+        assert virtual_config is not None
+        history_platform = virtual_config.platform
+    else:
+        history_platform = WEBUI_CHAT_PLATFORM
     history = chat_history.get_history(
         50,
         group_id=history_group_id,
         user_id=history_user_id,
+        platform=history_platform,
     )
     await chat_manager.send_message(
         session_id,
@@ -1338,7 +1409,11 @@ async def enable_virtual_identity(
             session_id,
             {
                 "type": "history",
-                "messages": chat_history.get_history(50, current_virtual_config.group_id),
+                "messages": chat_history.get_history(
+                    50,
+                    group_id=current_virtual_config.group_id,
+                    platform=current_virtual_config.platform,
+                ),
                 "group_id": current_virtual_config.group_id,
             },
         )
@@ -1379,7 +1454,11 @@ async def disable_virtual_identity(session_id: str, normalized_user_id: str) -> 
         session_id,
         {
             "type": "history",
-            "messages": chat_history.get_history(50, user_id=normalized_user_id),
+            "messages": chat_history.get_history(
+                50,
+                user_id=normalized_user_id,
+                platform=WEBUI_CHAT_PLATFORM,
+            ),
             "group_id": None,
         },
     )

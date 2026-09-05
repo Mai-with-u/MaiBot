@@ -47,9 +47,14 @@ class MCPHostLLMBridge:
 
         Args:
             sampling_task_name: 执行 Sampling 请求时使用的模型任务名。
+
+        Raises:
+            ValueError: 任务名为空或仅包含空白字符。
         """
 
-        self._sampling_task_name = sampling_task_name.strip() or "planner"
+        self._sampling_task_name = sampling_task_name.strip()
+        if not self._sampling_task_name:
+            raise ValueError("MCP Sampling 任务名不能为空")
         self._sampling_client = LLMServiceClient(
             task_name=self._sampling_task_name,
             request_type="mcp_sampling",

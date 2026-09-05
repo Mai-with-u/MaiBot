@@ -57,20 +57,6 @@ class PlatformIODriver(ABC):
         """清除当前注册的入站回调函数。"""
         self._inbound_handler = None
 
-    async def emit_inbound(self, envelope: InboundMessageEnvelope) -> bool:
-        """将一条入站封装转交给 Broker 回调。
-
-        Args:
-            envelope: 由驱动产出的规范化入站封装。
-
-        Returns:
-            bool: 若 Broker 接受该入站消息则返回 ``True``，否则返回 ``False``。
-        """
-
-        if self._inbound_handler is None:
-            return False
-        return await self._inbound_handler(envelope)
-
     async def start(self) -> None:
         """启动驱动生命周期。
 

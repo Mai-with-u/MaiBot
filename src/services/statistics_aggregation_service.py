@@ -19,58 +19,6 @@ def refresh_statistics_aggregates() -> None:
         session.commit()
 
 
-def fetch_message_hourly_summary(start_time: datetime, end_time: datetime) -> list[dict[str, Any]]:
-    with get_db_session(auto_commit=False) as session:
-        rows = session.exec(
-            text(
-                """
-                SELECT bucket_time, chat_id, chat_name, chat_type, message_count, latest_timestamp
-                FROM statistics_message_hourly
-                WHERE bucket_time >= datetime(strftime('%Y-%m-%d %H:00:00', :start_time))
-                  AND bucket_time <= :end_time
-                ORDER BY bucket_time ASC
-                """
-            ),
-            params={"start_time": start_time, "end_time": end_time},
-        ).all()
-    return [
-        {
-            "bucket_time": _coerce_datetime(row[0]),
-            "chat_id": row[1],
-            "chat_name": row[2],
-            "chat_type": row[3],
-            "message_count": int(row[4] or 0),
-            "latest_timestamp": _coerce_datetime(row[5]),
-        }
-        for row in rows
-    ]
-
-
-def fetch_tool_hourly_summary(start_time: datetime, end_time: datetime, tool_name: str) -> list[dict[str, Any]]:
-    with get_db_session(auto_commit=False) as session:
-        rows = session.exec(
-            text(
-                """
-                SELECT bucket_time, tool_name, call_count
-                FROM statistics_tool_hourly
-                WHERE bucket_time >= datetime(strftime('%Y-%m-%d %H:00:00', :start_time))
-                  AND bucket_time <= :end_time
-                  AND tool_name = :tool_name
-                ORDER BY bucket_time ASC
-                """
-            ),
-            params={"start_time": start_time, "end_time": end_time, "tool_name": tool_name},
-        ).all()
-    return [
-        {
-            "bucket_time": _coerce_datetime(row[0]),
-            "tool_name": row[1],
-            "call_count": int(row[2] or 0),
-        }
-        for row in rows
-    ]
-
-
 def fetch_message_count_by_chat_since(start_time: datetime) -> list[dict[str, Any]]:
     """按聊天对象聚合指定时间之后的消息数，不加载消息明细。"""
 

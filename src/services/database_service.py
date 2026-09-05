@@ -1,11 +1,11 @@
 """数据库服务模块。"""
 
-import json
-import time
-import traceback
 from datetime import date, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, cast
+
+import json
+import time
 
 from sqlalchemy import delete, func
 from sqlmodel import SQLModel, select
@@ -76,29 +76,24 @@ async def db_save(
     data: dict[str, Any],
     key_field: Optional[str] = None,
     key_value: Optional[Any] = None,
-) -> Optional[dict[str, Any]]:
-    try:
-        with get_db_session() as session:
-            record = None
-            if key_field and key_value is not None:
-                key_column = _get_model_field(model_class, key_field)
-                record = session.exec(cast(Any, select(model_class).where(key_column == key_value))).first()
+) -> dict[str, Any]:
+    with get_db_session() as session:
+        record = None
+        if key_field and key_value is not None:
+            key_column = _get_model_field(model_class, key_field)
+            record = session.exec(cast(Any, select(model_class).where(key_column == key_value))).first()
 
-            if record is None:
-                record = model_class(**data)
-            else:
-                for field_name, value in data.items():
-                    _get_model_field(model_class, field_name)
-                    setattr(record, field_name, value)
+        if record is None:
+            record = model_class(**data)
+        else:
+            for field_name, value in data.items():
+                _get_model_field(model_class, field_name)
+                setattr(record, field_name, value)
 
-            session.add(record)
-            session.flush()
-            session.refresh(record)
-            return _to_dict(record)
-    except Exception as e:
-        logger.error(f"[DatabaseService] 保存数据库记录出错: {e}")
-        traceback.print_exc()
-        return None
+        session.add(record)
+        session.flush()
+        session.refresh(record)
+        return _to_dict(record)
 
 
 async def db_get(
@@ -108,70 +103,50 @@ async def db_get(
     order_by: Optional[str | list[str]] = None,
     single_result: bool = False,
 ) -> Optional[dict[str, Any]] | list[dict[str, Any]]:
-    try:
-        with get_db_session(auto_commit=False) as session:
-            statement = select(model_class)
-            if conditions := _build_filters(model_class, filters):
-                statement = statement.where(*conditions)
-            statement = _apply_order_by(statement, model_class, order_by)
-            if limit:
-                statement = statement.limit(limit)
-            results = session.exec(cast(Any, statement)).all()
-            data = [_to_dict(item) for item in results]
-            if single_result:
-                return data[0] if data else None
-            return data
-    except Exception as e:
-        logger.error(f"[DatabaseService] 获取数据库记录出错: {e}")
-        traceback.print_exc()
-        return None if single_result else []
+    with get_db_session(auto_commit=False) as session:
+        statement = select(model_class)
+        if conditions := _build_filters(model_class, filters):
+            statement = statement.where(*conditions)
+        statement = _apply_order_by(statement, model_class, order_by)
+        if limit:
+            statement = statement.limit(limit)
+        results = session.exec(cast(Any, statement)).all()
+        data = [_to_dict(item) for item in results]
+        if single_result:
+            return data[0] if data else None
+        return data
 
 
 async def db_update(model_class: type[SQLModel], data: dict[str, Any], filters: Optional[dict[str, Any]] = None) -> int:
-    try:
-        with get_db_session() as session:
-            statement = select(model_class)
-            if conditions := _build_filters(model_class, filters):
-                statement = statement.where(*conditions)
-            records = session.exec(cast(Any, statement)).all()
-            for record in records:
-                for field_name, value in data.items():
-                    _get_model_field(model_class, field_name)
-                    setattr(record, field_name, value)
-                session.add(record)
-            return len(records)
-    except Exception as e:
-        logger.error(f"[DatabaseService] 更新数据库记录出错: {e}")
-        traceback.print_exc()
-        return 0
+    with get_db_session() as session:
+        statement = select(model_class)
+        if conditions := _build_filters(model_class, filters):
+            statement = statement.where(*conditions)
+        records = session.exec(cast(Any, statement)).all()
+        for record in records:
+            for field_name, value in data.items():
+                _get_model_field(model_class, field_name)
+                setattr(record, field_name, value)
+            session.add(record)
+        return len(records)
 
 
 async def db_delete(model_class: type[SQLModel], filters: Optional[dict[str, Any]] = None) -> int:
-    try:
-        with get_db_session() as session:
-            statement = delete(model_class)
-            if conditions := _build_filters(model_class, filters):
-                statement = statement.where(*conditions)
-            result = session.exec(statement)
-            return result.rowcount or 0
-    except Exception as e:
-        logger.error(f"[DatabaseService] 删除数据库记录出错: {e}")
-        traceback.print_exc()
-        return 0
+    with get_db_session() as session:
+        statement = delete(model_class)
+        if conditions := _build_filters(model_class, filters):
+            statement = statement.where(*conditions)
+        result = session.exec(statement)
+        return result.rowcount or 0
 
 
 async def db_count(model_class: type[SQLModel], filters: Optional[dict[str, Any]] = None) -> int:
-    try:
-        with get_db_session(auto_commit=False) as session:
-            statement = select(func.count()).select_from(model_class)
-            if conditions := _build_filters(model_class, filters):
-                statement = statement.where(*conditions)
-            result = session.exec(cast(Any, statement)).one()
-            return int(result or 0)
-    except Exception as e:
-        logger.error(f"[DatabaseService] 统计数据库记录出错: {e}")
-        traceback.print_exc()
-        return 0
+    with get_db_session(auto_commit=False) as session:
+        statement = select(func.count()).select_from(model_class)
+        if conditions := _build_filters(model_class, filters):
+            statement = statement.where(*conditions)
+        result = session.exec(cast(Any, statement)).one()
+        return int(result or 0)
 
 
 async def store_tool_info(
@@ -180,24 +155,16 @@ async def store_tool_info(
     tool_data: Optional[dict[str, Any]] = None,
     tool_name: str = "",
     tool_reasoning: str = "",
-) -> Optional[dict[str, Any]]:
-    try:
-        record_data = {
-            "tool_id": tool_id or str(int(time.time() * 1000000)),
-            "timestamp": datetime.now(),
-            "session_id": chat_stream.session_id,
-            "tool_name": tool_name,
-            "tool_data": json.dumps(tool_data or {}, ensure_ascii=False),
-            "tool_reasoning": tool_reasoning,
-        }
+) -> dict[str, Any]:
+    record_data = {
+        "tool_id": tool_id or str(int(time.time() * 1000000)),
+        "timestamp": datetime.now(),
+        "session_id": chat_stream.session_id,
+        "tool_name": tool_name,
+        "tool_data": json.dumps(tool_data or {}, ensure_ascii=False),
+        "tool_reasoning": tool_reasoning,
+    }
 
-        saved_record = await db_save(ToolRecord, data=record_data, key_field="tool_id", key_value=record_data["tool_id"])
-        if saved_record:
-            logger.debug(f"[DatabaseService] 成功存储工具信息: {tool_name} (ID: {record_data['tool_id']})")
-        else:
-            logger.error(f"[DatabaseService] 存储工具信息失败: {tool_name}")
-        return saved_record
-    except Exception as e:
-        logger.error(f"[DatabaseService] 存储工具信息时发生错误: {e}")
-        traceback.print_exc()
-        return None
+    saved_record = await db_save(ToolRecord, data=record_data, key_field="tool_id", key_value=record_data["tool_id"])
+    logger.debug(f"[DatabaseService] 成功存储工具信息: {tool_name} (ID: {record_data['tool_id']})")
+    return saved_record

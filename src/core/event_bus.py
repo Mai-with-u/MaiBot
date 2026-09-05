@@ -3,21 +3,33 @@
 
 面向最终架构的事件系统：
 - 内部 handler 直接注册 async callable
-- IPC 插件通过 plugin_runtime 桥接
+- IPC 插件通过 initialize 注入的 bridge callable 桥接
 - 不依赖任何插件基类
 """
 
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Protocol, Tuple
+
 import asyncio
 import contextlib
-from typing import Any, Callable, Dict, List, Optional, Tuple, Coroutine
 
 from src.common.logger import get_logger
-from src.core.types import EventType, MaiMessages
+
+from .types import EventType, MaiMessages
 
 logger = get_logger("event_bus")
 
 # Handler 签名：接收 MaiMessages，返回 (continue, modified_message)
 EventHandler = Callable[[Optional[MaiMessages]], Coroutine[Any, Any, Tuple[bool, Optional[MaiMessages]]]]
+
+
+class IpcEventBridge(Protocol):
+    """IPC 插件运行时事件桥接。由 initialize 注入，core 不硬依赖 plugin_runtime。"""
+
+    async def __call__(
+        self,
+        event_type_value: str,
+        message_dict: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]: ...
 
 
 class EventBus:
@@ -34,10 +46,16 @@ class EventBus:
         # event_type -> [(handler, name, weight, intercept)]
         self._handlers: Dict[EventType | str, List[_HandlerEntry]] = {}
         self._running_tasks: Dict[str, List[asyncio.Task]] = {}
+        self._ipc_bridge: Optional[IpcEventBridge] = None
 
         # 预注册所有内置事件类型
         for event in EventType:
             self._handlers[event] = []
+
+    def set_ipc_bridge(self, bridge: Optional[IpcEventBridge]) -> None:
+        """注入或清除 IPC 插件运行时事件桥接。"""
+
+        self._ipc_bridge = bridge
 
     def subscribe(
         self,
@@ -180,17 +198,14 @@ class EventBus:
         if not continue_flag:
             return continue_flag, message
 
+        ipc_bridge = self._ipc_bridge
+        if ipc_bridge is None:
+            return continue_flag, message
+
         try:
-            from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-            prm = get_plugin_runtime_manager()
-            if not prm.is_running:
-                return continue_flag, message
-
             event_value = event_type.value if isinstance(event_type, EventType) else str(event_type)
             message_dict = message.to_transport_dict() if message else None
-
-            new_continue, modified_dict = await prm.bridge_event(
+            new_continue, modified_dict = await ipc_bridge(
                 event_type_value=event_value,
                 message_dict=message_dict,
             )

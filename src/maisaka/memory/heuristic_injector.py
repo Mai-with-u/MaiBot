@@ -225,29 +225,10 @@ class HeuristicMemoryInjector:
             return {}
 
         try:
-            payload = await memory_service.delete_admin(
-                action="preview",
-                mode="paragraph",
-                selector={"hashes": paragraph_hashes},
-                timeout_ms=10000,
-            )
+            return await memory_service.preview_paragraph_sources(paragraph_hashes)
         except Exception as exc:
             logger.debug(f"启发式记忆命中来源解析失败，已按未知来源处理: {exc}")
             return {}
-        if not isinstance(payload, dict) or not bool(payload.get("success", False)):
-            return {}
-
-        sources: dict[str, str] = {}
-        for item in payload.get("items", []) or []:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("item_type", "") or "").strip() != "paragraph":
-                continue
-            paragraph_hash = str(item.get("item_hash", "") or "").strip()
-            source = str(item.get("source", "") or "").strip()
-            if paragraph_hash and source:
-                sources[paragraph_hash] = source
-        return sources
 
     @staticmethod
     def _hit_has_scope_hint(hit: MemoryHit) -> bool:
@@ -257,15 +238,16 @@ class HeuristicMemoryInjector:
         source = str(hit.source or "").strip()
         return source.startswith(_SOURCE_CHAT_SUMMARY_PREFIX) or source.startswith(_SOURCE_PERSON_FACT_PREFIX)
 
+    @staticmethod
     def _is_hit_allowed(
-        self,
         hit: MemoryHit,
         context: HeuristicMemoryContext,
         *,
         resolved_source: str = "",
     ) -> bool:
         metadata = hit.metadata if isinstance(hit.metadata, dict) else {}
-        source = str(metadata.get("source") or resolved_source or hit.source or "").strip()
+        # MemoryHit.source 是检索通道，不能当作段落存储来源。
+        source = str(metadata.get("source") or resolved_source or "").strip()
         source_type = str(metadata.get("source_type") or "").strip()
         chat_id = str(metadata.get("chat_id") or "").strip()
         person_id = str(metadata.get("person_id") or "").strip()
@@ -284,11 +266,11 @@ class HeuristicMemoryInjector:
             return bool(person_id and person_id in context.active_person_ids)
 
         if source_type == "chat_summary" or source.startswith(_SOURCE_CHAT_SUMMARY_PREFIX):
-            source_session_id = self._resolve_source_session_id(source=source, chat_id=chat_id)
-            return self._is_chat_memory_allowed(source_session_id, context.session)
+            source_session_id = HeuristicMemoryInjector._resolve_source_session_id(source=source, chat_id=chat_id)
+            return HeuristicMemoryInjector._is_chat_memory_allowed(source_session_id, context.session)
 
         if chat_id:
-            return self._is_chat_memory_allowed(chat_id, context.session)
+            return HeuristicMemoryInjector._is_chat_memory_allowed(chat_id, context.session)
         return False
 
     @staticmethod
@@ -299,7 +281,8 @@ class HeuristicMemoryInjector:
             return source[len(_SOURCE_CHAT_SUMMARY_PREFIX) :].strip()
         return ""
 
-    def _is_chat_memory_allowed(self, source_session_id: str, current_session: BotChatSession) -> bool:
+    @staticmethod
+    def _is_chat_memory_allowed(source_session_id: str, current_session: BotChatSession) -> bool:
         clean_source_session_id = str(source_session_id or "").strip()
         if not clean_source_session_id:
             return False

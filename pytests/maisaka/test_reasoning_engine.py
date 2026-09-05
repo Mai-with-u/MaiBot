@@ -20,6 +20,7 @@ from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.mode_policy import is_idle_cycle_reason
 from src.maisaka.monitor.events import _serialize_planner_block, _serialize_tool_results
 from src.maisaka.reasoning_engine import STOP_AFTER_EXECUTION_PAUSE_REASON, MaisakaReasoningEngine
+from src.services import database_service as database_api
 
 
 class _ToolRegistryStub:
@@ -63,6 +64,37 @@ def _build_tool_engine(results: list[ToolExecutionResult]) -> tuple[MaisakaReaso
     engine._append_tool_execution_result = lambda *args, **kwargs: None  # type: ignore[method-assign]
     engine._append_tool_post_history_messages = lambda messages: None  # type: ignore[method-assign]
     return engine, runtime
+
+
+@pytest.mark.asyncio
+async def test_store_tool_execution_record_returns_saved_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, _runtime = _build_tool_engine([])
+    saved_record = {"tool_id": "call-1", "session_id": "session-test"}
+    monkeypatch.setattr(database_api, "store_tool_info", AsyncMock(return_value=saved_record))
+
+    saved = await engine._store_tool_execution_record(
+        ToolInvocation(tool_name="echo", call_id="call-1"),
+        ToolExecutionResult(tool_name="echo", success=True, content="ok"),
+        None,
+    )
+
+    assert saved == saved_record
+
+
+@pytest.mark.asyncio
+async def test_store_tool_execution_record_returns_none_when_save_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, _runtime = _build_tool_engine([])
+    monkeypatch.setattr(database_api, "store_tool_info", AsyncMock(side_effect=RuntimeError("保存失败")))
+
+    saved = await engine._store_tool_execution_record(
+        ToolInvocation(tool_name="echo", call_id="call-1"),
+        ToolExecutionResult(tool_name="echo", success=True, content="ok"),
+        None,
+    )
+
+    assert saved is None
 
 
 @pytest.mark.asyncio

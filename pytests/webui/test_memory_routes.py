@@ -15,6 +15,10 @@ from src.webui.routers.memory import compat_router
 from src.webui.routes import router as main_router
 
 
+def _patch_memory_metadata_store(monkeypatch, store):
+    monkeypatch.setattr(memory_router_module.memory_service, "get_runtime_metadata_store", lambda: store)
+
+
 class _FakeDbContext:
     def __init__(self, db_session):
         self.db_session = db_session
@@ -298,7 +302,7 @@ def test_webui_memory_records_searches_authoritative_metadata(
     tmp_path: Path,
 ):
     store, ids = _memory_record_store(tmp_path)
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     try:
         response = client.get(
             "/api/webui/memory/records/search",
@@ -350,7 +354,7 @@ def test_webui_memory_record_context_derives_related_content(
     tmp_path: Path,
 ):
     store, ids = _memory_record_store(tmp_path)
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     try:
         response = client.get(f"/api/webui/memory/records/paragraph/{ids['paragraph']}")
 
@@ -380,7 +384,7 @@ def test_webui_fact_context_limits_paragraph_evidence_after_filtering_type(
         evidence_id=ids["relation"],
         observed_at=9_999_999_999.0,
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     try:
         response = client.get(
             f"/api/webui/memory/records/fact/{ids['fact']}",
@@ -423,7 +427,7 @@ def test_webui_memory_record_context_finds_profile_beyond_recent_snapshot_window
         ],
     )
     connection.commit()
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     try:
         response = client.get(f"/api/webui/memory/records/paragraph/{ids['paragraph']}")
 
@@ -441,7 +445,7 @@ def test_webui_memory_records_exposes_invalid_type_and_unavailable_database(
     invalid_response = client.get("/api/webui/memory/records/search", params={"types": "vector"})
     assert invalid_response.status_code == 400
 
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: None)
+    _patch_memory_metadata_store(monkeypatch, None)
     unavailable_response = client.get("/api/webui/memory/records/search")
     assert unavailable_response.status_code == 503
 
@@ -1019,7 +1023,7 @@ def test_webui_memory_timeline_returns_chat_scoped_events(client: TestClient, mo
         if chat_id == "chat-1"
         else None,
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: _FakeMemoryMetadataStore())
+    _patch_memory_metadata_store(monkeypatch, _FakeMemoryMetadataStore())
     monkeypatch.setattr(memory_router_module, "_prefetch_latest_messages_by_session", lambda db_session, session_ids: {})
     monkeypatch.setattr(memory_router_module._chat_manager, "get_session_name", lambda chat_id: "测试群")
 
@@ -1088,7 +1092,7 @@ def test_webui_memory_timeline_filters_types_and_limit(client: TestClient, monke
             user_nickname=None,
         ),
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: _FakeMemoryMetadataStore())
+    _patch_memory_metadata_store(monkeypatch, _FakeMemoryMetadataStore())
     monkeypatch.setattr(memory_router_module, "_prefetch_latest_messages_by_session", lambda db_session, session_ids: {})
 
     response = client.get(
@@ -1142,7 +1146,7 @@ def test_webui_memory_timeline_deleted_paragraph_prefers_delete_operation(client
             user_nickname=None,
         ),
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     monkeypatch.setattr(memory_router_module, "_prefetch_latest_messages_by_session", lambda db_session, session_ids: {})
 
     response = client.get(
@@ -1173,7 +1177,7 @@ def test_webui_memory_timeline_uses_latest_message_snapshot(client: TestClient, 
             user_nickname=None,
         ),
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: _FakeMemoryMetadataStore())
+    _patch_memory_metadata_store(monkeypatch, _FakeMemoryMetadataStore())
     monkeypatch.setattr(
         memory_router_module,
         "_prefetch_latest_messages_by_session",
@@ -1201,7 +1205,7 @@ def test_webui_memory_timeline_rejects_unknown_chat(client: TestClient, monkeypa
         return None
 
     monkeypatch.setattr(memory_router_module, "_find_real_chat_session", fake_find_real_chat_session)
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: _FakeMemoryMetadataStore())
+    _patch_memory_metadata_store(monkeypatch, _FakeMemoryMetadataStore())
 
     response = client.get("/api/webui/memory/timeline", params={"chat_id": "missing-chat"})
 
@@ -1228,7 +1232,7 @@ def test_webui_memory_timeline_handles_json_bytes_zero_timestamp_and_batches_ite
             user_nickname=None,
         ),
     )
-    monkeypatch.setattr(memory_router_module, "_get_memory_metadata_store", lambda: store)
+    _patch_memory_metadata_store(monkeypatch, store)
     monkeypatch.setattr(memory_router_module, "_prefetch_latest_messages_by_session", lambda db_session, session_ids: {})
 
     response = client.get("/api/webui/memory/timeline", params={"chat_id": "chat-1", "limit": 50})

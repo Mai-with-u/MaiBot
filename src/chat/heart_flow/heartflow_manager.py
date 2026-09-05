@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Iterator, Optional
 
 import asyncio
 import time
@@ -19,20 +19,45 @@ class HeartflowManager:
     """管理 session 级别的 Maisaka 心流实例。"""
 
     def __init__(self) -> None:
-        self.heartflow_chat_list: OrderedDict[str, MaisakaHeartFlowChatting] = OrderedDict()
+        self._heartflow_chat_list: OrderedDict[str, MaisakaHeartFlowChatting] = OrderedDict()
         self._chat_create_locks: Dict[str, asyncio.Lock] = {}
         self._chat_last_active_at: Dict[str, float] = {}
+
+    @property
+    def heartflow_chat_list(self) -> OrderedDict[str, MaisakaHeartFlowChatting]:
+        """兼容旧调用方直接读写内部字典；新代码应使用 get/iter/pop 封装。"""
+        return self._heartflow_chat_list
+
+    def get_heartflow_chat(self, session_id: str) -> Optional[MaisakaHeartFlowChatting]:
+        """按 session_id 查找已存在的心流实例，不创建、不刷新 LRU。"""
+        return self._heartflow_chat_list.get(session_id)
+
+    def iter_heartflow_chats(self) -> Iterator[MaisakaHeartFlowChatting]:
+        """按 OrderedDict 当前顺序迭代已存在的心流实例。"""
+        yield from self._heartflow_chat_list.values()
+
+    def pop_heartflow_chat(self, session_id: str) -> Optional[MaisakaHeartFlowChatting]:
+        """移除指定会话的心流实例，不调用 stop。
+
+        同时清理活跃时间记录，以及当前未持有的创建锁。
+        """
+        chat = self._heartflow_chat_list.pop(session_id, None)
+        self._chat_last_active_at.pop(session_id, None)
+        lock = self._chat_create_locks.get(session_id)
+        if lock is not None and not lock.locked():
+            self._chat_create_locks.pop(session_id, None)
+        return chat
 
     async def get_or_create_heartflow_chat(self, session_id: str) -> MaisakaHeartFlowChatting:
         """获取或创建指定会话对应的 Maisaka runtime。"""
         try:
-            if chat := self.heartflow_chat_list.get(session_id):
+            if chat := self.get_heartflow_chat(session_id):
                 self._touch_chat(session_id)
                 return chat
 
             create_lock = self._chat_create_locks.setdefault(session_id, asyncio.Lock())
             async with create_lock:
-                if chat := self.heartflow_chat_list.get(session_id):
+                if chat := self.get_heartflow_chat(session_id):
                     self._touch_chat(session_id)
                     return chat
 
@@ -42,7 +67,7 @@ class HeartflowManager:
 
                 new_chat = MaisakaHeartFlowChatting(session_id=session_id)
                 await new_chat.start()
-                self.heartflow_chat_list[session_id] = new_chat
+                self._heartflow_chat_list[session_id] = new_chat
                 self._touch_chat(session_id)
                 await self._evict_over_limit_chats(protected_session_id=session_id)
                 return new_chat
@@ -54,11 +79,11 @@ class HeartflowManager:
     def _touch_chat(self, session_id: str) -> None:
         """记录会话最近活跃时间，并维护心流实例的 LRU 顺序。"""
         self._chat_last_active_at[session_id] = time.time()
-        self.heartflow_chat_list.move_to_end(session_id)
+        self._heartflow_chat_list.move_to_end(session_id)
 
     async def _evict_over_limit_chats(self, *, protected_session_id: str) -> None:
         """当实例数量超过上限时，仅淘汰 24 小时内无消息的旧会话。"""
-        while len(self.heartflow_chat_list) > HEARTFLOW_MAX_ACTIVE_CHATS:
+        while len(self._heartflow_chat_list) > HEARTFLOW_MAX_ACTIVE_CHATS:
             session_id = self._find_evictable_session_id(protected_session_id=protected_session_id)
             if session_id is None:
                 return
@@ -67,7 +92,7 @@ class HeartflowManager:
     def _find_evictable_session_id(self, *, protected_session_id: str) -> str | None:
         """按 LRU 查找超过活跃保护窗口的可淘汰会话。"""
         expire_before = time.time() - HEARTFLOW_ACTIVE_RETENTION_SECONDS
-        for session_id in self.heartflow_chat_list:
+        for session_id in self._heartflow_chat_list:
             if session_id == protected_session_id:
                 continue
             last_active_at = self._chat_last_active_at.get(session_id, 0.0)
@@ -77,11 +102,7 @@ class HeartflowManager:
 
     async def _evict_chat(self, session_id: str, *, reason: str) -> None:
         """停止并移除指定会话的心流实例。"""
-        chat = self.heartflow_chat_list.pop(session_id, None)
-        self._chat_last_active_at.pop(session_id, None)
-        lock = self._chat_create_locks.get(session_id)
-        if lock is not None and not lock.locked():
-            self._chat_create_locks.pop(session_id, None)
+        chat = self.pop_heartflow_chat(session_id)
         if chat is None:
             return
 
@@ -91,10 +112,14 @@ class HeartflowManager:
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
 
+    async def stop_heartflow_chat(self, session_id: str) -> None:
+        """停止并移除指定会话的心流 runtime。"""
+        await self._evict_chat(session_id, reason="deleted_chat")
+
     async def clear_chat_history_context(self, session_id: str) -> bool:
         """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""
 
-        if session_id not in self.heartflow_chat_list:
+        if self.get_heartflow_chat(session_id) is None:
             return False
 
         await self._evict_chat(session_id, reason="clear_context_command")
@@ -102,7 +127,7 @@ class HeartflowManager:
 
     def adjust_talk_frequency(self, session_id: str, frequency: float) -> None:
         """调整指定聊天流的说话频率。"""
-        chat = self.heartflow_chat_list.get(session_id)
+        chat = self.get_heartflow_chat(session_id)
         if chat:
             self._touch_chat(session_id)
             chat.adjust_talk_frequency(frequency)

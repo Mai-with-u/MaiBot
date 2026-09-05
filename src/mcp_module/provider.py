@@ -1,4 +1,4 @@
-"""MCP 工具 Provider。"""
+"""将会话 ToolProvider 适配到进程级 MCPService。"""
 
 from __future__ import annotations
 
@@ -17,27 +17,23 @@ from .service import MCPService
 
 
 class MCPToolProvider(ToolProvider):
-    """基于进程级 MCPService 的轻量工具 Provider。"""
+    """会话侧 MCP 工具适配器。
+
+    MCPService.close 会释放进程级连接，不能注册进会话 ToolRegistry。
+    list_tools/invoke 适配到共享服务；close 不关闭 MCPService。
+    """
 
     provider_name = "mcp"
     provider_type = "mcp"
 
     def __init__(self, service: MCPService) -> None:
-        """初始化 MCP 工具 Provider。
-
-        Args:
-            service: 进程级 MCP 服务。
-        """
-
         self._service = service
 
     async def list_tools(
         self,
         context: Optional[ToolAvailabilityContext] = None,
     ) -> list[ToolSpec]:
-        """列出全部 MCP 工具。"""
-
-        del context
+        del context  # MCP 工具进程级共享，不按会话过滤。
         return await self._service.list_tools()
 
     async def invoke(
@@ -45,18 +41,7 @@ class MCPToolProvider(ToolProvider):
         invocation: ToolInvocation,
         context: Optional[ToolExecutionContext] = None,
     ) -> ToolExecutionResult:
-        """执行指定 MCP 工具。
-
-        Args:
-            invocation: 工具调用请求。
-            context: 执行上下文。
-
-        Returns:
-            ToolExecutionResult: 工具执行结果。
-        """
-
         return await self._service.call_tool_invocation(invocation, context)
 
     async def close(self) -> None:
-        """Runtime 不拥有共享连接，因此关闭 Provider 时无需释放服务。"""
-
+        """会话侧不得关闭进程级 MCP 连接。"""

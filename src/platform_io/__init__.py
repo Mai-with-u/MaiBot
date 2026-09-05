@@ -5,6 +5,7 @@
 """
 
 from .adapter_policy import AdapterIdentity, AdapterPolicyManager, AdapterPolicyResult, get_adapter_policy_manager
+from .inbound import dispatch_core_inbound
 from .manager import PlatformIOManager, get_platform_io_manager
 from .route_key_factory import RouteKeyFactory
 from .routing import RouteTable
@@ -27,6 +28,7 @@ __all__ = [
     "DriverKind",
     "InboundMessageEnvelope",
     "PlatformIOManager",
+    "dispatch_core_inbound",
     "AdapterIdentity",
     "AdapterPolicyManager",
     "AdapterPolicyResult",

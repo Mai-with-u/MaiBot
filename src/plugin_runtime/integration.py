@@ -10,6 +10,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -77,6 +78,14 @@ _RUNTIME_GROUP_DESCRIPTIONS: Dict[str, str] = {
     "third_party": "扩展插件（第三方扩展）",
 }
 
+# 能力实现仍由 mixin 提供，但 Manager 通过组合绑定，不再多继承。
+_RUNTIME_CAPABILITY_MIXINS: Tuple[type, ...] = (
+    RuntimeCoreCapabilityMixin,
+    RuntimeDataCapabilityMixin,
+    RuntimeComponentCapabilityMixin,
+    RuntimeRenderCapabilityMixin,
+)
+
 
 @dataclass(frozen=True)
 class DependencySyncState:
@@ -96,15 +105,11 @@ class AdapterRuntimeTransitionResult:
     failed_plugins: Dict[str, str]
 
 
-class PluginRuntimeManager(
-    RuntimeCoreCapabilityMixin,
-    RuntimeDataCapabilityMixin,
-    RuntimeComponentCapabilityMixin,
-    RuntimeRenderCapabilityMixin,
-):
+class PluginRuntimeManager:
     """插件运行时管理器（单例）
 
     内置插件与第三方插件分别运行在各自的 Supervisor / Runner 子进程中。
+    能力实现通过组合绑定到实例，self 仍是 Manager。
     """
 
     def __init__(self) -> None:
@@ -133,6 +138,29 @@ class PluginRuntimeManager(
         )
         self._adapter_transition_lock = asyncio.Lock()
         self._offline_adapter_plugin_ids: Set[str] = set()
+        self._bind_runtime_capability_mixins()
+
+    def _bind_runtime_capability_mixins(self) -> None:
+        """将能力 mixin 的方法绑定到当前 Manager 实例。
+
+        跳过 dunder；staticmethod 保持无 self 绑定，classmethod 的 cls 仍指向 mixin，
+        普通方法绑定后 self 为 Manager，以便访问 supervisors / load_plugin_globally。
+        """
+        manager_cls = type(self)
+        bound_names = set(manager_cls.__dict__)
+        for mixin_cls in _RUNTIME_CAPABILITY_MIXINS:
+            for name, attr in mixin_cls.__dict__.items():
+                if name.startswith("__") or name in bound_names:
+                    continue
+                if isinstance(attr, staticmethod):
+                    setattr(self, name, attr.__func__)
+                elif isinstance(attr, classmethod):
+                    setattr(self, name, MethodType(attr.__func__, mixin_cls))
+                elif callable(attr):
+                    setattr(self, name, MethodType(attr, self))
+                else:
+                    continue
+                bound_names.add(name)
 
     async def _dispatch_platform_inbound(self, envelope: InboundMessageEnvelope) -> None:
         """接收 Platform IO 审核后的入站消息并送入主消息链。

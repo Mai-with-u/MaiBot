@@ -12,7 +12,7 @@ import os
 import re
 
 from .i18n import get_locale, t
-from .i18n.loaders import DEFAULT_LOCALE, extract_placeholders, normalize_locale
+from .i18n.loaders import extract_placeholders, normalize_locale
 
 logger = logging.getLogger("maibot.prompt_i18n")
 
@@ -20,6 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROMPTS_ROOT = (PROJECT_ROOT / "prompts").resolve()
 CUSTOM_PROMPTS_ROOT = (PROJECT_ROOT / "data" / "custom_prompts").resolve()
 PROMPT_EXTENSIONS = (".prompt",)
+# Prompt 模板找不到时固定回退到 zh-CN，不跟随 UI 的 DEFAULT_LOCALE 探测结果。
+PROMPT_FALLBACK_LOCALE = "zh-CN"
 SAFE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 STRICT_ENV_KEYS = ("MAIBOT_PROMPT_I18N_STRICT", "MAIBOT_I18N_STRICT")
 STRICT_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -202,16 +204,16 @@ def _scan_prompt_directory(directory: Path, prompts_root: Path) -> dict[str, Pro
 
 
 def _iter_prompt_template_layers(prompts_root: Path, requested_locale: str) -> list[Path]:
-    prompt_layers: list[Path] = [prompts_root / DEFAULT_LOCALE]
-    if requested_locale != DEFAULT_LOCALE:
+    prompt_layers: list[Path] = [prompts_root / PROMPT_FALLBACK_LOCALE]
+    if requested_locale != PROMPT_FALLBACK_LOCALE:
         prompt_layers.append(prompts_root / requested_locale)
     return prompt_layers
 
 
 def _iter_locale_candidates(requested_locale: str) -> list[str]:
     locale_candidates: list[str] = [requested_locale]
-    if requested_locale != DEFAULT_LOCALE:
-        locale_candidates.append(DEFAULT_LOCALE)
+    if requested_locale != PROMPT_FALLBACK_LOCALE:
+        locale_candidates.append(PROMPT_FALLBACK_LOCALE)
     return locale_candidates
 
 

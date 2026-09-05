@@ -18,7 +18,6 @@ from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.chat.message_receive.message import SessionMessage
 from src.cli.console import console
 from src.common.data_models.message_component_data_model import (
-    EmojiComponent,
     ImageComponent,
     MessageSequence,
     TextComponent,
@@ -59,22 +58,21 @@ from src.maisaka.visual.chat_history_refresher import (
     refresh_chat_history_visual_placeholders,
 )
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
+from src.maisaka.context.history import TOOL_RESULT_MEDIA_SOURCE_KIND
+from src.maisaka.context.inbound_factory import (
+    build_inbound_visible_text,
+    build_session_inbound_message,
+    resolve_session_inbound_flags,
+)
 from src.maisaka.context.messages import (
-    ComplexSessionMessage,
     LLMContextMessage,
     ReferenceMessage,
     ReferenceMessageType,
     SessionBackedMessage,
     ToolResultMessage,
-    contains_complex_message,
 )
-from src.maisaka.focus import focus_mode_manager
 from src.maisaka.context.post_processor import process_chat_history_after_cycle
-from src.maisaka.context.history import (
-    TOOL_RESULT_MEDIA_SOURCE_KIND,
-    build_prefixed_message_sequence,
-    build_session_message_visible_text,
-)
+from src.maisaka.focus import focus_mode_manager
 from src.maisaka.jargon_context_matcher import (
     build_jargon_reference_message,
     extract_jargon_reference_contents,
@@ -90,7 +88,6 @@ from src.maisaka.monitor.events import (
     emit_planner_finalized,
 )
 from src.maisaka.memory.person_profile import build_person_profile_injection_messages
-from src.maisaka.context.planner_messages import build_planner_user_prefix_from_session_message
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
 if TYPE_CHECKING:
@@ -1224,63 +1221,16 @@ class MaisakaReasoningEngine:
     ) -> Optional[LLMContextMessage]:
         """根据真实消息构造对应的上下文消息。"""
 
-        source_sequence = message.raw_message
-        visible_text = self._build_legacy_visible_text(message, source_sequence, source_kind=source_kind)
-        include_chat_id = self._runtime._is_focus_mode_active_for_current_chat()
-        planner_prefix = build_planner_user_prefix_from_session_message(
+        return await build_session_inbound_message(
             message,
-            include_chat_id=include_chat_id,
-            is_self_message=source_kind == "guided_reply",
-        )
-        if contains_complex_message(source_sequence):
-            return ComplexSessionMessage.from_session_message(
-                message,
-                planner_prefix=planner_prefix,
-                visible_text=visible_text,
-                source_kind=source_kind,
-            )
-
-        user_sequence = await self._build_message_sequence(message, planner_prefix=planner_prefix)
-        if not user_sequence.components:
-            return None
-
-        return SessionBackedMessage.from_session_message(
-            message,
-            raw_message=user_sequence,
-            visible_text=visible_text,
+            flags=resolve_session_inbound_flags(
+                source_kind,
+                hydrate_visual=resolve_enable_visual_planner(),
+            ),
             source_kind=source_kind,
+            include_chat_id=self._runtime._is_focus_mode_active_for_current_chat(),
+            log_prefix=self._runtime.log_prefix,
         )
-
-    async def _build_message_sequence(
-        self,
-        message: SessionMessage,
-        *,
-        planner_prefix: str,
-    ) -> MessageSequence:
-        message_sequence = build_prefixed_message_sequence(message.raw_message, planner_prefix)
-        if resolve_enable_visual_planner():
-            await self._hydrate_visual_components(message_sequence.components)
-        return message_sequence
-
-    async def _hydrate_visual_components(self, planner_components: list[object]) -> None:
-        """在 Maisaka 真正需要图片或表情时，按需回填二进制数据。"""
-        load_tasks: list[asyncio.Task[None]] = []
-        for component in planner_components:
-            if isinstance(component, ImageComponent) and not component.binary_data:
-                load_tasks.append(asyncio.create_task(component.load_image_binary()))
-                continue
-            if isinstance(component, EmojiComponent) and not component.binary_data:
-                load_tasks.append(asyncio.create_task(component.load_emoji_binary()))
-
-        if not load_tasks:
-            return
-
-        results = await asyncio.gather(*load_tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, Exception):
-                logger.warning(
-                    f"{self._runtime.log_prefix} 回填图片或表情二进制数据失败，Maisaka 将退化为文本占位: {result}"
-                )
 
     async def _refresh_chat_history_visual_placeholders(self) -> int:
         """在进入新一轮规划前，尝试用已完成的识图结果刷新历史占位。"""
@@ -1320,24 +1270,11 @@ class MaisakaReasoningEngine:
                 message,
                 source_kind=source_kind,
             ),
-            build_visible_text=lambda message, source_kind: self._build_legacy_visible_text(
+            build_visible_text=lambda message, source_kind: build_inbound_visible_text(
                 message,
-                message.raw_message,
+                apply_planner_prefix=resolve_session_inbound_flags(source_kind).apply_planner_prefix,
                 source_kind=source_kind,
             ),
-        )
-
-    def _build_legacy_visible_text(
-        self,
-        message: SessionMessage,
-        source_sequence: MessageSequence,
-        *,
-        source_kind: str = "user",
-    ) -> str:
-        return build_session_message_visible_text(
-            message,
-            source_sequence,
-            include_reply_components=source_kind != "guided_reply",
         )
 
     def _insert_chat_history_message(self, message: LLMContextMessage) -> int:
@@ -1605,7 +1542,7 @@ class MaisakaReasoningEngine:
 
         try:
             tool_record_payload = build_tool_record_payload(invocation, result, tool_spec)
-            saved_record = await database_api.store_tool_info(
+            return await database_api.store_tool_info(
                 chat_stream=self._runtime.chat_stream,
                 tool_id=invocation.call_id,
                 tool_data=tool_record_payload,
@@ -1617,8 +1554,6 @@ class MaisakaReasoningEngine:
                 f"{self._runtime.log_prefix} 写入工具记录失败: 工具={invocation.tool_name} 调用编号={invocation.call_id}"
             )
             return None
-
-        return saved_record if isinstance(saved_record, dict) else None
 
     async def _record_tool_execution_effects(
         self,

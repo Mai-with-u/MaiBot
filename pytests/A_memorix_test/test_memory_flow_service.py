@@ -5,6 +5,7 @@ import pytest
 
 from src.A_memorix.core.utils.summary_importer import SUMMARY_PROMPT_TEMPLATE, SummaryImporter
 from src.services import memory_flow_service as memory_flow_module
+from src.services import memory_service as memory_service_module
 
 
 def _fake_global_config(**integration_values):
@@ -561,7 +562,7 @@ async def test_chat_summary_writeback_service_loads_trigger_count_from_summary_m
         async def _ensure_kernel():
             return SimpleNamespace(metadata_store=FakeMetadataStore())
 
-    monkeypatch.setattr(memory_flow_module.memory_service_module, "a_memorix_host_service", FakeRuntimeManager())
+    monkeypatch.setattr(memory_service_module, "a_memorix_host_service", FakeRuntimeManager())
 
     service = memory_flow_module.ChatSummaryWritebackService()
 

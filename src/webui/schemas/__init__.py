@@ -12,12 +12,6 @@ from .auth import (
     TokenVerifyResponse,
 )
 
-# Chat schemas
-from .chat import (
-    ChatHistoryMessage,
-    VirtualIdentityConfig,
-)
-
 # Emoji schemas
 from .emoji import (
     BatchDeleteRequest,
@@ -88,9 +82,6 @@ __all__ = [
     "ThumbnailCacheStatsResponse",
     "ThumbnailCleanupResponse",
     "ThumbnailPreheatResponse",
-    # Chat
-    "VirtualIdentityConfig",
-    "ChatHistoryMessage",
     # Plugin
     "FetchRawFileRequest",
     "FetchRawFileResponse",

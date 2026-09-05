@@ -7,6 +7,9 @@ import importlib.util
 
 
 class DummyLogger:
+    def debug(self, *a, **k):
+        pass
+
     def info(self, *a, **k):
         pass
 
@@ -90,7 +93,7 @@ class DummyMaiImage:
         return None
 
 
-class DummyLLMRequest:
+class DummyLLMOrchestrator:
     def __init__(self, *a, **k):
         pass
 
@@ -156,8 +159,7 @@ class DetachedRecordSession(DummySession):
 @pytest.fixture(autouse=True)
 def patch_external_dependencies(monkeypatch):
     # Provide dummy implementations as modules so that importing image_manager is safe
-    # Patch LLMRequest
-    llm_mod = types.SimpleNamespace(LLMRequest=DummyLLMRequest)
+    llm_mod = types.SimpleNamespace(LLMOrchestrator=DummyLLMOrchestrator)
     monkeypatch.setitem(sys.modules, "src.llm_models.utils_model", llm_mod)
     llm_service_mod = types.SimpleNamespace(LLMServiceClient=DummyLLMServiceClient)
     monkeypatch.setitem(sys.modules, "src.services.llm_service", llm_service_mod)

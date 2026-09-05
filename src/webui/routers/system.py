@@ -1427,27 +1427,9 @@ def _delete_database_records(
 
 async def _stop_runtime_before_restart() -> None:
     """WebUI 重启前主动停止插件运行时，避免遗留 runner 子进程。"""
-    try:
-        from src.core.event_bus import event_bus
-        from src.core.types import EventType
+    from src.core.process_shutdown import run_process_shutdown
 
-        await event_bus.emit(event_type=EventType.ON_STOP)
-    except Exception as exc:
-        logger.warning(f"WebUI 重启前触发 ON_STOP 事件失败: {exc}")
-
-    try:
-        from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-        await get_plugin_runtime_manager().stop()
-    except Exception as exc:
-        logger.error(f"WebUI 重启前停止插件运行时失败: {exc}", exc_info=True)
-
-    try:
-        from src.manager.async_task_manager import async_task_manager
-
-        await async_task_manager.stop_and_wait_all_tasks()
-    except Exception as exc:
-        logger.warning(f"WebUI 重启前停止异步任务失败: {exc}")
+    await run_process_shutdown("restart_partial")
 
 
 async def _delayed_restart() -> None:
