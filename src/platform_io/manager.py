@@ -48,6 +48,7 @@ class PlatformIOManager:
         self._send_route_table = RouteTable()
         self._receive_route_table = RouteTable()
         self._legacy_send_drivers: Dict[str, PlatformIODriver] = {}
+        # 仅记录由配置同步创建的平台，避免清掉入站动态创建的 legacy 驱动。
         self._legacy_config_platforms: Set[str] = set()
         self._deduplicator = MessageDeduplicator()
         self._outbound_tracker = OutboundTracker()
