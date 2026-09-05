@@ -146,7 +146,7 @@ describe('PluginStats', () => {
   })
 
   it('点赞失败时弹出 destructive 提示', async () => {
-    vi.mocked(likePlugin).mockResolvedValue({ success: false, error: '后端错误' })
+    vi.mocked(likePlugin).mockRejectedValue(new Error('后端错误'))
 
     render(<PluginStats pluginId="demo-plugin" />)
 
@@ -250,7 +250,7 @@ describe('PluginStats', () => {
   })
 
   it('评分提交失败时弹出错误提示且对话框保持打开', async () => {
-    vi.mocked(ratePlugin).mockResolvedValue({ success: false, error: '每天最多评分 3 次' })
+    vi.mocked(ratePlugin).mockRejectedValue(new Error('每天最多评分 3 次'))
 
     render(<PluginStats pluginId="demo-plugin" />)
 

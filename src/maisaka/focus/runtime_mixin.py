@@ -17,12 +17,15 @@ from src.common.data_models.message_component_data_model import MessageSequence,
 from src.common.logger import get_logger
 from src.config.config import global_config
 
+from src.maisaka.context.inbound_factory import (
+    SessionInboundFlags,
+    build_session_inbound_message_sync,
+)
 from src.maisaka.context.messages import (
     FOCUS_AT_WAKEUP_SOURCE,
     FOCUS_COOLDOWN_WAKEUP_SOURCE,
     FOCUS_WAKEUP_SOURCE_KINDS,
     LLMContextMessage,
-    SessionBackedMessage,
     ToolResultMessage,
 )
 from src.maisaka.mode_policy import is_idle_cycle_reason
@@ -333,14 +336,14 @@ class MaisakaFocusRuntimeMixin:
         wakeup_message.raw_message = MessageSequence([TextComponent(wakeup_notice)])
         wakeup_message.processed_plain_text = wakeup_notice
 
-        self._chat_history.append(
-            SessionBackedMessage.from_session_message(
-                wakeup_message,
-                raw_message=wakeup_message.raw_message,
-                visible_text=wakeup_notice,
-                source_kind=FOCUS_AT_WAKEUP_SOURCE if wakeup_reason == "at" else FOCUS_COOLDOWN_WAKEUP_SOURCE,
-            )
+        wakeup_history_message = build_session_inbound_message_sync(
+            wakeup_message,
+            flags=SessionInboundFlags.raw_focus_wakeup(),
+            source_kind=FOCUS_AT_WAKEUP_SOURCE if wakeup_reason == "at" else FOCUS_COOLDOWN_WAKEUP_SOURCE,
         )
+        if wakeup_history_message is None:
+            raise RuntimeError("Focus 唤醒合成消息缺少可用正文，无法写入聊天历史")
+        self._chat_history.append(wakeup_history_message)
         self._focus_cooldown_wakeup_scheduled = True
         self._queue_proactive_turn(wakeup_message)
         logger.info(
@@ -722,14 +725,14 @@ class MaisakaFocusRuntimeMixin:
         switch_trigger_message.raw_message = MessageSequence([TextComponent(switch_notice)])
         switch_trigger_message.processed_plain_text = switch_notice
 
-        copied_history.append(
-            SessionBackedMessage.from_session_message(
-                switch_trigger_message,
-                raw_message=switch_trigger_message.raw_message,
-                visible_text=switch_notice,
-                source_kind="focus_switch",
-            )
+        switch_history_message = build_session_inbound_message_sync(
+            switch_trigger_message,
+            flags=SessionInboundFlags.raw_focus_wakeup(),
+            source_kind="focus_switch",
         )
+        if switch_history_message is None:
+            raise RuntimeError("Focus 切换合成消息缺少可用正文，无法写入目标聊天历史")
+        copied_history.append(switch_history_message)
         copied_history.extend(recent_context_messages)
         target_runtime._chat_history = copied_history
         target_runtime._mark_message_turn_unscheduled()

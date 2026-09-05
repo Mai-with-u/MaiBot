@@ -189,7 +189,7 @@ async def _handle_maisaka_monitor_subscribe(
             data=cast(Dict[str, Any], replay_event["data"]),
         )
 
-    from src.maisaka.display.stage_status_board import get_stage_status_snapshot
+    from src.maisaka.monitor.stage_status import get_stage_status_snapshot
 
     await websocket_manager.send_event(
         connection_id,

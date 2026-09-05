@@ -1,5 +1,7 @@
 import type { Node, Edge } from 'reactflow'
 
+export type GraphViewMode = 'entity' | 'evidence'
+
 export interface GraphNode {
   id: string
   type: 'entity' | 'relation' | 'paragraph'

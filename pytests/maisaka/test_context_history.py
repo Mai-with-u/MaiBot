@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from src.common.data_models.message_component_data_model import MessageSequence, TextComponent
+import pytest
+
+from src.chat.message_receive.message import SessionMessage
+from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
+from src.common.data_models.message_component_data_model import (
+    ForwardComponent,
+    ForwardNodeComponent,
+    ImageComponent,
+    MessageSequence,
+    TextComponent,
+)
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     ContextItemMeta,
@@ -15,7 +25,18 @@ from src.maisaka.context.history import (
     normalize_tool_call_result_pairs,
     normalize_tool_result_order,
 )
-from src.maisaka.context.messages import ModelOutputContextMessage, SessionBackedMessage, ToolResultMessage
+from src.maisaka.context.inbound_factory import (
+    SessionInboundFlags,
+    build_session_inbound_message,
+    build_session_inbound_message_sync,
+)
+from src.maisaka.context.messages import (
+    ComplexSessionMessage,
+    ModelOutputContextMessage,
+    SessionBackedMessage,
+    ToolResultMessage,
+)
+from src.maisaka.context.planner_messages import build_planner_user_prefix_from_session_message
 from src.maisaka.context.post_processor import (
     _build_trimmed_assistant_tool_user_message,
     _trim_history_to_context_target,
@@ -190,3 +211,125 @@ def test_history_protocol_keeps_registered_pending_call() -> None:
     assert normalized == [call]
     assert stats["unanswered_tool_calls"] == 0
     assert stats["invalid_tool_turns"] == 0
+
+
+def _make_session_message(
+    *,
+    text: str = "你好",
+    message_id: str = "m1",
+    raw_message: MessageSequence | None = None,
+    processed: str | None = None,
+) -> SessionMessage:
+    message = SessionMessage(
+        message_id=message_id,
+        timestamp=datetime(2026, 8, 20, 1, 9, 30),
+        platform="test",
+    )
+    message.message_info = MessageInfo(
+        user_info=UserInfo(user_id="u1", user_nickname="用户", user_cardname="群名片"),
+    )
+    message.raw_message = raw_message or MessageSequence([TextComponent(text)])
+    message.session_id = "chat-1"
+    message.processed_plain_text = text if processed is None else processed
+    message.is_notify = False
+    return message
+
+
+def test_inbound_factory_keeps_planner_prefix_and_raw_wakeup_distinct() -> None:
+    message = _make_session_message(processed="原始唤醒正文")
+    prefixed = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.planner_ingest(hydrate_visual=False),
+    )
+    raw = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.raw_focus_wakeup(),
+    )
+
+    assert isinstance(prefixed, SessionBackedMessage)
+    assert isinstance(raw, SessionBackedMessage)
+    expected_prefix = build_planner_user_prefix_from_session_message(message)
+    assert isinstance(prefixed.raw_message.components[0], TextComponent)
+    assert prefixed.raw_message.components[0].text.startswith(expected_prefix)
+    assert raw.raw_message is message.raw_message
+    assert raw.visible_text == "原始唤醒正文"
+    assert prefixed.visible_text != raw.visible_text
+
+
+def test_inbound_factory_collapse_flag_does_not_make_paths_identical() -> None:
+    forward = ForwardNodeComponent(
+        [
+            ForwardComponent(
+                user_nickname="转发用户",
+                message_id="f1",
+                content=[TextComponent("转发内容")],
+                user_id="fu1",
+            )
+        ]
+    )
+    message = _make_session_message(raw_message=MessageSequence([forward]), processed="转发内容")
+    collapsed = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.planner_ingest(hydrate_visual=False),
+    )
+    kept = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.sent_message(),
+    )
+
+    assert isinstance(collapsed, ComplexSessionMessage)
+    assert isinstance(kept, SessionBackedMessage)
+    assert not isinstance(kept, ComplexSessionMessage)
+    assert collapsed.prompt_text.startswith("<message")
+    assert "[消息类型]转发消息" in collapsed.prompt_text
+
+
+def test_inbound_factory_plain_text_ingest_and_sent_share_prefix() -> None:
+    message = _make_session_message()
+    ingest = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.planner_ingest(hydrate_visual=False),
+    )
+    sent = build_session_inbound_message_sync(
+        message,
+        flags=SessionInboundFlags.sent_message(),
+    )
+
+    assert isinstance(ingest, SessionBackedMessage)
+    assert isinstance(sent, SessionBackedMessage)
+    assert ingest.raw_message.components[0].text == sent.raw_message.components[0].text
+    assert ingest.visible_text == sent.visible_text
+
+
+@pytest.mark.asyncio
+async def test_inbound_factory_visual_hydrate_flag_is_path_specific(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded_hashes: list[str] = []
+
+    async def fake_load(self: ImageComponent) -> None:
+        loaded_hashes.append(self.binary_hash)
+
+    monkeypatch.setattr(ImageComponent, "load_image_binary", fake_load)
+    image = ImageComponent(binary_hash="abc")
+    message = _make_session_message(raw_message=MessageSequence([image]), processed="[图片]")
+
+    await build_session_inbound_message(
+        message,
+        flags=SessionInboundFlags.planner_ingest(hydrate_visual=True),
+    )
+    assert loaded_hashes == ["abc"]
+
+    loaded_hashes.clear()
+    await build_session_inbound_message(
+        message,
+        flags=SessionInboundFlags.planner_ingest(hydrate_visual=False),
+    )
+    assert loaded_hashes == []
+
+
+def test_inbound_factory_sync_rejects_visual_hydrate() -> None:
+    message = _make_session_message()
+    with pytest.raises(ValueError, match="同步入站构造不能回填视觉二进制数据"):
+        build_session_inbound_message_sync(
+            message,
+            flags=SessionInboundFlags.planner_ingest(hydrate_visual=True),
+        )

@@ -58,6 +58,24 @@ class ComponentTypes(str, Enum):
     HOME_CARD = "HOME_CARD"
 
 
+def normalize_component_type(component_type: str) -> str:
+    """规范化组件类型名称。
+
+    SDK 仍产出 ACTION/action；host 侧统一映射为 TOOL 后再存储或查询。
+
+    Args:
+        component_type: 原始组件类型。
+
+    Returns:
+        str: 统一转为大写后的组件类型名。ACTION 映射为 TOOL。
+    """
+
+    normalized_component_type = str(component_type or "").strip().upper()
+    if normalized_component_type == "ACTION":
+        return "TOOL"
+    return normalized_component_type
+
+
 ComponentChatScope = Literal["all", "group", "private"]
 
 
@@ -566,14 +584,13 @@ class ComponentRegistry:
             component_type: 原始组件类型字符串。
 
         Returns:
-            ComponentTypes: 规范化后的组件类型枚举。
+            ComponentTypes: 规范化后的组件类型枚举。ACTION 映射为 TOOL。
 
         Raises:
             ValueError: 当组件类型不受支持时抛出。
         """
 
-        normalized_value = str(component_type or "").strip().upper()
-        return ComponentTypes(normalized_value)
+        return ComponentTypes(normalize_component_type(component_type))
 
     def clear(self) -> None:
         """清空全部组件注册状态。"""
@@ -668,19 +685,12 @@ class ComponentRegistry:
         """
 
         try:
+            source_type = str(component_type or "").strip().upper()
             normalized_type = self._normalize_component_type(component_type)
             normalized_metadata = dict(metadata)
-            if normalized_type == ComponentTypes.ACTION:
+            if source_type != normalized_type.value:
                 normalized_metadata = self._convert_action_metadata_to_tool_metadata(name, normalized_metadata)
-                component = ToolEntry(
-                    name,
-                    ComponentTypes.TOOL.value,
-                    plugin_id,
-                    normalized_metadata,
-                    chat_scope,
-                    allowed_session,
-                )
-            elif normalized_type == ComponentTypes.COMMAND:
+            if normalized_type == ComponentTypes.COMMAND:
                 component = CommandEntry(
                     name,
                     normalized_type.value,
@@ -994,16 +1004,17 @@ class ComponentRegistry:
         Returns:
             components (List[ComponentEntry]): 组件条目列表
         """
+        source_type = str(component_type or "").strip().upper()
         try:
             comp_type = self._normalize_component_type(component_type)
         except ValueError:
             logger.error(f"组件类型 {component_type} 不存在")
             raise
 
-        if comp_type == ComponentTypes.ACTION:
+        if source_type != comp_type.value:
             action_components = [
                 component
-                for component in self._by_type.get(ComponentTypes.TOOL, {}).values()
+                for component in self._by_type.get(comp_type, {}).values()
                 if self._is_legacy_action_component(component)
             ]
             if enabled_only:

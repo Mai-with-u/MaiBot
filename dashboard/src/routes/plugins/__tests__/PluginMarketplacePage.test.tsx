@@ -637,10 +637,7 @@ describe('PluginMarketplacePage 点赞', () => {
 
   it('点赞失败时弹出错误提示且不更新统计', async () => {
     const user = userEvent.setup()
-    vi.mocked(pluginStatsApi.likePlugin).mockResolvedValue({
-      success: false,
-      error: '请求过于频繁',
-    })
+    vi.mocked(pluginStatsApi.likePlugin).mockRejectedValue(new Error('请求过于频繁'))
     await renderPage()
 
     await user.click(screen.getByText('like-plugin-a'))

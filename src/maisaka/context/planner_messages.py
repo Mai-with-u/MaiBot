@@ -8,11 +8,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.common.data_models.message_component_data_model import (
     MessageSequence,
     ReplyComponent,
-    TextComponent,
 )
-
-from src.maisaka.context.message_adapter import format_speaker_content
-from .messages import SessionBackedMessage
 
 
 def build_planner_prefix(
@@ -137,62 +133,4 @@ def build_planner_user_prefix_from_session_message(
         include_message_id=include_message_id and not message.is_notify and bool(message.message_id),
         include_chat_id=include_chat_id,
         is_self_message=is_self_message,
-    )
-
-
-def build_session_backed_text_message(
-    *,
-    speaker_name: str,
-    text: str,
-    timestamp: datetime,
-    source_kind: str,
-    group_card: str = "",
-    message_id: Optional[str] = None,
-    chat_id: Optional[str] = None,
-    quote_ids: Optional[Sequence[str]] = None,
-    include_message_id: bool = True,
-    include_chat_id: bool = False,
-    is_self_message: bool = False,
-) -> SessionBackedMessage:
-    """构造带规划器前缀的纯文本历史消息。
-
-    Args:
-        speaker_name: 发言者名称。
-        text: 发言内容。
-        timestamp: 发言时间。
-        source_kind: 上下文来源类型。
-        group_card: 群昵称。
-        message_id: 消息 ID。
-        chat_id: 聊天流 ID。
-        quote_ids: 被引用消息 ID 列表。
-        include_message_id: 是否输出 `msg_id` 段。
-        include_chat_id: 是否输出 `chat_id` 段。
-        is_self_message: 是否显式标注这条消息是 bot 自己发送的。
-
-    Returns:
-        SessionBackedMessage: 可直接写入历史的上下文消息。
-    """
-
-    planner_prefix = build_planner_prefix(
-        timestamp=timestamp,
-        user_name=speaker_name,
-        group_card=group_card,
-        message_id=message_id,
-        chat_id=chat_id,
-        quote_ids=quote_ids,
-        include_message_id=include_message_id,
-        include_chat_id=include_chat_id,
-        is_self_message=is_self_message,
-    )
-    return SessionBackedMessage(
-        raw_message=MessageSequence([TextComponent(f"{planner_prefix}{text}")]),
-        visible_text=format_speaker_content(
-            speaker_name,
-            text,
-            timestamp,
-            message_id if include_message_id else None,
-        ),
-        timestamp=timestamp,
-        message_id=message_id,
-        source_kind=source_kind,
     )

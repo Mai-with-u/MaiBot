@@ -18,10 +18,8 @@ from src.common.data_models.message_component_data_model import (
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult
-from src.maisaka.context.message_adapter import format_speaker_content
-from src.maisaka.context.messages import SessionBackedMessage
-from src.maisaka.context.planner_messages import (
-    build_planner_prefix,
+from src.maisaka.context.inbound_factory import (
+    build_planner_prefixed_history_message,
     build_session_backed_text_message,
 )
 from src.plugin_runtime.integration import get_plugin_runtime_manager
@@ -472,30 +470,22 @@ class BuiltinToolRuntimeContext:
         bot_name = global_config.bot.nickname.strip() or "MaiSaka"
         reply_timestamp = datetime.now()
         include_chat_id = self._should_include_planner_chat_id()
-        planner_prefix = build_planner_prefix(
+        history_message = build_planner_prefixed_history_message(
+            speaker_name=bot_name,
             timestamp=reply_timestamp,
-            user_name=bot_name,
-            chat_id=self.runtime.session_id,
-            include_chat_id=include_chat_id,
-            is_self_message=True,
-        )
-        history_message = SessionBackedMessage(
-            raw_message=MessageSequence(
+            source_kind="guided_reply",
+            body_sequence=MessageSequence(
                 [
-                    TextComponent(planner_prefix),
                     EmojiComponent(
                         binary_hash="",
                         content=success_message,
                         binary_data=b64decode(emoji_base64),
-                    ),
+                    )
                 ]
             ),
-            visible_text=format_speaker_content(
-                bot_name,
-                "[表情包]",
-                reply_timestamp,
-            ),
-            timestamp=reply_timestamp,
-            source_kind="guided_reply",
+            visible_body="[表情包]",
+            chat_id=self.runtime.session_id,
+            include_chat_id=include_chat_id,
+            is_self_message=True,
         )
         self.runtime._chat_history.append(history_message)

@@ -85,7 +85,7 @@ class MainSystem:
         self.server = get_global_server()
 
     def _register_message_handlers(self) -> None:
-        """注册主消息处理器；消息服务实际调度前完成即可。"""
+        """注册 echo 处理器，并把 Legacy WS 入站交给 Platform IO 驱动。"""
 
         if self._message_handlers_registered:
             return
@@ -95,10 +95,21 @@ class MainSystem:
             raise RuntimeError("消息 API 初始化失败")
 
         from src.chat.message_receive.bot import chat_bot
+        from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
 
-        self.app.register_message_handler(chat_bot.message_process)
+        self.app.register_message_handler(LegacyPlatformDriver.handle_ws_inbound)
         self.app.register_custom_message_handler("message_id_echo", chat_bot.echo_message_process)
         self._message_handlers_registered = True
+
+    async def _prepare_platform_io(self) -> None:
+        """准备 Platform IO 入站分发与 legacy 驱动。"""
+
+        from src.platform_io import dispatch_core_inbound, get_platform_io_manager
+
+        manager = get_platform_io_manager()
+        if not manager.has_inbound_dispatcher:
+            manager.set_inbound_dispatcher(dispatch_core_inbound)
+        await manager.ensure_send_pipeline_ready()
 
     def _start_webui_server(self) -> None:
         """启动独立线程中的 WebUI 服务器。"""
@@ -238,6 +249,8 @@ class MainSystem:
                 should_schedule_image_path_maintenance_background,
             )
 
+            self._ensure_message_server()
+            await self._prepare_platform_io()
             self._register_message_handlers()
             if self.app is None or self.server is None:
                 raise RuntimeError("消息服务未初始化")

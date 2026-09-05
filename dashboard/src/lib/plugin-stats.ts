@@ -1,17 +1,15 @@
-﻿/**
- * 閹绘帊娆㈢紒鐔活吀 API 鐎广垺鍩涚粩?
- * 閻劋绨稉?Cloudflare Workers 缂佺喕顓搁張宥呭娴溿倓绨?
+/**
+ * 插件统计 API
+ *
+ * 与 Cloudflare Workers 上的统计服务（statsApi 实例，无 Cookie 认证）交互。
+ * 请求样板（解析、错误格式化）由 @/lib/http 的请求客户端承担；
+ * 本文件只声明 endpoint、业务错误文案与统计响应的归一化规则。
  */
+import { ApiError, statsApi } from '@/lib/http'
 
-// 闁板秶鐤嗙紒鐔活吀閺堝秴濮?API 閸︽澘娼冮敍鍫熷閺堝鏁ら幋宄板彙娴滎偆娈戞禍鎴狀伂缂佺喕顓搁張宥呭閿?
-import { ApiError, backendApi } from '@/lib/http'
-
-const STATS_API_BASE_URL = '/api/webui/plugins/stats-proxy'
 const PLUGIN_STATS_SUMMARY_CACHE_TTL = 5 * 60 * 1000
 const PLUGIN_STATS_SUMMARY_STORAGE_KEY = 'maibot-plugin-stats-summary-cache'
 
-let pluginStatsSummaryCache: { timestamp: number; data: Record<string, PluginStatsData> } | null =
-  null
 let pluginStatsSummaryRequest: Promise<Record<string, PluginStatsData>> | null = null
 
 export interface PluginStatsData {
@@ -110,25 +108,6 @@ function normalizePluginStatsResponse(data: unknown, pluginId: string): PluginSt
   }
 }
 
-function getReadableError(data: unknown, fallback: string): string {
-  if (!data || typeof data !== 'object') {
-    return fallback
-  }
-
-  const error = (data as { error?: unknown }).error
-  if (typeof error !== 'string' || !error.trim()) {
-    return fallback
-  }
-
-  return /[�閹缂鐠]/.test(error) ? fallback : error
-}
-
-/** 从 ApiError 携带的后端原始错误体中提取 error 字段 */
-function getDetailError(error: ApiError): string | undefined {
-  const detailError = (error.detail as { error?: unknown } | null | undefined)?.error
-  return typeof detailError === 'string' ? detailError : undefined
-}
-
 function readPluginStatsSummaryStorageCache(): PluginStatsSummaryStorageCache | null {
   if (typeof localStorage === 'undefined') {
     return null
@@ -179,7 +158,7 @@ function writePluginStatsSummaryStorageCache(data: Record<string, PluginStatsDat
 }
 
 function updateCachedPluginStats(pluginId: string, partialStats: Partial<PluginStatsData>): void {
-  const currentCache = pluginStatsSummaryCache ?? readPluginStatsSummaryStorageCache()
+  const currentCache = readPluginStatsSummaryStorageCache()
   if (!currentCache) {
     return
   }
@@ -198,104 +177,86 @@ function updateCachedPluginStats(pluginId: string, partialStats: Partial<PluginS
       ) ?? currentStats,
   }
 
-  pluginStatsSummaryCache = { timestamp: Date.now(), data: nextData }
   writePluginStatsSummaryStorageCache(nextData)
 }
 
+function remapRateLimitError(error: unknown, message: string): never {
+  if (error instanceof ApiError && error.status === 429) {
+    throw new ApiError(message, { status: 429, detail: error.detail })
+  }
+  throw error
+}
+
 export function getCachedPluginStatsSummary(): Record<string, PluginStatsData> | null {
-  if (pluginStatsSummaryCache) {
-    return pluginStatsSummaryCache.data
-  }
-
   const storedCache = readPluginStatsSummaryStorageCache()
-  if (!storedCache) {
-    return null
-  }
-
-  pluginStatsSummaryCache = storedCache
-  return storedCache.data
+  return storedCache?.data ?? null
 }
 
 /**
- * 閼惧嘲褰囬幓鎺嶆缂佺喕顓搁弫鐗堝祦
+ * 获取单个插件的统计数据
  */
-export async function getPluginStats(pluginId: string): Promise<PluginStatsData | null> {
-  try {
-    const data = await backendApi.get<unknown>(
-      `${STATS_API_BASE_URL}/stats/${encodeURIComponent(pluginId)}`
-    )
-    return normalizePluginStatsResponse(data, pluginId)
-  } catch (error) {
-    console.error('Error fetching plugin stats:', error)
-    return null
+export async function getPluginStats(pluginId: string): Promise<PluginStatsData> {
+  const data = await statsApi.get<unknown>(`/stats/${encodeURIComponent(pluginId)}`, {
+    errorMessage: '获取插件统计失败',
+  })
+  const stats = normalizePluginStatsResponse(data, pluginId)
+  if (!stats) {
+    throw new ApiError('插件统计响应格式无效', { detail: data })
   }
+  return stats
 }
 
 /**
- * 閼惧嘲褰囬幓鎺嶆鐢倸婧€閻ㄥ嫯浜ら柌蹇曠埠鐠佲剝鎲崇憰渚婄礄娑撳秴瀵橀崥顐ョ槑鐠佺尨绱氶妴? */
+ * 拉取插件统计摘要（绕过本地短缓存）
+ */
 async function fetchPluginStatsSummaryUncached(): Promise<Record<string, PluginStatsData>> {
-  try {
-    const data = await backendApi.get<PluginStatsSummaryResponse>(
-      `${STATS_API_BASE_URL}/stats/summary`
+  const data = await statsApi.get<PluginStatsSummaryResponse>('/stats/summary', {
+    errorMessage: '获取插件统计摘要失败',
+  })
+  if (!data.success || !data.stats || typeof data.stats !== 'object') {
+    throw new ApiError(
+      typeof data.error === 'string' && data.error.trim() ? data.error : '获取插件统计摘要失败',
+      { detail: data }
     )
-    if (!data.success || !data.stats || typeof data.stats !== 'object') {
-      return {}
-    }
-
-    return Object.fromEntries(
-      Object.entries(data.stats).map(([pluginId, stats]) => [
-        pluginId,
-        normalizePluginStatsResponse({ stats }, pluginId) ?? createEmptyStats(pluginId),
-      ])
-    )
-  } catch (error) {
-    console.error('Error fetching plugin stats summary:', error)
-    return {}
   }
+
+  return Object.fromEntries(
+    Object.entries(data.stats).map(([pluginId, stats]) => [
+      pluginId,
+      normalizePluginStatsResponse({ stats }, pluginId) ?? createEmptyStats(pluginId),
+    ])
+  )
 }
 
 export async function getPluginUserState(
   pluginId: string,
   userId: string = getUserId()
-): Promise<PluginUserState | null> {
-  try {
-    const data = await backendApi.get<Partial<PluginUserState> & { success?: boolean }>(
-      `${STATS_API_BASE_URL}/stats/user-state`,
-      {
-        query: { plugin_id: pluginId, user_id: userId },
-      }
-    )
-    if (data.success === false) {
-      return null
+): Promise<PluginUserState> {
+  const data = await statsApi.get<Partial<PluginUserState> & { success?: boolean }>(
+    '/stats/user-state',
+    {
+      query: { plugin_id: pluginId, user_id: userId },
+      errorMessage: '获取插件用户状态失败',
     }
+  )
+  if (data.success === false) {
+    throw new ApiError('获取插件用户状态失败', { detail: data })
+  }
 
-    return {
-      liked: data.liked === true,
-      disliked: data.disliked === true,
-      rating: data.rating == null ? null : Number(data.rating),
-      comment: typeof data.comment === 'string' ? data.comment : '',
-    }
-  } catch (error) {
-    console.error('Error fetching plugin user state:', error)
-    return null
+  return {
+    liked: data.liked === true,
+    disliked: data.disliked === true,
+    rating: data.rating == null ? null : Number(data.rating),
+    comment: typeof data.comment === 'string' ? data.comment : '',
   }
 }
 
 export async function getPluginStatsSummary(
   options: { forceRefresh?: boolean } = {}
 ): Promise<Record<string, PluginStatsData>> {
-  if (
-    !options.forceRefresh &&
-    pluginStatsSummaryCache &&
-    Date.now() - pluginStatsSummaryCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL
-  ) {
-    return pluginStatsSummaryCache.data
-  }
-
-  if (!options.forceRefresh && !pluginStatsSummaryCache) {
+  if (!options.forceRefresh) {
     const storedCache = readPluginStatsSummaryStorageCache()
     if (storedCache && Date.now() - storedCache.timestamp < PLUGIN_STATS_SUMMARY_CACHE_TTL) {
-      pluginStatsSummaryCache = storedCache
       return storedCache.data
     }
   }
@@ -303,7 +264,6 @@ export async function getPluginStatsSummary(
   if (!pluginStatsSummaryRequest || options.forceRefresh) {
     pluginStatsSummaryRequest = fetchPluginStatsSummaryUncached()
       .then((data) => {
-        pluginStatsSummaryCache = { timestamp: Date.now(), data }
         writePluginStatsSummaryStorageCache(data)
         return data
       })
@@ -316,18 +276,16 @@ export async function getPluginStatsSummary(
 }
 
 /**
- * 閻愮绂愰幓鎺嶆
+ * 点赞插件
  */
 export async function likePlugin(pluginId: string, userId?: string): Promise<VoteStatsResponse> {
-  try {
-    const finalUserId = userId || getUserId()
+  const finalUserId = userId || getUserId()
 
-    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/like`,
-      {
-        body: { plugin_id: pluginId, user_id: finalUserId },
-      }
-    )
+  try {
+    const data = await statsApi.post<Omit<VoteStatsResponse, 'success'>>('/stats/like', {
+      body: { plugin_id: pluginId, user_id: finalUserId },
+      errorMessage: '点赞失败',
+    })
 
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
@@ -336,32 +294,21 @@ export async function likePlugin(pluginId: string, userId?: string): Promise<Vot
     })
     return result
   } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 429) {
-        return { success: false, error: '点赞过于频繁，请稍后再试' }
-      }
-      if (error.status !== undefined) {
-        return { success: false, error: getReadableError(error.detail, '点赞失败') }
-      }
-    }
-    console.error('Error liking plugin:', error)
-    return { success: false, error: '网络请求失败' }
+    remapRateLimitError(error, '点赞过于频繁，请稍后再试')
   }
 }
 
 /**
- * 閻愮淇幓鎺嶆
+ * 点踩插件
  */
 export async function dislikePlugin(pluginId: string, userId?: string): Promise<VoteStatsResponse> {
-  try {
-    const finalUserId = userId || getUserId()
+  const finalUserId = userId || getUserId()
 
-    const data = await backendApi.post<Omit<VoteStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/dislike`,
-      {
-        body: { plugin_id: pluginId, user_id: finalUserId },
-      }
-    )
+  try {
+    const data = await statsApi.post<Omit<VoteStatsResponse, 'success'>>('/stats/dislike', {
+      body: { plugin_id: pluginId, user_id: finalUserId },
+      errorMessage: '点踩失败',
+    })
 
     const result: VoteStatsResponse = { success: true, ...data }
     updateCachedPluginStats(pluginId, {
@@ -370,16 +317,7 @@ export async function dislikePlugin(pluginId: string, userId?: string): Promise<
     })
     return result
   } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 429) {
-        return { success: false, error: '操作过于频繁，请稍后再试' }
-      }
-      if (error.status !== undefined) {
-        return { success: false, error: getReadableError(error.detail, '点踩失败') }
-      }
-    }
-    console.error('Error disliking plugin:', error)
-    return { success: false, error: '网络请求失败' }
+    remapRateLimitError(error, '操作过于频繁，请稍后再试')
   }
 }
 
@@ -403,28 +341,26 @@ export async function ratePlugin(
     return { success: false, error: '评分必须在 1-5 之间' }
   }
 
+  const finalUserId = userId || getUserId()
+  const payload: {
+    plugin_id: string
+    user_id: string
+    rating?: number
+    comment?: string | null
+  } = { plugin_id: pluginId, user_id: finalUserId }
+
+  if (hasRating) {
+    payload.rating = Number(rating)
+  }
+  if (hasComment) {
+    payload.comment = comment
+  }
+
   try {
-    const finalUserId = userId || getUserId()
-    const payload: {
-      plugin_id: string
-      user_id: string
-      rating?: number
-      comment?: string | null
-    } = { plugin_id: pluginId, user_id: finalUserId }
-
-    if (hasRating) {
-      payload.rating = Number(rating)
-    }
-    if (hasComment) {
-      payload.comment = comment
-    }
-
-    const data = await backendApi.post<Omit<RatingStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/rate`,
-      {
-        body: payload,
-      }
-    )
+    const data = await statsApi.post<Omit<RatingStatsResponse, 'success'>>('/stats/rate', {
+      body: payload,
+      errorMessage: '评分失败',
+    })
 
     const result: RatingStatsResponse = { success: true, ...data }
     const updatedStats: Partial<PluginStatsData> = {}
@@ -437,16 +373,7 @@ export async function ratePlugin(
     updateCachedPluginStats(pluginId, updatedStats)
     return result
   } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 429) {
-        return { success: false, error: '每天最多评分 3 次' }
-      }
-      if (error.status !== undefined) {
-        return { success: false, error: getDetailError(error) || '评分失败' }
-      }
-    }
-    console.error('Error rating plugin:', error)
-    return { success: false, error: '网络请求失败' }
+    remapRateLimitError(error, '每天最多评分 3 次')
   }
 }
 
@@ -454,42 +381,23 @@ export async function ratePlugin(
  * 记录插件下载
  */
 export async function recordPluginDownload(pluginId: string): Promise<DownloadStatsResponse> {
-  try {
-    const userId = getUserId()
-    const fingerprint = generateUserFingerprint()
-    const data = await backendApi.post<Omit<DownloadStatsResponse, 'success'>>(
-      `${STATS_API_BASE_URL}/stats/download`,
-      {
-        body: { plugin_id: pluginId, user_id: userId, fingerprint },
-      }
-    )
+  const userId = getUserId()
+  const fingerprint = generateUserFingerprint()
+  const data = await statsApi.post<Omit<DownloadStatsResponse, 'success'>>('/stats/download', {
+    body: { plugin_id: pluginId, user_id: userId, fingerprint },
+    errorMessage: '记录插件下载失败',
+  })
 
-    const result: DownloadStatsResponse = { success: true, ...data }
-    if (typeof result.downloads === 'number') {
-      updateCachedPluginStats(pluginId, { downloads: result.downloads })
-    }
-    return result
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 429) {
-        // 下载计数受限不影响实际下载流程
-        console.warn('Download recording rate limited')
-        return { success: true }
-      }
-      if (error.status !== undefined) {
-        const detailError = getDetailError(error)
-        console.error('Failed to record download:', detailError)
-        return { success: false, error: detailError }
-      }
-    }
-    console.error('Error recording download:', error)
-    return { success: false, error: '网络请求失败' }
+  const result: DownloadStatsResponse = { success: true, ...data }
+  if (typeof result.downloads === 'number') {
+    updateCachedPluginStats(pluginId, { downloads: result.downloads })
   }
+  return result
 }
 
 /**
- * 閻㈢喐鍨氶悽銊﹀煕閹稿洨姹楅敍鍫濈唨娴滃孩绁荤憴鍫濇珤閻楃懓绶涢敍?
- * 閻劋绨崷銊︽弓閻ц缍嶉弮鎯扮槕閸掝偆鏁ら幋鍑ょ礉闂冨弶顒涢柌宥咁槻閹舵洜銈?
+ * 根据浏览器环境生成稳定的用户指纹。
+ * 用于匿名统计，不依赖登录态。
  */
 export function generateUserFingerprint(): string {
   const nav = navigator as Navigator & { deviceMemory?: number }
@@ -509,7 +417,6 @@ export function generateUserFingerprint(): string {
     nav.deviceMemory || 0,
   ].join('|')
 
-  // 缁犫偓閸楁洖鎼辩敮灞藉毐閺?
   let hash = 0
   for (let i = 0; i < features.length; i++) {
     const char = features.charCodeAt(i)
@@ -521,24 +428,20 @@ export function generateUserFingerprint(): string {
 }
 
 /**
- * 閻㈢喐鍨氶幋鏍箯閸欐牜鏁ら幋?UUID
- * 鐎涙ê鍋嶉崷?localStorage 娑擃厽瀵旀稊鍛
+ * 生成或读取持久化用户 ID。
+ * 首次调用写入 localStorage，后续复用。
  */
 export function getUserId(): string {
   const STORAGE_KEY = 'maibot_user_id'
 
-  // 鐏忔繆鐦禒?localStorage 閼惧嘲褰?
   let userId = localStorage.getItem(STORAGE_KEY)
 
   if (!userId) {
-    // 閻㈢喐鍨氶弬鎵畱 UUID
     const fingerprint = generateUserFingerprint()
     const timestamp = Date.now().toString(36)
     const random = Math.random().toString(36).substring(2, 15)
 
     userId = `${fingerprint}_${timestamp}_${random}`
-
-    // 鐎涙ê鍋嶉崚?localStorage
     localStorage.setItem(STORAGE_KEY, userId)
   }
 

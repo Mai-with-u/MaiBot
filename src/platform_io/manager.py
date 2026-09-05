@@ -13,7 +13,15 @@ from .outbound_tracker import OutboundTracker
 from .route_key_factory import RouteKeyFactory
 from .registry import DriverRegistry
 from .routing import RouteTable
-from .types import DeliveryBatch, DeliveryReceipt, DeliveryStatus, InboundMessageEnvelope, RouteBinding, RouteKey
+from .types import (
+    DeliveryBatch,
+    DeliveryReceipt,
+    DeliveryStatus,
+    DriverKind,
+    InboundMessageEnvelope,
+    RouteBinding,
+    RouteKey,
+)
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -296,7 +304,6 @@ class PlatformIOManager:
     async def _sync_legacy_send_drivers(self) -> None:
         """根据当前配置同步 legacy fallback driver。"""
         from src.chat.utils.utils import get_configured_bot_accounts
-        from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
         from src.services.bot_account_service import WEBUI_BOT_USER_ID
 
         desired_accounts = {
@@ -320,16 +327,7 @@ class PlatformIOManager:
             if existing_driver is not None:
                 await self._remove_legacy_send_driver(platform)
 
-            driver = LegacyPlatformDriver(
-                driver_id=f"legacy.send.{platform}",
-                platform=platform,
-                account_id=account_id,
-            )
-            if self._started:
-                await self.add_driver(driver)
-            else:
-                self.register_driver(driver)
-            self._legacy_send_drivers[platform] = driver
+            await self._create_legacy_driver(platform, account_id=account_id)
 
     async def _remove_legacy_send_driver(self, platform: str) -> None:
         """移除指定平台的 legacy fallback driver。
@@ -346,6 +344,81 @@ class PlatformIOManager:
         else:
             self.unregister_driver(driver.driver_id)
         self._legacy_send_drivers.pop(platform, None)
+
+    async def _create_legacy_driver(
+        self,
+        platform: str,
+        account_id: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> PlatformIODriver:
+        """创建并登记一个平台级 legacy 驱动，同时绑定接收路由。
+
+        Args:
+            platform: 驱动负责的平台。
+            account_id: 可选的账号 ID。
+            scope: 可选的额外路由作用域。
+
+        Returns:
+            PlatformIODriver: 新创建的 legacy 驱动。
+        """
+        from src.platform_io.drivers.legacy_driver import LegacyPlatformDriver
+
+        driver = LegacyPlatformDriver(
+            driver_id=f"legacy.send.{platform}",
+            platform=platform,
+            account_id=account_id,
+            scope=scope,
+        )
+        if self._started:
+            await self.add_driver(driver)
+        else:
+            self.register_driver(driver)
+        self._legacy_send_drivers[platform] = driver
+        self._bind_legacy_receive_route(driver)
+        return driver
+
+    def _bind_legacy_receive_route(self, driver: PlatformIODriver) -> None:
+        """为 legacy 驱动绑定平台级接收路由。
+
+        Args:
+            driver: 要绑定接收路由的 legacy 驱动。
+        """
+        self.bind_receive_route(
+            RouteBinding(
+                route_key=RouteKey(platform=driver.descriptor.platform),
+                driver_id=driver.driver_id,
+                driver_kind=driver.descriptor.kind,
+            )
+        )
+
+    async def ensure_legacy_inbound_driver(self, message_data: Dict[str, Any]) -> PlatformIODriver:
+        """按入站消息的平台解析或创建对应的 legacy 驱动。
+
+        Args:
+            message_data: Legacy WS 入站消息字典。
+
+        Returns:
+            PlatformIODriver: 负责该平台入站的 legacy 驱动。
+        """
+        from src.platform_io.drivers.legacy_driver import extract_legacy_ws_platform
+
+        platform = extract_legacy_ws_platform(message_data).strip().lower()
+        existing_driver = self._legacy_send_drivers.get(platform)
+        if existing_driver is None:
+            for driver in self._driver_registry.list(kind=DriverKind.LEGACY, platform=platform):
+                existing_driver = driver
+                self._legacy_send_drivers[platform] = driver
+                break
+
+        if existing_driver is not None:
+            if not self._receive_route_table.has_binding_for_driver(
+                RouteKey(platform=platform),
+                existing_driver.driver_id,
+            ):
+                self._bind_legacy_receive_route(existing_driver)
+            return existing_driver
+
+        return await self._create_legacy_driver(platform)
 
     def bind_send_route(self, binding: RouteBinding) -> None:
         """为某个路由键绑定发送驱动。

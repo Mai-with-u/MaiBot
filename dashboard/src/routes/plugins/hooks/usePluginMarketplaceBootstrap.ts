@@ -247,14 +247,20 @@ export function usePluginMarketplaceBootstrap() {
             setLoading(true)
           }
           setError(null)
-          const [gitStatus, maimaiVersion, marketResult, installed] = await Promise.all([
+          const [gitStatus, maimaiVersion, marketResult, installedResult] = await Promise.all([
             checkGitStatus(),
             getMaimaiVersion(),
             // 市场清单失败需保留原有「setError + toast + 中断」行为，故就地收敛为判别结果，避免 Promise.all 整体 reject
             fetchPluginList()
               .then((data) => ({ ok: true as const, data }))
               .catch((err) => ({ ok: false as const, error: err instanceof Error ? err.message : '加载失败' })),
-            getInstalledPlugins(),
+            // 已安装列表失败不能阻断市场卡片，失败走 toast 而不是把市场清单一起丢掉
+            getInstalledPlugins()
+              .then((data) => ({ ok: true as const, data }))
+              .catch((err) => ({
+                ok: false as const,
+                error: err instanceof Error ? err.message : '加载已安装插件失败',
+              })),
           ])
           if (isUnmounted) {
             return
@@ -279,6 +285,15 @@ export function usePluginMarketplaceBootstrap() {
               variant: 'destructive',
             })
             return
+          }
+
+          const installed = installedResult.ok ? installedResult.data : []
+          if (!installedResult.ok) {
+            toast({
+              title: '加载已安装插件失败',
+              description: installedResult.error,
+              variant: 'destructive',
+            })
           }
 
           setInstalledPlugins(installed)

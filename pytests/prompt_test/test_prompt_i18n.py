@@ -6,6 +6,7 @@ import pytest
 
 from src.common.i18n import set_locale
 from src.common.prompt_i18n import (
+    PROMPT_FALLBACK_LOCALE,
     PROMPTS_ROOT,
     clear_prompt_cache,
     extract_prompt_placeholders,
@@ -43,7 +44,7 @@ def test_load_prompt_prefers_requested_locale(tmp_path: Path) -> None:
 
 def test_load_prompt_falls_back_to_default_locale(tmp_path: Path) -> None:
     prompts_root = tmp_path / "prompts"
-    write_prompt(prompts_root, "zh-CN", "replyer", "你好，{user_name}")
+    write_prompt(prompts_root, PROMPT_FALLBACK_LOCALE, "replyer", "你好，{user_name}")
 
     rendered = load_prompt("replyer", locale="en-US", prompts_root=prompts_root, user_name="Mai")
 
@@ -60,7 +61,7 @@ def test_load_prompt_does_not_fall_back_to_legacy_root(tmp_path: Path) -> None:
 
 def test_load_prompt_with_category_falls_back_to_default_locale_root(tmp_path: Path) -> None:
     prompts_root = tmp_path / "prompts"
-    write_prompt(prompts_root, "zh-CN", "replyer", "你好，{user_name}")
+    write_prompt(prompts_root, PROMPT_FALLBACK_LOCALE, "replyer", "你好，{user_name}")
 
     rendered = load_prompt("replyer", locale="en-US", category="chat", prompts_root=prompts_root, user_name="Mai")
 

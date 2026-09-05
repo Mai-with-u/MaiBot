@@ -78,6 +78,26 @@ async def test_clear_chat_history_context_still_stops() -> None:
     leftover.stop.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_stop_heartflow_chat_stops_and_removes() -> None:
+    """stop_heartflow_chat 应停止并移除对应心流实例，缺失时为 no-op。"""
+    manager = HeartflowManager()
+    chat = _insert_chat(manager, "session-a")
+    leftover = _insert_chat(manager, "session-b")
+    stop_spy = chat.stop
+
+    await manager.stop_heartflow_chat("session-a")
+
+    stop_spy.assert_awaited_once()
+    assert manager.get_heartflow_chat("session-a") is None
+    assert manager.get_heartflow_chat("session-b") is leftover
+    leftover.stop.assert_not_called()
+
+    await manager.stop_heartflow_chat("session-missing")
+    leftover.stop.assert_not_called()
+    assert manager.get_heartflow_chat("session-b") is leftover
+
+
 def test_heartflow_chat_list_property_still_works_if_present() -> None:
     """若仍暴露 heartflow_chat_list，应与 get/iter/pop 看到同一份注册表。"""
     manager = HeartflowManager()

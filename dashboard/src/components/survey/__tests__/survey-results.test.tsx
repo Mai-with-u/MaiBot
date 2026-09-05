@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SurveyResults } from '../survey-results'
 import * as surveyApi from '@/lib/survey-api'
-import type { StoredSubmission, SurveyConfig, SurveyStats, SurveyStatsResponse } from '@/types/survey'
+import type { StoredSubmission, SurveyConfig, SurveyStats } from '@/types/survey'
 
 // 打桩问卷 API，避免真实网络请求
 vi.mock('@/lib/survey-api', () => ({
@@ -78,13 +78,13 @@ const submission: StoredSubmission = {
 }
 
 beforeEach(() => {
-  vi.mocked(surveyApi.getSurveyStats).mockResolvedValue({ success: true, stats })
-  vi.mocked(surveyApi.getUserSubmissions).mockResolvedValue({ success: true, submissions: [] })
+  vi.mocked(surveyApi.getSurveyStats).mockResolvedValue(stats)
+  vi.mocked(surveyApi.getUserSubmissions).mockResolvedValue([])
 })
 
 describe('SurveyResults 统计展示', () => {
   it('加载中显示旋转指示', () => {
-    vi.mocked(surveyApi.getSurveyStats).mockReturnValue(new Promise<SurveyStatsResponse>(() => {}))
+    vi.mocked(surveyApi.getSurveyStats).mockReturnValue(new Promise<SurveyStats>(() => {}))
     const { container } = render(<SurveyResults config={config} />)
     expect(container.querySelector('.animate-spin')).toBeInTheDocument()
     expect(screen.queryByText('总提交数')).not.toBeInTheDocument()
@@ -118,19 +118,10 @@ describe('SurveyResults 统计展示', () => {
     expect(screen.getAllByText('暂无数据')).toHaveLength(2)
   })
 
-  it('统计获取失败时概览回退为默认值', async () => {
-    vi.mocked(surveyApi.getSurveyStats).mockResolvedValue({ success: false, error: '后端出错' })
+  it('统计获取失败时显示错误信息', async () => {
+    vi.mocked(surveyApi.getSurveyStats).mockRejectedValue(new Error('后端出错'))
     render(<SurveyResults config={config} />)
-    await screen.findByText('总提交数')
-    // totalSubmissions 与 uniqueUsers 均显示 0，最后提交显示占位符
-    expect(screen.getAllByText('0')).toHaveLength(2)
-    expect(screen.getByText('-')).toBeInTheDocument()
-  })
-
-  it('统计接口抛出异常时显示错误信息', async () => {
-    vi.mocked(surveyApi.getSurveyStats).mockRejectedValue(new Error('加载数据失败了'))
-    render(<SurveyResults config={config} />)
-    expect(await screen.findByText('加载数据失败了')).toBeInTheDocument()
+    expect(await screen.findByText('后端出错')).toBeInTheDocument()
     expect(screen.queryByText('总提交数')).not.toBeInTheDocument()
   })
 })
@@ -145,11 +136,15 @@ describe('SurveyResults 我的提交', () => {
     expect(await screen.findByText('你还没有提交过这份问卷')).toBeInTheDocument()
   })
 
+  it('提交记录获取失败时显示错误信息，不把失败当成空记录', async () => {
+    vi.mocked(surveyApi.getUserSubmissions).mockRejectedValue(new Error('提交记录失败'))
+    render(<SurveyResults config={config} />)
+    expect(await screen.findByText('提交记录失败')).toBeInTheDocument()
+    expect(screen.queryByText('你还没有提交过这份问卷')).not.toBeInTheDocument()
+  })
+
   it('按答案类型格式化展示提交记录', async () => {
-    vi.mocked(surveyApi.getUserSubmissions).mockResolvedValue({
-      success: true,
-      submissions: [submission],
-    })
+    vi.mocked(surveyApi.getUserSubmissions).mockResolvedValue([submission])
     const user = userEvent.setup()
     render(<SurveyResults config={config} />)
     await screen.findByText('总提交数')

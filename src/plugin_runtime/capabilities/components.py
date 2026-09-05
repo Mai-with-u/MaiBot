@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol,
 import tomlkit
 
 from src.common.logger import get_logger
+from src.plugin_runtime.host.component_registry import normalize_component_type
 from src.plugin_runtime.host.component_timeout import resolve_component_rpc_timeout_ms
 from src.webui.utils.toml_utils import save_toml_with_format
 
@@ -164,13 +165,10 @@ class RuntimeComponentCapabilityMixin:
             component_type: 原始组件类型。
 
         Returns:
-            str: 统一转为大写后的组件类型名。
+            str: 统一转为大写后的组件类型名。ACTION 映射为 TOOL。
         """
 
-        normalized_component_type = str(component_type or "").strip().upper()
-        if normalized_component_type == "ACTION":
-            return "TOOL"
-        return normalized_component_type
+        return normalize_component_type(component_type)
 
     @classmethod
     def _is_api_component_type(cls, component_type: str) -> bool:

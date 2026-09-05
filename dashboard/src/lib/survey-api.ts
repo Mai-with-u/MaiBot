@@ -4,16 +4,15 @@
  *
  * 请求样板（解析、错误格式化）由 @/lib/http 的 statsApi 实例承担（外部统计服务，不携带凭据）；
  * 本文件只声明 endpoint、业务错误文案与按状态码（429 / 409）区分的提示语。
+ * 公开函数遵循 throw 契约：成功返回数据，失败抛 ApiError。
  */
 import { ApiError, statsApi } from '@/lib/http'
 import type {
   QuestionAnswer,
   StoredSubmission,
   SurveyStats,
-  SurveyStatsResponse,
   SurveySubmission,
   SurveySubmitResponse,
-  UserSubmissionsResponse,
 } from '@/types/survey'
 
 /**
@@ -41,6 +40,26 @@ function getDetailError(error: ApiError): string | undefined {
   return typeof detailError === 'string' ? detailError : undefined
 }
 
+function rethrowSurveySubmitError(error: unknown): never {
+  if (error instanceof ApiError) {
+    if (error.status === 429) {
+      throw new ApiError('提交过于频繁，请稍后再试', {
+        status: 429,
+        detail: error.detail,
+        cause: error,
+      })
+    }
+    if (error.status === 409) {
+      throw new ApiError(getDetailError(error) || '你已经提交过这份问卷了', {
+        status: 409,
+        detail: error.detail,
+        cause: error,
+      })
+    }
+  }
+  throw error
+}
+
 /**
  * 提交问卷
  */
@@ -53,22 +72,22 @@ export async function submitSurvey(
     userId?: string
   }
 ): Promise<SurveySubmitResponse> {
+  const userId = options?.userId || getUserId()
+
+  const submission: SurveySubmission & { allowMultiple?: boolean } = {
+    surveyId,
+    surveyVersion,
+    userId,
+    answers,
+    submittedAt: new Date().toISOString(),
+    allowMultiple: options?.allowMultiple,
+    metadata: {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+    },
+  }
+
   try {
-    const userId = options?.userId || getUserId()
-
-    const submission: SurveySubmission & { allowMultiple?: boolean } = {
-      surveyId,
-      surveyVersion,
-      userId,
-      answers,
-      submittedAt: new Date().toISOString(),
-      allowMultiple: options?.allowMultiple,
-      metadata: {
-        userAgent: navigator.userAgent,
-        language: navigator.language,
-      },
-    }
-
     const data = await statsApi.post<{ submissionId?: string; message?: string }>(
       '/survey/submit',
       {
@@ -78,43 +97,22 @@ export async function submitSurvey(
     )
 
     return {
-      success: true,
       submissionId: data.submissionId,
       message: data.message,
     }
   } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 429) {
-        return { success: false, error: '提交过于频繁，请稍后再试' }
-      }
-      if (error.status === 409) {
-        return { success: false, error: getDetailError(error) || '你已经提交过这份问卷了' }
-      }
-      if (error.status !== undefined) {
-        return { success: false, error: error.message }
-      }
-    }
-    console.error('Error submitting survey:', error)
-    return { success: false, error: '网络错误' }
+    rethrowSurveySubmitError(error)
   }
 }
 
 /**
  * 获取问卷统计数据
  */
-export async function getSurveyStats(surveyId: string): Promise<SurveyStatsResponse> {
-  try {
-    const data = await statsApi.get<{ stats: SurveyStats }>(`/survey/stats/${surveyId}`, {
-      errorMessage: '获取统计数据失败',
-    })
-    return { success: true, stats: data.stats }
-  } catch (error) {
-    if (error instanceof ApiError && error.status !== undefined) {
-      return { success: false, error: error.message }
-    }
-    console.error('Error fetching survey stats:', error)
-    return { success: false, error: '网络错误' }
-  }
+export async function getSurveyStats(surveyId: string): Promise<SurveyStats> {
+  const data = await statsApi.get<{ stats: SurveyStats }>(`/survey/stats/${surveyId}`, {
+    errorMessage: '获取统计数据失败',
+  })
+  return data.stats
 }
 
 /**
@@ -123,50 +121,31 @@ export async function getSurveyStats(surveyId: string): Promise<SurveyStatsRespo
 export async function getUserSubmissions(
   surveyId?: string,
   userId?: string
-): Promise<UserSubmissionsResponse> {
-  try {
-    const finalUserId = userId || getUserId()
+): Promise<StoredSubmission[]> {
+  const finalUserId = userId || getUserId()
 
-    const data = await statsApi.get<{ submissions: StoredSubmission[] }>('/survey/submissions', {
-      query: {
-        user_id: finalUserId,
-        survey_id: surveyId || undefined,
-      },
-      errorMessage: '获取提交记录失败',
-    })
-    return { success: true, submissions: data.submissions }
-  } catch (error) {
-    if (error instanceof ApiError && error.status !== undefined) {
-      return { success: false, error: error.message }
-    }
-    console.error('Error fetching user submissions:', error)
-    return { success: false, error: '网络错误' }
-  }
+  const data = await statsApi.get<{ submissions: StoredSubmission[] }>('/survey/submissions', {
+    query: {
+      user_id: finalUserId,
+      survey_id: surveyId || undefined,
+    },
+    errorMessage: '获取提交记录失败',
+  })
+  return data.submissions ?? []
 }
 
 /**
  * 检查用户是否已提交问卷
  */
-export async function checkUserSubmission(
-  surveyId: string,
-  userId?: string
-): Promise<{ success: boolean; hasSubmitted?: boolean; error?: string }> {
-  try {
-    const finalUserId = userId || getUserId()
+export async function checkUserSubmission(surveyId: string, userId?: string): Promise<boolean> {
+  const finalUserId = userId || getUserId()
 
-    const data = await statsApi.get<{ hasSubmitted?: boolean }>('/survey/check', {
-      query: {
-        user_id: finalUserId,
-        survey_id: surveyId,
-      },
-      errorMessage: '检查失败',
-    })
-    return { success: true, hasSubmitted: data.hasSubmitted }
-  } catch (error) {
-    if (error instanceof ApiError && error.status !== undefined) {
-      return { success: false, error: error.message }
-    }
-    console.error('Error checking submission:', error)
-    return { success: false, error: '网络错误' }
-  }
+  const data = await statsApi.get<{ hasSubmitted?: boolean }>('/survey/check', {
+    query: {
+      user_id: finalUserId,
+      survey_id: surveyId,
+    },
+    errorMessage: '检查失败',
+  })
+  return Boolean(data.hasSubmitted)
 }

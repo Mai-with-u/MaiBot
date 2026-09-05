@@ -297,7 +297,6 @@ MODULE_ALIASES = {
     "remote": "远程服务",
     # WebUI
     "webui.ai_search": "WebUI智能搜索",
-    "webui.plugin_stats_proxy": "WebUI插件统计代理",
     "webui.websocket": "WebUI连接管理",
     "webui_data_transfer": "WebUI数据迁移",
     # A-Memorix

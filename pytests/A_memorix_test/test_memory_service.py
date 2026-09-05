@@ -1,6 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
-from src.services.memory_service import MemorySearchResult, MemoryService
+from src.services.memory_service import MemoryMetadataUnavailableError, MemorySearchResult, MemoryService
 
 
 def test_coerce_write_result_treats_skipped_payload_as_success():
@@ -387,3 +389,126 @@ async def test_memory_correction_admin_uses_new_component_and_keeps_legacy_alias
             {"timeout_ms": 120000},
         ),
     ]
+
+
+def test_query_memory_rows_uses_runtime_kernel_and_keeps_list_shaping(monkeypatch):
+    service = MemoryService()
+    captured = []
+
+    class FakeStore:
+        @staticmethod
+        def query(sql, params):
+            captured.append((sql, params))
+            return [{"hash": "h1"}]
+
+    monkeypatch.setattr(
+        "src.services.memory_service.get_runtime_kernel",
+        lambda: SimpleNamespace(metadata_store=FakeStore()),
+    )
+
+    result = service.query_memory_rows("SELECT hash FROM paragraphs", ("p1",))
+
+    assert result == [{"hash": "h1"}]
+    assert captured == [("SELECT hash FROM paragraphs", ("p1",))]
+
+
+def test_query_memory_rows_returns_empty_when_store_missing(monkeypatch):
+    service = MemoryService()
+    monkeypatch.setattr("src.services.memory_service.get_runtime_kernel", lambda: None)
+
+    assert service.query_memory_rows("SELECT 1") == []
+
+
+def test_query_memory_records_dict_shapes_rows_and_raises_when_unavailable(monkeypatch):
+    service = MemoryService()
+    captured = []
+
+    class FakeRow(dict):
+        pass
+
+    class FakeStore:
+        @staticmethod
+        def query(sql, params):
+            captured.append((sql, params))
+            return [FakeRow(hash="h1")]
+
+    monkeypatch.setattr(
+        "src.services.memory_service.get_runtime_kernel",
+        lambda: SimpleNamespace(metadata_store=FakeStore()),
+    )
+
+    result = service.query_memory_records("SELECT * FROM paragraphs WHERE hash = ?", ("h1",))
+
+    assert result == [{"hash": "h1"}]
+    assert all(isinstance(item, dict) for item in result)
+    assert captured == [("SELECT * FROM paragraphs WHERE hash = ?", ("h1",))]
+
+    monkeypatch.setattr("src.services.memory_service.get_runtime_kernel", lambda: None)
+    with pytest.raises(MemoryMetadataUnavailableError, match="长期记忆 metadata 数据库尚未就绪"):
+        service.query_memory_records("SELECT 1")
+
+
+def test_search_paragraph_records_uses_original_sql(monkeypatch):
+    service = MemoryService()
+    captured = []
+
+    class FakeStore:
+        @staticmethod
+        def query(sql, params):
+            captured.append((sql, params))
+            return [{"hash": "h1", "content": "咖啡"}]
+
+    monkeypatch.setattr(
+        "src.services.memory_service.get_runtime_kernel",
+        lambda: SimpleNamespace(metadata_store=FakeStore()),
+    )
+
+    rows = service.search_paragraph_records(
+        include_inactive=False,
+        keyword="咖啡",
+        pattern="%咖啡%",
+        limit=20,
+    )
+
+    assert rows == [{"hash": "h1", "content": "咖啡"}]
+    assert len(captured) == 1
+    sql, params = captured[0]
+    assert "FROM paragraphs" in sql
+    assert "LOWER(COALESCE(content, '')) LIKE ? ESCAPE '\\'" in sql
+    assert params == (0, "咖啡", "%咖啡%", "%咖啡%", "%咖啡%", 20)
+
+
+@pytest.mark.asyncio
+async def test_get_paragraphs_by_source_uses_host_ensure_kernel(monkeypatch):
+    service = MemoryService()
+    calls = []
+
+    class FakeStore:
+        @staticmethod
+        def get_paragraphs_by_source(source: str):
+            calls.append(source)
+            return [{"hash": "p1", "metadata": {"trigger_message_count": 6}}]
+
+    class FakeHost:
+        @staticmethod
+        async def _ensure_kernel():
+            return SimpleNamespace(metadata_store=FakeStore())
+
+    monkeypatch.setattr("src.services.memory_service.a_memorix_host_service", FakeHost())
+
+    result = await service.get_paragraphs_by_source("chat_summary:session-1")
+
+    assert result == [{"hash": "p1", "metadata": {"trigger_message_count": 6}}]
+    assert calls == ["chat_summary:session-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_paragraphs_by_source_returns_empty_when_ensure_kernel_missing(monkeypatch):
+    service = MemoryService()
+
+    class FakeHost:
+        pass
+
+    monkeypatch.setattr("src.services.memory_service.a_memorix_host_service", FakeHost())
+
+    assert await service.get_paragraphs_by_source("chat_summary:session-1") == []

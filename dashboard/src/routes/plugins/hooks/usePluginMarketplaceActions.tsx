@@ -238,15 +238,6 @@ export function usePluginMarketplaceActions({
     try {
       const result = await likePlugin(pluginId)
 
-      if (!result.success) {
-        toast({
-          title: '点赞失败',
-          description: result.error || '无法提交点赞',
-          variant: 'destructive',
-        })
-        return
-      }
-
       setPluginStats((currentStats) => {
         const currentPluginStats = currentStats[pluginId] ?? currentStats[plugin.id] ?? {
           plugin_id: pluginId,
@@ -274,11 +265,42 @@ export function usePluginMarketplaceActions({
 
         return nextStats
       })
+    } catch (error) {
+      toast({
+        title: '点赞失败',
+        description: error instanceof Error ? error.message : '无法提交点赞',
+        variant: 'destructive',
+      })
     } finally {
       setLikingPluginIds((currentIds) => {
         const nextIds = new Set(currentIds)
         nextIds.delete(pluginId)
         return nextIds
+      })
+    }
+  }
+
+  const refreshInstalledPlugin = async (plugin: PluginInfo) => {
+    try {
+      const installed = await getInstalledPlugins({ forceRefresh: true })
+      setInstalledPlugins(installed)
+      setPlugins((prevPlugins) =>
+        prevPlugins.map((item) => {
+          if (item.id !== plugin.id) {
+            return item
+          }
+          return {
+            ...item,
+            installed: checkPluginInstalled(item.id, installed),
+            installed_version: getInstalledPluginVersion(item.id, installed),
+          }
+        })
+      )
+    } catch (error) {
+      toast({
+        title: '刷新已安装插件失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
       })
     }
   }
@@ -333,26 +355,7 @@ export function usePluginMarketplaceActions({
         loaded_plugins: 1,
       })
 
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === installingPlugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
+      await refreshInstalledPlugin(installingPlugin)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误'
       setPluginProgress({
@@ -387,26 +390,7 @@ export function usePluginMarketplaceActions({
         description: `${plugin.manifest.name} 已成功卸载`,
       })
 
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === plugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
+      await refreshInstalledPlugin(plugin)
     } catch (error) {
       toast({
         title: '卸载失败',
@@ -471,26 +455,7 @@ export function usePluginMarketplaceActions({
         loaded_plugins: 1,
       })
 
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === plugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
+      await refreshInstalledPlugin(plugin)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '未知错误'
       setPluginProgress({

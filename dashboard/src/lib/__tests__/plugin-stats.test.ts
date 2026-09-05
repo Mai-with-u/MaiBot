@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const SUMMARY_STORAGE_KEY = 'maibot-plugin-stats-summary-cache'
 
-// 稳定的 mock：backendApi 方法与 ApiError 类在 vi.resetModules 后保持同一引用
+// 稳定的 mock：statsApi 方法与 ApiError 类在 vi.resetModules 后保持同一引用
 const httpMocks = vi.hoisted(() => {
   class MockApiError extends Error {
     readonly status?: number
@@ -18,7 +18,7 @@ const httpMocks = vi.hoisted(() => {
 
   return {
     ApiError: MockApiError,
-    backendApi: {
+    statsApi: {
       get: vi.fn(),
       post: vi.fn(),
     },
@@ -27,7 +27,7 @@ const httpMocks = vi.hoisted(() => {
 
 vi.mock('@/lib/http', () => ({
   ApiError: httpMocks.ApiError,
-  backendApi: httpMocks.backendApi,
+  statsApi: httpMocks.statsApi,
 }))
 
 async function loadPluginStats() {
@@ -41,16 +41,17 @@ function seedSummaryCache(data: Record<string, unknown>): void {
 
 describe('plugin-stats', () => {
   beforeEach(() => {
-    // 模块内存缓存 + localStorage 缓存都要清干净
     vi.resetModules()
     localStorage.clear()
+    httpMocks.statsApi.get.mockReset()
+    httpMocks.statsApi.post.mockReset()
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   describe('getPluginStats', () => {
     it('归一化 stats 包装响应并补齐缺省数值', async () => {
-      httpMocks.backendApi.get.mockResolvedValue({
+      httpMocks.statsApi.get.mockResolvedValue({
         stats: { plugin_id: 'plugin-a', likes: 7, rating: 4.5 },
       })
       const stats = await loadPluginStats()
@@ -64,24 +65,28 @@ describe('plugin-stats', () => {
         rating_count: 0,
         recent_ratings: undefined,
       })
-      expect(httpMocks.backendApi.get).toHaveBeenCalledWith(
-        '/api/webui/plugins/stats-proxy/stats/plugin-a'
-      )
+      expect(httpMocks.statsApi.get).toHaveBeenCalledWith('/stats/plugin-a', {
+        errorMessage: '获取插件统计失败',
+      })
     })
 
-    it('响应不是对象或请求失败时返回 null', async () => {
-      httpMocks.backendApi.get.mockResolvedValueOnce(null)
+    it('响应不是对象或请求失败时抛出', async () => {
+      httpMocks.statsApi.get.mockResolvedValueOnce(null)
       const stats = await loadPluginStats()
-      await expect(stats.getPluginStats('plugin-a')).resolves.toBeNull()
+      await expect(stats.getPluginStats('plugin-a')).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '插件统计响应格式无效',
+      })
 
-      httpMocks.backendApi.get.mockRejectedValueOnce(new Error('网络错误'))
-      await expect(stats.getPluginStats('plugin-a')).resolves.toBeNull()
+      const networkError = new Error('网络错误')
+      httpMocks.statsApi.get.mockRejectedValueOnce(networkError)
+      await expect(stats.getPluginStats('plugin-a')).rejects.toBe(networkError)
     })
   })
 
   describe('getPluginStatsSummary', () => {
-    it('拉取摘要并写入内存与 localStorage 缓存，TTL 内不重复请求', async () => {
-      httpMocks.backendApi.get.mockResolvedValue({
+    it('拉取摘要并写入 localStorage 缓存，TTL 内不重复请求', async () => {
+      httpMocks.statsApi.get.mockResolvedValue({
         success: true,
         stats: { 'plugin-a': { likes: 3 } },
       })
@@ -91,7 +96,10 @@ describe('plugin-stats', () => {
       expect(summary['plugin-a']).toMatchObject({ plugin_id: 'plugin-a', likes: 3 })
 
       await stats.getPluginStatsSummary()
-      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
+      expect(httpMocks.statsApi.get).toHaveBeenCalledTimes(1)
+      expect(httpMocks.statsApi.get).toHaveBeenCalledWith('/stats/summary', {
+        errorMessage: '获取插件统计摘要失败',
+      })
 
       const storedRaw = localStorage.getItem(SUMMARY_STORAGE_KEY)
       expect(storedRaw).not.toBeNull()
@@ -102,30 +110,35 @@ describe('plugin-stats', () => {
     })
 
     it('forceRefresh 跳过缓存重新请求', async () => {
-      httpMocks.backendApi.get.mockResolvedValue({ success: true, stats: {} })
+      httpMocks.statsApi.get.mockResolvedValue({ success: true, stats: {} })
       const stats = await loadPluginStats()
 
       await stats.getPluginStatsSummary()
       await stats.getPluginStatsSummary({ forceRefresh: true })
-      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
+      expect(httpMocks.statsApi.get).toHaveBeenCalledTimes(2)
     })
 
-    it('内存缓存为空时命中新鲜的 localStorage 缓存', async () => {
+    it('命中新鲜的 localStorage 缓存时不发请求', async () => {
       seedSummaryCache({ 'plugin-b': { likes: 9 } })
       const stats = await loadPluginStats()
 
       const summary = await stats.getPluginStatsSummary()
       expect(summary['plugin-b']).toMatchObject({ plugin_id: 'plugin-b', likes: 9 })
-      expect(httpMocks.backendApi.get).not.toHaveBeenCalled()
+      expect(httpMocks.statsApi.get).not.toHaveBeenCalled()
     })
 
-    it('后端返回 success=false 或抛错时返回空对象', async () => {
-      httpMocks.backendApi.get.mockResolvedValueOnce({ success: false, error: '服务不可用' })
+    it('后端返回 success=false 或抛错时向上抛出，不写入空缓存', async () => {
+      httpMocks.statsApi.get.mockResolvedValueOnce({ success: false, error: '服务不可用' })
       const stats = await loadPluginStats()
-      await expect(stats.getPluginStatsSummary()).resolves.toEqual({})
+      await expect(stats.getPluginStatsSummary()).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '服务不可用',
+      })
+      expect(localStorage.getItem(SUMMARY_STORAGE_KEY)).toBeNull()
 
-      httpMocks.backendApi.get.mockRejectedValueOnce(new Error('boom'))
-      await expect(stats.getPluginStatsSummary({ forceRefresh: true })).resolves.toEqual({})
+      httpMocks.statsApi.get.mockRejectedValueOnce(new Error('boom'))
+      await expect(stats.getPluginStatsSummary({ forceRefresh: true })).rejects.toThrow('boom')
+      expect(localStorage.getItem(SUMMARY_STORAGE_KEY)).toBeNull()
     })
   })
 
@@ -154,61 +167,52 @@ describe('plugin-stats', () => {
   describe('likePlugin / dislikePlugin', () => {
     it('点赞成功后同步更新本地统计缓存', async () => {
       seedSummaryCache({ 'plugin-a': { likes: 1, dislikes: 0 } })
-      httpMocks.backendApi.post.mockResolvedValue({ likes: 2, dislikes: 0, liked: true })
+      httpMocks.statsApi.post.mockResolvedValue({ likes: 2, dislikes: 0, liked: true })
       const stats = await loadPluginStats()
 
       const result = await stats.likePlugin('plugin-a', 'user-1')
       expect(result).toEqual({ success: true, likes: 2, dislikes: 0, liked: true })
-      expect(httpMocks.backendApi.post).toHaveBeenCalledWith(
-        '/api/webui/plugins/stats-proxy/stats/like',
-        { body: { plugin_id: 'plugin-a', user_id: 'user-1' } }
-      )
+      expect(httpMocks.statsApi.post).toHaveBeenCalledWith('/stats/like', {
+        body: { plugin_id: 'plugin-a', user_id: 'user-1' },
+        errorMessage: '点赞失败',
+      })
 
       const cached = stats.getCachedPluginStatsSummary()
       expect(cached?.['plugin-a'].likes).toBe(2)
     })
 
-    it('429 返回固定的限频文案', async () => {
-      httpMocks.backendApi.post.mockRejectedValue(new httpMocks.ApiError('限频', { status: 429 }))
+    it('429 抛出固定的限频文案', async () => {
+      httpMocks.statsApi.post.mockRejectedValue(new httpMocks.ApiError('限频', { status: 429 }))
       const stats = await loadPluginStats()
 
-      await expect(stats.likePlugin('plugin-a', 'user-1')).resolves.toEqual({
-        success: false,
-        error: '点赞过于频繁，请稍后再试',
+      await expect(stats.likePlugin('plugin-a', 'user-1')).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '点赞过于频繁，请稍后再试',
+        status: 429,
       })
-      await expect(stats.dislikePlugin('plugin-a', 'user-1')).resolves.toEqual({
-        success: false,
-        error: '操作过于频繁，请稍后再试',
+      await expect(stats.dislikePlugin('plugin-a', 'user-1')).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '操作过于频繁，请稍后再试',
+        status: 429,
       })
     })
 
-    it('HTTP 错误优先展示后端可读错误，乱码错误回落默认文案', async () => {
-      httpMocks.backendApi.post.mockRejectedValueOnce(
-        new httpMocks.ApiError('请求失败', { status: 400, detail: { error: '插件不存在' } })
-      )
+    it('HTTP 错误直接抛出 ApiError', async () => {
+      const error = new httpMocks.ApiError('插件不存在', {
+        status: 400,
+        detail: { error: '插件不存在' },
+      })
+      httpMocks.statsApi.post.mockRejectedValueOnce(error)
       const stats = await loadPluginStats()
-      await expect(stats.likePlugin('plugin-a', 'user-1')).resolves.toEqual({
-        success: false,
-        error: '插件不存在',
-      })
-
-      httpMocks.backendApi.post.mockRejectedValueOnce(
-        new httpMocks.ApiError('请求失败', { status: 400, detail: { error: '閹绘帊娆�' } })
-      )
-      await expect(stats.likePlugin('plugin-a', 'user-1')).resolves.toEqual({
-        success: false,
-        error: '点赞失败',
-      })
+      await expect(stats.likePlugin('plugin-a', 'user-1')).rejects.toBe(error)
     })
 
-    it('网络层失败返回网络错误文案', async () => {
-      httpMocks.backendApi.post.mockRejectedValue(new Error('offline'))
+    it('网络层失败向上抛出', async () => {
+      const networkError = new Error('offline')
+      httpMocks.statsApi.post.mockRejectedValue(networkError)
       const stats = await loadPluginStats()
 
-      await expect(stats.likePlugin('plugin-a', 'user-1')).resolves.toEqual({
-        success: false,
-        error: '网络请求失败',
-      })
+      await expect(stats.likePlugin('plugin-a', 'user-1')).rejects.toBe(networkError)
     })
   })
 
@@ -219,7 +223,7 @@ describe('plugin-stats', () => {
         success: false,
         error: '评分和评论至少需要填写一项',
       })
-      expect(httpMocks.backendApi.post).not.toHaveBeenCalled()
+      expect(httpMocks.statsApi.post).not.toHaveBeenCalled()
     })
 
     it('评分超出 1-5 范围时拒绝', async () => {
@@ -236,64 +240,63 @@ describe('plugin-stats', () => {
 
     it('提交评分与评论并用响应更新缓存', async () => {
       seedSummaryCache({ 'plugin-a': { rating: 3, rating_count: 1 } })
-      httpMocks.backendApi.post.mockResolvedValue({ rating: 4.2, rating_count: 2 })
+      httpMocks.statsApi.post.mockResolvedValue({ rating: 4.2, rating_count: 2 })
       const stats = await loadPluginStats()
 
       const result = await stats.ratePlugin('plugin-a', 5, '很好用', 'user-1')
       expect(result).toEqual({ success: true, rating: 4.2, rating_count: 2 })
-      expect(httpMocks.backendApi.post).toHaveBeenCalledWith(
-        '/api/webui/plugins/stats-proxy/stats/rate',
-        { body: { plugin_id: 'plugin-a', user_id: 'user-1', rating: 5, comment: '很好用' } }
-      )
+      expect(httpMocks.statsApi.post).toHaveBeenCalledWith('/stats/rate', {
+        body: { plugin_id: 'plugin-a', user_id: 'user-1', rating: 5, comment: '很好用' },
+        errorMessage: '评分失败',
+      })
 
       const cached = stats.getCachedPluginStatsSummary()
       expect(cached?.['plugin-a']).toMatchObject({ rating: 4.2, rating_count: 2 })
     })
 
     it('仅提交评论时载荷不带 rating 字段', async () => {
-      httpMocks.backendApi.post.mockResolvedValue({})
+      httpMocks.statsApi.post.mockResolvedValue({})
       const stats = await loadPluginStats()
 
       await stats.ratePlugin('plugin-a', null, '只有评论', 'user-1')
-      expect(httpMocks.backendApi.post).toHaveBeenCalledWith(
-        '/api/webui/plugins/stats-proxy/stats/rate',
-        { body: { plugin_id: 'plugin-a', user_id: 'user-1', comment: '只有评论' } }
-      )
+      expect(httpMocks.statsApi.post).toHaveBeenCalledWith('/stats/rate', {
+        body: { plugin_id: 'plugin-a', user_id: 'user-1', comment: '只有评论' },
+        errorMessage: '评分失败',
+      })
     })
 
-    it('429 返回每日限次文案，HTTP 错误透传后端 error 字段', async () => {
-      httpMocks.backendApi.post.mockRejectedValueOnce(
-        new httpMocks.ApiError('限频', { status: 429 })
-      )
+    it('429 抛出每日限次文案，其它 HTTP 错误原样抛出', async () => {
+      httpMocks.statsApi.post.mockRejectedValueOnce(new httpMocks.ApiError('限频', { status: 429 }))
       const stats = await loadPluginStats()
-      await expect(stats.ratePlugin('plugin-a', 4, null, 'user-1')).resolves.toEqual({
-        success: false,
-        error: '每天最多评分 3 次',
+      await expect(stats.ratePlugin('plugin-a', 4, null, 'user-1')).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '每天最多评分 3 次',
+        status: 429,
       })
 
-      httpMocks.backendApi.post.mockRejectedValueOnce(
-        new httpMocks.ApiError('请求失败', { status: 400, detail: { error: '评论包含敏感词' } })
-      )
-      await expect(stats.ratePlugin('plugin-a', 4, null, 'user-1')).resolves.toEqual({
-        success: false,
-        error: '评论包含敏感词',
+      const error = new httpMocks.ApiError('评论包含敏感词', {
+        status: 400,
+        detail: { error: '评论包含敏感词' },
       })
+      httpMocks.statsApi.post.mockRejectedValueOnce(error)
+      await expect(stats.ratePlugin('plugin-a', 4, null, 'user-1')).rejects.toBe(error)
     })
   })
 
   describe('recordPluginDownload', () => {
     it('记录成功后更新缓存中的下载数', async () => {
       seedSummaryCache({ 'plugin-a': { downloads: 10 } })
-      httpMocks.backendApi.post.mockResolvedValue({ counted: true, downloads: 11 })
+      httpMocks.statsApi.post.mockResolvedValue({ counted: true, downloads: 11 })
       const stats = await loadPluginStats()
 
       const result = await stats.recordPluginDownload('plugin-a')
       expect(result).toEqual({ success: true, counted: true, downloads: 11 })
 
-      const [, options] = httpMocks.backendApi.post.mock.calls[0] as [
+      const [, options] = httpMocks.statsApi.post.mock.calls[0] as [
         string,
         { body: Record<string, unknown> },
       ]
+      expect(httpMocks.statsApi.post.mock.calls[0][0]).toBe('/stats/download')
       expect(options.body.plugin_id).toBe('plugin-a')
       expect(typeof options.body.user_id).toBe('string')
       expect(String(options.body.fingerprint)).toMatch(/^fp_/)
@@ -301,34 +304,24 @@ describe('plugin-stats', () => {
       expect(stats.getCachedPluginStatsSummary()?.['plugin-a'].downloads).toBe(11)
     })
 
-    it('429 限频不阻断下载流程，视为成功', async () => {
-      httpMocks.backendApi.post.mockRejectedValue(new httpMocks.ApiError('限频', { status: 429 }))
-      const stats = await loadPluginStats()
-
-      await expect(stats.recordPluginDownload('plugin-a')).resolves.toEqual({ success: true })
-    })
-
-    it('HTTP 错误返回后端错误，网络失败返回网络文案', async () => {
-      httpMocks.backendApi.post.mockRejectedValueOnce(
-        new httpMocks.ApiError('请求失败', { status: 500, detail: { error: '统计服务异常' } })
-      )
-      const stats = await loadPluginStats()
-      await expect(stats.recordPluginDownload('plugin-a')).resolves.toEqual({
-        success: false,
-        error: '统计服务异常',
+    it('HTTP 错误与网络失败均向上抛出', async () => {
+      const httpError = new httpMocks.ApiError('统计服务异常', {
+        status: 500,
+        detail: { error: '统计服务异常' },
       })
+      httpMocks.statsApi.post.mockRejectedValueOnce(httpError)
+      const stats = await loadPluginStats()
+      await expect(stats.recordPluginDownload('plugin-a')).rejects.toBe(httpError)
 
-      httpMocks.backendApi.post.mockRejectedValueOnce(new Error('offline'))
-      await expect(stats.recordPluginDownload('plugin-a')).resolves.toEqual({
-        success: false,
-        error: '网络请求失败',
-      })
+      const networkError = new Error('offline')
+      httpMocks.statsApi.post.mockRejectedValueOnce(networkError)
+      await expect(stats.recordPluginDownload('plugin-a')).rejects.toBe(networkError)
     })
   })
 
   describe('getPluginUserState', () => {
     it('归一化用户状态字段', async () => {
-      httpMocks.backendApi.get.mockResolvedValue({
+      httpMocks.statsApi.get.mockResolvedValue({
         success: true,
         liked: true,
         disliked: false,
@@ -342,19 +335,23 @@ describe('plugin-stats', () => {
         rating: 4,
         comment: '',
       })
-      expect(httpMocks.backendApi.get).toHaveBeenCalledWith(
-        '/api/webui/plugins/stats-proxy/stats/user-state',
-        { query: { plugin_id: 'plugin-a', user_id: 'user-1' } }
-      )
+      expect(httpMocks.statsApi.get).toHaveBeenCalledWith('/stats/user-state', {
+        query: { plugin_id: 'plugin-a', user_id: 'user-1' },
+        errorMessage: '获取插件用户状态失败',
+      })
     })
 
-    it('success=false 或请求失败时返回 null', async () => {
-      httpMocks.backendApi.get.mockResolvedValueOnce({ success: false })
+    it('success=false 或请求失败时抛出', async () => {
+      httpMocks.statsApi.get.mockResolvedValueOnce({ success: false })
       const stats = await loadPluginStats()
-      await expect(stats.getPluginUserState('plugin-a', 'user-1')).resolves.toBeNull()
+      await expect(stats.getPluginUserState('plugin-a', 'user-1')).rejects.toMatchObject({
+        name: 'ApiError',
+        message: '获取插件用户状态失败',
+      })
 
-      httpMocks.backendApi.get.mockRejectedValueOnce(new Error('boom'))
-      await expect(stats.getPluginUserState('plugin-a', 'user-1')).resolves.toBeNull()
+      const boom = new Error('boom')
+      httpMocks.statsApi.get.mockRejectedValueOnce(boom)
+      await expect(stats.getPluginUserState('plugin-a', 'user-1')).rejects.toBe(boom)
     })
   })
 

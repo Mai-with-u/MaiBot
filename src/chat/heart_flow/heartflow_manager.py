@@ -112,6 +112,10 @@ class HeartflowManager:
         except Exception as exc:
             logger.warning(f"淘汰心流聊天 {session_id} 失败: {exc}", exc_info=True)
 
+    async def stop_heartflow_chat(self, session_id: str) -> None:
+        """停止并移除指定会话的心流 runtime。"""
+        await self._evict_chat(session_id, reason="deleted_chat")
+
     async def clear_chat_history_context(self, session_id: str) -> bool:
         """停止并移除当前会话运行时，使其短期历史上下文立即失效。"""
 

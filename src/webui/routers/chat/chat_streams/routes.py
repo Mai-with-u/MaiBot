@@ -1110,11 +1110,11 @@ def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
     }
 
 
-def _release_deleted_chat_runtime(session_id: str) -> None:
-    """移除运行期缓存，避免定时保存把已删除聊天流重新写回数据库。"""
+async def _release_deleted_chat_runtime(session_id: str) -> None:
+    """停止心流 runtime 并移除运行期缓存，避免定时保存把已删除聊天流重新写回数据库。"""
 
     core_chat_manager.sessions.pop(session_id, None)
-    heartflow_manager.pop_heartflow_chat(session_id)
+    await heartflow_manager.stop_heartflow_chat(session_id)
 
 
 def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
@@ -1161,7 +1161,6 @@ def _delete_chat_session_scope(session_id: str) -> Dict[str, Any]:
             total_deleted += deleted_count
             items.append({"key": key, "label": label, "count": deleted_count})
 
-    _release_deleted_chat_runtime(session_id)
     logger.warning(
         "已删除聊天流及关联数据: "
         f"session_id={session_id} total_deleted={total_deleted} items={items}"
@@ -1264,7 +1263,9 @@ async def delete_chat_session(session_id: str) -> Dict[str, object]:
     if not normalized_session_id:
         raise HTTPException(status_code=400, detail="缺少聊天流 session_id")
 
-    return _delete_chat_session_scope(normalized_session_id)
+    result = _delete_chat_session_scope(normalized_session_id)
+    await _release_deleted_chat_runtime(normalized_session_id)
+    return result
 
 
 @router.put("/sessions/{session_id}/talk-frequency")

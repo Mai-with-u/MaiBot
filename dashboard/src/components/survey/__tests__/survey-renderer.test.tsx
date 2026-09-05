@@ -47,27 +47,32 @@ function makeConfig(overrides?: Partial<SurveyConfig>): SurveyConfig {
 }
 
 beforeEach(() => {
-  vi.mocked(surveyApi.checkUserSubmission).mockResolvedValue({ success: true, hasSubmitted: false })
-  vi.mocked(surveyApi.submitSurvey).mockResolvedValue({ success: true, submissionId: 'sub-001' })
+  vi.mocked(surveyApi.checkUserSubmission).mockResolvedValue(false)
+  vi.mocked(surveyApi.submitSurvey).mockResolvedValue({ submissionId: 'sub-001' })
 })
 
 describe('SurveyRenderer 展示前置分支', () => {
   it('检查提交状态期间只显示加载指示', () => {
-    vi.mocked(surveyApi.checkUserSubmission).mockReturnValue(
-      new Promise<{ success: boolean; hasSubmitted?: boolean; error?: string }>(() => {})
-    )
+    vi.mocked(surveyApi.checkUserSubmission).mockReturnValue(new Promise<boolean>(() => {}))
     const { container } = render(<SurveyRenderer config={makeConfig()} />)
     expect(container.querySelector('.animate-spin')).toBeInTheDocument()
     expect(screen.queryByText('你的昵称')).not.toBeInTheDocument()
   })
 
   it('已提交过且不允许多次提交时显示提示', async () => {
-    vi.mocked(surveyApi.checkUserSubmission).mockResolvedValue({ success: true, hasSubmitted: true })
+    vi.mocked(surveyApi.checkUserSubmission).mockResolvedValue(true)
     render(<SurveyRenderer config={makeConfig()} />)
     expect(await screen.findByText('你已经提交过这份问卷了，感谢参与！')).toBeInTheDocument()
     expect(surveyApi.checkUserSubmission).toHaveBeenCalledWith('test-survey')
     // 已提交分支下不再渲染题目
     expect(screen.queryByText('你的昵称')).not.toBeInTheDocument()
+  })
+
+  it('检查提交状态失败时仍展示问卷并用错误文案提示', async () => {
+    vi.mocked(surveyApi.checkUserSubmission).mockRejectedValue(new Error('检查失败'))
+    render(<SurveyRenderer config={makeConfig()} />)
+    expect(await screen.findByText('你的昵称')).toBeInTheDocument()
+    expect(screen.getByText('检查失败')).toBeInTheDocument()
   })
 
   it('允许多次提交时跳过历史提交检查直接渲染问卷', async () => {
@@ -160,8 +165,8 @@ describe('SurveyRenderer 正常答题流程', () => {
     )
   })
 
-  it('提交返回失败时显示错误并回调 onSubmitError', async () => {
-    vi.mocked(surveyApi.submitSurvey).mockResolvedValue({ success: false, error: '服务器繁忙' })
+  it('提交失败时显示错误并回调 onSubmitError', async () => {
+    vi.mocked(surveyApi.submitSurvey).mockRejectedValue(new Error('服务器繁忙'))
     const user = userEvent.setup()
     const onSubmitError = vi.fn()
     render(<SurveyRenderer config={makeConfig()} onSubmitError={onSubmitError} />)

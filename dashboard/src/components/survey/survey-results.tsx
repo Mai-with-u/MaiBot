@@ -39,18 +39,10 @@ export function SurveyResults({
       setError(null)
 
       try {
-        // 获取统计数据
-        const statsResult = await getSurveyStats(config.id)
-        if (statsResult.success && statsResult.stats) {
-          setStats(statsResult.stats)
-        }
+        setStats(await getSurveyStats(config.id))
 
-        // 获取用户提交记录
         if (showUserSubmissions) {
-          const submissionsResult = await getUserSubmissions(config.id)
-          if (submissionsResult.success && submissionsResult.submissions) {
-            setUserSubmissions(submissionsResult.submissions)
-          }
+          setUserSubmissions(await getUserSubmissions(config.id))
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载数据失败')

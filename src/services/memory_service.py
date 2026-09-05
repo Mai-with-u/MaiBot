@@ -4,10 +4,18 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.A_memorix.host_service import a_memorix_host_service
+from src.A_memorix.runtime_registry import get_runtime_kernel
 from src.common.logger import get_logger
 
 
 logger = get_logger("memory_service")
+
+
+class MemoryMetadataUnavailableError(RuntimeError):
+    """runtime kernel 尚未提供 metadata_store。"""
+
+    def __init__(self, message: str = "长期记忆 metadata 数据库尚未就绪") -> None:
+        super().__init__(message)
 
 
 @dataclass
@@ -532,6 +540,552 @@ class MemoryService:
 
     async def protect_memory(self, *, target: str, hours: float | None = None) -> MemoryWriteResult:
         return await self.maintain_memory(action="protect", target=target, hours=hours)
+
+    def get_runtime_metadata_store(self) -> Any:
+        """读取 runtime_registry 中当前 kernel 的 metadata_store，供 WebUI 权威查询使用。"""
+
+        kernel = get_runtime_kernel()
+        return getattr(kernel, "metadata_store", None) if kernel is not None else None
+
+    def query_memory_rows(self, sql: str, params: tuple[Any, ...] = ()) -> List[Dict[str, Any]]:
+        """执行 WebUI 时间线等宽松查询；store 缺失或 SQL 失败时返回空列表。"""
+
+        metadata_store = self.get_runtime_metadata_store()
+        if metadata_store is None or not hasattr(metadata_store, "query"):
+            return []
+        try:
+            return list(metadata_store.query(sql, params))
+        except Exception:
+            return []
+
+    def query_memory_records(self, sql: str, params: tuple[Any, ...] = ()) -> List[Dict[str, Any]]:
+        """执行 WebUI 权威记忆查询；查询错误需要完整暴露，不能伪装成空结果。"""
+
+        metadata_store = self.get_runtime_metadata_store()
+        if metadata_store is None:
+            raise MemoryMetadataUnavailableError()
+        return [dict(row) for row in metadata_store.query(sql, params)]
+
+    async def get_paragraphs_by_source(self, source: str) -> List[Any]:
+        """通过宿主 `_ensure_kernel` 路径读取指定来源段落，不改行形状。"""
+
+        runtime_manager = a_memorix_host_service
+        ensure_kernel = getattr(runtime_manager, "_ensure_kernel", None)
+        if not callable(ensure_kernel):
+            return []
+        kernel = await ensure_kernel()
+        metadata_store = getattr(kernel, "metadata_store", None)
+        if metadata_store is None:
+            return []
+        paragraphs = metadata_store.get_paragraphs_by_source(source)
+        if not paragraphs:
+            return []
+        return paragraphs
+
+    @staticmethod
+    def _memory_placeholders(values: Sequence[str]) -> str:
+        return ",".join("?" for _ in values)
+
+    @staticmethod
+    def _append_limit(sql: str, limit: Optional[int]) -> str:
+        if limit is None:
+            return sql
+        return f"{sql}\n        LIMIT ?"
+
+    def search_paragraph_records(
+        self,
+        *,
+        include_inactive: bool,
+        keyword: str,
+        pattern: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT hash, content, source, knowledge_type, word_count, vector_index,
+                   created_at, updated_at, metadata, is_deleted
+            FROM paragraphs
+            WHERE (? = 1 OR COALESCE(is_deleted, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(content, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(source, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(updated_at, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, limit),
+        )
+
+    def search_entity_records(
+        self,
+        *,
+        include_inactive: bool,
+        keyword: str,
+        pattern: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT e.hash, e.name, e.appearance_count, e.vector_index, e.created_at, e.metadata, e.is_deleted,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
+            WHERE (? = 1 OR COALESCE(e.is_deleted, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(e.name, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(e.hash, '')) LIKE ? ESCAPE '\\')
+            ORDER BY e.appearance_count DESC, e.created_at DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, limit),
+        )
+
+    def search_relation_records(
+        self,
+        *,
+        include_inactive: bool,
+        keyword: str,
+        pattern: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT hash, subject, predicate, object, confidence, source_paragraph,
+                   vector_state, created_at, last_reinforced, is_inactive,
+                   is_pinned, protected_until, metadata
+            FROM relations
+            WHERE (? = 1 OR COALESCE(is_inactive, 0) = 0)
+              AND (? = '' OR LOWER(COALESCE(subject, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(predicate, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(object, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(hash, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(last_reinforced, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, pattern, limit),
+        )
+
+    def search_fact_records(
+        self,
+        *,
+        include_inactive: bool,
+        keyword: str,
+        pattern: str,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT *
+            FROM fact_claims
+            WHERE (? = 1 OR LOWER(COALESCE(status, 'active')) = 'active')
+              AND (? = '' OR LOWER(COALESCE(fact_key, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(value_text, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(scope_id, '')) LIKE ? ESCAPE '\\'
+                   OR LOWER(COALESCE(claim_id, '')) LIKE ? ESCAPE '\\')
+            ORDER BY COALESCE(updated_at, last_confirmed_at, created_at, 0) DESC
+            LIMIT ?
+            """,
+            (int(include_inactive), keyword, pattern, pattern, pattern, pattern, limit),
+        )
+
+    def get_paragraph_record(self, token: str) -> List[Dict[str, Any]]:
+        return self.query_memory_records("SELECT * FROM paragraphs WHERE hash = ? LIMIT 1", (token,))
+
+    def get_entity_record(self, token: str) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT e.*,
+                   (
+                       SELECT COUNT(DISTINCT pe.paragraph_hash)
+                       FROM paragraph_entities pe
+                       JOIN paragraphs p ON p.hash = pe.paragraph_hash
+                       WHERE pe.entity_hash = e.hash
+                         AND COALESCE(p.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM entities e
+            WHERE e.hash = ? OR LOWER(TRIM(e.name)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
+            (token, token),
+        )
+
+    def get_relation_record(self, token: str) -> List[Dict[str, Any]]:
+        return self.query_memory_records("SELECT * FROM relations WHERE hash = ? LIMIT 1", (token,))
+
+    def get_fact_record(self, token: str) -> List[Dict[str, Any]]:
+        return self.query_memory_records("SELECT * FROM fact_claims WHERE claim_id = ? LIMIT 1", (token,))
+
+    def list_entity_paragraph_hashes(self, entity_hash: str, limit: int) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT DISTINCT p.hash
+            FROM paragraph_entities pe
+            JOIN paragraphs p ON p.hash = pe.paragraph_hash
+            WHERE pe.entity_hash = ? AND COALESCE(p.is_deleted, 0) = 0
+            ORDER BY COALESCE(p.updated_at, p.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (entity_hash, limit),
+        )
+
+    def list_relation_paragraph_hashes(self, relation_hash: str, limit: int) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT DISTINCT p.hash
+            FROM paragraph_relations pr
+            JOIN paragraphs p ON p.hash = pr.paragraph_hash
+            WHERE pr.relation_hash = ? AND COALESCE(p.is_deleted, 0) = 0
+            ORDER BY COALESCE(p.updated_at, p.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (relation_hash, limit),
+        )
+
+    def list_fact_paragraph_evidence_ids(self, claim_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+        SELECT evidence_id
+        FROM fact_evidence
+        WHERE claim_id = ? AND evidence_type = 'paragraph'
+        ORDER BY observed_at DESC
+        LIMIT ?
+        """,
+            (claim_id, limit),
+        )
+
+    def list_active_paragraph_hashes(self, hashes: Sequence[str]) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"SELECT hash FROM paragraphs WHERE hash IN ({placeholders}) AND COALESCE(is_deleted, 0) = 0",
+            tuple(hashes),
+        )
+
+    def list_paragraph_records_by_hashes(self, hashes: Sequence[str], limit: int) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"SELECT * FROM paragraphs WHERE hash IN ({placeholders}) ORDER BY COALESCE(updated_at, created_at, 0) DESC LIMIT ?",
+            (*hashes, limit),
+        )
+
+    def list_entity_records_by_paragraph_hashes(self, hashes: Sequence[str], limit: int) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"""
+            SELECT DISTINCT e.*,
+                   (
+                       SELECT COUNT(DISTINCT pe2.paragraph_hash)
+                       FROM paragraph_entities pe2
+                       JOIN paragraphs p2 ON p2.hash = pe2.paragraph_hash
+                       WHERE pe2.entity_hash = e.hash
+                         AND COALESCE(p2.is_deleted, 0) = 0
+                   ) AS active_evidence_count
+            FROM paragraph_entities pe
+            JOIN entities e ON e.hash = pe.entity_hash
+            WHERE pe.paragraph_hash IN ({placeholders})
+            ORDER BY e.appearance_count DESC
+            LIMIT ?
+            """,
+            (*hashes, limit),
+        )
+
+    def list_relation_records_by_paragraph_hashes(self, hashes: Sequence[str], limit: int) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"""
+            SELECT DISTINCT r.*
+            FROM paragraph_relations pr
+            JOIN relations r ON r.hash = pr.relation_hash
+            WHERE pr.paragraph_hash IN ({placeholders})
+            ORDER BY COALESCE(r.last_reinforced, r.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (*hashes, limit),
+        )
+
+    def list_fact_records_by_paragraph_hashes(self, hashes: Sequence[str], limit: int) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"""
+            SELECT DISTINCT fc.*
+            FROM fact_evidence fe
+            JOIN fact_claims fc ON fc.claim_id = fe.claim_id
+            WHERE fe.evidence_id IN ({placeholders})
+            ORDER BY COALESCE(fc.updated_at, fc.last_confirmed_at, fc.created_at, 0) DESC
+            LIMIT ?
+            """,
+            (*hashes, limit),
+        )
+
+    def list_episode_records_by_paragraph_hashes(self, hashes: Sequence[str], limit: int) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(hashes)
+        return self.query_memory_records(
+            f"""
+            SELECT DISTINCT e.episode_id, e.title, e.summary, e.source, e.paragraph_count,
+                            e.event_time_start, e.event_time_end, e.updated_at
+            FROM episode_paragraphs ep
+            JOIN episodes e ON e.episode_id = ep.episode_id
+            WHERE ep.paragraph_hash IN ({placeholders})
+            ORDER BY e.updated_at DESC
+            LIMIT ?
+            """,
+            (*hashes, limit),
+        )
+
+    def list_fact_evidence_records(self, claim_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT evidence_type, evidence_id, stance, weight, observed_at, metadata_json
+            FROM fact_evidence WHERE claim_id = ? ORDER BY observed_at DESC LIMIT ?
+            """,
+            (claim_id, limit),
+        )
+
+    def list_fact_transition_records(self, claim_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.query_memory_records(
+            """
+            SELECT transition_id, old_claim_id, new_claim_id, transition_type, reason,
+                   evidence_type, evidence_id, created_at
+            FROM fact_transitions
+            WHERE old_claim_id = ? OR new_claim_id = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (claim_id, claim_id, limit),
+        )
+
+    def list_profile_snapshot_records(
+        self,
+        *,
+        paragraph_hashes: Sequence[str],
+        fact_ids: Sequence[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        profile_match_clauses: List[str] = []
+        profile_params: List[Any] = []
+        if paragraph_hashes:
+            placeholders = self._memory_placeholders(paragraph_hashes)
+            profile_match_clauses.append(
+                f"""
+            EXISTS (
+                SELECT 1 FROM json_each(COALESCE(s.evidence_ids_json, '[]')) evidence
+                WHERE CAST(evidence.value AS TEXT) IN ({placeholders})
+            )
+            """
+            )
+            profile_params.extend(paragraph_hashes)
+        if fact_ids:
+            placeholders = self._memory_placeholders(fact_ids)
+            profile_match_clauses.append(
+                f"""
+            EXISTS (
+                SELECT 1 FROM json_each(COALESCE(s.fact_claim_ids_json, '[]')) claim
+                WHERE CAST(claim.value AS TEXT) IN ({placeholders})
+            )
+            """
+            )
+            profile_params.extend(fact_ids)
+        if not profile_match_clauses:
+            return []
+        return self.query_memory_records(
+            f"""
+            SELECT s.person_id, s.profile_version, s.profile_text,
+                   s.updated_at, s.source_note
+            FROM person_profile_snapshots s
+            JOIN (
+                SELECT person_id, MAX(profile_version) AS max_version
+                FROM person_profile_snapshots GROUP BY person_id
+            ) latest ON latest.person_id = s.person_id AND latest.max_version = s.profile_version
+            WHERE {" OR ".join(profile_match_clauses)}
+            ORDER BY s.updated_at DESC
+            LIMIT ?
+            """,
+            (*profile_params, limit),
+        )
+
+    def list_relation_graph_projection_jobs(self, relation_ids: Sequence[str]) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(relation_ids)
+        return self.query_memory_records(
+            f"""
+            SELECT relation_hash, desired_active, status, attempt_count, last_error, updated_at
+            FROM relation_graph_projection_jobs
+            WHERE relation_hash IN ({placeholders})
+            ORDER BY updated_at DESC
+            """,
+            tuple(relation_ids),
+        )
+
+    def query_delete_operation_id_for_item(self, token: str) -> List[Dict[str, Any]]:
+        return self.query_memory_rows(
+            """
+            SELECT operation_id
+            FROM delete_operation_items
+            WHERE item_hash = ?
+               OR item_key = ?
+               OR payload_json LIKE ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (token, token, f"%{token}%"),
+        )
+
+    def list_timeline_paragraph_rows(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT hash, content, created_at, updated_at, metadata, source, is_deleted, deleted_at
+        FROM paragraphs
+        ORDER BY COALESCE(updated_at, created_at, 0) DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (limit,) if limit is not None else ())
+
+    def list_timeline_episode_rows(self, sources: Sequence[str], limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        placeholders = self._memory_placeholders(sources)
+        sql = self._append_limit(
+            f"""
+        SELECT episode_id, source, title, summary, paragraph_count, created_at, updated_at, event_time_start, event_time_end
+        FROM episodes
+        WHERE source IN ({placeholders})
+        ORDER BY COALESCE(updated_at, created_at, event_time_start, 0) DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (*sources, *((limit,) if limit is not None else ())))
+
+    def list_timeline_feedback_task_rows(
+        self,
+        session_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT *
+        FROM memory_feedback_tasks
+        WHERE session_id = ?
+        ORDER BY COALESCE(updated_at, query_timestamp, created_at, 0) DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (session_id, *((limit,) if limit is not None else ())))
+
+    def get_paragraph_source_row(self, paragraph_hash: str) -> List[Dict[str, Any]]:
+        return self.query_memory_rows(
+            "SELECT hash, metadata, source FROM paragraphs WHERE hash = ? LIMIT 1",
+            (paragraph_hash,),
+        )
+
+    def list_timeline_delete_operation_rows(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT operation_id, mode, selector, reason, requested_by, status, created_at, restored_at, summary_json
+        FROM delete_operations
+        ORDER BY COALESCE(restored_at, created_at, 0) DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (limit,) if limit is not None else ())
+
+    def list_timeline_delete_operation_item_rows(self, operation_ids: Sequence[str]) -> List[Dict[str, Any]]:
+        placeholders = ",".join("?" for _ in operation_ids)
+        return self.query_memory_rows(
+            f"""
+            SELECT operation_id, item_type, item_hash, item_key, payload_json, created_at
+            FROM delete_operation_items
+            WHERE operation_id IN ({placeholders})
+            ORDER BY operation_id ASC, id ASC
+            """,
+            tuple(operation_ids),
+        )
+
+    def list_timeline_profile_snapshot_rows(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT DISTINCT pps.person_id, pps.profile_version, pps.updated_at, pps.source_note
+        FROM person_profile_snapshots pps
+        JOIN paragraph_entities pe ON pe.entity_hash = pps.person_id OR pe.entity_hash IN (
+            SELECT hash FROM entities WHERE name = pps.person_id
+        )
+        JOIN paragraphs p ON p.hash = pe.paragraph_hash
+        ORDER BY pps.updated_at DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (limit,) if limit is not None else ())
+
+    def list_timeline_profile_paragraph_rows(self, person_ids: Sequence[str]) -> List[Dict[str, Any]]:
+        placeholders = ",".join("?" for _ in person_ids)
+        return self.query_memory_rows(
+            f"""
+            SELECT pe.entity_hash, e.name AS entity_name, p.hash, p.metadata, p.source
+            FROM paragraph_entities pe
+            LEFT JOIN entities e ON e.hash = pe.entity_hash
+            JOIN paragraphs p ON p.hash = pe.paragraph_hash
+            WHERE pe.entity_hash IN ({placeholders}) OR e.name IN ({placeholders})
+            """,
+            (*person_ids, *person_ids),
+        )
+
+    def list_timeline_profile_override_rows(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT person_id, updated_at, updated_by, source
+        FROM person_profile_overrides
+        ORDER BY updated_at DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (limit,) if limit is not None else ())
+
+    def list_timeline_maintenance_relation_rows(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = self._append_limit(
+            """
+        SELECT r.hash, r.subject, r.predicate, r.object, r.source_paragraph, r.last_reinforced,
+               r.inactive_since, r.protected_until, r.metadata, p.source, p.metadata AS paragraph_metadata
+        FROM relations r
+        LEFT JOIN paragraphs p ON p.hash = r.source_paragraph
+        ORDER BY COALESCE(r.last_reinforced, r.inactive_since, r.protected_until, r.created_at, 0) DESC
+        """,
+            limit,
+        )
+        return self.query_memory_rows(sql, (limit,) if limit is not None else ())
+
+    def get_graph_paragraph_row(self, paragraph_hash: str) -> List[Dict[str, Any]]:
+        return self.query_memory_rows(
+            """
+        SELECT hash, content, source, created_at, updated_at, metadata, is_deleted, deleted_at
+        FROM paragraphs
+        WHERE hash = ?
+        LIMIT 1
+        """,
+            (paragraph_hash,),
+        )
+
+    def list_graph_paragraph_entity_rows(self, paragraph_hash: str) -> List[Dict[str, Any]]:
+        return self.query_memory_rows(
+            """
+            SELECT e.hash, e.name, pe.mention_count
+            FROM paragraph_entities pe
+            LEFT JOIN entities e ON e.hash = pe.entity_hash
+            WHERE pe.paragraph_hash = ?
+            ORDER BY COALESCE(pe.mention_count, 1) DESC, e.name ASC
+            """,
+            (paragraph_hash,),
+        )
+
+    def list_graph_paragraph_relation_rows(self, paragraph_hash: str) -> List[Dict[str, Any]]:
+        return self.query_memory_rows(
+            """
+            SELECT r.hash, r.subject, r.predicate, r.object, r.confidence
+            FROM paragraph_relations pr
+            JOIN relations r ON r.hash = pr.relation_hash
+            WHERE pr.paragraph_hash = ?
+              AND (r.is_inactive IS NULL OR r.is_inactive = 0)
+            ORDER BY r.confidence DESC, r.created_at DESC
+            """,
+            (paragraph_hash,),
+        )
 
 
 memory_service = MemoryService()
