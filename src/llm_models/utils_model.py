@@ -52,14 +52,21 @@ from src.llm_models.request_snapshot import (
     serialize_client_request_snapshot,
     update_failed_request_attempt,
 )
-from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder
+from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
+    ContextItem,
+    ContextItemBuilder,
+    SystemMessageItem,
+    UserMessageItem,
+)
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import (
     ToolDefinitionInput,
     ToolOption,
     normalize_tool_options,
 )
-from src.llm_models.utils import compress_messages, llm_usage_recorder
+from src.llm_models.utils import compress_messages, llm_usage_recorder, replace_images_with_text
 
 install(extra_lines=3)
 
@@ -71,6 +78,8 @@ DATA_URI_LIMIT_PATTERN = re.compile(
 )
 DATA_URI_RETRY_MARGIN_BYTES = 128 * 1024
 MIN_COMPRESSED_IMAGE_TARGET_SIZE_BYTES = 512 * 1024
+UNSUPPORTED_IMAGE_PATTERN = re.compile(r"unsupported image", re.IGNORECASE)
+"""识别视觉接口拒绝图片的错误关键词。"""
 EMPTY_TASK_FALLBACKS = {
     "expression_use": "utils",
     "learner": "utils",
@@ -172,11 +181,15 @@ class LLMOrchestrator:
             )
 
     @staticmethod
-    def _can_retry_with_compressed_images(
+    def _can_retry_with_image_fallback(
         active_request: ClientRequest,
         original_response_request: ResponseRequest | None,
     ) -> bool:
-        """判断当前请求是否还可以通过压缩图片进行一次兜底重试。"""
+        """判断当前请求是否还可以通过图片相关降级（压缩或转文本）进行一次兜底重试。
+
+        仅当当前请求仍是原始请求（context_items 未被修改过）时允许降级重试，
+        避免压缩/转文本后再次失败时无限重试。
+        """
         return (
             isinstance(active_request, ResponseRequest)
             and bool(active_request.context_items)
@@ -185,13 +198,17 @@ class LLMOrchestrator:
         )
 
     @staticmethod
-    def _extract_data_uri_limit_bytes(error: RespNotOkException) -> int | None:
-        """从兼容 OpenAI 的错误文本中提取 data URI 单项大小限制。"""
+    def _collect_candidate_error_messages(error: RespNotOkException) -> list[str]:
+        """收集用于错误特征匹配的候选文本（含底层异常链）。"""
         candidate_messages = [error.message, str(error)]
         if error.__cause__ is not None:
             candidate_messages.append(str(error.__cause__))
+        return candidate_messages
 
-        for candidate_message in candidate_messages:
+    @staticmethod
+    def _extract_data_uri_limit_bytes(error: RespNotOkException) -> int | None:
+        """从兼容 OpenAI 的错误文本中提取 data URI 单项大小限制。"""
+        for candidate_message in LLMOrchestrator._collect_candidate_error_messages(error):
             if not candidate_message:
                 continue
 
@@ -205,6 +222,25 @@ class LLMOrchestrator:
                 return None
 
         return None
+
+    @staticmethod
+    def _is_unsupported_image_error(error: RespNotOkException) -> bool:
+        """判断错误是否为视觉接口拒绝图片（400 unsupported image）。"""
+        return any(
+            UNSUPPORTED_IMAGE_PATTERN.search(candidate_message)
+            for candidate_message in LLMOrchestrator._collect_candidate_error_messages(error)
+        )
+
+    @staticmethod
+    def _has_image_part(items: list[ContextItem]) -> bool:
+        """判断消息列表中是否包含图片片段。"""
+
+        for item in items:
+            if not isinstance(item, (SystemMessageItem, UserMessageItem, AssistantMessageItem)):
+                continue
+            if any(isinstance(part, ContextImagePart) for part in item.parts):
+                return True
+        return False
 
     @staticmethod
     def _build_data_uri_retry_target_size(limit_bytes: int) -> int:
@@ -993,7 +1029,7 @@ class LLMOrchestrator:
                 task_display = self.request_type or "未知任务"
 
                 # 可重试的HTTP错误
-                can_retry_with_compression = self._can_retry_with_compressed_images(
+                can_retry_with_compression = self._can_retry_with_image_fallback(
                     active_request,
                     original_response_request,
                 )
@@ -1043,6 +1079,24 @@ class LLMOrchestrator:
                     # 压缩消息本身不消耗重试次数
                     compressed_messages = compress_messages(active_request.context_items)
                     active_request = active_request.copy_with(context_items=compressed_messages)
+                    update_failed_request_attempt(e, status="retrying")
+                    continue
+
+                # 特殊处理 400 unsupported image：将当前请求中的图片降级为纯文本后重试。
+                # 仅对 maisaka 规划器/回复器链路生效，且只对原始请求做一次兜底。
+                if (
+                    e.status_code == 400
+                    and self.request_type.startswith("maisaka.")
+                    and can_retry_with_compression
+                    and self._is_unsupported_image_error(e)
+                    and self._has_image_part(active_request.context_items)
+                ):
+                    logger.warning(
+                        f"任务 '{task_display}' 的模型 '{model_info.name}' 返回 400 unsupported image，"
+                        f"尝试将图片降级为纯文本后重试..."
+                    )
+                    text_messages = replace_images_with_text(active_request.context_items)
+                    active_request = active_request.copy_with(context_items=text_messages)
                     update_failed_request_attempt(e, status="retrying")
                     continue
 
