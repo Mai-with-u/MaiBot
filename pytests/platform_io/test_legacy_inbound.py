@@ -126,6 +126,20 @@ async def test_send_pipeline_binds_legacy_receive_route(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_dynamic_inbound_driver_survives_config_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("src.chat.utils.utils.get_configured_bot_accounts", lambda: {})
+    monkeypatch.setattr("src.platform_io.drivers.legacy_driver._register_ws_inbound_handler", lambda: None)
+    manager = PlatformIOManager()
+
+    driver = await manager.ensure_legacy_inbound_driver({"platform": "telegram"})
+    await manager.ensure_send_pipeline_ready()
+
+    assert manager.driver_registry.get(driver.driver_id) is driver
+    assert manager.receive_route_table.has_binding_for_driver(RouteKey(platform="telegram"), driver.driver_id)
+    await manager.stop()
+
+
+@pytest.mark.asyncio
 async def test_cli_driver_renders_text_and_returns_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     rendered: List[str] = []
     monkeypatch.setattr(

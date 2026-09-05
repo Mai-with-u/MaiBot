@@ -48,6 +48,7 @@ class PlatformIOManager:
         self._send_route_table = RouteTable()
         self._receive_route_table = RouteTable()
         self._legacy_send_drivers: Dict[str, PlatformIODriver] = {}
+        self._legacy_config_platforms: Set[str] = set()
         self._deduplicator = MessageDeduplicator()
         self._outbound_tracker = OutboundTracker()
         self._inbound_dispatcher: Optional[InboundDispatcher] = None
@@ -299,6 +300,9 @@ class PlatformIOManager:
             for platform, driver in self._legacy_send_drivers.items()
             if driver.driver_id != driver_id
         }
+        self._legacy_config_platforms = {
+            platform for platform in self._legacy_config_platforms if platform in self._legacy_send_drivers
+        }
         return removed_driver
 
     async def _sync_legacy_send_drivers(self) -> None:
@@ -314,20 +318,21 @@ class PlatformIOManager:
         # WebUI 不依赖外部适配器配置，但仍通过 legacy driver 进入其 WebSocket 广播链路。
         desired_accounts["webui"] = WEBUI_BOT_USER_ID
         desired_platforms = set(desired_accounts.keys())
-        current_platforms = set(self._legacy_send_drivers.keys())
 
-        for platform in sorted(current_platforms - desired_platforms):
+        for platform in sorted(self._legacy_config_platforms - desired_platforms):
             await self._remove_legacy_send_driver(platform)
 
         for platform, account_id in desired_accounts.items():
             existing_driver = self._legacy_send_drivers.get(platform)
             if existing_driver is not None and existing_driver.descriptor.account_id == account_id:
+                self._legacy_config_platforms.add(platform)
                 continue
 
             if existing_driver is not None:
                 await self._remove_legacy_send_driver(platform)
 
             await self._create_legacy_driver(platform, account_id=account_id)
+            self._legacy_config_platforms.add(platform)
 
     async def _remove_legacy_send_driver(self, platform: str) -> None:
         """移除指定平台的 legacy fallback driver。
@@ -344,6 +349,7 @@ class PlatformIOManager:
         else:
             self.unregister_driver(driver.driver_id)
         self._legacy_send_drivers.pop(platform, None)
+        self._legacy_config_platforms.discard(platform)
 
     async def _create_legacy_driver(
         self,
