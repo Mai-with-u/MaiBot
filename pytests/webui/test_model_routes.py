@@ -98,6 +98,7 @@ async def test_test_provider_connection_uses_query_api_key_for_gemini(
         calls=calls,
     )
     monkeypatch.setattr(model_routes.httpx, "AsyncClient", fake_client_class)
+    monkeypatch.setattr(model_routes, "validate_public_url", lambda url, **kw: url)
 
     result = await model_routes.test_provider_connection(
         base_url="https://generativelanguage.googleapis.com/v1beta",
@@ -134,6 +135,7 @@ async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
         calls=calls,
     )
     monkeypatch.setattr(model_routes.httpx, "AsyncClient", fake_client_class)
+    monkeypatch.setattr(model_routes, "validate_public_url", lambda url, **kw: url)
 
     result = await model_routes.test_provider_connection(
         base_url="https://example.com/v1",

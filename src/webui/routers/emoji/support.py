@@ -2,7 +2,8 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Set, Tuple
+from typing import Tuple
+from weakref import WeakValueDictionary
 
 from PIL import Image
 from sqlmodel import col, select
@@ -19,10 +20,11 @@ THUMBNAIL_QUALITY = 80
 EMOJI_REGISTERED_DIR = os.path.join("data", "emoji")
 EMOJI_DIR = EMOJI_REGISTERED_DIR
 
-_thumbnail_locks: Dict[str, threading.Lock] = {}
+# 弱值字典保存按哈希的生成锁：使用方在临界区内持有强引用，用完即被自动回收，避免按文件哈希无限累积。
+_thumbnail_locks: WeakValueDictionary = WeakValueDictionary()
 _locks_lock = threading.Lock()
 _thumbnail_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="thumbnail")
-_generating_thumbnails: Set[str] = set()
+_generating_thumbnails: set[str] = set()
 _generating_lock = threading.Lock()
 
 
@@ -36,17 +38,23 @@ def get_generating_lock() -> threading.Lock:
     return _generating_lock
 
 
-def get_generating_thumbnails() -> Set[str]:
+def get_generating_thumbnails() -> set[str]:
     """获取正在生成的缩略图哈希集合。"""
     return _generating_thumbnails
 
 
 def _get_thumbnail_lock(file_hash: str) -> threading.Lock:
-    """获取指定文件哈希的锁，用于防止并发生成同一缩略图。"""
+    """获取指定文件哈希的锁，用于防止并发生成同一缩略图。
+
+    锁条目在无人使用时自动回收：任何等待或持有该锁的线程都持有强引用，
+    因此不会出现两个线程拿到不同锁对象并发生成同一缩略图的情况。
+    """
     with _locks_lock:
-        if file_hash not in _thumbnail_locks:
-            _thumbnail_locks[file_hash] = threading.Lock()
-        return _thumbnail_locks[file_hash]
+        lock = _thumbnail_locks.get(file_hash)
+        if lock is None:
+            lock = threading.Lock()
+            _thumbnail_locks[file_hash] = lock
+        return lock
 
 
 def _background_generate_thumbnail(source_path: str, file_hash: str) -> None:

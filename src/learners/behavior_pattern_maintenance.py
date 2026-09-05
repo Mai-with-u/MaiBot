@@ -75,8 +75,24 @@ class BehaviorPatternMaintenanceService:
             session_id=normalized_session_id,
             related_session_ids=related_session_ids,
         )
-        self._last_run_at_by_session_id[normalized_session_id] = current_time
+        self._record_run_at(normalized_session_id, current_time)
         return result
+
+    def _record_run_at(self, session_id: str, run_at: float) -> None:
+        """记录会话的最近维护时间，并清理冷却窗口外的过期记录。
+
+        冷却窗口外的记录与缺失等价（都会允许再次维护），
+        及时清理可避免字典随历史会话数无界增长。
+        """
+
+        self._last_run_at_by_session_id[session_id] = run_at
+        stale_ids = [
+            recorded_session_id
+            for recorded_session_id, recorded_at in self._last_run_at_by_session_id.items()
+            if run_at - recorded_at >= MAINTENANCE_COOLDOWN_SECONDS
+        ]
+        for stale_id in stale_ids:
+            self._last_run_at_by_session_id.pop(stale_id, None)
 
     def maintain_session(
         self,

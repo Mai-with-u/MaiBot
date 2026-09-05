@@ -234,6 +234,12 @@ class WebSocketLogHandler(logging.Handler):
 
         try:
             from src.webui.logs_ws import broadcast_log
+            from src.webui.routers.websocket.manager import websocket_manager
+
+            # 无订阅者时直接跳过：日志是全仓库频率最高的事件源，
+            # 每行日志创建一个广播任务会在无前端连接时白白消耗事件循环。
+            if not websocket_manager.has_topic_subscribers("logs", "main"):
+                return
 
             broadcast_coro = broadcast_log(log_data)
             try:

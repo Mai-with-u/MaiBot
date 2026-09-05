@@ -274,6 +274,8 @@ class BotConsole:
         finally:
             await self._unregister_output_driver()
             if self._session_id is not None:
-                runtime = heartflow_manager.heartflow_chat_list.pop(self._session_id, None)
-                if runtime is not None:
-                    await runtime.stop()
+                try:
+                    await heartflow_manager.release_chat(self._session_id, reason="cli_exit")
+                except Exception as exc:
+                    # 退出清理为尽力而为：停止失败不应中断退出流程
+                    console.print(f"[bold red]释放心流运行时失败: {exc}[/bold red]")

@@ -59,20 +59,24 @@ class EventBus:
         if event_type not in self._handlers:
             self._handlers[event_type] = []
 
+        # 同名重复注册会导致 emit 时同一 handler 被执行多次，直接暴露错误。
+        if any(existing.name == name for existing in self._handlers[event_type]):
+            raise ValueError(f"事件 handler 重复注册: {name} -> {event_type}")
+
         entry = _HandlerEntry(handler=handler, name=name, weight=weight, intercept=intercept)
         self._handlers[event_type].append(entry)
         self._handlers[event_type].sort(key=lambda e: e.weight, reverse=True)
         logger.debug(f"注册事件 handler: {name} -> {event_type} (weight={weight}, intercept={intercept})")
 
     def unsubscribe(self, event_type: EventType | str, name: str) -> bool:
-        """取消注册事件 handler"""
+        """取消注册事件 handler（同名条目全部移除）"""
         handlers = self._handlers.get(event_type, [])
-        for i, entry in enumerate(handlers):
-            if entry.name == name:
-                del handlers[i]
-                logger.debug(f"取消注册事件 handler: {name} <- {event_type}")
-                return True
-        return False
+        remaining = [entry for entry in handlers if entry.name != name]
+        if len(remaining) == len(handlers):
+            return False
+        self._handlers[event_type] = remaining
+        logger.debug(f"取消注册事件 handler: {name} <- {event_type}")
+        return True
 
     async def emit(
         self,

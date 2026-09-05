@@ -235,6 +235,12 @@ class RPCServer:
             self._pending_requests.pop(request_id, None)
             self._pending_request_metadata.pop(request_id, None)
             raise RPCError(ErrorCode.E_TIMEOUT, f"请求 {method} 超时 ({timeout_ms}ms)") from None
+        except asyncio.CancelledError:
+            # 调用方任务被取消时 future 已无消费者，必须清理登记，
+            # 否则条目会滞留到断连/停机才批量回收。
+            self._pending_requests.pop(request_id, None)
+            self._pending_request_metadata.pop(request_id, None)
+            raise
         except Exception as e:
             self._pending_requests.pop(request_id, None)
             self._pending_request_metadata.pop(request_id, None)

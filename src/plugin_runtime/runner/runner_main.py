@@ -571,6 +571,21 @@ class PluginRunner:
             summary["operation"] = operation
         return summary
 
+    # 诊断文件单代大小上限：健康检查等事件按固定频率持续追加，
+    # 超过上限即轮转一代（仅保留 .1），防止文件跨重启无界增长。
+    DEBUG_FILE_MAX_BYTES = 16 * 1024 * 1024
+
+    def _rotate_debug_file_if_needed(self, debug_file: Path) -> None:
+        """诊断文件超限时轮转一代；多进程并发轮转失败时跳过本次即可。"""
+
+        try:
+            if not debug_file.exists() or debug_file.stat().st_size < self.DEBUG_FILE_MAX_BYTES:
+                return
+            rotated = debug_file.with_name(f"{debug_file.stem}.1{debug_file.suffix}")
+            os.replace(debug_file, rotated)
+        except Exception as exc:
+            logger.warning(f"轮转 Runner RPC 诊断文件失败: {exc}")
+
     def _write_debug_event_sync(self, event: str, payload: Dict[str, Any]) -> None:
         """把 Runner 诊断事件追加到独立 JSONL 文件。"""
 
@@ -586,6 +601,7 @@ class PluginRunner:
         try:
             debug_file = self._debug_file_path()
             debug_file.parent.mkdir(parents=True, exist_ok=True)
+            self._rotate_debug_file_if_needed(debug_file)
             with open(debug_file, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
         except Exception as exc:

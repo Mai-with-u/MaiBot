@@ -290,6 +290,7 @@ class EmbeddingManager:
                 for text, embedding in zip(uncached_texts, new_embeddings, strict=True):
                     cache_key = self._get_cache_key(text)
                     self._embedding_cache[cache_key] = embedding.copy()
+                self._prune_embedding_cache()
 
             # 合并结果
             for idx, embedding in zip(uncached_indices, new_embeddings, strict=True):
@@ -300,6 +301,19 @@ class EmbeddingManager:
         final_embeddings = np.array([emb for _, emb in cached_embeddings])
 
         return final_embeddings
+
+    # 内存缓存按唯一文本无界增长（单条向量可达数 KB），超过上限时
+    # 按插入顺序淘汰最旧条目；落盘缓存（save_cache）不受影响。
+    MAX_EMBEDDING_CACHE_SIZE = 10000
+
+    def _prune_embedding_cache(self) -> None:
+        """把内存嵌入缓存裁剪到容量上限内（需持有 ``self._cache_lock``）。"""
+
+        overflow = len(self._embedding_cache) - self.MAX_EMBEDDING_CACHE_SIZE
+        if overflow <= 0:
+            return
+        for cache_key in list(self._embedding_cache)[:overflow]:
+            self._embedding_cache.pop(cache_key, None)
 
     def save_cache(self, cache_path: Optional[Union[str, Path]] = None) -> None:
         """
@@ -353,6 +367,7 @@ class EmbeddingManager:
         with self._cache_lock:
             with np.load(cache_path, allow_pickle=False) as data:
                 self._embedding_cache = {str(key): np.asarray(data[key], dtype=np.float32) for key in data.files}
+            self._prune_embedding_cache()
 
             logger.info(f"缓存已加载: {cache_path} ({len(self._embedding_cache)} 条)")
 
