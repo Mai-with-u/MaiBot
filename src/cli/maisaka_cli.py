@@ -132,10 +132,10 @@ class BufferCLI:
     async def run(self) -> None:
         """主交互循环。"""
         await self._register_output_driver()
-        self._reader.start(asyncio.get_event_loop())
-        self._show_banner()
-
         try:
+            self._reader.start(asyncio.get_event_loop())
+            self._show_banner()
+
             while True:
                 console.print("[bold cyan]> [/bold cyan]", end="")
                 raw_input = await self._reader.get_line()
