@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.A_memorix.host_service import a_memorix_host_service
 from src.common.logger import get_logger
@@ -470,6 +470,36 @@ class MemoryService:
         except Exception as exc:
             logger.warning(f"删除管理调用失败: {exc}")
             return {"success": False, "error": str(exc)}
+
+    async def preview_paragraph_sources(self, paragraph_hashes: Sequence[str]) -> Dict[str, str]:
+        """按段落 hash 预览存储来源，失败时返回空映射。"""
+
+        hashes = list(paragraph_hashes)
+        if not hashes:
+            return {}
+        try:
+            payload = await self.delete_admin(
+                action="preview",
+                mode="paragraph",
+                selector={"hashes": hashes},
+                timeout_ms=10000,
+            )
+        except Exception:
+            return {}
+        if not isinstance(payload, dict) or not bool(payload.get("success", False)):
+            return {}
+
+        sources: Dict[str, str] = {}
+        for item in payload.get("items", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("item_type", "") or "").strip() != "paragraph":
+                continue
+            paragraph_hash = str(item.get("item_hash", "") or "").strip()
+            source = str(item.get("source", "") or "").strip()
+            if paragraph_hash and source:
+                sources[paragraph_hash] = source
+        return sources
 
     async def memory_correction_admin(self, *, action: str, timeout_ms: int = 120000, **kwargs) -> Dict[str, Any]:
         try:

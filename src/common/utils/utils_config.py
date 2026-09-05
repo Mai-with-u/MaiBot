@@ -10,7 +10,8 @@ logger = get_logger("config_utils")
 
 class ExpressionConfigUtils:
     @staticmethod
-    def _find_expression_config_item(session_id: Optional[str] = None):
+    def find_expression_config_item(session_id: Optional[str] = None):
+        """查找与当前聊天流匹配的表达配置项。"""
         if not global_config.expression.learning_list:
             return None
 
@@ -43,6 +44,8 @@ class ExpressionConfigUtils:
 
         return None
 
+    _find_expression_config_item = find_expression_config_item
+
     @staticmethod
     def get_expression_config_for_chat(session_id: Optional[str] = None) -> tuple[bool, bool]:
         # sourcery skip: use-next
@@ -55,7 +58,7 @@ class ExpressionConfigUtils:
         Returns:
             tuple: (是否使用表达, 是否学习表达)
         """
-        config_item = ExpressionConfigUtils._find_expression_config_item(session_id)
+        config_item = ExpressionConfigUtils.find_expression_config_item(session_id)
         if config_item is None:
             return True, True
 
@@ -78,7 +81,8 @@ class ExpressionConfigUtils:
 
 class BehaviorConfigUtils:
     @staticmethod
-    def _find_behavior_config_item(session_id: Optional[str] = None):
+    def find_behavior_config_item(session_id: Optional[str] = None):
+        """查找与当前聊天流匹配的行为表现配置项。"""
         if not global_config.experimental.behavior_learning_list:
             return None
 
@@ -114,6 +118,8 @@ class BehaviorConfigUtils:
 
         return None
 
+    _find_behavior_config_item = find_behavior_config_item
+
     @staticmethod
     def get_behavior_config_for_chat(session_id: Optional[str] = None) -> tuple[bool, bool]:
         """
@@ -123,7 +129,7 @@ class BehaviorConfigUtils:
         """
 
         enable_behavior_learning = bool(global_config.experimental.enable_behavior_learning)
-        config_item = BehaviorConfigUtils._find_behavior_config_item(session_id)
+        config_item = BehaviorConfigUtils.find_behavior_config_item(session_id)
         if config_item is None:
             return True, enable_behavior_learning
 
@@ -179,7 +185,8 @@ class JargonConfigUtils:
         return ChatConfigUtils.get_target_session_ids_with_wildcards(target_item)
 
     @staticmethod
-    def _find_jargon_config_item(session_id: Optional[str] = None):
+    def find_jargon_config_item(session_id: Optional[str] = None):
+        """查找与当前聊天流匹配的黑话配置项。"""
         if not global_config.jargon.learning_list:
             return None
 
@@ -215,10 +222,12 @@ class JargonConfigUtils:
 
         return None
 
+    _find_jargon_config_item = find_jargon_config_item
+
     @staticmethod
     def get_jargon_config_for_chat(session_id: Optional[str] = None) -> tuple[bool, bool]:
         """根据聊天会话 ID 获取黑话使用与学习开关。"""
-        config_item = JargonConfigUtils._find_jargon_config_item(session_id)
+        config_item = JargonConfigUtils.find_jargon_config_item(session_id)
         if config_item is None:
             return True, True
         return config_item.use, config_item.learn
@@ -329,7 +338,8 @@ class ChatConfigUtils:
         return list(ChatConfigUtils._iter_matching_chat_prompts(session_id, is_group_chat))
 
     @staticmethod
-    def _target_values(target_item) -> tuple[str, str, str]:
+    def target_values(target_item) -> tuple[str, str, str]:
+        """从配置目标提取 platform、item_id 和 rule_type。"""
         if isinstance(target_item, dict):
             platform = str(target_item.get("platform") or "").strip()
             item_id = str(target_item.get("item_id") or "").strip()
@@ -341,22 +351,24 @@ class ChatConfigUtils:
         rule_type = str(getattr(target_item, "type", "") or getattr(target_item, "rule_type", "") or "").strip()
         return platform, item_id, rule_type
 
+    _target_values = target_values
+
     @staticmethod
     def is_default_target(target_item) -> bool:
         """判断配置目标是否是 learning_list 的默认兜底项。"""
-        platform, item_id, _ = ChatConfigUtils._target_values(target_item)
+        platform, item_id, _ = ChatConfigUtils.target_values(target_item)
         return not platform and not item_id
 
     @staticmethod
     def is_platform_default_target(target_item) -> bool:
         """判断配置目标是否是 learning_list 的平台兜底项。"""
-        platform, item_id, _ = ChatConfigUtils._target_values(target_item)
+        platform, item_id, _ = ChatConfigUtils.target_values(target_item)
         return bool(platform and platform != "*" and not item_id)
 
     @staticmethod
     def is_wildcard_target(target_item) -> bool:
         """判断配置目标是否包含 platform/item_id 通配符。"""
-        platform, item_id, _ = ChatConfigUtils._target_values(target_item)
+        platform, item_id, _ = ChatConfigUtils.target_values(target_item)
         return platform == "*" or item_id == "*"
 
     @staticmethod
@@ -401,7 +413,7 @@ class ChatConfigUtils:
     @staticmethod
     def get_target_session_ids_with_wildcards(target_item) -> set[str]:
         """获取配置目标对应的已知真实聊天流 ID，允许 platform/item_id 使用 * 通配。"""
-        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        platform, item_id, rule_type = ChatConfigUtils.target_values(target_item)
         if not platform or not item_id:
             return set()
 
@@ -459,7 +471,7 @@ class ChatConfigUtils:
         if not session_id:
             return False
 
-        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        platform, item_id, rule_type = ChatConfigUtils.target_values(target_item)
         if not platform or not item_id:
             return False
 
@@ -493,7 +505,7 @@ class ChatConfigUtils:
         if not session_id:
             return False
 
-        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        platform, item_id, rule_type = ChatConfigUtils.target_values(target_item)
         if not platform or platform == "*" or item_id:
             return False
 
@@ -541,7 +553,7 @@ class ChatConfigUtils:
         if not session_id:
             return False
 
-        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        platform, item_id, rule_type = ChatConfigUtils.target_values(target_item)
         if not platform or not item_id:
             return False
 
@@ -575,7 +587,7 @@ class ChatConfigUtils:
     @staticmethod
     def get_target_session_ids(target_item) -> set[str]:
         """获取配置目标对应的已知真实聊天流 ID。"""
-        platform, item_id, rule_type = ChatConfigUtils._target_values(target_item)
+        platform, item_id, rule_type = ChatConfigUtils.target_values(target_item)
         if not platform or not item_id:
             return set()
 
@@ -614,7 +626,7 @@ class ChatConfigUtils:
 
         matched_rules = []
         for rule in global_config.chat.reply_timing.talk_value_rules:
-            target_priority = ChatConfigUtils._talk_rule_target_priority(rule, session_id, is_group_chat)
+            target_priority = ChatConfigUtils.talk_rule_target_priority(rule, session_id, is_group_chat)
             if target_priority is None:
                 continue
             matched_rules.append((rule, target_priority))
@@ -625,8 +637,9 @@ class ChatConfigUtils:
         return result  # 如果没有任何规则生效，返回默认值
 
     @staticmethod
-    def _talk_rule_target_priority(rule, session_id: Optional[str], is_group_chat: Optional[bool]) -> Optional[int]:
-        platform, item_id, rule_type = ChatConfigUtils._target_values(rule)
+    def talk_rule_target_priority(rule, session_id: Optional[str], is_group_chat: Optional[bool]) -> Optional[int]:
+        """计算发言规则的目标匹配优先级，未命中返回 None。"""
+        platform, item_id, rule_type = ChatConfigUtils.target_values(rule)
         if rule_type == "group":
             config_is_group = True
             target_attr = "group_id"
@@ -670,22 +683,31 @@ class ChatConfigUtils:
             return 4
         return 3
 
+    _talk_rule_target_priority = talk_rule_target_priority
+
     @staticmethod
-    def _get_rule_time(rule) -> str:
+    def get_rule_time(rule) -> str:
+        """读取发言规则的时间字段。"""
         if isinstance(rule, dict):
             return str(rule.get("time") or "").strip()
         return str(rule.time or "").strip()
 
+    _get_rule_time = get_rule_time
+
     @staticmethod
-    def _get_rule_value(rule) -> float:
+    def get_rule_value(rule) -> float:
+        """读取发言规则的数值字段。"""
         value = rule.get("value") if isinstance(rule, dict) else rule.value
         try:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
 
+    _get_rule_value = get_rule_value
+
     @staticmethod
-    def _talk_rule_time_priority(rule_time: str, now_min: int) -> Optional[int]:
+    def talk_rule_time_priority(rule_time: str, now_min: int) -> Optional[int]:
+        """计算发言规则的时间匹配优先级，未命中返回 None。"""
         if not rule_time:
             return 1
         if rule_time == "*":
@@ -699,20 +721,22 @@ class ChatConfigUtils:
             return 2 if start_min <= now_min <= end_min else None
         return 2 if now_min >= start_min or now_min <= end_min else None
 
+    _talk_rule_time_priority = talk_rule_time_priority
+
     @staticmethod
     def _select_talk_rule_value(rules: list[tuple[Any, int]], now_min: int) -> Optional[float]:
         selected_priority = (0, 0)
         selected_value: Optional[float] = None
 
         for rule, target_priority in rules:
-            time_priority = ChatConfigUtils._talk_rule_time_priority(ChatConfigUtils._get_rule_time(rule), now_min)
+            time_priority = ChatConfigUtils.talk_rule_time_priority(ChatConfigUtils.get_rule_time(rule), now_min)
             if time_priority is None:
                 continue
             priority = (target_priority, time_priority)
             if priority <= selected_priority:
                 continue
             selected_priority = priority
-            selected_value = ChatConfigUtils._get_rule_value(rule)
+            selected_value = ChatConfigUtils.get_rule_value(rule)
 
         return selected_value
 

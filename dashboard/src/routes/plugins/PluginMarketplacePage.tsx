@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,132 +9,23 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
-import { AlertCircle, AlertTriangle, ArrowUpDown, CheckCircle2, Filter, Info, Loader2, Search, Settings2 } from 'lucide-react'
+import { AlertTriangle, ArrowUpDown, Filter, Info, Loader2, Search, Settings2 } from 'lucide-react'
 
 import { RestartOverlay } from '@/components/restart-overlay'
-import { useToast } from '@/hooks/use-toast'
 import { RestartProvider } from '@/lib/restart-context'
-import {
-  checkGitStatus,
-  checkPluginInstalled,
-  connectPluginProgressWebSocket,
-  fetchPluginList,
-  getCachedPluginList,
-  getInstalledPluginVersion,
-  getInstalledPlugins,
-  getMaimaiVersion,
-  installPlugin,
-  isPluginCompatible,
-  uninstallPlugin,
-  updatePlugin,
-  type InstalledPlugin,
-} from '@/lib/plugin-api'
-import {
-  getCachedPluginStatsSummary,
-  getPluginStatsSummary,
-  likePlugin,
-  recordPluginDownload,
-  type PluginStatsData,
-} from '@/lib/plugin-stats'
-import { PLUGIN_MARKET_VIEW_STATE_KEY } from '@/lib/plugin-market-navigation'
 
 import { InstallDialog } from './InstallDialog'
 import { MarketplaceTab } from './MarketplaceTab'
-import type {
-  GitStatus,
-  MaimaiVersion,
-  MarketplaceSortKey,
-  PluginInfo,
-  PluginLoadProgress,
-  PluginProgressById,
-} from './types'
-import { clearPluginProgress, getPluginType, mergePluginProgress, PLUGIN_TYPE_OPTIONS } from './types'
+import { usePluginMarketplaceActions } from './hooks/usePluginMarketplaceActions'
+import { usePluginMarketplaceBootstrap } from './hooks/usePluginMarketplaceBootstrap'
+import { usePluginMarketplaceViewState } from './hooks/usePluginMarketplaceViewState'
+import { getPluginType, PLUGIN_TYPE_OPTIONS, type MarketplaceSortKey } from './types'
 import { PluginDetailPage } from '../plugin-detail'
 
 const PLUGIN_MARKET_COMPATIBLE_ONLY_KEY = 'plugins-market-compatible-only'
-const PLUGIN_MARKET_SCROLL_TOP_KEY = 'plugins-market-scroll-top'
-const MARKETPLACE_SORT_KEYS: MarketplaceSortKey[] = ['default', 'latest', 'downloads', 'likes', 'rating']
-
-interface PluginMarketplaceViewState {
-  searchQuery: string
-  pluginTypeFilter: string
-  marketplaceSortBy: MarketplaceSortKey
-  showInstalledPlugins: boolean
-}
-
-const DEFAULT_PLUGIN_MARKET_VIEW_STATE: PluginMarketplaceViewState = {
-  searchQuery: '',
-  pluginTypeFilter: 'all',
-  marketplaceSortBy: 'default',
-  showInstalledPlugins: false,
-}
 
 interface PluginMarketplacePageProps {
   embedded?: boolean
-}
-
-const resolvePluginStats = (
-  plugin: PluginInfo,
-  statsSummary: Record<string, PluginStatsData>
-): PluginStatsData | undefined => {
-  const statsIds = [
-    plugin.manifest?.id,
-  ].filter((id): id is string => Boolean(id))
-
-  return statsIds.map(id => statsSummary[id]).find(Boolean)
-}
-
-const buildPluginStatsMap = (
-  pluginList: PluginInfo[],
-  statsSummary: Record<string, PluginStatsData>
-): Record<string, PluginStatsData> => {
-  const statsMap: Record<string, PluginStatsData> = {}
-
-  for (const plugin of pluginList) {
-    const stats = resolvePluginStats(plugin, statsSummary)
-    if (!stats) {
-      continue
-    }
-
-    const statsIds = [
-      plugin.manifest?.id,
-      stats.plugin_id,
-    ].filter((id): id is string => Boolean(id))
-
-    for (const statsId of statsIds) {
-      statsMap[statsId] = stats
-    }
-  }
-
-  return statsMap
-}
-
-const readPluginMarketplaceViewState = (): PluginMarketplaceViewState => {
-  const savedState = sessionStorage.getItem(PLUGIN_MARKET_VIEW_STATE_KEY)
-  if (!savedState) {
-    return DEFAULT_PLUGIN_MARKET_VIEW_STATE
-  }
-
-  const parsed = JSON.parse(savedState) as Partial<PluginMarketplaceViewState>
-  const pluginTypeFilter = typeof parsed.pluginTypeFilter === 'string'
-    && (parsed.pluginTypeFilter === 'all' || PLUGIN_TYPE_OPTIONS.some(option => option.value === parsed.pluginTypeFilter))
-    ? parsed.pluginTypeFilter
-    : DEFAULT_PLUGIN_MARKET_VIEW_STATE.pluginTypeFilter
-  const marketplaceSortBy = parsed.marketplaceSortBy
-    && MARKETPLACE_SORT_KEYS.includes(parsed.marketplaceSortBy)
-    ? parsed.marketplaceSortBy
-    : DEFAULT_PLUGIN_MARKET_VIEW_STATE.marketplaceSortBy
-
-  return {
-    searchQuery: typeof parsed.searchQuery === 'string'
-      ? parsed.searchQuery
-      : DEFAULT_PLUGIN_MARKET_VIEW_STATE.searchQuery,
-    pluginTypeFilter,
-    marketplaceSortBy,
-    showInstalledPlugins: typeof parsed.showInstalledPlugins === 'boolean'
-      ? parsed.showInstalledPlugins
-      : DEFAULT_PLUGIN_MARKET_VIEW_STATE.showInstalledPlugins,
-  }
 }
 
 // 插件市场页：只展示市场索引、安装状态和版本信息
@@ -149,780 +40,80 @@ export function PluginMarketplacePage({ embedded = false }: PluginMarketplacePag
 // 内部组件：实际内容
 function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePageProps>) {
   const navigate = useNavigate()
-  const scrollViewportRef = useRef<HTMLDivElement | null>(null)
-  const scrollRestoredRef = useRef(false)
-  const initialViewStateRef = useRef(readPluginMarketplaceViewState())
   const settingsRoute: '/plugin-mirrors' | '/plugin-mirrors/embed' = embedded
     ? '/plugin-mirrors/embed'
     : '/plugin-mirrors'
   const [restartNoticeVisible, setRestartNoticeVisible] = useState(
     () => localStorage.getItem('plugins-restart-notice-dismissed') !== 'true'
   )
-  const [searchQuery, setSearchQuery] = useState(initialViewStateRef.current.searchQuery)
-  const [pluginTypeFilter, setPluginTypeFilter] = useState(initialViewStateRef.current.pluginTypeFilter)
-  const [marketplaceSortBy, setMarketplaceSortBy] = useState<MarketplaceSortKey>(
-    initialViewStateRef.current.marketplaceSortBy
-  )
   const [showCompatibleOnly] = useState(
     () => localStorage.getItem(PLUGIN_MARKET_COMPATIBLE_ONLY_KEY) !== 'false'
   )
-  const [showInstalledPlugins, setShowInstalledPlugins] = useState(initialViewStateRef.current.showInstalledPlugins)
-  const [plugins, setPlugins] = useState<PluginInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
-  const [marketplaceProgress, setMarketplaceProgress] = useState<PluginLoadProgress | null>(null)
-  const [pluginProgressById, setPluginProgressById] = useState<PluginProgressById>({})
-  const [maimaiVersion, setMaimaiVersion] = useState<MaimaiVersion | null>(null)
-  const [, setInstalledPlugins] = useState<InstalledPlugin[]>([])
-  const [pluginStats, setPluginStats] = useState<Record<string, PluginStatsData>>({})
-  const [likingPluginIds, setLikingPluginIds] = useState<Set<string>>(() => new Set())
-  
-  // 安装对话框状态
-  const [installDialogOpen, setInstallDialogOpen] = useState(false)
-  const [installingPlugin, setInstallingPlugin] = useState<PluginInfo | null>(null)
   const [detailPluginId, setDetailPluginId] = useState<string | null>(null)
-  
-  const { toast } = useToast()
+
+  const {
+    plugins,
+    setPlugins,
+    loading,
+    error,
+    gitStatus,
+    marketplaceProgress,
+    pluginProgressById,
+    maimaiVersion,
+    pluginStats,
+    setPluginStats,
+    setInstalledPlugins,
+    setPluginProgress,
+    setCompletedPluginProgress,
+  } = usePluginMarketplaceBootstrap()
+
+  const {
+    scrollViewportRef,
+    searchQuery,
+    setSearchQuery,
+    pluginTypeFilter,
+    setPluginTypeFilter,
+    marketplaceSortBy,
+    setMarketplaceSortBy,
+    showInstalledPlugins,
+    setShowInstalledPlugins,
+  } = usePluginMarketplaceViewState({
+    loading,
+    pluginCount: plugins.length,
+  })
+
+  const {
+    installDialogOpen,
+    installingPlugin,
+    installProgress,
+    likingPluginIds,
+    openInstallDialog,
+    handleInstallDialogOpenChange,
+    handleInstall,
+    handleUninstall,
+    handleUpdate,
+    handleLike,
+    checkPluginCompatibility,
+    getIncompatibleReason,
+    getStatusBadge,
+    needsUpdate,
+  } = usePluginMarketplaceActions({
+    gitStatus,
+    maimaiVersion,
+    pluginProgressById,
+    setPlugins,
+    setInstalledPlugins,
+    setPluginStats,
+    setPluginProgress,
+    setCompletedPluginProgress,
+  })
+
   const isFetchingMarketplace = marketplaceProgress?.stage === 'loading'
     && marketplaceProgress.operation === 'fetch'
-  const installProgress = installingPlugin
-    ? pluginProgressById[installingPlugin.id] ?? null
-    : null
-
-  const setPluginProgress = (progress: PluginLoadProgress) => {
-    setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
-  }
-
-  const setCompletedPluginProgress = (progress: PluginLoadProgress) => {
-    setPluginProgress(progress)
-    if (!progress.plugin_id) {
-      return
-    }
-
-    const completedPluginId = progress.plugin_id
-    setTimeout(() => {
-      setPluginProgressById((currentProgress) => (
-        clearPluginProgress(currentProgress, completedPluginId, progress)
-      ))
-    }, 2000)
-  }
 
   const dismissRestartNotice = () => {
     localStorage.setItem('plugins-restart-notice-dismissed', 'true')
     setRestartNoticeVisible(false)
-  }
-
-  useEffect(() => {
-    sessionStorage.setItem(
-      PLUGIN_MARKET_VIEW_STATE_KEY,
-      JSON.stringify({
-        searchQuery,
-        pluginTypeFilter,
-        marketplaceSortBy,
-        showInstalledPlugins,
-      } satisfies PluginMarketplaceViewState)
-    )
-  }, [marketplaceSortBy, pluginTypeFilter, searchQuery, showInstalledPlugins])
-
-  useEffect(() => {
-    const viewport = scrollViewportRef.current
-    if (!viewport) {
-      return
-    }
-
-    const handleScroll = () => {
-      sessionStorage.setItem(PLUGIN_MARKET_SCROLL_TOP_KEY, String(viewport.scrollTop))
-    }
-
-    viewport.addEventListener('scroll', handleScroll, { passive: true })
-    return () => {
-      viewport.removeEventListener('scroll', handleScroll)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (scrollRestoredRef.current || loading) {
-      return
-    }
-
-    const viewport = scrollViewportRef.current
-    if (!viewport) {
-      return
-    }
-
-    const savedScrollTop = Number(sessionStorage.getItem(PLUGIN_MARKET_SCROLL_TOP_KEY) ?? 0)
-    if (!Number.isFinite(savedScrollTop) || savedScrollTop <= 0) {
-      scrollRestoredRef.current = true
-      return
-    }
-
-    const frameId = requestAnimationFrame(() => {
-      viewport.scrollTop = savedScrollTop
-      scrollRestoredRef.current = true
-    })
-
-    return () => {
-      cancelAnimationFrame(frameId)
-    }
-  }, [loading, plugins.length])
-
-  const mergeInstalledPluginInfo = (
-    marketPlugins: PluginInfo[],
-    installed: InstalledPlugin[]
-  ): PluginInfo[] => {
-    const mergedData = marketPlugins.map(plugin => {
-      const installedPlugin = installed.find(item => item.id === plugin.id || item.manifest?.id === plugin.id)
-      const isInstalled = Boolean(installedPlugin) || checkPluginInstalled(plugin.id, installed)
-      const installedVersion = installedPlugin?.manifest?.version ?? getInstalledPluginVersion(plugin.id, installed)
-
-      return {
-        ...plugin,
-        installed: isInstalled,
-        installed_version: installedVersion,
-      }
-    })
-
-    for (const installedPlugin of installed) {
-      const installedManifestId = installedPlugin.manifest?.id
-      const existsInMarket = mergedData.some(
-        p => p.id === installedPlugin.id || p.id === installedManifestId || p.manifest?.id === installedPlugin.id
-      )
-      if (!existsInMarket && installedPlugin.manifest) {
-        const urls = installedPlugin.manifest.urls as PluginInfo['manifest']['urls'] | undefined
-        // 添加本地安装但不在市场的插件
-        mergedData.push({
-          id: installedPlugin.id,
-          manifest: {
-            manifest_version: installedPlugin.manifest.manifest_version || 1,
-            id: installedPlugin.manifest.id || installedPlugin.id,
-            name: installedPlugin.manifest.name,
-            version: installedPlugin.manifest.version,
-            description: installedPlugin.manifest.description || '',
-            author: installedPlugin.manifest.author,
-            license: installedPlugin.manifest.license || 'Unknown',
-            host_application: installedPlugin.manifest.host_application,
-            homepage_url: installedPlugin.manifest.homepage_url || urls?.homepage,
-            repository_url: installedPlugin.manifest.repository_url || urls?.repository,
-            urls,
-            keywords: installedPlugin.manifest.keywords || [],
-            plugin_type: installedPlugin.manifest.plugin_type || 'extension',
-            display: installedPlugin.manifest.display,
-            changelog: installedPlugin.manifest.changelog,
-            default_locale: (installedPlugin.manifest.default_locale as string) || 'zh-CN',
-            locales_path: installedPlugin.manifest.locales_path as string | undefined,
-          },
-          downloads: 0,
-          rating: 0,
-          review_count: 0,
-          installed: true,
-          installed_version: installedPlugin.manifest.version,
-          source: 'local',
-          changelog: installedPlugin.changelog ?? undefined,
-          stats_ids: [installedPlugin.manifest.id].filter(Boolean) as string[],
-          published_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-      }
-    }
-
-    return mergedData
-  }
-
-  // 统一管理 WebSocket 和数据加载
-  useEffect(() => {
-    let unsubscribeProgress: (() => Promise<void>) | null = null
-    let isUnmounted = false
-
-    const init = async () => {
-      const cachedPluginList = getCachedPluginList()
-      const cachedStatsSummary = getCachedPluginStatsSummary()
-      if (cachedPluginList?.length && !isUnmounted) {
-        setPlugins(cachedPluginList)
-        if (cachedStatsSummary) {
-          setPluginStats(buildPluginStatsMap(cachedPluginList, cachedStatsSummary))
-        }
-        setLoading(false)
-      }
-
-      const progressSubscription = connectPluginProgressWebSocket(
-        (progress) => {
-          if (isUnmounted) return
-          
-          if (progress.operation === 'fetch') {
-            setMarketplaceProgress(progress)
-          } else {
-            setPluginProgressById((currentProgress) => mergePluginProgress(currentProgress, progress))
-          }
-
-          // 完成状态短暂保留在对应插件卡片上，不影响其他插件的进度。
-          if (progress.stage === 'success' && progress.operation === 'fetch') {
-            setTimeout(() => {
-              if (!isUnmounted) {
-                setMarketplaceProgress(null)
-              }
-            }, 2000)
-          } else if (progress.stage === 'success' && progress.plugin_id) {
-            const completedPluginId = progress.plugin_id
-            setTimeout(() => {
-              if (!isUnmounted) {
-                setPluginProgressById((currentProgress) => (
-                  clearPluginProgress(currentProgress, completedPluginId, progress)
-                ))
-              }
-            }, 2000)
-          } else if (progress.stage === 'error' && progress.operation === 'fetch') {
-            setLoading(false)
-            setError(progress.error || '加载失败')
-          }
-        },
-        (error) => {
-          console.error('WebSocket error:', error)
-          if (!isUnmounted) {
-            toast({
-              title: 'WebSocket 连接失败',
-              description: '无法实时显示加载进度',
-              variant: 'destructive',
-            })
-          }
-        }
-      )
-        .then((unsubscribe) => {
-          if (isUnmounted) {
-            void unsubscribe()
-            return unsubscribe
-          }
-
-          unsubscribeProgress = unsubscribe
-          return unsubscribe
-        })
-        .catch((error) => {
-          console.error('WebSocket subscribe error:', error)
-          return null
-        })
-
-      // 并发加载互不依赖的数据，避免 Git 检查、版本读取、市场清单和本地扫描串行拖慢页面。
-      if (!isUnmounted) {
-        try {
-          if (!cachedPluginList?.length) {
-            setLoading(true)
-          }
-          setError(null)
-          const [gitStatus, maimaiVersion, marketResult, installed] = await Promise.all([
-            checkGitStatus(),
-            getMaimaiVersion(),
-            // 市场清单失败需保留原有「setError + toast + 中断」行为，故就地收敛为判别结果，避免 Promise.all 整体 reject
-            fetchPluginList()
-              .then((data) => ({ ok: true as const, data }))
-              .catch((err) => ({ ok: false as const, error: err instanceof Error ? err.message : '加载失败' })),
-            getInstalledPlugins(),
-          ])
-          if (isUnmounted) {
-            return
-          }
-
-          setGitStatus(gitStatus)
-          if (!gitStatus.installed) {
-            toast({
-              title: 'Git 未安装',
-              description: gitStatus.error || '请先安装 Git 才能使用插件安装功能',
-              variant: 'destructive',
-            })
-          }
-
-          setMaimaiVersion(maimaiVersion)
-
-          if (!marketResult.ok) {
-            setError(marketResult.error)
-            toast({
-              title: '加载失败',
-              description: marketResult.error,
-              variant: 'destructive',
-            })
-            return
-          }
-
-          setInstalledPlugins(installed)
-          const mergedData = mergeInstalledPluginInfo(marketResult.data, installed)
-
-          if (cachedStatsSummary) {
-            setPluginStats(buildPluginStatsMap(mergedData, cachedStatsSummary))
-          }
-          setPlugins(mergedData)
-
-          getPluginStatsSummary({ forceRefresh: Boolean(cachedStatsSummary) })
-            .then((statsSummary) => {
-              if (!isUnmounted) {
-                setPluginStats(buildPluginStatsMap(mergedData, statsSummary))
-              }
-            })
-            .catch((statsError) => {
-              console.warn('刷新插件统计失败:', statsError)
-            })
-        } finally {
-          if (!isUnmounted) {
-            setLoading(false)
-          }
-        }
-      }
-
-      void progressSubscription
-    }
-
-    init()
-
-    return () => {
-      isUnmounted = true
-      if (unsubscribeProgress) {
-        void unsubscribeProgress()
-      }
-    }
-  }, [toast])
-
-  // 获取插件状态徽章
-  const getStatusBadge = (plugin: PluginInfo) => {
-    // 优先显示兼容性状态（已安装但不兼容也需要提示，避免用户误以为可继续更新）
-    if (maimaiVersion && !checkPluginCompatibility(plugin)) {
-      return (
-        <Badge variant="destructive" className="gap-1">
-          <AlertCircle className="h-3 w-3" />
-          不兼容
-        </Badge>
-      )
-    }
-    
-    if (plugin.installed) {
-      // 版本比较：去除两边空格并进行比较
-      const installedVer = plugin.installed_version?.trim()
-      const marketVer = plugin.manifest.version?.trim()
-      
-      if (installedVer !== marketVer) {
-        // 简单的版本比较：只有当市场版本比已安装版本新时才显示"可更新"
-        // 如果本地版本更新（比如手动更新或市场数据过期），则显示"已安装"
-        const installedParts = installedVer?.split('.').map(Number) || [0, 0, 0]
-        const marketParts = marketVer?.split('.').map(Number) || [0, 0, 0]
-        
-        // 比较主版本号、次版本号、修订号
-        for (let i = 0; i < 3; i++) {
-          if ((marketParts[i] || 0) > (installedParts[i] || 0)) {
-            // 市场版本更新
-            return (
-              <Badge variant="outline" className="gap-1 text-orange-600 border-orange-600">
-                <AlertCircle className="h-3 w-3" />
-                可更新
-              </Badge>
-            )
-          } else if ((marketParts[i] || 0) < (installedParts[i] || 0)) {
-            // 本地版本更新
-            break
-          }
-        }
-      }
-      
-      return (
-        <Badge variant="default" className="gap-1">
-          <CheckCircle2 className="h-3 w-3" />
-          已安装
-        </Badge>
-      )
-    }
-    return null
-  }
-
-  // 检查插件兼容性
-  // 规则：
-  // 1. manifest_version === 1 的插件在麦麦 >= 1.0.0 时一律视为不兼容（旧 manifest 已不再被宿主接受）；
-  // 2. 否则若声明了 host_application 范围，则按版本范围判定。
-  const checkPluginCompatibility = (plugin: PluginInfo): boolean => {
-    if (!maimaiVersion) return true
-
-    // manifest v1 在 1.0.0+ 麦麦上不再兼容
-    const manifestVersion = plugin.manifest?.manifest_version ?? 1
-    if (manifestVersion <= 1 && maimaiVersion.version_major >= 1) {
-      return false
-    }
-
-    if (!plugin.manifest?.host_application) return true
-
-    return isPluginCompatible(
-      plugin.manifest.host_application.min_version,
-      plugin.manifest.host_application.max_version,
-      maimaiVersion
-    )
-  }
-
-  // 不兼容原因（用于 UI 提示）
-  const getIncompatibleReason = (plugin: PluginInfo): string | null => {
-    if (!maimaiVersion) return null
-    const manifestVersion = plugin.manifest?.manifest_version ?? 1
-    if (manifestVersion <= 1 && maimaiVersion.version_major >= 1) {
-      return `该插件使用旧版 manifest (v${manifestVersion})，已不被麦麦 ${maimaiVersion.version} 支持`
-    }
-    if (plugin.manifest?.host_application && !isPluginCompatible(
-      plugin.manifest.host_application.min_version,
-      plugin.manifest.host_application.max_version,
-      maimaiVersion
-    )) {
-      const min = plugin.manifest.host_application.min_version || '未知'
-      const max = plugin.manifest.host_application.max_version
-      const range = max ? `${min} - ${max}` : `${min}+`
-      return `不兼容当前版本 (需要 ${range}，当前 ${maimaiVersion.version})`
-    }
-    return null
-  }
-
-  // 检查是否需要更新（市场版本比已安装版本新）
-  const needsUpdate = (plugin: PluginInfo): boolean => {
-    if (!plugin.installed || !plugin.installed_version || !plugin.manifest?.version) {
-      return false
-    }
-    // 不兼容的插件不允许更新
-    if (!checkPluginCompatibility(plugin)) {
-      return false
-    }
-    
-    const installedVer = plugin.installed_version.trim()
-    const marketVer = plugin.manifest.version.trim()
-    
-    if (installedVer === marketVer) return false
-    
-    const installedParts = installedVer.split('.').map(Number)
-    const marketParts = marketVer.split('.').map(Number)
-    
-    // 比较主版本号、次版本号、修订号
-    for (let i = 0; i < 3; i++) {
-      if ((marketParts[i] || 0) > (installedParts[i] || 0)) {
-        return true  // 市场版本更新
-      } else if ((marketParts[i] || 0) < (installedParts[i] || 0)) {
-        return false  // 本地版本更新
-      }
-    }
-    
-    return false
-  }
-
-  // 打开安装对话框
-  const openInstallDialog = (plugin: PluginInfo) => {
-    if (!gitStatus?.installed) {
-      toast({
-        title: '无法安装',
-        description: 'Git 未安装',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    // 检查插件兼容性
-    if (maimaiVersion && !checkPluginCompatibility(plugin)) {
-      toast({
-        title: '无法安装',
-        description: getIncompatibleReason(plugin) ?? '插件与当前麦麦版本不兼容',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setInstallingPlugin(plugin)
-    setInstallDialogOpen(true)
-  }
-
-  const handleInstallDialogOpenChange = (open: boolean) => {
-    if (!open && installProgress?.operation === 'install' && installProgress.stage === 'loading') {
-      return
-    }
-
-    setInstallDialogOpen(open)
-    if (!open) {
-      setInstallingPlugin(null)
-    }
-  }
-
-  const handleLike = async (plugin: PluginInfo) => {
-    const pluginId = plugin.manifest?.id || plugin.id
-    if (likingPluginIds.has(pluginId)) {
-      return
-    }
-
-    setLikingPluginIds((currentIds) => {
-      const nextIds = new Set(currentIds)
-      nextIds.add(pluginId)
-      return nextIds
-    })
-
-    try {
-      const result = await likePlugin(pluginId)
-
-      if (!result.success) {
-        toast({
-          title: '点赞失败',
-          description: result.error || '无法提交点赞',
-          variant: 'destructive',
-        })
-        return
-      }
-
-      setPluginStats((currentStats) => {
-        const currentPluginStats = currentStats[pluginId] ?? currentStats[plugin.id] ?? {
-          plugin_id: pluginId,
-          likes: 0,
-          dislikes: 0,
-          downloads: plugin.downloads ?? 0,
-          rating: plugin.rating ?? 0,
-          rating_count: 0,
-        }
-        const nextPluginStats: PluginStatsData = {
-          ...currentPluginStats,
-          plugin_id: pluginId,
-          likes: Number(result.likes ?? currentPluginStats.likes),
-          dislikes: Number(result.dislikes ?? currentPluginStats.dislikes),
-          liked: result.liked,
-          disliked: result.disliked,
-        }
-        const nextStats = { ...currentStats }
-        const statsIds = [pluginId, plugin.id, plugin.manifest?.id, currentPluginStats.plugin_id]
-          .filter((id): id is string => Boolean(id))
-
-        for (const statsId of statsIds) {
-          nextStats[statsId] = nextPluginStats
-        }
-
-        return nextStats
-      })
-    } finally {
-      setLikingPluginIds((currentIds) => {
-        const nextIds = new Set(currentIds)
-        nextIds.delete(pluginId)
-        return nextIds
-      })
-    }
-  }
-
-  // 安装插件处理
-  const handleInstall = async (branch: string) => {
-    if (!installingPlugin) return
-
-    if (!branch || branch.trim() === '') {
-      toast({
-        title: '分支名称不能为空',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    try {
-      setPluginProgress({
-        operation: 'install',
-        stage: 'loading',
-        progress: 0,
-        message: `正在准备安装 ${installingPlugin.manifest.name}`,
-        plugin_id: installingPlugin.id,
-        total_plugins: 1,
-        loaded_plugins: 0,
-      })
-
-      await installPlugin(
-        installingPlugin.id,
-        installingPlugin.manifest.repository_url || installingPlugin.manifest.urls?.repository || '',
-        branch
-      )
-
-      // 记录下载统计
-      if (installingPlugin.manifest.id) {
-        recordPluginDownload(installingPlugin.manifest.id).catch(err => {
-          console.warn('Failed to record download:', err)
-        })
-      }
-      
-      toast({
-        title: '安装成功',
-        description: `${installingPlugin.manifest.name} 已成功安装`,
-      })
-      setCompletedPluginProgress({
-        operation: 'install',
-        stage: 'success',
-        progress: 100,
-        message: `${installingPlugin.manifest.name} 已成功安装`,
-        plugin_id: installingPlugin.id,
-        total_plugins: 1,
-        loaded_plugins: 1,
-      })
-      
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === installingPlugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-            
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误'
-      setPluginProgress({
-        operation: 'install',
-        stage: 'error',
-        progress: 0,
-        message: errorMessage,
-        error: errorMessage,
-        plugin_id: installingPlugin.id,
-        total_plugins: 1,
-        loaded_plugins: 0,
-      })
-      toast({
-        title: '安装失败',
-        description: errorMessage,
-        variant: 'destructive',
-      })
-    }
-  }
-
-  // 卸载插件处理
-  const handleUninstall = async (plugin: PluginInfo) => {
-    if (pluginProgressById[plugin.id]?.stage === 'loading') {
-      return
-    }
-
-    try {
-      await uninstallPlugin(plugin.id)
-
-      toast({
-        title: '卸载成功',
-        description: `${plugin.manifest.name} 已成功卸载`,
-      })
-
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === plugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-            
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
-    } catch (error) {
-      toast({
-        title: '卸载失败',
-        description: error instanceof Error ? error.message : '未知错误',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  // 更新插件处理
-  const handleUpdate = async (plugin: PluginInfo) => {
-    if (pluginProgressById[plugin.id]?.stage === 'loading') {
-      return
-    }
-
-    if (!gitStatus?.installed) {
-      toast({
-        title: '无法更新',
-        description: 'Git 未安装',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    // 不兼容的插件不允许更新
-    if (maimaiVersion && !checkPluginCompatibility(plugin)) {
-      toast({
-        title: '无法更新',
-        description: getIncompatibleReason(plugin) ?? '插件与当前麦麦版本不兼容',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    try {
-      setPluginProgress({
-        operation: 'update',
-        stage: 'loading',
-        progress: 0,
-        message: `正在准备更新 ${plugin.manifest.name}`,
-        plugin_id: plugin.id,
-        total_plugins: 1,
-        loaded_plugins: 0,
-      })
-      const updateResult = await updatePlugin(
-        plugin.id,
-        plugin.manifest.repository_url || plugin.manifest.urls?.repository || '',
-        'main'
-      )
-
-      toast({
-        title: '更新成功',
-        description: `${plugin.manifest.name} 已从 ${updateResult.old_version} 更新到 ${updateResult.new_version}`,
-      })
-      setCompletedPluginProgress({
-        operation: 'update',
-        stage: 'success',
-        progress: 100,
-        message: `${plugin.manifest.name} 已完成更新`,
-        plugin_id: plugin.id,
-        total_plugins: 1,
-        loaded_plugins: 1,
-      })
-
-      // 重新加载已安装插件列表
-      const installed = await getInstalledPlugins({ forceRefresh: true })
-      setInstalledPlugins(installed)
-
-      // 重新合并已安装信息到插件列表
-      setPlugins(prevPlugins =>
-        prevPlugins.map(p => {
-          if (p.id === plugin.id) {
-            const isInstalled = checkPluginInstalled(p.id, installed)
-            const installedVersion = getInstalledPluginVersion(p.id, installed)
-            
-            return {
-              ...p,
-              installed: isInstalled,
-              installed_version: installedVersion
-            }
-          }
-          return p
-        })
-      )
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误'
-      setPluginProgress({
-        operation: 'update',
-        stage: 'error',
-        progress: 0,
-        message: errorMessage,
-        error: errorMessage,
-        plugin_id: plugin.id,
-        total_plugins: 1,
-        loaded_plugins: 0,
-      })
-      toast({
-        title: '更新失败',
-        description: errorMessage,
-        variant: 'destructive',
-      })
-    }
   }
 
   // 过滤插件用于标签页统计
@@ -936,8 +127,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
         p.manifest.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (p.manifest.keywords && p.manifest.keywords.some(k => k.toLowerCase().includes(searchQuery.toLowerCase())))
       const matchesType = pluginTypeFilter === 'all' || getPluginType(p) === pluginTypeFilter
-      const matchesCompatibility = !showCompatibleOnly || 
-        !maimaiVersion || 
+      const matchesCompatibility = !showCompatibleOnly ||
+        !maimaiVersion ||
         checkPluginCompatibility(p)
 
       return matchesSearch && matchesType && matchesCompatibility

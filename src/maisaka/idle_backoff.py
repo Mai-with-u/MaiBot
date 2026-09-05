@@ -1,11 +1,12 @@
 """Maisaka 空闲退避状态。"""
 
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import time
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.maisaka.mode_policy import is_idle_cycle_reason
+
+from .mode_policy import is_idle_cycle_reason
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -64,23 +65,26 @@ class IdleBackoffController:
             f"退避={backoff_seconds:.2f} 秒"
         )
 
-    def should_delay(self, pending_count: int) -> bool:
-        """判断当前消息触发是否应被空闲退避延迟。"""
+    def should_delay(self, pending_count: int) -> Optional[float]:
+        """判断当前消息触发是否应被空闲退避延迟。
+
+        若应延迟，返回剩余秒数；调用方负责按该秒数延迟后再检查。
+        """
         runtime = self._runtime
         if runtime._is_focus_mode_active_for_current_chat():
             self.reset()
-            return False
+            return None
 
         if not runtime.chat_stream.is_group_session:
-            return False
+            return None
 
         if self._until <= 0:
-            return False
+            return None
 
         remaining_seconds = self._until - time.time()
         if remaining_seconds <= 0:
             self._until = 0.0
-            return False
+            return None
 
         bypass_pending_count = max(0, int(global_config.chat.reply_timing.no_action_backoff_bypass_pending_count))
         if bypass_pending_count > 0 and pending_count >= bypass_pending_count:
@@ -88,8 +92,7 @@ class IdleBackoffController:
                 f"{runtime.log_prefix} 空闲退避被待处理消息数绕过: "
                 f"待处理={pending_count} 阈值={bypass_pending_count}"
             )
-            return False
+            return None
 
         logger.debug(f"{runtime.log_prefix} 空闲退避中，延迟 {remaining_seconds:.2f} 秒后再检查")
-        runtime._defer_message_turn_check(remaining_seconds)
-        return True
+        return remaining_seconds

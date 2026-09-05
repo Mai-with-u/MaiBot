@@ -114,6 +114,6 @@ class BufferCLI:
                 await self._dispatch_input(user_text)
         finally:
             if self._session is not None:
-                runtime = heartflow_manager.heartflow_chat_list.pop(self._session.session_id, None)
+                runtime = heartflow_manager.pop_heartflow_chat(self._session.session_id)
                 if runtime is not None:
                     await runtime.stop()

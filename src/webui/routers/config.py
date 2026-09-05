@@ -296,18 +296,18 @@ class _SingleModelPromptOrchestrator(LLMOrchestrator):
     """复用现有 LLM 调度器，但把本次请求限制到一个已定义模型。"""
 
     def __init__(self, model_name: str, temperature: float, max_tokens: int) -> None:
-        self._prompt_generator_task_config = TaskConfig(
-            model_list=[model_name],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            slow_threshold=30.0,
-            selection_strategy="sequential",
-            hard_timeout=180.0,
+        super().__init__(
+            task_name="webui_prompt_generator",
+            request_type="webui_prompt_generator",
+            task_config=TaskConfig(
+                model_list=[model_name],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                slow_threshold=30.0,
+                selection_strategy="sequential",
+                hard_timeout=180.0,
+            ),
         )
-        super().__init__(task_name="webui_prompt_generator", request_type="webui_prompt_generator")
-
-    def _get_task_config_or_raise(self) -> TaskConfig:
-        return self._prompt_generator_task_config
 
 
 def _get_cached_schema(cache_key: str, config_class: type[ConfigBase], include_nested: bool = True) -> Dict[str, Any]:

@@ -95,18 +95,18 @@ class _SingleModelTestOrchestrator(LLMOrchestrator):
     """复用 LLM 调度器，但将 WebUI 测试请求限制到单个模型。"""
 
     def __init__(self, model_name: str) -> None:
-        self._model_test_task_config = TaskConfig(
-            model_list=[model_name],
-            max_tokens=512,
-            temperature=0.0,
-            slow_threshold=30.0,
-            selection_strategy="sequential",
-            hard_timeout=90.0,
+        super().__init__(
+            task_name="webui_model_test",
+            request_type="webui_model_test",
+            task_config=TaskConfig(
+                model_list=[model_name],
+                max_tokens=512,
+                temperature=0.0,
+                slow_threshold=30.0,
+                selection_strategy="sequential",
+                hard_timeout=90.0,
+            ),
         )
-        super().__init__(task_name="webui_model_test", request_type="webui_model_test")
-
-    def _get_task_config_or_raise(self) -> TaskConfig:
-        return self._model_test_task_config
 
 
 @router.get("/client-types")

@@ -5,8 +5,8 @@ from typing import Sequence, TYPE_CHECKING
 from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
 from src.maisaka.focus import focus_mode_manager
-from src.maisaka.mode_policy import is_reply_necessity_trigger_enabled
-from src.maisaka.turn_gates import FrequencyThresholdTurnGate, ReplyNecessityTurnGate
+
+from .turn_policy import TurnPolicy, TurnSnapshot
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -19,8 +19,7 @@ class MessageTurnScheduler:
 
     def __init__(self, runtime: "MaisakaHeartFlowChatting") -> None:
         self._runtime = runtime
-        self._reply_necessity_gate = ReplyNecessityTurnGate(runtime)
-        self._frequency_threshold_gate = FrequencyThresholdTurnGate(runtime)
+        self._turn_policy = TurnPolicy(runtime)
 
     def score_reply_necessity(
         self,
@@ -30,35 +29,10 @@ class MessageTurnScheduler:
     ) -> tuple[int, str]:
         """按当前 runtime 快照为待处理消息计算回复必要性评分。"""
 
-        score_result = self._reply_necessity_gate.score(
+        return self._turn_policy.score_reply_necessity(
             pending_messages=pending_messages,
             trigger_threshold=trigger_threshold,
         )
-        return score_result.score, score_result.detail
-
-    def should_trigger_by_reply_necessity(
-        self,
-        *,
-        pending_messages: Sequence[SessionMessage],
-        trigger_threshold: int,
-        formatted_frequency: str,
-        pending_count: int,
-    ) -> bool:
-        """判断新 Maisaka 是否应基于回复必要性进入 Planner。"""
-
-        result = self._reply_necessity_gate.evaluate(
-            pending_messages=pending_messages,
-            trigger_threshold=trigger_threshold,
-        )
-        decision_label = "进入Planner" if result.should_trigger else "等待更多消息"
-        schedule_detail = (
-            f"[频率: {formatted_frequency}]"
-            f"[{pending_count}/{trigger_threshold} 消息 | 压力: {result.pressure_score}]"
-        )
-        logger.info(
-            f"{self._runtime.log_prefix}{schedule_detail}[{result.detail}][{decision_label}]"
-        )
-        return result.should_trigger
 
     def schedule_message_turn(self) -> None:
         runtime = self._runtime
@@ -85,48 +59,19 @@ class MessageTurnScheduler:
         if pending_count <= 0:
             return
 
-        effective_frequency = runtime._get_effective_reply_frequency()
-        formatted_frequency = f"{effective_frequency:.3f}"
-        if runtime._is_reply_frequency_silent():
-            logger.info(
-                f"{runtime.log_prefix} 回复频率调度: 频率={formatted_frequency} "
-                f"pending={pending_count} 判定=静默消费"
-            )
-            runtime._enqueue_message_turn()
-            return
-
-        if runtime._has_forced_turn_trigger():
-            logger.info(
-                f"{runtime.log_prefix} 回复频率调度: 频率={formatted_frequency} "
-                f"pending={pending_count} 判定=强制触发"
-            )
-            runtime._enqueue_message_turn()
-            return
-
-        if runtime._idle_backoff.should_delay(pending_count):
-            return
-
-        trigger_threshold = runtime._get_message_trigger_threshold()
-        schedule_detail = f"[频率: {formatted_frequency}][{pending_count}/{trigger_threshold} 消息]"
-        if is_reply_necessity_trigger_enabled():
-            if self.should_trigger_by_reply_necessity(
-                pending_messages=runtime.message_cache[runtime._last_processed_index :],
-                trigger_threshold=trigger_threshold,
-                formatted_frequency=formatted_frequency,
+        decision = self._turn_policy.decide(
+            TurnSnapshot(
                 pending_count=pending_count,
-            ):
-                runtime._enqueue_message_turn()
-            return
-
-        logger.info(f"{runtime.log_prefix} 回复频率调度: {schedule_detail}")
-        frequency_result = self._frequency_threshold_gate.evaluate(
-            pending_count=pending_count,
-            trigger_threshold=trigger_threshold,
+                pending_messages=runtime.message_cache[runtime._last_processed_index :],
+                effective_frequency=runtime._get_effective_reply_frequency(),
+                is_silent=runtime._is_reply_frequency_silent(),
+                has_forced_trigger=runtime._has_forced_turn_trigger(),
+                trigger_threshold=runtime._get_message_trigger_threshold(),
+                log_prefix=runtime.log_prefix,
+            )
         )
-        logger.info(f"{runtime.log_prefix} 回复频率调度: {frequency_result.detail}")
-        if frequency_result.should_trigger:
+        if decision.action == "enqueue":
             runtime._enqueue_message_turn()
             return
-
-        if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
-            runtime._defer_message_turn_check(frequency_result.delay_seconds)
+        if decision.action == "delay" and decision.delay_seconds is not None:
+            runtime._defer_message_turn_check(decision.delay_seconds)

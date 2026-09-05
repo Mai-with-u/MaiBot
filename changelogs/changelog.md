@@ -1,5 +1,42 @@
 # 更新日志
 
+# [1.2.5] - 2026-9-5
+
+## 聊天流
+
+- WebUI 聊天历史与清空改为解析已存在的真实聊天流，不再自行计算 session_id；虚拟身份按所属 platform 查找。
+
+## 核心
+
+- 抽出进程停机步骤编排，三个入口仍保持各自原有停机集合与顺序。
+- EventBus 的 IPC 事件桥接改为初始化注入，core 不再硬依赖 plugin_runtime。
+- HeartflowManager 收口活循环注册表，调用方不再直接 get/pop 内部字典；WebUI 删除聊天流仍只移除缓存、不 stop。
+
+## 插件运行时
+
+- Host/Runner RPC 抽出共享会话层，握手与入站回复仍直写，线协议不变。
+- PluginRuntimeManager 改为组合绑定能力实现，不再多继承 mixin；capability 名与 ACTION 词汇不变。
+
+## Maisaka
+
+- 消息开口判定收到 TurnPolicy.decide，调度副作用仍留在 scheduler。
+- MemoryService 增加段落来源具名 preview；启发式记忆改为相同 preview 富集后的纯函数过滤。
+
+## 模型
+
+- WebUI 单模测试/人设生成改为注入合成 TaskConfig，不再覆盖编排器私有方法。
+
+## Webui [1.7.4]
+
+- 将 `/api/chat` 路由拆分为本地聊天室与聊天流两个模块，对外路径保持不变。
+- 聊天流规则匹配改为走 ChatConfigUtils 的公开 interface。
+- 适配器主程序规则面板接入配置表单编排，仍为单节草稿 + 手动保存。
+- 聊天流管理与插件市场页将列表/引导状态机沉入领域 hook，过滤与分页语义不变。
+
+## 细节
+
+- 删除未使用的 LLMRequest、统计 hourly 拉取、`/statistics/summary|models`、TCPTransportServer、`emit_inbound`、catalog `POST /clone`，以及死副本 `schemas/chat.py`。
+
 # [1.2.4] - 2026-9-1
 
 ## Maisaka

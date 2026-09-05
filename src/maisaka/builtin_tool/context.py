@@ -23,7 +23,6 @@ from src.maisaka.context.messages import SessionBackedMessage
 from src.maisaka.context.planner_messages import (
     build_planner_prefix,
     build_session_backed_text_message,
-    extract_quote_ids_from_message_sequence,
 )
 from src.plugin_runtime.integration import get_plugin_runtime_manager
 
@@ -460,37 +459,7 @@ class BuiltinToolRuntimeContext:
     def append_sent_message_to_chat_history(self, message: Any, *, source_kind: str = "guided_reply") -> bool:
         """将已发送消息写回 Maisaka 历史。"""
 
-        runtime_append = getattr(self.runtime, "append_sent_message_to_chat_history", None)
-        if callable(runtime_append):
-            return bool(runtime_append(message, source_kind=source_kind))
-
-        from src.maisaka.context.messages import SessionBackedMessage
-        from src.maisaka.context.history import build_prefixed_message_sequence, build_session_message_visible_text
-        user_info = message.message_info.user_info
-        speaker_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
-        include_chat_id = self._should_include_planner_chat_id()
-        planner_prefix = build_planner_prefix(
-            timestamp=message.timestamp,
-            user_name=speaker_name,
-            group_card=user_info.user_cardname or "",
-            message_id=message.message_id,
-            chat_id=message.session_id,
-            quote_ids=extract_quote_ids_from_message_sequence(message.raw_message),
-            include_message_id=not message.is_notify and bool(message.message_id),
-            include_chat_id=include_chat_id,
-            is_self_message=source_kind == "guided_reply",
-        )
-        history_message = SessionBackedMessage.from_session_message(
-            message,
-            raw_message=build_prefixed_message_sequence(message.raw_message, planner_prefix),
-            visible_text=build_session_message_visible_text(
-                message,
-                include_reply_components=source_kind != "guided_reply",
-            ),
-            source_kind=source_kind,
-        )
-        self.runtime._chat_history.append(history_message)
-        return True
+        return self.runtime.append_sent_message_to_chat_history(message, source_kind=source_kind)
 
     def append_sent_emoji_to_chat_history(
         self,

@@ -282,6 +282,84 @@ async def test_tuning_admin_uses_long_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preview_paragraph_sources_uses_delete_admin_preview(monkeypatch):
+    service = MemoryService()
+    calls = []
+
+    async def fake_invoke(component_name, args=None, **kwargs):
+        calls.append((component_name, args, kwargs))
+        return {
+            "success": True,
+            "items": [
+                {"item_type": "paragraph", "item_hash": "h1", "source": "chat_summary:s1"},
+                {"item_type": "entity", "item_hash": "h2", "source": "ignored"},
+                {"item_type": "paragraph", "item_hash": "h3", "source": "person_fact:p1"},
+                {"item_type": "paragraph", "item_hash": "", "source": "chat_summary:s2"},
+                "not-a-dict",
+            ],
+        }
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+
+    result = await service.preview_paragraph_sources(["h1", "h3"])
+
+    assert result == {"h1": "chat_summary:s1", "h3": "person_fact:p1"}
+    assert calls == [
+        (
+            "memory_delete_admin",
+            {
+                "action": "preview",
+                "mode": "paragraph",
+                "selector": {"hashes": ["h1", "h3"]},
+            },
+            {"timeout_ms": 10000},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_preview_paragraph_sources_returns_empty_on_failure(monkeypatch):
+    service = MemoryService()
+
+    async def fake_invoke(component_name, args=None, **kwargs):
+        raise RuntimeError("preview failed")
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+
+    assert await service.preview_paragraph_sources(["h1"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_preview_paragraph_sources_returns_empty_when_unsuccessful(monkeypatch):
+    service = MemoryService()
+
+    async def fake_invoke(component_name, args=None, **kwargs):
+        return {
+            "success": False,
+            "items": [{"item_type": "paragraph", "item_hash": "h1", "source": "chat_summary:s1"}],
+        }
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+
+    assert await service.preview_paragraph_sources(["h1"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_preview_paragraph_sources_skips_invoke_for_empty_hashes(monkeypatch):
+    service = MemoryService()
+    calls = []
+
+    async def fake_invoke(component_name, args=None, **kwargs):
+        calls.append((component_name, args, kwargs))
+        return {"success": True, "items": []}
+
+    monkeypatch.setattr(service, "_invoke", fake_invoke)
+
+    assert await service.preview_paragraph_sources([]) == {}
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_memory_correction_admin_uses_new_component_and_keeps_legacy_alias(monkeypatch):
     service = MemoryService()
     calls = []

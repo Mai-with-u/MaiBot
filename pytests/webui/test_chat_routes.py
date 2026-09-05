@@ -5,7 +5,8 @@ from typing import Any, Iterator
 import pytest
 
 from src.common.database.database_model import ChatSession
-from src.webui.routers.chat import routes
+from src.webui.routers.chat.chat_streams import routes as chat_streams_routes
+from src.webui.routers.chat.local_chat import routes as local_chat_routes
 
 
 class _DetachedGuardPerson:
@@ -53,9 +54,9 @@ async def test_get_persons_by_platform_serializes_before_session_closes(monkeypa
         finally:
             person.closed = True
 
-    monkeypatch.setattr(routes, "get_db_session", fake_get_db_session)
+    monkeypatch.setattr(local_chat_routes, "get_db_session", fake_get_db_session)
 
-    response = await routes.get_persons_by_platform(platform="qq", limit=50)
+    response = await local_chat_routes.get_persons_by_platform(platform="qq", limit=50)
 
     assert response == {
         "success": True,
@@ -89,4 +90,4 @@ def test_group_display_name_ignores_private_latest_message_identity() -> None:
         user_cardname=None,
     )
 
-    assert routes._get_chat_display_name(chat_session, latest_message) == "麦麦脑电图｜技术交流群｜部署/配置"
+    assert chat_streams_routes._get_chat_display_name(chat_session, latest_message) == "麦麦脑电图｜技术交流群｜部署/配置"

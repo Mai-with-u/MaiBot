@@ -14,7 +14,7 @@ import sys
 import time
 import traceback
 
-from src.common.i18n import set_locale, t, tn
+from src.common.i18n import set_locale, t
 from src.common.logger import get_logger, initialize_logging, shutdown_logging
 from src.common.runtime_loop import set_main_loop
 from src.common.shutdown import request_shutdown
@@ -147,7 +147,6 @@ asyncio.run(emit_terminal_update_notice_if_needed())
 logger.info(t("startup.worker_dir_set", script_dir=script_dir))
 
 from src.main import MainSystem  # noqa
-from src.manager.async_task_manager import async_task_manager  # noqa
 
 
 # logger = get_logger("main")
@@ -208,83 +207,14 @@ def easter_egg():
     print(rainbow_text)
 
 
-async def graceful_shutdown(main_system: MainSystem | None = None):  # sourcery skip: use-named-expression
+async def graceful_shutdown(main_system: MainSystem | None = None):
     try:
-        request_shutdown("graceful_shutdown")
-        logger.info(t("startup.shutdown_started"))
+        from src.core.process_shutdown import run_process_shutdown
 
-        # 关闭 WebUI 服务器
-        try:
-            if main_system is not None and main_system.webui_server is not None:
-                await main_system.webui_server.shutdown()
-        except Exception as e:
-            logger.warning(f"关闭 WebUI 服务器时出错: {e}")
-
-        from src.core.event_bus import event_bus
-        from src.core.types import EventType
-
-        # 触发 ON_STOP 事件
-        await _await_shutdown_step(
-            event_bus.emit(event_type=EventType.ON_STOP),
-            timeout=5.0,
-            step_name="触发 ON_STOP 事件",
-        )
-
-        # 停止新版本插件运行时
-        from src.plugin_runtime.integration import get_plugin_runtime_manager
-
-        await _await_shutdown_step(
-            get_plugin_runtime_manager().stop(),
-            timeout=8.0,
-            step_name="停止插件运行时",
-        )
-
-        # 停止所有异步任务
-        await _await_shutdown_step(
-            async_task_manager.stop_and_wait_all_tasks(),
-            timeout=5.0,
-            step_name="停止异步任务管理器任务",
-        )
-
-        # 获取所有剩余任务，排除当前任务
-        remaining_tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
-
-        if remaining_tasks:
-            logger.info(tn("startup.remaining_tasks_cancelling", len(remaining_tasks)))
-
-            # 取消所有剩余任务
-            for task in remaining_tasks:
-                if not task.done():
-                    task.cancel()
-
-            # 等待所有任务完成，设置超时
-            try:
-                await asyncio.wait_for(asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=5.0)
-                logger.info(t("startup.remaining_tasks_cancelled"))
-            except asyncio.TimeoutError:
-                logger.warning(t("startup.remaining_tasks_cancel_timeout"))
-            except Exception as e:
-                logger.error(t("startup.remaining_tasks_cancel_error", error=e))
-
-        logger.info(t("startup.shutdown_completed"))
-
+        webui_server = None if main_system is None else main_system.webui_server
+        await run_process_shutdown("stepwise_timeout", webui_server=webui_server)
     except Exception as e:
         logger.error(t("startup.shutdown_failed", error=e), exc_info=True)
-
-
-async def _await_shutdown_step(awaitable, *, timeout: float, step_name: str):
-    """为关停步骤设置硬超时，避免单个组件阻塞 Ctrl+C 退出。"""
-
-    try:
-        return await asyncio.wait_for(awaitable, timeout=timeout)
-    except asyncio.TimeoutError:
-        logger.warning(f"{step_name} 超时，继续执行后续关停步骤")
-        return None
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.warning(f"{step_name} 失败，继续执行后续关停步骤: {exc}", exc_info=True)
-        return None
 
 
 def _cancel_main_task(main_loop: asyncio.AbstractEventLoop | None, main_task: asyncio.Task[None] | None) -> None:

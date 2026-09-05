@@ -159,7 +159,7 @@ class MaisakaFocusRuntimeMixin:
 
             from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-            running_runtimes = list(heartflow_manager.heartflow_chat_list.values())
+            running_runtimes = list(heartflow_manager.iter_heartflow_chats())
             if self._select_focus_cooldown_wakeup_runtime(running_runtimes) is not self:
                 return
             trigger_session_id = self._find_pending_other_focus_chat_id(running_runtimes, self.session_id)
@@ -179,7 +179,7 @@ class MaisakaFocusRuntimeMixin:
 
         running_sessions = [
             runtime.chat_stream
-            for runtime in heartflow_manager.heartflow_chat_list.values()
+            for runtime in heartflow_manager.iter_heartflow_chats()
         ]
         return focus_mode_manager.resolve_session_from_args(arguments, running_sessions)
 
@@ -191,7 +191,7 @@ class MaisakaFocusRuntimeMixin:
 
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-        running_runtimes = list(heartflow_manager.heartflow_chat_list.values())
+        running_runtimes = list(heartflow_manager.iter_heartflow_chats())
         target_runtime = self._select_focus_cooldown_wakeup_runtime(
             running_runtimes,
             trigger_session_id=trigger_session_id,
@@ -208,7 +208,7 @@ class MaisakaFocusRuntimeMixin:
 
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-        running_runtimes = list(heartflow_manager.heartflow_chat_list.values())
+        running_runtimes = list(heartflow_manager.iter_heartflow_chats())
         target_runtime = self._select_focus_cooldown_wakeup_runtime(
             running_runtimes,
             trigger_session_id=trigger_session_id,
@@ -366,7 +366,7 @@ class MaisakaFocusRuntimeMixin:
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
         running_runtimes = sorted(
-            heartflow_manager.heartflow_chat_list.values(),
+            heartflow_manager.iter_heartflow_chats(),
             key=lambda runtime: runtime.chat_stream.last_active_timestamp
             or runtime.chat_stream.created_timestamp,
             reverse=True,
@@ -657,7 +657,7 @@ class MaisakaFocusRuntimeMixin:
 
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-        target_runtime = heartflow_manager.heartflow_chat_list.get(target_session.session_id)
+        target_runtime = heartflow_manager.get_heartflow_chat(target_session.session_id)
         if target_runtime is None:
             return False, f"chat_id={target_session.session_id} 当前不是运行中已创建聊天，不能切换。", {}, {}
 

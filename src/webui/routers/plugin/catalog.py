@@ -11,8 +11,6 @@ from .progress import update_progress
 from .schemas import (
     AddMirrorRequest,
     AvailableMirrorsResponse,
-    CloneRepositoryRequest,
-    CloneRepositoryResponse,
     FetchRawFileRequest,
     FetchRawFileResponse,
     GitStatusResponse,
@@ -20,7 +18,7 @@ from .schemas import (
     UpdateMirrorRequest,
     VersionResponse,
 )
-from .support import get_plugins_dir, parse_version, require_plugin_token, validate_safe_path
+from .support import parse_version, require_plugin_token
 
 logger = get_logger("webui.plugin_routes")
 
@@ -181,30 +179,4 @@ async def fetch_raw_file(
         await update_progress(
             stage="error", progress=0, message="加载失败", error=str(e), total_plugins=0, loaded_plugins=0
         )
-        raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}") from e
-
-
-@router.post("/clone", response_model=CloneRepositoryResponse)
-async def clone_repository(
-    request: CloneRepositoryRequest,
-    maibot_session: Optional[str] = Cookie(None),
-) -> CloneRepositoryResponse:
-    require_plugin_token(maibot_session)
-    logger.info(f"收到克隆仓库请求: {request.owner}/{request.repo} -> {request.target_path}")
-
-    try:
-        target_path = validate_safe_path(request.target_path, get_plugins_dir())
-        service = get_git_mirror_service()
-        result = await service.clone_repository(
-            owner=request.owner,
-            repo=request.repo,
-            target_path=target_path,
-            branch=request.branch,
-            mirror_id=request.mirror_id,
-            custom_url=request.custom_url,
-            depth=request.depth,
-        )
-        return CloneRepositoryResponse(**result)
-    except Exception as e:
-        logger.error(f"克隆仓库失败: {e}")
         raise HTTPException(status_code=500, detail=f"服务器错误: {str(e)}") from e

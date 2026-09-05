@@ -810,7 +810,7 @@ class RuntimeDataCapabilityMixin:
     def _get_frequency_adjust_value(chat_id: str) -> float:
         from src.chat.heart_flow.heartflow_manager import heartflow_manager
 
-        heartflow_chat = heartflow_manager.heartflow_chat_list.get(chat_id)
+        heartflow_chat = heartflow_manager.get_heartflow_chat(chat_id)
         return 1.0 if heartflow_chat is None else heartflow_chat._talk_frequency_adjust
 
     async def _cap_frequency_get_current_talk_value(self, plugin_id: str, capability: str, args: Dict[str, Any]) -> Any:

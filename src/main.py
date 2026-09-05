@@ -47,6 +47,23 @@ async def _wait_for_plugin_runners_spawned(
         await asyncio.sleep(0.02)
 
 
+async def _bridge_event_to_ipc_runtime(
+    event_type_value: str,
+    message_dict: dict[str, Any] | None = None,
+) -> tuple[bool, dict[str, Any] | None]:
+    """将事件总线事件转发到 IPC 插件运行时。"""
+
+    from src.plugin_runtime.integration import get_plugin_runtime_manager
+
+    plugin_runtime_manager = get_plugin_runtime_manager()
+    if not plugin_runtime_manager.is_running:
+        return True, None
+    return await plugin_runtime_manager.bridge_event(
+        event_type_value=event_type_value,
+        message_dict=message_dict,
+    )
+
+
 class MainSystem:
     def __init__(self) -> None:
         # 使用消息API替代直接的FastAPI实例
@@ -147,8 +164,12 @@ class MainSystem:
         # start_api_server()
         # logger.info("API服务器启动成功")
 
+        from src.core.event_bus import event_bus
+
         try:
             await asyncio.gather(plugin_runtime_task, a_memorix_task)
+            # 注入 IPC 桥接；emit 在无 handler 时仍提前返回，不桥接 ON_START。
+            event_bus.set_ipc_bridge(_bridge_event_to_ipc_runtime)
             await emoji_load_task
         except Exception:
             for task in (plugin_runtime_task, a_memorix_task, emoji_load_task):
@@ -178,7 +199,6 @@ class MainSystem:
         # await asyncio.sleep(0.5) #防止logger输出飞了
 
         # 触发 ON_START 事件，事件总线会统一桥接到 IPC 插件运行时。
-        from src.core.event_bus import event_bus
         from src.core.types import EventType
 
         await event_bus.emit(event_type=EventType.ON_START)
@@ -255,23 +275,9 @@ async def main() -> None:
         await system.initialize()
         await system.schedule_tasks()
     finally:
-        if system.webui_server:
-            await system.webui_server.shutdown()
-        from src.A_memorix.host_service import a_memorix_host_service
-        from src.emoji_system.emoji_manager import emoji_manager
-        from src.mcp_module.service import get_mcp_service
-        from src.plugin_runtime.integration import get_plugin_runtime_manager
-        from src.services.memory_flow_service import memory_automation_service
+        from src.core.process_shutdown import run_process_shutdown
 
-        emoji_manager.shutdown()
-        await memory_automation_service.shutdown()
-        await a_memorix_host_service.stop()
-        await get_plugin_runtime_manager().bridge_event("on_stop")
-        await get_plugin_runtime_manager().stop()
-        await async_task_manager.stop_and_wait_all_tasks()
-        await get_mcp_service().close()
-        await config_manager.stop_file_watcher()
-        set_main_loop(None)
+        await run_process_shutdown("full", webui_server=system.webui_server)
 
 
 if __name__ == "__main__":
