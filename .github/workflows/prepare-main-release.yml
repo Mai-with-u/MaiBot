@@ -1,0 +1,181 @@
+name: Prepare Main Release
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - ready_for_review
+      - synchronize
+      - reopened
+  workflow_dispatch:
+
+concurrency:
+  group: prepare-main-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-dashboard-release:
+    name: Prepare Dashboard Stable Release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'dev' &&
+      github.event.pull_request.draft == false)
+    runs-on: ubuntu-24.04
+    environment: webui
+    steps:
+      - name: Generate release bot token
+        id: release-bot-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Check out dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ steps.release-bot-token.outputs.token }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.1"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Read Dashboard stable version
+        id: dashboard-version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION=$(python -c "import json; print(json.load(open('dashboard/package.json'))['version'])")
+          uv run --no-project --with packaging python -c "from packaging.version import Version; version = Version('${VERSION}'); assert not version.is_prerelease, f'{version} 不是正式版本'"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          HTTP_STATUS=$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" \
+            "https://pypi.org/pypi/maibot-dashboard/${VERSION}/json")
+          case "$HTTP_STATUS" in
+            200)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "检查 PyPI 版本时返回了异常状态码: $HTTP_STATUS" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Build Dashboard
+        if: steps.dashboard-version.outputs.published == 'false'
+        working-directory: dashboard
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Prepare Dashboard package
+        if: steps.dashboard-version.outputs.published == 'false'
+        shell: bash
+        env:
+          WEBUI_VERSION: ${{ steps.dashboard-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          rm -rf .webui_dist_pkg
+          mkdir -p .webui_dist_pkg/maibot_dashboard/dist
+          cat > .webui_dist_pkg/pyproject.toml <<EOF
+          [project]
+          name = "maibot-dashboard"
+          version = "${WEBUI_VERSION}"
+          description = "MaiBot WebUI static assets"
+          readme = "README.md"
+          requires-python = ">=3.10"
+
+          [build-system]
+          requires = ["setuptools>=80.9.0", "wheel"]
+          build-backend = "setuptools.build_meta"
+
+          [tool.setuptools]
+          include-package-data = true
+
+          [tool.setuptools.packages.find]
+          where = ["."]
+          include = ["maibot_dashboard"]
+          exclude = ["maibot_dashboard.dist*"]
+
+          [tool.setuptools.package-data]
+          maibot_dashboard = ["dist/**"]
+          EOF
+          cat > .webui_dist_pkg/README.md <<'EOF'
+          # MaiBot WebUI Dist
+
+          该包仅包含 MaiBot WebUI 的前端构建产物（dist）。
+          EOF
+          cat > .webui_dist_pkg/maibot_dashboard/__init__.py <<'EOF'
+          from .resources import get_dist_path
+
+          __all__ = ["get_dist_path"]
+          EOF
+          cat > .webui_dist_pkg/maibot_dashboard/resources.py <<'EOF'
+          from pathlib import Path
+
+          def get_dist_path() -> Path:
+              return Path(__file__).parent / "dist"
+          EOF
+          cp -a dashboard/dist/. .webui_dist_pkg/maibot_dashboard/dist/
+
+      - name: Publish Dashboard stable package
+        if: steps.dashboard-version.outputs.published == 'false'
+        working-directory: .webui_dist_pkg
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine upload -u __token__ -p "$PYPI_API_TOKEN" dist/*
+
+      - name: Update stable dependency declarations
+        run: |
+          uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_stable_dependency.py
+
+      - name: Update dependency lock
+        run: uv lock --upgrade-package maibot-dashboard
+
+      - name: Verify locked runtime dependencies
+        env:
+          UV_NO_CACHE: "1"
+        run: uv sync --locked --no-dev --no-install-project
+
+      - name: Commit release dependency update
+        shell: bash
+        env:
+          DASHBOARD_VERSION: ${{ steps.dashboard-version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- pyproject.toml requirements.txt uv.lock; then
+            echo "Dashboard 正式版依赖和锁文件已就绪"
+            exit 0
+          fi
+
+          git config user.name "maibot-release[bot]"
+          git config user.email "maibot-release[bot]@users.noreply.github.com"
+          git add pyproject.toml requirements.txt uv.lock
+          git commit -m "chore: 准备 Dashboard 正式版 ${DASHBOARD_VERSION}"
+          git pull --rebase origin dev
+          git push origin HEAD:dev
