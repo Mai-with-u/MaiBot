@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 from urllib.request import urlopen
+
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
@@ -13,6 +14,7 @@ import tomlkit
 
 
 PACKAGE_NAME = os.environ.get("DASHBOARD_PACKAGE_NAME", "maibot-dashboard")
+DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
 PYPROJECT_PATH = Path("pyproject.toml")
 REQUIREMENTS_PATH = Path("requirements.txt")
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
@@ -31,9 +33,7 @@ def find_dashboard_requirement(requirements: Iterable[str]) -> Requirement:
 
 def extract_pinned_min_version(requirement: Requirement) -> Version:
     matched_versions = [
-        Version(specifier.version)
-        for specifier in requirement.specifier
-        if specifier.operator in {">=", "=="}
+        Version(specifier.version) for specifier in requirement.specifier if specifier.operator in {">=", "=="}
     ]
 
     if len(matched_versions) != 1:
@@ -42,7 +42,15 @@ def extract_pinned_min_version(requirement: Requirement) -> Version:
     return matched_versions[0]
 
 
-def get_latest_dev_version() -> Version:
+def get_target_base_version() -> Version:
+    package_data = json.loads(DASHBOARD_PACKAGE_PATH.read_text(encoding="utf-8"))
+    target_version = Version(str(package_data["version"]))
+    if target_version.is_prerelease:
+        raise RuntimeError(f"dashboard/package.json 中的 {target_version} 不是正式版本序列")
+    return target_version
+
+
+def get_latest_dev_version(target_base_version: Version) -> Version:
     with urlopen(PYPI_JSON_URL, timeout=30) as response:
         pypi_data = json.load(response)
 
@@ -56,11 +64,11 @@ def get_latest_dev_version() -> Version:
         except InvalidVersion:
             continue
 
-        if parsed_version.is_devrelease:
+        if parsed_version.is_devrelease and parsed_version.release == target_base_version.release:
             dev_versions.append(parsed_version)
 
     if not dev_versions:
-        raise RuntimeError(f"PyPI 上没有找到 {PACKAGE_NAME} 的 dev 版本")
+        raise RuntimeError(f"PyPI 上没有找到 {PACKAGE_NAME} {target_base_version} 序列的 dev 版本")
 
     return max(dev_versions)
 
@@ -71,12 +79,12 @@ def update_pyproject(latest_version: Version) -> bool:
     current_requirement = find_dashboard_requirement(str(item) for item in dependencies)
     current_version = extract_pinned_min_version(current_requirement)
 
-    if latest_version <= current_version:
+    if latest_version == current_version:
         print(f"pyproject.toml 已是最新 dev 版本: {current_version}")
         return False
 
     normalized_package_name = canonicalize_name(PACKAGE_NAME)
-    updated_dependency = f"{PACKAGE_NAME}>={latest_version}"
+    updated_dependency = f"{PACKAGE_NAME}=={latest_version}"
 
     for index, dependency in enumerate(dependencies):
         parsed_requirement = Requirement(str(dependency))
@@ -96,12 +104,12 @@ def update_requirements(latest_version: Version) -> bool:
     )
     current_version = extract_pinned_min_version(current_requirement)
 
-    if latest_version <= current_version:
+    if latest_version == current_version:
         print(f"requirements.txt 已是最新 dev 版本: {current_version}")
         return False
 
     normalized_package_name = canonicalize_name(PACKAGE_NAME)
-    updated_requirement = f"{PACKAGE_NAME}>={latest_version}"
+    updated_requirement = f"{PACKAGE_NAME}=={latest_version}"
 
     for index, line in enumerate(lines):
         stripped_line = line.strip()
@@ -125,8 +133,9 @@ def update_requirements(latest_version: Version) -> bool:
 
 
 def main() -> None:
-    latest_version = get_latest_dev_version()
-    print(f"PyPI 最新 dashboard dev 版本: {latest_version}")
+    target_base_version = get_target_base_version()
+    latest_version = get_latest_dev_version(target_base_version)
+    print(f"PyPI 最新 dashboard {target_base_version} 序列 dev 版本: {latest_version}")
 
     pyproject_updated = update_pyproject(latest_version)
     requirements_updated = update_requirements(latest_version)

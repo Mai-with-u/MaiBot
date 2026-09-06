@@ -37,18 +37,21 @@ jobs:
         run: |
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_dependency.py
 
+      - name: Update dependency lock
+        run: uv lock --upgrade-package maibot-dashboard
+
       - name: Commit dependency update
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- pyproject.toml requirements.txt; then
+          if git diff --quiet -- pyproject.toml requirements.txt uv.lock; then
             echo "没有发现 dashboard dev 依赖更新"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml requirements.txt
+          git add pyproject.toml requirements.txt uv.lock
           git commit -m "chore: 更新 dashboard dev 依赖"
           git pull --rebase origin dev
           git push origin HEAD:dev

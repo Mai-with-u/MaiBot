@@ -3,7 +3,6 @@ name: Publish WebUI Dist
 on:
   push:
     branches:
-      - main
       - dev
       - r-dev
     paths:
@@ -36,12 +35,8 @@ jobs:
           rm -rf .webui_dist_pkg
           mkdir -p .webui_dist_pkg/maibot_dashboard/dist
           BASE_VERSION=$(python -c "import json; print(json.load(open('dashboard/package.json'))['version'])")
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            WEBUI_VERSION="${BASE_VERSION}"
-          else
-            TODAY=$(date -u +%Y%m%d)
-            WEBUI_VERSION="${BASE_VERSION}.dev${TODAY}${GITHUB_RUN_NUMBER}"
-          fi
+          TODAY=$(date -u +%Y%m%d)
+          WEBUI_VERSION="${BASE_VERSION}.dev${TODAY}${GITHUB_RUN_NUMBER}"
           cat > .webui_dist_pkg/pyproject.toml <<EOF
           [project]
           name = "maibot-dashboard"
