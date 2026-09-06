@@ -1097,7 +1097,46 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
     unmount()
   })
 
-  it('保存提供商：新增与更新都会整份写入', async () => {
+  it('模型列表为空时可以先添加提供商，再添加第一个模型', async () => {
+    stubConfig({ models: [], api_providers: [], model_task_config: {} })
+    updateModelConfigMock.mockImplementation(async (config) => {
+      if (!(config.models as unknown[]).length) {
+        throw new Error('模型列表不能为空')
+      }
+      return {}
+    })
+    const { result, unmount } = await renderLoadedHook()
+    act(() => result.current.openProviderDialog(null, null))
+
+    await act(async () => {
+      await result.current.handleSaveProviderEdit(provider('main'), null)
+    })
+
+    expect(lastToast()).toEqual(expect.objectContaining({ title: '提供商已添加' }))
+    expect(result.current.providerDialogOpen).toBe(false)
+    expect(result.current.providers).toEqual(['main'])
+    expect(result.current.models).toEqual([])
+    expect(result.current.hasUnsavedChanges).toBe(false)
+    expect(updateModelConfigMock).not.toHaveBeenCalled()
+    expect(updateModelConfigSectionMock).toHaveBeenCalledWith('api_providers', [
+      expect.objectContaining(provider('main')),
+    ])
+
+    act(() => result.current.openEditDialog(null, null))
+    expect(result.current.editingModel?.api_provider).toBe('main')
+    act(() => result.current.setEditingModel(model('first')))
+    await act(async () => {
+      await result.current.handleSaveEdit()
+    })
+    expect(result.current.models.map(({ name }) => name)).toEqual(['first'])
+    expect(updateModelConfigMock).toHaveBeenCalledWith(expect.objectContaining({
+      models: [expect.objectContaining({ name: 'first', api_provider: 'main' })],
+      api_providers: [expect.objectContaining(provider('main'))],
+    }))
+    unmount()
+  })
+
+  it('保存提供商：新增与更新只写入提供商小节', async () => {
     const { result, unmount } = await renderLoadedHook()
 
     await act(async () => {
@@ -1132,6 +1171,13 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
     })
     expect(result.current.apiProviders[2].api_key).toBe('rotated')
     expect(lastToast()).toEqual(expect.objectContaining({ title: '提供商已更新' }))
+    expect(updateModelConfigMock).not.toHaveBeenCalled()
+    expect(updateModelConfigSectionMock).toHaveBeenCalledTimes(2)
+    expect(updateModelConfigSectionMock).toHaveBeenLastCalledWith('api_providers', [
+      expect.objectContaining(provider('main')),
+      expect.objectContaining(provider('spare')),
+      expect.objectContaining({ name: 'extra', api_key: 'rotated' }),
+    ])
     unmount()
   })
 
@@ -1162,7 +1208,8 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
 
   it('保存提供商失败时 toast', async () => {
     const { result, unmount } = await renderLoadedHook()
-    updateModelConfigMock.mockRejectedValueOnce(new Error('提供商节写入失败'))
+    updateModelConfigSectionMock.mockRejectedValueOnce(new Error('提供商节写入失败'))
+    act(() => result.current.openProviderDialog(null, null))
 
     await act(async () => {
       await result.current.handleSaveProviderEdit(
@@ -1186,6 +1233,8 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
         variant: 'destructive',
       })
     )
+    expect(result.current.providerDialogOpen).toBe(true)
+    expect(result.current.apiProviders.map(({ name }) => name)).toEqual(['main', 'spare'])
     expect(result.current.saving).toBe(false)
     unmount()
   })
@@ -1228,7 +1277,7 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
 
   it('默认 auto 上下文确认级联删除会走 provider 保存计数', async () => {
     const persist = createDeferred<Record<string, unknown>>()
-    updateModelConfigMock.mockReturnValueOnce(persist.promise)
+    updateModelConfigSectionMock.mockReturnValueOnce(persist.promise)
     const { result, unmount } = await renderLoadedHook()
 
     let pending: Promise<void> = Promise.resolve()
@@ -1255,7 +1304,7 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
 
   it('auto 上下文级联删除失败会 toast', async () => {
     const { result, unmount } = await renderLoadedHook()
-    updateModelConfigMock.mockRejectedValueOnce(new Error('级联写入失败'))
+    updateModelConfigSectionMock.mockRejectedValueOnce(new Error('级联写入失败'))
 
     await act(async () => {
       await result.current.handleConfirmDeleteProviderImpact()
@@ -1308,6 +1357,15 @@ describe('useModelConfig 提供商编辑与级联删除', () => {
     expect(result.current.models.map((item) => item.name)).toEqual(['helper'])
     expect(result.current.taskConfig?.replyer.model_list).toEqual(['helper'])
     expect(result.current.taskConfig?.utils.model_list).toEqual([])
+    expect(updateModelConfigMock).toHaveBeenCalledWith(expect.objectContaining({
+      api_providers: [expect.objectContaining(provider('spare'))],
+      models: [expect.objectContaining({ name: 'helper' })],
+      model_task_config: expect.objectContaining({
+        replyer: { model_list: ['helper'] },
+        utils: { model_list: [] },
+      }),
+    }))
+    expect(updateModelConfigSectionMock).not.toHaveBeenCalled()
     expect(result.current.deleteConfirmState.isOpen).toBe(false)
     expect(lastToast()).toEqual(
       expect.objectContaining({

@@ -571,6 +571,19 @@ export function useModelConfig() {
   const saveProviders = useCallback(
     async (nextProviders: APIProvider[], affectedModels: unknown[] = []) => {
       const cleanedProviders = nextProviders.map(cleanProviderData)
+      if (affectedModels.length === 0) {
+        // 单独保存提供商，允许先配置提供商再添加模型；模型和任务草稿继续各自自动保存。
+        const providerCheckpoint = prepareProviderSaveBarrier(cleanedProviders)
+        await enqueueConfigWrite(async () => {
+          await updateModelConfigSection('api_providers', cleanedProviders)
+        })
+        if (commitProviderSaveBarrier(providerCheckpoint)) {
+          syncProviderState(cleanedProviders)
+        }
+        return
+      }
+
+      // 级联删除涉及模型和任务引用，必须整份写入，避免产生不一致的中间状态。
       const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(
         models,
         taskConfig,
@@ -598,8 +611,11 @@ export function useModelConfig() {
     },
     [
       checkTaskConfigIssues,
+      commitProviderSaveBarrier,
+      enqueueConfigWrite,
       models,
       persistModelConfigDraft,
+      prepareProviderSaveBarrier,
       removeModelsForProviders,
       syncProviderState,
       taskConfig,
