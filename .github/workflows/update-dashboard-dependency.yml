@@ -1,15 +1,6 @@
 name: Update Dashboard Dependency
 
 on:
-  workflow_run:
-    workflows:
-      - Publish WebUI Dist
-    types:
-      - completed
-    branches:
-      - dev
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -21,7 +12,6 @@ concurrency:
 
 jobs:
   update-dev-dependency:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout dev

@@ -14,6 +14,7 @@ import tomlkit
 
 
 PACKAGE_NAME = os.environ.get("DASHBOARD_PACKAGE_NAME", "maibot-dashboard")
+PUBLISHED_DEV_VERSION = os.environ.get("DASHBOARD_DEV_VERSION")
 DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
 PYPROJECT_PATH = Path("pyproject.toml")
 REQUIREMENTS_PATH = Path("requirements.txt")
@@ -71,6 +72,20 @@ def get_latest_dev_version(target_base_version: Version) -> Version:
         raise RuntimeError(f"PyPI 上没有找到 {PACKAGE_NAME} {target_base_version} 序列的 dev 版本")
 
     return max(dev_versions)
+
+
+def get_target_dev_version(target_base_version: Version) -> Version:
+    if PUBLISHED_DEV_VERSION is None:
+        return get_latest_dev_version(target_base_version)
+
+    published_version = Version(PUBLISHED_DEV_VERSION)
+    if not published_version.is_devrelease:
+        raise RuntimeError(f"工作流发布版本 {published_version} 不是 dev 版本")
+    if published_version.release != target_base_version.release:
+        raise RuntimeError(
+            f"工作流发布版本 {published_version} 不属于 dashboard {target_base_version} 序列"
+        )
+    return published_version
 
 
 def update_pyproject(latest_version: Version) -> bool:
@@ -134,8 +149,8 @@ def update_requirements(latest_version: Version) -> bool:
 
 def main() -> None:
     target_base_version = get_target_base_version()
-    latest_version = get_latest_dev_version(target_base_version)
-    print(f"PyPI 最新 dashboard {target_base_version} 序列 dev 版本: {latest_version}")
+    latest_version = get_target_dev_version(target_base_version)
+    print(f"Dashboard {target_base_version} 序列目标 dev 版本: {latest_version}")
 
     pyproject_updated = update_pyproject(latest_version)
     requirements_updated = update_requirements(latest_version)
