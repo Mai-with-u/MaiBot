@@ -1171,6 +1171,32 @@ describe('MemoryEpisodeManager 重建与待处理任务', () => {
     fireEvent.click(screen.getByRole('button', { name: /处理来源重建任务/ }))
     expect(memoryApi.processMemoryEpisodePending).not.toHaveBeenCalled()
   })
+
+  it('刷新时把数量传给状态接口；重建进行中禁用运维按钮', async () => {
+    let resolveRebuild: (value: MemoryEpisodeActionPayload) => void = () => {}
+    vi.mocked(memoryApi.rebuildMemoryEpisodes).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveRebuild = resolve
+      }),
+    )
+    await renderReady()
+
+    fireEvent.change(screen.getByLabelText('数量'), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: /刷新 Episode/ }))
+    await waitFor(() => {
+      expect(memoryApi.getMemoryEpisodeStatus).toHaveBeenCalledWith(8)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /重新生成 Episode/ }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /重新生成 Episode/ })).toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: /处理来源重建任务/ })).toBeDisabled()
+    resolveRebuild(makeAction())
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /重新生成 Episode/ })).toBeEnabled()
+    })
+  })
 })
 
 describe('MemoryTimelineManager 范围、筛选与分页', () => {

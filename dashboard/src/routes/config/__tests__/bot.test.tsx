@@ -14,10 +14,13 @@ const toastMock = vi.fn()
 
 // 路由 search 字符串（供 useRouterState mock 读取，可按用例改写）
 let routerSearchStr = ''
+// 源文件模式可按用例替换 smol-toml.parse；默认走真实解析
+let tomlParseOverride: ((input: string) => unknown) | null = null
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  tomlParseOverride = null
 })
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
@@ -186,6 +189,15 @@ vi.mock('@/lib/config-api', () => ({
   updateBotConfigRaw: vi.fn(),
   updateBotConfigSection: vi.fn(),
 }))
+
+vi.mock('smol-toml', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('smol-toml')>()
+  return {
+    ...actual,
+    parse: (input: string) =>
+      tomlParseOverride ? tomlParseOverride(input) : actual.parse(input),
+  }
+})
 
 function baseConfig(): Record<string, unknown> {
   return {
@@ -1343,3 +1355,398 @@ describe('BotConfigPage 特征化', () => {
     })
   })
 })
+
+describe('BotConfigPage 补充覆盖', () => {
+  it('无 uiOrder 的 tab 排在后面；无 uiLabel / 指向缺失 host 的分节不生成 tab', async () => {
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'BotConfigRoot',
+        classDoc: '',
+        fields: [],
+        nested: {
+          ordered: sectionSchema('OrderedSection', '有序', {
+            uiLabel: '有序',
+            uiOrder: 0,
+          }),
+          plain: sectionSchema('PlainSection', '无序', { uiLabel: '无序' }),
+          ghost: sectionSchema('GhostSection', '幽灵'),
+          lost: sectionSchema('LostSection', '丢失', {
+            uiLabel: '丢失',
+            uiParent: 'missing_host',
+          }),
+          child: sectionSchema('ChildSection', '子', {
+            uiLabel: '子栏目',
+            uiParent: 'ghost',
+          }),
+        },
+      },
+    } as never)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await user.click(screen.getByRole('tab', { name: '详细设置' }))
+    const tabList = await waitFor(() => {
+      const node = document.querySelector('[data-config-bot-tab-list="true"]') as HTMLElement | null
+      if (!node) throw new Error('missing tab list')
+      return node
+    })
+    const tabNames = within(tabList)
+      .getAllByRole('tab')
+      .map((tab) => tab.textContent)
+    expect(tabNames).toEqual(['有序', '无序'])
+  })
+
+  it('配置数据无法解析时走加载失败兜底', async () => {
+    vi.mocked(configApi.getBotConfigCached).mockResolvedValue(null as never)
+    render(<BotConfigPage />)
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith({
+        title: '加载失败',
+        description: '无法加载配置文件',
+        variant: 'destructive',
+      })
+    )
+    expect(await screen.findByRole('tab', { name: '核心设置' })).toBeInTheDocument()
+  })
+
+  it('分节值为 null 时按空对象展示', async () => {
+    vi.mocked(configApi.getBotConfigCached).mockResolvedValue({
+      ...baseConfig(),
+      personality: null,
+    })
+    await renderBotPage()
+    expect(screen.getByTestId('core-personality')).toHaveTextContent('{}')
+  })
+
+  it('TOML 单行错误会翻译，非 Error 使用兜底文案', async () => {
+    const user = userEvent.setup()
+    await renderBotPage()
+    await user.click(screen.getByRole('tab', { name: '源文件' }))
+    const editor = await screen.findByPlaceholderText('TOML 配置内容')
+    fireEvent.change(editor, { target: { value: 'title = "ok"' } })
+
+    const cases: Array<{ err: unknown; description: string | RegExp }> = [
+      { err: new Error('Unexpected token'), description: '意外的标记' },
+      { err: new Error('Invalid number'), description: '无效的数字' },
+      { err: new Error('Invalid date'), description: '无效的日期格式' },
+      { err: new Error('Invalid boolean'), description: '无效的布尔值（应为 true 或 false）' },
+      { err: new Error('Unexpected character'), description: '意外的字符' },
+      { err: new Error('unrecognized escape sequence'), description: '无法识别的转义序列' },
+      { err: new Error('Unexpected end of input'), description: '意外的文件结束（可能缺少闭合符号）' },
+      {
+        err: new Error('Error: Invalid TOML document: unrecognized escape sequence'),
+        description:
+          'TOML 文档错误：无法识别的转义序列（提示：在双引号字符串中使用 \\\\ 转义反斜杠，或使用单引号字符串）',
+      },
+      {
+        err: new Error('Invalid TOML document: boom'),
+        description: 'TOML 文档错误：boom',
+      },
+      {
+        err: new Error('Unexpected character x at line 3, column 4'),
+        description: '第 3 行第 4 列：意外的字符',
+      },
+      {
+        err: new Error('Expected } at line 3, column 4'),
+        description: '第 3 行第 4 列：缺少必要的字符',
+      },
+      {
+        err: new Error('Invalid foo at line 3, column 4'),
+        description: '第 3 行第 4 列：无效的语法',
+      },
+      {
+        err: new Error('Unterminated string at line 2'),
+        description: '第 2 行：字符串未正常结束（缺少引号）',
+      },
+      {
+        err: new Error('Duplicate key x at line 5'),
+        description: '第 5 行：重复的键名',
+      },
+      {
+        err: new Error('Invalid escape sequence at line 1'),
+        description: '第 1 行：无效的转义序列（提示：在双引号字符串中使用 \\\\ 转义反斜杠）',
+      },
+      {
+        err: new Error('Expected string but got integer at line 2'),
+        description: '第 2 行：类型不匹配',
+      },
+      {
+        err: new Error('line 8, column 2'),
+        description: '第 8 行第 2 列',
+      },
+      { err: 'not-an-error', description: 'TOML 格式错误' },
+    ]
+
+    const saveButton = await screen.findByRole('button', { name: '保存' })
+    for (const { err, description } of cases) {
+      toastMock.mockClear()
+      tomlParseOverride = () => {
+        throw err
+      }
+      await user.click(saveButton)
+      await waitFor(() =>
+        expect(toastMock).toHaveBeenCalledWith({
+          variant: 'destructive',
+          title: 'TOML 格式错误',
+          description,
+        })
+      )
+    }
+    expect(configApi.updateBotConfigRaw).not.toHaveBeenCalled()
+  })
+
+  it('关闭文件模式提示后仍展示 TOML 错误面板', async () => {
+    localStorage.setItem('bot-config-file-mode-notice-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await user.click(screen.getByRole('tab', { name: '源文件' }))
+    const editor = await screen.findByPlaceholderText('TOML 配置内容')
+    expect(screen.queryByText('文件模式：')).not.toBeInTheDocument()
+
+    fireEvent.change(editor, { target: { value: 'a =' } })
+    await user.click(await screen.findByRole('button', { name: '保存' }))
+    expect(await screen.findByText('⚠️ TOML 格式错误：')).toBeInTheDocument()
+    expect(screen.queryByText('文件模式：')).not.toBeInTheDocument()
+  })
+
+  it('分区自动保存进行中时按钮显示自动保存中', async () => {
+    const deferred = createDeferred<Record<string, unknown>>()
+    vi.mocked(configApi.updateBotConfigSection).mockReturnValue(deferred.promise)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await enterDetailMode(user)
+
+    await user.click(screen.getByText('change-personality-personality'))
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: '自动保存中' })).toBeDisabled(),
+      { timeout: 4000 }
+    )
+
+    deferred.resolve({})
+    await screen.findByRole('button', { name: '已保存' })
+  })
+
+  it('URL field 仅分节名时不切子页；定位失败也不会抛错', async () => {
+    routerSearchStr = '?field=personality'
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    vi.mocked(scrollToConfigSearchField).mockReturnValue(null)
+    await renderBotPage()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('form-personality')).toHaveAttribute('data-advanced', 'true')
+    )
+    await waitFor(() => expect(scrollToConfigSearchField).toHaveBeenCalledWith('personality'))
+  })
+
+  it('刷新后 schema 不再包含当前 tab 时回退到第一个可用 tab', async () => {
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await enterDetailMode(user)
+
+    const tabList = document.querySelector('[data-config-bot-tab-list="true"]') as HTMLElement
+    await user.click(within(tabList).getByRole('tab', { name: '机器人' }))
+    expect(await screen.findByTestId('form-bot')).toBeInTheDocument()
+
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'BotConfigRoot',
+        classDoc: '',
+        fields: [],
+        nested: {
+          personality: sectionSchema('PersonalitySection', '人格配置', {
+            uiLabel: '人格',
+            uiOrder: 1,
+          }),
+        },
+      },
+    } as never)
+
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    expect(await screen.findByTestId('form-personality')).toBeInTheDocument()
+    expect(screen.queryByTestId('form-bot')).not.toBeInTheDocument()
+  })
+
+  it('子页与分组表单会写入嵌套路径，空 fieldPath 被忽略', async () => {
+    const config = {
+      ...baseConfig(),
+      chat: { enabled: true, reply_style: { style: 'a' } },
+    }
+    vi.mocked(configApi.getBotConfigCached).mockResolvedValue(config)
+    vi.mocked(configApi.getBotConfig).mockResolvedValue(config)
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue(chatSubtabSchema() as never)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await enterDetailMode(user, 'form-ChatSectionRoot')
+
+    const subtabList = document.querySelector('[data-config-bot-subtab-list="true"]') as HTMLElement
+    await user.click(within(subtabList).getByRole('tab', { name: '时机子页' }))
+    expect(await screen.findByTestId('form-ReplyTiming-values')).toHaveTextContent('{}')
+    await user.click(screen.getByText('change-root-ReplyTiming'))
+    expect(screen.getByTestId('form-ReplyTiming-values')).toHaveTextContent('root-新值')
+    await user.click(screen.getByText('change-deep-root-ReplyTiming'))
+    expect(screen.getByTestId('form-ReplyTiming-values')).toHaveTextContent('deep-新值')
+
+    await user.click(within(subtabList).getByRole('button', { name: '更多' }))
+    await user.click(within(subtabList).getByRole('tab', { name: '内部组' }))
+    const groupForm = await screen.findByTestId('form-chat_inner.chat_leaf-values')
+    const beforeEmpty = groupForm.textContent
+    await user.click(screen.getByText('change-empty-chat_inner.chat_leaf'))
+    expect(screen.getByTestId('form-chat_inner.chat_leaf-values').textContent).toBe(beforeEmpty)
+
+    await user.click(screen.getByText('change-chat_inner.chat_leaf-chat_inner'))
+    expect(screen.getByTestId('form-chat_inner.chat_leaf-values')).toHaveTextContent('chat_inner-新值')
+  })
+
+  it('子页标签回退到字段名；nested 缺失时仍渲染根子页', async () => {
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'BotConfigRoot',
+        classDoc: '',
+        fields: [],
+        nested: {
+          chat: {
+            className: 'ChatSection',
+            classDoc: '',
+            fields: [
+              field('enabled', 'boolean'),
+              field('mystery', 'object'),
+              field('notes', 'string'),
+            ],
+            nested: {
+              mystery: {
+                className: 'Mystery',
+                classDoc: '',
+                fields: [],
+                nested: {},
+              },
+              notes: {
+                className: 'Notes',
+                classDoc: '备注',
+                fields: [],
+                nested: {},
+              },
+            },
+            uiLabel: '聊天',
+            uiOrder: 1,
+            uiUseSubTabs: true,
+          },
+          chat_inner: sectionSchema('ChatInner', '', {
+            uiParent: 'chat',
+            uiAdvanced: true,
+          }),
+          chat_leaf: sectionSchema('ChatLeaf', '', { uiParent: 'chat_inner' }),
+          bare: {
+            className: 'Bare',
+            classDoc: '裸',
+            fields: [field('enabled', 'boolean')],
+            nested: undefined,
+            uiLabel: '裸配置',
+            uiOrder: 2,
+            uiUseSubTabs: true,
+          },
+        },
+      },
+    } as never)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await enterDetailMode(user, 'form-ChatSectionRoot')
+
+    const subtabList = document.querySelector('[data-config-bot-subtab-list="true"]') as HTMLElement
+    expect(within(subtabList).getByRole('tab', { name: 'mystery' })).toBeInTheDocument()
+    expect(within(subtabList).queryByRole('tab', { name: '备注' })).not.toBeInTheDocument()
+
+    await user.click(within(subtabList).getByRole('button', { name: '更多' }))
+    await user.click(within(subtabList).getByRole('tab', { name: 'chat_inner' }))
+    expect(await screen.findByTestId('form-chat_inner.chat_leaf-sections')).toHaveTextContent(
+      'chat_inner,chat_leaf'
+    )
+
+    const tabList = document.querySelector('[data-config-bot-tab-list="true"]') as HTMLElement
+    await user.click(within(tabList).getByRole('tab', { name: '裸配置' }))
+    expect(await screen.findByTestId('form-BareRoot')).toBeInTheDocument()
+  })
+
+  it('子页全部为高级时收起回退到第一个子页 id', async () => {
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'BotConfigRoot',
+        classDoc: '',
+        fields: [],
+        nested: {
+          secret_host: {
+            className: 'SecretHost',
+            classDoc: '',
+            fields: [field('secret', 'object')],
+            nested: {
+              secret: {
+                className: 'Secret',
+                classDoc: '机密页',
+                fields: [],
+                nested: {},
+                uiAdvanced: true,
+              },
+            },
+            uiLabel: '机密',
+            uiUseSubTabs: true,
+          },
+        },
+      },
+    } as never)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await user.click(screen.getByRole('tab', { name: '详细设置' }))
+
+    const subtabList = await waitFor(() => {
+      const node = document.querySelector('[data-config-bot-subtab-list="true"]') as HTMLElement | null
+      if (!node) throw new Error('missing subtab list')
+      return node
+    })
+    expect(within(subtabList).queryByRole('tab', { name: '机密页' })).not.toBeInTheDocument()
+    await user.click(within(subtabList).getByRole('button', { name: '更多' }))
+    expect(within(subtabList).getByRole('tab', { name: '机密页' })).toBeInTheDocument()
+    expect(await screen.findByTestId('form-Secret')).toBeInTheDocument()
+
+    await user.click(within(subtabList).getByRole('button', { name: '收起' }))
+    expect(within(subtabList).queryByRole('tab', { name: '机密页' })).not.toBeInTheDocument()
+  })
+
+  it('全部为高级 tab 时选中后收起仍回退到唯一 tab', async () => {
+    vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
+      schema: {
+        className: 'BotConfigRoot',
+        classDoc: '',
+        fields: [],
+        nested: {
+          experimental: sectionSchema('ExperimentalSection', '实验性配置', {
+            uiLabel: '实验性',
+            uiOrder: 1,
+            uiAdvanced: true,
+          }),
+        },
+      },
+    } as never)
+    localStorage.setItem('bot-config-tabs-guide-dismissed', 'true')
+    localStorage.setItem('bot-config-experimental-features-notice-dismissed', 'true')
+    const user = userEvent.setup()
+    await renderBotPage()
+    await user.click(screen.getByRole('tab', { name: '详细设置' }))
+
+    const tabList = await waitFor(() => {
+      const node = document.querySelector('[data-config-bot-tab-list="true"]') as HTMLElement | null
+      if (!node) throw new Error('missing tab list')
+      return node
+    })
+    await user.click(within(tabList).getByRole('button', { name: '更多' }))
+    await user.click(within(tabList).getByRole('tab', { name: '实验性' }))
+    expect(await screen.findByTestId('form-experimental')).toBeInTheDocument()
+
+    await user.click(within(tabList).getByRole('button', { name: '收起' }))
+    expect(within(tabList).queryByRole('tab', { name: '实验性' })).not.toBeInTheDocument()
+  })
+})
+

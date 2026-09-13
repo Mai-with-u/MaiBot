@@ -889,3 +889,521 @@ describe('错误态、空态与持久化失败', () => {
   })
 })
 
+/** 批量派发监控事件，避免每条都包一层 act 带来的额外开销 */
+function emitMonitorEvents(
+  events: Array<{ type: MaisakaMonitorEvent['type']; data: Record<string, unknown> }>
+) {
+  expect(capturedHandler).not.toBeNull()
+  act(() => {
+    for (const event of events) {
+      capturedHandler?.({ type: event.type, data: event.data } as unknown as MaisakaMonitorEvent)
+    }
+  })
+}
+
+type MonitorUpgradeFn = (
+  db: {
+    objectStoreNames: { contains: (name: string) => boolean }
+    createObjectStore: (
+      name: string,
+      options: { keyPath: string }
+    ) => { createIndex: ReturnType<typeof vi.fn> }
+  },
+  oldVersion: number,
+  newVersion: number | null,
+  transaction: { objectStore: (name: string) => { clear: ReturnType<typeof vi.fn> } }
+) => void
+
+function getOpenDbUpgrade(): MonitorUpgradeFn {
+  const openOptions = idbMocks.openDB.mock.calls[0]?.[2] as { upgrade?: MonitorUpgradeFn }
+  expect(openOptions.upgrade).toEqual(expect.any(Function))
+  return openOptions.upgrade as MonitorUpgradeFn
+}
+
+describe('会话展示名补充', () => {
+  it('群聊缺名称或名称等于群号/会话 ID 时直接使用 groupId', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('session.start', {
+      event_id: 2401,
+      session_id: 'session-only-group',
+      is_group_chat: true,
+      group_id: 'group-only',
+      timestamp: 100,
+    })
+    emitMonitorEvent('session.start', {
+      event_id: 2402,
+      session_id: 'session-same-group',
+      session_name: 'group-same',
+      is_group_chat: true,
+      group_id: 'group-same',
+      timestamp: 110,
+    })
+    emitMonitorEvent('session.start', {
+      event_id: 2403,
+      session_id: 'named-as-session',
+      session_name: 'named-as-session',
+      is_group_chat: true,
+      group_id: 'group-from-id',
+      timestamp: 120,
+    })
+    emitMonitorEvent('session.start', {
+      event_id: 2404,
+      session_id: 'session-blank-name',
+      session_name: '   ',
+      is_group_chat: true,
+      group_id: 'group-blank',
+      timestamp: 130,
+    })
+
+    expect(view.result.current.sessions.get('session-only-group')?.sessionName).toBe('group-only')
+    expect(view.result.current.sessions.get('session-same-group')?.sessionName).toBe('group-same')
+    expect(view.result.current.sessions.get('named-as-session')?.sessionName).toBe('group-from-id')
+    expect(view.result.current.sessions.get('session-blank-name')?.sessionName).toBe('group-blank')
+  })
+
+  it('session.start 会重建已有会话并累加 eventCount', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 2411, timestamp: 100 }))
+    emitMonitorEvent('session.start', {
+      event_id: 2412,
+      session_id: 'session-a',
+      session_name: '新群名',
+      is_group_chat: true,
+      group_id: 'group-1',
+      platform: 'qq',
+      timestamp: 150,
+    })
+
+    expect(view.result.current.sessions.get('session-a')).toMatchObject({
+      sessionName: '新群名(group-1)',
+      lastActivity: 150,
+      eventCount: 2,
+    })
+  })
+})
+
+describe('IndexedDB 升级、修剪与无库短路', () => {
+  it('升级回调在仓库缺失时创建索引，并从 v1 清空旧数据', async () => {
+    await importHookModule()
+
+    expect(idbMocks.openDB).toHaveBeenCalledWith(
+      'maisaka-monitor-db',
+      2,
+      expect.objectContaining({ upgrade: expect.any(Function) })
+    )
+
+    const upgrade = getOpenDbUpgrade()
+    const createIndex = vi.fn()
+    const createObjectStore = vi.fn(() => ({ createIndex }))
+    const clear = vi.fn()
+    const objectStore = vi.fn(() => ({ clear }))
+
+    upgrade(
+      {
+        objectStoreNames: { contains: () => false },
+        createObjectStore,
+      },
+      1,
+      2,
+      { objectStore }
+    )
+
+    expect(createObjectStore).toHaveBeenCalledWith('timeline', { keyPath: 'id' })
+    expect(createIndex).toHaveBeenCalledWith('by-timestamp', 'timestamp')
+    expect(createObjectStore).toHaveBeenCalledWith('sessions', { keyPath: 'sessionId' })
+    expect(createObjectStore).toHaveBeenCalledWith('meta', { keyPath: 'key' })
+    expect(objectStore).toHaveBeenCalledWith('timeline')
+    expect(objectStore).toHaveBeenCalledWith('sessions')
+    expect(objectStore).toHaveBeenCalledWith('meta')
+    expect(clear).toHaveBeenCalledTimes(3)
+  })
+
+  it('升级回调在仓库已存在且 oldVersion 为 0 时不创建也不清空', async () => {
+    await importHookModule()
+    const upgrade = getOpenDbUpgrade()
+    const createObjectStore = vi.fn(() => ({ createIndex: vi.fn() }))
+    const clear = vi.fn()
+
+    upgrade(
+      {
+        objectStoreNames: { contains: () => true },
+        createObjectStore,
+      },
+      0,
+      2,
+      { objectStore: vi.fn(() => ({ clear })) }
+    )
+
+    expect(createObjectStore).not.toHaveBeenCalled()
+    expect(clear).not.toHaveBeenCalled()
+  })
+
+  it('持久化累计达到修剪间隔且库存超额时按时间戳删除最旧记录', async () => {
+    const overflowKeys = Array.from({ length: 10002 }, (_, index) => `old-${index}`)
+    fakeDb.getAllKeysFromIndex.mockResolvedValue(overflowKeys)
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvents(
+      Array.from({ length: 200 }, (_, index) => ({
+        type: 'message.ingested' as const,
+        data: makeMessageData({
+          event_id: 4000 + index,
+          message_id: `msg-prune-${index}`,
+          timestamp: 100 + index,
+        }),
+      }))
+    )
+
+    expect(view.result.current.allTimeline).toHaveLength(200)
+    await waitFor(() => expect(fakeStores.timeline.delete).toHaveBeenCalledTimes(2))
+    expect(fakeStores.timeline.delete).toHaveBeenCalledWith('old-0')
+    expect(fakeStores.timeline.delete).toHaveBeenCalledWith('old-1')
+  })
+
+  it('持久化达到修剪间隔但库存未超额时不删除', async () => {
+    fakeDb.getAllKeysFromIndex.mockResolvedValue(['keep-1', 'keep-2'])
+    const hookModule = await importHookModule()
+    await mountMonitor(hookModule)
+
+    emitMonitorEvents(
+      Array.from({ length: 200 }, (_, index) => ({
+        type: 'message.ingested' as const,
+        data: makeMessageData({
+          event_id: 5000 + index,
+          message_id: `msg-keep-${index}`,
+          timestamp: 100 + index,
+        }),
+      }))
+    )
+
+    await waitFor(() => expect(fakeDb.getAllKeysFromIndex).toHaveBeenCalled())
+    expect(fakeStores.timeline.delete).not.toHaveBeenCalled()
+  })
+
+  it('没有 indexedDB 时 flush 与 clear 直接返回且不写库', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+    Object.defineProperty(window, 'indexedDB', { configurable: true, value: undefined })
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 2601 }))
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 350)
+      })
+    })
+    expect(fakeStores.timeline.put).not.toHaveBeenCalled()
+
+    act(() => view.result.current.clearTimeline())
+    await act(async () => {})
+    expect(view.result.current.allTimeline).toHaveLength(0)
+    expect(fakeStores.timeline.clear).not.toHaveBeenCalled()
+  })
+})
+
+describe('阶段状态与消息更新边界', () => {
+  it('stage.status / stage.removed 的 session_id 非字符串时不改阶段状态', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('stage.status', makeStageData({ event_id: 2701 }))
+    emitMonitorEvent(
+      'stage.status',
+      makeStageData({ event_id: 2702, session_id: 123, stage: '不该写入', timestamp: 101 })
+    )
+    emitMonitorEvent('stage.removed', { event_id: 2703, session_id: 123, timestamp: 102 })
+
+    expect(view.result.current.stageStatuses.size).toBe(1)
+    expect(view.result.current.stageStatuses.get('session-a')?.stage).toBe('规划中')
+  })
+
+  it('阶段状态缺省字段回退为空串并用当前时间填充时间戳', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('stage.status', {
+      event_id: 2711,
+      session_id: 'session-a',
+      timestamp: 100,
+    })
+
+    const status = view.result.current.stageStatuses.get('session-a')
+    expect(status).toMatchObject({
+      sessionId: 'session-a',
+      sessionName: undefined,
+      stage: '',
+      detail: '',
+      roundText: '',
+      agentState: '',
+    })
+    expect(status?.stageStartedAt).toEqual(expect.any(Number))
+    expect(status?.updatedAt).toEqual(expect.any(Number))
+  })
+
+  it('message.updated 跳过其他会话和非消息条目，并就地更新 message.sent', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('session.start', {
+      event_id: 2801,
+      session_id: 'session-a',
+      session_name: '测试群',
+      is_group_chat: true,
+      group_id: 'group-1',
+      timestamp: 90,
+    })
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: 2802, content: '原始入站', timestamp: 100 })
+    )
+    emitMonitorEvent(
+      'message.sent',
+      makeMessageData({
+        event_id: 2803,
+        message_id: 'msg-sent',
+        content: '原始回复',
+        timestamp: 110,
+      })
+    )
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({
+        event_id: 2804,
+        session_id: 'session-b',
+        session_name: '另一个群',
+        group_id: 'group-2',
+        message_id: 'msg-b',
+        content: '另一会话',
+        timestamp: 120,
+      })
+    )
+
+    emitMonitorEvent('message.updated', {
+      event_id: 2805,
+      session_id: 'session-a',
+      message_id: 'msg-1',
+      content: '修正入站',
+      timestamp: 130,
+    })
+    emitMonitorEvent('message.updated', {
+      event_id: 2806,
+      session_id: 'session-a',
+      message_id: 'msg-sent',
+      content: 12,
+      media: 'not-array',
+      timestamp: 140,
+    })
+
+    const timeline = view.result.current.allTimeline
+    expect(timeline).toHaveLength(4)
+    expect(timeline[0]).toMatchObject({ type: 'session.start', sessionId: 'session-a' })
+    expect(timeline[1].data).toMatchObject({ message_id: 'msg-1', content: '修正入站' })
+    expect(timeline[2].data).toMatchObject({ message_id: 'msg-sent', content: '', media: [] })
+    expect(timeline[3].data).toMatchObject({ message_id: 'msg-b', content: '另一会话' })
+  })
+
+  it('防抖落盘完成后再更新消息，会单独写回已入账条目', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 2811, content: '原始内容' }))
+    await waitFor(() => expect(fakeStores.timeline.put).toHaveBeenCalledTimes(1))
+
+    emitMonitorEvent('message.updated', {
+      event_id: 2812,
+      session_id: 'session-a',
+      message_id: 'msg-1',
+      content: '落盘后修正',
+      timestamp: 101,
+    })
+
+    await waitFor(() => expect(fakeStores.timeline.put).toHaveBeenCalledTimes(2))
+    expect(view.result.current.allTimeline[0].data).toMatchObject({ content: '落盘后修正' })
+    expect(fakeStores.timeline.put).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 'evt_2811',
+        data: expect.objectContaining({ content: '落盘后修正' }),
+        persistedAt: expect.any(Number),
+      })
+    )
+  })
+})
+
+describe('快照边界与内存裁剪', () => {
+  it('快照 entryCounter 非数字时用时间线长度，非正 eventId 不进入去重集合', async () => {
+    fakeDb.getAllFromIndex.mockResolvedValue([
+      {
+        id: 'evt_custom_1',
+        type: 'message.ingested',
+        data: { session_id: 'session-a', timestamp: 100 },
+        timestamp: 100,
+        sessionId: 'session-a',
+        persistedAt: 1,
+      },
+      {
+        id: 'evt_0',
+        eventId: 0,
+        type: 'message.ingested',
+        data: { session_id: 'session-a', timestamp: 110 },
+        timestamp: 110,
+        sessionId: 'session-a',
+        persistedAt: 1,
+      },
+    ])
+    fakeDb.get.mockImplementation(async (_store, key) => {
+      if (key === 'entryCounter') {
+        return { key, value: '不是数字' }
+      }
+      return undefined
+    })
+
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: undefined, message_id: 'msg-next', timestamp: 120 })
+    )
+
+    expect(view.result.current.allTimeline).toHaveLength(3)
+    expect(view.result.current.allTimeline[2].id).toMatch(/^evt_3_\d+$/)
+  })
+
+  it('快照 lastEventId 更小时不回退已从 localStorage 恢复的游标', async () => {
+    window.localStorage.setItem(LAST_EVENT_ID_STORAGE_KEY, '50')
+    fakeDb.get.mockImplementation(async (_store, key) => {
+      if (key === 'lastEventId') {
+        return { key, value: 10 }
+      }
+      return undefined
+    })
+
+    await importHookModule()
+
+    expect(clientMocks.setInitialReplayCursor).toHaveBeenNthCalledWith(1, 50)
+    expect(clientMocks.setInitialReplayCursor).toHaveBeenLastCalledWith(50)
+    expect(window.localStorage.getItem(LAST_EVENT_ID_STORAGE_KEY)).toBe('50')
+  })
+
+  it('内存时间线超过上限时只保留最新的 3000 条', async () => {
+    fakeDb.getAllFromIndex.mockResolvedValue(
+      Array.from({ length: 3000 }, (_, index) => ({
+        id: `evt_${index + 1}`,
+        eventId: index + 1,
+        type: 'message.ingested' as const,
+        data: {
+          session_id: 'session-a',
+          message_id: `msg-cap-${index + 1}`,
+          timestamp: index + 1,
+        },
+        timestamp: index + 1,
+        sessionId: 'session-a',
+        persistedAt: 1,
+      }))
+    )
+
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+    expect(view.result.current.allTimeline).toHaveLength(3000)
+
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: 9000, message_id: 'msg-cap-new', timestamp: 4000 })
+    )
+
+    expect(view.result.current.allTimeline).toHaveLength(3000)
+    expect(view.result.current.allTimeline[0].id).toBe('evt_2')
+    expect(view.result.current.allTimeline[2999].id).toBe('evt_9000')
+  })
+
+  it('相同时间戳时按 evt_序号_ 的自增序号排序', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: undefined, message_id: 'msg-late', timestamp: 100 })
+    )
+    emitMonitorEvent(
+      'message.ingested',
+      makeMessageData({ event_id: undefined, message_id: 'msg-later', timestamp: 100 })
+    )
+
+    expect(view.result.current.allTimeline.map((entry) => entry.data)).toEqual([
+      expect.objectContaining({ message_id: 'msg-late' }),
+      expect.objectContaining({ message_id: 'msg-later' }),
+    ])
+    expect(view.result.current.allTimeline[0].id < view.result.current.allTimeline[1].id).toBe(
+      true
+    )
+  })
+})
+
+describe('订阅进行中的共享与 SSR 短路', () => {
+  it('订阅 Promise 未完成时第二个消费者不重复发起订阅', async () => {
+    const deferred = createDeferred<() => Promise<void>>()
+    clientMocks.subscribe.mockImplementation((listener: MaisakaEventListener) => {
+      capturedHandler = listener
+      return deferred.promise
+    })
+    const hookModule = await importHookModule()
+
+    const first = renderHook(() => hookModule.useMaisakaMonitor())
+    const second = renderHook(() => hookModule.useMaisakaMonitor())
+    expect(clientMocks.subscribe).toHaveBeenCalledTimes(1)
+
+    deferred.resolve(unsubscribeMock)
+    await act(async () => {})
+    emitMonitorEvent('stage.snapshot', { entries: [], timestamp: 100 })
+    expect(first.result.current.connected).toBe(true)
+    expect(second.result.current.connected).toBe(true)
+  })
+
+  it('导入时 window 不存在则游标为 0 且不打开数据库', async () => {
+    vi.stubGlobal('window', undefined)
+    try {
+      await importHookModule()
+      expect(clientMocks.setInitialReplayCursor).toHaveBeenCalledWith(0)
+      expect(idbMocks.openDB).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+      Object.defineProperty(window, 'indexedDB', { configurable: true, value: {} as IDBFactory })
+    }
+  })
+
+  it('运行中 window 消失时不写 localStorage 也不调度持久化', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 2901, content: '原始内容' }))
+    view.unmount()
+
+    const originalWindow = globalThis.window
+    vi.stubGlobal('window', undefined)
+    try {
+      capturedHandler?.({
+        type: 'message.ingested',
+        data: makeMessageData({ event_id: 2902, message_id: 'msg-2', timestamp: 101 }),
+      } as unknown as MaisakaMonitorEvent)
+      capturedHandler?.({
+        type: 'message.updated',
+        data: {
+          event_id: 2903,
+          session_id: 'session-a',
+          message_id: 'msg-1',
+          content: '不该落盘的修正',
+          timestamp: 102,
+        },
+      } as unknown as MaisakaMonitorEvent)
+      expect(window).toBeUndefined()
+    } finally {
+      vi.stubGlobal('window', originalWindow)
+      vi.unstubAllGlobals()
+      Object.defineProperty(window, 'indexedDB', { configurable: true, value: {} as IDBFactory })
+    }
+  })
+})
+

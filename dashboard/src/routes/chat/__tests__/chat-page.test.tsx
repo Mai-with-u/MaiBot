@@ -1085,5 +1085,685 @@ describe('聊天页 ChatPage', () => {
       })
     )
   })
+
+  it('会话消息边沿：系统/未知类型、他人消息去重与溢出、富文本历史、双标签跳过非当前页', async () => {
+    presetVirtualTab()
+    await renderConnectedPage()
+
+    emitSession('webui-default', { type: 'system', content: '已连接', timestamp: 10 })
+    emitSession('webui-default', { type: 'system' })
+    emitSession('webui-default', { type: 'pong' })
+    expect(screen.getByText('system:已连接')).toBeInTheDocument()
+    expect(screen.getByText('system:')).toBeInTheDocument()
+
+    emitSession('webui-default', {
+      type: 'user_message',
+      content: '重复他人',
+      timestamp: 20,
+      sender: { name: '路人', user_id: 'qq_other' },
+    })
+    emitSession('webui-default', {
+      type: 'user_message',
+      content: '重复他人',
+      timestamp: 20,
+      sender: { name: '路人', user_id: 'qq_other' },
+    })
+    expect(screen.getAllByText('user:重复他人')).toHaveLength(1)
+
+    emitSession('webui-default', {
+      type: 'user_message',
+      message_id: 'mid-emoji',
+      sender: { name: '路人', user_id: 'qq_other' },
+      emojis: [{ data_url: 'data:image/gif;base64,EEE' }],
+    })
+    expect(screen.getByText('user:')).toHaveAttribute('data-segments', 'emoji:data:image/gif;base64,EEE')
+
+    emitSession('webui-default', { type: 'user_message', content: '无发送者', timestamp: 21 })
+    expect(screen.getByText('user:无发送者')).toBeInTheDocument()
+
+    emitSession('webui-default', {
+      type: 'bot_message',
+      message_type: 'rich',
+      content: '富文本回复',
+      segments: [{ type: 'text', data: '富文本回复' }],
+    })
+    expect(screen.getByText('bot:富文本回复')).toHaveAttribute('data-segments', 'text:富文本回复')
+
+    emitSession('webui-default', { type: 'typing', is_typing: true })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'typing')
+    emitSession('webui-default', { type: 'error' })
+    expect(screen.getByText('error:chat.message.errorFallback')).toBeInTheDocument()
+
+    emitSession('virtual-1', {
+      type: 'session_info',
+      session_id: 'v-sess',
+      bot_name: '虚拟机器人',
+    })
+    emitSession('virtual-1', { type: 'bot_message', content: '只在虚拟页', timestamp: 30 })
+    emitSession('virtual-1', { type: 'error', content: '虚拟页错误', timestamp: 31 })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-bot', 'chat.botNameFallback')
+    expect(screen.queryByText('bot:只在虚拟页')).not.toBeInTheDocument()
+    expect(screen.queryByText('error:虚拟页错误')).not.toBeInTheDocument()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ description: '虚拟页错误', variant: 'destructive' })
+    )
+
+    act(() => sidebarProps().onSwitch('virtual-1'))
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-bot', '虚拟机器人')
+    expect(screen.getByText('bot:只在虚拟页')).toBeInTheDocument()
+    expect(screen.getByText('error:虚拟页错误')).toBeInTheDocument()
+
+    act(() => sidebarProps().onSwitch('webui-default'))
+    emitSession('webui-default', {
+      type: 'history',
+      messages: [
+        {
+          content: '图文历史',
+          timestamp: 1,
+          is_bot: false,
+          message_type: 'rich',
+          segments: [{ type: 'image', data: 'data:image/png;base64,AA' }],
+        },
+        { content: '无名用户', timestamp: 2, is_bot: false },
+        { content: '空段', timestamp: 3, is_bot: true, message_type: 'rich', segments: [] },
+        { content: '空段对象', timestamp: 4, is_bot: true, message_type: 'rich', segments: null },
+      ],
+    })
+    expect(screen.getByText('user:图文历史')).toHaveAttribute(
+      'data-segments',
+      'image:data:image/png;base64,AA'
+    )
+    expect(screen.getByText('user:无名用户')).toBeInTheDocument()
+    expect(screen.getByText('bot:空段')).toHaveAttribute('data-segments', '')
+    expect(screen.getByText('bot:空段对象')).toHaveAttribute('data-segments', '')
+
+    act(() => {
+      const listeners = mocks.sessionListeners.get('webui-default') ?? []
+      for (let index = 0; index < 101; index += 1) {
+        for (const listener of listeners) {
+          listener({
+            type: 'user_message',
+            content: `他人${index}`,
+            timestamp: 9000 + index,
+            sender: { name: '路人', user_id: 'qq_other' },
+          })
+        }
+      }
+    })
+    expect(screen.getByText('user:他人0')).toBeInTheDocument()
+    expect(screen.getByText('user:他人100')).toBeInTheDocument()
+
+    act(() => composerProps().onChange('溢出后再发'))
+    await act(async () => {
+      composerProps().onSend()
+    })
+    expect(screen.getByText('user:溢出后再发')).toBeInTheDocument()
+  })
+
+  it('MaiSaka 状态映射：空闲/acting/思考类/reply 工具、重试推断、group/user 匹配与未命中', async () => {
+    await renderConnectedPage()
+
+    emitMonitor({
+      type: 'stage.snapshot',
+      data: {
+        entries: [
+          makeStageStatus({
+            session_id: 'snap-1',
+            group_id: 'g-chat',
+            stage: 'replyer working',
+          }),
+        ],
+        timestamp: 1,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+
+    emitSession('webui-default', {
+      type: 'session_info',
+      session_id: 'sess-1',
+      user_id: 'u-1',
+      group_id: 'g-chat',
+      platform: 'webui',
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'typing')
+
+    const expectStatus = (stage: string, kind: string, extra: Partial<StageStatusEvent> = {}) => {
+      emitMonitor({
+        type: 'stage.status',
+        data: makeStageStatus({ stage, timestamp: 10, ...extra }),
+      })
+      expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', kind)
+    }
+
+    expectStatus('空闲', 'none')
+    expectStatus('Planner 决策', 'none', { agent_state: 'wait' })
+    expectStatus('处理异常', 'error')
+    expectStatus('内部错误', 'error')
+    expectStatus('error occurred', 'error')
+    expectStatus('replier 输出', 'typing')
+    expectStatus('工具执行 reply', 'typing')
+    expectStatus('思考中', 'thinking')
+    expectStatus('消息整理', 'thinking')
+    expectStatus('启动循环', 'thinking')
+    expectStatus('工具调用', 'acting')
+    expectStatus('  ', 'acting', {
+      agent_state: '',
+      updated_at: 0,
+      timestamp: 0,
+    })
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'sess-miss',
+        group_id: 'g-other',
+        stage: '回复生成中',
+        timestamp: 20,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'acting')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'sess-user',
+        user_id: 'u-1',
+        platform: 'webui',
+        group_id: null,
+        stage: '消息整理',
+        updated_at: 0,
+        timestamp: 21,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'sess-platform-miss',
+        user_id: 'u-1',
+        platform: 'discord',
+        group_id: null,
+        stage: '回复生成中',
+        timestamp: 22,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'sess-platform-empty',
+        user_id: 'u-1',
+        group_id: null,
+        stage: '启动循环',
+        timestamp: 23,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'llm.retry',
+      data: {
+        session_id: 'sess-miss',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        attempt: 1,
+        max_attempts: 3,
+        reason: '未命中',
+        retry_interval: 1,
+        timestamp: 24,
+      },
+    })
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-miss',
+        task_name: 'replyer_main',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '未命中错误',
+        timestamp: 25,
+      },
+    })
+    emitMonitor({
+      type: 'stage.removed',
+      data: { session_id: 'sess-miss', timestamp: 26 },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '空闲', agent_state: 'wait', timestamp: 27 }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'none')
+
+    emitMonitor({
+      type: 'llm.retry',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'tool_executor',
+        request_type: 'tool',
+        model_name: 'm',
+        attempt: 1,
+        max_attempts: 3,
+        reason: '工具重试',
+        retry_interval: 1,
+        timestamp: 0,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'acting')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '空闲', timestamp: 28 }),
+    })
+    emitMonitor({
+      type: 'llm.retry',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'planner_main',
+        request_type: 'plan',
+        model_name: 'm',
+        attempt: 1,
+        max_attempts: 3,
+        reason: '规划重试',
+        retry_interval: 1,
+        timestamp: 0,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'llm.retry',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'keep',
+        request_type: 'replier',
+        model_name: 'm',
+        attempt: 2,
+        max_attempts: 3,
+        reason: '保留当前 kind',
+        retry_interval: 1,
+        timestamp: 29,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '空闲', timestamp: 30 }),
+    })
+    emitMonitor({
+      type: 'llm.retry',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'x',
+        request_type: 'replier_stream',
+        model_name: 'm',
+        attempt: 1,
+        max_attempts: 3,
+        reason: 'replier',
+        retry_interval: 1,
+        timestamp: 31,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'typing')
+
+    emitMonitor({
+      type: 'llm.error',
+      data: {
+        session_id: 'sess-1',
+        task_name: 'x',
+        request_type: 'chat',
+        model_name: 'm',
+        message: '无时间戳错误',
+        timestamp: 0,
+      },
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+  })
+
+  it('虚拟身份：已有 groupId/群名按配置打开，发送用虚拟昵称，监控按群或用户匹配，关闭后持久化剩余标签', async () => {
+    localStorage.setItem(
+      VIRTUAL_TABS_KEY,
+      JSON.stringify([
+        {
+          id: 'virtual-named',
+          label: '虚拟-有群',
+          createdAt: 1,
+          virtualConfig: {
+            platform: 'qq',
+            personId: 'p2',
+            userId: 'u200',
+            userName: '小红',
+            groupName: '测试群',
+            groupId: 'custom-group',
+          },
+        },
+        {
+          id: 'virtual-anon',
+          label: '虚拟-匿名',
+          createdAt: 2,
+          virtualConfig: {
+            platform: 'telegram',
+            personId: 'p3',
+            userId: 'u300',
+            userName: '',
+            groupName: '',
+            groupId: 'g-anon',
+          },
+        },
+      ])
+    )
+    await renderConnectedPage()
+
+    expect(mocks.openSession).toHaveBeenCalledWith(
+      'virtual-named',
+      expect.objectContaining({
+        user_id: 'u200',
+        user_name: '小红',
+        group_name: '测试群',
+        group_id: 'custom-group',
+      })
+    )
+
+    act(() => sidebarProps().onSwitch('virtual-named'))
+    act(() => composerProps().onChange('虚拟身份发言'))
+    await act(async () => {
+      composerProps().onSend()
+    })
+    expect(mocks.sendMessage).toHaveBeenCalledWith('virtual-named', '虚拟身份发言', '小红', {
+      images: [],
+    })
+
+    await act(async () => {
+      await composerProps().onSendEmoji({
+        id: 'emoji-a',
+        content_type: 'image/gif',
+        content_url: '/emoji-a.gif',
+        created_at: 1,
+      })
+    })
+    expect(mocks.sendMessage).toHaveBeenCalledWith('virtual-named', '', '小红', {
+      emojis: [{ name: '猫猫', mime_type: 'image/gif', base64: 'QUJD' }],
+    })
+
+    emitSession('virtual-named', {
+      type: 'user_message',
+      content: '自己的回显',
+      timestamp: 40,
+      sender: { name: '小红', user_id: 'u200' },
+    })
+    expect(screen.queryByText('user:自己的回显')).not.toBeInTheDocument()
+
+    emitSession('virtual-named', {
+      type: 'user_message',
+      content: '群友消息',
+      timestamp: 41,
+      sender: { name: '群友', user_id: 'u999' },
+    })
+    expect(screen.getByText('user:群友消息')).toBeInTheDocument()
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'other-sess',
+        group_id: 'custom-group',
+        stage: '工具调用',
+        timestamp: 42,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'acting')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'by-user',
+        user_id: 'u200',
+        platform: 'qq',
+        group_id: null,
+        stage: '思考中',
+        timestamp: 43,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({
+        session_id: 'by-user-miss',
+        user_id: 'u200',
+        platform: 'discord',
+        group_id: null,
+        stage: '回复生成中',
+        timestamp: 44,
+      }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'thinking')
+
+    act(() => sidebarProps().onSwitch('virtual-anon'))
+    act(() => composerProps().onChange('匿名发言'))
+    await act(async () => {
+      composerProps().onSend()
+    })
+    expect(mocks.sendMessage).toHaveBeenCalledWith('virtual-anon', '匿名发言', USER_NAME, {
+      images: [],
+    })
+
+    act(() => sidebarProps().onSwitch('virtual-named'))
+    const stopPropagation = vi.fn()
+    const onClose = sidebarProps().onClose as (
+      tabId: string,
+      event?: { stopPropagation: () => void }
+    ) => void
+    act(() => onClose('virtual-anon', { stopPropagation }))
+    expect(stopPropagation).toHaveBeenCalled()
+    expect(mocks.closeSession).toHaveBeenCalledWith('virtual-anon')
+    expect(screen.queryByTestId('tab-virtual-anon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar')).toHaveAttribute('data-active', 'virtual-named')
+    expect(JSON.parse(localStorage.getItem(VIRTUAL_TABS_KEY) ?? '[]')).toEqual([
+      expect.objectContaining({
+        id: 'virtual-named',
+        label: '虚拟-有群',
+        virtualConfig: expect.objectContaining({
+          groupId: 'custom-group',
+          groupName: '测试群',
+          userName: '小红',
+        }),
+      }),
+    ])
+  })
+
+  it('发送失败在多标签下只清空当前标签运行状态', async () => {
+    presetVirtualTab()
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.sendMessage.mockRejectedValue(new Error('boom'))
+
+    act(() => composerProps().onChange('会失败'))
+    await act(async () => {
+      composerProps().onSend()
+    })
+
+    expect(screen.getByText('user:会失败')).toBeInTheDocument()
+    expect(screen.getByTestId('tab-virtual-1')).toBeInTheDocument()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'chat.toast.sendFailed', variant: 'destructive' })
+    )
+  })
+
+  it('图片数量达到上限后拒绝新增，超额文件只保留空位并提示', async () => {
+    await renderConnectedPage()
+
+    const textFile = new File(['hello'], 'note.txt', { type: 'text/plain' })
+    const firstPng = new File(['img'], '图0.png', { type: 'image/png' })
+    await act(async () => {
+      await composerProps().onAddImages(makeFileList([textFile, firstPng]))
+    })
+    await waitFor(() => {
+      expect(composerProps().images).toHaveLength(1)
+    })
+
+    const morePngs = Array.from(
+      { length: 7 },
+      (_, index) => new File(['img'], `图${index + 1}.png`, { type: 'image/png' })
+    )
+    await act(async () => {
+      await composerProps().onAddImages(makeFileList(morePngs))
+    })
+    await waitFor(() => {
+      expect(composerProps().images).toHaveLength(8)
+    })
+
+    const overflowPng = new File(['img'], '图8.png', { type: 'image/png' })
+    await act(async () => {
+      await composerProps().onAddImages(makeFileList([overflowPng]))
+    })
+    expect(composerProps().images).toHaveLength(8)
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'chat.toast.imageLimit',
+        description: 'chat.toast.imageLimitDesc:8',
+        variant: 'destructive',
+      })
+    )
+
+    const firstId = composerProps().images[0].id
+    act(() => composerProps().onRemoveImage(firstId))
+    expect(composerProps().images).toHaveLength(7)
+
+    const extras = ['a', 'b', 'c'].map(
+      (name) => new File(['img'], `${name}.png`, { type: 'image/png' })
+    )
+    await act(async () => {
+      await composerProps().onAddImages(makeFileList(extras))
+    })
+    await waitFor(() => {
+      expect(composerProps().images).toHaveLength(8)
+    })
+    expect(mocks.toast).toHaveBeenCalledWith({
+      title: 'chat.toast.imageLimit',
+      description: 'chat.toast.imageLimitDesc:8',
+    })
+  })
+
+  it('头像非图片被拒绝；失败原因非 Error 时走兜底文案；无 MIME 仍可上传', async () => {
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const textFile = new File(['x'], 'avatar.txt', { type: 'text/plain' })
+    await act(async () => {
+      await sidebarProps().onUpdateUserAvatar(textFile)
+    })
+    expect(mocks.uploadWebuiUserAvatar).not.toHaveBeenCalled()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'chat.toast.avatarUnsupported', variant: 'destructive' })
+    )
+
+    mocks.uploadWebuiUserAvatar.mockRejectedValue('not-an-error')
+    const okFile = new File(['x'], 'avatar.png', { type: 'image/png' })
+    await act(async () => {
+      await sidebarProps().onUpdateUserAvatar(okFile)
+    })
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'chat.toast.avatarSaveFailed',
+        description: 'chat.toast.avatarSaveFailedDesc',
+        variant: 'destructive',
+      })
+    )
+
+    mocks.uploadWebuiUserAvatar.mockResolvedValue(undefined)
+    const noTypeFile = new File(['x'], 'avatar.bin', { type: '' })
+    await act(async () => {
+      await sidebarProps().onUpdateUserAvatar(noTypeFile)
+    })
+    expect(mocks.uploadWebuiUserAvatar).toHaveBeenCalledWith(USER_ID, noTypeFile)
+  })
+
+  it('MaiSaka 订阅失败只记日志，聊天仍可连接', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.monitorSubscribe.mockRejectedValue(new Error('monitor down'))
+    await renderConnectedPage()
+
+    await waitFor(() => {
+      expect(console.error).toHaveBeenCalledWith(
+        '[Chat] 订阅 MaiSaka 状态失败:',
+        expect.any(Error)
+      )
+    })
+    expect(screen.getByTestId('tab-webui-default')).toHaveAttribute('data-connected', 'true')
+  })
+
+  it('卸载后忽略连接/监控回调，未完成的订阅会立即清理', async () => {
+    let resolveSubscribe: ((cleanup: () => Promise<void>) => void) | undefined
+    const cleanupFn = vi.fn(async () => {})
+    mocks.monitorSubscribe.mockImplementation((listener: (event: MaisakaMonitorEvent) => void) => {
+      mocks.monitorListeners.push(listener)
+      return new Promise((resolve) => {
+        resolveSubscribe = resolve
+      })
+    })
+
+    const { unmount } = await renderConnectedPage()
+    unmount()
+
+    act(() => {
+      mocks.connectionListeners.forEach((listener) => listener(false))
+    })
+    emitMonitor({ type: 'stage.status', data: makeStageStatus({ stage: '回复生成中' }) })
+
+    expect(resolveSubscribe).toEqual(expect.any(Function))
+    await act(async () => {
+      resolveSubscribe?.(cleanupFn)
+    })
+    expect(cleanupFn).toHaveBeenCalled()
+  })
+
+  it('未连接时修改昵称只写入本地，不调用 WS', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.openSession.mockRejectedValue(new Error('offline'))
+    render(<ChatPage />)
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'chat.toast.connectionFailed', variant: 'destructive' })
+      )
+    })
+
+    act(() => sidebarProps().onUpdateUserName('离线改名'))
+    expect(localStorage.getItem('maibot_webui_user_name')).toBe('离线改名')
+    expect(mocks.updateNickname).not.toHaveBeenCalled()
+  })
+
+  it('读取图片失败：FileReader 结果非字符串时提示读取失败', async () => {
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const OriginalFileReader = window.FileReader
+    window.FileReader = class extends OriginalFileReader {
+      override readAsDataURL() {
+        Object.defineProperty(this, 'result', { value: new ArrayBuffer(1) })
+        this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>)
+      }
+    } as typeof FileReader
+
+    try {
+      const pngFile = new File(['fake-image'], '坏结果.png', { type: 'image/png' })
+      await act(async () => {
+        await composerProps().onAddImages(makeFileList([pngFile]))
+      })
+    } finally {
+      window.FileReader = OriginalFileReader
+    }
+
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'chat.toast.imageReadFailed', variant: 'destructive' })
+    )
+    expect(screen.getByTestId('composer')).toHaveAttribute('data-images', '')
+  })
 })
+
 

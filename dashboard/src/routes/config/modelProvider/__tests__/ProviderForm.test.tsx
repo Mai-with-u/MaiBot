@@ -408,3 +408,152 @@ describe('ProviderForm 保存流程', () => {
     )
   })
 })
+
+describe('ProviderForm 弹窗开关与模板选择', () => {
+  const formProps = {
+    onOpenChange: vi.fn(),
+    editingProvider: emptyProvider(),
+    editingIndex: null as number | null,
+    providers: [] as APIProvider[],
+    onSave: vi.fn(),
+    tourState: { isRunning: false },
+  }
+
+  it('关闭弹窗时不拉取客户端类型，重新打开会重置模板与校验状态', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<ProviderForm open={false} {...formProps} />)
+    expect(configApi.fetchModelClientTypes).not.toHaveBeenCalled()
+
+    rerender(<ProviderForm open {...formProps} />)
+    expect(await screen.findByText('添加提供商')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('请输入提供商名称')).toBeInTheDocument()
+
+    rerender(<ProviderForm open={false} {...formProps} />)
+    rerender(<ProviderForm open {...formProps} />)
+    expect(await screen.findByText('添加提供商')).toBeInTheDocument()
+    expect(getTemplateTrigger()).toHaveTextContent('DeepSeek')
+    expect(screen.queryByText('请输入提供商名称')).not.toBeInTheDocument()
+  })
+
+  it('打开后立即卸载会忽略迟到的成功与失败客户端类型结果', async () => {
+    let resolveFetch: ((value: []) => void) | undefined
+    vi.mocked(configApi.fetchModelClientTypes).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        })
+    )
+    const first = render(<ProviderForm open {...formProps} />)
+    first.unmount()
+    resolveFetch?.([])
+
+    let rejectFetch: ((error: Error) => void) | undefined
+    vi.mocked(configApi.fetchModelClientTypes).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectFetch = reject
+        })
+    )
+    const second = render(<ProviderForm open {...formProps} />)
+    second.unmount()
+    rejectFetch?.(new Error('late'))
+  })
+
+  it('从模板列表选择 OpenAI / Gemini 会填充字段，无 allowed_client_types 时锁定客户端类型', async () => {
+    const user = userEvent.setup()
+    renderForm()
+
+    await user.click(getTemplateTrigger())
+    await user.click(await screen.findByRole('option', { name: 'OpenAI' }))
+    expect(screen.getByLabelText('名称 *')).toHaveValue('OpenAI')
+    expect(screen.getByLabelText('基础 URL *')).toHaveValue('https://api.openai.com/v1')
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
+
+    await user.click(getTemplateTrigger())
+    await user.click(await screen.findByRole('option', { name: 'Google Gemini' }))
+    expect(screen.getByLabelText('名称 *')).toHaveValue('Gemini')
+    expect(screen.getByLabelText('基础 URL *')).toHaveValue(
+      'https://generativelanguage.googleapis.com/v1beta'
+    )
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent('gemini')
+  })
+
+  it('编辑无 allowed_client_types 的 OpenAI 提供商时仍按 URL 匹配模板', async () => {
+    renderForm({
+      editingProvider: makeProvider({
+        name: 'OpenAI',
+        base_url: 'https://api.openai.com/v1',
+        client_type: 'openai',
+      }),
+      editingIndex: 0,
+    })
+    await waitFor(() => expect(getTemplateTrigger()).toHaveTextContent('OpenAI'))
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
+  })
+})
+
+describe('ProviderForm 字段编辑补全', () => {
+  it('校验错误后修改 URL、API Key 与重试间隔会清错并带上新值保存', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm()
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.clear(screen.getByLabelText('名称 *'))
+    await user.clear(screen.getByLabelText('基础 URL *'))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(await screen.findByText('请输入基础 URL')).toBeInTheDocument()
+    expect(screen.getByText('请输入 API Key')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('名称 *'), 'Acme')
+    await user.type(screen.getByLabelText('基础 URL *'), 'https://acme.example/v1')
+    await user.type(screen.getByLabelText('API Key *'), 'sk-acme')
+    expect(screen.queryByText('请输入基础 URL')).not.toBeInTheDocument()
+    expect(screen.queryByText('请输入 API Key')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '高级配置' }))
+    const intervalInput = screen.getByLabelText('重试间隔(秒)')
+    await user.clear(intervalInput)
+    await user.type(intervalInput, '7')
+
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Acme',
+          base_url: 'https://acme.example/v1',
+          api_key: 'sk-acme',
+          retry_interval: 7,
+        }),
+        null
+      )
+    )
+  })
+
+  it('editingProvider 为 null 时改字段保持空对象，fetch 返回 null 时仍展示内置客户端', async () => {
+    const user = userEvent.setup()
+    vi.mocked(configApi.fetchModelClientTypes).mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof configApi.fetchModelClientTypes>>
+    )
+    renderForm({ editingProvider: null })
+
+    fireEvent.change(screen.getByLabelText('名称 *'), { target: { value: 'Nope' } })
+    fireEvent.change(screen.getByLabelText('基础 URL *'), {
+      target: { value: 'https://nope.example' },
+    })
+    fireEvent.change(screen.getByLabelText('API Key *'), { target: { value: 'sk-nope' } })
+    await user.click(screen.getByRole('button', { name: '高级配置' }))
+    fireEvent.change(screen.getByLabelText('最大重试'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('超时(秒)'), { target: { value: '9' } })
+    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('重试间隔(秒)'), { target: { value: '4' } })
+
+    await user.click(screen.getByRole('button', { name: '使用自定义提供商' }))
+    await user.click(screen.getByRole('combobox', { name: '客户端类型' }))
+    expect(await screen.findByRole('option', { name: 'openai' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'gemini' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'gemini' }))
+  })
+})

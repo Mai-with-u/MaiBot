@@ -4,6 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import {
   AliasNamesHook,
+  AMemorixSharedMemoryGroupsHook,
+  BehaviorFocusGroupsHook,
   BehaviorGroupsHook,
   BehaviorLearningListHook,
   BotPlatformAccountsHook,
@@ -17,6 +19,7 @@ import {
   JargonLearningListHook,
   KeywordRulesHook,
   MCPRootItemsHook,
+  MCPServersHook,
   MultipleReplyStyleHook,
   RegexRulesHook,
 } from '../complexFieldHooks'
@@ -182,6 +185,25 @@ async function addLearningRule(scopeTitle: string, chatType?: '群聊' | '私聊
   }
   await user.click(within(dialog).getByRole('button', { name: '添加' }))
   return user
+}
+
+const sharedMemorySchema: FieldSchema = {
+  name: 'shared_memory_groups',
+  type: 'array',
+  label: '共享记忆组',
+  description: '共享记忆组',
+  required: false,
+  'x-display-as-section': true,
+}
+
+function talkRulesProps(overrides: Record<string, unknown> = {}) {
+  return {
+    fieldPath: 'chat.reply_timing.talk_value_rules',
+    parentValues: { enable_talk_value_rules: true },
+    schema: fieldSchema,
+    nestedSchema: talkRuleSchema,
+    ...overrides,
+  }
 }
 
 describe('complexFieldHooks', () => {
@@ -582,6 +604,195 @@ describe('complexFieldHooks', () => {
         { type: 'group', use: true, learn: true, platform: '', item_id: '' },
       ])
     })
+
+    it('取消添加对话框，并展示未指定类型、双关关闭和待填写聊天流', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const { rerender } = render(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[]}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '添加学习规则' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: '取消' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(onChange).not.toHaveBeenCalled()
+
+      await addLearningRule('指定聊天流')
+      expect(onChange).toHaveBeenLastCalledWith([
+        { type: 'group', use: true, learn: true, platform: 'qq', item_id: '' },
+      ])
+
+      rerender(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[{ type: 'group', use: true, learn: true, platform: 'qq', item_id: '' }]}
+        />,
+      )
+      expect(screen.getByText('qq:待填写聊天流')).toBeInTheDocument()
+      expect(screen.queryByText('正在验证聊天流...')).not.toBeInTheDocument()
+
+      await addLearningRule('指定聊天流')
+      rerender(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[
+            { type: 'group', use: true, learn: true, platform: 'qq', item_id: '' },
+            { type: 'group', use: true, learn: true, platform: 'qq', item_id: '' },
+          ]}
+        />,
+      )
+      expect(screen.getAllByText('qq:待填写聊天流')).toHaveLength(2)
+
+      await user.click(screen.getByRole('button', { name: '删除学习规则 1' }))
+      rerender(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[{ type: 'group', use: true, learn: true, platform: 'qq', item_id: '' }]}
+        />,
+      )
+      expect(screen.getByText('qq:待填写聊天流')).toBeInTheDocument()
+
+      rerender(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[
+            { platform: '', item_id: '123', type: 'channel', use: false, learn: false },
+            { platform: '*', item_id: '', type: 'group', use: false, learn: false },
+            { platform: '', item_id: '*', type: 'private', use: false, learn: false },
+            { platform: '  ', item_id: '  ', type: 'group', use: false, learn: false },
+          ]}
+        />,
+      )
+      expect(screen.getByText('留空:123')).toBeInTheDocument()
+      expect(screen.getByText('任意平台:留空')).toBeInTheDocument()
+      expect(screen.getByText('留空:全部目标')).toBeInTheDocument()
+      expect(screen.getByText('全局默认')).toBeInTheDocument()
+
+      const learnSwitches = screen.getAllByRole('switch')
+      await user.click(learnSwitches[1])
+      expect(onChange).toHaveBeenCalled()
+    })
+
+    it('解析结果缺少 session 视为缺失，卸载后忽略进行中的请求', async () => {
+      const missingSessionId = nextItemId('nosession')
+      const pendingId = nextItemId('unmount')
+      resolveChatTargetsMock.mockResolvedValueOnce([{ found: true, session: null }])
+
+      render(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value={[learningItem({ item_id: missingSessionId })]}
+        />,
+      )
+      expect(await screen.findByText('无效的聊天流')).toBeInTheDocument()
+
+      cleanup()
+      const deferred = createDeferred<Array<{ found: boolean; session?: ChatStream | null }>>()
+      resolveChatTargetsMock.mockReturnValue(deferred.promise)
+      const { unmount } = render(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value={[learningItem({ item_id: pendingId, type: 'private' })]}
+        />,
+      )
+      expect(await screen.findByText('正在验证聊天流...')).toBeInTheDocument()
+      unmount()
+      deferred.resolve([
+        {
+          found: true,
+          session: createChatStream({
+            chat_type: 'private',
+            display_name: '卸载后不应出现',
+            user_id: pendingId,
+            target_id: pendingId,
+            group_id: null,
+          }),
+        },
+      ])
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(screen.queryByText('卸载后不应出现')).not.toBeInTheDocument()
+    })
+
+    it('命中私聊聊天流时展示用户 ID 预览', async () => {
+      const privateId = nextItemId('private')
+      resolveChatTargetsMock.mockResolvedValue([
+        {
+          found: true,
+          session: createChatStream({
+            chat_type: 'private',
+            display_name: '小明的私聊',
+            user_id: privateId,
+            target_id: privateId,
+            group_id: null,
+            account_id: 'acc-9',
+          }),
+        },
+      ])
+
+      render(
+        <ExpressionLearningListHook
+          fieldPath="expression.learning_list"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value={[learningItem({ item_id: privateId, type: 'private' })]}
+        />,
+      )
+
+      expect(await screen.findByText('小明的私聊 · 账号 acc-9')).toBeInTheDocument()
+      expect(screen.getAllByText(`qq:${privateId}`).length).toBeGreaterThan(0)
+    })
+
+    it('黑话平台下拉在无已定义平台时禁用，卸载后不再写回配置', async () => {
+      const deferred = createDeferred<Record<string, unknown>>()
+      getBotConfigCachedMock.mockReturnValue(deferred.promise)
+      const { unmount } = render(
+        <JargonLearningListHook
+          fieldPath="jargon.learning_list"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value={[]}
+        />,
+      )
+      unmount()
+      deferred.resolve({ bot: { platform: 'qq', platforms: ['wx'] } })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      getBotConfigCachedMock.mockResolvedValue({
+        bot: { platform: null, platforms: 'not-array' },
+      })
+      render(
+        <JargonLearningListHook
+          fieldPath="jargon.learning_list"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value={[{ platform: '', item_id: '123', type: 'group', use: true, learn: true }]}
+        />,
+      )
+      expect(await screen.findByText('留空:123')).toBeInTheDocument()
+      expect(screen.getByText('未定义平台')).toBeInTheDocument()
+    })
   })
 
   describe('ChatTalkValueRulesHook', () => {
@@ -831,6 +1042,215 @@ describe('complexFieldHooks', () => {
         ]),
       )
     })
+
+    it('折叠后可再次展开，空列表合并编辑展示占位，并支持取消添加', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const { rerender } = render(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ parentValues: { enable_talk_value_rules: false }, onChange })}
+          value={[]}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '展开规则' }))
+      expect(screen.getByRole('button', { name: '添加发言频率规则' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '折叠规则' }))
+      expect(screen.getByText('动态发言频率规则未启用，规则列表已折叠。展开后仍可查看或编辑已有规则。')).toBeInTheDocument()
+
+      rerender(
+        <ChatTalkValueRulesHook {...talkRulesProps({ onChange })} value={[]} />,
+      )
+      await user.click(screen.getByRole('button', { name: '合并编辑' }))
+      expect(screen.getByText('尚未配置任何规则，将使用全局默认频率。')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '可视化轨道' }))
+      await user.click(screen.getByRole('button', { name: '添加发言频率规则' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: '取消' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '添加发言频率规则' }))
+      const addDialog = await screen.findByRole('dialog')
+      await user.click(within(addDialog).getByRole('button', { name: /平台通配/ }))
+      await user.click(within(addDialog).getByRole('button', { name: '添加' }))
+      expect(onChange.mock.calls.at(-1)?.[0][0]).toMatchObject({
+        platform: 'qq',
+        item_id: '*',
+        time: '00:00-23:59',
+      })
+    })
+
+    it('时间轴可添加强制全天、拖动结束手柄、滑动频率并忽略跨组拖放', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const firstId = nextItemId('end')
+      const secondId = nextItemId('other-group')
+      const first = talkItem({ item_id: firstId, time: '08:00-10:00', value: 0.3, rule_type: '' })
+      const second = talkItem({
+        item_id: firstId,
+        time: '14:00-16:00',
+        value: 0.7,
+        rule_type: '',
+      })
+      const other = talkItem({ item_id: secondId, time: '09:00-11:00', value: 0.1 })
+
+      const { rerender } = render(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ onChange })}
+          value={[first, second, other]}
+        />,
+      )
+
+      expect(screen.getByText(/未指定/)).toBeInTheDocument()
+      await user.click(screen.getAllByRole('button', { name: '*' })[0])
+      expect(onChange.mock.calls.at(-1)?.[0].at(-1)).toMatchObject({
+        item_id: firstId,
+        time: '*',
+        value: 0.5,
+      })
+
+      const endHandle = screen.getByLabelText(`调整qq:${firstId} · 未指定轨道 1 结束时间`)
+      const track = endHandle.closest('[data-talk-timeline-track]') as HTMLElement
+      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 240,
+        bottom: 28,
+        width: 240,
+        height: 28,
+        toJSON: () => ({}),
+      })
+
+      fireEvent.pointerDown(endHandle, { pointerId: 7, clientX: 200, clientY: 10 })
+      fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 160, clientY: 10 })
+      fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 160, clientY: 10 })
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      })
+      fireEvent.pointerUp(endHandle, { pointerId: 7, clientX: 160, clientY: 10 })
+      expect(onChange).toHaveBeenCalled()
+
+      const sliders = screen.getAllByRole('slider')
+      fireEvent.keyDown(sliders[0], { key: 'ArrowRight' })
+      expect(onChange).toHaveBeenCalled()
+
+      const handleA = screen.getByLabelText(`拖动qq:${firstId} · 未指定轨道 1 调整顺序`)
+      const handleB = screen.getByLabelText(`拖动qq:${secondId} · 群聊轨道 1 调整顺序`)
+      const dataTransfer = { effectAllowed: 'none', setData: vi.fn(), getData: vi.fn() }
+      fireEvent.dragStart(handleA, { dataTransfer })
+      fireEvent.dragOver(handleB.closest('.min-h-12') as HTMLElement, { dataTransfer })
+      fireEvent.drop(handleB.closest('.min-h-12') as HTMLElement, { dataTransfer })
+      fireEvent.dragEnd(handleA)
+      expect(onChange.mock.calls.at(-1)?.[0][0].item_id).toBe(firstId)
+
+      const fallbackItem = talkItem({ item_id: firstId, time: '', value: 0.2, rule_type: '' })
+      rerender(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ onChange })}
+          value={[first, fallbackItem]}
+        />,
+      )
+      const fallbackHandle = screen.getByLabelText(`拖动qq:${firstId} · 未指定轨道 2 调整顺序`)
+      fireEvent.dragStart(fallbackHandle, { dataTransfer })
+      fireEvent.drop(
+        screen.getByLabelText(`拖动qq:${firstId} · 未指定轨道 1 调整顺序`).closest('.min-h-12') as HTMLElement,
+        { dataTransfer },
+      )
+
+      rerender(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ onChange })}
+          value={[
+            talkItem({ item_id: firstId, time: '24:00-10:00', value: 'nope' }),
+            talkItem({ item_id: firstId, time: '12:60-13:00', value: null }),
+            talkItem({ item_id: firstId, time: '08:00-12:00-99', value: { x: 1 } }),
+            talkItem({ item_id: firstId, time: '00:00-00:00', value: 0 }),
+          ]}
+        />,
+      )
+      expect(screen.getAllByText('时间格式错误').length).toBeGreaterThan(1)
+      expect(screen.getByText('00:00-00:00')).toBeInTheDocument()
+    })
+
+    it('合并编辑可切换兜底/强制全天、改聊天类型，非法频率输入被忽略', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const itemId = nextItemId('merge2')
+
+      render(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ onChange })}
+          value={[
+            talkItem({ item_id: itemId, time: '09:00-11:00', value: 0.45 }),
+            talkItem({ item_id: itemId, time: '', value: 0.2 }),
+          ]}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '合并编辑' }))
+      fireEvent.change(screen.getAllByPlaceholderText('留空表示全局，* 表示通配')[1], {
+        target: { value: '888' },
+      })
+      expect(onChange).toHaveBeenCalled()
+
+      const typeTrigger = screen.getByRole('combobox')
+      await user.click(typeTrigger)
+      await user.click(await screen.findByRole('option', { name: '私聊' }))
+      expect(onChange.mock.calls.at(-1)?.[0][0].rule_type).toBe('private')
+
+      const wildcardButtons = screen.getAllByRole('button', { name: '*' })
+      await user.click(wildcardButtons[0])
+      expect(onChange.mock.calls.at(-1)?.[0][0].time).toBe('*')
+
+      const fallbackButtons = screen.getAllByRole('button', { name: '兜底' })
+      expect(fallbackButtons[0]).toBeDisabled()
+
+      const timeRangeButtons = screen.getAllByRole('button', { name: '时间段' })
+      await user.click(timeRangeButtons[0])
+      expect(onChange).toHaveBeenCalled()
+
+      fireEvent.change(screen.getByDisplayValue('0.45'), { target: { value: 'abc' } })
+      expect(onChange.mock.calls.at(-1)?.[0][0].value).not.toBeNaN()
+
+      const groupedSliders = screen.getAllByRole('slider')
+      fireEvent.keyDown(groupedSliders[0], { key: 'ArrowLeft' })
+      expect(onChange).toHaveBeenCalled()
+
+      await user.click(wildcardButtons[1])
+      const lastItems = onChange.mock.calls.at(-1)?.[0] as Array<Record<string, unknown>>
+      expect(lastItems.some((item) => item.time === '*')).toBe(true)
+    })
+
+    it('把已有时间段改成重复兜底时会保留当前项并规范化旧兜底', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const itemId = nextItemId('pref')
+
+      render(
+        <ChatTalkValueRulesHook
+          {...talkRulesProps({ onChange })}
+          value={[
+            talkItem({ item_id: itemId, time: '', value: 0.2 }),
+            talkItem({ item_id: itemId, time: '08:00-12:00', value: 0.4 }),
+          ]}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: '合并编辑' }))
+      fireEvent.change(screen.getByDisplayValue('08:00-12:00'), {
+        target: { value: '' },
+      })
+      const normalized = onChange.mock.calls.at(-1)?.[0] as Array<Record<string, unknown>>
+      expect(normalized).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ time: '00:00-23:59' }),
+          expect.objectContaining({ time: '' }),
+        ]),
+      )
+    })
   })
 
   describe('ExpressionGroupsHook 非共享记忆范围', () => {
@@ -945,6 +1365,328 @@ describe('complexFieldHooks', () => {
       await user.click(screen.getByLabelText('删除行为共享组 1'))
       expect(onChange).toHaveBeenLastCalledWith([])
     })
+
+    it('兼容 expression_groups 字段，并补全空平台聊天流的平台值', async () => {
+      const onChange = vi.fn()
+      render(
+        <ExpressionGroupsHook
+          fieldPath="expression.expression_groups"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[
+            'invalid',
+            null,
+            {
+              expression_groups: [
+                { platform: '', item_id: '123', type: 'group' },
+                { platform: 'qq', item_id: '*', rule_type: 'group' },
+                { platform: '*', item_id: '555', rule_type: 'private' },
+                { platform: '', item_id: '*', rule_type: 'group' },
+                { platform: '*', item_id: '', rule_type: 'group' },
+                { platform: '', item_id: '', rule_type: 'private' },
+              ],
+            },
+          ]}
+        />,
+      )
+
+      expect(screen.getByText('未填写:123')).toBeInTheDocument()
+      expect(screen.getByText('qq:全部目标')).toBeInTheDocument()
+      expect(screen.getByText('任意平台:555')).toBeInTheDocument()
+      expect(screen.getByText('未填写:全部目标')).toBeInTheDocument()
+      expect(screen.getByText('任意平台:未填写')).toBeInTheDocument()
+      expect(screen.getByText('未填写:未填写')).toBeInTheDocument()
+      expect(screen.getAllByText('这个表达共享组还没有成员。')).toHaveLength(2)
+
+      fireEvent.change(screen.getAllByPlaceholderText('群号或用户 ID')[0], {
+        target: { value: '999' },
+      })
+      expect(onChange.mock.calls.at(-1)?.[0][2].targets[0]).toMatchObject({
+        platform: 'qq',
+        item_id: '999',
+      })
+
+      fireEvent.change(screen.getAllByPlaceholderText('qq')[1], {
+        target: { value: 'kook' },
+      })
+      expect(onChange.mock.calls.at(-1)?.[0][2].targets).toEqual(
+        expect.arrayContaining([expect.objectContaining({ platform: 'kook', item_id: '*' })]),
+      )
+    })
+
+    it('Focus 共享组使用独立标题，并可取消添加成员对话框', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      render(
+        <BehaviorFocusGroupsHook
+          fieldPath="behavior.focus_groups"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[]}
+        />,
+      )
+
+      expect(screen.getByText('Focus 共享组')).toBeInTheDocument()
+      expect(screen.getByText('配置后只有同组聊天流共享 Focus，不同组可以分别进入 Focus。')).toBeInTheDocument()
+      expect(screen.getByText('暂无Focus 共享组，点击上方按钮选择第一个成员。')).toBeInTheDocument()
+
+      await user.click(screen.getByLabelText('添加Focus 共享组'))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: /指定聊天流/ }))
+      await user.click(within(dialog).getByRole('button', { name: '添加' }))
+      expect(onChange).toHaveBeenLastCalledWith([
+        { targets: [{ platform: 'qq', item_id: '', rule_type: 'group' }] },
+      ])
+    })
+  })
+
+  describe('共享记忆组', () => {
+    it('空列表、全局共享占位和加载聊天流失败', async () => {
+      const user = userEvent.setup()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      getChatStreamsMock.mockRejectedValueOnce(new Error('聊天流失败'))
+      const onParentChange = vi.fn()
+
+      const { rerender } = render(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={vi.fn()}
+          onParentChange={onParentChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[]}
+        />,
+      )
+
+      expect(screen.getByText('暂无共享记忆组，点击上方按钮添加后可直接选择群聊或私聊。')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: '聊天管理' })).toHaveAttribute(
+        'href',
+        '/chat-management?view=groups&kind=memory',
+      )
+      await waitFor(() => {
+        expect(consoleError).toHaveBeenCalled()
+      })
+
+      rerender(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={vi.fn()}
+          onParentChange={onParentChange}
+          parentValues={{ global_memory_sharing_enabled: true }}
+          schema={sharedMemorySchema}
+          value={[]}
+        />,
+      )
+      expect(screen.getByText('全局共享已开启，暂不需要配置共享记忆组。')).toBeInTheDocument()
+      expect(screen.getByLabelText('添加共享记忆组')).toBeDisabled()
+
+      await user.click(screen.getByRole('switch', { name: '全局共享记忆' }))
+      expect(onParentChange).toHaveBeenLastCalledWith('global_memory_sharing_enabled', false)
+      consoleError.mockRestore()
+    })
+
+    it('可搜索、选择已知聊天流，并支持手动填写与收起', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      const groupChat = createChatStream({
+        display_name: '测试群',
+        target_id: '10001',
+        group_id: '10001',
+        group_name: '测试群',
+        account_id: 'bot-1',
+      })
+      const privateChat = createChatStream({
+        id: 2,
+        session_id: 'session-private',
+        display_name: '小明的私聊',
+        chat_type: 'private',
+        target_id: '20002',
+        user_id: '20002',
+        user_nickname: '小明',
+        group_id: null,
+        group_name: null,
+      })
+      getChatStreamsMock.mockResolvedValue([
+        createChatStream({ platform: '', target_id: '1' }),
+        createChatStream({ id: 8, platform: 'qq', target_id: '', group_id: '', chat_type: 'group' }),
+        { ...groupChat, id: 3, chat_type: 'unknown' } as ChatStream,
+        groupChat,
+        { ...groupChat, id: 9, display_name: '旧版测试群' },
+        privateChat,
+      ])
+
+      const { rerender } = render(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[{ targets: [{ platform: 'qq', item_id: '', rule_type: 'group' }] }]}
+        />,
+      )
+
+      await user.click(screen.getByLabelText('展开共享记忆组 1'))
+      expect(screen.getByText('未选择聊天流')).toBeInTheDocument()
+      expect(screen.getByText('待选择')).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: '选择群聊或私聊' })).toHaveTextContent(
+          '搜索或选择已知聊天流',
+        )
+      })
+
+      await user.click(screen.getByRole('combobox', { name: '选择群聊或私聊' }))
+      const searchInput = await screen.findByPlaceholderText('搜索群名、私聊名、群号或用户 ID...')
+      await user.type(searchInput, 'zzz-none')
+      expect(await screen.findByText('未找到匹配的聊天流')).toBeInTheDocument()
+
+      await user.clear(searchInput)
+      await user.type(searchInput, '测试群')
+      await user.click(await screen.findByText(/测试群 · 账号 bot-1 · 群聊/))
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets[0]).toMatchObject({
+        platform: 'qq',
+        item_id: '10001',
+        rule_type: 'group',
+      })
+
+      rerender(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[{ targets: [{ platform: 'qq', item_id: '10001', rule_type: 'group' }] }]}
+        />,
+      )
+      expect(await screen.findByText('测试群')).toBeInTheDocument()
+      expect(screen.queryByText('未选择聊天流')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('combobox', { name: '选择群聊或私聊' }))
+      expect((await screen.findAllByText(/测试群 · 账号 bot-1 · 群聊/)).length).toBeGreaterThan(0)
+      expect(screen.getAllByText(/小明的私聊 · 私聊/).length).toBeGreaterThan(0)
+    })
+
+    it('未匹配目标会打开手动填写，匹配成功后收起，删除成员并剪枝折叠状态', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      getChatStreamsMock.mockResolvedValue([
+        createChatStream({
+          display_name: '匹配群',
+          target_id: '10001',
+          group_id: '10001',
+        }),
+      ])
+
+      const { rerender } = render(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[
+            { targets: [{ platform: 'qq', item_id: 'not-found', rule_type: 'group' }] },
+            { targets: [{ platform: 'qq', item_id: 'also-missing', rule_type: 'private' }] },
+          ]}
+        />,
+      )
+
+      await user.click(screen.getByLabelText('展开共享记忆组 1'))
+      expect(await screen.findByText('未匹配')).toBeInTheDocument()
+      expect(screen.getByText('群号或用户 ID')).toBeInTheDocument()
+
+      fireEvent.change(screen.getByPlaceholderText('群号或用户 ID'), {
+        target: { value: '30003' },
+      })
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets[0].item_id).toBe('30003')
+      fireEvent.change(screen.getByPlaceholderText('qq'), { target: { value: 'wx' } })
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets[0].platform).toBe('wx')
+      await user.click(screen.getByRole('combobox', { name: '选择聊天类型' }))
+      await user.click(await screen.findByRole('option', { name: '私聊' }))
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets[0].rule_type).toBe('private')
+      await user.click(screen.getByRole('button', { name: '收起手动填写' }))
+      expect(screen.queryByPlaceholderText('群号或用户 ID')).not.toBeInTheDocument()
+
+      rerender(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[
+            { targets: [{ platform: 'qq', item_id: '10001', rule_type: 'group' }] },
+            { targets: [{ platform: 'qq', item_id: 'also-missing', rule_type: 'private' }] },
+          ]}
+        />,
+      )
+      expect(await screen.findByText('匹配群')).toBeInTheDocument()
+      expect(screen.queryByText('群号或用户 ID')).not.toBeInTheDocument()
+
+      await user.click(screen.getByLabelText('添加共享记忆组 1 的成员'))
+      const memberDialog = await screen.findByRole('dialog')
+      await user.click(within(memberDialog).getByRole('button', { name: '取消' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+      await user.click(screen.getByLabelText('添加共享记忆组 1 的成员'))
+      const addDialog = await screen.findByRole('dialog')
+      await user.click(within(addDialog).getByRole('button', { name: '添加' }))
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets).toHaveLength(2)
+
+      await user.click(screen.getByLabelText('删除共享记忆组 1 的成员 1'))
+      expect(onChange.mock.calls.at(-1)?.[0][0].targets).toHaveLength(0)
+
+      await user.click(screen.getByLabelText('折叠共享记忆组 1'))
+      await user.click(screen.getByLabelText('删除共享记忆组 2'))
+      rerender(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[{ targets: [{ platform: 'qq', item_id: '10001', rule_type: 'group' }] }]}
+        />,
+      )
+      expect(screen.getByText('共享记忆组 1')).toBeInTheDocument()
+      expect(screen.queryByText('共享记忆组 2')).not.toBeInTheDocument()
+    })
+
+    it('无已知聊天流时展示占位，空成员组显示空态', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      getChatStreamsMock.mockResolvedValue([])
+
+      const { rerender } = render(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[{ targets: [] }]}
+        />,
+      )
+
+      await user.click(screen.getByLabelText('展开共享记忆组 1'))
+      expect(screen.getByText('这个共享记忆组还没有成员。')).toBeInTheDocument()
+
+      await user.click(screen.getByLabelText('添加共享记忆组 1 的成员'))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: '添加' }))
+      expect(onChange).toHaveBeenLastCalledWith([
+        { targets: [{ platform: 'qq', item_id: '', rule_type: 'group' }] },
+      ])
+
+      rerender(
+        <AMemorixSharedMemoryGroupsHook
+          fieldPath="a_memorix.shared_memory_groups"
+          onChange={onChange}
+          parentValues={{ global_memory_sharing_enabled: false }}
+          schema={sharedMemorySchema}
+          value={[{ targets: [{ platform: 'qq', item_id: '', rule_type: 'group' }] }]}
+        />,
+      )
+      expect(screen.getByRole('combobox', { name: '选择群聊或私聊' })).toHaveTextContent(
+        '暂无已知聊天流',
+      )
+    })
   })
 
   describe('其他导出 hook', () => {
@@ -988,6 +1730,31 @@ describe('complexFieldHooks', () => {
       expect(screen.getByText('qq:1 · 群聊')).toBeInTheDocument()
       fireEvent.change(screen.getByDisplayValue('你好'), { target: { value: '新提示' } })
       expect(onChange.mock.calls.at(-1)?.[0][0].prompt).toBe('新提示')
+
+      fireEvent.change(screen.getByDisplayValue('qq'), { target: { value: '' } })
+      fireEvent.change(screen.getByDisplayValue('1'), { target: { value: '' } })
+      await user.click(screen.getByRole('combobox'))
+      await user.click(await screen.findByRole('option', { name: /private|私聊/ }))
+      expect(onChange).toHaveBeenCalled()
+
+      rerender(
+        <ChatPromptsHook
+          fieldPath="chat.chat_prompts"
+          onChange={onChange}
+          schema={fieldSchema}
+          nestedSchema={promptSchema}
+          value={[
+            { platform: '', item_id: '', rule_type: '', prompt: '空' },
+            { platform: 'qq', item_id: '', rule_type: 'group', prompt: '仅平台' },
+            { platform: '', item_id: '9', rule_type: 'private', prompt: '仅ID' },
+          ]}
+        />,
+      )
+      expect(screen.getByText('全局 · 未指定')).toBeInTheDocument()
+      expect(screen.getByText('qq · 群聊')).toBeInTheDocument()
+      expect(screen.getByText('9 · 私聊')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '删除全局 · 未指定' }))
+      expect(onChange.mock.calls.at(-1)?.[0]).toHaveLength(2)
     })
 
     it('KeywordRulesHook 与 RegexRulesHook 规范化隐藏字段并生成标题', async () => {
@@ -1028,13 +1795,49 @@ describe('complexFieldHooks', () => {
         />,
       )
       expect(screen.getByText('正则 1 条 → 未填写反应')).toBeInTheDocument()
+
+      rerender(
+        <KeywordRulesHook
+          fieldPath="personality.keyword_rules"
+          onChange={keywordChange}
+          schema={fieldSchema}
+          nestedSchema={keywordSchema}
+          value={[{ keywords: ['', 1, '  '], reaction: `很长的反应文案${'哈'.repeat(40)}` }]}
+        />,
+      )
+      expect(screen.getByText(/未配置关键词 → 很长的反应文案/)).toBeInTheDocument()
+      expect(screen.getByText(/…/)).toBeInTheDocument()
+
+      cleanup()
+      render(
+        <RegexRulesHook
+          fieldPath="personality.regex_rules"
+          onChange={regexChange}
+          schema={fieldSchema}
+          nestedSchema={keywordSchema}
+          value={[]}
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: '添加正则规则' }))
+      expect(regexChange).toHaveBeenLastCalledWith([{ keywords: [], reaction: '', regex: [] }])
+      cleanup()
+      render(
+        <RegexRulesHook
+          fieldPath="personality.regex_rules"
+          onChange={regexChange}
+          schema={fieldSchema}
+          nestedSchema={keywordSchema}
+          value={[{ regex: [], reaction: 'ok' }]}
+        />,
+      )
+      expect(screen.getByText('未配置正则 → ok')).toBeInTheDocument()
     })
 
     it('FocusWhitelistHook 使用兜底 schema 添加默认项', async () => {
       const user = userEvent.setup()
       const onChange = vi.fn()
 
-      render(
+      const { rerender } = render(
         <FocusWhitelistHook
           fieldPath="focus.whitelist"
           onChange={onChange}
@@ -1043,10 +1846,32 @@ describe('complexFieldHooks', () => {
         />,
       )
 
+      expect(screen.getByText('尚未配置 Focus 白名单。')).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: '添加 Focus 白名单' }))
       expect(onChange).toHaveBeenLastCalledWith([
         { platform: '', item_id: '', type: 'group', use: true, learn: true },
       ])
+
+      rerender(
+        <FocusWhitelistHook
+          fieldPath="focus.whitelist"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[{ platform: 'qq', item_id: '1', type: 'group', use: true, learn: true }]}
+        />,
+      )
+      expect(screen.getByText('qq:1 · 群聊')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '删除qq:1 · 群聊' }))
+      expect(onChange).toHaveBeenLastCalledWith([])
+      rerender(
+        <FocusWhitelistHook
+          fieldPath="focus.whitelist"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={null}
+        />,
+      )
+      expect(screen.getByText('尚未配置 Focus 白名单。')).toBeInTheDocument()
     })
 
     it('BotPlatformAccountsHook 处理加载失败、空列表和备用账号编辑', async () => {
@@ -1148,6 +1973,165 @@ describe('complexFieldHooks', () => {
         target: { value: '[{"enabled":true}]' },
       })
       expect(onChange).toHaveBeenCalledWith([{ enabled: true }])
+    })
+
+    it('MCPServersHook 解析失败时展示错误，别名非数组时走空列表', async () => {
+      const user = userEvent.setup()
+      const onChange = vi.fn()
+      render(
+        <MCPServersHook
+          fieldPath="mcp.servers"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[]}
+        />,
+      )
+      expect(screen.getByText('MCP 服务器配置结构较复杂，使用 JSON 编辑。')).toBeInTheDocument()
+      fireEvent.change(screen.getByPlaceholderText(/example-server/), {
+        target: { value: '{bad' },
+      })
+      expect(screen.getByText(/JSON 解析失败：/)).toBeInTheDocument()
+
+      cleanup()
+      render(
+        <AliasNamesHook fieldPath="bot.alias_names" onChange={onChange} schema={fieldSchema} value={null} />,
+      )
+      expect(screen.getByText('暂无别名。')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '添加别名' }))
+      expect(onChange).toHaveBeenLastCalledWith([''])
+
+      cleanup()
+      render(
+        <MultipleReplyStyleHook
+          fieldPath="personality.multiple_reply_style"
+          onChange={onChange}
+          schema={fieldSchema}
+          value={[]}
+        />,
+      )
+      expect(screen.getByText('暂无备用表达风格。')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '添加表达风格' }))
+      expect(onChange).toHaveBeenLastCalledWith([''])
+    })
+
+    it('适配器账号加载中、就绪来源、恢复身份和非 Error 更新失败', async () => {
+      const user = userEvent.setup()
+      const deferred = createDeferred<
+        Array<{
+          id: number
+          platform: string
+          account_id: string
+          disabled: boolean
+          first_seen_at: string
+          last_seen_at: string
+          disabled_at: string | null
+          last_source: string
+          last_adapter_id: string
+          last_plugin_id: string
+          last_gateway_name: string
+          online: boolean
+        }>
+      >()
+      vi.mocked(botAccountsApi.getDiscoveredBotAccounts).mockReturnValue(deferred.promise)
+
+      const { rerender } = render(
+        <BotPlatformAccountsHook
+          fieldPath="bot.platform"
+          onChange={vi.fn()}
+          onParentChange={vi.fn()}
+          parentValues={{ qq_account: { invalid: true }, platforms: 'bad' }}
+          schema={fieldSchema}
+          value={null}
+        />,
+      )
+      expect(screen.getByText('正在读取适配器账号…')).toBeInTheDocument()
+
+      deferred.resolve([
+        {
+          id: 3,
+          platform: 'qq',
+          account_id: 'bot-ready',
+          disabled: false,
+          first_seen_at: '2026-08-08T08:00:00',
+          last_seen_at: '2026-08-08T09:00:00',
+          disabled_at: null,
+          last_source: 'ready',
+          last_adapter_id: 'adapter-1',
+          last_plugin_id: 'plugin-1',
+          last_gateway_name: 'gateway-1',
+          online: true,
+        },
+        {
+          id: 4,
+          platform: 'wx',
+          account_id: 'bot-disabled',
+          disabled: true,
+          first_seen_at: '2026-08-08T08:00:00',
+          last_seen_at: '2026-08-08T09:00:00',
+          disabled_at: '2026-08-08T10:00:00',
+          last_source: 'message',
+          last_adapter_id: 'adapter-2',
+          last_plugin_id: 'plugin-2',
+          last_gateway_name: 'gateway-2',
+          online: false,
+        },
+      ])
+
+      expect(await screen.findByText('bot-ready')).toBeInTheDocument()
+      expect(screen.getByText(/就绪状态/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '已排除账号 1' })).toBeInTheDocument()
+
+      vi.mocked(botAccountsApi.setDiscoveredBotAccountDisabled).mockResolvedValueOnce({
+        id: 4,
+        platform: 'wx',
+        account_id: 'bot-disabled',
+        disabled: false,
+        first_seen_at: '2026-08-08T08:00:00',
+        last_seen_at: '2026-08-08T09:00:00',
+        disabled_at: null,
+        last_source: 'message',
+        last_adapter_id: 'adapter-2',
+        last_plugin_id: 'plugin-2',
+        last_gateway_name: 'gateway-2',
+        online: true,
+      })
+      await user.click(screen.getByRole('button', { name: '已排除账号 1' }))
+      await user.click(screen.getByRole('button', { name: '恢复身份' }))
+      await waitFor(() => {
+        expect(botAccountsApi.setDiscoveredBotAccountDisabled).toHaveBeenCalledWith(4, false)
+      })
+
+      vi.mocked(botAccountsApi.setDiscoveredBotAccountDisabled).mockRejectedValueOnce('boom')
+      const excludeButtons = screen.getAllByRole('button', { name: '排除身份' })
+      await user.click(excludeButtons[excludeButtons.length - 1])
+      expect(await screen.findByText('更新适配器账号失败')).toBeInTheDocument()
+
+      vi.mocked(botAccountsApi.getDiscoveredBotAccounts).mockRejectedValueOnce(new Error('网络错误'))
+      rerender(
+        <BotPlatformAccountsHook
+          fieldPath="bot.platform"
+          onChange={vi.fn()}
+          onParentChange={vi.fn()}
+          parentValues={{ qq_account: 88, platforms: [':only-account', 'plat:'] }}
+          schema={fieldSchema}
+          value="telegram"
+        />,
+      )
+      await user.click(screen.getByRole('button', { name: '备用平台账号' }))
+      fireEvent.change(screen.getAllByPlaceholderText('114514')[0], { target: { value: '200' } })
+      fireEvent.change(screen.getAllByPlaceholderText('wx')[0], { target: { value: '' } })
+
+      cleanup()
+      vi.mocked(botAccountsApi.getDiscoveredBotAccounts).mockRejectedValueOnce(new Error('网络错误'))
+      render(
+        <BotPlatformAccountsHook
+          fieldPath="bot.platform"
+          onChange={vi.fn()}
+          schema={fieldSchema}
+          value="qq"
+        />,
+      )
+      expect(await screen.findByText('网络错误')).toBeInTheDocument()
     })
   })
 })

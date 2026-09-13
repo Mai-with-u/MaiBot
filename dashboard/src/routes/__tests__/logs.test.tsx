@@ -421,6 +421,10 @@ describe('LogViewerPage 终端面板', () => {
   })
 
   it('日期筛选只保留窗口内日志，清除后恢复全部', async () => {
+    // 只伪造 Date：日历默认打开「今天」所在月。/10/ 会同时命中「9月10日」
+    // 和相邻月「10月*」的 aria-label，必须钉在日志所在的 2026-08。
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 7, 13, 12, 0, 0))
     const user = userEvent.setup()
     logWsMocks.getAllLogs.mockReturnValue([
       makeLog('early', { message: '月初日志', timestamp: '2026-08-01 08:00:00' }),
@@ -428,30 +432,34 @@ describe('LogViewerPage 终端面板', () => {
       makeLog('late', { message: '月末日志', timestamp: '2026-08-20 18:00:00' }),
     ])
 
-    render(<LogViewerPage />)
-    await user.click(screen.getByRole('button', { name: '筛选' }))
-    expect(screen.getByText('3 / 3')).toBeInTheDocument()
+    try {
+      render(<LogViewerPage />)
+      await user.click(screen.getByRole('button', { name: '筛选' }))
+      expect(screen.getByText('3 / 3')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /开始日期/ }))
-    const startCalendar = await screen.findByRole('grid')
-    await user.click(within(startCalendar).getByRole('button', { name: /10/ }))
+      await user.click(screen.getByRole('button', { name: /开始日期/ }))
+      const startCalendar = await screen.findByRole('grid')
+      await user.click(within(startCalendar).getByRole('button', { name: /2026年8月10日/ }))
 
-    expect(screen.queryAllByText('月初日志')).toHaveLength(0)
-    expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('月末日志').length).toBeGreaterThan(0)
-    expect(screen.getByText('2 / 3')).toBeInTheDocument()
+      expect(screen.queryAllByText('月初日志')).toHaveLength(0)
+      expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('月末日志').length).toBeGreaterThan(0)
+      expect(screen.getByText('2 / 3')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /结束日期/ }))
-    const endCalendar = await screen.findByRole('grid')
-    await user.click(within(endCalendar).getByRole('button', { name: /15/ }))
+      await user.click(screen.getByRole('button', { name: /结束日期/ }))
+      const endCalendar = await screen.findByRole('grid')
+      await user.click(within(endCalendar).getByRole('button', { name: /2026年8月15日/ }))
 
-    expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
-    expect(screen.queryAllByText('月末日志')).toHaveLength(0)
-    expect(screen.getByText('1 / 3')).toBeInTheDocument()
+      expect(screen.getAllByText('月中日志').length).toBeGreaterThan(0)
+      expect(screen.queryAllByText('月末日志')).toHaveLength(0)
+      expect(screen.getByText('1 / 3')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: '清除' }))
-    expect(screen.getByText('3 / 3')).toBeInTheDocument()
-    expect(screen.getAllByText('月初日志').length).toBeGreaterThan(0)
+      await user.click(screen.getByRole('button', { name: '清除' }))
+      expect(screen.getByText('3 / 3')).toBeInTheDocument()
+      expect(screen.getAllByText('月初日志').length).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('用户向上滚动关闭自动滚动，滚回底部再开启', async () => {

@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useImportForm } from '../useImportForm'
 
-vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
+const toastMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 
 vi.mock('@/lib/memory-api', () => ({
   getMemoryImportSettings: vi.fn(),
@@ -37,11 +39,13 @@ function renderForm(onCreated = vi.fn()) {
 }
 
 beforeEach(() => {
+  vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({ success: true, settings: {} } as never)
   vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({ success: true, path_aliases: {} } as never)
   vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({ success: true, data: [] } as never)
 })
 
 afterEach(() => {
+  cleanup()
   vi.clearAllMocks()
 })
 
@@ -256,3 +260,571 @@ describe('useImportForm', () => {
     })
   })
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function makeUploadFile(name = 'demo.txt') {
+  return new File(['hello'], name, { type: 'text/plain' })
+}
+
+describe('useImportForm 模式切换校验', () => {
+  it('切换文本/文件/文件夹/LPMM 时分别拦截或放行提交', async () => {
+    vi.mocked(memoryApi.createMemoryRawScanImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'raw-1' },
+    } as never)
+    const { result, onCreated } = renderForm()
+
+    act(() => result.current.setUnifiedImportMode('text'))
+    expect(result.current.importContentCategoryMissing).toBe(true)
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '请选择资料类别',
+        description: '新建内容导入任务前需要明确选择资料类别',
+        variant: 'destructive',
+      }),
+    )
+    expect(memoryApi.createMemoryPasteImport).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.setImportContentCategory('factual')
+      result.current.setUnifiedImportMode('text')
+    })
+    expect(result.current.importContentCategoryMissing).toBe(false)
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '粘贴内容不能为空' }),
+    )
+    expect(memoryApi.createMemoryPasteImport).not.toHaveBeenCalled()
+
+    act(() => result.current.setUnifiedImportMode('file'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '请选择上传文件',
+        description: '至少选择一个 txt/md/json 文件后再提交',
+        variant: 'destructive',
+      }),
+    )
+    expect(memoryApi.createMemoryUploadImport).not.toHaveBeenCalled()
+
+    act(() => result.current.setUnifiedImportMode('folder'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryRawScanImport).toHaveBeenCalledOnce()
+    expect(onCreated).toHaveBeenCalledWith('raw-1')
+
+    act(() => {
+      result.current.setImportContentCategory('')
+      result.current.setImportCreateMode('lpmm_openie')
+    })
+    expect(result.current.importContentCategoryMissing).toBe(true)
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryLpmmOpenieImport).not.toHaveBeenCalled()
+
+    act(() => result.current.setImportCreateMode('lpmm_convert'))
+    expect(result.current.importContentCategoryMissing).toBe(false)
+
+    act(() => result.current.setImportCreateMode('upload'))
+    expect(result.current.importContentCategoryMissing).toBe(true)
+
+    act(() => {
+      result.current.setImportContentCategory('quote')
+      result.current.setImportCreateMode('paste')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryPasteImport).not.toHaveBeenCalled()
+    expect(memoryApi.createMemoryLpmmConvertImport).not.toHaveBeenCalled()
+  })
+
+  it('文件/文件夹/OpenIE/转换成功后按当前模式分派创建接口', async () => {
+    vi.mocked(memoryApi.createMemoryUploadImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'upload-task-1' },
+    } as never)
+    vi.mocked(memoryApi.createMemoryRawScanImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'raw-task-1' },
+    } as never)
+    vi.mocked(memoryApi.createMemoryLpmmOpenieImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'openie-task-1' },
+    } as never)
+    vi.mocked(memoryApi.createMemoryLpmmConvertImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'convert-task-1' },
+    } as never)
+    const { result, onCreated } = renderForm()
+    const file = makeUploadFile()
+
+    act(() => {
+      result.current.setImportContentCategory('narrative')
+      result.current.setUnifiedImportMode('file')
+      result.current.setUploadFiles([file])
+      result.current.setUploadInputMode('json')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryUploadImport).toHaveBeenCalledWith(
+      [file],
+      expect.objectContaining({
+        input_mode: 'json',
+        strategy_override: 'narrative',
+        chat_log: false,
+      }),
+    )
+    expect(result.current.uploadFiles).toEqual([])
+    expect(onCreated).toHaveBeenCalledWith('upload-task-1')
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '上传导入任务已创建' }),
+    )
+
+    act(() => {
+      result.current.setUnifiedImportMode('folder')
+      result.current.setRawRelativePath('notes')
+      result.current.setRawGlob('*.md')
+      result.current.setRawRecursive(false)
+      result.current.setRawInputMode('json')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryRawScanImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        alias: 'raw',
+        relative_path: 'notes',
+        glob: '*.md',
+        recursive: false,
+        input_mode: 'json',
+      }),
+    )
+
+    act(() => {
+      result.current.setImportCreateMode('lpmm_openie')
+      result.current.setOpenieRelativePath('lpmm/in')
+      result.current.setOpenieIncludeAllJson(true)
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryLpmmOpenieImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        alias: 'lpmm',
+        relative_path: 'lpmm/in',
+        include_all_json: true,
+      }),
+    )
+
+    act(() => {
+      result.current.setImportCreateMode('lpmm_convert')
+      result.current.setConvertRelativePath('src')
+      result.current.setConvertTargetRelativePath('dst')
+      result.current.setConvertDimension('8')
+      result.current.setConvertBatchSize('16')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryLpmmConvertImport).toHaveBeenCalledWith({
+      alias: 'lpmm',
+      relative_path: 'src',
+      target_alias: 'converted',
+      target_relative_path: 'dst',
+      dimension: 8,
+      batch_size: 16,
+    })
+    expect(onCreated).toHaveBeenCalledWith('convert-task-1')
+  })
+
+  it('创建中再次提交会被忽略', async () => {
+    const pending = deferred<{ success: boolean; task?: { task_id: string } }>()
+    vi.mocked(memoryApi.createMemoryUploadImport).mockReturnValue(pending.promise as never)
+    const { result } = renderForm()
+
+    act(() => {
+      result.current.setImportContentCategory('factual')
+      result.current.setUnifiedImportMode('file')
+      result.current.setUploadFiles([makeUploadFile()])
+    })
+
+    let firstSubmit: Promise<void> | undefined
+    act(() => {
+      firstSubmit = result.current.submitImportByMode()
+    })
+    await waitFor(() => expect(result.current.creatingImport).toBe(true))
+
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(memoryApi.createMemoryUploadImport).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      pending.resolve({ success: true, task: { task_id: 'up-1' } })
+      await firstSubmit
+    })
+    expect(result.current.creatingImport).toBe(false)
+  })
+})
+
+describe('useImportForm 确认失败', () => {
+  it('文本模式 success=false 使用接口 error，缺省时走兜底文案', async () => {
+    vi.mocked(memoryApi.createMemoryPasteImport).mockResolvedValueOnce({
+      success: false,
+      error: '队列已满',
+    } as never)
+    const { result, onCreated } = renderForm()
+
+    act(() => {
+      result.current.setUnifiedImportMode('text')
+      result.current.setPasteContent('要导入的内容')
+      result.current.setPasteName('草稿')
+      result.current.setImportContentCategory('factual')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '创建粘贴导入任务失败',
+        description: '队列已满',
+        variant: 'destructive',
+      }),
+    )
+    expect(onCreated).not.toHaveBeenCalled()
+    expect(result.current.pasteContent).toBe('要导入的内容')
+
+    toastMock.mockClear()
+    vi.mocked(memoryApi.createMemoryPasteImport).mockResolvedValueOnce({ success: false } as never)
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '创建粘贴导入任务失败',
+        description: '创建粘贴导入任务失败',
+      }),
+    )
+  })
+
+  it('各模式创建抛非 Error 时使用各自兜底文案', async () => {
+    vi.mocked(memoryApi.createMemoryPasteImport).mockRejectedValue('bad')
+    vi.mocked(memoryApi.createMemoryUploadImport).mockRejectedValue('bad')
+    vi.mocked(memoryApi.createMemoryRawScanImport).mockRejectedValue('bad')
+    vi.mocked(memoryApi.createMemoryLpmmOpenieImport).mockRejectedValue('bad')
+    vi.mocked(memoryApi.createMemoryLpmmConvertImport).mockRejectedValue('bad')
+    const { result } = renderForm()
+
+    act(() => {
+      result.current.setImportContentCategory('quote')
+      result.current.setUnifiedImportMode('text')
+      result.current.setPasteContent('内容')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '创建粘贴导入任务失败',
+        description: '创建粘贴导入任务失败',
+      }),
+    )
+
+    act(() => {
+      result.current.setUnifiedImportMode('file')
+      result.current.setUploadFiles([makeUploadFile()])
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建上传导入任务失败' }),
+    )
+
+    act(() => result.current.setUnifiedImportMode('folder'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建本地扫描任务失败' }),
+    )
+
+    act(() => result.current.setImportCreateMode('lpmm_openie'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建 LPMM OpenIE 任务失败' }),
+    )
+
+    act(() => result.current.setImportCreateMode('lpmm_convert'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建 LPMM 转换任务失败' }),
+    )
+    expect(result.current.creatingImport).toBe(false)
+  })
+
+  it('文件/扫描/OpenIE/转换 success=false 使用默认失败文案', async () => {
+    vi.mocked(memoryApi.createMemoryUploadImport).mockResolvedValue({ success: false } as never)
+    vi.mocked(memoryApi.createMemoryRawScanImport).mockResolvedValue({ success: false } as never)
+    vi.mocked(memoryApi.createMemoryLpmmOpenieImport).mockResolvedValue({ success: false } as never)
+    vi.mocked(memoryApi.createMemoryLpmmConvertImport).mockResolvedValue({ success: false } as never)
+    const { result, onCreated } = renderForm()
+
+    act(() => {
+      result.current.setImportContentCategory('chat_log')
+      result.current.setUnifiedImportMode('file')
+      result.current.setUploadFiles([makeUploadFile()])
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '创建上传导入任务失败',
+        description: '创建上传导入任务失败',
+      }),
+    )
+
+    act(() => result.current.setUnifiedImportMode('folder'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建本地扫描任务失败' }),
+    )
+
+    act(() => result.current.setImportCreateMode('lpmm_openie'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建 LPMM OpenIE 任务失败' }),
+    )
+
+    act(() => result.current.setImportCreateMode('lpmm_convert'))
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: '创建 LPMM 转换任务失败' }),
+    )
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('创建成功但没有 task_id 时仍回调空字符串，并使用队列兜底文案', async () => {
+    vi.mocked(memoryApi.createMemoryPasteImport).mockResolvedValue({
+      success: true,
+      task: {},
+    } as never)
+    const { result, onCreated } = renderForm()
+
+    act(() => {
+      result.current.setUnifiedImportMode('text')
+      result.current.setPasteContent('内容')
+      result.current.setImportContentCategory('factual')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+
+    expect(onCreated).toHaveBeenCalledWith('')
+    expect(result.current.pasteContent).toBe('')
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '粘贴导入任务已创建',
+        description: '导入任务已加入队列',
+      }),
+    )
+  })
+
+  it('onCreated 抛错时按创建失败处理', async () => {
+    vi.mocked(memoryApi.createMemoryPasteImport).mockResolvedValue({
+      success: true,
+      task: { task_id: 'task-paste-2' },
+    } as never)
+    const { result, onCreated } = renderForm(
+      vi.fn().mockRejectedValue(new Error('队列刷新失败')),
+    )
+
+    act(() => {
+      result.current.setUnifiedImportMode('text')
+      result.current.setPasteContent('内容')
+      result.current.setImportContentCategory('factual')
+    })
+    await act(async () => {
+      await result.current.submitImportByMode()
+    })
+
+    expect(onCreated).toHaveBeenCalledWith('task-paste-2')
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: '创建粘贴导入任务失败',
+        description: '队列刷新失败',
+        variant: 'destructive',
+      }),
+    )
+  })
+})
+
+describe('useImportForm 空 counts 与默认值', () => {
+  it('空 settings / 空别名 / 空聊天流保持表单缺省，无效并发不写入载荷', async () => {
+    const { result } = renderForm()
+
+    await waitFor(() => expect(memoryApi.getMemoryImportSettings).toHaveBeenCalled())
+    expect(result.current.importSettings).toEqual({})
+    expect(result.current.importAliasKeys).toEqual([])
+    expect(result.current.importChatTargets).toEqual([])
+
+    act(() => {
+      result.current.setImportCommonFileConcurrency('')
+      result.current.setImportCommonChunkConcurrency('0')
+      result.current.setImportCommonNarrativeWindowSize('abc')
+      result.current.setImportCommonNarrativeOverlap('-1')
+      result.current.setImportCommonFactualTargetSize('1.5')
+      result.current.setImportCommonChatId('   ')
+      result.current.setImportCommonChatReferenceTime('   ')
+    })
+    expect(result.current.buildCommonImportPayload()).toEqual({
+      llm_enabled: true,
+      strategy_override: 'auto',
+      chat_log: false,
+      scope_type: 'global',
+      dedupe_policy: 'content_hash',
+      force: false,
+      clear_manifest: false,
+    })
+  })
+
+  it('聊天范围与合法计数写入载荷；settings 可 seed 全部默认并发', async () => {
+    vi.mocked(memoryApi.getMemoryImportSettings).mockResolvedValue({
+      success: true,
+      settings: {
+        default_file_concurrency: 8,
+        default_chunk_concurrency: 9,
+        default_narrative_window_size: 2000,
+        default_narrative_overlap: 100,
+        default_factual_target_size: 1500,
+      },
+    } as never)
+    vi.mocked(memoryApi.getMemoryImportChatTargets).mockResolvedValue({
+      success: true,
+      data: [{ chat_id: 'chat-1', chat_name: '测试群' }],
+    } as never)
+    const { result } = renderForm()
+
+    await waitFor(() => expect(result.current.importCommonFileConcurrency).toBe('8'))
+    expect(result.current.importCommonChunkConcurrency).toBe('9')
+    expect(result.current.importCommonNarrativeWindowSize).toBe('2000')
+    expect(result.current.importCommonNarrativeOverlap).toBe('100')
+    expect(result.current.importCommonFactualTargetSize).toBe('1500')
+    expect(result.current.importChatTargets).toEqual([
+      { chat_id: 'chat-1', chat_name: '测试群' },
+    ])
+
+    act(() => {
+      result.current.setImportContentCategory('chat_log')
+      result.current.setImportCommonChatId('  chat-1  ')
+      result.current.setImportCommonChatReferenceTime('  2024-01-01  ')
+    })
+    expect(result.current.buildCommonImportPayload()).toMatchObject({
+      strategy_override: 'narrative',
+      chat_log: true,
+      scope_type: 'chat',
+      chat_id: 'chat-1',
+      chat_reference_time: '2024-01-01',
+      file_concurrency: 8,
+      chunk_concurrency: 9,
+      narrative_window_size: 2000,
+      narrative_overlap: 100,
+      factual_target_size: 1500,
+    })
+  })
+
+  it('路径别名到达后：非法当前值回退到排序后的第一项，合法值保持', async () => {
+    let resolveAliases: (value: unknown) => void = () => {}
+    vi.mocked(memoryApi.getMemoryImportPathAliases).mockReturnValue(
+      new Promise((resolve) => {
+        resolveAliases = resolve
+      }) as never,
+    )
+    const { result, unmount } = renderForm()
+
+    act(() => result.current.setPathResolveAlias('gone'))
+    await act(async () => {
+      resolveAliases({
+        success: true,
+        path_aliases: { zeta: '/z', alpha: '/a', raw: '/r' },
+      })
+    })
+    await waitFor(() => expect(result.current.importAliasKeys).toEqual(['alpha', 'raw', 'zeta']))
+    expect(result.current.pathResolveAlias).toBe('alpha')
+    unmount()
+
+    vi.mocked(memoryApi.getMemoryImportPathAliases).mockResolvedValue({
+      success: true,
+      path_aliases: { raw: '/r', lpmm: '/l' },
+    } as never)
+    const keepRaw = renderForm()
+    await waitFor(() => expect(keepRaw.result.current.importAliasKeys).toEqual(['lpmm', 'raw']))
+    expect(keepRaw.result.current.pathResolveAlias).toBe('raw')
+  })
+
+  it('用户已改过的其余默认字段不被后续 settings 覆盖', async () => {
+    let resolveSettings: (value: unknown) => void = () => {}
+    vi.mocked(memoryApi.getMemoryImportSettings).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSettings = resolve
+      }) as never,
+    )
+    const { result } = renderForm()
+
+    act(() => {
+      result.current.setImportCommonChunkConcurrency('11')
+      result.current.setImportCommonNarrativeWindowSize('11')
+      result.current.setImportCommonNarrativeOverlap('11')
+      result.current.setImportCommonFactualTargetSize('11')
+    })
+    await act(async () => {
+      resolveSettings({
+        success: true,
+        settings: {
+          default_chunk_concurrency: 9,
+          default_narrative_window_size: 2000,
+          default_narrative_overlap: 100,
+          default_factual_target_size: 1500,
+        },
+      })
+    })
+
+    await waitFor(() => expect(memoryApi.getMemoryImportSettings).toHaveBeenCalled())
+    expect(result.current.importCommonChunkConcurrency).toBe('11')
+    expect(result.current.importCommonNarrativeWindowSize).toBe('11')
+    expect(result.current.importCommonNarrativeOverlap).toBe('11')
+    expect(result.current.importCommonFactualTargetSize).toBe('11')
+  })
+})
+
