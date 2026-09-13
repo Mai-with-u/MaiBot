@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   prepare-dashboard-release:
@@ -29,19 +29,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: webui
     steps:
-      - name: Generate release bot token
-        id: release-bot-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
       - name: Check out dev
         uses: actions/checkout@v4
         with:
           ref: dev
           fetch-depth: 0
-          token: ${{ steps.release-bot-token.outputs.token }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -173,8 +165,9 @@ jobs:
             exit 0
           fi
 
-          git config user.name "maibot-release[bot]"
-          git config user.email "maibot-release[bot]@users.noreply.github.com"
+          # 使用 checkout 默认保存的 GITHUB_TOKEN 推送；此提交不会自动触发 push 工作流。
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml requirements.txt uv.lock
           git commit -m "chore: 准备 Dashboard 正式版 ${DASHBOARD_VERSION}"
           git pull --rebase origin dev
