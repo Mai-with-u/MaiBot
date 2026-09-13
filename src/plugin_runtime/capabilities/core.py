@@ -572,12 +572,22 @@ class RuntimeCoreCapabilityMixin:
 
         try:
             prompt = _normalize_prompt_arg(args.get("prompt"))
-            task_name = llm_api.resolve_task_name(str(args.get("model", "") or args.get("model_name", "")))
+            # `model` 既可能是模型任务名，也可能是直接指定的模型名。按是否命中已注册
+            # 任务名分流：命中则按任务解析（插件沿用 model="replyer" 的任务路由不受影响），
+            # 未命中则视为模型名，交给默认任务 + 直选模型，使 model="<模型名>" 也能直达。
+            requested_task_hint = str(args.get("model", "") or args.get("model_name", "")).strip()
+            if requested_task_hint in llm_api.get_available_models():
+                task_name = llm_api.resolve_task_name(requested_task_hint)
+                requested_model_name = None
+            else:
+                task_name = llm_api.resolve_task_name("")
+                requested_model_name = requested_task_hint or None
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
                     task_name=task_name,
                     request_type=f"plugin.{plugin_id}",
                     prompt=prompt,
+                    model_name=requested_model_name,
                     temperature=args.get("temperature"),
                     max_tokens=args.get("max_tokens"),
                 )
@@ -607,12 +617,20 @@ class RuntimeCoreCapabilityMixin:
 
         try:
             prompt = _normalize_prompt_arg(args.get("prompt"))
-            task_name = llm_api.resolve_task_name(str(args.get("model", "") or args.get("model_name", "")))
+            # 同 _cap_llm_generate：按是否命中已注册任务名分流 model 的语义。
+            requested_task_hint = str(args.get("model", "") or args.get("model_name", "")).strip()
+            if requested_task_hint in llm_api.get_available_models():
+                task_name = llm_api.resolve_task_name(requested_task_hint)
+                requested_model_name = None
+            else:
+                task_name = llm_api.resolve_task_name("")
+                requested_model_name = requested_task_hint or None
             result = await llm_api.generate(
                 llm_api.LLMServiceRequest(
                     task_name=task_name,
                     request_type=f"plugin.{plugin_id}",
                     prompt=prompt,
+                    model_name=requested_model_name,
                     tool_options=tool_options,
                     temperature=args.get("temperature"),
                     max_tokens=args.get("max_tokens"),
