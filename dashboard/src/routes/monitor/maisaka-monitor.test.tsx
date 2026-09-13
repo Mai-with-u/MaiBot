@@ -1411,3 +1411,96 @@ describe('推理记录跳转', () => {
     expect(screen.queryAllByRole('button', { name: '推理' })).toHaveLength(0)
   })
 })
+
+describe('MaisakaMonitor 额外空态与错误态', () => {
+  it('已发送消息无内容无媒体时显示非文本占位', () => {
+    setupMonitorState({
+      timeline: [makeEntry('message.sent', makeSent({ content: '', speaker_name: '麦麦' }))],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('[非文本消息]')).toBeInTheDocument()
+    expect(screen.queryByText('[空消息]')).not.toBeInTheDocument()
+  })
+
+  it('阶段名为空时显示未知阶段，未映射的运行状态原样展示', () => {
+    setupMonitorState({
+      selectedSession: 's1',
+      stageStatuses: new Map([
+        ['s1', makeStatus({ stage: '', agentState: 'thinking', detail: '' })],
+      ]),
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('未知阶段')).toBeInTheDocument()
+    expect(screen.getByText('thinking')).toBeInTheDocument()
+  })
+
+  it('选中会话但时间线为空时仍显示推理空态', () => {
+    setupMonitorState({
+      selectedSession: 's1',
+      sessions: new Map([['s1', makeSession()]]),
+      timeline: [],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('等待 MaiSaka 推理事件…')).toBeInTheDocument()
+    expect(screen.getByText('当前聊天流暂无阶段状态')).toBeInTheDocument()
+  })
+
+  it('默认展示原文件且仅有远程地址时先进入读取中', () => {
+    httpMocks.get.mockReturnValue(new Promise(() => {}))
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'message.ingested',
+          makeIngested({
+            content: '',
+            media: [
+              {
+                kind: 'image',
+                hash: 'pending-image',
+                text: '图片描述',
+                url: '/api/webui/system/maisaka-monitor/media/image/pending-image',
+                default_original: true,
+              },
+            ],
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    expect(screen.getByText('正在读取图片…')).toBeInTheDocument()
+    expect(screen.queryByAltText('图片原文件')).not.toBeInTheDocument()
+  })
+
+  it('原文件图片解码失败时切换为读取失败', () => {
+    setupMonitorState({
+      timeline: [
+        makeEntry(
+          'message.ingested',
+          makeIngested({
+            content: '',
+            media: [
+              {
+                kind: 'emoji',
+                hash: 'broken',
+                text: '损坏表情',
+                url: '',
+                data_url: 'data:image/png;base64,broken',
+                default_original: true,
+              },
+            ],
+          })
+        ),
+      ],
+    })
+    render(<MaisakaMonitor />)
+
+    fireEvent.error(screen.getByAltText('表情包原文件'))
+    expect(screen.getByText('原文件读取失败')).toBeInTheDocument()
+    expect(screen.queryByAltText('表情包原文件')).not.toBeInTheDocument()
+  })
+})
+

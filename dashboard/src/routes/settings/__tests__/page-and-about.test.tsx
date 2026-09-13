@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AboutTab } from '../AboutTab'
 import { SettingsPage } from '../index'
 
+const scrollAreaState = vi.hoisted(() => ({ attachViewportRef: true }))
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
@@ -22,7 +24,7 @@ vi.mock('@/components/ui/scroll-area', () => ({
     <div
       data-testid="settings-scroll-viewport"
       ref={(node) => {
-        if (viewportRef) {
+        if (scrollAreaState.attachViewportRef && viewportRef) {
           viewportRef.current = node
         }
       }}
@@ -55,6 +57,11 @@ vi.mock('@/components/ui/tabs', async () => {
       <TabsContext.Provider value={{ value, onValueChange }}>
         <div data-testid="settings-tabs" data-value={value}>
           {children}
+          <button
+            type="button"
+            data-testid="settings-invalid-tab"
+            onClick={() => onValueChange('not-a-tab')}
+          />
         </div>
       </TabsContext.Provider>
     ),
@@ -90,6 +97,7 @@ describe('设置页入口与关于页', () => {
   const scrollTo = vi.fn()
 
   beforeEach(() => {
+    scrollAreaState.attachViewportRef = true
     window.history.replaceState(null, '', '/settings')
     Object.defineProperty(HTMLDivElement.prototype, 'scrollTo', {
       configurable: true,
@@ -166,5 +174,85 @@ describe('设置页入口与关于页', () => {
       'rel',
       'noopener noreferrer'
     )
+  })
+
+  it('hash 标签在无查询参数时生效，切回外观页时去掉 tab 参数', async () => {
+    window.history.replaceState(null, '', '/settings#other')
+    const replaceState = vi.spyOn(window.history, 'replaceState')
+    const user = userEvent.setup()
+
+    render(<SettingsPage />)
+
+    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'other')
+    expect(screen.getByText('其他页内容')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'settings.tabs.appearance' }))
+
+    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'appearance')
+    expect(screen.getByText('外观页内容')).toBeInTheDocument()
+    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/settings')
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 })
+  })
+
+  it('未知标签值回退到外观页', async () => {
+    window.history.replaceState(null, '', '/settings?tab=about')
+    const replaceState = vi.spyOn(window.history, 'replaceState')
+    const user = userEvent.setup()
+
+    render(<SettingsPage />)
+    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'about')
+
+    await user.click(screen.getByTestId('settings-invalid-tab'))
+
+    expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-value', 'appearance')
+    expect(replaceState).toHaveBeenLastCalledWith(null, '', '/settings')
+  })
+
+  it('滚动视口未挂载时不折叠标题', () => {
+    scrollAreaState.attachViewportRef = false
+    render(<SettingsPage />)
+
+    const viewport = screen.getByTestId('settings-scroll-viewport')
+    const titleContainer = screen.getByRole('heading', { name: 'settings.title' }).parentElement
+      ?.parentElement
+
+    viewport.scrollTop = 80
+    fireEvent.scroll(viewport)
+    expect(titleContainer).toHaveClass('max-h-24', 'opacity-100')
+  })
+
+  it('标题折叠或展开导致视口高度变化时校正滚动位置', () => {
+    const pending: FrameRequestCallback[] = []
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        pending.push(callback)
+        return pending.length
+      })
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+
+    render(<SettingsPage />)
+    const viewport = screen.getByTestId('settings-scroll-viewport')
+    let clientHeight = 400
+    Object.defineProperty(viewport, 'clientHeight', {
+      configurable: true,
+      get: () => clientHeight,
+    })
+
+    viewport.scrollTop = 80
+    fireEvent.scroll(viewport)
+    expect(pending).toHaveLength(1)
+    clientHeight = 520
+    pending[0](0)
+    expect(viewport.scrollTop).toBe(200)
+
+    viewport.scrollTop = 3
+    clientHeight = 520
+    fireEvent.scroll(viewport)
+    expect(pending).toHaveLength(2)
+    clientHeight = 300
+    pending[1](0)
+    expect(viewport.scrollTop).toBe(0)
   })
 })

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1115,5 +1115,638 @@ describe('局部图谱', () => {
     expect(screen.getByText(/"step": 2/)).toBeInTheDocument()
     expect(screen.getByText(/"ok": true/)).toBeInTheDocument()
     expect(screen.getByText('自身反馈')).toBeInTheDocument()
+  })
+})
+
+function installInteractiveCanvas() {
+  const restoreMetrics = installCanvasMetrics()
+  const arcs: Array<{ x: number; y: number }> = []
+  let tx = 0
+  let ty = 0
+  let zoom = 1
+  const originalGetContext = HTMLCanvasElement.prototype.getContext
+  HTMLCanvasElement.prototype.getContext = function getContext() {
+    return {
+      arc(x: number, y: number) {
+        arcs.push({ x, y })
+      },
+      beginPath() {},
+      clearRect() {},
+      fill() {},
+      fillText() {},
+      lineTo() {},
+      moveTo() {},
+      restore() {},
+      save() {},
+      scale(value: number) {
+        zoom = value
+      },
+      setTransform() {},
+      stroke() {},
+      translate(x: number, y: number) {
+        tx = x
+        ty = y
+      },
+    }
+  } as unknown as HTMLCanvasElement['getContext']
+
+  const queue: FrameRequestCallback[] = []
+  const originalRaf = window.requestAnimationFrame
+  const originalCancel = window.cancelAnimationFrame
+  window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    queue.push(cb)
+    return queue.length
+  }) as typeof window.requestAnimationFrame
+  window.cancelAnimationFrame = (() => undefined) as typeof window.cancelAnimationFrame
+
+  return {
+    flushAll() {
+      act(() => {
+        const pending = queue.splice(0, queue.length)
+        pending.forEach((cb, index) => cb(index * 16))
+      })
+    },
+    latestFramePoints(count: number) {
+      return arcs.slice(-count).map((arc) => ({
+        clientX: arc.x * zoom + tx,
+        clientY: arc.y * zoom + ty,
+      }))
+    },
+    get arcCount() {
+      return arcs.length
+    },
+    restore() {
+      HTMLCanvasElement.prototype.getContext = originalGetContext
+      window.requestAnimationFrame = originalRaf
+      window.cancelAnimationFrame = originalCancel
+      restoreMetrics()
+    },
+  }
+}
+
+async function flushCanvasFrame(
+  canvas: ReturnType<typeof installInteractiveCanvas>,
+  nodeCount: number
+) {
+  await waitFor(() => {
+    canvas.flushAll()
+    expect(canvas.arcCount).toBeGreaterThan(0)
+  })
+  canvas.flushAll()
+  const points = canvas.latestFramePoints(nodeCount)
+  expect(points.length).toBeGreaterThan(0)
+  return points
+}
+
+describe('加载中', () => {
+  it('路径列表加载中显示转圈', async () => {
+    let resolvePaths: (value: never) => void = () => undefined
+    vi.mocked(behaviorApi.listBehaviorPaths).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePaths = resolve
+      }) as never
+    )
+    renderPage()
+    await screen.findByRole('heading', { name: '行为学习' })
+    expect(document.querySelector('.animate-spin')).toBeTruthy()
+    resolvePaths({
+      success: true,
+      total: 0,
+      page: 1,
+      page_size: 20,
+      data: [],
+    } as never)
+    expect(await screen.findByText('暂无行为经验路径')).toBeInTheDocument()
+  })
+
+  it('场景簇加载中显示转圈', async () => {
+    const user = userEvent.setup()
+    let resolveClusters: (value: never) => void = () => undefined
+    vi.mocked(behaviorApi.listBehaviorClusters).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveClusters = resolve
+      }) as never
+    )
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '场景簇浏览' }))
+    expect(document.querySelector('.animate-spin')).toBeTruthy()
+    resolveClusters({
+      success: true,
+      data: [makeCluster()],
+    } as never)
+    expect(await screen.findByText('全部聊天流 · 1 个场景簇')).toBeInTheDocument()
+  })
+
+  it('图谱加载中显示转圈，完成后空数据走空态', async () => {
+    const user = userEvent.setup()
+    let resolveGraph: (value: never) => void = () => undefined
+    vi.mocked(behaviorApi.getBehaviorGraphData).mockReturnValue(
+      new Promise((resolve) => {
+        resolveGraph = resolve
+      }) as never
+    )
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '场景簇图谱' }))
+    expect(await screen.findByRole('heading', { name: '场景簇图谱' })).toBeInTheDocument()
+    expect(document.querySelector('.animate-spin')).toBeTruthy()
+    resolveGraph({ success: true, data: emptyGraph } as never)
+    expect(await screen.findByText('暂无图谱数据')).toBeInTheDocument()
+  })
+
+  it('试跑检索过程中按钮禁用并显示转圈', async () => {
+    const user = userEvent.setup()
+    let resolveDebug: (value: never) => void = () => undefined
+    vi.mocked(behaviorApi.debugBehaviorRetrieval).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDebug = resolve
+      }) as never
+    )
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '检索调试' }))
+    await user.click(screen.getByRole('button', { name: '试跑检索' }))
+    expect(screen.getByRole('button', { name: '试跑检索' })).toBeDisabled()
+    expect(document.querySelector('.animate-spin')).toBeTruthy()
+    resolveDebug({ success: true, data: makeDebugPayload() } as never)
+    await waitFor(() => expect(screen.getByRole('button', { name: '试跑检索' })).toBeEnabled())
+  })
+})
+
+describe('经验路径补充', () => {
+  it('按停用状态和观察学习筛选', async () => {
+    const user = userEvent.setup()
+    await renderReady()
+    await chooseOption(user, '全部状态', '已停用')
+    await chooseOption(user, '全部类型', '观察学习')
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorPaths).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: 'false',
+          learning_type: 'observed_behavior',
+          page: 1,
+        })
+      )
+    )
+  })
+
+  it('选择全局池展示全局行为，带账号的聊天流显示账号', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.listBehaviorChats).mockResolvedValue({
+      success: true,
+      data: [
+        {
+          session_id: 'sess1',
+          display_name: '会话1',
+          cluster_count: 2,
+          path_count: 5,
+          account_id: 'u123',
+          platform: 'qq',
+          chat_type: 'group',
+          scene_count: 1,
+          last_active_time: null,
+        },
+        {
+          session_id: '',
+          display_name: '全局池',
+          cluster_count: 1,
+          path_count: 1,
+          platform: 'system',
+          chat_type: 'private',
+          scene_count: 0,
+          last_active_time: null,
+        },
+      ],
+    } as never)
+    await renderReady()
+    await user.click(getComboboxByText('全部聊天流'))
+    expect(await screen.findByRole('option', { name: /会话1 · 账号 u123/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: /全局池/ }))
+    expect(await screen.findByText(/全局行为 · /)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorPaths).toHaveBeenCalledWith(
+        expect.objectContaining({ session_id: '__global__', page: 1 })
+      )
+    )
+  })
+
+  it('合并场景簇更新时间，覆盖未知来源/NaN 分数/收起与上一页，并按各字段本地排序', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.listBehaviorPaths).mockResolvedValue({
+      success: true,
+      total: 21,
+      page: 1,
+      page_size: 20,
+      data: [
+        makePath({
+          id: 1,
+          scene_cluster_id: null,
+          scene_cluster_name: '未分组',
+          actor_type: 'mystery',
+          learning_type: 'other',
+          score: Number.NaN,
+          activation_count: 1,
+          failure_count: 8,
+          success_count: 1,
+          count: 2,
+          scene_cluster_source_count: 1,
+          last_active_time: null,
+          last_feedback_time: null,
+          update_time: '2025-01-01T00:00:00Z',
+        }),
+        makePath({
+          id: 2,
+          scene_cluster_id: null,
+          scene_cluster_name: '未分组',
+          actor_type: 'mystery',
+          learning_type: 'other',
+          action: '后续动作',
+          score: Number.NaN,
+          last_active_time: '2025-09-01T00:00:00Z',
+          last_feedback_time: '2025-09-02T00:00:00Z',
+          update_time: '2025-09-01T00:00:00Z',
+        }),
+        makePath({
+          id: 3,
+          scene_cluster_id: 99,
+          scene_cluster_name: '另一簇',
+          activation_count: 99,
+          failure_count: 0,
+          success_count: 8,
+          count: 12,
+          score: 0.4,
+          scene_cluster_source_count: 20,
+          last_active_time: '2024-01-01T00:00:00Z',
+          last_feedback_time: '2024-01-01T00:00:00Z',
+          update_time: '2025-02-01T00:00:00Z',
+        }),
+      ],
+    } as never)
+    await renderReady()
+    expect(await screen.findByText(/2 个场景簇 · 21 条经验路径/)).toBeInTheDocument()
+    expect(screen.getByText(/场景簇 #99/)).toBeInTheDocument()
+    expect(screen.getAllByText('0.00').length).toBeGreaterThan(0)
+
+    const untitled = screen.getByRole('button', { name: /未分组/ })
+    await user.click(untitled)
+    expect((await screen.findAllByText('未知来源')).length).toBeGreaterThan(0)
+    expect(untitled).toHaveAttribute('aria-expanded', 'true')
+    await user.click(untitled)
+    expect(untitled).toHaveAttribute('aria-expanded', 'false')
+
+    await chooseOption(user, '最近更新', '使用次数')
+    await chooseOption(user, '使用次数', '负向反馈')
+    await chooseOption(user, '负向反馈', '场景样本')
+    await chooseOption(user, '场景样本', '路径分数')
+    await chooseOption(user, '路径分数', '正向反馈')
+    await chooseOption(user, '正向反馈', '学习次数')
+    await chooseOption(user, '学习次数', '最近使用')
+    await chooseOption(user, '最近使用', '最近反馈')
+    await chooseOption(user, '降序', '升序')
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorPaths).toHaveBeenCalledWith(
+        expect.objectContaining({ sort_by: 'last_feedback_time', sort_order: 'asc', page: 1 })
+      )
+    )
+
+    expect(screen.getByText('1 / 2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /下一页/ }))
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorPaths).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+    )
+    await user.click(screen.getByRole('button', { name: /上一页/ }))
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorPaths).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
+    )
+  })
+})
+
+describe('场景簇浏览补充', () => {
+  it('搜索按钮提交查询，并按升序/路径数量/使用次数重拉', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.listBehaviorClusters).mockResolvedValue({
+      success: true,
+      total: 3,
+      page: 1,
+      page_size: 20,
+      data: [makeCluster()],
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '场景簇浏览' }))
+    expect(await screen.findByText('全部聊天流 · 3 个场景簇')).toBeInTheDocument()
+
+    await user.type(screen.getByPlaceholderText('搜索场景簇 tag'), '插件')
+    await user.click(screen.getByRole('button', { name: '搜索' }))
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorClusters).toHaveBeenCalledWith(
+        expect.objectContaining({ search: '插件', page: 1 })
+      )
+    )
+    await chooseOption(user, '最近更新', '路径数量')
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorClusters).toHaveBeenCalledWith(
+        expect.objectContaining({ sort_by: 'path_count', page: 1 })
+      )
+    )
+    await chooseOption(user, '路径数量', '使用次数')
+    await chooseOption(user, '降序', '升序')
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorClusters).toHaveBeenCalledWith(
+        expect.objectContaining({ sort_by: 'activation_count', sort_order: 'asc', page: 1 })
+      )
+    )
+  })
+
+  it('场景簇分页可回到上一页', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.listBehaviorClusters).mockResolvedValue({
+      success: true,
+      total: 21,
+      page: 1,
+      page_size: 20,
+      data: [makeCluster()],
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '场景簇浏览' }))
+    expect(await screen.findByText('1 / 2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /下一页/ }))
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorClusters).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 2 })
+      )
+    )
+    await user.click(screen.getByRole('button', { name: /上一页/ }))
+    await waitFor(() =>
+      expect(behaviorApi.listBehaviorClusters).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1 })
+      )
+    )
+  })
+})
+
+describe('检索调试补充', () => {
+  it('扩散阶段缺省字段回退为 0，非数字最高分显示 0.00', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.debugBehaviorRetrieval).mockResolvedValue({
+      success: true,
+      data: makeDebugPayload({
+        retrieval_debug: {
+          direct: { direct_tag_count: 1, cluster_count: 0 },
+          spread: {
+            direct_tag_count: 1,
+            cluster_count: 0,
+            expanded_tag_count: undefined,
+            total_query_tag_count: undefined,
+          },
+          direct_top_score: Number.NaN,
+          direct_locked: false,
+        },
+      }),
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '检索调试' }))
+    await user.click(screen.getByRole('button', { name: '试跑检索' }))
+    expect(await screen.findByText('扩展 tag 数')).toBeInTheDocument()
+    expect(screen.getByText('查询 tag 总数')).toBeInTheDocument()
+    expect(screen.getAllByText('0.00').length).toBeGreaterThan(0)
+  })
+})
+
+describe('局部图谱补充', () => {
+  it('渲染 co_occurs/related 边、双 action/outcome，以及空证据回退标签', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.getBehaviorPathDetail).mockResolvedValue({
+      success: true,
+      data: makeDetail({
+        path: makePath({ scene_cluster_tags: [], scene_cluster_source_count: 7, outcome: '' }),
+        scene_cluster: {
+          id: 10,
+          name: '信息查询',
+          tags: [],
+          source_count: 0,
+          update_time: null,
+        },
+        evidence: [],
+        feedback: [],
+        nodes: [
+          { id: 1, kind: 'scene', label: '场景', score: 1, source_count: 1 },
+          { id: 2, kind: 'intent', label: '意图', score: 1, source_count: 1 },
+          { id: 4, kind: 'domain', label: '领域', score: 1, source_count: 1 },
+          { id: 5, kind: 'need', label: '需求', score: 1, source_count: 1 },
+          { id: 8, kind: 'action', label: '行动A', score: 1, source_count: 1 },
+          { id: 18, kind: 'action', label: '行动B', score: 1, source_count: 1 },
+          { id: 9, kind: 'outcome', label: '结果A', score: 1, source_count: 1 },
+          { id: 19, kind: 'outcome', label: '结果B', score: 1, source_count: 1 },
+        ],
+        edges: [
+          {
+            id: 'e1',
+            source: 'scene:1',
+            target: 'scene:2',
+            kind: 'co_occurs',
+            weight: 0.5,
+            count: 1,
+          },
+          {
+            id: 'e2',
+            source: 'scene:4',
+            target: 'scene:5',
+            kind: 'related',
+            weight: 1,
+            count: 1,
+          },
+          {
+            id: 'e3',
+            source: 'scene:1',
+            target: 'action:8',
+            kind: 'scene_action',
+            weight: 2,
+            count: 1,
+          },
+        ],
+      }),
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '局部图谱' }))
+    expect(await screen.findByTestId('react-flow')).toHaveTextContent('nodes:9,edges:3')
+    expect(screen.getAllByText('暂无记录').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('信息查询').length).toBeGreaterThan(0)
+    expect(screen.getByText('样本 7')).toBeInTheDocument()
+    expect(screen.getByText(/scene:1 → scene:2/)).toBeInTheDocument()
+    expect(screen.getByText(/scene:4 → scene:5/)).toBeInTheDocument()
+  })
+})
+
+describe('网络图谱补充', () => {
+  it('图谱 success=false 或缺少网络字段时显示空态', async () => {
+    const user = userEvent.setup()
+    vi.mocked(behaviorApi.getBehaviorGraphData).mockResolvedValueOnce({
+      success: false,
+      data: emptyGraph,
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: '场景簇图谱' }))
+    expect(await screen.findByText('暂无图谱数据')).toBeInTheDocument()
+
+    cleanup()
+    vi.mocked(behaviorApi.getBehaviorGraphData).mockResolvedValue({
+      success: true,
+      data: { tag_network: { nodes: [], edges: [] } },
+    } as never)
+    await renderReady()
+    await user.click(screen.getByRole('tab', { name: 'Tag簇网络' }))
+    expect(await screen.findByText('暂无图谱数据')).toBeInTheDocument()
+  })
+
+  it('指定聊天流后图谱请求带上 session_id', async () => {
+    const user = userEvent.setup()
+    await renderReady()
+    await chooseOption(user, '全部聊天流', /会话1/)
+    await user.click(screen.getByRole('tab', { name: '场景簇图谱' }))
+    await waitFor(() =>
+      expect(behaviorApi.getBehaviorGraphData).toHaveBeenCalledWith({ session_id: 'sess1' })
+    )
+  })
+
+  it('场景簇画布可点选详情、拖拽、调节节点上限并关闭侧栏', async () => {
+    const user = userEvent.setup()
+    const canvas = installInteractiveCanvas()
+    const sceneNodes = [
+      makeSceneNode(1, {
+        label: '插件启动失败排查现场',
+        path_count: 40,
+        tags: [
+          {
+            tag: 'plugin',
+            kind: 'domain',
+            cluster_key: 'd1',
+            display: '插件',
+            probability: 0.42,
+          },
+        ],
+      }),
+      makeSceneNode(2, {
+        short_label: '',
+        path_count: 8,
+        source_count: 1,
+        tags: [],
+        update_time: null,
+      }),
+      ...Array.from({ length: 23 }, (_, index) =>
+        makeSceneNode(index + 3, { path_count: 2, tags: [] })
+      ),
+    ]
+    vi.mocked(behaviorApi.getBehaviorGraphData).mockResolvedValue({
+      success: true,
+      data: {
+        scene_cluster_network: {
+          nodes: sceneNodes,
+          edges: sceneNodes.slice(0, -1).map((node, index) => ({
+            source: node.id,
+            target: sceneNodes[index + 1].id,
+            source_label: String(node.id),
+            target_label: String(sceneNodes[index + 1].id),
+            weight: index === 0 ? 0.3 : index === 1 ? 0 : Number.NaN,
+            shared_tags: [],
+          })),
+        },
+        tag_network: { nodes: [], edges: [] },
+      },
+    } as never)
+    try {
+      await renderReady()
+      await user.click(screen.getByRole('tab', { name: '场景簇图谱' }))
+      expect(await screen.findByText('25 节点')).toBeInTheDocument()
+      const surface = document.querySelector('canvas')
+      expect(surface).toBeTruthy()
+      const points = await flushCanvasFrame(canvas, 25)
+
+      fireEvent.pointerMove(surface!, { clientX: 2, clientY: 2, pointerId: 9 })
+      fireEvent.pointerMove(surface!, { ...points[0], pointerId: 9 })
+      fireEvent.pointerDown(surface!, { ...points[0], pointerId: 1 })
+      fireEvent.pointerMove(surface!, {
+        clientX: points[0].clientX + 12,
+        clientY: points[0].clientY + 8,
+        pointerId: 1,
+      })
+      fireEvent.pointerUp(surface!, { ...points[0], pointerId: 1 })
+      expect(await screen.findByText('节点详情')).toBeInTheDocument()
+      expect(screen.getByText(/场景簇 #/)).toBeInTheDocument()
+      expect(screen.getByText('插件')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: '关闭节点详情' }))
+      await waitFor(() => expect(screen.queryByText('插件')).not.toBeInTheDocument())
+
+      if (points[1]) {
+        fireEvent.pointerDown(surface!, { ...points[1], pointerId: 2 })
+        fireEvent.pointerUp(surface!, { ...points[1], pointerId: 2 })
+        expect(await screen.findByText('暂无 tag 分布')).toBeInTheDocument()
+      }
+
+      fireEvent.pointerDown(surface!, { clientX: 4, clientY: 4, pointerId: 3 })
+      fireEvent.pointerMove(surface!, { clientX: 40, clientY: 30, pointerId: 3 })
+      fireEvent.pointerUp(surface!, { clientX: 40, clientY: 30, pointerId: 3 })
+      fireEvent.doubleClick(surface!)
+      canvas.flushAll()
+
+      await user.click(screen.getByRole('button', { name: '展开图谱调节' }))
+      await user.click(screen.getByRole('checkbox', { name: '暂停' }))
+      canvas.flushAll()
+      await user.click(screen.getByRole('checkbox', { name: '显示标签' }))
+      const sliders = document.querySelectorAll('input[type="range"]')
+      expect(sliders.length).toBeGreaterThan(1)
+      fireEvent.change(sliders[1], { target: { value: '20' } })
+      await waitFor(() => expect(screen.getByText(/最多显示节点 20/)).toBeInTheDocument())
+      await user.click(screen.getByRole('button', { name: '收起图谱调节' }))
+    } finally {
+      canvas.restore()
+    }
+  })
+
+  it('Tag 簇画布按 kind 着色，空成员与空 kind 走回退文案', async () => {
+    const user = userEvent.setup()
+    const canvas = installInteractiveCanvas()
+    vi.mocked(behaviorApi.getBehaviorGraphData).mockResolvedValue({
+      success: true,
+      data: {
+        scene_cluster_network: { nodes: [], edges: [] },
+        tag_network: {
+          nodes: [
+            makeTagNode('need:1', 'need', { label: '安抚需求', scene_count: 10 }),
+            makeTagNode('attitude:1', 'attitude', {
+              label: '焦虑态度',
+              aliases: [],
+              scene_count: 8,
+            }),
+            makeTagNode('domain:1', 'domain', { label: '插件领域', scene_count: 6 }),
+            makeTagNode('scene:1', 'scene', { label: '排障场景', scene_count: 4 }),
+            makeTagNode('misc:1', '', { label: '其它标签', scene_count: 2, aliases: ['成员A'] }),
+          ],
+          edges: [
+            { source: 'need:1', target: 'attitude:1', weight: 4, count: 2 },
+            { source: 'domain:1', target: 'scene:1', weight: 2, count: 1 },
+            { source: 'need:1', target: 'misc:1', weight: 1, count: 1 },
+          ],
+        },
+      },
+    } as never)
+    try {
+      await renderReady()
+      await user.click(screen.getByRole('tab', { name: 'Tag簇网络' }))
+      expect(await screen.findByText('5 节点')).toBeInTheDocument()
+      const surface = document.querySelector('canvas')
+      expect(surface).toBeTruthy()
+      const points = await flushCanvasFrame(canvas, 5)
+
+      fireEvent.pointerDown(surface!, { ...points[1], pointerId: 1 })
+      fireEvent.pointerUp(surface!, { ...points[1], pointerId: 1 })
+      expect(await screen.findByText('节点详情')).toBeInTheDocument()
+      expect(screen.getByText('暂无成员')).toBeInTheDocument()
+
+      fireEvent.pointerDown(surface!, { ...points[4], pointerId: 2 })
+      fireEvent.pointerUp(surface!, { ...points[4], pointerId: 2 })
+      expect(await screen.findByText('成员A')).toBeInTheDocument()
+      expect(screen.getByText('tag')).toBeInTheDocument()
+    } finally {
+      canvas.restore()
+    }
   })
 })

@@ -735,3 +735,157 @@ describe('会话选择、清空与持久化', () => {
     expect(fakeStores.meta.put).toHaveBeenCalledWith({ key: 'lastEventId', value: 501 })
   })
 })
+
+describe('错误态、空态与持久化失败', () => {
+  it('IndexedDB 读取失败时记录警告并以空快照继续工作', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    idbMocks.openDB.mockRejectedValue(new Error('idb 损坏'))
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '读取 MaiSaka 观察 IndexedDB 缓存失败，已忽略:',
+      expect.any(Error)
+    )
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1201 }))
+    expect(view.result.current.allTimeline).toHaveLength(1)
+  })
+
+  it('没有 indexedDB 时不尝试打开数据库', async () => {
+    Object.defineProperty(window, 'indexedDB', { configurable: true, value: undefined })
+    await importHookModule()
+    expect(idbMocks.openDB).not.toHaveBeenCalled()
+  })
+
+  it('保存快照失败时记录警告且界面状态仍保留', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fakeStores.timeline.put.mockRejectedValue(new Error('磁盘满'))
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1301 }))
+    await waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith(
+        '保存 MaiSaka 观察 IndexedDB 缓存失败，已忽略:',
+        expect.any(Error)
+      )
+    )
+    expect(view.result.current.allTimeline).toHaveLength(1)
+  })
+
+  it('清空快照失败时记录警告但内存状态仍被清空', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fakeStores.timeline.clear.mockRejectedValue(new Error('clear failed'))
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1401 }))
+    act(() => view.result.current.clearTimeline())
+
+    expect(view.result.current.allTimeline).toHaveLength(0)
+    await waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith(
+        '清空 MaiSaka 观察 IndexedDB 缓存失败，已忽略:',
+        expect.any(Error)
+      )
+    )
+  })
+
+  it('localStorage 游标为 0 或负数时按 0 处理', async () => {
+    window.localStorage.setItem(LAST_EVENT_ID_STORAGE_KEY, '0')
+    await importHookModule()
+    expect(clientMocks.setInitialReplayCursor).toHaveBeenCalledWith(0)
+
+    vi.resetModules()
+    window.localStorage.setItem(LAST_EVENT_ID_STORAGE_KEY, '-8')
+    await importHookModule()
+    expect(clientMocks.setInitialReplayCursor).toHaveBeenLastCalledWith(0)
+  })
+
+  it('快照 selectedSession 非字符串时不恢复选中会话', async () => {
+    fakeDb.get.mockImplementation(async (_store, key) => {
+      if (key === 'selectedSession') {
+        return { key, value: 12 }
+      }
+      return undefined
+    })
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+    expect(view.result.current.selectedSession).toBeNull()
+  })
+
+  it('stage.snapshot 非数组、stage.removed 缺 session_id 时保持原状态', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('stage.status', makeStageData({ event_id: 1501 }))
+    emitMonitorEvent('stage.snapshot', { event_id: 1502, timestamp: 110, entries: null })
+    emitMonitorEvent('stage.removed', { event_id: 1503, timestamp: 111 })
+    emitMonitorEvent('stage.status', makeStageData({ event_id: 1504, session_id: undefined }))
+
+    expect(view.result.current.stageStatuses.get('session-a')?.stage).toBe('规划中')
+    expect(view.result.current.stageStatuses.size).toBe(1)
+  })
+
+  it('message.updated 缺少 message_id 时不改写内容', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1601, content: '原始内容' }))
+    emitMonitorEvent('message.updated', {
+      event_id: 1602,
+      session_id: 'session-a',
+      content: '不该生效',
+      timestamp: 101,
+    })
+
+    expect(view.result.current.allTimeline[0].data).toMatchObject({ content: '原始内容' })
+  })
+
+  it('event_id 为 0 或负数时不推进游标', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 0, message_id: 'msg-0' }))
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: -3, message_id: 'msg-neg' }))
+
+    expect(view.result.current.allTimeline).toHaveLength(2)
+    expect(clientMocks.updateReplayCursor).not.toHaveBeenCalled()
+  })
+
+  it('群聊名称已含群号时不重复拼接，缺标识时用 session_id 前八位', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('session.start', {
+      event_id: 1701,
+      session_id: 'session-g',
+      session_name: '测试群(group-1)',
+      is_group_chat: true,
+      group_id: 'group-1',
+      timestamp: 100,
+    })
+    emitMonitorEvent('session.start', {
+      event_id: 1702,
+      session_id: 'anonabcd1234',
+      is_group_chat: true,
+      timestamp: 110,
+    })
+
+    expect(view.result.current.sessions.get('session-g')?.sessionName).toBe('测试群(group-1)')
+    expect(view.result.current.sessions.get('anonabcd1234')?.sessionName).toBe('anonabcd')
+  })
+
+  it('选中不存在的会话时过滤结果为空', async () => {
+    const hookModule = await importHookModule()
+    const view = await mountMonitor(hookModule)
+
+    emitMonitorEvent('message.ingested', makeMessageData({ event_id: 1801 }))
+    act(() => view.result.current.setSelectedSession('missing'))
+
+    expect(view.result.current.selectedSession).toBe('missing')
+    expect(view.result.current.timeline).toHaveLength(0)
+    expect(view.result.current.allTimeline).toHaveLength(1)
+  })
+})
+

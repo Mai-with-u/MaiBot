@@ -995,4 +995,95 @@ describe('聊天页 ChatPage', () => {
       ].join('|')
     )
   })
+
+  it('空历史结束加载后消息列表为空；损坏的虚拟标签不会恢复额外会话', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    localStorage.setItem(VIRTUAL_TABS_KEY, '{not-json')
+    await renderConnectedPage()
+
+    emitSession('webui-default', { type: 'history' })
+
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-loading', 'false')
+    expect(screen.queryAllByTestId('msg')).toHaveLength(0)
+    expect(screen.getByTestId('tab-webui-default')).toBeInTheDocument()
+    expect(screen.queryByTestId('tab-virtual-1')).not.toBeInTheDocument()
+  })
+
+  it('error 无内容走兜底文案；阶段失败映射为错误状态', async () => {
+    await renderConnectedPage()
+    emitSession('webui-default', { type: 'session_info', session_id: 'sess-1' })
+
+    emitSession('webui-default', { type: 'error', timestamp: 320 })
+    expect(screen.getByText('error:chat.message.errorFallback')).toBeInTheDocument()
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'chat.toast.error',
+        variant: 'destructive',
+      })
+    )
+
+    emitMonitor({
+      type: 'stage.status',
+      data: makeStageStatus({ stage: '工具执行失败', timestamp: 321 }),
+    })
+    expect(screen.getByTestId('message-list')).toHaveAttribute('data-status', 'error')
+  })
+
+  it('空白发送被拦截；未连接时发送表情失败', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.openSession.mockRejectedValue(new Error('offline'))
+    render(<ChatPage />)
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'chat.toast.connectionFailed', variant: 'destructive' })
+      )
+    })
+
+    act(() => composerProps().onChange('   '))
+    await act(async () => {
+      composerProps().onSend()
+    })
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+
+    await expect(
+      composerProps().onSendEmoji({
+        id: 'emoji-a',
+        content_type: 'image/gif',
+        content_url: '/emoji-a.gif',
+        created_at: 1,
+      })
+    ).rejects.toThrow('chat.toast.currentSessionUnavailable')
+    expect(mocks.loadUserEmojiPayload).not.toHaveBeenCalled()
+  })
+
+  it('表情负载读取失败不会发出消息；头像保存失败弹出错误', async () => {
+    await renderConnectedPage()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.loadUserEmojiPayload.mockRejectedValue(new Error('表情不存在'))
+
+    await expect(
+      composerProps().onSendEmoji({
+        id: 'emoji-a',
+        content_type: 'image/gif',
+        content_url: '/emoji-a.gif',
+        created_at: 1,
+      })
+    ).rejects.toThrow('表情不存在')
+    expect(mocks.sendMessage).not.toHaveBeenCalled()
+
+    mocks.uploadWebuiUserAvatar.mockRejectedValue(new Error('磁盘满了'))
+    const okFile = new File(['x'], 'avatar.png', { type: 'image/png' })
+    await act(async () => {
+      await sidebarProps().onUpdateUserAvatar(okFile)
+    })
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'chat.toast.avatarSaveFailed',
+        description: '磁盘满了',
+        variant: 'destructive',
+      })
+    )
+  })
 })
+

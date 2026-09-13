@@ -107,4 +107,51 @@ describe('反馈问卷页面', () => {
     await user.click(screen.getByRole('button', { name: '触发提交错误' }))
     expect(errorSpy).toHaveBeenCalledWith('MaiBot Survey submission error:', '提交失败')
   })
+
+  it('麦麦问卷初始化期间显示加载指示器，不渲染标题', () => {
+    vi.mocked(systemApi.getMaiBotStatus).mockImplementation(() => new Promise(() => {}))
+    render(<MaiBotFeedbackSurveyPage />)
+
+    expect(document.querySelector('.animate-spin')).not.toBeNull()
+    expect(screen.queryByRole('heading', { name: '麦麦使用体验反馈问卷' })).not.toBeInTheDocument()
+  })
+
+  it('麦麦版本为空字符串时写入未知版本', async () => {
+    vi.mocked(systemApi.getMaiBotStatus).mockResolvedValue({
+      running: true,
+      uptime: 1,
+      version: '',
+      start_time: '2026-07-26T00:00:00Z',
+    })
+    render(<MaiBotFeedbackSurveyPage />)
+
+    expect(await screen.findByText('maibot_version:未知版本')).toBeInTheDocument()
+  })
+
+  it('问卷配置解析失败时展示错误空态与重试按钮', async () => {
+    vi.spyOn(JSON, 'parse').mockReturnValue(null)
+    render(<MaiBotFeedbackSurveyPage />)
+
+    expect(await screen.findByText('无法加载问卷配置')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(screen.queryByTestId('survey-renderer')).not.toBeInTheDocument()
+  })
+
+  it('WebUI 问卷配置解析失败时展示错误空态', () => {
+    vi.spyOn(JSON, 'parse').mockReturnValue(null)
+    render(<WebUIFeedbackSurveyPage />)
+
+    expect(screen.getByText('无法加载问卷配置')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
+
+  it('WebUI 问卷深拷贝配置，不修改原始对象', async () => {
+    const { webuiFeedbackSurvey } = await import('@/config/surveys')
+    const snapshot = structuredClone(webuiFeedbackSurvey)
+
+    render(<WebUIFeedbackSurveyPage />)
+
+    expect(webuiFeedbackSurvey).toEqual(snapshot)
+    expect(screen.getByText(`webui_version:v${APP_VERSION}`)).toBeInTheDocument()
+  })
 })

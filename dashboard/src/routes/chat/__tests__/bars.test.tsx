@@ -143,6 +143,56 @@ describe('ChatComposer', () => {
     expect(screen.getByRole('button', { name: '发送用户表情' })).toBeDisabled()
     expect(screen.getByPlaceholderText('chat.input.waiting')).toBeDisabled()
   })
+
+  it('空白内容禁用发送；输入法组合与禁用态不会触发发送', () => {
+    const { rerender, props } = renderComposer({ value: '   ' })
+    expect(screen.getByRole('button', { name: 'chat.actions.send' })).toBeDisabled()
+
+    rerender(<ChatComposer {...props} value="你好" />)
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'chat.input.placeholder' }), {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: true,
+    })
+    expect(props.onSend).not.toHaveBeenCalled()
+
+    rerender(<ChatComposer {...props} value="你好" disabled />)
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'chat.input.placeholder' }), {
+      key: 'Enter',
+      shiftKey: false,
+      isComposing: false,
+    })
+    expect(screen.getByRole('button', { name: 'chat.actions.send' })).toBeDisabled()
+    expect(props.onSend).not.toHaveBeenCalled()
+  })
+
+  it('发送用户表情，空文件列表不触发添加图片', async () => {
+    const user = userEvent.setup()
+    const { container, props } = renderComposer()
+
+    await user.click(screen.getByRole('button', { name: '发送用户表情' }))
+    expect(props.onSendEmoji).toHaveBeenCalledWith({
+      id: 'emoji-a',
+      content_type: 'image/png',
+      content_url: '/emoji-a.png',
+      created_at: 1,
+    })
+
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: null },
+    })
+    expect(props.onAddImages).not.toHaveBeenCalled()
+  })
+
+  it('无文件名的待发图片使用默认替代文本', () => {
+    renderComposer({
+      images: [{ ...image, name: '' }],
+    })
+    expect(screen.getByRole('img', { name: 'chat.media.image' })).toHaveAttribute(
+      'src',
+      image.data_url
+    )
+  })
 })
 
 describe('ChatTabBar', () => {
@@ -287,6 +337,78 @@ describe('ChatTabBar', () => {
     expect(onOpenObservedSettings).toHaveBeenCalledWith('observed-a')
     expect(screen.getByLabelText('chat.sidebar.observedBadge')).toBeInTheDocument()
   })
+
+  it('空会话列表只保留头像入口，空文件不会上传', () => {
+    const onUpdateUserAvatar = vi.fn(async () => {})
+    const { container } = render(
+      <ChatTabBar
+        tabs={[]}
+        activeTabId="webui-default"
+        activeObservedSessionId={null}
+        observedSessions={new Map()}
+        userId="user-a"
+        userName="小明"
+        isUploadingUserAvatar={false}
+        onSwitch={vi.fn()}
+        onSelectObserved={vi.fn()}
+        onOpenObservedSettings={vi.fn()}
+        onClose={vi.fn()}
+        onUpdateUserAvatar={onUpdateUserAvatar}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'chat.sidebar.editAvatar' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^标签-/ })).not.toBeInTheDocument()
+
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [] },
+    })
+    expect(onUpdateUserAvatar).not.toHaveBeenCalled()
+  })
+
+  it('未连接标签仍可切换，私聊观察流走独立入口', async () => {
+    const user = userEvent.setup()
+    const onSwitch = vi.fn()
+    const onSelectObserved = vi.fn()
+    render(
+      <ChatTabBar
+        tabs={[makeTab('webui-default', { isConnected: false })]}
+        activeTabId="virtual-a"
+        activeObservedSessionId={null}
+        observedSessions={
+          new Map([
+            [
+              'observed-private',
+              {
+                sessionId: 'observed-private',
+                sessionName: '小明的私聊',
+                isGroupChat: false,
+                groupId: '',
+                platform: 'qq',
+                lastActivity: 1,
+                eventCount: 1,
+              },
+            ],
+          ])
+        }
+        userId="user-a"
+        userName="小明"
+        isUploadingUserAvatar={false}
+        onSwitch={onSwitch}
+        onSelectObserved={onSelectObserved}
+        onOpenObservedSettings={vi.fn()}
+        onClose={vi.fn()}
+        onUpdateUserAvatar={vi.fn(async () => {})}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: '机器人-webui-default' }))
+    expect(onSwitch).toHaveBeenCalledWith('webui-default')
+    await user.click(
+      screen.getByRole('button', { name: /^小明的私聊chat\.sidebar\.observedBadge/ })
+    )
+    expect(onSelectObserved).toHaveBeenCalledWith('observed-private')
+  })
 })
 
 describe('ChatHeaderBar', () => {
@@ -348,5 +470,47 @@ describe('ChatHeaderBar', () => {
       />
     )
     expect(screen.getByRole('button', { name: 'chat.actions.reconnect' })).toBeDisabled()
+  })
+
+  it('无活动会话按断开展示，允许重连且不显示虚拟身份', () => {
+    render(
+      <ChatHeaderBar
+        activeTab={undefined}
+        botDisplayName="麦麦"
+        isConnecting={false}
+        isLoadingHistory={false}
+        onReconnect={vi.fn()}
+      />
+    )
+    expect(screen.getByText('麦麦')).toBeInTheDocument()
+    expect(screen.getByText('chat.status.disconnected')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'chat.actions.reconnect' })).toBeEnabled()
+    expect(screen.queryByText('qq')).not.toBeInTheDocument()
+  })
+
+  it('虚拟私聊不展示空群名，加载历史时显示等待指示', () => {
+    render(
+      <ChatHeaderBar
+        activeTab={makeTab('virtual-a', {
+          type: 'virtual',
+          virtualConfig: {
+            platform: 'qq',
+            personId: 'person-a',
+            userId: 'user-a',
+            userName: '小明',
+            groupName: '',
+            groupId: '',
+          },
+        })}
+        botDisplayName="麦麦"
+        isConnecting={false}
+        isLoadingHistory
+        onReconnect={vi.fn()}
+      />
+    )
+    expect(screen.getByText('小明')).toBeInTheDocument()
+    expect(screen.getByText('qq')).toBeInTheDocument()
+    expect(screen.queryByText('测试群')).not.toBeInTheDocument()
+    expect(document.querySelector('.animate-spin')).toBeInTheDocument()
   })
 })
