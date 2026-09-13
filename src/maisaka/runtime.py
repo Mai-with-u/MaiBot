@@ -158,7 +158,6 @@ class MaisakaHeartFlowChatting(MaisakaFocusRuntimeMixin, MaisakaRuntimeDisplayMi
             is_group_chat=self.chat_stream.is_group_session,
         )
         self._chat_history: list[LLMContextMessage] = []
-        self.history_loop: list[CycleDetail] = []
 
         # Keep all original messages for batching and later learning.
         self.message_cache: list[SessionMessage] = []

@@ -1356,7 +1356,6 @@ class MaisakaReasoningEngine:
 
     async def _end_cycle(self, cycle_detail: CycleDetail, only_long_execution: bool = True) -> CycleDetail:
         """结束并记录一轮 Maisaka 思考循环。"""
-        self._runtime.history_loop.append(cycle_detail)
         await self._post_process_chat_history_after_cycle(cycle_detail)
         cycle_detail.end_time = time.time()
 
